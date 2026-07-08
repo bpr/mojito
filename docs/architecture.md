@@ -1,15 +1,18 @@
 # Architecture After Parsing
 
-This document describes mojo-lite after parsing. Its input is the parsed program:
+This document describes mojo-lite after parsing. Its simplest input is the parsed
+program:
 
 ```rust
 Vec<ast::Stmt>
 ```
 
-Lexing and parsing are intentionally out of scope here. They will have their own
-document. This file starts where the parser stops and follows a program through
-semantic checking, HIR lowering, MIR lowering, compiler analyses, drop
-elaboration, and execution on the register VM.
+When the compiler is running from a file path, the first post-parse stage may
+also parse imported modules and link them into that same shape. Lexing and
+parsing are intentionally out of scope here; see `docs/frontend.md` for those.
+This file starts where the parser stops and follows a program through module
+linking, compile-time elaboration, semantic checking, HIR lowering, MIR lowering,
+compiler analyses, drop elaboration, and execution on the register VM.
 
 ## Big Picture
 
@@ -17,6 +20,8 @@ The post-parse pipeline is:
 
 ```text
 Vec<Stmt>
+  -> module link
+  -> comptime elaboration
   -> check
   -> HIR CFG
   -> MIR
@@ -29,6 +34,12 @@ The design is an hourglass:
 
 ```text
 parsed AST
+   |
+   v
+module linker
+   |
+   v
+comptime elaborator
    |
    v
 semantic checker
@@ -46,9 +57,10 @@ analysis + drop elaboration
 register VM
 ```
 
-The MIR is the important waist. Earlier phases preserve source structure and
-diagnostics. Later phases should consume verified MIR rather than rediscover
-language semantics from the AST.
+The MIR is the important waist. Earlier phases preserve source structure,
+perform declaration-time rewrites, and protect later phases from unsupported
+syntax. Later phases should consume verified MIR rather than rediscover language
+semantics from the AST.
 
 ## Design Goals
 
@@ -66,7 +78,137 @@ mojo-lite is not trying to be Mojo's production architecture. It has no MLIR
 backend, no GPU pipeline, and no optimizer stack. The register VM is the concrete
 execution model and the executable specification for the supported subset.
 
-## Stage 1: Semantic Checking
+## Stage 1: Module Linking
+
+Module:
+
+```rust
+src/module.rs
+```
+
+Entry points:
+
+```rust
+module::link(entry_path: &Path) -> Result<Vec<Stmt>, ModuleError>
+module::link_source(source: &str, entry_path: &Path) -> Result<Vec<Stmt>, ModuleError>
+```
+
+The module linker is deliberately small. It consumes parsed source plus an entry
+path and returns one flat `Vec<Stmt>` for the rest of the compiler.
+
+Currently it supports:
+
+- `from module import Name, Other`
+- `from module import *`
+- dotted module paths such as `from collections.list import List`
+- relative imports such as `from .optional import Optional`
+- transitive imports, dependency-first hoisting, deduplication, and simple cycle
+  breaking by canonical path
+
+Imported module declarations are hoisted ahead of the importing module. A module
+exports top-level `def`, `struct`, `trait`, and `comptime` declarations, except
+that a module's `main` is not exported. Top-level executable statements from an
+imported module are not run.
+
+Plain `import module` is parsed but still acts as a no-op because qualified
+`module.Name` lookup is not modeled yet. Aliases are also deferred.
+
+The important architectural point is that the rest of the pipeline does not know
+whether declarations came from one file or several. After linking, modules are
+just ordinary declarations in a single program.
+
+## Stage 2: Comptime Elaboration
+
+Module:
+
+```rust
+src/comptime.rs
+```
+
+Entry point:
+
+```rust
+comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
+```
+
+`comptime` is implemented as a phase distinction before type checking. The
+elaborator rewrites compile-time constructs into ordinary AST so the checker,
+HIR, MIR, and VM do not need to carry special `comptime if` or `comptime for`
+semantics.
+
+Compile-time values are represented by:
+
+```rust
+CtValue::Int
+CtValue::Bool
+CtValue::Str
+CtValue::Tuple
+CtValue::List
+```
+
+The implemented forms are:
+
+- `comptime NAME = expr`: evaluates `expr` immediately, records the result in
+  the compile-time environment, and keeps a folded declaration whose value is a
+  literal.
+- `comptime if`: evaluates each condition as a compile-time `Bool` and keeps
+  only the selected branch. Dropped branches disappear before type checking,
+  which lets them contain code that would be invalid for the selected
+  specialization.
+- `comptime for`: evaluates the iterable as either `range(...)` or a
+  compile-time tuple/list, substitutes the loop variable with a literal, and
+  splices a fresh elaborated copy of the loop body for each element.
+- CTFE calls: a compile-time expression may call a pure, non-generic, top-level
+  `def`. The body is executed by a small AST interpreter that supports local
+  variables, assignment, `if`, `while`, `for`, `break`, `continue`, expression
+  statements, and `return`.
+- Materialization: module-level `comptime` constants are inlined as runtime
+  literals into later code, so a function can use a constant computed at module
+  elaboration time.
+
+CTFE is intentionally not the register VM. It is a small, fuel-bounded
+compile-time execution island. That keeps the first implementation simple and
+isolated, but it also means any semantics supported by CTFE must be mirrored
+manually until compile-time execution is moved onto MIR/VM machinery.
+
+### Fuel
+
+In this codebase, **fuel** means a compile-time step budget. It is not a runtime
+performance mechanism and not user-visible gas. The current budget is a fixed
+program-wide quota:
+
+```rust
+const FUEL: usize = 100_000;
+```
+
+The elaborator burns fuel for compile-time function calls, statements executed
+inside CTFE, loop iterations, and `comptime for` unrolling. If the budget reaches
+zero, elaboration fails with `ComptimeError::QuotaExceeded`.
+
+The goal is to prevent compile-time execution from hanging the compiler. A bad
+`while True` in a CTFE function or an enormous generated loop should fail
+deterministically instead of making compilation unbounded. This is similar in
+spirit to Zig's compile-time branch quota, though mojo-lite keeps the mechanism
+small and fixed for now.
+
+### Checker Interaction
+
+The checker still has a narrow constant folder for value-parameter contexts such
+as SIMD widths and simple value-parameterized types. The comptime elaborator now
+runs before the checker, so CTFE-computed values are folded into literals before
+those checks run.
+
+That layering is useful but not final. Today there are two related mechanisms:
+
+- `src/comptime.rs` handles language-level `comptime` declarations, branch
+  selection, loop unrolling, materialization, and CTFE.
+- `src/checker.rs` still validates type/value-parameter positions and folds the
+  small expression subset it needs for those positions.
+
+As value-parameter generics and type-level programming grow, those responsibilities
+should become more centralized.
+
+## Stage 3: Semantic Checking
 
 Entry point:
 
@@ -88,7 +230,7 @@ It is responsible for:
 - call argument matching
 - default, keyword, and variadic arguments where supported
 - `owned`, `mut`, `ref`, and `deinit` conventions
-- simple compile-time integer constants used as value parameters
+- compile-time integer constants used as value parameters
 - list, tuple, string, and SIMD type rules
 - borrow checking for call arguments
 - rejecting parse-only syntax whose semantics are deferred
@@ -97,9 +239,9 @@ The checker is deliberately conservative. If a construct is parsed but not
 semantically implemented, this is where it should normally become
 `TypeError::Unsupported`.
 
-Examples of syntax that may parse before it is fully implemented include
-`comptime if`, `comptime for`, richer trait features, `with`, tuple unpacking,
-t-strings, slices, chained comparisons, and ternary expressions.
+Examples of syntax that may parse before it is fully implemented include richer
+trait features, `with`, t-strings, and advanced expression/declaration forms that
+the VM does not yet execute.
 
 ### Borrow Checking In The Checker
 
@@ -130,27 +272,7 @@ This early borrow check complements, rather than replaces, MIR ownership
 analysis. The checker handles local aliasing at call boundaries; MIR analysis
 handles move state across control flow.
 
-### Comptime Today
-
-`comptime` is mostly future architecture.
-
-The checker currently has a narrow compile-time integer evaluator for value
-parameters. It can evaluate integer literals, comptime names, unary minus, and
-basic integer arithmetic in positions such as SIMD widths or simple
-value-parameterized generics.
-
-It does not yet implement real compile-time execution. Planned work includes:
-
-- a real compile-time value model
-- `comptime if` branch selection
-- `comptime for` unrolling
-- CTFE over a restricted VM/MIR subset
-- type values
-- trait comptime members
-
-See `../comptime.md` for the design notes.
-
-## Stage 2: HIR CFG Lowering
+## Stage 4: HIR CFG Lowering
 
 Module:
 
@@ -288,7 +410,7 @@ where `target` is a block in the enclosing function CFG, not the local region CF
 The VM later propagates this as a non-local jump while running `finally` blocks on
 the way out.
 
-## Stage 3: MIR Lowering
+## Stage 5: MIR Lowering
 
 Module:
 
@@ -527,7 +649,7 @@ pub struct SpanTable(pub HashMap<u32, (Span, Option<VarId>)>);
 This is what lets ownership diagnostics point back to the original source even
 though expressions have been flattened into temporaries.
 
-## Stage 4: Ownership Analysis
+## Stage 6: Ownership Analysis
 
 Module:
 
@@ -598,7 +720,7 @@ print(p.left)    # error
 
 Dynamic indexed moves are more conservative because arbitrary indices can alias.
 
-## Stage 5: Liveness And ASAP Destruction
+## Stage 7: Liveness And ASAP Destruction
 
 Same module:
 
@@ -667,7 +789,7 @@ continue.
 hidden try-region exits explicit enough for the VM to run destructors before
 jumping to the enclosing loop target.
 
-## Stage 6: Register VM
+## Stage 8: Register VM
 
 Module:
 
@@ -905,26 +1027,23 @@ reimplementing every scalar/list/string/SIMD rule from scratch.
 
 The main pressure points are:
 
-- comptime needs a real compile-time value universe and elaboration pass
+- CTFE currently has a small AST interpreter; moving CTFE onto restricted MIR/VM
+  execution would reduce duplicated semantics and make compile-time execution
+  track runtime behavior more closely
+- the compile-time value universe still needs to grow toward Mojo-style
+  type-level values, declaration generation, and richer specialization
 - more declaration facts should move out of VM-side AST registries
+- the module system is useful but intentionally simple: no qualified
+  `import module` lookup, aliases, packages, or imported top-level execution
 - trait support is intentionally incomplete
 - generics and value-parameter specialization need a more central
   representation
 - exception modeling is structured, not a fully general unwind-edge MIR
-- richer closure support would need a clearer capture representation
+- nested-function and capture support should match Mojo's non-escaping patterns
+  without growing into a general escaping-closure system
+- more library types can migrate from runtime/compiler support into self-hosted
+  modules as the language subset gets stronger
 - diagnostics should continue moving from "correct" to "pleasant"
-
-The likely next architectural expansion is comptime:
-
-```text
-checked AST / early HIR
-  -> comptime elaboration
-  -> ordinary runtime HIR/MIR
-```
-
-The goal should be to avoid rebuilding a second tree-walker. Small constant
-evaluation is fine, but general compile-time function execution should eventually
-reuse MIR/VM machinery with restrictions and fuel.
 
 ## Mental Model
 
@@ -932,8 +1051,11 @@ Read the compiler from the middle outward:
 
 1. MIR is the contract.
 2. HIR exists to make control flow explicit before MIR.
-3. The checker prevents unsupported or ill-typed programs from reaching MIR.
-4. Analysis proves ownership and inserts destruction.
-5. The VM executes what MIR says.
+3. Module linking assembles imported declarations into one program.
+4. Comptime elaboration erases compile-time control and materializes constants
+   before runtime checking.
+5. The checker prevents unsupported or ill-typed programs from reaching MIR.
+6. Analysis proves ownership and inserts destruction.
+7. The VM executes what MIR says.
 
 That is the core architecture of mojo-lite after parsing.

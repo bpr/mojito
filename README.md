@@ -272,10 +272,10 @@ Supported pieces include:
 - `comptime NAME = expr` constants
 - `comptime if` branch selection
 - `comptime for` over `range` and compile-time tuple/list values
-- richer compile-time values such as integers, booleans, strings, types, tuples,
-  and lists
-- small pure-function CTFE that reuses checked compiler machinery and runs with a
-  fuel quota
+- richer compile-time values such as integers, booleans, strings, tuples, and
+  lists
+- small pure-function CTFE, implemented as a fuel-bounded AST interpreter before
+  checking
 - materialization of compile-time values into ordinary runtime code where the
   subset supports it
 
