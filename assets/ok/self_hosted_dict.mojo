@@ -15,6 +15,11 @@ def main():
         print(entry.value)
     print(count)
 
+    try:
+        print(d["missing"])
+    except e:
+        print("Caught error: ", e)
+
     # Check that copying a dictionary preserves value semantics
     var d2: Dict[String, String] = d.copy()
     print(d2["name"], " : ",d2["phase"])

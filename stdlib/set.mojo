@@ -1,6 +1,10 @@
 from list import List
+from iterable import Iterable
 
-struct Set[T: Equatable & Copyable & Movable]:
+struct Set[T: Equatable & Copyable & Movable](Iterable):
+    comptime Element = Self.T
+    comptime Iter = List[Self.T]
+
     var items: List[Self.T]
 
     def __init__(out self):

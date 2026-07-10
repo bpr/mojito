@@ -3,7 +3,11 @@
 # types, heap pointers, the value-type lifecycle (init/copy/move), the operator/
 # subscript/len dunders, and the iterator protocol.
 
-struct ListIter[T: Copyable & Movable]:
+from iterable import Iterable, Iterator
+
+struct _ListIter[T: Copyable & Movable](Iterator):
+    comptime Element = Self.T
+
     var data: UnsafePointer[Self.T]
     var size: Int
     var idx: Int
@@ -21,7 +25,10 @@ struct ListIter[T: Copyable & Movable]:
         self.idx = self.idx + 1
         return v
 
-struct List[T: Copyable & Movable](Copyable):
+struct List[T: Copyable & Movable](Copyable, Iterable):
+    comptime Element = Self.T
+    comptime Iter = _ListIter[Self.T]
+
     var data: UnsafePointer[Self.T]
     var size: Int
     var cap: Int
@@ -74,5 +81,5 @@ struct List[T: Copyable & Movable](Copyable):
     def __setitem__(mut self, i: Int, v: Self.T):
         self.data[i] = v
 
-    def __iter__(self) -> ListIter[Self.T]:
-        return ListIter[Self.T](self.data, self.size)
+    def __iter__(self) -> _ListIter[Self.T]:
+        return _ListIter[Self.T](self.data, self.size)

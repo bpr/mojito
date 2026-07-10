@@ -4,7 +4,7 @@
 //! files into a temp directory alongside a small entry program, links them
 //! (`from module import …`), and runs on the VM.
 
-use mojo_lite::{BackendKind, check, link};
+use mojo_lite::{BackendKind, check, elaborate, link};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -42,6 +42,7 @@ impl Drop for TempDir {
 
 fn run(entry: &Path) -> Result<String, String> {
     let program = link(entry).map_err(|e| e.to_string())?;
+    let program = elaborate(program).map_err(|e| format!("comptime error: {e}"))?;
     check(&program).map_err(|e| format!("type error: {e:?}"))?;
     let mut backend = BackendKind::Vm.make();
     backend
@@ -64,6 +65,7 @@ fn self_hosted_generic_optional() {
 #[test]
 fn self_hosted_generic_list_grows_indexes_iterates() {
     let d = TempDir::new();
+    d.add_stdlib("iterable.mojo");
     d.add_stdlib("list.mojo");
     let main = d.write(
         "main.mojo",
@@ -76,6 +78,7 @@ fn self_hosted_generic_list_grows_indexes_iterates() {
 #[test]
 fn self_hosted_generic_list_has_value_semantics() {
     let d = TempDir::new();
+    d.add_stdlib("iterable.mojo");
     d.add_stdlib("list.mojo");
     let main = d.write(
         "main.mojo",
@@ -88,6 +91,7 @@ fn self_hosted_generic_list_has_value_semantics() {
 #[test]
 fn self_hosted_generic_set_deduplicates_contains_iterates() {
     let d = TempDir::new();
+    d.add_stdlib("iterable.mojo");
     d.add_stdlib("list.mojo");
     d.add_stdlib("set.mojo");
     let main = d.write(
@@ -100,6 +104,7 @@ fn self_hosted_generic_set_deduplicates_contains_iterates() {
 #[test]
 fn self_hosted_generic_dict_sets_gets_updates_iterates() {
     let d = TempDir::new();
+    d.add_stdlib("iterable.mojo");
     d.add_stdlib("list.mojo");
     d.add_stdlib("dict.mojo");
     let main = d.write(
@@ -107,4 +112,16 @@ fn self_hosted_generic_dict_sets_gets_updates_iterates() {
         "from dict import Dict\n\ndef main():\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 10\n    d[\"b\"] = 20\n    d[\"a\"] = 15\n    print(len(d))\n    print(\"a\" in d, \"z\" in d)\n    print(d[\"a\"], d.get_or(\"z\", -1))\n    var total: Int = 0\n    for entry in d:\n        total = total + entry.value\n    print(total)\n",
     );
     assert_eq!(run(&main).unwrap(), "2\ntrue false\n15 -1\n35\n");
+}
+
+#[test]
+fn self_hosted_algorithms_use_comptime_facts() {
+    let main = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("ok")
+        .join("self_hosted_algorithms.mojo");
+    assert_eq!(
+        run(&main).unwrap(),
+        "1 2 0\n8 24\n4 17\n42\nfallback\n7\n"
+    );
 }

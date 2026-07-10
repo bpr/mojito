@@ -1,6 +1,6 @@
 from list import List
 
-struct DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](Copyable):
+struct _DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](Copyable):
     var key: Self.K
     var value: Self.V
 
@@ -9,13 +9,13 @@ struct DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](Copya
         self.value = value
 
 struct Dict[K: Equatable & Copyable & Movable, V: Copyable & Movable](Copyable):
-    var entries: List[DictEntry[Self.K, Self.V]]
+    var entries: List[_DictEntry[Self.K, Self.V]]
 
     def __init__(out self):
-        self.entries = List[DictEntry[Self.K, Self.V]]()
+        self.entries = List[_DictEntry[Self.K, Self.V]]()
 
     def __init__(out self, *, copy: Self):
-        self.entries = List[DictEntry[Self.K, Self.V]](copy: copy.entries)
+        self.entries = List[_DictEntry[Self.K, Self.V]](copy: copy.entries)
 
     def copy(self) -> Self:
         return Dict[Self.K, Self.V](copy: self)
@@ -40,9 +40,9 @@ struct Dict[K: Equatable & Copyable & Movable, V: Copyable & Movable](Copyable):
     def __setitem__(mut self, key: Self.K, value: Self.V):
         var i: Int = self.find_index(key)
         if i >= 0:
-            self.entries[i] = DictEntry[Self.K, Self.V](key, value)
+            self.entries[i] = _DictEntry[Self.K, Self.V](key, value)
         else:
-            self.entries.append(DictEntry[Self.K, Self.V](key, value))
+            self.entries.append(_DictEntry[Self.K, Self.V](key, value))
 
     def get_or(self, key: Self.K, default: Self.V) -> Self.V:
         var i: Int = self.find_index(key)
@@ -53,5 +53,5 @@ struct Dict[K: Equatable & Copyable & Movable, V: Copyable & Movable](Copyable):
     def __len__(self) -> Int:
         return len(self.entries)
 
-    def __iter__(self) -> List[DictEntry[Self.K, Self.V]]:
+    def __iter__(self) -> List[_DictEntry[Self.K, Self.V]]:
         return self.entries
