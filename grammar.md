@@ -782,7 +782,7 @@ TSTRING:                                             # interpolation; parsed int
     # `t"…{x+1}…"` / raw `rt"…"`; each `{…}` is a parsed expression (semantics deferred)
 ```
 
-Reserved keywords (cannot be a `NAME`):
+Reserved keywords (cannot be an unquoted `NAME`):
 
 ```
 var  def  struct  trait  comptime  return  pass  None  and  or  not
@@ -792,6 +792,9 @@ import  from  as
 ```
 
 `True` / `False` lex directly to boolean literals, so they are reserved too.
+Any name may be **stropped** with backticks: `` `var` ``, `` `with space` ``, and
+`` `with#symbol` `` each lex as one ordinary `NAME` whose value is the text between
+the delimiters. A stropped name cannot span a newline.
 The type names `Int` / `UInt` / `Bool` / `String` / `Float64`, the decorator name
 `fieldwise_init`, the built-in trait names (`AnyType`, `Copyable`, `Movable`, …), the
 type-alias `Self`, and `self` are **not** reserved (they are ordinary `NAME`s that are

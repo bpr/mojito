@@ -315,6 +315,12 @@ impl Checker {
             // A bare name may be an in-scope type parameter (a generic `def`'s
             // `T`) or a struct type, optionally applied to parameter arguments.
             Type::Named(name, args) => {
+                // Mojo exposes the compile-time `StringLiteral` type. Mojito
+                // materializes string literals directly as runtime strings, so
+                // it is represented by the existing string type.
+                if name == "StringLiteral" && args.is_empty() {
+                    return Ok(Ty::String);
+                }
                 if args.is_empty()
                     && let Some(bounds) = self.lookup_tparam(name)
                 {

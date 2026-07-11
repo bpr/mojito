@@ -9,6 +9,7 @@ pub enum LexError {
     InvalidInteger(usize),
     InvalidFloat(usize),
     UnterminatedString(usize),
+    UnterminatedIdentifier(usize),
     InvalidEscape(char, usize),
 }
 
@@ -33,6 +34,7 @@ impl LexError {
             | LexError::InvalidInteger(pos)
             | LexError::InvalidFloat(pos)
             | LexError::UnterminatedString(pos)
+            | LexError::UnterminatedIdentifier(pos)
             | LexError::InvalidEscape(_, pos) => *pos,
         }
     }
@@ -298,6 +300,9 @@ impl fmt::Display for LexError {
             }
             LexError::UnterminatedString(pos) => {
                 write!(f, "Unterminated string literal starting at byte {}", pos)
+            }
+            LexError::UnterminatedIdentifier(pos) => {
+                write!(f, "Unterminated backtick identifier starting at byte {}", pos)
             }
             LexError::InvalidEscape(c, pos) => {
                 write!(f, "Invalid string escape '\\{}' at byte {}", c, pos)

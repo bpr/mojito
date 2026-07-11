@@ -763,6 +763,13 @@ fn parses_annotated_comptime_constant() {
 }
 
 #[test]
+fn parses_docstrings_in_declaration_positions() {
+    let _ = parse(
+        "\"\"\"Module docs.\"\"\"\n\nstruct S:\n    \"\"\"Struct docs.\"\"\"\n    var x: Int\n    \"\"\"Field docs.\"\"\"\n    comptime N = 1\n    \"\"\"Constant docs.\"\"\"\n    def get(self) -> Int:\n        \"\"\"Method docs.\"\"\"\n        return self.x\n\ntrait T:\n    \"\"\"Trait docs.\"\"\"\n    def get(self) -> Int:\n        ...\n",
+    );
+}
+
+#[test]
 fn parses_comptime_if_with_else() {
     // `comptime if` mirrors a normal `if` (branches + optional else).
     match &parse("comptime if N > 4:\n    pass\nelse:\n    pass\n")[0].kind {

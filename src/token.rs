@@ -69,6 +69,9 @@ pub enum Token {
     FloatLiteral(f64),
     BoolLiteral(bool),
     StringLiteral(String),
+    /// A triple-quoted string. Kept distinct through parsing so a standalone
+    /// literal can be recognized as a Mojo docstring.
+    TripleStringLiteral(String),
     /// A t-string (`t"…{expr}…"`) or raw t-string (`rt"…"`), lexed into
     /// alternating literal text and raw interpolation-expression text; the parser
     /// re-parses each interpolation into a real `Expr`. `raw` is true for `rt`.

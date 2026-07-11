@@ -338,6 +338,21 @@ fn keyword_table_and_lex_helper() {
     assert_eq!(mojito::lex("var\n").unwrap()[0], Token::Var);
 }
 
+#[test]
+fn lexes_stropped_identifiers_without_keyword_or_punctuation_meaning() {
+    assert_eq!(
+        lex_all("`var` `with space` `with#symbol` `café`") ,
+        vec![
+            Token::Identifier("var".into()),
+            Token::Identifier("with space".into()),
+            Token::Identifier("with#symbol".into()),
+            Token::Identifier("café".into()),
+            Token::Newline,
+            Token::Eof,
+        ]
+    );
+}
+
 // --- Augmented-assignment operators ---
 
 #[test]
@@ -411,11 +426,11 @@ fn lexes_single_and_triple_quoted_strings() {
     );
     assert_eq!(
         lex_all("var x = \"\"\"multi\nline\"\"\"")[3],
-        Token::StringLiteral("multi\nline".into())
+        Token::TripleStringLiteral("multi\nline".into())
     );
     assert_eq!(
         lex_all("var x = '''a\nb'''")[3],
-        Token::StringLiteral("a\nb".into())
+        Token::TripleStringLiteral("a\nb".into())
     );
 }
 

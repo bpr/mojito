@@ -117,7 +117,11 @@ impl<'a> Lexer<'a> {
             let rem = self.remainder();
             if rem.starts_with(&delim) {
                 self.pos += delim.len(); // consume the closing delimiter
-                return Ok(Token::StringLiteral(value));
+                return Ok(if triple {
+                    Token::TripleStringLiteral(value)
+                } else {
+                    Token::StringLiteral(value)
+                });
             }
             let c = match rem.chars().next() {
                 Some(c) => c,
@@ -645,6 +649,29 @@ impl<'a> Iterator for Lexer<'a> {
                         }
                         Err(err) => return Some(Err(err)),
                     }
+                }
+                '`' => {
+                    // A stropped identifier: backticks make keywords, whitespace,
+                    // and punctuation usable as one ordinary identifier. The
+                    // delimiters are syntax and are not retained in its name.
+                    let start = self.pos;
+                    self.pos += 1;
+                    let text_start = self.pos;
+                    loop {
+                        match self.remainder().chars().next() {
+                            Some('`') => {
+                                let text = self.input[text_start..self.pos].to_string();
+                                self.pos += 1;
+                                self.emit(Token::Identifier(text));
+                                break;
+                            }
+                            Some('\n' | '\r') | None => {
+                                return Some(Err(LexError::UnterminatedIdentifier(start)));
+                            }
+                            Some(ch) => self.pos += ch.len_utf8(),
+                        }
+                    }
+                    continue;
                 }
                 _ if c.is_ascii_alphabetic() || c == '_' => {
                     let start = self.pos;

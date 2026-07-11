@@ -208,6 +208,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.expect_stmt_end()?;
                     StmtKind::Pass
                 }
+                // Mojo docstrings are triple-quoted string statements placed at
+                // the start of a module/declaration body. Documentation metadata
+                // is not retained yet, but it has no runtime effect.
+                Some(Token::TripleStringLiteral(_)) => {
+                    self.next_token()?;
+                    self.expect_stmt_end()?;
+                    StmtKind::Pass
+                }
                 _ => self.parse_expr_or_assign()?,
             })
         })()
@@ -777,6 +785,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Token::Newline => {
                     self.next_token()?;
                 }
+                Token::TripleStringLiteral(_) => {
+                    self.next_token()?;
+                    self.expect_stmt_end()?;
+                }
                 Token::Var => {
                     self.expect(Token::Var, "Expected 'var'")?;
                     let fname = self.expect_identifier("Expected a field name")?;
@@ -873,6 +885,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 Token::Newline => {
                     self.next_token()?;
+                }
+                Token::TripleStringLiteral(_) => {
+                    self.next_token()?;
+                    self.expect_stmt_end()?;
                 }
                 Token::Def => methods.push(self.parse_trait_method()?),
                 Token::Comptime => comptime_members.push(self.parse_trait_comptime()?),
@@ -1474,6 +1490,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::FloatLiteral(val) => Ok(self.node(ExprKind::Float(val), start)),
             Token::BoolLiteral(val) => Ok(self.node(ExprKind::Bool(val), start)),
             Token::StringLiteral(val) => Ok(self.node(ExprKind::Str(val), start)),
+            Token::TripleStringLiteral(val) => Ok(self.node(ExprKind::Str(val), start)),
             Token::TString { chunks, raw } => self.build_tstring(chunks, raw, start),
             Token::None => Ok(self.node(ExprKind::None, start)),
             Token::Identifier(id) => Ok(self.node(ExprKind::Identifier(id), start)),
