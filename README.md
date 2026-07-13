@@ -181,6 +181,16 @@ echo 'var x: Int = 1' | cargo run -- lex
 cargo run -- run assets/ok/list_and_struct.mojo
 ```
 
+`check`, `own`, and `run` link imports. Add repeatable module roots with
+`--module-path PATH` (or `-I PATH`) and explicit standard-library roots with
+`--stdlib PATH`; either spelling also accepts `--option=PATH`. Resolution checks
+the importing file's directory first, then CLI roots in their command-line order,
+then mojito's bundled `stdlib/` fallback:
+
+```sh
+cargo run -- run -I vendor --module-path ../shared --stdlib ~/mojo/stdlib main.mojo
+```
+
 Stage errors are written to standard error with a non-zero exit code, so the CLI
 is usable in scripts.
 

@@ -982,6 +982,8 @@ impl<'a> Elab<'a> {
             | ExprKind::None
             | ExprKind::Identifier(_)
             | ExprKind::TypeValue(_)
+            | ExprKind::Invoke { .. }
+            | ExprKind::BraceLit(_)
             | ExprKind::TypeApply { .. } => Ok(()),
         }
     }
@@ -1152,6 +1154,8 @@ impl<'a> Elab<'a> {
                         || self.vm_ctfe_safe_fn(name, visiting, needed))
             }
             ExprKind::MethodCall { .. }
+            | ExprKind::BraceLit(_)
+            | ExprKind::Invoke { .. }
             | ExprKind::TypeValue(_)
             | ExprKind::TypeApply { .. }
             | ExprKind::Named { .. }
@@ -1675,6 +1679,8 @@ impl<'a> Elab<'a> {
             }
             ExprKind::Named { value, .. } => self.mono_expr(value, consts, mono),
             ExprKind::TypeValue(_) => Ok(()),
+            ExprKind::Invoke { .. } => Ok(()),
+            ExprKind::BraceLit(_) => Ok(()),
             ExprKind::IfExpr {
                 cond,
                 then_branch,
@@ -1956,6 +1962,8 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
         }
         ExprKind::ListLit(elems) | ExprKind::TupleLit(elems) => rewrite_exprs(elems, subs),
         ExprKind::TypeValue(_) => {}
+        ExprKind::Invoke { .. } => {}
+        ExprKind::BraceLit(_) => {}
         ExprKind::Named { value, .. } => rewrite_expr(value, subs),
         ExprKind::IfExpr {
             cond,

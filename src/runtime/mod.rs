@@ -436,6 +436,10 @@ fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
         FloorDiv => Value::Int(floor_div(x, nonzero(y)?)),
         Mod => Value::Int(floor_mod(x, nonzero(y)?)),
         Pow => Value::Int(x.pow(pow_exp(y)?)),
+        Shl => Value::Int(x.wrapping_shl(y as u32)),
+        Shr => Value::Int(x.wrapping_shr(y as u32)),
+        BitAnd => Value::Int(x & y),
+        BitOr => Value::Int(x | y),
         Lt => Value::Bool(x < y),
         Gt => Value::Bool(x > y),
         Le => Value::Bool(x <= y),
@@ -456,6 +460,10 @@ fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
         FloorDiv => Value::UInt(x / nonzero_u(y)?),
         Mod => Value::UInt(x % nonzero_u(y)?),
         Pow => Value::UInt(x.pow(pow_exp(y as i64)?)),
+        Shl => Value::UInt(x.wrapping_shl(y as u32)),
+        Shr => Value::UInt(x.wrapping_shr(y as u32)),
+        BitAnd => Value::UInt(x & y),
+        BitOr => Value::UInt(x | y),
         Lt => Value::Bool(x < y),
         Gt => Value::Bool(x > y),
         Le => Value::Bool(x <= y),
@@ -481,7 +489,9 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
         Ge => Value::Bool(x >= y),
         Eq => Value::Bool(x == y),
         Ne => Value::Bool(x != y),
-        Div | And | Or | In | NotIn => unreachable!("handled before numeric dispatch"),
+        Div | Shl | Shr | BitAnd | BitOr | And | Or | In | NotIn => {
+            unreachable!("handled before numeric dispatch")
+        }
     })
 }
 

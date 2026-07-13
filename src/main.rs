@@ -1,6 +1,8 @@
-use mojito::{BackendKind, ModuleError, ParseError, Stmt, check, lex, parse};
+use mojito::{
+    BackendKind, LinkOptions, ModuleError, ParseError, Stmt, check, lex, parse, parse_diagnostics,
+};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// Obtain the program to check/run: when a real file path is given, **link** it
@@ -8,11 +10,11 @@ use std::process::ExitCode;
 /// the source alone (imports left unresolved — there is no base directory). Either
 /// way, **compile-time elaboration** resolves `comptime if`/`comptime for` before
 /// the program is handed to the checker.
-fn load_program(file: Option<&str>) -> Result<Vec<Stmt>, String> {
+fn load_program(file: Option<&str>, link_options: &LinkOptions) -> Result<Vec<Stmt>, String> {
     let program = match file {
         Some(path) if path != "-" => {
             let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
-            mojito::link_source(&source, Path::new(path))
+            mojito::link_source_with_options(&source, Path::new(path), link_options.clone())
                 .map_err(|e| format_module_error(&e, path, &source))?
         }
         _ => {
@@ -38,36 +40,25 @@ fn load_program(file: Option<&str>) -> Result<Vec<Stmt>, String> {
 /// A `FILE` of `-`, or its absence, reads from standard input.
 fn main() -> ExitCode {
     let raw: Vec<String> = std::env::args().skip(1).collect();
-
-    // Extract an optional `--backend=NAME` from anywhere; the register VM is the
-    // sole/default executor.
-    let mut backend = BackendKind::Vm;
-    let mut args: Vec<String> = Vec::new();
-    for a in raw {
-        if let Some(name) = a.strip_prefix("--backend=") {
-            match BackendKind::parse(name) {
-                Ok(b) => backend = b,
-                Err(e) => {
-                    eprintln!("{e}");
-                    return ExitCode::FAILURE;
-                }
-            }
-        } else {
-            args.push(a);
+    let cli = match parse_cli_args(raw) {
+        Ok(cli) => cli,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
         }
-    }
+    };
 
     let (command, file) = (
-        args.first().map(String::as_str),
-        args.get(1).map(String::as_str),
+        cli.args.first().map(String::as_str),
+        cli.args.get(1).map(String::as_str),
     );
     match command {
         None => ExitCode::SUCCESS,
         Some("lex") => stage("lex", file, run_lex),
         Some("parse") => stage_parse(file),
-        Some("check") => program_stage("check", file, run_check),
-        Some("own") => program_stage("own", file, run_own),
-        Some("run") => stage_run(file, backend), // ← now backend-aware
+        Some("check") => program_stage("check", file, &cli.link_options, run_check),
+        Some("own") => program_stage("own", file, &cli.link_options, run_own),
+        Some("run") => stage_run(file, cli.backend, &cli.link_options),
         Some("-h" | "--help" | "help") => {
             print_usage();
             ExitCode::SUCCESS
@@ -77,6 +68,62 @@ fn main() -> ExitCode {
             print_usage();
             ExitCode::FAILURE
         }
+    }
+}
+
+struct CliArgs {
+    backend: BackendKind,
+    args: Vec<String>,
+    link_options: LinkOptions,
+}
+
+/// Extract global options from anywhere on the command line. Local imports win,
+/// then CLI roots in occurrence order, then the bundled stdlib fallback.
+fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
+    let mut backend = BackendKind::Vm;
+    let mut args = Vec::new();
+    let mut roots = Vec::<PathBuf>::new();
+    let mut iter = raw.into_iter();
+    while let Some(arg) = iter.next() {
+        if let Some(name) = arg.strip_prefix("--backend=") {
+            backend = BackendKind::parse(name)?;
+        } else if arg == "--backend" {
+            let name = iter.next().ok_or("--backend requires a name")?;
+            backend = BackendKind::parse(&name)?;
+        } else if let Some(path) = arg.strip_prefix("--module-path=") {
+            require_path("--module-path", path, &mut roots)?;
+        } else if arg == "--module-path" || arg == "-I" {
+            let path = iter
+                .next()
+                .ok_or_else(|| format!("{arg} requires a path"))?;
+            require_path(&arg, &path, &mut roots)?;
+        } else if let Some(path) = arg.strip_prefix("--stdlib=") {
+            require_path("--stdlib", path, &mut roots)?;
+        } else if arg == "--stdlib" {
+            let path = iter.next().ok_or("--stdlib requires a path")?;
+            require_path("--stdlib", &path, &mut roots)?;
+        } else if arg.starts_with('-') && arg != "-" && !matches!(arg.as_str(), "-h" | "--help") {
+            return Err(format!("unknown option '{arg}'"));
+        } else {
+            args.push(arg);
+        }
+    }
+    roots.extend(LinkOptions::default().search_roots);
+    Ok(CliArgs {
+        backend,
+        args,
+        link_options: LinkOptions {
+            search_roots: roots,
+        },
+    })
+}
+
+fn require_path(option: &str, path: &str, roots: &mut Vec<PathBuf>) -> Result<(), String> {
+    if path.is_empty() {
+        Err(format!("{option} requires a non-empty path"))
+    } else {
+        roots.push(PathBuf::from(path));
+        Ok(())
     }
 }
 
@@ -98,8 +145,13 @@ fn format_module_error(err: &ModuleError, entry_path: &str, entry_source: &str) 
 
 /// Run a stage that operates on the **linked program** (so `from module import …`
 /// is resolved when a file path is given). Used by `check`/`own`.
-fn program_stage(name: &str, file: Option<&str>, f: fn(&[Stmt]) -> Result<(), String>) -> ExitCode {
-    let program = match load_program(file) {
+fn program_stage(
+    name: &str,
+    file: Option<&str>,
+    link_options: &LinkOptions,
+    f: fn(&[Stmt]) -> Result<(), String>,
+) -> ExitCode {
+    let program = match load_program(file, link_options) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{name} error: {e}");
@@ -116,8 +168,8 @@ fn program_stage(name: &str, file: Option<&str>, f: fn(&[Stmt]) -> Result<(), St
 }
 
 /// `run`, routed through the selected backend (over the linked program).
-fn stage_run(file: Option<&str>, backend: BackendKind) -> ExitCode {
-    match run_program(file, backend) {
+fn stage_run(file: Option<&str>, backend: BackendKind, link_options: &LinkOptions) -> ExitCode {
+    match run_program(file, backend, link_options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("run error: {e}");
@@ -126,8 +178,12 @@ fn stage_run(file: Option<&str>, backend: BackendKind) -> ExitCode {
     }
 }
 
-fn run_program(file: Option<&str>, backend: BackendKind) -> Result<(), String> {
-    let program = load_program(file)?;
+fn run_program(
+    file: Option<&str>,
+    backend: BackendKind,
+    link_options: &LinkOptions,
+) -> Result<(), String> {
+    let program = load_program(file, link_options)?;
     check(&program).map_err(|e| e.to_string())?;
     // Ownership (move) analysis is a real compile stage: reject use-after-move.
     mojito::check_ownership(&program).map_err(|e| e.to_string())?;
@@ -147,6 +203,10 @@ fn print_usage() {
     eprint!(
         "mojito — a lexer/parser/checker/evaluator for a subset of Mojo\n\n\
          usage: mojito [COMMAND] [FILE]\n\n\
+         global options:\n\
+         \x20 -I, --module-path PATH  add a module search root (repeatable)\n\
+         \x20 --stdlib PATH          add a stdlib search root (repeatable)\n\
+         \x20 --backend NAME         select the run backend\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\
@@ -196,18 +256,21 @@ fn stage_parse(file: Option<&str>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match parse(&source) {
-        Ok(program) => {
-            println!("{:#?}", program);
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
+    let report = parse_diagnostics(&source, 20);
+    if report.errors.is_empty() {
+        println!("{:#?}", report.program);
+        ExitCode::SUCCESS
+    } else {
+        for e in &report.errors {
             eprintln!(
                 "parse error: {}",
-                format_parse_error(file.unwrap_or("-"), &source, &e)
+                format_parse_error(file.unwrap_or("-"), &source, e)
             );
-            ExitCode::FAILURE
         }
+        if report.truncated {
+            eprintln!("parse error: stopped after 20 diagnostics");
+        }
+        ExitCode::FAILURE
     }
 }
 
@@ -272,5 +335,38 @@ fn run_own(program: &[Stmt]) -> Result<(), String> {
             let (start, end) = e.span();
             Err(format!("{e} (bytes {start}..{end})"))
         }
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn module_roots_preserve_cli_order_before_bundled_stdlib() {
+        let cli = parse_cli_args(vec![
+            "check".into(),
+            "main.mojo".into(),
+            "--module-path".into(),
+            "first".into(),
+            "-I".into(),
+            "second".into(),
+            "--stdlib=third".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            &cli.link_options.search_roots[..3],
+            &[
+                PathBuf::from("first"),
+                PathBuf::from("second"),
+                PathBuf::from("third")
+            ]
+        );
+    }
+
+    #[test]
+    fn module_root_options_require_paths() {
+        assert!(parse_cli_args(vec!["check".into(), "--module-path".into()]).is_err());
+        assert!(parse_cli_args(vec!["check".into(), "--stdlib=".into()]).is_err());
     }
 }

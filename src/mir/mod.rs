@@ -952,7 +952,11 @@ impl Flatten<'_> {
             // program never reaches MIR lowering with them. A bare `TypeApply` is a
             // type used as a value (only valid as a static-method receiver, handled
             // in the `MethodCall` arm above).
-            ExprKind::TypeValue(_) | ExprKind::TypeApply { .. } | ExprKind::TString { .. } => {
+            ExprKind::TypeValue(_)
+            | ExprKind::Invoke { .. }
+            | ExprKind::BraceLit(_)
+            | ExprKind::TypeApply { .. }
+            | ExprKind::TString { .. } => {
                 unreachable!("parse-only expression rejected by the checker before MIR: {e:?}")
             }
         }

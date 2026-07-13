@@ -611,6 +611,15 @@ pub enum ExprKind {
         args: Vec<Expr>,
         kwargs: Vec<KwArg>,
     },
+    /// A call whose callee is an expression rather than a bare source name,
+    /// including calls through fields and parameterized callable values. Parsed
+    /// for Mojo source compatibility; callable-expression semantics are deferred.
+    Invoke {
+        callee: Box<Expr>,
+        param_args: Vec<ParamArg>,
+        args: Vec<Expr>,
+        kwargs: Vec<KwArg>,
+    },
     /// Field access on a struct value: `object.field`.
     Member {
         object: Box<Expr>,
@@ -641,6 +650,9 @@ pub enum ExprKind {
     /// A non-empty list literal `[a, b, …]` — a `List` whose element type is
     /// inferred from the elements.
     ListLit(Vec<Expr>),
+    /// A brace-delimited set/dictionary literal. Entries retain an optional
+    /// value (`key: value`); semantics are deferred.
+    BraceLit(Vec<(Expr, Option<Expr>)>),
     /// A tuple literal `(a, b, …)` — a fixed-size, heterogeneous `Tuple`. `()` is
     /// the empty tuple and `(a,)` a 1-tuple; a plain `(e)` is grouping, not a tuple.
     TupleLit(Vec<Expr>),
@@ -706,6 +718,10 @@ pub enum InfixOp {
     Div,
     FloorDiv,
     Mod,
+    Shl,
+    Shr,
+    BitAnd,
+    BitOr,
     Pow,
     Eq,
     Ne,
@@ -735,6 +751,10 @@ impl InfixOp {
             InfixOp::Div => "__truediv__",
             InfixOp::FloorDiv => "__floordiv__",
             InfixOp::Mod => "__mod__",
+            InfixOp::Shl => "__lshift__",
+            InfixOp::Shr => "__rshift__",
+            InfixOp::BitAnd => "__and__",
+            InfixOp::BitOr => "__or__",
             InfixOp::Pow => "__pow__",
             InfixOp::Eq => "__eq__",
             InfixOp::Ne => "__ne__",

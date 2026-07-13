@@ -482,9 +482,26 @@ impl<'a> Iterator for Lexer<'a> {
                     self.emit(Token::RBracket);
                     continue;
                 }
+                '{' => {
+                    self.pos += 1;
+                    self.paren_count += 1;
+                    self.emit(Token::LBrace);
+                    continue;
+                }
+                '}' => {
+                    self.pos += 1;
+                    self.paren_count = self.paren_count.saturating_sub(1);
+                    self.emit(Token::RBrace);
+                    continue;
+                }
                 '&' => {
                     self.pos += 1;
                     self.emit(Token::Amp);
+                    continue;
+                }
+                '|' => {
+                    self.pos += 1;
+                    self.emit(Token::Pipe);
                     continue;
                 }
                 '^' => {
@@ -611,7 +628,10 @@ impl<'a> Iterator for Lexer<'a> {
                     continue;
                 }
                 '<' => {
-                    if self.remainder().starts_with("<=") {
+                    if self.remainder().starts_with("<<") {
+                        self.pos += 2;
+                        self.emit(Token::Shl);
+                    } else if self.remainder().starts_with("<=") {
                         self.pos += 2;
                         self.emit(Token::Le);
                     } else {
@@ -621,7 +641,10 @@ impl<'a> Iterator for Lexer<'a> {
                     continue;
                 }
                 '>' => {
-                    if self.remainder().starts_with(">=") {
+                    if self.remainder().starts_with(">>") {
+                        self.pos += 2;
+                        self.emit(Token::Shr);
+                    } else if self.remainder().starts_with(">=") {
                         self.pos += 2;
                         self.emit(Token::Ge);
                     } else {
@@ -735,7 +758,9 @@ impl<'a> Iterator for Lexer<'a> {
                             .chars()
                             .filter(|&c| c != '_')
                             .collect();
-                        match i64::from_str_radix(&cleaned, radix) {
+                        match i64::from_str_radix(&cleaned, radix)
+                            .or_else(|_| u64::from_str_radix(&cleaned, radix).map(|n| n as i64))
+                        {
                             Ok(num) => self.emit(Token::IntLiteral(num)),
                             Err(_) => return Some(Err(LexError::InvalidInteger(start))),
                         }
@@ -770,7 +795,10 @@ impl<'a> Iterator for Lexer<'a> {
                             Ok(num) => self.emit(Token::FloatLiteral(num)),
                             Err(_) => return Some(Err(LexError::InvalidFloat(start))),
                         }
-                    } else if let Ok(num) = cleaned.parse::<i64>() {
+                    } else if let Ok(num) = cleaned
+                        .parse::<i64>()
+                        .or_else(|_| cleaned.parse::<u64>().map(|n| n as i64))
+                    {
                         self.emit(Token::IntLiteral(num));
                     } else {
                         return Some(Err(LexError::InvalidInteger(start)));

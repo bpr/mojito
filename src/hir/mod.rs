@@ -89,6 +89,8 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::TypeValue(_)
+        | ExprKind::Invoke { .. }
+        | ExprKind::BraceLit(_)
         | ExprKind::TString { .. }
         | ExprKind::TypeApply { .. } => {}
     }

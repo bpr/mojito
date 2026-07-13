@@ -8,12 +8,6 @@ Tasks are grouped in the same approximate dependency order as the roadmap.
 
 ## Correctness and Interface Gaps
 
-### CLI module search paths
-
-Expose `LinkOptions.search_roots` through the CLI. Decide between repeatable
-`--module-path PATH`, a dedicated `--stdlib PATH`, or both. Cover precedence
-between the importing directory, user roots, and the bundled stdlib.
-
 ## Self-Hosted Collections
 
 ### Nested self-hosted lists

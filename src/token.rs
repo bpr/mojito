@@ -98,12 +98,15 @@ pub enum Token {
     Ellipsis, // `...` (an unimplemented trait-method requirement)
     At,       // `@`
     Amp,      // `&` (trait-bound conjunction)
+    Pipe,     // `|`
     Caret,    // `^` (transfer sigil)
     Arrow,    // `->`
     LParen,
     RParen,
     LBracket, // `[`  (type-parameter / type-argument list)
     RBracket, // `]`
+    LBrace,   // `{`  (effect sets; collection literals are syntax-only for now)
+    RBrace,   // `}`
 
     // Arithmetic operators
     Plus,        // `+`
@@ -121,6 +124,8 @@ pub enum Token {
     Gt,    // `>`
     Le,    // `<=`
     Ge,    // `>=`
+    Shl,   // `<<`
+    Shr,   // `>>`
 
     // Structural (Offside Rule) Tokens
     Newline,

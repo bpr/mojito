@@ -55,6 +55,15 @@ pub struct Parser<I: Iterator<Item = Result<(Token, Span), LexError>>> {
     last_stmt_ended_with_semicolon: bool,
 }
 
+/// A syntax-only recovery result. `program` is deliberately partial and must not
+/// be sent to semantic phases when `errors` is non-empty.
+#[derive(Debug)]
+pub struct ParseReport {
+    pub program: Vec<Stmt>,
+    pub errors: Vec<ParseError>,
+    pub truncated: bool,
+}
+
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     pub fn new(tokens: I) -> Self {
         Self {
@@ -149,6 +158,84 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
 
         Ok(stmts)
+    }
+
+    /// Parse for diagnostics, recovering at layout-level statement boundaries.
+    /// Normal compilation continues to use `parse_program` and remains fail-fast.
+    pub fn parse_program_diagnostic(&mut self, max_errors: usize) -> ParseReport {
+        let mut program = Vec::new();
+        let mut errors = Vec::new();
+        let mut truncated = false;
+
+        loop {
+            let token = match self.peek_token() {
+                Ok(Some(token)) => token.clone(),
+                Ok(None) => break,
+                Err(err) => {
+                    errors.push(err.at(self.last_span));
+                    self.discard_one();
+                    if errors.len() >= max_errors {
+                        truncated = true;
+                        break;
+                    }
+                    continue;
+                }
+            };
+            match token {
+                Token::Eof => break,
+                Token::Newline | Token::Indent | Token::Dedent => self.discard_one(),
+                _ => match self.parse_statement() {
+                    Ok(stmt) => program.push(stmt),
+                    Err(err) => {
+                        errors.push(err);
+                        if errors.len() >= max_errors {
+                            truncated = true;
+                            break;
+                        }
+                        self.synchronize_statement();
+                    }
+                },
+            }
+        }
+        ParseReport {
+            program,
+            errors,
+            truncated,
+        }
+    }
+
+    /// Consume one raw lexer item even when it is an error, guaranteeing forward
+    /// progress during recovery.
+    fn discard_one(&mut self) {
+        if let Some(Ok((token, span))) = self.tokens.next() {
+            self.last_span = span;
+            if !matches!(
+                token,
+                Token::Newline | Token::Indent | Token::Dedent | Token::Eof
+            ) {
+                self.last_significant_end = span.1;
+            }
+        }
+    }
+
+    /// Panic-mode synchronization. Newlines and layout boundaries are reliable
+    /// because the lexer suppresses newlines while delimiters remain open.
+    fn synchronize_statement(&mut self) {
+        loop {
+            match self.tokens.next() {
+                Some(Ok((token, span))) => {
+                    self.last_span = span;
+                    if matches!(
+                        token,
+                        Token::Newline | Token::Semicolon | Token::Dedent | Token::Eof
+                    ) {
+                        break;
+                    }
+                }
+                Some(Err(_)) => continue,
+                None => break,
+            }
+        }
     }
 
     // --- Statements ---
@@ -319,6 +406,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     fn parse_var_decl(&mut self) -> Result<StmtKind, ParseError> {
         self.expect(Token::Var, "Statements must begin with a keyword")?;
         let name = self.expect_identifier("Expected identifier after 'var'")?;
+        if matches!(self.peek_token()?, Some(Token::Comma)) {
+            let mut targets = vec![Expr::new(ExprKind::Identifier(name), self.last_span)];
+            while matches!(self.peek_token()?, Some(Token::Comma)) {
+                self.next_token()?;
+                let target = self.expect_identifier("Expected another variable name")?;
+                targets.push(Expr::new(ExprKind::Identifier(target), self.last_span));
+            }
+            self.expect(
+                Token::Assign,
+                "Expected '=' after variable unpacking targets",
+            )?;
+            let value = self.parse_expression(Precedence::Lowest)?;
+            self.expect_stmt_end()?;
+            return Ok(StmtKind::Unpack { targets, value });
+        }
         // An optional `: Type`; omitting it infers the type from `value`.
         let ty = if matches!(self.peek_token()?, Some(Token::Colon)) {
             self.next_token()?; // consume ':'
@@ -326,11 +428,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             None
         };
-        self.expect(
-            Token::Assign,
-            "Expected '=' after the variable name (or its ': Type')",
-        )?;
-        let value = self.parse_expression(Precedence::Lowest)?;
+        let value = if matches!(self.peek_token()?, Some(Token::Assign)) {
+            self.next_token()?;
+            self.parse_expression(Precedence::Lowest)?
+        } else {
+            Expr::new(ExprKind::None, self.last_span)
+        };
         self.expect_stmt_end()?;
         Ok(StmtKind::VarDecl { name, ty, value })
     }
@@ -367,6 +470,34 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             _ => {
                 let name =
                     self.expect_identifier("Expected a name, 'if', or 'for' after 'comptime'")?;
+                // Directive form, e.g. `comptime assert(condition), message`.
+                if name == "assert" {
+                    let mut args = if matches!(self.peek_token()?, Some(Token::LParen)) {
+                        self.next_token()?;
+                        let (args, _) = self.parse_call_args()?;
+                        self.expect(Token::RParen, "Expected ')' after comptime directive")?;
+                        args
+                    } else {
+                        vec![self.parse_expression(Precedence::Lowest)?]
+                    };
+                    if matches!(self.peek_token()?, Some(Token::Comma)) {
+                        self.next_token()?;
+                        args.push(self.parse_expression(Precedence::Lowest)?);
+                    }
+                    self.expect_stmt_end()?;
+                    return Ok(StmtKind::Expr(Expr::new(
+                        ExprKind::Call {
+                            name,
+                            param_args: Vec::new(),
+                            args,
+                            kwargs: Vec::new(),
+                        },
+                        self.last_span,
+                    )));
+                }
+                if matches!(self.peek_token()?, Some(Token::LBracket)) {
+                    self.parse_type_params()?;
+                }
                 // Mojo permits an optional annotation (`comptime N: Int = 1`).
                 // The current AST stores the folded value only; parsing the type
                 // here keeps syntax compatibility and validates that the annotation
@@ -427,12 +558,28 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect(Token::RParen, "Expected ')' after parameters")?;
 
         let raises = self.parse_raises_effect()?;
+        if matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "abi") {
+            self.next_token()?;
+            self.expect(Token::LParen, "Expected '(' after abi")?;
+            while !matches!(self.peek_token()?, Some(Token::RParen) | None) {
+                self.next_token()?;
+            }
+            self.expect(Token::RParen, "Expected ')' after abi")?;
+        }
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?; // consume '->'
             Some(self.parse_type()?)
         } else {
             None
         };
+
+        if matches!(self.peek_token()?, Some(Token::LBrace)) {
+            self.next_token()?;
+            while !matches!(self.peek_token()?, Some(Token::RBrace) | None) {
+                self.next_token()?;
+            }
+            self.expect(Token::RBrace, "Expected '}' after function effects")?;
+        }
 
         self.expect(Token::Colon, "Expected ':' before the function body")?;
         let body = self.parse_suite()?;
@@ -712,12 +859,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// when followed by the parameter name (another identifier); if it is followed
     /// by `:` it *is* the name (so `read` remains usable as a parameter name).
     fn parse_convention_and_name(&mut self) -> Result<(Option<ArgConvention>, String), ParseError> {
-        let word = self.expect_identifier("Expected a parameter name")?;
+        let word = if matches!(self.peek_token()?, Some(Token::Var)) {
+            self.next_token()?;
+            "var".to_string()
+        } else {
+            self.expect_identifier("Expected a parameter name")?
+        };
         // `word :` → `word` is the parameter name, no convention.
         if matches!(self.peek_token()?, Some(Token::Colon)) {
             return Ok((None, word));
         }
-        let Some(convention) = convention_word(&word) else {
+        let Some(convention) = (if word == "var" {
+            Some(ArgConvention::Owned)
+        } else {
+            convention_word(&word)
+        }) else {
             return Err(ParseError::UnexpectedToken(
                 Token::Identifier(word),
                 "expected a parameter name (or a convention: read/mut/owned/out/ref)".into(),
@@ -815,8 +971,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     let fname = self.expect_identifier("Expected a field name")?;
                     self.expect(Token::Colon, "Fields require a type annotation")?;
                     let ty = self.parse_type()?;
+                    if matches!(self.peek_token()?, Some(Token::Assign)) {
+                        self.next_token()?;
+                        self.parse_expression(Precedence::Lowest)?;
+                    }
                     self.expect_stmt_end()?;
                     fields.push(Param { name: fname, ty });
+                }
+                Token::Pass => {
+                    self.next_token()?;
+                    self.expect_stmt_end()?;
                 }
                 Token::Comptime => associated.push(self.parse_struct_comptime()?),
                 Token::Def => methods.push(self.parse_method(Vec::new())?),
@@ -875,6 +1039,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             traits.push(self.expect_identifier("Expected a trait name in the conformance list")?);
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
+                if matches!(self.peek_token()?, Some(Token::RParen)) {
+                    break;
+                }
             } else {
                 break;
             }
@@ -945,6 +1112,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     fn parse_trait_method(&mut self) -> Result<crate::ast::TraitMethod, ParseError> {
         self.expect(Token::Def, "Expected 'def'")?;
         let name = self.expect_identifier("Expected a method name after 'def'")?;
+        if matches!(self.peek_token()?, Some(Token::LBracket)) {
+            self.parse_type_params()?;
+        }
 
         self.expect(Token::LParen, "Expected '(' after the method name")?;
         let first = self.expect_identifier("A method's first parameter must be 'self'")?;
@@ -988,6 +1158,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             None
         };
 
+        if matches!(self.peek_token()?, Some(Token::LBrace)) {
+            self.next_token()?;
+            while !matches!(self.peek_token()?, Some(Token::RBrace) | None) {
+                self.next_token()?;
+            }
+            self.expect(Token::RBrace, "Expected '}' after method effects")?;
+        }
         self.expect(Token::Colon, "Expected ':' before the method body")?;
         // A body of exactly `...` is a pure requirement; anything else is a
         // default implementation (parsed, flagged unsupported by the checker).
@@ -1008,6 +1185,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     fn parse_method(&mut self, decorators: Vec<Decorator>) -> Result<Method, ParseError> {
         self.expect(Token::Def, "Expected 'def'")?;
         let name = self.expect_identifier("Expected a method name after 'def'")?;
+        if matches!(self.peek_token()?, Some(Token::LBracket)) {
+            self.parse_type_params()?;
+        }
 
         self.expect(Token::LParen, "Expected '(' after the method name")?;
         // Detect the receiver. An instance method starts with `self`, optionally
@@ -1018,13 +1198,15 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // parameter carries a convention is not distinguished — a rare case.)
         let first_is_self =
             matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "self");
-        let first_is_convention = matches!(self.peek_token()?, Some(Token::Identifier(id)) if convention_word(id).is_some());
+        let first_is_convention = matches!(self.peek_token()?, Some(Token::Identifier(id)) if convention_word(id).is_some())
+            || matches!(self.peek_token()?, Some(Token::Var));
         let (has_self, self_convention) = if first_is_self {
             self.next_token()?; // consume 'self'
             (true, None)
         } else if first_is_convention {
             let conv = match self.peek_token()? {
                 Some(Token::Identifier(id)) => convention_word(id),
+                Some(Token::Var) => Some(ArgConvention::Owned),
                 _ => None,
             };
             // `ref self` may carry an origin specifier: `ref[origin] self`.
@@ -1328,6 +1510,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let mut params = Vec::new();
         if !matches!(self.peek_token()?, Some(Token::RParen)) {
             loop {
+                if matches!(self.peek_token()?, Some(Token::Slash | Token::DoubleSlash)) {
+                    self.next_token()?;
+                    if matches!(self.peek_token()?, Some(Token::Comma)) {
+                        self.next_token()?;
+                    }
+                    continue;
+                }
                 params.push(self.parse_type()?);
                 if matches!(self.peek_token()?, Some(Token::Comma)) {
                     self.next_token()?; // consume ','
@@ -1388,9 +1577,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect(Token::LBracket, "Expected '[' to begin parameter arguments")?;
         let mut args = Vec::new();
         loop {
-            args.push(self.parse_param_arg()?);
+            let mut arg = self.parse_param_arg()?;
+            // Named compile-time arguments (`scope="singlethread"`) are not yet
+            // represented distinctly in the AST, but retain their value so the
+            // syntax can be consumed and rejected later if semantics require it.
+            if matches!(self.peek_token()?, Some(Token::Assign)) {
+                self.next_token()?;
+                arg = crate::ast::ParamArg::Value(self.parse_expression(Precedence::Lowest)?);
+            }
+            args.push(arg);
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
+                if matches!(self.peek_token()?, Some(Token::RBracket)) {
+                    break;
+                }
             } else {
                 break;
             }
@@ -1408,13 +1608,48 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     fn parse_param_arg(&mut self) -> Result<crate::ast::ParamArg, ParseError> {
         use crate::ast::ParamArg;
         if self.peek_starts_type()? {
-            return Ok(ParamArg::Type(self.parse_type()?));
+            let start = self.peek_start();
+            let ty = self.parse_type()?;
+            if matches!(self.peek_token()?, Some(Token::LParen)) {
+                let name = match &ty {
+                    Type::Int => Some("Int"),
+                    Type::UInt => Some("UInt"),
+                    Type::Bool => Some("Bool"),
+                    Type::String => Some("String"),
+                    Type::Float64 => Some("Float64"),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    let atom = Expr::new(
+                        ExprKind::Identifier(name.to_string()),
+                        (start, self.last_span.1),
+                    );
+                    return Ok(ParamArg::Value(
+                        self.parse_expression_from(atom, Precedence::Lowest)?,
+                    ));
+                }
+            }
+            return Ok(ParamArg::Type(ty));
         }
         if let Some(Token::Identifier(_)) = self.peek_token()? {
             let id = self.expect_identifier("unreachable: peeked identifier")?;
             let id_span = self.last_span;
             if matches!(self.peek_token()?, Some(Token::LBracket)) {
                 let args = self.parse_param_args()?;
+                if matches!(self.peek_token()?, Some(Token::LParen)) {
+                    self.next_token()?;
+                    let (call_args, kwargs) = self.parse_call_args()?;
+                    self.expect(Token::RParen, "Expected ')' after arguments")?;
+                    return Ok(ParamArg::Value(Expr::new(
+                        ExprKind::Call {
+                            name: id,
+                            param_args: args,
+                            args: call_args,
+                            kwargs,
+                        },
+                        (id_span.0, self.last_span.1),
+                    )));
+                }
                 return Ok(ParamArg::Type(Type::Named(id, args)));
             }
             // A value expression whose first atom is this identifier.
@@ -1458,15 +1693,30 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 if matches!(self.peek_token()?, Some(Token::Comma)) {
                     self.next_token()?;
                 }
+                if matches!(self.peek_token()?, Some(Token::RBracket)) {
+                    break;
+                }
                 continue;
+            }
+            // Variadic compile-time parameter pack marker.
+            if matches!(self.peek_token()?, Some(Token::Star)) {
+                self.next_token()?;
+                if matches!(self.peek_token()?, Some(Token::Comma)) {
+                    self.next_token()?;
+                    continue;
+                }
             }
             let name = self.expect_identifier("Expected a type-parameter name")?;
             self.expect(
                 Token::Colon,
                 "A type parameter requires a ': bound' (e.g. 'T: Copyable')",
             )?;
-            let first_bound =
-                self.expect_identifier("Expected a trait name in the type-parameter bound")?;
+            let first_bound = if matches!(self.peek_token()?, Some(Token::Def)) {
+                self.parse_type()?;
+                "<function type>".to_string()
+            } else {
+                self.expect_identifier("Expected a trait or type in the type-parameter bound")?
+            };
             // Origin parameters use `Origin[mut=<bool expression>]`. Preserve the
             // Origin classification and parse the mutability expression; semantic
             // origin parameters are deliberately deferred.
@@ -1482,15 +1732,26 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 self.expect(Token::Assign, "Expected '=' after 'mut' in Origin")?;
                 self.parse_expression(Precedence::Lowest)?;
                 self.expect(Token::RBracket, "Expected ']' after Origin mutability")?;
+            } else if matches!(self.peek_token()?, Some(Token::LBracket)) {
+                // A concrete parameterized value type such as `List[Int]`.
+                // TypeParam currently records only its head name.
+                self.parse_param_args()?;
             }
             let mut bounds = vec![first_bound];
             while matches!(self.peek_token()?, Some(Token::Amp)) {
                 self.next_token()?; // consume '&'
                 bounds.push(self.expect_identifier("Expected a trait name after '&'")?);
             }
+            if matches!(self.peek_token()?, Some(Token::Assign)) {
+                self.next_token()?;
+                self.parse_expression(Precedence::Lowest)?;
+            }
             params.push(crate::ast::TypeParam { name, bounds });
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
+                if matches!(self.peek_token()?, Some(Token::RBracket)) {
+                    break;
+                }
             } else {
                 break;
             }
@@ -1550,10 +1811,17 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::IntLiteral(val) => Ok(self.node(ExprKind::Int(val), start)),
             Token::FloatLiteral(val) => Ok(self.node(ExprKind::Float(val), start)),
             Token::BoolLiteral(val) => Ok(self.node(ExprKind::Bool(val), start)),
-            Token::StringLiteral(val) => Ok(self.node(ExprKind::Str(val), start)),
+            Token::StringLiteral(mut val) => {
+                while let Some(Token::StringLiteral(next)) = self.peek_token()?.cloned() {
+                    self.next_token()?;
+                    val.push_str(&next);
+                }
+                Ok(self.node(ExprKind::Str(val), start))
+            }
             Token::TripleStringLiteral(val) => Ok(self.node(ExprKind::Str(val), start)),
             Token::TString { chunks, raw } => self.build_tstring(chunks, raw, start),
             Token::None => Ok(self.node(ExprKind::None, start)),
+            Token::Ellipsis => Ok(self.node(ExprKind::Identifier("...".into()), start)),
             Token::Identifier(id) => Ok(self.node(ExprKind::Identifier(id), start)),
             Token::Def => {
                 let ty = self.parse_function_type_tail()?;
@@ -1606,6 +1874,26 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 self.expect(Token::RBracket, "Expected ']' after list elements")?;
                 Ok(self.node(ExprKind::ListLit(elems), start))
             }
+            Token::LBrace => {
+                let mut entries = Vec::new();
+                while !matches!(self.peek_token()?, Some(Token::RBrace)) {
+                    let key = self.parse_expression(Precedence::Lowest)?;
+                    let value = if matches!(self.peek_token()?, Some(Token::Colon)) {
+                        self.next_token()?;
+                        Some(self.parse_expression(Precedence::Lowest)?)
+                    } else {
+                        None
+                    };
+                    entries.push((key, value));
+                    if matches!(self.peek_token()?, Some(Token::Comma)) {
+                        self.next_token()?;
+                    } else {
+                        break;
+                    }
+                }
+                self.expect(Token::RBrace, "Expected '}' after brace literal")?;
+                Ok(self.node(ExprKind::BraceLit(entries), start))
+            }
             token => Err(ParseError::UnexpectedToken(
                 token,
                 "Expected an expression".into(),
@@ -1657,10 +1945,24 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         if matches!(self.peek_token()?, Some(Token::LBracket)) {
             // A leading `:` is a slice with no lower bound (`obj[:j]`, `obj[::2]`).
             self.next_token()?; // consume '['
+            if matches!(self.peek_token()?, Some(Token::RBracket)) {
+                self.next_token()?;
+                return Ok(self.node(
+                    ExprKind::Index {
+                        object: Box::new(left),
+                        index: Box::new(Expr::new(ExprKind::None, self.last_span)),
+                    },
+                    start,
+                ));
+            }
             if matches!(self.peek_token()?, Some(Token::Colon)) {
                 return self.parse_slice_rest(left, None);
             }
-            let first = self.parse_param_arg()?;
+            let mut first = self.parse_param_arg()?;
+            if matches!(self.peek_token()?, Some(Token::Assign)) {
+                self.next_token()?;
+                first = crate::ast::ParamArg::Value(self.parse_expression(Precedence::Lowest)?);
+            }
             // A `:` after the first entry makes this a slice; the entry is its lower
             // bound and must be a value expression.
             if matches!(self.peek_token()?, Some(Token::Colon)) {
@@ -1680,23 +1982,36 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let mut param_args = vec![first];
             while matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
-                param_args.push(self.parse_param_arg()?);
+                if matches!(self.peek_token()?, Some(Token::RBracket)) {
+                    break;
+                }
+                let mut arg = self.parse_param_arg()?;
+                if matches!(self.peek_token()?, Some(Token::Assign)) {
+                    self.next_token()?;
+                    arg = crate::ast::ParamArg::Value(self.parse_expression(Precedence::Lowest)?);
+                }
+                param_args.push(arg);
             }
             self.expect(Token::RBracket, "Expected ']' after a subscript")?;
             if matches!(self.peek_token()?, Some(Token::LParen)) {
-                let name = call_name(left)?;
                 self.next_token()?; // consume '('
                 let (args, kwargs) = self.parse_call_args()?;
                 self.expect(Token::RParen, "Expected ')' after arguments")?;
-                return Ok(self.node(
-                    ExprKind::Call {
+                let kind = match left.kind {
+                    ExprKind::Identifier(name) => ExprKind::Call {
                         name,
                         param_args,
                         args,
                         kwargs,
                     },
-                    start,
-                ));
+                    _ => ExprKind::Invoke {
+                        callee: Box::new(left),
+                        param_args,
+                        args,
+                        kwargs,
+                    },
+                };
+                return Ok(self.node(kind, start));
             }
             // A single value entry is an ordinary subscript `obj[i]`; anything with a
             // type argument (`UnsafePointer[Int]`) is a parameterized-type reference
@@ -1734,19 +2049,24 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         // Postfix call without explicit parameters: `IDENT '(' args ')'`.
         if matches!(self.peek_token()?, Some(Token::LParen)) {
-            let name = call_name(left)?;
             self.next_token()?; // consume '('
             let (args, kwargs) = self.parse_call_args()?;
             self.expect(Token::RParen, "Expected ')' after arguments")?;
-            return Ok(self.node(
-                ExprKind::Call {
+            let kind = match left.kind {
+                ExprKind::Identifier(name) => ExprKind::Call {
                     name,
                     param_args: Vec::new(),
                     args,
                     kwargs,
                 },
-                start,
-            ));
+                _ => ExprKind::Invoke {
+                    callee: Box::new(left),
+                    param_args: Vec::new(),
+                    args,
+                    kwargs,
+                },
+            };
+            return Ok(self.node(kind, start));
         }
 
         // Walrus / named expression: `name := value`. The target must be a bare
@@ -1823,6 +2143,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::Slash => InfixOp::Div,
             Token::DoubleSlash => InfixOp::FloorDiv,
             Token::Percent => InfixOp::Mod,
+            Token::Shl => InfixOp::Shl,
+            Token::Shr => InfixOp::Shr,
+            Token::Amp => InfixOp::BitAnd,
+            Token::Pipe => InfixOp::BitOr,
             Token::DoubleStar => InfixOp::Pow,
             // Comparisons (`== != < > <= >=`, `in`, `not in`) are handled by the
             // chained-comparison path above, never here.
@@ -1934,7 +2258,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // Membership `in` / `not in` share comparison precedence. In infix
             // position (after an operand) `not` can only start `not in`.
             Some(Token::In | Token::Not) => Precedence::Comparison,
-            Some(Token::Plus | Token::Minus) => Precedence::Sum,
+            Some(
+                Token::Plus | Token::Minus | Token::Shl | Token::Shr | Token::Amp | Token::Pipe,
+            ) => Precedence::Sum,
             Some(Token::Star | Token::Slash | Token::DoubleSlash | Token::Percent) => {
                 Precedence::Product
             }
@@ -1958,6 +2284,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             args.push(self.parse_expression(Precedence::Lowest)?);
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
+                if matches!(self.peek_token()?, Some(Token::RParen | Token::RBracket)) {
+                    break;
+                }
             } else {
                 break;
             }
@@ -2091,7 +2420,12 @@ fn infix_precedence(op: InfixOp) -> Precedence {
         | InfixOp::Ge
         | InfixOp::In
         | InfixOp::NotIn => Precedence::Comparison,
-        InfixOp::Add | InfixOp::Sub => Precedence::Sum,
+        InfixOp::Add
+        | InfixOp::Sub
+        | InfixOp::Shl
+        | InfixOp::Shr
+        | InfixOp::BitAnd
+        | InfixOp::BitOr => Precedence::Sum,
         InfixOp::Mul | InfixOp::Div | InfixOp::FloorDiv | InfixOp::Mod => Precedence::Product,
         // Right-associative: parse the right operand one level below `**` so that
         // a following `**` (Power > Unary) is re-absorbed (`a ** b ** c` = `a ** (b ** c)`).

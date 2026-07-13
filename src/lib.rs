@@ -29,7 +29,7 @@ pub use lexer::Lexer;
 pub use module::{
     LinkOptions, ModuleError, link, link_source, link_source_with_options, link_with_options,
 };
-pub use parser::Parser;
+pub use parser::{ParseReport, Parser};
 pub use runtime::Value;
 pub use token::Token;
 pub use types::{ParamDecl, Ty, TyArg};
@@ -44,4 +44,11 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
 /// checking or evaluation). Surfaces lexer errors as `ParseError::LexerError`.
 pub fn parse(source: &str) -> Result<Vec<Stmt>, ParseError> {
     Parser::new(Lexer::new(source)).parse_program()
+}
+
+/// Parse for human-facing diagnostics, collecting up to `max_errors`. A report
+/// with errors contains a quarantined partial AST and is not suitable for later
+/// compiler stages.
+pub fn parse_diagnostics(source: &str, max_errors: usize) -> ParseReport {
+    Parser::new(Lexer::new(source)).parse_program_diagnostic(max_errors.max(1))
 }

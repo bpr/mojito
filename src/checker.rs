@@ -2705,6 +2705,12 @@ impl Checker {
             ExprKind::TypeValue(_) => Err(TypeError::Unsupported(
                 "function types as compile-time values".to_string(),
             )),
+            ExprKind::Invoke { .. } => Err(TypeError::Unsupported(
+                "calls through callable expressions".to_string(),
+            )),
+            ExprKind::BraceLit(_) => Err(TypeError::Unsupported(
+                "brace-delimited collection literals".to_string(),
+            )),
             ExprKind::Identifier(name) => self
                 .lookup(name)
                 .cloned()
@@ -5381,6 +5387,10 @@ fn infix_symbol(op: InfixOp) -> &'static str {
         InfixOp::Div => "/",
         InfixOp::FloorDiv => "//",
         InfixOp::Mod => "%",
+        InfixOp::Shl => "<<",
+        InfixOp::Shr => ">>",
+        InfixOp::BitAnd => "&",
+        InfixOp::BitOr => "|",
         InfixOp::Pow => "**",
         InfixOp::Eq => "==",
         InfixOp::Ne => "!=",

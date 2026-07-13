@@ -51,14 +51,18 @@ or user program needs them.
   signatures, ambiguity, no-match behavior, generic ranking, bound-aware
   symbols, method/constructor diagnostics, and namespace collisions; the fixed
   findings are retained in `overload_errors.md`.
-- [ ] **CLI module search paths** — expose the existing `LinkOptions` search-root
-  support through a `--module-path` or `--stdlib` command-line option.
+- [x] **CLI module search paths** — repeatable `--module-path`/`-I` and
+  `--stdlib` roots are searched after the importer directory, in command-line
+  order, before the bundled stdlib fallback.
 - [x] **Method argument binding parity** — ordinary method calls use the same
   keyword, default, positional-only, keyword-only, and variadic binding rules as
   free functions while preserving receiver and ordinary-parameter write-back.
 - [x] **Generic call binding parity** — generic free functions use the same
   default, keyword, positional-only, keyword-only, variadic, convention, and
   alias-aware argument binding as non-generic functions.
+- [x] **Diagnostic-mode parser recovery** — normal compilation remains fail-fast;
+  the parse CLI uses a capped, statement-synchronized diagnostic mode that
+  reports multiple spanned errors and quarantines its partial AST.
 
 ### 2. Strengthen Self-Hosted Collections
 

@@ -124,6 +124,56 @@ fn custom_search_root_is_used_after_importer_directory() {
 }
 
 #[test]
+fn custom_search_roots_are_tried_in_order() {
+    let d = TempDir::new();
+    d.write(
+        "first/pkg/tool.mojo",
+        "def answer() -> Int:\n    return 1\n",
+    );
+    d.write(
+        "second/pkg/tool.mojo",
+        "def answer() -> Int:\n    return 2\n",
+    );
+    let main = d.write(
+        "src/main.mojo",
+        "from pkg.tool import answer\n\ndef main():\n    print(answer())\n",
+    );
+    let program = link_with_options(
+        &main,
+        LinkOptions {
+            search_roots: vec![d.0.join("first"), d.0.join("second")],
+        },
+    )
+    .unwrap();
+    check(&program).unwrap();
+    let mut backend = BackendKind::Vm.make();
+    backend.run(&program).unwrap();
+    assert_eq!(backend.output(), "1\n");
+}
+
+#[test]
+fn importer_directory_precedes_custom_search_roots() {
+    let d = TempDir::new();
+    d.write("root/pkg/tool.mojo", "def answer() -> Int:\n    return 1\n");
+    d.write("src/pkg/tool.mojo", "def answer() -> Int:\n    return 9\n");
+    let main = d.write(
+        "src/main.mojo",
+        "from pkg.tool import answer\n\ndef main():\n    print(answer())\n",
+    );
+    let program = link_with_options(
+        &main,
+        LinkOptions {
+            search_roots: vec![d.0.join("root")],
+        },
+    )
+    .unwrap();
+    check(&program).unwrap();
+    let mut backend = BackendKind::Vm.make();
+    backend.run(&program).unwrap();
+    assert_eq!(backend.output(), "9\n");
+}
+
+#[test]
 fn missing_module_and_missing_name_error() {
     let d = TempDir::new();
     d.write("m.mojo", "def f(x: Int) -> Int:\n    return x\n");

@@ -3,7 +3,7 @@ use mojito::ast::{
     Method, Param, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind, StructComptime, TStringPart,
     TraitComptime, TraitMethod, Type, TypeParam, WithItem,
 };
-use mojito::{Lexer, Parser};
+use mojito::{Lexer, Parser, parse_diagnostics};
 
 /// Box an `ExprKind` into a `Box<Expr>` child (dummy span; equality ignores it).
 fn bx(kind: ExprKind) -> Box<Expr> {
@@ -1847,6 +1847,22 @@ fn parses_parenthesized_from_imports() {
             names: ImportNames::Names(vec![iname("tile", None), iname("vectorize", Some("vec")),]),
         })]
     );
+}
+
+#[test]
+fn diagnostic_parse_recovers_at_statement_boundaries() {
+    let report = parse_diagnostics(
+        "var first: = 1\nvar ok = 2\nvar second: = 3\nvar third: = 4\n",
+        20,
+    );
+    assert!(report.errors.len() >= 3, "{report:#?}");
+    assert!(!report.truncated);
+}
+
+#[test]
+fn strict_parse_remains_fail_fast() {
+    let source = "var first: = 1\nvar second: = 2\n";
+    assert!(mojito::parse(source).is_err());
 }
 
 #[test]
