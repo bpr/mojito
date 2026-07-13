@@ -24,10 +24,10 @@ use mojito::{BackendKind, check, elaborate, link, parse};
 fn run(src: &str) -> Result<String, String> {
     let program = parse(src).map_err(|e| format!("parse error: {e:?}"))?;
     let program = elaborate(program).map_err(|e| format!("comptime error: {e}"))?;
-    check(&program).map_err(|e| format!("type error: {e:?}"))?;
+    let checked = mojito::check_program(&program).map_err(|e| format!("type error: {e:?}"))?;
     let mut backend = BackendKind::Vm.make();
     backend
-        .run(&program)
+        .run_checked(&checked)
         .map_err(|e| format!("runtime error: {e:?}"))?;
     Ok(backend.output())
 }

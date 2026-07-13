@@ -11,7 +11,7 @@
 //! `# expect: <substring>` (valid Mojo, skipped by the lexer): the reported error
 //! must then contain `<substring>`.
 
-use mojito::{BackendKind, check, check_ownership};
+use mojito::BackendKind;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -52,14 +52,15 @@ fn classify(path: &Path) -> (Outcome, String) {
         Ok(p) => p,
         Err(e) => return (Outcome::TypeError, e.to_string()),
     };
-    if let Err(e) = check(&program) {
-        return (Outcome::TypeError, e.to_string());
-    }
-    if let Err(e) = check_ownership(&program) {
+    let checked = match mojito::check_program(&program) {
+        Ok(checked) => checked,
+        Err(e) => return (Outcome::TypeError, e.to_string()),
+    };
+    if let Err(e) = mojito::check_ownership_checked(&checked) {
         return (Outcome::OwnershipError, e.to_string());
     }
     let mut backend = BackendKind::Vm.make();
-    match backend.run(&program) {
+    match backend.run_checked(&checked) {
         Ok(()) => (Outcome::Ok, String::new()),
         Err(e) => (Outcome::RuntimeError, e.to_string()),
     }

@@ -174,6 +174,31 @@ fn importer_directory_precedes_custom_search_roots() {
 }
 
 #[test]
+fn linked_declarations_preserve_module_identity_in_checked_program() {
+    let d = TempDir::new();
+    let module = d.write("library.mojo", "def answer() -> Int:\n    return 42\n");
+    let main = d.write(
+        "main.mojo",
+        "from library import answer\n\ndef main():\n    print(answer())\n",
+    );
+    let checked = mojito::check_program(&link(&main).unwrap()).unwrap();
+    let answer = checked
+        .statements()
+        .iter()
+        .find(|stmt| matches!(&stmt.kind, mojito::ast::StmtKind::Def { name, .. } if name == "answer"))
+        .unwrap();
+    let entry = checked
+        .statements()
+        .iter()
+        .find(
+            |stmt| matches!(&stmt.kind, mojito::ast::StmtKind::Def { name, .. } if name == "main"),
+        )
+        .unwrap();
+    assert_eq!(answer.module.as_deref(), Some(module.to_str().unwrap()));
+    assert_eq!(entry.module.as_deref(), Some(main.to_str().unwrap()));
+}
+
+#[test]
 fn missing_module_and_missing_name_error() {
     let d = TempDir::new();
     d.write("m.mojo", "def f(x: Int) -> Int:\n    return x\n");

@@ -184,11 +184,11 @@ fn run_program(
     link_options: &LinkOptions,
 ) -> Result<(), String> {
     let program = load_program(file, link_options)?;
-    check(&program).map_err(|e| e.to_string())?;
+    let checked = mojito::check_program(&program).map_err(|e| e.to_string())?;
     // Ownership (move) analysis is a real compile stage: reject use-after-move.
-    mojito::check_ownership(&program).map_err(|e| e.to_string())?;
+    mojito::check_ownership_checked(&checked).map_err(|e| e.to_string())?;
     let mut backend = backend.make(); // Box<dyn Backend>
-    backend.run(&program).map_err(|e| e.to_string())?;
+    backend.run_checked(&checked).map_err(|e| e.to_string())?;
     let output = backend.output();
     if !output.is_empty() {
         print!("{output}");

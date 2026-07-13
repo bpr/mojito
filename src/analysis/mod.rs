@@ -30,6 +30,17 @@ use std::collections::{BTreeMap, HashSet};
 /// every value is used consistently with having been moved.
 pub fn check_ownership(program: &[Stmt]) -> Result<(), OwnershipError> {
     let prog = lower_program(program);
+    check_ownership_mir(&prog)
+}
+
+pub fn check_ownership_checked(
+    program: &crate::checked::CheckedProgram,
+) -> Result<(), OwnershipError> {
+    let prog = crate::mir::lower_checked_program(program);
+    check_ownership_mir(&prog)
+}
+
+fn check_ownership_mir(prog: &MirProgram) -> Result<(), OwnershipError> {
     for (_name, f) in &prog.functions {
         analyze_moves(f)?;
     }

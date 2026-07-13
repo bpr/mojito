@@ -272,7 +272,18 @@ fn overload_candidates(existing: &Ty, new_ty: &Ty) -> Option<Vec<Ty>> {
 
 /// Type-check a whole program. Convenience wrapper over [`Checker`].
 pub fn check(stmts: &[Stmt]) -> Result<(), TypeError> {
-    Checker::new().check_program(stmts)
+    check_program(stmts).map(|_| ())
+}
+
+/// Type-check and retain the semantic facts consumed by lowering/backends.
+pub fn check_program(stmts: &[Stmt]) -> Result<crate::checked::CheckedProgram, TypeError> {
+    let mut checker = Checker::new();
+    checker.check_program(stmts)?;
+    Ok(crate::checked::CheckedProgram::new(
+        stmts.to_vec(),
+        checker.overload_targets.into_inner(),
+        checker.resolved_types.into_inner(),
+    ))
 }
 
 /// Type-check a program and return the concrete lowered callee chosen for every
@@ -280,9 +291,7 @@ pub fn check(stmts: &[Stmt]) -> Result<(), TypeError> {
 /// `f(x)` can lower to a signature-specific function even when overloads share
 /// the same arity.
 pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<Span, String>, TypeError> {
-    let mut checker = Checker::new();
-    checker.check_program(stmts)?;
-    Ok(checker.overload_targets.into_inner())
+    Ok(check_program(stmts)?.overload_targets().clone())
 }
 
 /// A single-pass static type checker over the parsed AST.
@@ -324,6 +333,7 @@ pub struct Checker {
     /// Free-function `**kwargs` collectors, keyed by source function name. The
     /// stored type is the homogeneous value element type.
     kw_collectors: RefCell<HashMap<String, Ty>>,
+    resolved_types: RefCell<Vec<(Type, Ty)>>,
 }
 
 impl Checker {
@@ -342,12 +352,21 @@ impl Checker {
             self_mutable: false,
             overload_targets: RefCell::new(HashMap::new()),
             kw_collectors: RefCell::new(HashMap::new()),
+            resolved_types: RefCell::new(Vec::new()),
         }
     }
 
     /// The type denoted by a source annotation; resolves type parameters and
     /// validates struct names and type-argument counts.
     fn ty_from_anno(&self, ty: &Type) -> Result<Ty, TypeError> {
+        let resolved = self.resolve_ty_from_anno(ty)?;
+        self.resolved_types
+            .borrow_mut()
+            .push((ty.clone(), resolved.clone()));
+        Ok(resolved)
+    }
+
+    fn resolve_ty_from_anno(&self, ty: &Type) -> Result<Ty, TypeError> {
         Ok(match ty {
             Type::Int => Ty::Int,
             Type::UInt => Ty::UInt,

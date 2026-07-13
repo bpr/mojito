@@ -3,14 +3,16 @@
 //! the phase-distinction semantics: unselected branches are dropped before checking,
 //! and `comptime for` unrolls with the loop variable substituted as a literal.
 
-use mojito::{BackendKind, CtValue, Ty, check, elaborate, parse};
+use mojito::{BackendKind, CtValue, Ty, elaborate, parse};
 
 fn run(src: &str) -> Result<String, String> {
     let program = parse(src).map_err(|e| format!("parse: {e}"))?;
     let program = elaborate(program).map_err(|e| format!("comptime: {e}"))?;
-    check(&program).map_err(|e| format!("check: {e:?}"))?;
+    let checked = mojito::check_program(&program).map_err(|e| format!("check: {e:?}"))?;
     let mut backend = BackendKind::Vm.make();
-    backend.run(&program).map_err(|e| format!("run: {e:?}"))?;
+    backend
+        .run_checked(&checked)
+        .map_err(|e| format!("run: {e:?}"))?;
     Ok(backend.output())
 }
 

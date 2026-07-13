@@ -352,12 +352,19 @@ pub struct WithItem {
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
+    /// Source module identity assigned by the linker. Parser-created statements
+    /// use `None`; linked entry/import declarations carry their originating path.
+    pub module: Option<String>,
 }
 
 impl Stmt {
     /// Construct a spanned statement.
     pub fn new(kind: StmtKind, span: Span) -> Self {
-        Stmt { kind, span }
+        Stmt {
+            kind,
+            span,
+            module: None,
+        }
     }
 }
 

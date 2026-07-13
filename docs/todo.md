@@ -15,27 +15,6 @@ Tasks are grouped in the same approximate dependency order as the roadmap.
 Port `HashDict`'s explicit bucket growth to the self-hosted `HashSet`; retain
 collision behavior and deep-copy semantics while rebuilding nested-list buckets.
 
-## Checked Semantic Data
-
-### Checked program representation
-
-Define a checked program/declaration representation that owns resolved symbols,
-types, conformances, callable signatures, defaults, and source provenance.
-Change the checker to produce it without weakening existing sequential name
-binding or overload resolution.
-
-### Typed MIR declarations
-
-Build `MirDeclarations` from checked declarations. Replace remaining AST `Type`
-and default `Expr` values with checked types and normalized constant/default
-metadata so MIR and backends do not reinterpret source syntax.
-
-### Module identity preservation
-
-Identify the smallest provenance needed after the linker flattens modules. Add
-module identity to checked declarations only when a concrete consumer—improved
-diagnostics, caching, or interchange—needs it.
-
 ## Origins, References, and Lifetimes
 
 Mojo origins are compile-time symbolic descriptions of the storage that governs

@@ -21,10 +21,10 @@ use crate::ast::{
     ArgConvention, Dtype, Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt,
     StmtKind, TStringPart, Type,
 };
-use crate::checker::{
-    effective_keyword_only_index, regular_marker_index, resolve_overload_targets,
-};
+use crate::checked::{CheckedConst, CheckedProgram};
+use crate::checker::{effective_keyword_only_index, regular_marker_index};
 use crate::token::DUMMY_SPAN;
+use crate::types::Ty;
 use std::collections::HashSet;
 
 /// Whether an argument convention transfers ownership to the callee (`owned`, or
@@ -1606,7 +1606,7 @@ pub struct MirDeclarations {
 #[derive(Debug)]
 pub struct MirStructDeclaration {
     pub name: String,
-    pub fields: Vec<(String, Type)>,
+    pub fields: Vec<(String, Ty)>,
     pub mut_self_methods: HashSet<String>,
     pub fieldwise_init: bool,
     pub param_decls: Vec<(String, bool)>,
@@ -1616,12 +1616,12 @@ pub struct MirStructDeclaration {
 pub struct MirFunctionDeclaration {
     pub lowered_name: String,
     pub param_names: Vec<String>,
-    pub param_types: Vec<Type>,
-    pub defaults: Vec<Option<Expr>>,
+    pub param_types: Vec<Ty>,
+    pub defaults: Vec<Option<CheckedConst>>,
     pub required: Vec<bool>,
-    pub variadic: Option<Type>,
+    pub variadic: Option<Ty>,
     pub variadic_index: Option<usize>,
-    pub kw_variadic: Option<Type>,
+    pub kw_variadic: Option<Ty>,
     pub kw_variadic_index: Option<usize>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
@@ -2045,11 +2045,18 @@ fn lower_fn_nested(request: FunctionLowering<'_>, out: &mut Vec<(String, MirFunc
 /// methods are deferred). Remaining top-level statements form `__toplevel__`.
 /// (Nested `def`s inside a body are still deferred — see `lower_stmt`.)
 pub fn lower_program(program: &[Stmt]) -> MirProgram {
+    let checked = crate::checker::check_program(program)
+        .unwrap_or_else(|_| CheckedProgram::unchecked(program));
+    lower_checked_program(&checked)
+}
+
+pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
+    let program = checked.statements();
     let mut functions = Vec::new();
     let mut declarations = MirDeclarations::default();
     let mut toplevel: Vec<Stmt> = Vec::new();
     let overloads = crate::symbol::OverloadSets::scan(program);
-    let overload_targets = resolve_overload_targets(program).unwrap_or_default();
+    let overload_targets = checked.overload_targets().clone();
 
     for s in program {
         match &s.kind {
@@ -2077,12 +2084,33 @@ pub fn lower_program(program: &[Stmt]) -> MirProgram {
                 declarations.functions.push(MirFunctionDeclaration {
                     lowered_name: lowered_name.clone(),
                     param_names: regular.iter().map(|p| p.name.clone()).collect(),
-                    param_types: regular.iter().map(|p| p.ty.clone()).collect(),
-                    defaults: regular.iter().map(|p| p.default.clone()).collect(),
+                    param_types: regular
+                        .iter()
+                        .map(|p| {
+                            checked
+                                .resolved_type(&p.ty)
+                                .expect("checked parameter type")
+                                .clone()
+                        })
+                        .collect(),
+                    defaults: regular
+                        .iter()
+                        .map(|p| p.default.as_ref().and_then(CheckedConst::from_expr))
+                        .collect(),
                     required: regular.iter().map(|p| p.default.is_none()).collect(),
-                    variadic: variadic_idx.map(|i| params[i].ty.clone()),
+                    variadic: variadic_idx.map(|i| {
+                        checked
+                            .resolved_type(&params[i].ty)
+                            .expect("checked variadic type")
+                            .clone()
+                    }),
                     variadic_index: regular_marker_index(params, variadic_idx),
-                    kw_variadic: kw_variadic_idx.map(|i| params[i].ty.clone()),
+                    kw_variadic: kw_variadic_idx.map(|i| {
+                        checked
+                            .resolved_type(&params[i].ty)
+                            .expect("checked kwargs type")
+                            .clone()
+                    }),
                     kw_variadic_index: kw_variadic_idx,
                     positional_only: regular_marker_index(params, *positional_only),
                     keyword_only: effective_keyword_only_index(params, *keyword_only, variadic_idx),
@@ -2133,7 +2161,15 @@ pub fn lower_program(program: &[Stmt]) -> MirProgram {
                     name: name.clone(),
                     fields: fields
                         .iter()
-                        .map(|field| (field.name.clone(), field.ty.clone()))
+                        .map(|field| {
+                            (
+                                field.name.clone(),
+                                checked
+                                    .resolved_type(&field.ty)
+                                    .expect("checked field type")
+                                    .clone(),
+                            )
+                        })
                         .collect(),
                     mut_self_methods,
                     fieldwise_init: *fieldwise_init,
@@ -2160,13 +2196,29 @@ pub fn lower_program(program: &[Stmt]) -> MirProgram {
                     declarations.functions.push(MirFunctionDeclaration {
                         lowered_name: mangled.clone(),
                         param_names: regular.iter().map(|param| param.name.clone()).collect(),
-                        param_types: regular.iter().map(|param| param.ty.clone()).collect(),
-                        defaults: regular.iter().map(|param| param.default.clone()).collect(),
+                        param_types: regular
+                            .iter()
+                            .map(|param| {
+                                checked
+                                    .resolved_type(&param.ty)
+                                    .expect("checked method parameter type")
+                                    .clone()
+                            })
+                            .collect(),
+                        defaults: regular
+                            .iter()
+                            .map(|param| param.default.as_ref().and_then(CheckedConst::from_expr))
+                            .collect(),
                         required: regular
                             .iter()
                             .map(|param| param.default.is_none())
                             .collect(),
-                        variadic: variadic_idx.map(|index| m.params[index].ty.clone()),
+                        variadic: variadic_idx.map(|index| {
+                            checked
+                                .resolved_type(&m.params[index].ty)
+                                .expect("checked method variadic type")
+                                .clone()
+                        }),
                         variadic_index: regular_marker_index(&m.params, variadic_idx),
                         kw_variadic: None,
                         kw_variadic_index: None,

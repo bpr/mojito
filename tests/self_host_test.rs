@@ -4,7 +4,7 @@
 //! a small entry program that imports through the bundled `stdlib/std/...` search
 //! root and runs on the VM.
 
-use mojito::{BackendKind, check, elaborate, link};
+use mojito::{BackendKind, elaborate, link};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -35,10 +35,10 @@ impl Drop for TempDir {
 fn run(entry: &Path) -> Result<String, String> {
     let program = link(entry).map_err(|e| e.to_string())?;
     let program = elaborate(program).map_err(|e| format!("comptime error: {e}"))?;
-    check(&program).map_err(|e| format!("type error: {e:?}"))?;
+    let checked = mojito::check_program(&program).map_err(|e| format!("type error: {e:?}"))?;
     let mut backend = BackendKind::Vm.make();
     backend
-        .run(&program)
+        .run_checked(&checked)
         .map_err(|e| format!("runtime error: {e:?}"))?;
     Ok(backend.output())
 }

@@ -82,17 +82,14 @@ or user program needs them.
 
 ### 3. Centralize Checked Semantic Data
 
-- [ ] **Checked program representation** — introduce a `CheckedProgram` or
-  equivalent checked-declaration table containing resolved types, symbols,
-  conformances, and callable metadata instead of returning only checker side
-  tables.
-- [ ] **Typed MIR declarations** — migrate the remaining AST `Type` and `Expr`
-  values in `MirDeclarations` to checked types and normalized constants derived
-  from the checked program.
-- [ ] **Module identity preservation** — preserve declaration provenance beyond
-  linking when needed for diagnostics, incremental compilation, or external
-  interchange; avoid changing the current flat semantics without a concrete
-  consumer.
+- [x] **Checked program representation** — `CheckedProgram` owns the checked AST,
+  resolved annotations, overload targets, and declaration provenance consumed by
+  ownership analysis and backend lowering.
+- [x] **Typed MIR declarations** — `MirDeclarations` stores checked `Ty` values
+  and normalized constants rather than AST types and default expressions.
+- [x] **Module identity preservation** — linked statements retain their source
+  module path through checking and lowering instead of becoming anonymous after
+  flattening.
 
 ### 4. Add Origin and Reference Semantics
 

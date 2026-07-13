@@ -1,4 +1,5 @@
 use crate::ast::Stmt;
+use crate::checked::CheckedProgram;
 use crate::error::RuntimeError;
 use crate::runtime::Value;
 
@@ -10,6 +11,9 @@ pub use vm::VmBackend;
 pub trait Backend {
     /// Run the whole program (top-level statements, then `main()` if present).
     fn run(&mut self, program: &[Stmt]) -> Result<(), RuntimeError>;
+    fn run_checked(&mut self, program: &CheckedProgram) -> Result<(), RuntimeError> {
+        self.run(program.statements())
+    }
     /// Captured standard output.
     fn output(&self) -> String;
     /// Final top-level bindings, for the CLI `run` dump. Empty for backends with no

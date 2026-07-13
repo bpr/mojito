@@ -252,6 +252,24 @@ fn program_driver_makes_a_function_per_def_and_method() {
 }
 
 #[test]
+fn checked_lowering_owns_typed_declarations_and_normalized_defaults() {
+    let program = parse("def f(x: UInt = 3):\n    pass\n").expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let declaration = mir
+        .declarations
+        .functions
+        .iter()
+        .find(|declaration| declaration.lowered_name == "f")
+        .unwrap();
+    assert_eq!(declaration.param_types, vec![mojito::Ty::UInt]);
+    assert!(matches!(
+        declaration.defaults.as_slice(),
+        [Some(mojito::CheckedConst::Int(3))]
+    ));
+}
+
+#[test]
 fn member_read_lowers_to_a_place_load() {
     // A pure field chain read (`p.a`) lowers to a `LoadPlace` (a place read), so
     // the ownership analysis sees which field is read (field-sensitivity). A

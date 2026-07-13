@@ -1335,6 +1335,45 @@ pub(crate) fn coerce(value: Value, ty: &Type) -> Value {
     }
 }
 
+pub(crate) fn coerce_checked(value: Value, ty: &crate::types::Ty) -> Value {
+    use crate::types::{Ty, TyArg};
+    match ty {
+        Ty::UInt => match value {
+            Value::Int(n) => Value::UInt(n as u64),
+            value => value,
+        },
+        Ty::Float64 => match value {
+            Value::Int(n) => Value::Float64(n as f64),
+            Value::UInt(n) => Value::Float64(n as f64),
+            value => value,
+        },
+        Ty::Tuple(types) => match value {
+            Value::Tuple(items) => Value::Tuple(
+                items
+                    .into_iter()
+                    .zip(types)
+                    .map(|(value, ty)| coerce_checked(value, ty))
+                    .collect(),
+            ),
+            value => value,
+        },
+        Ty::Struct(name, args) if name == "Tuple" => match value {
+            Value::Tuple(items) => Value::Tuple(
+                items
+                    .into_iter()
+                    .zip(args)
+                    .map(|(value, arg)| match arg {
+                        TyArg::Ty(ty) => coerce_checked(value, ty),
+                        TyArg::Val(_) => value,
+                    })
+                    .collect(),
+            ),
+            value => value,
+        },
+        _ => value,
+    }
+}
+
 /// Coerce a value to match an existing binding's numeric type (for assignment,
 /// where the declared type isn't carried but the current value's type is it).
 pub(crate) fn coerce_like(new: Value, existing: &Value) -> Value {

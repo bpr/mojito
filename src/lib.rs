@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod ast;
 pub mod backend;
+pub mod checked;
 pub mod checker;
 pub mod comptime;
 pub mod ct;
@@ -16,12 +17,13 @@ pub mod token;
 pub mod types;
 
 // Re-export commonly used types at the crate root for convenience
-pub use analysis::check_ownership;
+pub use analysis::{check_ownership, check_ownership_checked};
 pub use ast::{
     Dtype, Expr, ImportName, ImportNames, InfixOp, Param, PrefixOp, Stmt, Type, TypeParam,
 };
 pub use backend::{Backend, BackendKind};
-pub use checker::{Checker, check};
+pub use checked::{CheckedConst, CheckedProgram};
+pub use checker::{Checker, check, check_program};
 pub use comptime::{ComptimeError, elaborate};
 pub use ct::CtValue;
 pub use error::{LexError, OwnershipError, ParseError, RuntimeError, TypeError};

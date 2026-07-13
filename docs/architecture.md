@@ -117,9 +117,10 @@ overload set in the ordinary flat program scope.
 Plain `import module` is parsed but still acts as a no-op because qualified
 `module.Name` lookup is not modeled yet. Aliases are also deferred.
 
-The important architectural point is that the rest of the pipeline does not know
-whether declarations came from one file or several. After linking, modules are
-just ordinary declarations in a single program.
+Linking retains flat name-binding semantics, but each hoisted and entry statement
+now carries its source module path. `CheckedProgram` preserves that provenance for
+diagnostics and future interchange without reintroducing module namespaces into
+ordinary lookup.
 
 ## Stage 2: Comptime Elaboration
 
@@ -274,9 +275,16 @@ Entry point:
 
 ```rust
 checker::check(program: &[Stmt]) -> Result<(), TypeError>
+checker::check_program(program: &[Stmt]) -> Result<CheckedProgram, TypeError>
 ```
 
-Related entry point used by MIR lowering:
+`check` is the compatibility validation wrapper. The compiler pipeline uses
+`check_program`, whose checked handoff owns the AST plus resolved annotation
+types, selected overload targets, and module provenance. Ownership analysis and
+the VM consume that object directly; they do not invoke an independent checker
+side-table query.
+
+The older compatibility query remains available to focused tests:
 
 ```rust
 checker::resolve_overload_targets(program: &[Stmt]) -> Result<HashMap<Span, String>, TypeError>
@@ -533,6 +541,7 @@ Main entry points:
 ```rust
 lower_cfg(cfg: &hir::Cfg) -> MirFunction
 lower_program(program: &[Stmt]) -> MirProgram
+lower_checked_program(program: &CheckedProgram) -> MirProgram
 ```
 
 MIR is the stable waist of the compiler. HIR still has nested expressions; MIR
@@ -982,11 +991,11 @@ The VM builds a `Prog` containing:
 - signature-mangled overload definitions and fallback lookup for unique arity
   protocol calls
 
-MIR lowering normalizes the declaration facts needed by execution into
-`MirDeclarations`: struct field layouts, mutating method identities, function
-parameter/default/marker information, and generic parameter declarations. The VM
-builds its compact runtime registries from that metadata rather than rescanning the
-source AST or recomputing overload names.
+The checked entry point is the production path. It normalizes declaration facts
+into `MirDeclarations`: struct field layouts and callable parameters use checked
+`Ty`, defaults use `CheckedConst`, and overload names come from `CheckedProgram`.
+The VM builds compact registries from this metadata rather than rescanning AST
+annotations, reevaluating default expressions, or recomputing overload choices.
 
 ### Function Calls
 

@@ -1787,7 +1787,11 @@ fn compare_ints(op: InfixOp, a: i64, b: i64) -> Result<bool, ComptimeError> {
 }
 
 fn mk(kind: StmtKind, span: Span) -> Stmt {
-    Stmt { kind, span }
+    Stmt {
+        kind,
+        span,
+        module: None,
+    }
 }
 
 /// Materialize a compile-time value as a literal expression. The elaborator never

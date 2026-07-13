@@ -27,7 +27,8 @@
 //! with keyword/default/variadic args, and nested `def`/`struct`.
 
 use super::Backend;
-use crate::ast::{Expr, ExprKind, PrefixOp, Stmt, Type};
+use crate::ast::Stmt;
+use crate::checked::CheckedConst;
 use crate::checker::{ArgSlot, CallVariadics, match_call_slots};
 use crate::error::RuntimeError;
 use crate::hir::VarId;
@@ -38,6 +39,7 @@ use crate::runtime::{
     is_list_mutator, list_query, promote_numeric_elems, read_simd_lane, simd_from_values,
     value_as_index,
 };
+use crate::types::Ty;
 use std::collections::HashMap;
 
 /// The control-flow outcome of executing an instruction or a `try` sub-region.
@@ -59,7 +61,7 @@ enum Flow {
 /// keep field layout): field names + types (for constructor coercion), and which
 /// methods take `mut self` (so their receiver is written back).
 struct StructDef {
-    fields: Vec<(String, Type)>,
+    fields: Vec<(String, Ty)>,
     mut_self_methods: std::collections::HashSet<String>,
     fieldwise_init: bool,
     /// The struct's compile-time parameters (`[...]`), each `(name, is_value)` —
@@ -75,16 +77,16 @@ struct StructDef {
 /// is the trailing `*args` element type, if any.
 struct FnSig {
     param_names: Vec<String>,
-    param_types: Vec<Type>,
+    param_types: Vec<Ty>,
     /// Const-evaluated default per regular parameter (`None` = no default, or a
     /// non-constant default the VM can't fold — using such a slot errors).
     defaults: Vec<Option<Value>>,
     required: Vec<bool>,
-    variadic: Option<Type>,
+    variadic: Option<Ty>,
     /// Where the collected `*args` list belongs among source parameters. For a
     /// signature like `def f(a, *xs, b)`, this is `Some(1)`.
     variadic_index: Option<usize>,
-    kw_variadic: Option<Type>,
+    kw_variadic: Option<Ty>,
     kw_variadic_index: Option<usize>,
     /// Indexes into the regular-parameter list.
     positional_only: Option<usize>,
@@ -1635,6 +1637,27 @@ impl VmBackend {
 impl Backend for VmBackend {
     fn run(&mut self, program: &[Stmt]) -> Result<(), RuntimeError> {
         let prog = build_prog(program);
+        self.run_prog(prog)
+    }
+
+    fn run_checked(
+        &mut self,
+        program: &crate::checked::CheckedProgram,
+    ) -> Result<(), RuntimeError> {
+        self.run_prog(build_prog_checked(program))
+    }
+
+    fn output(&self) -> String {
+        self.output.clone()
+    }
+
+    fn bindings(&self) -> Vec<(String, Value)> {
+        self.bindings.clone()
+    }
+}
+
+impl VmBackend {
+    fn run_prog(&mut self, prog: Prog) -> Result<(), RuntimeError> {
         self.configure_lifecycle(&prog);
         // Run the top-level block, then `main()`. Capture the top-level frame's
         // user variables (skipping synthetic `$…` temporaries) as the global
@@ -1654,18 +1677,16 @@ impl Backend for VmBackend {
         }
         Ok(())
     }
-
-    fn output(&self) -> String {
-        self.output.clone()
-    }
-
-    fn bindings(&self) -> Vec<(String, Value)> {
-        self.bindings.clone()
-    }
 }
 
 fn build_prog(program: &[Stmt]) -> Prog {
-    let mir = crate::analysis::elaborate_drops_program(crate::mir::lower_program(program));
+    let checked = crate::checker::check_program(program)
+        .unwrap_or_else(|_| crate::checked::CheckedProgram::unchecked(program));
+    build_prog_checked(&checked)
+}
+
+fn build_prog_checked(checked: &crate::checked::CheckedProgram) -> Prog {
+    let mir = crate::analysis::elaborate_drops_program(crate::mir::lower_checked_program(checked));
     let structs = build_structs(&mir.declarations);
     let sigs = build_sigs(&mir.declarations);
     Prog {
@@ -1711,7 +1732,7 @@ fn build_sigs(declarations: &crate::mir::MirDeclarations) -> HashMap<String, FnS
                     defaults: declaration
                         .defaults
                         .iter()
-                        .map(|default| default.as_ref().and_then(const_default))
+                        .map(|default| default.as_ref().map(checked_const_value))
                         .collect(),
                     required: declaration.required.clone(),
                     variadic: declaration.variadic.clone(),
@@ -1730,19 +1751,13 @@ fn build_sigs(declarations: &crate::mir::MirDeclarations) -> HashMap<String, FnS
 /// Const-fold a default-argument expression to a value. Handles the literal forms
 /// (and a unary minus over one) that defaults use in practice; a non-constant
 /// default folds to `None` and errors only if that slot is actually taken.
-fn const_default(e: &Expr) -> Option<Value> {
-    match &e.kind {
-        ExprKind::Int(n) => Some(Value::Int(*n)),
-        ExprKind::Float(x) => Some(Value::Float64(*x)),
-        ExprKind::Bool(b) => Some(Value::Bool(*b)),
-        ExprKind::Str(s) => Some(Value::Str(s.clone())),
-        ExprKind::None => Some(Value::None),
-        ExprKind::Prefix(PrefixOp::Neg, inner) => match const_default(inner)? {
-            Value::Int(n) => Some(Value::Int(-n)),
-            Value::Float64(x) => Some(Value::Float64(-x)),
-            _ => None,
-        },
-        _ => None,
+fn checked_const_value(value: &CheckedConst) -> Value {
+    match value {
+        CheckedConst::Int(value) => Value::Int(*value),
+        CheckedConst::Float(value) => Value::Float64(*value),
+        CheckedConst::Bool(value) => Value::Bool(*value),
+        CheckedConst::String(value) => Value::Str(value.clone()),
+        CheckedConst::None => Value::None,
     }
 }
 
@@ -1783,13 +1798,13 @@ fn bind_args(
                 ))
             })?,
         };
-        regular_values.push(coerce(value, &sig.param_types[i]));
+        regular_values.push(crate::runtime::coerce_checked(value, &sig.param_types[i]));
     }
     // Collect overflow positional args into the `*args` list.
     let (out, frame_slots) = if let Some(elem_ty) = &sig.variadic {
         let items = overflow
             .iter()
-            .map(|&idx| coerce(argv[idx].clone(), elem_ty))
+            .map(|&idx| crate::runtime::coerce_checked(argv[idx].clone(), elem_ty))
             .collect();
         let idx = sig.variadic_index.unwrap_or(regular_values.len());
         let mut out = Vec::with_capacity(regular_values.len() + 1);
@@ -1835,7 +1850,7 @@ fn construct(
         .fields
         .iter()
         .zip(args)
-        .map(|((fname, fty), arg)| (fname.clone(), coerce(arg, fty)))
+        .map(|((fname, fty), arg)| (fname.clone(), crate::runtime::coerce_checked(arg, fty)))
         .collect();
     // Reify the value parameters onto the instance (type parameters stay erased):
     // pair each declared value parameter with its supplied comptime `Int` argument.
