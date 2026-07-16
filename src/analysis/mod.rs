@@ -197,7 +197,7 @@ fn var_moved(i: &MirInstr) -> Option<VarId> {
 /// leaks (rather than risk a double-free) on the branch edges where a value dies
 /// without being used — full drop elaboration across branches is future work.
 /// Whether the value in variable `v` is dropped by *this* function: locals always;
-/// an `owned` parameter (the caller transferred it) yes; a borrowed parameter or
+/// a consuming `var` parameter (the caller transferred it) yes; a borrowed parameter or
 /// `self` never (the caller owns a borrow; `self` is written back / would recurse).
 fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
     let vi = v as usize;

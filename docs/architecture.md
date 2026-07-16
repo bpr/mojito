@@ -150,20 +150,24 @@ Currently it supports:
 - `from module import *`
 - dotted module paths such as `from collections.list import List`
 - relative imports such as `from .optional import Optional`
+- qualified `import module as alias` member access and selective member aliases
+- unaliased dotted namespaces, qualified exported types, and lexical block imports
+- dots-only relative sibling imports (`from . import sibling`)
+- source packages identified by `__init__.mojo`, including package re-exports
+- underscore-prefixed wildcard privacy and collision-free module identities
 - transitive imports, dependency-first hoisting, deduplication, and simple cycle
   breaking by canonical path
 
-Imported module declarations are hoisted ahead of the importing module. A module
-exports top-level `def`, `struct`, `trait`, and `comptime` declarations, except
-that a module's `main` is not exported. Top-level executable statements from an
-imported module are not run.
+Imported declarations receive module-qualified internal names before they are
+hoisted. Import bindings are rewritten to those names, so two modules can export
+the same source name without merging declarations or overload sets. A module
+exports top-level `def`, `struct`, `trait`, and `comptime` declarations except
+`main`; wildcard imports omit underscore-prefixed names.
 
-An imported overloaded function is still one exported source name. After linking,
-the checker sees all same-name `def` declarations in order and builds the
-overload set in the ordinary flat program scope.
-
-Plain `import module` is parsed but still acts as a no-op because qualified
-`module.Name` lookup is not modeled yet. Aliases are also deferred.
+Package directories resolve through `__init__.mojo`. Imports in that file become
+package re-exports. Mojo forbids executable file-scope statements, so package
+initialization means declaration and compile-time initialization rather than
+Python-style runtime import side effects.
 
 Linking retains flat name-binding semantics, but recursively stamps every
 statement and expression with its source module path. A `SourceSpan` combines
@@ -356,15 +360,32 @@ It is responsible for:
 - type parameters and value parameters
 - call argument matching
 - default, keyword, and variadic arguments where supported
-- `owned`, `mut`, `ref`, and `deinit` conventions
+- `var`, `mut`, `ref`, and `deinit` conventions
 - compile-time integer constants used as value parameters
 - list, tuple, string, and SIMD type rules
+- typed and parametric raising effects, inferred handler types, and the `Never`
+  bottom type
 - borrow checking for call arguments
 - rejecting parse-only syntax whose semantics are deferred
 
 The checker is deliberately conservative. If a construct is parsed but not
 semantically implemented, this is where it should normally become
 `TypeError::Unsupported`.
+
+Trait refinement is flattened during checking: inherited method and associated
+compile-time requirements become part of the refined contract, and a refined
+bound satisfies its ancestors. Before checking, executable trait defaults are
+materialized as ordinary methods on each conforming struct. An explicit struct
+method wins; unresolved defaults from multiple paths are rejected. MIR and the
+VM retain static dispatch and need no trait-object representation.
+
+Opaque trait-bounded indexing uses the requirement signature for its index and
+result types, then executes through concrete dunder dispatch after erasure.
+Printing has a narrower first-pass formatter contract: intrinsic values write
+directly, while user structs declare `Writable` or legacy `Representable` and implement
+`__str__() -> String`; the VM invokes that checked hook. The self-hosted
+`IncrementalHasher` demonstrates stateful multi-part hashing without a hashing
+VM intrinsic.
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features, `with`, t-strings, and advanced expression/declaration forms that
@@ -386,13 +407,14 @@ At a call site the checker:
 1. collects the candidates for the source name
 2. filters candidates by call shape, explicit type/value arguments, and argument
    type compatibility
-3. prefers concrete candidates over generic candidates, then scores surviving
-   candidates by how many argument coercions they need
+3. ranks surviving candidates lexicographically by conversion count, variadic
+   use, parameter-signature length, and generic/concrete tie-break
 4. accepts the unique lowest-score candidate
 5. rejects no-match and tied-best cases
 
-This deliberately conservative ranking gives useful Mojo-like behavior without
-pretending to implement the complete Mojo overload lattice. For example, a
+This first-pass ranking includes validated, nonraising user-defined `@implicit`
+constructors. The checker records the uniquely selected converting constructor
+at the source expression and MIR emits that call before its consumer. For example, a
 typed `String` value selects `f(x: String)` over `f(x: Int)`, and an exact
 `Int` argument selects `f(x: Int)` over a candidate requiring widening. A bare
 integer literal passed to both `f(Int)` and `f(Float64)` is ambiguous because it
@@ -421,7 +443,7 @@ For each argument, the checker classifies the operation:
 
 - ordinary read/shared borrow
 - `mut` or `ref` exclusive borrow
-- `owned` move via `^`
+- consuming move via `^`
 
 It then applies the mutable-XOR-shared rule by root/place. The checker is
 place-sensitive enough to allow disjoint field borrows such as:
@@ -505,6 +527,23 @@ vars[0..n_params]
 
 This becomes the VM call ABI later. A callee frame receives argument values by
 writing them into the first `n_params` variable slots.
+
+A free-function named `out` result is deliberately outside that ABI prefix. MIR
+seeds it as an uninitialized callee-local slot, rewrites fallthrough and bare
+returns to read that slot, and exposes its declared type as the function result.
+The caller therefore invokes a named-result function exactly like an ordinary
+returning function and never supplies the `out` argument.
+
+A variadic type parameter retains a leading `*` in the checked parameter name.
+Generic-call inference recognizes the matching `*args: *Pack` element type and
+checks each overflow argument independently against the pack bounds instead of
+forcing all arguments to unify to one type. The VM deliberately erases those
+individual types into its existing variadic collection representation. This
+supports heterogeneous calls and pack length queries. Specialization infers
+literal and directly constructed call-argument types, binds the pack's type tuple
+into the compile-time environment, and unrolls `args.__len__()`-driven loops.
+Each unrolled index is checked through the declared common bound; retaining a
+distinct concrete type for every index is deferred.
 
 ### If
 
@@ -650,7 +689,10 @@ A lowered program contains:
 - one `MirFunction` per lowered struct method
 - lifted nested functions where the compiler can safely lift them
 
-The VM runs `__toplevel__`, then calls zero-argument `main()` if it exists.
+Production compilation rejects executable file-scope source statements. The VM
+runs the synthetic module-initialization function and then calls zero-argument
+`main()` if it exists; the same synthetic function supports explicitly opted-in
+legacy statement snippets in phase-level tests.
 
 ### MIR Blocks And Terminators
 
@@ -783,6 +825,29 @@ MIR calls keep the information the VM needs for Mojo-style conventions:
 - simple caller places for `mut`/`ref` write-back
 - compile-time parameter argument registers for value parameters
 - the resolved lowered callee name when the checker selected an overload
+
+Non-capturing functions also have a runtime `Value::Function` representation.
+Calls through a function-typed local or a general callable expression lower to
+`CallIndirect`, whose callee register is resolved to a MIR function symbol by the
+VM before it pushes the ordinary explicit frame. The checker has already matched
+the arguments against the callable signature, so indirect execution shares the
+same function ABI without adding dynamic overload selection.
+
+`Ty::Func` and `Ty::GenericFunc` retain both the `raises` effect and its optional
+error type. Direct overload resolution carries the selected candidate's effect
+alongside its lowered symbol, and an indirect call reads the effect from its
+callable type. Generic substitution includes error types, with a nonraising
+callable inferring `Never`. `Never` is the bottom type, and `raises Never` is
+treated as nonraising. A protected `try` records the errors its body can raise
+and gives the `except` binding that type. Effect checking therefore happens
+after candidate selection instead of conservatively attaching one effect to
+every declaration sharing a source name, and before lowering.
+
+When a `Ty::GenericFunc` appears where a concrete `Ty::Func` is
+expected, the checker solves its type parameters from the expected parameter and
+result types and validates the resulting monomorphic signature. This is a
+Mojito runtime-value extension; current Mojo normally spells the equivalent
+specialization as a compile-time function alias.
 
 For method calls, MIR also records whether the receiver was a writable place.
 That lets a `mut self` method write the mutated receiver back to the caller.
@@ -999,7 +1064,7 @@ The VM does not need to discover last uses dynamically. It just executes
 Droppable roots are:
 
 - locals
-- `owned` parameters
+- consuming `var` parameters
 
 Borrowed parameters are not dropped by the callee. They are owned by the caller.
 `self` is handled carefully to avoid destructor recursion and to support method
@@ -1014,6 +1079,18 @@ declaration order. Struct destruction runs:
 2. fields in reverse declaration order
 
 Lists and tuples drop their elements in reverse order.
+
+Types decorated with `@explicit_destroy` are deliberately excluded from this
+automatic path. A checked, stable-binding obligation analysis requires every
+initialized value to reach exactly one named `deinit self` method on every exit.
+It rejects abandonment, overwrite, partial moves, and inconsistent branch or
+loop states. MIR retains the declaration metadata, and the VM suppresses
+`DropVar` for these types.
+
+A named explicit destructor is lowered as a call followed by `ConsumeVar`.
+Because consumption occurs only after a successful return, a raising destructor
+leaves the source slot live on the exceptional edge so an `except` handler can
+invoke a fallback destructor.
 
 ### Edge Drops
 
@@ -1117,8 +1194,9 @@ callee's final parameter value back into the caller place.
 Overloaded function calls arrive at the VM already resolved to a lowered
 signature name. For constructor overloads, a direct resolved callee such as
 `Box.__init__$ov$String` still enters the constructor path: the VM creates the
-uninitialized `self` skeleton, invokes the selected `__init__`, and returns the
-initialized struct. Internal dunder/protocol paths that do not have a source call
+uninitialized `self` skeleton, binds the remaining arguments through the same
+positional/default/keyword matcher used by ordinary calls, invokes the selected
+`__init__`, and returns the initialized struct. Internal dunder/protocol paths that do not have a source call
 span can still ask for a unique overload by source name and arity; this is a
 fallback for compiler-generated calls, not the general overload-ranking engine.
 
@@ -1155,7 +1233,9 @@ skipped so partial moves do not double-drop.
 
 ### Exceptions And Non-Normal Flow
 
-`raise` propagates as a runtime `Raised` error until a `Try` catches it.
+`raise` propagates the original runtime value as a `Raised` error until a `Try`
+catches it. This preserves fields on user-defined typed error structs; string
+raise shorthand is normalized to the builtin `Error` value.
 
 Inside try sub-regions, the VM uses a control-flow enum conceptually like:
 
@@ -1324,13 +1404,13 @@ The main pressure points are:
   entry-helper fact folding
 - the compile-time value universe still needs to grow toward Mojo-style
   type-level values, declaration generation, and richer specialization
-- overload resolution now supports arity and conservative type-directed
-  selection, but Mojo's full ranking, implicit-conversion, and generic-overload
-  ordering rules remain future work
+- overload resolution now supports arity, conservative type-directed selection,
+  and concrete user-defined implicit constructors, but Mojo's full generic
+  conversion and specialization ordering rules remain future work
 - checked declaration metadata can eventually replace the remaining AST types in
   `MirDeclarations`; the VM-side AST registries themselves have been removed
-- the module system is useful but intentionally simple: no qualified
-  `import module` lookup, aliases, packages, or imported top-level execution
+- source modules and packages are flattened after lexical namespace resolution;
+  compiled `.mojoc` artifacts remain future distribution tooling
 - trait support is intentionally incomplete
 - generics and value-parameter specialization need a more central
   representation

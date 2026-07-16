@@ -6,7 +6,7 @@
 //! `Tuple` elements) are destroyed in reverse declaration order. These behaviors
 //! are asserted directly on VM output.
 //!
-//! `__del__` uses Mojo's real `def __del__(deinit self)` signature (now recognized (current Mojo spelling; the older `owned self` is also accepted)
+//! `__del__` uses Mojo's `def __del__(deinit self)` signature.
 //! by the checker); the VM treats a method named `__del__` as the destructor.
 
 use mojito::{BackendKind, check_program, parse};
@@ -88,12 +88,12 @@ fn fields_drop_in_reverse_declaration_order() {
 
 #[test]
 fn owned_parameter_is_dropped_by_the_callee() {
-    // `consume(a^)` transfers `a` to an `owned` parameter: the value is destroyed
+    // `consume(a^)` transfers `a` to a `var` parameter: the value is destroyed
     // once, inside the callee (at the parameter's last use) — not by the caller,
-    // and not twice. Un-flagging `owned` (and `owned self` for `__del__`) is what
+    // and not twice. Consuming parameter ownership is what
     // makes this expressible.
     let src = format!(
-        "{RES}def consume(owned t: Res):\n    print(\"consuming\", t.id)\n\ndef main():\n    var a: Res = Res(1)\n    consume(a^)\n    print(\"done\")\n"
+        "{RES}def consume(var t: Res):\n    print(\"consuming\", t.id)\n\ndef main():\n    var a: Res = Res(1)\n    consume(a^)\n    print(\"done\")\n"
     );
     let out = vm(&src);
     assert_eq!(out.matches("del 1").count(), 1, "destroyed exactly once");

@@ -185,7 +185,7 @@ fn linked_declarations_preserve_module_identity_in_checked_program() {
     let answer = checked
         .statements()
         .iter()
-        .find(|stmt| matches!(&stmt.kind, mojito::ast::StmtKind::Def { name, .. } if name == "answer"))
+        .find(|stmt| matches!(&stmt.kind, mojito::ast::StmtKind::Def { name, .. } if name.ends_with("answer")))
         .unwrap();
     let entry = checked
         .statements()
@@ -222,7 +222,7 @@ fn linked_expression_locations_include_their_source_module() {
     let from_lib = checked
         .statements()
         .iter()
-        .find(|statement| matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name == "from_lib"))
+        .find(|statement| matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name.ends_with("from_lib")))
         .expect("imported function");
     let mojito::ast::StmtKind::Def { body, .. } = &from_lib.kind else {
         unreachable!()
@@ -253,4 +253,118 @@ fn missing_module_and_missing_name_error() {
             .unwrap_err()
             .contains("no declaration named 'g'")
     );
+}
+
+#[test]
+fn aliases_qualified_imports_and_same_named_declarations_do_not_collide() {
+    let d = TempDir::new();
+    d.write("left.mojo", "def answer() -> Int:\n    return 1\n");
+    d.write("right.mojo", "def answer() -> Int:\n    return 2\n");
+    let main = d.write(
+        "main.mojo",
+        "from left import answer as left_answer\nimport right as r\n\ndef main():\n    print(left_answer(), r.answer())\n",
+    );
+    assert_eq!(run(&main).unwrap(), "1 2\n");
+}
+
+#[test]
+fn unaliased_dotted_import_uses_the_full_qualified_path() {
+    let d = TempDir::new();
+    d.write("pkg/__init__.mojo", "");
+    d.write("pkg/tool.mojo", "def answer() -> Int:\n    return 42\n");
+    let main = d.write(
+        "main.mojo",
+        "import pkg.tool\n\ndef main():\n    print(pkg.tool.answer())\n",
+    );
+    assert_eq!(run(&main).unwrap(), "42\n");
+}
+
+#[test]
+fn dotted_namespace_resolves_exported_types() {
+    let d = TempDir::new();
+    d.write("pkg/__init__.mojo", "");
+    d.write(
+        "pkg/models.mojo",
+        "@fieldwise_init\nstruct Box:\n    var value: Int\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "import pkg.models\n\ndef main():\n    var box: pkg.models.Box = pkg.models.Box(9)\n    print(box.value)\n",
+    );
+    assert_eq!(run(&main).unwrap(), "9\n");
+}
+
+#[test]
+fn local_bindings_shadow_imported_members() {
+    let d = TempDir::new();
+    d.write("values.mojo", "comptime value = 41\n");
+    let main = d.write(
+        "main.mojo",
+        "from values import value\n\ndef main():\n    var value: Int = 7\n    print(value)\n",
+    );
+    assert_eq!(run(&main).unwrap(), "7\n");
+}
+
+#[test]
+fn imports_inside_functions_and_blocks_are_lexically_scoped() {
+    let d = TempDir::new();
+    d.write("util.mojo", "def answer() -> Int:\n    return 42\n");
+    let main = d.write(
+        "main.mojo",
+        "def main():\n    from util import answer\n    if True:\n        import util as nested\n        print(nested.answer())\n    print(answer())\n",
+    );
+    assert_eq!(run(&main).unwrap(), "42\n42\n");
+
+    let bad = d.write(
+        "bad.mojo",
+        "def main():\n    if True:\n        from util import answer\n        print(answer())\n    print(answer())\n",
+    );
+    assert!(run(&bad).unwrap_err().contains("answer"));
+}
+
+#[test]
+fn package_init_reexports_members() {
+    let d = TempDir::new();
+    d.write("tools/value.mojo", "def answer() -> Int:\n    return 42\n");
+    d.write("tools/__init__.mojo", "from .value import answer\n");
+    let main = d.write(
+        "main.mojo",
+        "from tools import answer\n\ndef main():\n    print(answer())\n",
+    );
+    assert_eq!(run(&main).unwrap(), "42\n");
+}
+
+#[test]
+fn dots_only_relative_import_binds_a_sibling_module_namespace() {
+    let d = TempDir::new();
+    d.write("pkg/__init__.mojo", "");
+    d.write("pkg/tool.mojo", "def answer() -> Int:\n    return 42\n");
+    d.write(
+        "pkg/use.mojo",
+        "from . import tool\n\ndef indirect() -> Int:\n    return tool.answer()\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "from pkg.use import indirect\n\ndef main():\n    print(indirect())\n",
+    );
+    assert_eq!(run(&main).unwrap(), "42\n");
+}
+
+#[test]
+fn wildcard_import_hides_underscore_prefixed_declarations() {
+    let d = TempDir::new();
+    d.write(
+        "api.mojo",
+        "def shown() -> Int:\n    return 1\n\ndef _hidden() -> Int:\n    return 2\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "from api import *\n\ndef main():\n    print(shown())\n",
+    );
+    assert_eq!(run(&main).unwrap(), "1\n");
+    let bad = d.write(
+        "bad.mojo",
+        "from api import *\n\ndef main():\n    print(_hidden())\n",
+    );
+    assert!(run(&bad).unwrap_err().contains("_hidden"));
 }

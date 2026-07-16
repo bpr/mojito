@@ -49,6 +49,7 @@ struct StructDef {
     /// `false` for an erased type parameter. Aligns positionally with a
     /// construction's supplied parameter arguments.
     param_decls: Vec<(String, bool)>,
+    explicit_destroy: bool,
 }
 
 /// A free function's calling signature (the MIR doesn't keep it), for matching
@@ -449,6 +450,53 @@ impl VmBackend {
         caller: &Frame,
         instruction: &MirInstr,
     ) -> Result<Option<Frame>, RuntimeError> {
+        if let MirInstr::CallIndirect {
+            dest,
+            callee,
+            args,
+            kwargs,
+        } = instruction
+        {
+            let Value::Function(function_name) = &caller.registers[callee.0 as usize] else {
+                return Err(RuntimeError::NotCallable(crate::runtime::type_name(
+                    &caller.registers[callee.0 as usize],
+                )));
+            };
+            let index = prog
+                .index_of(function_name)
+                .ok_or_else(|| RuntimeError::NotCallable(function_name.clone()))?;
+            let positional = args
+                .iter()
+                .map(|register| caller.registers[register.0 as usize].clone())
+                .collect();
+            let keywords = kwargs
+                .iter()
+                .map(|(name, register)| {
+                    (name.clone(), caller.registers[register.0 as usize].clone())
+                })
+                .collect();
+            let (bound, _) = match prog.sigs.get(function_name) {
+                Some(signature) => {
+                    self.bind_for_call(prog, function_name, signature, positional, keywords)?
+                }
+                None => (
+                    positional,
+                    (0..args.len()).map(ArgSlot::Positional).collect(),
+                ),
+            };
+            return self
+                .make_frame(
+                    prog,
+                    index,
+                    bound,
+                    &[],
+                    Some(ReturnContinuation {
+                        dest: *dest,
+                        writebacks: Vec::new(),
+                    }),
+                )
+                .map(Some);
+        }
         if let MirInstr::MethodCall {
             dest,
             recv,
@@ -900,6 +948,7 @@ impl VmBackend {
         name: &str,
         target: Option<&str>,
         args: Vec<Value>,
+        kwargs: Vec<(String, Value)>,
         param_vals: &[Option<Value>],
     ) -> Result<Value, RuntimeError> {
         let def = &prog.structs[name];
@@ -928,10 +977,17 @@ impl VmBackend {
                 "vm: checked constructor '{constructor}' is missing from MIR"
             ))
         })?;
-        let mut call_args = Vec::with_capacity(args.len() + 1);
-        call_args.push(skeleton);
-        call_args.extend(args);
-        let (_, frame_vars) = self.call_frame(prog, fidx, call_args, &[])?;
+        let user_args = match prog.sigs.get(&constructor) {
+            Some(signature) => {
+                self.bind_for_call(prog, &constructor, signature, args, kwargs)?
+                    .0
+            }
+            None => args,
+        };
+        let mut bound = Vec::with_capacity(user_args.len() + 1);
+        bound.push(skeleton);
+        bound.extend(user_args);
+        let (_, frame_vars) = self.call_frame(prog, fidx, bound, &[])?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
     }
 
@@ -1183,7 +1239,8 @@ impl VmBackend {
         prog: &Prog,
         entries: Vec<(String, Value)>,
     ) -> Result<Value, RuntimeError> {
-        let mut dict = self.construct_via_init(prog, "HashDict", None, Vec::new(), &[])?;
+        let mut dict =
+            self.construct_via_init(prog, "HashDict", None, Vec::new(), Vec::new(), &[])?;
         let fname = prog.overload_name("HashDict.__setitem__", 2);
         let fidx = prog.index_of(&fname).ok_or_else(|| {
             RuntimeError::Unsupported("vm: kwargs HashDict has no __setitem__".to_string())
@@ -1354,6 +1411,11 @@ impl VmBackend {
                     None => self.call_named(prog, &func.0, argv, kw, &pvals)?,
                 };
                 regs[dest.0 as usize] = result;
+            }
+            MirInstr::CallIndirect { callee, .. } => {
+                return Err(RuntimeError::NotCallable(crate::runtime::type_name(
+                    &regs[callee.0 as usize],
+                )));
             }
             MirInstr::MethodCall {
                 dest,
@@ -1603,6 +1665,17 @@ impl VmBackend {
                 let v = std::mem::replace(&mut vars[*var as usize], Value::None);
                 self.drop_value(prog, v)?;
             }
+            MirInstr::ConsumeVar { var } => {
+                let value = std::mem::replace(&mut vars[*var as usize], Value::Moved);
+                if let Value::Struct { fields, .. } = value {
+                    // The named explicit destructor has already consumed the
+                    // aggregate. Its fields still receive their ordinary
+                    // reverse-order destruction after that call succeeds.
+                    for (_, field) in fields.into_iter().rev() {
+                        self.drop_value(prog, field)?;
+                    }
+                }
+            }
             MirInstr::Unsupported(what) => {
                 return Err(RuntimeError::Unsupported(format!(
                     "vm backend does not support {what} yet"
@@ -1611,11 +1684,11 @@ impl VmBackend {
             MirInstr::Raise { src } => {
                 // Raise an error, propagating as `Raised` — the nearest enclosing
                 // `Try` (if any) intercepts it; otherwise it unwinds the frame.
-                let msg = match &regs[src.0 as usize] {
-                    Value::Error(s) | Value::Str(s) => s.clone(),
-                    other => crate::runtime::type_name(other).to_string(),
+                let error = match &regs[src.0 as usize] {
+                    Value::Str(message) => Value::Error(message.clone()),
+                    other => other.clone(),
                 };
-                return Err(RuntimeError::Raised(msg));
+                return Err(RuntimeError::Raised(error));
             }
             MirInstr::Try {
                 body,
@@ -1677,16 +1750,16 @@ impl VmBackend {
             // The body raised: run the exceptional-edge cleanup (destroy the body's
             // locals as they go out of scope), then dispatch to the handler or
             // re-propagate.
-            Err(RuntimeError::Raised(msg)) => {
+            Err(RuntimeError::Raised(error)) => {
                 self.run_cleanup(prog, cleanup, vars)?;
                 match handler {
                     Some((err_slot, hblocks)) => {
                         if let Some(slot) = err_slot {
-                            vars[*slot as usize] = Value::Error(msg);
+                            vars[*slot as usize] = error.clone();
                         }
                         self.run_region(prog, frame_id, hblocks, regs, vars)
                     }
-                    None => Err(RuntimeError::Raised(msg)),
+                    None => Err(RuntimeError::Raised(error)),
                 }
             }
             // A non-raised runtime error propagates untouched.
@@ -1924,6 +1997,13 @@ impl VmBackend {
     fn drop_value(&mut self, prog: &Prog, v: Value) -> Result<(), RuntimeError> {
         match v {
             Value::Struct { name, fields, .. } => {
+                if prog
+                    .structs
+                    .get(&name)
+                    .is_some_and(|definition| definition.explicit_destroy)
+                {
+                    return Ok(());
+                }
                 let del = format!("{name}.__del__");
                 if let Some(idx) = prog.index_of(&del) {
                     // `self` is the whole struct; the return value is discarded.
@@ -1971,16 +2051,43 @@ impl VmBackend {
         if let Some(struct_name) = crate::symbol::init_overload_struct(name)
             && prog.structs.contains_key(struct_name)
         {
-            if !kwargs.is_empty() {
-                return Err(RuntimeError::Unsupported(format!(
-                    "vm: keyword arguments to '{struct_name}' are not supported"
-                )));
-            }
-            return self.construct_via_init(prog, struct_name, Some(name), args, param_vals);
+            return self.construct_via_init(
+                prog,
+                struct_name,
+                Some(name),
+                args,
+                kwargs,
+                param_vals,
+            );
         }
         match name {
             "print" => {
-                let cells: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+                let mut cells = Vec::with_capacity(args.len());
+                for value in args {
+                    if let Value::Struct {
+                        name,
+                        fields,
+                        value_params,
+                    } = value
+                    {
+                        let recv = Value::Struct {
+                            name: name.clone(),
+                            fields,
+                            value_params,
+                        };
+                        match self.call_dunder(prog, &name, "__str__", vec![recv])? {
+                            Value::Str(text) => cells.push(text),
+                            other => {
+                                return Err(RuntimeError::TypeError(format!(
+                                    "{name}.__str__ returned {}, expected String",
+                                    crate::runtime::type_name(&other)
+                                )));
+                            }
+                        }
+                    } else {
+                        cells.push(value.to_string());
+                    }
+                }
                 self.output.push_str(&cells.join(" "));
                 self.output.push('\n');
                 Ok(Value::None)
@@ -2045,13 +2152,22 @@ impl VmBackend {
             // takes precedence over the fieldwise constructor: build an uninitialized
             // `self` skeleton, run `__init__`, and return the initialized value.
             _ if prog.structs.contains_key(name) => {
+                let init_name = format!("{name}.__init__");
+                if (!args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy")
+                    && (prog.index_of(&init_name).is_some()
+                        || prog
+                            .index_of(&prog.overload_name(&init_name, args.len()))
+                            .is_some())
+                {
+                    return self.construct_via_init(prog, name, None, args, kwargs, param_vals);
+                }
                 if !kwargs.is_empty() {
                     self.construct_via_copy(prog, name, args, kwargs, param_vals)
                 } else if prog
-                    .index_of(&prog.overload_name(&format!("{name}.__init__"), args.len()))
+                    .index_of(&prog.overload_name(&init_name, args.len()))
                     .is_some()
                 {
-                    self.construct_via_init(prog, name, None, args, param_vals)
+                    self.construct_via_init(prog, name, None, args, Vec::new(), param_vals)
                 } else {
                     construct(&prog.structs[name], name, args, param_vals)
                 }
@@ -2128,7 +2244,7 @@ impl Backend for VmBackend {
 impl VmBackend {
     fn run_prog(&mut self, prog: Prog) -> Result<(), RuntimeError> {
         self.configure_lifecycle(&prog);
-        // Run the top-level block, then `main()`. Capture the top-level frame's
+        // Run module initialization, then `main()`. Capture the top-level frame's
         // user variables (skipping synthetic `$…` temporaries) as the global
         // bindings.
         if let Some(top) = prog.index_of("__toplevel__") {
@@ -2181,6 +2297,7 @@ fn build_structs(declarations: &crate::mir::MirDeclarations) -> HashMap<String, 
                     mut_self_methods: declaration.mut_self_methods.clone(),
                     fieldwise_init: declaration.fieldwise_init,
                     param_decls: declaration.param_decls.clone(),
+                    explicit_destroy: declaration.explicit_destroy_message.is_some(),
                 },
             )
         })
@@ -2396,6 +2513,7 @@ fn const_value(k: &Const) -> Value {
         Const::Float(x) => Value::Float64(*x),
         Const::Bool(b) => Value::Bool(*b),
         Const::Str(s) => Value::Str(s.clone()),
+        Const::Function(name) => Value::Function(name.clone()),
         Const::None => Value::None,
     }
 }

@@ -184,13 +184,15 @@ ellipsis, a 3-dot level (`from ...pkg import X`) is read as one `...` (plus any 
 `.`). **`from module import …` is now resolved** by a link pass (`src/module.rs`): when
 a file path is given (`mojo-lite run FILE`), the module is loaded from a `.mojo` file
 relative to the importing file's directory (`collections` → `collections.mojo`, dotted
-`a.b` → `a/b.mojo`, relative dots climb directories) and its **top-level declarations**
-(`def`/`struct`/`trait`/`comptime`, excluding `main`) are hoisted into the program ahead
-of the code that uses them. Imports are resolved transitively (a module may import
-others), deduplicated by path (cycles are broken). Still parse-only / no-op: a plain
-`import module` (qualified `module.Name` access), `as` aliases on imported names, and a
-module's top-level executable code (only declarations are hoisted). From stdin (no base
-directory) imports stay unresolved.
+`a.b` → `a/b.mojo`, relative dots climb directories). A directory containing
+`__init__.mojo` is a source package, and imports in that initializer re-export names
+from the package. Top-level declarations (`def`/`struct`/`trait`/`comptime`, excluding
+`main`) receive module-qualified internal identities before being flattened. Plain
+qualified imports, module/member aliases, wildcard privacy for underscore names,
+lexically scoped imports, dots-only sibling imports, transitive imports, and collision
+isolation are resolved by the linker. Executable top-level code is invalid rather than
+an import-time side effect. Compiled package artifacts and imports from stdin remain
+unsupported.
 
 ### function_def
 
@@ -206,7 +208,7 @@ param_item:
     | '*' NAME ':' type                    # *args (positional variadic)
     | '**' NAME ':' type                   # **kwargs (keyword variadic)
     | [convention] NAME ':' type ['=' expression]   # regular, optional default
-convention: 'read' | 'mut' | 'owned' | 'out' | 'ref' [origin_spec] | 'deinit'
+convention: 'read' | 'mut' | 'var' | 'out' | 'ref' [origin_spec] | 'deinit'
 origin_spec: '[' ','.expression+ ']'   # an expression, a named origin, origin_of(...), or '_'
 reference_binding: 'ref' NAME '=' expression
 ```
@@ -214,10 +216,16 @@ reference_binding: 'ref' NAME '=' expression
 Every parameter is typed; omitting `-> type` means the function returns `None`. The
 full Mojo parameter grammar is **parsed**. **Default values** (`b: Int = 2`) and a
 trailing **`*args` homogeneous variadic** (`*values: Int`, a `List[T]` in the body)
-are *implemented* for non-generic free `def`s. Homogeneous `**kwargs: T` is also
+are *implemented* for non-generic free `def`s. Generic
+`[*Types: Bound](*values: *Types)` declarations also accept heterogeneous values,
+check each value against `Bound`, and support pack length queries and compile-time
+iteration/indexing for literal or directly constructed call arguments. An indexed
+value has the common pack-bound type; per-index concrete type reflection remains
+deferred. Homogeneous `**kwargs: T` is also
 implemented: unmatched ordered keyword pairs are transported by the call ABI and
 materialized as an owned self-hosted `HashDict[String, T]` local. Generic and method
-`**kwargs` remain deferred. The remaining unsupported form is the `out` convention.
+`**kwargs` remain deferred. A single `out result: T` is a caller-transparent named
+result; multiple named results are unsupported.
 A `convention` word is only a convention when a parameter name follows it, so `read`,
 `mut`, `ref`, etc. remain usable as parameter names (`def f(read: Int)`, `def f(ref:
 Int)`). Ordering is parsed leniently. The **`ref` convention** (parametric-mutability
@@ -335,9 +343,10 @@ least one member; fields and methods may interleave.
   makes `self` writable: the method may do `self.field = e` (and call other `mut self`
   methods), and those mutations are **written back** to the receiver — so `c.increment()`
   persists. A `mut self` method must be called on a mutable place (a variable or a
-  field/index chain), never a temporary. Other argument conventions (`mut`/`out`/`read`/`ref`
-  on ordinary parameters, and `out self` / `owned self` / `ref self` receivers) are still
-  deferred (parsed, flagged by the checker).
+  field/index chain), never a temporary. Ordinary `read`/`mut`/`var`/`ref`
+  parameters execute, and one `out name: Type` parameter denotes a named result
+  that callers receive like an ordinary return value. Receiver conventions
+  include lifecycle `out self` and `deinit self` plus `var`/`ref self`.
 - **Decorators** use a **general grammar** — any dotted name with optional call
   arguments, one or more, stacked before a `def` or `struct` (or a struct method).
   They are parsed into the AST but **only `@fieldwise_init` is acted on**: it generates
@@ -345,10 +354,10 @@ least one member; fields and methods may interleave.
   instance (an ordinary call — see `primary`). A struct without it has no constructor (a
   checker error to construct). Every other decorator is recorded and ignored.
 - **Dunder methods** (`__init__`, `__eq__`, `__add__`, …) are ordinary methods by name and
-  parse as such. **Receiver conventions** `read`/`mut`/`owned`/`out`/`ref self` parse; only
-  `mut self` is modeled (writable, written back). A hand-written `__init__` (`out self`),
-  an `owned self` or `ref self` method, and a `@staticmethod` (no `self`) parse but the
-  checker flags them as unsupported.
+  parse as such. **Receiver conventions** `read`/`mut`/`var`/`out`/`ref self` participate
+  in checking and lowering, including lifecycle `out self` and origin-bearing reference
+  receivers. A `@staticmethod` (no `self`) checks and executes through the ordinary
+  function call ABI. Unsupported receiver combinations are diagnosed by the checker.
 - Type and value **parameters** and trait **conformance** are supported (see
   **Parameterization** and `conformance`), but not inheritance, operator overloading,
   `@value`, or value parameters of non-`Int` type. There is no member **write**
@@ -635,15 +644,15 @@ built-ins only when not shadowed by a binding.
 - `Int(x)` / `UInt(x)` / `Float64(x)` — numeric conversions: one argument of type
   `Int`, `UInt`, `Float64`, or `Bool`, producing the named type. (`Float64`→integer
   truncates toward zero; `Bool` is 0/1.)
-- `print(...)` — writes its arguments (any number of *printable* values — everything
-  except functions, ranges, and opaque type parameters) separated by a space, followed
-  by a newline; returns `None`. Keyword arguments (`sep=` / `end=`) are not supported
-  (mojo-lite has no keyword arguments). Unlike Mojo it does not require `Writable`
-  conformance — any displayable value prints.
+- `print(...)` — writes intrinsic values or user structs that declare `Writable`
+  / `Representable` and implement `__str__(self) -> String`, separated by a space
+  and followed by a newline; returns `None`. Keyword arguments (`sep=` / `end=`)
+  are not supported. This hook is the first-pass formatter boundary; the complete
+  Writer and format-spec APIs remain narrower than Mojo.
 - `Error(msg)` — constructs an `Error` from a `String` (see **try_stmt**).
 - `String(x)` — stringify a numeric, `Bool`, or `String` value → `String` (uses the
-  value's display, so `Bool` is `true`/`false` and `Float64` keeps a decimal point — a
-  mojo-lite display convention). Lets you build messages: `"n = " + String(n)`.
+  value's display, so `Bool` is `True`/`False` and `Float64` keeps a decimal point).
+  Lets you build messages: `"n = " + String(n)`.
 - `abs(x)` — absolute value of a numeric, preserving its type.
 - `min(a, b)` / `max(a, b)` — two numeric arguments unified like an operator (no
   concrete-type mixing), returning their common type.

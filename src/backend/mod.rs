@@ -14,7 +14,9 @@ pub use vm::VmBackend;
 /// A pluggable execution backend. The frontend hands it a program (the checked
 /// AST, lowered to verified MIR) and it executes, capturing output.
 pub trait Backend {
-    /// Run the whole program (top-level statements, then `main()` if present).
+    /// Run a checked program, entering through `main()` when present. Production
+    /// compilation rejects executable module-scope statements; the top-level MIR
+    /// block remains for declarations and explicit legacy snippet tests.
     fn run(&mut self, program: &CheckedProgram) -> Result<(), RuntimeError>;
     /// Captured standard output.
     fn output(&self) -> String;

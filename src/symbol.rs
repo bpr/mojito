@@ -256,6 +256,7 @@ pub fn method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -> Strin
 #[derive(Debug, Default, Clone)]
 pub struct OverloadSets {
     functions: HashMap<String, HashSet<usize>>,
+    all_functions: HashSet<String>,
     methods: HashMap<String, HashSet<usize>>,
     comptimes: HashMap<String, i64>,
 }
@@ -293,6 +294,7 @@ impl OverloadSets {
             }
         }
         OverloadSets {
+            all_functions: functions.keys().cloned().collect(),
             functions: keep_overloaded(functions),
             methods: keep_overloaded(methods),
             comptimes,
@@ -304,6 +306,12 @@ impl OverloadSets {
         self.functions
             .get(name)
             .is_some_and(|arities| arities.contains(&arity))
+    }
+
+    /// Whether `name` denotes any linked free-function declaration. MIR uses
+    /// this to distinguish a function value from a non-local runtime name.
+    pub fn is_function(&self, name: &str) -> bool {
+        self.all_functions.contains(name)
     }
 
     /// Whether method `source_name` (`Type.method`) is overloaded and defines
@@ -387,9 +395,26 @@ fn signature_from_ast(
 pub fn lifecycle_method_name(m: &Method) -> &str {
     if is_mojo_copy_constructor(m) {
         "__copyinit__"
+    } else if is_mojo_move_constructor(m) {
+        "__moveinit__"
     } else {
         &m.name
     }
+}
+
+fn is_mojo_move_constructor(m: &Method) -> bool {
+    m.name == "__init__"
+        && m.has_self
+        && matches!(m.self_convention, Some(ArgConvention::Out))
+        && m.positional_only.is_none()
+        && m.keyword_only == Some(0)
+        && m.params.len() == 1
+        && m.params[0].name == "move"
+        && m.params[0].default.is_none()
+        && m.params[0].kind == ParamKind::Regular
+        && m.params[0].convention.is_none()
+        && matches!(m.params[0].ty, Type::SelfType)
+        && m.ret.is_none()
 }
 
 fn is_mojo_copy_constructor(m: &Method) -> bool {

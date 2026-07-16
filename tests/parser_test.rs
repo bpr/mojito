@@ -181,6 +181,7 @@ fn parses_struct_with_field_and_method() {
                 positional_only: None,
                 keyword_only: None,
                 raises: false,
+                raises_type: None,
                 ret: Some(Type::Int),
                 body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                     ExprKind::Member {
@@ -337,6 +338,7 @@ fn parses_def_signature_and_body() {
             positional_only: None,
             keyword_only: None,
             raises: false,
+            raises_type: None,
             ret: Some(Type::Int),
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                 ExprKind::Infix(InfixOp::Add, ident("a"), ident("b"))
@@ -494,6 +496,7 @@ fn parses_generic_def_with_type_param_signature() {
             positional_only: None,
             keyword_only: None,
             raises: false,
+            raises_type: None,
             ret: Some(Type::Named("T".into(), vec![])),
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                 ExprKind::Identifier("x".into())
@@ -615,13 +618,13 @@ fn parses_placeholder_and_semicolon_function_styles() {
 #[test]
 fn parses_trait_receiver_conventions() {
     let stmts = parse(
-        "trait Receivers:\n    def read_it(self):\n        ...\n    def mutate(mut self):\n        ...\n    def consume(owned self):\n        ...\n    def borrow(ref self):\n        ...\n",
+        "trait Receivers:\n    def read_it(self):\n        ...\n    def mutate(mut self):\n        ...\n    def consume(var self):\n        ...\n    def borrow(ref self):\n        ...\n",
     );
     match &stmts[0].kind {
         StmtKind::Trait { methods, .. } => {
             assert_eq!(methods[0].self_convention, None);
             assert_eq!(methods[1].self_convention, Some(ArgConvention::Mut));
-            assert_eq!(methods[2].self_convention, Some(ArgConvention::Owned));
+            assert_eq!(methods[2].self_convention, Some(ArgConvention::Var));
             assert_eq!(methods[3].self_convention, Some(ArgConvention::Ref));
         }
         other => panic!("expected a trait, got {:?}", other),
@@ -1057,9 +1060,19 @@ fn rejects_with_missing_name_after_as() {
 
 #[test]
 fn parses_raises_effect_on_def() {
-    // `raises` (with a discarded error type) parses; the def records it.
+    // Both the effect and its optional typed error are retained.
     match &parse("def f(x: Int) raises ValidationError -> Int:\n    return x\n")[0].kind {
-        StmtKind::Def { raises, .. } => assert!(*raises),
+        StmtKind::Def {
+            raises,
+            raises_type,
+            ..
+        } => {
+            assert!(*raises);
+            assert_eq!(
+                raises_type,
+                &Some(Type::Named("ValidationError".into(), Vec::new()))
+            );
+        }
         other => panic!("expected a def, got {:?}", other),
     }
     match &parse("def g(x: Int) -> Int:\n    return x\n")[0].kind {
@@ -1458,6 +1471,22 @@ fn parses_variadic_and_kw_variadic() {
 }
 
 #[test]
+fn retains_variadic_type_pack_declarations_and_uses() {
+    let parsed =
+        parse("def count[*ArgTypes: AnyType](*args: *ArgTypes) -> Int:\n    return len(args)\n");
+    let StmtKind::Def {
+        type_params,
+        params,
+        ..
+    } = &parsed[0].kind
+    else {
+        panic!("expected function declaration")
+    };
+    assert_eq!(type_params[0].name, "*ArgTypes");
+    assert_eq!(params[0].ty, Type::Named("*ArgTypes".into(), Vec::new()));
+}
+
+#[test]
 fn parses_positional_only_and_keyword_only_markers() {
     let (p, slash, star) = def_params("def mn(a: Int, b: Int, /) -> Int:\n    return a\n");
     assert_eq!(p.len(), 2);
@@ -1472,9 +1501,9 @@ fn parses_positional_only_and_keyword_only_markers() {
 #[test]
 fn parses_argument_conventions() {
     let (p, _, _) =
-        def_params("def f(mut x: Int, owned y: String, out z: Bool, read w: Int):\n    pass\n");
+        def_params("def f(mut x: Int, var y: String, out z: Bool, read w: Int):\n    pass\n");
     assert_eq!(p[0].convention, Some(ArgConvention::Mut));
-    assert_eq!(p[1].convention, Some(ArgConvention::Owned));
+    assert_eq!(p[1].convention, Some(ArgConvention::Var));
     assert_eq!(p[2].convention, Some(ArgConvention::Out));
     assert_eq!(p[3].convention, Some(ArgConvention::Read));
 }
@@ -1819,7 +1848,8 @@ fn parses_function_type_annotations() {
             params: vec![Type::Int],
             ret: Box::new(Type::Int),
             thin: false,
-            raises: false
+            raises: false,
+            raises_type: None
         }
     );
     // `thin` (non-capturing) after the parameter list, multiple params.
@@ -1830,6 +1860,7 @@ fn parses_function_type_annotations() {
             ret: Box::new(Type::String),
             thin: true,
             raises: false,
+            raises_type: None,
         }
     );
     // No params + `raises` effect.
@@ -1839,7 +1870,8 @@ fn parses_function_type_annotations() {
             params: vec![],
             ret: Box::new(Type::None),
             thin: false,
-            raises: true
+            raises: true,
+            raises_type: None
         }
     );
 }
@@ -1902,9 +1934,11 @@ fn function_type_return_nests() {
                 ret: Box::new(Type::Int),
                 thin: false,
                 raises: false,
+                raises_type: None,
             }),
             thin: false,
             raises: false,
+            raises_type: None,
         }
     );
 }
@@ -1922,7 +1956,8 @@ fn parses_function_typed_parameter() {
             params: vec![Type::Int],
             ret: Box::new(Type::Int),
             thin: true,
-            raises: false
+            raises: false,
+            raises_type: None
         }
     );
 }

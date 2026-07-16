@@ -50,7 +50,7 @@ fn self_hosted_generic_optional() {
         "main.mojo",
         "from std.optional import Optional\n\ndef main():\n    var a: Optional[Int] = Optional[Int](42, True)\n    var b: Optional[Int] = Optional[Int](0, False)\n    print(a.is_some(), a.or_else(-1))\n    print(b.is_some(), b.or_else(-1))\n",
     );
-    assert_eq!(run(&main).unwrap(), "true 42\nfalse -1\n");
+    assert_eq!(run(&main).unwrap(), "True 42\nFalse -1\n");
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn self_hosted_generic_set_deduplicates_contains_iterates() {
         "main.mojo",
         "from std.collections.set import Set\n\ndef main():\n    var s: Set[Int] = Set[Int]()\n    s.add(3)\n    s.add(3)\n    s.add(5)\n    print(len(s))\n    print(3 in s, 4 in s)\n    var total: Int = 0\n    for x in s:\n        total = total + x\n    print(total)\n",
     );
-    assert_eq!(run(&main).unwrap(), "2\ntrue false\n8\n");
+    assert_eq!(run(&main).unwrap(), "2\nTrue False\n8\n");
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn self_hosted_generic_dict_sets_gets_updates_iterates() {
         "main.mojo",
         "from std.collections.dict import Dict\n\ndef main():\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 10\n    d[\"b\"] = 20\n    d[\"a\"] = 15\n    print(len(d))\n    print(\"a\" in d, \"z\" in d)\n    print(d[\"a\"], d.get(\"z\", -1))\n    var total: Int = 0\n    for key in d:\n        total = total + d[key]\n    print(total)\n",
     );
-    assert_eq!(run(&main).unwrap(), "2\ntrue false\n15 -1\n35\n");
+    assert_eq!(run(&main).unwrap(), "2\nTrue False\n15 -1\n35\n");
 }
 
 #[test]
@@ -104,7 +104,17 @@ fn self_hosted_hash_backed_set() {
         "main.mojo",
         "from std.collections.hashset import HashSet\n\ndef main():\n    var s: HashSet[Int] = HashSet[Int]()\n    s.add(3)\n    s.add(3)\n    s.add(11)\n    s.add(19)\n    print(len(s))\n    print(s.contains(11), s.contains(4))\n    var w: HashSet[String] = HashSet[String]()\n    w.add(\"mojo\")\n    w.add(\"lite\")\n    w.add(\"mojo\")\n    print(len(w))\n    print(w.contains(\"lite\"), w.contains(\"rust\"))\n",
     );
-    assert_eq!(run(&main).unwrap(), "3\ntrue false\n2\ntrue false\n");
+    assert_eq!(run(&main).unwrap(), "3\nTrue False\n2\nTrue False\n");
+}
+
+#[test]
+fn incremental_hasher_accumulates_multiple_hash_parts() {
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        "from std.hashing import IncrementalHasher\n\ndef main():\n    var first = IncrementalHasher.create()\n    first.write_hash(UInt(3))\n    first.write_hash(UInt(7))\n    var second = IncrementalHasher.create()\n    second.write_hash(UInt(3))\n    second.write_hash(UInt(8))\n    print(first.finish() == first.finish())\n    print(first.finish() == second.finish())\n",
+    );
+    assert_eq!(run(&main).unwrap(), "True\nFalse\n");
 }
 
 // --- Nested self-hosted lists (roadmap §2: the hash-set bucket-array shape) ---
@@ -189,7 +199,7 @@ fn self_hosted_hashset_copy_and_list_shadowing() {
         "main.mojo",
         "from std.collections.hashset import HashSet\nfrom std.collections.list import List\n\ndef main():\n    var s: HashSet[Int] = HashSet[Int]()\n    s.add(1)\n    var t: HashSet[Int] = s.copy()\n    t.add(9)\n    print(len(s), len(t), s.contains(9), t.contains(9))\n    var xs: List[Int] = List[Int]()\n    xs.append(7)\n    print(xs[0])\n",
     );
-    assert_eq!(run(&main).unwrap(), "1 2 false true\n7\n");
+    assert_eq!(run(&main).unwrap(), "1 2 False True\n7\n");
 }
 
 #[test]
@@ -201,7 +211,7 @@ fn self_hosted_dict_views_get_and_snapshots() {
     );
     assert_eq!(
         run(&main).unwrap(),
-        "2 2 2 3\na b 1 2\na 1\ntrue false\n99\na 1\nb 2\nc 3\n"
+        "2 2 2 3\na b 1 2\na 1\nTrue False\n99\na 1\nb 2\nc 3\n"
     );
 }
 
@@ -218,7 +228,7 @@ fn hash_dict_matches_list_dict_and_preserves_order() {
     let rest: Vec<&str> = lines.collect();
     let divider = rest.iter().position(|line| *line == "---").unwrap();
     assert_eq!(&rest[..divider], &rest[divider + 1..divider * 2 + 1]);
-    assert_eq!(rest.last(), Some(&"false -1"));
+    assert_eq!(rest.last(), Some(&"False -1"));
 }
 
 #[test]
@@ -228,7 +238,7 @@ fn hash_dict_copy_has_value_semantics() {
         "main.mojo",
         "from std.collections.hashdict import HashDict\n\ndef main():\n    var a: HashDict[String, Int] = HashDict[String, Int]()\n    a[\"x\"] = 1\n    var b = a.copy()\n    b[\"x\"] = 9\n    b[\"y\"] = 2\n    print(len(a), a[\"x\"], \"y\" in a)\n    print(len(b), b[\"x\"], \"y\" in b)\n",
     );
-    assert_eq!(run(&main).unwrap(), "1 1 false\n2 9 true\n");
+    assert_eq!(run(&main).unwrap(), "1 1 False\n2 9 True\n");
 }
 
 #[test]

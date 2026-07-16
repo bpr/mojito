@@ -18,6 +18,8 @@ pub enum Value {
     Bool(bool),
     Str(String),
     None,
+    /// A non-capturing function value, represented by its resolved MIR symbol.
+    Function(String),
     /// A half-open integer range `[start, stop)` with the given `step`, produced
     /// by the built-in `range(...)` and consumed by `for`. Not a first-class
     /// value: there is no annotation for it, so it only lives in a `for` header.
@@ -166,9 +168,10 @@ impl fmt::Display for Value {
             Value::UInt(n) => write!(f, "{}", n),
             // `{:?}` keeps the decimal point (e.g. `3.0`), distinguishing from Int.
             Value::Float64(x) => write!(f, "{:?}", x),
-            Value::Bool(b) => write!(f, "{}", b),
+            Value::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
             Value::Str(s) => write!(f, "{}", s),
             Value::None => write!(f, "None"),
+            Value::Function(name) => write!(f, "<function {name}>"),
             Value::Range { start, stop, step } => write!(f, "range({}, {}, {})", start, stop, step),
             Value::Struct {
                 name,
@@ -200,7 +203,16 @@ impl fmt::Display for Value {
                 let strs: Vec<String> = match lanes {
                     SimdLanes::Int(v) => v.iter().map(|n| n.to_string()).collect(),
                     SimdLanes::Float(v) => v.iter().map(|x| format!("{:?}", x)).collect(),
-                    SimdLanes::Bool(v) => v.iter().map(|b| b.to_string()).collect(),
+                    SimdLanes::Bool(v) => v
+                        .iter()
+                        .map(|b| {
+                            if *b {
+                                "True".to_string()
+                            } else {
+                                "False".to_string()
+                            }
+                        })
+                        .collect(),
                 };
                 if strs.len() == 1 {
                     write!(f, "{}", strs[0])
@@ -267,6 +279,7 @@ pub(crate) fn type_name(value: &Value) -> String {
         Value::Bool(_) => "Bool".to_string(),
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),
+        Value::Function(_) => "function".to_string(),
         Value::Range { .. } => "range".to_string(),
         Value::Struct { name, .. } => name.clone(),
         Value::Simd { dtype, lanes } => {

@@ -1,5 +1,5 @@
 # try / except / else / finally with a raising and a non-raising path.
-def risky(fail: Bool) -> Int:
+def risky(fail: Bool) raises -> Int:
     if fail:
         raise "failed"
     return 42

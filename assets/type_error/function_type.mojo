@@ -1,4 +1,7 @@
-# A function-typed parameter — parsed, semantics deferred.
-# expect: function type annotation
-def apply(cb: def(Int) thin -> Int, x: Int) -> Int:
-    return cb(x)
+# A callable value must have exactly the annotated parameter and result types.
+# expect: variable 'callback'
+def wrong(value: String) -> Int:
+    return 0
+
+def main():
+    var callback: def(Int) -> Int = wrong

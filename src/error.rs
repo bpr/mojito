@@ -75,6 +75,17 @@ impl ParseError {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeError {
     UndefinedVariable(String),
+    /// An executable statement appeared at module scope. Mojo modules contain
+    /// declarations and compile-time constants; runtime work belongs in a
+    /// function such as `main`.
+    InvalidModuleScope(String),
+    /// A raising operation appeared outside a `raises` function or protected
+    /// `try` body.
+    UnhandledRaise(String),
+    RaiseTypeMismatch {
+        expected: String,
+        found: String,
+    },
     /// A non-`Copyable` value is used where it would be copied (bound to a new
     /// variable, passed by value, returned, …). Mojo move-only semantics: transfer
     /// it with `^`, or make the type `Copyable`. `ty` is the type; `context` is the
@@ -88,6 +99,11 @@ pub enum TypeError {
     /// mutable-XOR-shared. E.g. `f(mut a, mut a)` or `f(mut a, a)`.
     AliasingViolation {
         var: String,
+    },
+    ExplicitDestroy {
+        var: String,
+        message: String,
+        problem: String,
     },
     /// A name used in call position is not function-typed.
     NotCallable {
@@ -284,7 +300,7 @@ pub enum RuntimeError {
     ClosureEscape,
     /// An error raised by `raise` that was not caught by any `try`/`except`. It
     /// propagates through VM execution and is reported if it reaches the top.
-    Raised(String),
+    Raised(crate::runtime::Value),
     /// A valid-Mojo construct that reaches a compiler/backend boundary whose
     /// semantics Mojito does not implement. Carries a feature description.
     Unsupported(String),
@@ -341,6 +357,18 @@ impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TypeError::UndefinedVariable(name) => write!(f, "Undefined variable '{}'", name),
+            TypeError::InvalidModuleScope(statement) => write!(
+                f,
+                "{statement} is not allowed at file scope; move executable code into a function body"
+            ),
+            TypeError::UnhandledRaise(operation) => write!(
+                f,
+                "{operation} requires a surrounding 'try' block or enclosing function to declare 'raises'"
+            ),
+            TypeError::RaiseTypeMismatch { expected, found } => write!(
+                f,
+                "raising operation produces '{found}', but this context propagates '{expected}'"
+            ),
             TypeError::NonCopyable { ty, context } => write!(
                 f,
                 "cannot copy non-Copyable type '{ty}' ({context}); transfer it with '^' \
@@ -350,6 +378,14 @@ impl fmt::Display for TypeError {
                 f,
                 "'{var}' is borrowed mutably and also used at the same call \
                  (a mutable borrow must be exclusive)"
+            ),
+            TypeError::ExplicitDestroy {
+                var,
+                message,
+                problem,
+            } => write!(
+                f,
+                "explicit-destroy obligation for '{var}' {problem}: {message}"
             ),
             TypeError::NotCallable { name, ty } => {
                 write!(f, "'{}' has type {} and is not callable", name, ty)
@@ -592,7 +628,7 @@ impl fmt::Display for RuntimeError {
                     "closures cannot escape their defining scope (downward funargs only)"
                 )
             }
-            RuntimeError::Raised(msg) => write!(f, "unhandled error: {}", msg),
+            RuntimeError::Raised(value) => write!(f, "unhandled error: {}", value),
             RuntimeError::Unsupported(what) => write!(f, "unsupported feature: {}", what),
         }
     }

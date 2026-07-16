@@ -307,9 +307,12 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) owned_parameters: Vec<bool>,
     pub(super) reference_parameters: Vec<bool>,
     pub(super) returns_reference: bool,
+    pub(super) named_result: Option<&'a str>,
     pub(super) body: &'a [Stmt],
     pub(super) overloads: &'a crate::symbol::OverloadSets,
     pub(super) overload_targets: &'a HashMap<SourceSpan, String>,
+    pub(super) implicit_conversions: &'a HashMap<SourceSpan, String>,
+    pub(super) explicit_destroy_calls: &'a HashSet<SourceSpan>,
 }
 
 pub(super) fn lower_fn_nested(request: FunctionLowering<'_>, out: &mut Vec<(String, MirFunction)>) {
@@ -320,9 +323,12 @@ pub(super) fn lower_fn_nested(request: FunctionLowering<'_>, out: &mut Vec<(Stri
         owned_parameters: owned_params,
         reference_parameters: ref_params,
         returns_reference,
+        named_result,
         body,
         overloads,
         overload_targets,
+        implicit_conversions,
+        explicit_destroy_calls,
     } = request;
     let mut f_bound: HashSet<String> = param_names.iter().cloned().collect();
     binds(body, &mut f_bound);
@@ -372,12 +378,34 @@ pub(super) fn lower_fn_nested(request: FunctionLowering<'_>, out: &mut Vec<(Stri
         &registry,
         overloads,
         overload_targets,
+        implicit_conversions,
+        explicit_destroy_calls,
         returns_reference,
     );
+    f.n_params = param_annotations.len();
     f.param_annotations = param_annotations;
     f.owned_params = owned_params;
     f.ref_params = ref_params;
     f.returns_reference = returns_reference;
+    if let Some(result) = named_result {
+        let slot = f
+            .var_names
+            .iter()
+            .position(|name| name == result)
+            .expect("named result was seeded into the function variables");
+        for block in &mut f.blocks {
+            if matches!(block.term, MirTerm::Return(None) | MirTerm::FallOff) {
+                let reg = Reg(f.n_regs);
+                f.n_regs += 1;
+                block.instrs.push(MirInstr::UseVar {
+                    dest: reg,
+                    var: slot as VarId,
+                    mode: UseMode::Copy,
+                });
+                block.term = MirTerm::Return(Some(reg));
+            }
+        }
+    }
     out.push((name.to_string(), f));
 
     let cap_ty = SourceType::Named("$capture".to_string(), Vec::new());
@@ -411,7 +439,15 @@ pub(super) fn lower_fn_nested(request: FunctionLowering<'_>, out: &mut Vec<(Stri
                 .cloned()
                 .collect();
             let ncfg = Cfg::build_fn_with_captures(&names, immutable_captures, dbody);
-            let mut nf = lower_cfg_nested(&ncfg, &registry, overloads, overload_targets, false);
+            let mut nf = lower_cfg_nested(
+                &ncfg,
+                &registry,
+                overloads,
+                overload_targets,
+                implicit_conversions,
+                explicit_destroy_calls,
+                false,
+            );
             nf.param_annotations = ptys;
             nf.owned_params = owned2;
             nf.ref_params = refp2;

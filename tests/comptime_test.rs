@@ -69,7 +69,7 @@ fn comptime_for_iterates_a_heterogeneous_tuple() {
     // heterogeneous), which a runtime `for` can't provide — but `comptime for`
     // substitutes `i` with a literal, so each `t[i]` type-checks.
     let src = "def main():\n    var t: Tuple[Int, String, Bool] = (42, \"hi\", True)\n    comptime for i in range(3):\n        print(t[i])\n";
-    assert_eq!(run(src).unwrap(), "42\nhi\ntrue\n");
+    assert_eq!(run(src).unwrap(), "42\nhi\nTrue\n");
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn comptime_for_enables_compile_time_tuple_indexing() {
     // Substituting the loop var with a literal makes `t[i]` a compile-time-constant
     // index — so a heterogeneous tuple can be walked (a runtime `for` can't).
     let src = "def main():\n    var t: Tuple[Int, String, Bool] = (1, \"two\", True)\n    comptime for i in range(3):\n        print(t[i])\n";
-    assert_eq!(run(src).unwrap(), "1\ntwo\ntrue\n");
+    assert_eq!(run(src).unwrap(), "1\ntwo\nTrue\n");
 }
 
 #[test]
@@ -176,6 +176,12 @@ fn generic_comptime_specialization_recurses_and_unrolls() {
     // against the value parameter. sumto[4] = 4+3+2+1+0 = 10; repeat[5] = 0..4 = 10.
     let src = "def sumto[n: Int]() -> Int:\n    comptime if n == 0:\n        return 0\n    else:\n        return n + sumto[n - 1]()\n\ndef repeat[k: Int]() -> Int:\n    var total: Int = 0\n    comptime for i in range(k):\n        total = total + i\n    return total\n\ndef main():\n    print(sumto[4]())\n    print(repeat[5]())\n";
     assert_eq!(run(src).unwrap(), "10\n10\n");
+}
+
+#[test]
+fn heterogeneous_pack_length_drives_comptime_iteration() {
+    let src = "def sum_values[*ArgTypes: Intable](*args: *ArgTypes) -> Int:\n    var total: Int = 0\n    comptime for i in range(args.__len__()):\n        total = total + Int(args[i])\n    return total\n\ndef main():\n    print(sum_values(1, True, 2.0))\n";
+    assert_eq!(run(src).unwrap(), "4\n");
 }
 
 #[test]

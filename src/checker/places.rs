@@ -39,12 +39,13 @@ pub(super) fn is_place_expr(e: &Expr) -> bool {
 pub(super) fn check_call_aliasing(
     slots: &[ArgSlot],
     conventions: &[Option<ArgConvention>],
+    copied_reads: &[bool],
     args: &[Expr],
     kwargs: &[crate::ast::KwArg],
 ) -> Result<(), TypeError> {
     // Each place argument's access: its full place (root + projection path) and
     // whether it is *exclusive* (a `mut`/`ref` borrow, or a `^` move).
-    let mut accesses: Vec<(&str, Vec<PlaceSeg>, bool)> = Vec::new();
+    let mut accesses: Vec<(&str, Vec<PlaceSeg>, bool, bool)> = Vec::new();
     for (i, slot) in slots.iter().enumerate() {
         let arg = match slot {
             ArgSlot::Positional(p) => &args[*p],
@@ -62,7 +63,12 @@ pub(super) fn check_call_aliasing(
             ),
         };
         if let Some((root, path)) = place {
-            accesses.push((root, path, exclusive));
+            accesses.push((
+                root,
+                path,
+                exclusive,
+                copied_reads.get(i).copied().unwrap_or(false),
+            ));
         }
     }
     // Mutable-XOR-shared, **place-sensitive**: two accesses to the *same variable*
@@ -71,9 +77,10 @@ pub(super) fn check_call_aliasing(
     // `f(mut p.a, p.a)` and `f(mut p, p.a)` are rejected.
     for i in 0..accesses.len() {
         for j in (i + 1)..accesses.len() {
-            let (ra, pa, ea) = &accesses[i];
-            let (rb, pb, eb) = &accesses[j];
-            if ra == rb && (*ea || *eb) && places_overlap(pa, pb) {
+            let (ra, pa, ea, ca) = &accesses[i];
+            let (rb, pb, eb, cb) = &accesses[j];
+            let live_alias_conflict = (*ea && !*cb) || (*eb && !*ca);
+            if ra == rb && live_alias_conflict && places_overlap(pa, pb) {
                 return Err(TypeError::AliasingViolation {
                     var: ra.to_string(),
                 });

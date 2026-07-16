@@ -1,0 +1,57 @@
+# Differential cases shared by Mojo and Mojito.
+# mode: run (both execute with matching stdout), reject (both reject),
+# mojo-only (strict-subset gap), mojito-only (acceptance divergence), or
+# output-diff (both execute with intentionally different stdout).
+id	mode	fixture
+hello-world	run	assets/ok/hello_world.mojo
+legacy-fn	reject	conformance/fixtures/legacy_fn.mojo
+integer-arithmetic	run	conformance/fixtures/integer_arithmetic.mojo
+literal-families	run	conformance/fixtures/literal_families.mojo
+boolean-formatting	run	conformance/fixtures/boolean_formatting.mojo
+line-continuation	run	assets/ok/line_continuation.mojo
+default-arguments	run	assets/ok/default_args.mojo
+named-result	run	conformance/fixtures/named_result.mojo
+keyword-arguments	run	assets/ok/keyword_call.mojo
+positional-and-keyword-only	run	assets/ok/positional_only.mojo
+homogeneous-variadics	run	assets/ok/variadic_args.mojo
+heterogeneous-variadics	run	conformance/fixtures/heterogeneous_variadics.mojo
+complete-call-model	run	conformance/fixtures/complete_call_model.mojo
+chained-comparisons	run	conformance/fixtures/chained_comparisons.mojo
+conditional-expressions	run	assets/ok/ternary.mojo
+while-loop	run	assets/ok/while.mojo
+control-break-continue	run	conformance/fixtures/control_break_continue.mojo
+tuple-values	run	conformance/fixtures/tuple_values.mojo
+list-values	run	conformance/fixtures/list_values.mojo
+struct-methods	run	conformance/fixtures/struct_methods.mojo
+lifecycle-initialization	run	assets/ok/init_out_self.mojo
+unified-lifecycle	run	conformance/fixtures/unified_lifecycle.mojo
+current-var-convention	run	conformance/fixtures/current_var_convention.mojo
+legacy-owned-convention	reject	conformance/fixtures/legacy_owned_convention.mojo
+static-methods	run	assets/ok/static_methods.mojo
+overload-by-type	mojo-only	conformance/fixtures/overload_by_type.mojo
+overload-ordering	run	conformance/fixtures/overload_ordering.mojo
+compile-time-if	run	conformance/fixtures/comptime_if.mojo
+compile-time-parameters	run	conformance/fixtures/comptime_parameters.mojo
+owned-return-and-bindings	run	conformance/fixtures/owned_return_and_bindings.mojo
+lexical-shadowing	run	conformance/fixtures/lexical_shadowing.mojo
+raise-and-handle	run	conformance/fixtures/raise_and_handle.mojo
+typed-errors	run	conformance/fixtures/typed_errors.mojo
+struct-copy-semantics	run	conformance/fixtures/struct_copy_semantics.mojo
+move-transfer	run	conformance/fixtures/move_transfer.mojo
+reference-return	run	conformance/fixtures/reference_return.mojo
+compile-time-constant	run	conformance/fixtures/comptime_constant.mojo
+trait-requirement	run	conformance/fixtures/trait_requirement.mojo
+wrong-return-type	reject	assets/type_error/wrong_return.mojo
+positional-only-by-keyword	reject	assets/type_error/positional_only_by_keyword.mojo
+keyword-only-by-position	reject	assets/type_error/keyword_only_by_position.mojo
+immutable-mutation	reject	assets/type_error/immutable_mutation.mojo
+borrow-aliasing	run	conformance/fixtures/mutable_read_copy.mojo
+use-after-move	reject	conformance/fixtures/use_after_move.mojo
+file-scope-execution	reject	conformance/fixtures/file_scope_execution.mojo
+raises-effect-unchecked	mojito-only	conformance/fixtures/raises_effect_unchecked.mojo
+print-without-writable	reject	conformance/fixtures/print_without_writable.mojo
+implicit-function-scope	mojo-only	conformance/fixtures/implicit_function_scope.mojo
+loop-else	mojo-only	conformance/fixtures/loop_else.mojo
+implicit-conversion	run	conformance/fixtures/implicit_conversion.mojo
+explicit-destroy	run	conformance/fixtures/explicit_destroy.mojo
+raising-explicit-destroy	run	conformance/fixtures/raising_explicit_destroy.mojo

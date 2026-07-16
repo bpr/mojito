@@ -91,6 +91,7 @@ expressions.
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
 | `call` | `Call` | Call a free function, constructor, or builtin |
+| `call.indirect` | `CallIndirect` | Invoke a non-capturing function value |
 | `call.method` | `MethodCall` | Invoke a method on a receiver |
 
 ### Places and aggregate access
@@ -137,6 +138,7 @@ expressions.
 | `ref.read` | `ReadRef` | Read through a runtime reference handle |
 | `ref.write` | `WriteRef` | Write through a runtime reference handle |
 | `drop.var` | `DropVar` | Destroy the value in a variable slot |
+| `consume.var` | `ConsumeVar` | Consume an explicitly destroyed aggregate after its named destructor succeeds; then destroy its fields in reverse order |
 | `drop.reg` | `Drop` | Reserved register-drop operation |
 
 ### Terminators
@@ -308,6 +310,16 @@ reified as function locals or struct metadata.
 Calls may dispatch to builtins, user functions, fieldwise constructors,
 hand-written `__init__`, or copy constructors. Argument binding handles required,
 default, positional-only, keyword-only, and variadic parameters where supported.
+
+### `call.indirect` — Callable Value
+
+```text
+call.indirect %dest, %callee(%r0, %r1)
+```
+
+Invokes the non-capturing function value in `%callee`. The value carries a
+resolved MIR function symbol; arguments use the target's normal signature and
+execution pushes the same explicit frame as a direct user-function call.
 
 ### `call.method` — Method Call
 
@@ -686,7 +698,7 @@ The complete current inventory is:
 
 ```text
 const.i64       const.f64       const.bool      const.str
-const.none
+const.function  const.none
 
 var.copy        var.move        var.borrow      var.borrow_mut
 var.store
@@ -698,7 +710,7 @@ eq              ne              lt              gt
 le              ge              and             or
 in              not_in
 
-call            call.method
+call            call.indirect   call.method
 
 field.get       index.get       slice.get
 place.load      place.store     place.move

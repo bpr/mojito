@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+manifest="$root/conformance/parity.tsv"
+cases="$root/conformance/cases.tsv"
+manual_sections="$root/conformance/manual-sections.tsv"
+
+awk -F '\t' '
+BEGIN { ok = 1; rows = 0 }
+/^#/ || NF == 0 { next }
+$1 == "id" {
+    if ($0 != "id\tarea\tstatus\tscope\trelation\tmojo_behavior\tmojito_behavior\tevidence\tnotes") {
+        print "invalid parity manifest header" > "/dev/stderr"; ok = 0
+    }
+    next
+}
+{
+    rows++
+    if (NF != 9) { print "parity row " NR " has " NF " fields, expected 9" > "/dev/stderr"; ok = 0 }
+    if (seen[$1]++) { print "duplicate parity id: " $1 > "/dev/stderr"; ok = 0 }
+    if ($3 !~ /^(implemented|partial|excluded|stretch)$/) { print "invalid status for " $1 ": " $3 > "/dev/stderr"; ok = 0 }
+    if ($4 !~ /^(first-pass|excluded|post-native)$/) { print "invalid scope for " $1 ": " $4 > "/dev/stderr"; ok = 0 }
+    if ($5 !~ /^(match|subset|divergence|representation|excluded|stretch)$/) { print "invalid relation for " $1 ": " $5 > "/dev/stderr"; ok = 0 }
+    if ($6 == "" || $7 == "" || $8 == "") { print "missing behavior or evidence for " $1 > "/dev/stderr"; ok = 0 }
+    if ($5 == "divergence" && $8 !~ /(^|;)case:/) { print "divergence lacks differential case: " $1 > "/dev/stderr"; ok = 0 }
+    if ($3 == "implemented" && $5 !~ /^(match|representation)$/) { print "implemented row has non-parity relation: " $1 > "/dev/stderr"; ok = 0 }
+    if ($3 == "implemented" && $4 == "first-pass" && $5 == "match" && $8 !~ /(^|;)case:/) {
+        print "implemented first-pass match lacks differential case: " $1 > "/dev/stderr"; ok = 0
+    }
+    if ($3 == "excluded" && ($4 != "excluded" || $5 != "excluded")) { print "inconsistent excluded row: " $1 > "/dev/stderr"; ok = 0 }
+    if ($3 == "stretch" && $5 != "stretch") { print "inconsistent stretch row: " $1 > "/dev/stderr"; ok = 0 }
+}
+END {
+    if (rows == 0) { print "parity manifest has no rows" > "/dev/stderr"; ok = 0 }
+    exit(ok ? 0 : 1)
+}
+' "$manifest"
+
+case_ids="$(awk -F '\t' '!/^#/ && $1 != "id" && NF { print $1 }' "$cases")"
+manual_ids="$(awk -F '\t' '!/^#/ && $1 != "id" && NF { print $1 }' "$manual_sections")"
+
+while IFS=$'\t' read -r id _area _status _scope _relation _mojo _mojito evidence _notes; do
+    [[ -z "$id" || "$id" == \#* || "$id" == "id" ]] && continue
+    IFS=';' read -ra refs <<<"$evidence"
+    for ref in "${refs[@]}"; do
+        case "$ref" in
+            case:*)
+                case_id="${ref#case:}"
+                if ! grep -Fxq "$case_id" <<<"$case_ids"; then
+                    echo "parity row $id references missing case: $case_id" >&2
+                    exit 1
+                fi
+                ;;
+            test:*|docs:*)
+                path="${ref#*:}"
+                path="${path%%::*}"
+                path="${path%%#*}"
+                if [[ ! -e "$root/$path" ]]; then
+                    echo "parity row $id references missing file: $path" >&2
+                    exit 1
+                fi
+                ;;
+            manual:*)
+                manual_id="${ref#manual:}"
+                if ! grep -Fxq "$manual_id" <<<"$manual_ids"; then
+                    echo "parity row $id references missing manual section: $manual_id" >&2
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "parity row $id has invalid evidence reference: $ref" >&2
+                exit 1
+                ;;
+        esac
+    done
+done <"$manifest"
+
+while IFS=$'\t' read -r manual_id scope url; do
+    [[ -z "$manual_id" || "$manual_id" == \#* || "$manual_id" == "id" ]] && continue
+    if [[ "$scope" != "first-pass" && "$scope" != "excluded" ]]; then
+        echo "manual section $manual_id has invalid scope: $scope" >&2
+        exit 1
+    fi
+    if [[ "$url" != https://mojolang.org/* ]]; then
+        echo "manual section $manual_id has non-official URL: $url" >&2
+        exit 1
+    fi
+    if ! grep -Fq "manual:$manual_id" "$manifest"; then
+        echo "manual section is not covered by parity manifest: $manual_id" >&2
+        exit 1
+    fi
+done <"$manual_sections"
+
+awk -F '\t' '
+BEGIN { ok = 1; rows = 0 }
+/^#/ || NF == 0 { next }
+$1 == "id" { if ($0 != "id\tmode\tfixture") { print "invalid conformance case header" > "/dev/stderr"; ok = 0 }; next }
+{
+    rows++
+    if (NF != 3) { print "conformance case row " NR " has " NF " fields, expected 3" > "/dev/stderr"; ok = 0 }
+    if (seen[$1]++) { print "duplicate conformance case id: " $1 > "/dev/stderr"; ok = 0 }
+    if ($2 !~ /^(run|reject|mojo-only|mojito-only|output-diff)$/) { print "invalid conformance mode for " $1 ": " $2 > "/dev/stderr"; ok = 0 }
+}
+END { if (rows == 0) ok = 0; exit(ok ? 0 : 1) }
+' "$cases"
+
+while IFS=$'\t' read -r id _mode fixture; do
+    [[ -z "$id" || "$id" == \#* || "$id" == "id" ]] && continue
+    if [[ ! -f "$root/$fixture" ]]; then
+        echo "conformance case $id references missing fixture: $fixture" >&2
+        exit 1
+    fi
+done <"$cases"
+
+echo "parity manifest: ok"

@@ -121,11 +121,11 @@ fn boolean_short_circuit_skips_rhs() {
     // NOT evaluated when the left settles the result.
     // `loud()` prints; its absence from the output proves the skip.
     let src = "def loud() -> Bool:\n    print(\"called\")\n    return True\n\ndef main():\n    var a: Bool = False and loud()\n    print(a)\n    var b: Bool = True or loud()\n    print(b)\n    if False and loud():\n        print(\"nope\")\n    print(\"done\")\n";
-    assert_eq!(parity(src), "false\ntrue\ndone\n");
+    assert_eq!(parity(src), "False\nTrue\ndone\n");
 
     // When the left operand does NOT settle it, the right IS evaluated.
     let src2 = "def loud() -> Bool:\n    print(\"called\")\n    return True\n\ndef main():\n    var a: Bool = True and loud()\n    print(a)\n";
-    assert_eq!(parity(src2), "called\ntrue\n");
+    assert_eq!(parity(src2), "called\nTrue\n");
 
     // Nested short-circuits compose.
     parity("print(True or (False and False))\nprint((1 < 2) and (2 < 3) and (3 < 4))\n");
@@ -262,7 +262,7 @@ fn lists_tuples_and_indexing() {
     // List literal + index + mutation + membership; tuple return + const index.
     assert_eq!(
         parity("var xs = [1, 2, 3]\nxs.append(4)\nprint(xs[0])\nprint(len(xs))\nprint(3 in xs)\n"),
-        "1\n4\ntrue\n"
+        "1\n4\nTrue\n"
     );
     let tup = "def pair() -> Tuple[Int, Int]:\n    return (7, 9)\n\ndef main():\n    var t = pair()\n    print(t[0])\n    print(t[1])\n";
     assert_eq!(parity(tup), "7\n9\n");
@@ -278,6 +278,16 @@ fn argument_matching_default_keyword_variadic() {
     );
     let variadic = "def total(*xs: Int) -> Int:\n    var s: Int = 0\n    for x in xs:\n        s = s + x\n    return s\n\ndef main():\n    print(total())\n    print(total(1, 2, 3))\n";
     assert_eq!(parity(variadic), "0\n6\n");
+}
+
+#[test]
+fn user_static_methods_use_the_shared_call_abi() {
+    assert_eq!(
+        parity(
+            "struct S:\n    @staticmethod\n    def add(a: Int, b: Int = 2) -> Int:\n        return a + b\n\ndef main():\n    print(S.add(3), S.add(b=4, a=3))\n"
+        ),
+        "5 7\n"
+    );
 }
 
 #[test]
@@ -417,7 +427,7 @@ fn dunder_operator_and_builtin_dispatch() {
     // Operators + `len`/`String`/subscript/`in` on a user struct dispatch to its
     // dunder methods (operator overloading), running on the VM.
     let src = "@fieldwise_init\nstruct Vec2:\n    var x: Int\n    var y: Int\n    def __add__(self, o: Vec2) -> Vec2:\n        return Vec2(self.x + o.x, self.y + o.y)\n    def __eq__(self, o: Vec2) -> Bool:\n        return self.x == o.x and self.y == o.y\n    def __str__(self) -> String:\n        return \"V(\" + String(self.x) + \",\" + String(self.y) + \")\"\n    def __len__(self) -> Int:\n        return 2\n    def __getitem__(self, i: Int) -> Int:\n        if i == 0:\n            return self.x\n        return self.y\n    def __contains__(self, v: Int) -> Bool:\n        return self.x == v or self.y == v\n\ndef main():\n    var a: Vec2 = Vec2(1, 2)\n    print(String(a + Vec2(3, 4)))\n    print(a == Vec2(1, 2))\n    print(len(a), a[0], a[1])\n    print(2 in a, 9 not in a)\n";
-    assert_eq!(parity(src), "V(4,6)\ntrue\n2 1 2\ntrue true\n");
+    assert_eq!(parity(src), "V(4,6)\nTrue\n2 1 2\nTrue True\n");
 }
 
 #[test]
@@ -473,7 +483,7 @@ fn copyinit_gives_value_semantics() {
     // A pointer-owning struct with `__copyinit__` deep-copies on `var b = a` and on
     // pass-by-value, so writes through one don't affect the other. `__moveinit__`
     // relocates on `^`.
-    let src = "struct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = UnsafePointer[Int].alloc(n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = UnsafePointer[Int].alloc(e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, owned e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    var b: Buf = a\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
+    let src = "struct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = UnsafePointer[Int].alloc(n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = UnsafePointer[Int].alloc(e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    var b: Buf = a\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
     assert_eq!(parity(src), "5 9\n9\n");
 }
 
@@ -486,10 +496,10 @@ fn mojo_copy_constructor_gives_value_semantics() {
 #[test]
 fn ternary_and_chained_comparison_run() {
     // Ternary picks a branch; chained comparison evaluates each operand once and
-    // short-circuits (a middle false → the rest is not evaluated).
+    // short-circuits (a middle False → the rest is not evaluated).
     let src = "def loud(n: Int) -> Int:\n    print(\"e\", n)\n    return n\n\ndef main():\n    var x: Int = 5\n    var m: Int = 10 if x > 0 else 20\n    print(m)\n    print(0 <= x < 10)\n    print(0 <= x < 3)\n    print(1 < 0 < loud(99))\n";
-    // loud(99) must NOT run (1 < 0 is false), so no "e 99" line.
-    assert_eq!(parity(src), "10\ntrue\nfalse\nfalse\n");
+    // loud(99) must NOT run (1 < 0 is False), so no "e 99" line.
+    assert_eq!(parity(src), "10\nTrue\nFalse\nFalse\n");
 }
 
 #[test]

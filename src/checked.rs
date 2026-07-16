@@ -5,6 +5,7 @@ use crate::ast::{SourceType, Stmt};
 use crate::token::{SourceSpan, Span};
 use crate::types::Ty;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// A successfully checked program plus semantic facts that downstream phases
 /// previously recomputed from AST syntax or checker-private side tables.
@@ -12,7 +13,16 @@ use std::collections::HashMap;
 pub struct CheckedProgram {
     statements: Vec<Stmt>,
     overload_targets: HashMap<SourceSpan, String>,
+    implicit_conversions: HashMap<SourceSpan, String>,
     checked_types: HashMap<AnnotationSite, Ty>,
+    explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+    explicit_destroy_calls: HashSet<SourceSpan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExplicitDestroyInfo {
+    pub message: String,
+    pub destructors: HashMap<String, bool>,
 }
 
 /// The declaration-owned location of a source annotation. Unlike `SourceType`
@@ -71,12 +81,18 @@ impl CheckedProgram {
     pub(crate) fn new(
         statements: Vec<Stmt>,
         overload_targets: HashMap<SourceSpan, String>,
+        implicit_conversions: HashMap<SourceSpan, String>,
         checked_types: HashMap<AnnotationSite, Ty>,
+        explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+        explicit_destroy_calls: HashSet<SourceSpan>,
     ) -> Self {
         Self {
             statements,
             overload_targets,
+            implicit_conversions,
             checked_types,
+            explicit_destroy_types,
+            explicit_destroy_calls,
         }
     }
 
@@ -90,8 +106,22 @@ impl CheckedProgram {
         &self.overload_targets
     }
 
+    /// Checker-selected converting constructor for an expression used in a
+    /// context that permits a user-defined implicit conversion.
+    pub fn implicit_conversions(&self) -> &HashMap<SourceSpan, String> {
+        &self.implicit_conversions
+    }
+
     pub(crate) fn checked_type_at(&self, site: &AnnotationSite) -> Option<&Ty> {
         self.checked_types.get(site)
+    }
+
+    pub(crate) fn explicit_destroy_types(&self) -> &HashMap<String, ExplicitDestroyInfo> {
+        &self.explicit_destroy_types
+    }
+
+    pub(crate) fn explicit_destroy_calls(&self) -> &HashSet<SourceSpan> {
+        &self.explicit_destroy_calls
     }
 
     /// Module identity attached to a declaration or expression location.
@@ -105,7 +135,14 @@ impl CheckedProgram {
     pub(crate) fn prevalidated_ctfe(statements: &[Stmt]) -> Self {
         let mut checked_types = HashMap::new();
         collect_source_type_approximations(statements, &mut checked_types);
-        Self::new(statements.to_vec(), HashMap::new(), checked_types)
+        Self::new(
+            statements.to_vec(),
+            HashMap::new(),
+            HashMap::new(),
+            checked_types,
+            HashMap::new(),
+            HashSet::new(),
+        )
     }
 }
 

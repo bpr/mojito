@@ -33,6 +33,21 @@ fn accepts_functions_and_calls() {
 }
 
 #[test]
+fn accepts_a_named_out_result_as_the_function_return() {
+    ok(
+        "def doubled(value: Int, out result: Int):\n    result = value * 2\n\ndef main():\n    var answer: Int = doubled(21)\n",
+    );
+}
+
+#[test]
+fn rejects_an_uninitialized_named_out_result() {
+    assert_eq!(
+        err("def missing(out result: Int):\n    pass\n"),
+        TypeError::MissingReturn("missing".into())
+    );
+}
+
+#[test]
 fn accepts_recursion() {
     ok("def f(n: Int) -> Int:\n    return f(n)\n\nvar x: Int = f(0)\n");
 }
@@ -613,7 +628,7 @@ fn accepts_trait_receiver_convention_requirements() {
         "trait Bumpable:\n    def bump(mut self):\n        ...\n\n@fieldwise_init\nstruct Counter(Bumpable):\n    var n: Int\n\n    def bump(mut self):\n        self.n = self.n + 1\n\ndef inc[T: Bumpable](mut x: T):\n    x.bump()\n",
     );
     ok(
-        "trait Consumable:\n    def consume(owned self):\n        ...\n\n@fieldwise_init\nstruct Box(Consumable):\n    var n: Int\n\n    def consume(owned self):\n        pass\n",
+        "trait Consumable:\n    def consume(var self):\n        ...\n\n@fieldwise_init\nstruct Box(Consumable):\n    var n: Int\n\n    def consume(var self):\n        pass\n",
     );
 }
 
@@ -1045,20 +1060,67 @@ fn accepts_raise_and_try_except() {
 
 #[test]
 fn accepts_string_shorthand_raise() {
-    ok("raise \"oops\"\n");
+    ok("def boom() raises:\n    raise \"oops\"\n");
 }
 
 #[test]
 fn accepts_try_else_finally_and_bound_error() {
     // `except e:` binds `e: Error`, usable (e.g. re-raised).
-    ok("try:\n    raise \"x\"\nexcept e:\n    raise e^\nelse:\n    pass\nfinally:\n    pass\n");
+    ok(
+        "def reraiser() raises:\n    try:\n        raise \"x\"\n    except e:\n        raise e^\n    else:\n        pass\n    finally:\n        pass\n",
+    );
 }
 
 #[test]
-fn accepts_raises_effect_but_does_not_enforce_it() {
-    // A `raises` function that raises, called without a surrounding try — the
-    // effect is deliberately not analyzed.
-    ok("def boom() raises -> Int:\n    raise \"deep\"\n    return 0\n\nvar y: Int = boom()\n");
+fn enforces_raises_effect_at_call_sites() {
+    let source = "def boom() raises -> Int:\n    raise \"deep\"\n    return 0\n\ndef caller() -> Int:\n    return boom()\n";
+    assert!(matches!(err(source), TypeError::UnhandledRaise(_)));
+    ok(
+        "def boom() raises -> Int:\n    raise \"deep\"\n    return 0\n\ndef caller() raises -> Int:\n    return boom()\n",
+    );
+}
+
+#[test]
+fn enforces_raises_effect_at_instance_and_static_method_calls() {
+    let declarations = "@fieldwise_init\nstruct Bomb:\n    var code: Int\n    def explode(self) raises -> Int:\n        raise \"boom\"\n    @staticmethod\n    def static_explode() raises -> Int:\n        raise \"boom\"\n";
+    assert!(matches!(
+        err(&format!(
+            "{declarations}\ndef caller(b: Bomb) -> Int:\n    return b.explode()\n"
+        )),
+        TypeError::UnhandledRaise(_)
+    ));
+    assert!(matches!(
+        err(&format!(
+            "{declarations}\ndef caller() -> Int:\n    return Bomb.static_explode()\n"
+        )),
+        TypeError::UnhandledRaise(_)
+    ));
+    ok(&format!(
+        "{declarations}\ndef caller(b: Bomb) raises -> Int:\n    return b.explode()\n"
+    ));
+}
+
+#[test]
+fn enforces_effects_after_free_overload_and_callable_selection() {
+    let overloads = "def select(value: Int) -> Int:\n    return value\n\ndef select(value: String) raises -> Int:\n    raise value\n    return 0\n";
+    ok(&format!(
+        "{overloads}\ndef safe() -> Int:\n    return select(7)\n"
+    ));
+    assert!(matches!(
+        err(&format!(
+            "{overloads}\ndef unsafe() -> Int:\n    return select(\"boom\")\n"
+        )),
+        TypeError::UnhandledRaise(_)
+    ));
+
+    let callable = "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() raises -> Int) raises -> Int:\n    return callback()\n";
+    ok(callable);
+    assert!(matches!(
+        err(
+            "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() -> Int) -> Int:\n    return callback()\n\ndef main():\n    print(invoke(boom))\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
 }
 
 #[test]
@@ -1072,12 +1134,34 @@ fn accepts_transfer_sigil_as_identity() {
 }
 
 #[test]
-fn rejects_raising_a_non_error() {
-    let e = err("raise 5\n");
+fn accepts_typed_errors_and_infers_the_except_binding() {
+    ok(
+        "@fieldwise_init\nstruct ValidationError:\n    var field: String\n    var reason: String\n\ndef validate(name: String) raises ValidationError -> Int:\n    if name == \"\":\n        raise ValidationError(\"name\", \"empty\")\n    return 1\n\ndef main():\n    try:\n        var ignored = validate(\"\")\n    except error:\n        var field: String = error.field\n",
+    );
+}
+
+#[test]
+fn rejects_an_error_that_differs_from_the_declared_type() {
+    let e = err(
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef bad() raises ValidationError:\n    raise Error(\"wrong family\")\n",
+    );
     assert!(
-        matches!(&e, TypeError::TypeMismatch { context, .. } if context == "raise"),
-        "got {:?}",
-        e
+        matches!(e, TypeError::RaiseTypeMismatch { .. }),
+        "got {e:?}"
+    );
+}
+
+#[test]
+fn never_is_a_bottom_type_and_raises_never_is_nonraising() {
+    ok(
+        "def stop() raises -> Never:\n    raise \"stop\"\n\ndef choose() raises -> Int:\n    return stop()\n\ndef safe() raises Never -> Int:\n    return 7\n\ndef caller() -> Int:\n    return safe()\n",
+    );
+}
+
+#[test]
+fn infers_parametric_error_types_from_callable_arguments() {
+    ok(
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef run_action[E: AnyType](action: def() raises E -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 7\n\ndef fail() raises ValidationError -> Int:\n    raise ValidationError(\"failed\")\n\ndef safe_caller() -> Int:\n    return run_action(safe)\n\ndef typed_caller() raises ValidationError -> Int:\n    return run_action(fail)\n",
     );
 }
 
@@ -1114,7 +1198,7 @@ fn imported_names_are_not_made_available() {
 #[test]
 fn accepts_print_of_various_values() {
     ok(
-        "@fieldwise_init\nstruct P:\n    var x: Int\n\nprint(1, \"a\", True, 3.5, None, P(5))\nprint()\n",
+        "@fieldwise_init\nstruct P(Writable):\n    var x: Int\n    def __str__(self) -> String:\n        return String(self.x)\n\nprint(1, \"a\", True, 3.5, None, P(5))\nprint()\n",
     );
 }
 
@@ -1607,7 +1691,7 @@ fn rejects_tuple_element_write() {
 
 #[test]
 fn flags_advanced_parameter_forms_as_unsupported() {
-    let src = "def f(out x: Int):\n    pass\n";
+    let src = "def f(out x: Int, out y: Int):\n    x = 1\n    y = 2\n";
     assert!(
         matches!(err(src), TypeError::Unsupported(_)),
         "expected Unsupported for: {src}"
@@ -1677,6 +1761,21 @@ fn accepts_variadic_args() {
         TypeError::BadCall { .. }
     ));
     ok("def f[T: AnyType](*a: T) -> Int:\n    return len(a)\n\nvar n: Int = f(1, 2, 3)\n");
+}
+
+#[test]
+fn accepts_a_heterogeneous_variadic_type_pack() {
+    ok(
+        "def count[*ArgTypes: AnyType](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    var n: Int = count(1, \"two\", True)\n",
+    );
+}
+
+#[test]
+fn checks_each_heterogeneous_pack_element_against_its_bound() {
+    let error = err(
+        "def count[*ArgTypes: Intable](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    var n: Int = count(1, \"two\")\n",
+    );
+    assert!(matches!(error, TypeError::TraitNotSatisfied { .. }));
 }
 
 #[test]
@@ -1836,20 +1935,16 @@ fn accepts_decorators_and_plain_dunders() {
 }
 
 #[test]
-fn flags_out_self_and_static_methods_as_unsupported() {
+fn flags_out_self_and_accepts_static_methods() {
     // `out self` on a non-__init__ method is still unsupported (only `__init__`
     // may initialize the receiver).
     assert!(matches!(
         err("struct W:\n    var x: Int\n\n    def reset(out self):\n        self.x = 0\n"),
         TypeError::Unsupported(_)
     ));
-    // A @staticmethod (no self).
-    assert!(matches!(
-        err(
-            "struct S:\n    var n: Int\n\n    @staticmethod\n    def make(x: Int) -> Int:\n        return x\n"
-        ),
-        TypeError::Unsupported(_)
-    ));
+    ok(
+        "struct S:\n    @staticmethod\n    def make(x: Int) -> Int:\n        return x\n\ndef main():\n    print(S.make(2))\n",
+    );
 }
 
 #[test]
@@ -1882,16 +1977,59 @@ fn hand_written_init_out_self() {
 }
 
 #[test]
-fn flags_function_type_annotations_as_unsupported() {
-    // A function-typed variable or parameter parses but is not modeled yet.
+fn handwritten_constructor_uses_default_and_keyword_binding() {
+    ok(
+        "struct Box:\n    var value: Int\n    def __init__(out self, value: Int = 3):\n        self.value = value\n\ndef main():\n    var a = Box()\n    var b = Box(value=7)\n    print(a.value, b.value)\n",
+    );
+}
+
+#[test]
+fn lifecycle_initialization_is_required_on_every_value_producing_path() {
+    ok(
+        "struct Choice:\n    var value: Int\n    def __init__(out self, choose: Bool):\n        if choose:\n            self.value = 1\n        else:\n            self.value = 2\n",
+    );
     assert!(matches!(
-        err("def g(x: Int) -> Int:\n    return x\n\nvar f: def(Int) -> Int = g\n"),
-        TypeError::Unsupported(_)
+        err(
+            "struct Choice:\n    var value: Int\n    def __init__(out self, choose: Bool):\n        if choose:\n            self.value = 1\n"
+        ),
+        TypeError::UninitializedField { .. }
     ));
+    ok(
+        "struct Choice:\n    var value: Int\n    def __init__(out self, choose: Bool) raises:\n        if choose:\n            self.value = 1\n        else:\n            raise \"no value\"\n",
+    );
+}
+
+#[test]
+fn trait_refinement_inherits_requirements_and_capabilities() {
+    ok(
+        "trait Named:\n    def name(self) -> String: ...\n\ntrait Described(Named):\n    def description(self) -> String: ...\n\n@fieldwise_init\nstruct Item(Described):\n    var label: String\n    def name(self) -> String:\n        return self.label\n    def description(self) -> String:\n        return self.label\n\ndef require_named[T: Named](value: T) -> String:\n    return value.name()\n\ndef main():\n    var item = Item(\"x\")\n    print(require_named(item))\n",
+    );
     assert!(matches!(
-        err("def apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return x\n"),
-        TypeError::Unsupported(_)
+        err(
+            "trait Named:\n    def name(self) -> String: ...\n\ntrait Described(Named):\n    def description(self) -> String: ...\n\n@fieldwise_init\nstruct Bad(Described):\n    var label: String\n    def description(self) -> String:\n        return self.label\n"
+        ),
+        TypeError::MissingTraitMethod { method, .. } if method == "name"
     ));
+}
+
+#[test]
+fn checks_callable_parameters_and_indirect_invocation() {
+    ok(
+        "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    var callback: def(Int) -> Int = increment\n    print(apply(callback, 41))\n",
+    );
+    assert!(matches!(
+        err(
+            "def wrong(x: String) -> Int:\n    return 0\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    print(apply(wrong, 41))\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn contextually_instantiates_a_generic_callable_value() {
+    ok(
+        "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) -> Int = identity\n    print(callback(42))\n",
+    );
 }
 
 #[test]
@@ -1910,23 +2048,20 @@ fn accepts_numeric_bases_and_string_forms_but_flags_tstrings() {
 
 #[test]
 fn owned_self_and_owned_params_are_accepted() {
-    // `owned self` (Mojo's `__del__` receiver) and `owned`/`read` parameter
+    // `deinit self` and `var`/`read` parameter
     // conventions bind by value and now type-check (their ownership meaning is
     // handled by the ownership analysis / ASAP drops).
     assert!(
-        check_source("@fieldwise_init\nstruct R:\n    var x: Int\n    def __del__(owned self):\n        print(self.x)\n").is_ok()
+        check_source("@fieldwise_init\nstruct R:\n    var x: Int\n    def __del__(deinit self):\n        print(self.x)\n").is_ok()
     );
-    assert!(check_source("def f(owned a: Int, read b: Int) -> Int:\n    return a + b\n").is_ok());
+    assert!(check_source("def f(var a: Int, read b: Int) -> Int:\n    return a + b\n").is_ok());
 }
 
 #[test]
-fn out_is_rejected_and_ref_self_is_accepted() {
-    // Ordinary `out` remains unsupported; `ref self` is a writable,
+fn named_out_result_and_ref_self_are_accepted() {
+    // A named `out` result is caller-transparent; `ref self` is a writable,
     // caller-place-backed receiver with checked reference semantics.
-    assert!(matches!(
-        check_source("def f(out a: Int):\n    pass\n"),
-        Err(TypeError::Unsupported(_))
-    ));
+    assert!(check_source("def f(out a: Int):\n    a = 1\n").is_ok());
     assert!(
         check_source(
             "@fieldwise_init\nstruct R:\n    var x: Int\n    def m(ref self):\n        self.x = 2\n"
@@ -2057,7 +2192,7 @@ fn owned_arg_consumes_but_read_and_mut_borrow() {
     let common = "@fieldwise_init\nstruct T:\n    var x: Int\n\n";
     // `owned` consumes → copying a non-Copyable value into it is rejected.
     let owned = format!(
-        "{common}def take(owned t: T) -> Int:\n    return t.x\n\ndef main():\n    var a: T = T(1)\n    print(take(a))\n"
+        "{common}def take(var t: T) -> Int:\n    return t.x\n\ndef main():\n    var a: T = T(1)\n    print(take(a))\n"
     );
     assert!(matches!(
         check_source(&owned),
@@ -2065,7 +2200,7 @@ fn owned_arg_consumes_but_read_and_mut_borrow() {
     ));
     // `owned` with `^` is a move → fine.
     let moved = format!(
-        "{common}def take(owned t: T) -> Int:\n    return t.x\n\ndef main():\n    var a: T = T(1)\n    print(take(a^))\n"
+        "{common}def take(var t: T) -> Int:\n    return t.x\n\ndef main():\n    var a: T = T(1)\n    print(take(a^))\n"
     );
     assert!(check_source(&moved).is_ok());
     // `read` (default) and `mut` borrow → no copy, fine.
@@ -2090,8 +2225,11 @@ fn borrow_check_rejects_mutable_aliasing() {
     ));
 
     let mut_and_shared = "def f(mut a: Int, b: Int):\n    a = a + b\n\ndef main():\n    var x: Int = 5\n    f(x, x)\n";
+    assert!(check_source(mut_and_shared).is_ok());
+
+    let noncopyable = "@fieldwise_init\nstruct Box:\n    var x: Int\n\ndef f(mut a: Box, b: Box):\n    pass\n\ndef main():\n    var x = Box(5)\n    f(x, x)\n";
     assert!(matches!(
-        check_source(mut_and_shared),
+        check_source(noncopyable),
         Err(TypeError::AliasingViolation { .. })
     ));
 
@@ -2108,7 +2246,7 @@ fn borrow_check_rejects_move_while_borrowed() {
     // conflict (can't move an aliased value).
     let common = "@fieldwise_init\nstruct T:\n    var x: Int\n\n";
     let mut_and_move = format!(
-        "{common}def f(mut a: T, owned b: T):\n    a.x = b.x\n\ndef main():\n    var p: T = T(1)\n    f(p, p^)\n"
+        "{common}def f(mut a: T, var b: T):\n    a.x = b.x\n\ndef main():\n    var p: T = T(1)\n    f(p, p^)\n"
     );
     assert!(matches!(
         check_source(&mut_and_move),
@@ -2119,18 +2257,18 @@ fn borrow_check_rejects_move_while_borrowed() {
 #[test]
 fn deinit_self_is_the_current_destructor_convention() {
     // Current Mojo spells the destructor receiver `deinit self`; the older
-    // `owned self` is also accepted. Both type-check.
+    // `deinit self` is the current consuming destructor receiver.
     let deinit = "@fieldwise_init\nstruct R:\n    var id: Int\n    def __del__(deinit self):\n        print(self.id)\n\ndef main():\n    var a: R = R(1)\n    print(a.id)\n";
     assert!(check_source(deinit).is_ok());
-    let owned = "@fieldwise_init\nstruct R:\n    var id: Int\n    def __del__(owned self):\n        print(self.id)\n\ndef main():\n    var a: R = R(1)\n    print(a.id)\n";
+    let owned = "@fieldwise_init\nstruct R:\n    var id: Int\n    def __del__(deinit self):\n        print(self.id)\n\ndef main():\n    var a: R = R(1)\n    print(a.id)\n";
     assert!(check_source(owned).is_ok());
 }
 
 #[test]
 fn borrow_check_is_place_sensitive() {
     // Field-aware: two `mut` borrows of *disjoint* fields of the same variable are
-    // fine, but overlapping places (a field vs itself, or the whole vs a field) are
-    // rejected.
+    // fine. An overlapping read of a Copyable value is materialized before the
+    // exclusive access, matching Mojo's call semantics.
     let common = "@fieldwise_init\nstruct P(Copyable):\n    var a: Int\n    var b: Int\n\n";
     let disjoint = format!(
         "{common}def f(mut x: Int, mut y: Int):\n    x = y\n\ndef main():\n    var p: P = P(1, 2)\n    f(p.a, p.b)\n    print(p.a)\n"
@@ -2143,18 +2281,12 @@ fn borrow_check_is_place_sensitive() {
     let same_field = format!(
         "{common}def f(mut x: Int, y: Int):\n    x = y\n\ndef main():\n    var p: P = P(1, 2)\n    f(p.a, p.a)\n    print(p.a)\n"
     );
-    assert!(matches!(
-        check_source(&same_field),
-        Err(TypeError::AliasingViolation { .. })
-    ));
+    assert!(check_source(&same_field).is_ok());
 
     let whole_vs_field = format!(
         "{common}def g(mut x: P, y: Int):\n    pass\n\ndef main():\n    var p: P = P(1, 2)\n    g(p, p.a)\n    print(p.a)\n"
     );
-    assert!(matches!(
-        check_source(&whole_vs_field),
-        Err(TypeError::AliasingViolation { .. })
-    ));
+    assert!(check_source(&whole_vs_field).is_ok());
 }
 
 // --- Operator overloading (dunder dispatch) ---

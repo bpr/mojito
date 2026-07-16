@@ -66,9 +66,30 @@ pub(super) fn validate_required_order(params: &[&crate::ast::FnParam]) -> Result
 pub(super) fn lifecycle_method_name(m: &Method) -> &str {
     if is_mojo_copy_constructor(m) {
         "__copyinit__"
+    } else if is_mojo_move_constructor(m) {
+        "__moveinit__"
     } else {
         &m.name
     }
+}
+
+pub(super) fn is_mojo_move_constructor(m: &Method) -> bool {
+    m.name == "__init__"
+        && m.has_self
+        && matches!(m.self_convention, Some(ArgConvention::Out))
+        && m.positional_only.is_none()
+        && m.keyword_only == Some(0)
+        && m.params.len() == 1
+        && is_move_param(&m.params[0])
+        && m.ret.is_none()
+}
+
+pub(super) fn is_move_param(p: &FnParam) -> bool {
+    p.name == "move"
+        && p.default.is_none()
+        && p.kind == crate::ast::ParamKind::Regular
+        && p.convention.is_none()
+        && matches!(p.ty, SourceType::SelfType)
 }
 
 pub(super) fn is_mojo_copy_constructor(m: &Method) -> bool {

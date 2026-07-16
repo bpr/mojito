@@ -2,10 +2,10 @@
 
 use super::*;
 
-/// Whether an argument convention transfers ownership to the callee (`owned`, or
+/// Whether an argument convention transfers ownership to the callee (`var`, or
 /// the destructor's `deinit`).
 pub(super) fn is_owned(c: &Option<ArgConvention>) -> bool {
-    matches!(c, Some(ArgConvention::Owned | ArgConvention::Deinit))
+    matches!(c, Some(ArgConvention::Var | ArgConvention::Deinit))
 }
 
 /// Whether a `try` region's statements contain a `break`/`continue` that **leaves**
@@ -74,6 +74,7 @@ pub enum Const {
     Float(f64),
     Bool(bool),
     Str(String),
+    Function(String),
     None,
 }
 
@@ -199,6 +200,14 @@ pub enum MirInstr {
         /// for a plain call.
         param_arg_regs: Vec<Option<Reg>>,
     },
+    /// A call through a runtime function value. Callable parameters use this
+    /// instruction instead of treating the parameter name as a global symbol.
+    CallIndirect {
+        dest: Reg,
+        callee: Reg,
+        args: Vec<Reg>,
+        kwargs: Vec<(String, Reg)>,
+    },
     /// A method call `recv.method(args)`. `recv_place` is `Some` when the receiver
     /// is a writable place (a variable / field-index chain), so a `mut self` method
     /// or an in-place `List` mutator can write the updated receiver back; `None`
@@ -300,6 +309,12 @@ pub enum MirInstr {
     DropVar {
         var: VarId,
     },
+    /// Consume a variable without running implicit destruction. Explicit-destroy
+    /// calls emit this immediately after the call, so a raising call leaves the
+    /// source live for an `except` fallback while a successful call consumes it.
+    ConsumeVar {
+        var: VarId,
+    },
     /// A construct the MIR/backends don't lower yet (a `try` with its exceptional
     /// edges, a nested declaration). Kept as an explicit node — rather than a
     /// lowering-time `panic!` — so a backend can report a clean error instead of
@@ -375,7 +390,7 @@ pub struct MirFunction {
     /// caller can coerce a numeric-literal argument at parameter binding. Empty
     /// for `__toplevel__`.
     pub param_annotations: Vec<SourceType>,
-    /// Whether each parameter is `owned` (the callee takes ownership, so it drops
+    /// Whether each parameter is consuming (the callee takes ownership, so it drops
     /// the value — unlike a borrowed `read`/`mut` parameter). Same order as the
     /// params; the caller transfers with `^`, so its own drop is skipped.
     pub owned_params: Vec<bool>,

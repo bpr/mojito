@@ -322,6 +322,7 @@ fn run_lex(source: &str) -> Result<(), String> {
 
 /// `check`: type-check the linked program; report success or the first error.
 fn run_check(program: &[Stmt]) -> Result<(), String> {
+    mojito::validate_module_scope(program).map_err(|e| e.to_string())?;
     check(program).map_err(|e| e.to_string())?;
     // The ownership analysis is part of a full check.
     mojito::check_ownership(program).map_err(|e| e.to_string())?;
@@ -332,6 +333,7 @@ fn run_check(program: &[Stmt]) -> Result<(), String> {
 /// `own` — type-check, then run the ownership (move) analysis. Reports `ok`, or the
 /// first move violation with its source byte range.
 fn run_own(program: &[Stmt]) -> Result<(), String> {
+    mojito::validate_module_scope(program).map_err(|e| e.to_string())?;
     check(program).map_err(|e| e.to_string())?;
     match mojito::check_ownership(program) {
         Ok(()) => {

@@ -38,7 +38,7 @@ struct Dict[K: Equatable & Copyable & Movable, V: Copyable & Movable](Copyable, 
     def __contains__(self, key: Self.K) -> Bool:
         return self.find_index(key) >= 0
 
-    def __getitem__(self, key: Self.K) -> Self.V:
+    def __getitem__(self, key: Self.K) raises -> Self.V:
         var i: Int = self.find_index(key)
         if i >= 0:
             return self.entries[i].value

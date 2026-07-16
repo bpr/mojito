@@ -11,8 +11,7 @@ use crate::ast::{ArgConvention, Dtype};
 use crate::ct::CtValue;
 
 /// A type in mojito's semantic lattice. Scalars mirror `ast::Type`; `Func` is
-/// synthesized from a `def` signature. The annotation grammar has no function
-/// types yet, so `Func` only ever arises from a `def`, never from an annotation.
+/// synthesized from a `def` signature or lowered from a function-type annotation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ty {
     Int,
@@ -21,6 +20,8 @@ pub enum Ty {
     String,
     Float64,
     None,
+    /// Bottom type: no runtime value can inhabit it.
+    Never,
     /// The flexible type of an integer literal: coerces to `Int`, `UInt`, or
     /// `Float64` (materializing to `Int` if nothing forces a choice).
     IntLiteral,
@@ -37,6 +38,8 @@ pub enum Ty {
         variadic: Option<Box<Ty>>,
         positional_only: Option<usize>,
         keyword_only: Option<usize>,
+        raises: bool,
+        error: Option<Box<Ty>>,
         /// The argument convention of each regular parameter.
         conventions: Vec<Option<ArgConvention>>,
         ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
@@ -52,6 +55,8 @@ pub enum Ty {
         variadic: Option<Box<Ty>>,
         positional_only: Option<usize>,
         keyword_only: Option<usize>,
+        raises: bool,
+        error: Option<Box<Ty>>,
         conventions: Vec<Option<ArgConvention>>,
         ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
         ref_return: Option<Box<crate::origin::RefSig>>,
@@ -141,7 +146,19 @@ impl fmt::Display for Ty {
             Ty::String => write!(f, "String"),
             Ty::Float64 | Ty::FloatLiteral => write!(f, "Float64"),
             Ty::None => write!(f, "None"),
-            Ty::Func { params, ret, .. } | Ty::GenericFunc { params, ret, .. } => {
+            Ty::Never => write!(f, "Never"),
+            Ty::Func {
+                params,
+                ret,
+                raises,
+                ..
+            }
+            | Ty::GenericFunc {
+                params,
+                ret,
+                raises,
+                ..
+            } => {
                 write!(f, "def(")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -149,7 +166,11 @@ impl fmt::Display for Ty {
                     }
                     write!(f, "{}", p)?;
                 }
-                write!(f, ") -> {}", ret)
+                write!(f, ")")?;
+                if *raises {
+                    write!(f, " raises")?;
+                }
+                write!(f, " -> {}", ret)
             }
             Ty::Overload(candidates) => {
                 write!(f, "overload(")?;

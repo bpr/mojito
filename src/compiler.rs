@@ -7,7 +7,7 @@ use crate::comptime::{ComptimeError, elaborate};
 use crate::error::{OwnershipError, ParseError, RuntimeError, TypeError};
 use crate::module::{LinkOptions, ModuleError, link_source_with_options, link_with_options};
 use crate::runtime::Value;
-use crate::{Stmt, check_program, parse};
+use crate::{Stmt, ast::StmtKind, check_program, parse};
 use std::fmt;
 use std::path::Path;
 
@@ -66,6 +66,43 @@ impl std::error::Error for CompilerError {}
 pub struct Compiler {
     link_options: LinkOptions,
     backend: BackendKind,
+    allow_executable_module_scope: bool,
+}
+
+/// Reject runtime statements at module scope, matching Mojo's source rules.
+/// Declarations, imports, compile-time constants, and `pass` are permitted.
+pub fn validate_module_scope(stmts: &[Stmt]) -> Result<(), TypeError> {
+    for stmt in stmts {
+        let statement = match &stmt.kind {
+            StmtKind::Def { .. }
+            | StmtKind::Struct { .. }
+            | StmtKind::Trait { .. }
+            | StmtKind::Comptime { .. }
+            | StmtKind::Import { .. }
+            | StmtKind::FromImport { .. }
+            | StmtKind::Pass => continue,
+            StmtKind::VarDecl { .. } => "variable declaration",
+            StmtKind::RefDecl { .. } => "reference declaration",
+            StmtKind::Assign { .. } | StmtKind::SetPlace { .. } => "assignment",
+            StmtKind::AugAssign { .. } => "augmented assignment",
+            StmtKind::Unpack { .. } => "unpacking assignment",
+            StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. } => {
+                "unelaborated compile-time statement"
+            }
+            StmtKind::If { .. } => "if statement",
+            StmtKind::While { .. } => "while statement",
+            StmtKind::For { .. } => "for statement",
+            StmtKind::Return(_) => "return statement",
+            StmtKind::Raise(_) => "raise statement",
+            StmtKind::With { .. } => "with statement",
+            StmtKind::Try { .. } => "try statement",
+            StmtKind::Break => "break statement",
+            StmtKind::Continue => "continue statement",
+            StmtKind::Expr(_) => "expression statement",
+        };
+        return Err(TypeError::InvalidModuleScope(statement.to_string()));
+    }
+    Ok(())
 }
 
 impl Compiler {
@@ -74,7 +111,16 @@ impl Compiler {
         Self {
             link_options,
             backend,
+            allow_executable_module_scope: false,
         }
+    }
+
+    /// Permit executable module-scope statements for isolated compiler tests.
+    /// This accepts a non-Mojo snippet dialect and must not be used by the CLI or
+    /// by conformance tests.
+    pub fn with_snippet_module_scope(mut self) -> Self {
+        self.allow_executable_module_scope = true;
+        self
     }
 
     /// Link and compile a source entry path through ownership verification.
@@ -105,6 +151,9 @@ impl Compiler {
     /// Elaborate, check, and ownership-verify an already linked statement set.
     pub fn compile_linked(&self, linked: Vec<Stmt>) -> Result<CompiledProgram, CompilerError> {
         let elaborated = elaborate(linked).map_err(CompilerError::Comptime)?;
+        if !self.allow_executable_module_scope {
+            validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
+        }
         let checked = check_program(&elaborated).map_err(CompilerError::Type)?;
         check_ownership_checked(&checked).map_err(CompilerError::Ownership)?;
         Ok(CompiledProgram { checked })

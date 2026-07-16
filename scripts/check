@@ -3,6 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+echo "==> parity manifest"
+scripts/check-parity-manifest
+
 echo "==> cargo fmt --check"
 cargo fmt --check
 

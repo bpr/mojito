@@ -110,6 +110,8 @@ struct Flatten<'a> {
     overloads: crate::symbol::OverloadSets,
     /// Checker-selected lowered callee names for overloaded call expressions.
     overload_targets: HashMap<SourceSpan, String>,
+    implicit_conversions: HashMap<SourceSpan, String>,
+    explicit_destroy_calls: std::collections::HashSet<SourceSpan>,
     /// Local reference slot to its frozen owner place and permission.
     aliases: HashMap<VarId, (MirPlace, bool)>,
     runtime_aliases: std::collections::HashSet<VarId>,
@@ -325,6 +327,23 @@ impl Flatten<'_> {
     /// Post-order: each subexpression emits one instruction and yields its result
     /// `Reg`, so `foo(bar(x))` → `t0 = bar(x); t1 = foo(t0)`. Total over `Expr`.
     fn expr(&mut self, e: &Expr) -> Reg {
+        if let Some(target) = self.implicit_conversions.get(&span(e)).cloned() {
+            let argument = self.expr_unconverted(e);
+            let dest = self.fresh(span(e), None);
+            self.emit(MirInstr::Call {
+                dest,
+                func: FuncRef::named(&target),
+                args: vec![argument],
+                kwargs: Vec::new(),
+                arg_places: vec![None],
+                param_arg_regs: Vec::new(),
+            });
+            return dest;
+        }
+        self.expr_unconverted(e)
+    }
+
+    fn expr_unconverted(&mut self, e: &Expr) -> Reg {
         match &e.kind {
             // --- Literals ------------------------------------------------------
             ExprKind::Int(n) => self.constant(e, Const::Int(*n)),
@@ -337,6 +356,11 @@ impl Flatten<'_> {
             // A bare read defaults to `Copy`; a call site refines it to
             // `Borrow*`/`Move` per the callee's convention (Stage 6).
             ExprKind::Identifier(name) => {
+                if !self.vars.iter().any(|candidate| candidate == name)
+                    && self.overloads.is_function(name)
+                {
+                    return self.constant(e, Const::Function(name.clone()));
+                }
                 let var = self.var(name);
                 let d = self.fresh(span(e), Some(var));
                 if let Some((mut place, _)) = self.aliases.get(&var).cloned() {
@@ -423,6 +447,28 @@ impl Flatten<'_> {
                 if let Some(info) = self.nested.get(name).cloned() {
                     return self.lower_nested_call(e, &info, args);
                 }
+                // A local with a function type (normally a callable parameter)
+                // shadows any global function of the same name.
+                if self.vars.iter().any(|candidate| candidate == name) {
+                    let callee = self.expr(&Expr {
+                        kind: ExprKind::Identifier(name.clone()),
+                        span: e.span,
+                        source: e.source.clone(),
+                    });
+                    let regs = self.args(args);
+                    let kw = kwargs
+                        .iter()
+                        .map(|arg| (arg.name.clone(), self.expr(&arg.value)))
+                        .collect();
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::CallIndirect {
+                        dest,
+                        callee,
+                        args: regs,
+                        kwargs: kw,
+                    });
+                    return dest;
+                }
                 // Compile-time parameter arguments (`Name[param_args](...)`),
                 // evaluated before ordinary call arguments: a
                 // **value** parameter is a comptime `Int` expression flattened to a
@@ -459,12 +505,59 @@ impl Flatten<'_> {
                 });
                 d
             }
+            ExprKind::Invoke {
+                callee,
+                param_args: _,
+                args,
+                kwargs,
+            } => {
+                let callee = self.expr(callee);
+                let args = self.args(args);
+                let kwargs = kwargs
+                    .iter()
+                    .map(|arg| (arg.name.clone(), self.expr(&arg.value)))
+                    .collect();
+                let dest = self.fresh(span(e), None);
+                self.emit(MirInstr::CallIndirect {
+                    dest,
+                    callee,
+                    args,
+                    kwargs,
+                });
+                dest
+            }
             ExprKind::MethodCall {
                 object,
                 method,
                 args,
                 kwargs,
             } => {
+                let explicit_destroy = self.explicit_destroy_calls.contains(&span(e));
+                if let ExprKind::Identifier(type_name) = &object.kind
+                    && !self.vars.iter().any(|name| name == type_name)
+                {
+                    let regs = self.args(args);
+                    let kw = kwargs
+                        .iter()
+                        .map(|arg| (arg.name.clone(), self.expr(&arg.value)))
+                        .collect();
+                    let d = self.fresh(span(e), None);
+                    let target = self
+                        .overload_targets
+                        .get(&span(e))
+                        .cloned()
+                        .unwrap_or_else(|| format!("{type_name}.{method}"));
+                    let arg_places = args.iter().map(|arg| self.simple_place(arg)).collect();
+                    self.emit(MirInstr::Call {
+                        dest: d,
+                        func: FuncRef::named(&target),
+                        args: regs,
+                        kwargs: kw,
+                        arg_places,
+                        param_arg_regs: Vec::new(),
+                    });
+                    return d;
+                }
                 // A **static** method on a parameterized built-in type — the receiver
                 // is a type, not a value (`UnsafePointer[T].alloc(n)`). Lower to a
                 // builtin call `Type.method(args)`; the element type is erased.
@@ -488,7 +581,15 @@ impl Flatten<'_> {
                 // If the receiver is a place, load it through that place (indices
                 // evaluated once) and keep the place for write-back; otherwise it is
                 // a temporary evaluated for its value only.
-                let (recv, recv_place) = match self.try_place(object) {
+                let receiver_expr = if explicit_destroy {
+                    match &object.kind {
+                        ExprKind::Transfer(inner) => inner.as_ref(),
+                        _ => object.as_ref(),
+                    }
+                } else {
+                    object.as_ref()
+                };
+                let (recv, recv_place) = match self.try_place(receiver_expr) {
                     Some(place) => {
                         let recv = self.fresh(span(e), None);
                         self.emit(MirInstr::LoadPlace {
@@ -516,9 +617,12 @@ impl Flatten<'_> {
                     resolved: self.overload_targets.get(&span(e)).cloned(),
                     args: regs,
                     kwargs: kw,
-                    recv_place,
+                    recv_place: if explicit_destroy { None } else { recv_place },
                     arg_places,
                 });
+                if explicit_destroy && let Some(place) = self.try_place(receiver_expr) {
+                    self.emit(MirInstr::ConsumeVar { var: place.root });
+                }
                 d
             }
             ExprKind::Member { object, field } => {
@@ -617,7 +721,6 @@ impl Flatten<'_> {
             // type used as a value (only valid as a static-method receiver, handled
             // in the `MethodCall` arm above).
             ExprKind::TypeValue(_)
-            | ExprKind::Invoke { .. }
             | ExprKind::BraceLit(_)
             | ExprKind::TypeApply { .. }
             | ExprKind::TString { .. } => {
@@ -883,6 +986,8 @@ impl Flatten<'_> {
                 nested: self.nested.clone(), // a `try` region may call a nested `def`
                 overloads: self.overloads.clone(),
                 overload_targets: self.overload_targets.clone(),
+                implicit_conversions: self.implicit_conversions.clone(),
+                explicit_destroy_calls: self.explicit_destroy_calls.clone(),
                 aliases: self.aliases.clone(),
                 runtime_aliases: self.runtime_aliases.clone(),
                 returns_reference: self.returns_reference,
@@ -1287,6 +1392,8 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &HashMap::new(),
         &crate::symbol::OverloadSets::default(),
         &HashMap::new(),
+        &HashMap::new(),
+        &std::collections::HashSet::new(),
         false,
     )
 }
@@ -1299,6 +1406,8 @@ fn lower_cfg_nested(
     nested: &HashMap<String, NestedInfo>,
     overloads: &crate::symbol::OverloadSets,
     overload_targets: &HashMap<SourceSpan, String>,
+    implicit_conversions: &HashMap<SourceSpan, String>,
+    explicit_destroy_calls: &std::collections::HashSet<SourceSpan>,
     returns_reference: bool,
 ) -> MirFunction {
     let mut mir = MirFunction {
@@ -1334,6 +1443,8 @@ fn lower_cfg_nested(
             nested: nested.clone(),
             overloads: overloads.clone(),
             overload_targets: overload_targets.clone(),
+            implicit_conversions: implicit_conversions.clone(),
+            explicit_destroy_calls: explicit_destroy_calls.clone(),
             aliases: HashMap::new(),
             runtime_aliases: std::collections::HashSet::new(),
             returns_reference,
@@ -1361,8 +1472,8 @@ fn lower_cfg_nested(
 }
 
 /// A whole program's worth of lowered functions, keyed by name. The synthetic
-/// `__toplevel__` holds executable top-level statements; the VM runs it before
-/// the program's zero-argument `main` entry point.
+/// `__toplevel__` holds module initialization and explicit legacy test snippets.
+/// Production compilation rejects executable file-scope source statements.
 #[derive(Debug)]
 pub struct MirProgram {
     pub functions: Vec<(String, MirFunction)>,
@@ -1403,6 +1514,8 @@ pub struct MirStructDeclaration {
     pub mut_self_methods: HashSet<String>,
     pub fieldwise_init: bool,
     pub param_decls: Vec<(String, bool)>,
+    pub explicit_destroy_message: Option<String>,
+    pub explicit_destructors: HashMap<String, bool>,
 }
 
 #[derive(Debug)]
@@ -1429,7 +1542,8 @@ use nested::*;
 /// Decision — **declarations are handled here, not inside a function body**: each
 /// top-level `def` becomes its own `MirFunction`; each `struct` method becomes
 /// `Struct.method`; a `trait`'s bodiless requirements produce nothing (default
-/// methods are deferred). Remaining top-level statements form `__toplevel__`.
+/// methods are deferred). Remaining statements form `__toplevel__`; production
+/// compilation has already rejected executable file-scope source statements.
 /// (Nested `def`s inside a body are still deferred — see `lower_stmt`.)
 pub fn lower_program(program: &[Stmt]) -> Result<MirProgram, crate::error::TypeError> {
     let checked = crate::checker::check_program(program)?;
@@ -1444,6 +1558,8 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     let mut toplevel: Vec<Stmt> = Vec::new();
     let overloads = crate::symbol::OverloadSets::scan(program);
     let overload_targets = checked.overload_targets().clone();
+    let implicit_conversions = checked.implicit_conversions().clone();
+    let explicit_destroy_calls = checked.explicit_destroy_calls().clone();
 
     for s in program {
         match &s.kind {
@@ -1457,17 +1573,38 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                 body,
                 ..
             } => {
-                let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                let ptys = params.iter().map(|p| p.ty.clone()).collect();
-                let owned = params.iter().map(|p| is_owned(&p.convention)).collect();
-                let refp = params.iter().map(|p| is_ref(&p.convention)).collect();
+                let named_result = params
+                    .iter()
+                    .find(|p| matches!(p.convention, Some(ArgConvention::Out)));
+                // ABI parameters lead the variable table; the named result is a
+                // callee-local uninitialized slot and is never passed by callers.
+                let caller_params: Vec<_> = params
+                    .iter()
+                    .filter(|p| !matches!(p.convention, Some(ArgConvention::Out)))
+                    .collect();
+                let mut names: Vec<String> = caller_params.iter().map(|p| p.name.clone()).collect();
+                if let Some(result) = named_result {
+                    names.push(result.name.clone());
+                }
+                let ptys = caller_params.iter().map(|p| p.ty.clone()).collect();
+                let owned = caller_params
+                    .iter()
+                    .map(|p| is_owned(&p.convention))
+                    .collect();
+                let refp = caller_params
+                    .iter()
+                    .map(|p| is_ref(&p.convention))
+                    .collect();
                 let lowered_name =
                     crate::symbol::lowered_def_name(name, type_params, params, &overloads);
                 let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
                 let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
                 let regular: Vec<_> = params
                     .iter()
-                    .filter(|p| p.kind == ParamKind::Regular)
+                    .filter(|p| {
+                        p.kind == ParamKind::Regular
+                            && !matches!(p.convention, Some(ArgConvention::Out))
+                    })
                     .collect();
                 declarations.functions.push(MirFunctionDeclaration {
                     lowered_name: lowered_name.clone(),
@@ -1533,9 +1670,12 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         owned_parameters: owned,
                         reference_parameters: refp,
                         returns_reference: matches!(ret, Some(SourceType::Ref { .. })),
+                        named_result: named_result.map(|p| p.name.as_str()),
                         body,
                         overloads: &overloads,
                         overload_targets: &overload_targets,
+                        implicit_conversions: &implicit_conversions,
+                        explicit_destroy_calls: &explicit_destroy_calls,
                     },
                     &mut functions,
                 );
@@ -1596,6 +1736,15 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     mut_self_methods,
                     fieldwise_init: *fieldwise_init,
                     param_decls: crate::runtime::classify_param_decls(type_params),
+                    explicit_destroy_message: checked
+                        .explicit_destroy_types()
+                        .get(name)
+                        .map(|info| info.message.clone()),
+                    explicit_destructors: checked
+                        .explicit_destroy_types()
+                        .get(name)
+                        .map(|info| info.destructors.clone())
+                        .unwrap_or_default(),
                 });
                 for (method_index, m) in methods.iter().enumerate() {
                     let method_name = crate::symbol::lifecycle_method_name(m);
@@ -1699,9 +1848,12 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             owned_parameters: owned,
                             reference_parameters: refp,
                             returns_reference: matches!(m.ret, Some(SourceType::Ref { .. })),
+                            named_result: None,
                             body: &m.body,
                             overloads: &overloads,
                             overload_targets: &overload_targets,
+                            implicit_conversions: &implicit_conversions,
+                            explicit_destroy_calls: &explicit_destroy_calls,
                         },
                         &mut functions,
                     );
@@ -1720,6 +1872,8 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             &HashMap::new(),
             &overloads,
             &overload_targets,
+            &implicit_conversions,
+            &explicit_destroy_calls,
             false,
         ),
     ));

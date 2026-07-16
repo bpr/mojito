@@ -39,7 +39,10 @@ impl Outcome {
 
 /// Run the full pipeline, returning where it first fails and the message.
 fn classify(path: &Path) -> (Outcome, String) {
-    let compiler = Compiler::default();
+    // Historical fixture files include isolated executable snippets at module
+    // scope. Production compilation rejects that non-Mojo convenience; this
+    // test opts in explicitly until those fixtures are migrated into `main`.
+    let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = match compiler.compile_path(path) {
         Ok(program) => program,
         Err(CompilerError::Module(mojito::ModuleError::Parse { err, .. })) => {

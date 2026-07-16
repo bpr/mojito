@@ -32,6 +32,7 @@ The harness then also asserts the error contains that substring.
 
 ## Note
 
-mojito runs **top-level statements**, then — like Mojo — calls a zero-argument
-`main()` if the file defines one (see `ok/defines_main.mojo`). So a fixture can put
-its work in `main()` and it will actually execute.
+Production Mojito, like Mojo, rejects executable statements at file scope and
+calls a zero-argument `main()` as the program entry point. Some historical
+fixtures remain module-scope snippets and run only through the test suite's
+explicit non-conforming snippet mode; new fixtures should be valid Mojo programs.

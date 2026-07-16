@@ -50,10 +50,10 @@ struct List[T: Copyable & Movable](Copyable, Iterable):
     def copy(self) -> Self:
         return List[Self.T](copy: self)
 
-    def __moveinit__(out self, owned existing: Self):
-        self.cap = existing.cap
-        self.size = existing.size
-        self.data = existing.data
+    def __init__(out self, *, move: Self):
+        self.cap = move.cap
+        self.size = move.size
+        self.data = move.data
 
     def grow(mut self):
         var new_cap: Int = self.cap * 2

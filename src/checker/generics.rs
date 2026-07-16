@@ -42,6 +42,31 @@ pub(super) fn unify(
             }
             Ok(())
         }
+        Ty::Func {
+            params: pattern_params,
+            ret: pattern_ret,
+            error: pattern_error,
+            ..
+        } => {
+            if let Ty::Func {
+                params: actual_params,
+                ret: actual_ret,
+                error: actual_error,
+                ..
+            } = actual
+            {
+                for (pattern, actual) in pattern_params.iter().zip(actual_params) {
+                    unify(pattern, actual, subst)?;
+                }
+                unify(pattern_ret, actual_ret, subst)?;
+                if let (Some(pattern), Some(actual)) = (pattern_error, actual_error) {
+                    unify(pattern, actual, subst)?;
+                } else if let Some(pattern) = pattern_error {
+                    unify(pattern, &Ty::Never, subst)?;
+                }
+            }
+            Ok(())
+        }
         // A non-parameter pattern contributes no solution; coercion is checked
         // separately by the caller.
         _ => Ok(()),
@@ -71,6 +96,8 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             variadic,
             positional_only,
             keyword_only,
+            raises,
+            error,
             conventions,
             ref_params,
             ref_return,
@@ -82,6 +109,10 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             variadic: variadic.as_ref().map(|v| Box::new(substitute(v, subst))),
             positional_only: *positional_only,
             keyword_only: *keyword_only,
+            raises: *raises,
+            error: error
+                .as_ref()
+                .map(|error| Box::new(substitute(error, subst))),
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
@@ -125,6 +156,8 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             variadic,
             positional_only,
             keyword_only,
+            raises,
+            error,
             conventions,
             ref_params,
             ref_return,
@@ -141,6 +174,10 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
                 .map(|v| Box::new(substitute_self(v, replacement))),
             positional_only: *positional_only,
             keyword_only: *keyword_only,
+            raises: *raises,
+            error: error
+                .as_ref()
+                .map(|error| Box::new(substitute_self(error, replacement))),
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),

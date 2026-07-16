@@ -437,6 +437,7 @@ impl<'a> Elab<'a> {
                 positional_only,
                 keyword_only,
                 raises,
+                raises_type,
                 ret,
                 body,
             } => {
@@ -456,6 +457,7 @@ impl<'a> Elab<'a> {
                         positional_only: *positional_only,
                         keyword_only: *keyword_only,
                         raises: *raises,
+                        raises_type: raises_type.clone(),
                         ret: ret.clone(),
                         body,
                     },
@@ -552,6 +554,17 @@ impl<'a> Elab<'a> {
                     ComptimeError::BadArithmetic(format!("comptime index {i} out of range"))
                 })
             }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if method == "__len__" && args.is_empty() && kwargs.is_empty() => {
+                let sequence = self
+                    .eval(object, scope)?
+                    .as_sequence("__len__() of a compile-time collection")?;
+                Ok(CtValue::Int(sequence.len() as i64))
+            }
             ExprKind::Prefix(PrefixOp::Neg, inner) => {
                 Ok(CtValue::Int(-self.eval(inner, scope)?.as_int("unary '-'")?))
             }
@@ -578,6 +591,12 @@ impl<'a> Elab<'a> {
                 args,
                 ..
             } if name == "is_same_type" => self.eval_is_same_type(param_args, args, scope),
+            ExprKind::Call { name, args, .. } if name == "len" && args.len() == 1 => {
+                let sequence = self
+                    .eval(&args[0], scope)?
+                    .as_sequence("len() of a compile-time collection")?;
+                Ok(CtValue::Int(sequence.len() as i64))
+            }
             // A call into a pure top-level function → CTFE.
             ExprKind::Call {
                 name,
@@ -1450,6 +1469,7 @@ impl<'a> Elab<'a> {
             positional_only,
             keyword_only,
             raises,
+            raises_type,
             ret,
             body,
             ..
@@ -1485,6 +1505,20 @@ impl<'a> Elab<'a> {
                 ParamDecl::Type { .. } => kept_type_params.push(tp.clone()),
             }
         }
+        // A variadic type-pack specialization also exposes its sequence of
+        // element types through the runtime `*args` parameter during compile-time
+        // elaboration. This makes `len(args)` and `args[i]` evaluable while a
+        // `comptime for` body is being unrolled.
+        if let Some((_, CtValue::Tuple(types))) = decls
+            .iter()
+            .zip(vals)
+            .find(|(decl, _)| decl.name().starts_with('*'))
+            && let Some(pack_param) = params
+                .iter()
+                .find(|param| matches!(&param.ty, Type::Named(name, _) if name.starts_with('*')))
+        {
+            env.insert(pack_param.name.clone(), CtValue::Tuple(types.clone()));
+        }
         // Elaborate the body with the parameters bound, so its comptime constructs
         // select/unroll against the concrete arguments.
         let elaborated = self.block(body, &mut env, true)?;
@@ -1498,6 +1532,7 @@ impl<'a> Elab<'a> {
                 positional_only: *positional_only,
                 keyword_only: *keyword_only,
                 raises: *raises,
+                raises_type: raises_type.clone(),
                 ret: ret.clone(),
                 body: final_body,
             },
@@ -1645,7 +1680,7 @@ impl<'a> Elab<'a> {
                 }
                 if self.specializable.contains_key(name) {
                     let (vals, kept_type_args) =
-                        self.resolve_spec_args(name, param_args, consts)?;
+                        self.resolve_spec_args(name, param_args, args, consts)?;
                     let mangled = mangle(name, &vals);
                     if mono.done.insert(mangled.clone()) {
                         mono.queue.push_back(Job {
@@ -1733,9 +1768,23 @@ impl<'a> Elab<'a> {
         &self,
         name: &str,
         param_args: &[ParamArg],
+        call_args: &[Expr],
         consts: &HashMap<String, CtValue>,
     ) -> Result<(Vec<CtValue>, Vec<ParamArg>), ComptimeError> {
         let decls = self.template_decls(name)?;
+        if param_args.is_empty()
+            && let [ParamDecl::Type { name: pack, .. }] = decls.as_slice()
+            && pack.starts_with('*')
+        {
+            let types = call_args
+                .iter()
+                .map(infer_pack_argument_type)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|ty| CtValue::Type(Box::new(ty)))
+                .collect();
+            return Ok((vec![CtValue::Tuple(types)], Vec::new()));
+        }
         if param_args.len() != decls.len() {
             return Err(ComptimeError::Arity(format!(
                 "generic '{name}' must be called with {} explicit argument(s), got {}",
@@ -1761,6 +1810,28 @@ impl<'a> Elab<'a> {
             }
         }
         Ok((vals, kept_type_args))
+    }
+}
+
+fn infer_pack_argument_type(expr: &Expr) -> Result<Ty, ComptimeError> {
+    match &expr.kind {
+        ExprKind::Int(_) => Ok(Ty::Int),
+        ExprKind::Float(_) => Ok(Ty::Float64),
+        ExprKind::Bool(_) => Ok(Ty::Bool),
+        ExprKind::Str(_) => Ok(Ty::String),
+        ExprKind::None => Ok(Ty::None),
+        ExprKind::Call { name, .. } => Ok(match name.as_str() {
+            "Int" => Ty::Int,
+            "UInt" => Ty::UInt,
+            "Float64" => Ty::Float64,
+            "Bool" => Ty::Bool,
+            "String" => Ty::String,
+            other => Ty::Struct(other.to_string(), Vec::new()),
+        }),
+        _ => Err(ComptimeError::NotComptime(
+            "a heterogeneous pack specialization currently needs literal or constructed arguments"
+                .to_string(),
+        )),
     }
 }
 

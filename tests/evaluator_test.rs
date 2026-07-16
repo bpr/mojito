@@ -76,6 +76,42 @@ fn functions_and_nested_calls() {
 }
 
 #[test]
+fn named_out_result_is_returned_without_a_caller_argument() {
+    assert_eq!(
+        output(
+            "def doubled(value: Int, out result: Int):\n    result = value * 2\n\ndef main():\n    print(doubled(21))\n"
+        ),
+        "42\n"
+    );
+}
+
+#[test]
+fn callable_parameter_invokes_a_function_value() {
+    let actual = output(
+        "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    var callback: def(Int) -> Int = increment\n    print(apply(callback, 41))\n",
+    );
+    assert_eq!(actual, "42\n");
+}
+
+#[test]
+fn generic_function_value_runs_through_a_monomorphic_callable_view() {
+    assert_eq!(
+        output(
+            "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) -> Int = identity\n    print(callback(42))\n"
+        ),
+        "42\n"
+    );
+}
+
+#[test]
+fn raising_callable_value_is_caught() {
+    let actual = output(
+        "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() raises -> Int) raises -> Int:\n    return callback()\n\ndef main():\n    try:\n        var ignored = invoke(boom)\n    except error:\n        print(\"caught callable\")\n",
+    );
+    assert_eq!(actual, "caught callable\n");
+}
+
+#[test]
 fn inner_scope_shadows_outer() {
     let e = run(
         "var x: Int = 1\ndef f() -> Int:\n    var x: Int = 99\n    return x\n\nvar outer: Int = x\nvar inner: Int = f()\n",
@@ -206,6 +242,40 @@ fn constructs_and_reads_fields() {
     ));
     assert_eq!(binding(&e, "a"), Value::Int(3));
     assert_eq!(binding(&e, "b"), Value::Int(4));
+}
+
+#[test]
+fn handwritten_constructor_shares_default_and_keyword_call_binding() {
+    assert_eq!(
+        output(
+            "struct Box:\n    var value: Int\n    def __init__(out self, value: Int = 3):\n        self.value = value\n\ndef main():\n    var a = Box()\n    var b = Box(value=7)\n    print(a.value, b.value)\n"
+        ),
+        "3 7\n"
+    );
+}
+
+#[test]
+fn trait_default_method_is_materialized_and_can_be_overridden() {
+    let actual = output(
+        "trait Named:\n    def name(self) -> String: ...\n    def describe(self) -> String:\n        return self.name() + \"!\"\n\n@fieldwise_init\nstruct Defaulted(Named):\n    var label: String\n    def name(self) -> String:\n        return self.label\n\n@fieldwise_init\nstruct Overridden(Named):\n    var label: String\n    def name(self) -> String:\n        return self.label\n    def describe(self) -> String:\n        return \"override \" + self.label\n\ndef main():\n    var a = Defaulted(\"default\")\n    var b = Overridden(\"custom\")\n    print(a.describe())\n    print(b.describe())\n",
+    );
+    assert_eq!(actual, "default!\noverride custom\n");
+}
+
+#[test]
+fn opaque_trait_bound_dispatches_indexing() {
+    let actual = output(
+        "trait IntIndexer:\n    def __getitem__(self, index: Int) -> Int: ...\n\n@fieldwise_init\nstruct Pair(IntIndexer):\n    var first: Int\n    var second: Int\n    def __getitem__(self, index: Int) -> Int:\n        if index == 0:\n            return self.first\n        return self.second\n\ndef second[T: IntIndexer](value: T) -> Int:\n    return value[1]\n\ndef main():\n    print(second(Pair(3, 7)))\n",
+    );
+    assert_eq!(actual, "7\n");
+}
+
+#[test]
+fn writable_value_formats_through_its_string_hook() {
+    let actual = output(
+        "@fieldwise_init\nstruct Temperature(Writable):\n    var degrees: Int\n    def __str__(self) -> String:\n        return String(self.degrees) + \" degrees\"\n\ndef main():\n    print(Temperature(21))\n",
+    );
+    assert_eq!(actual, "21 degrees\n");
 }
 
 #[test]
@@ -606,7 +676,7 @@ fn simd_comparison_yields_bool_mask() {
     let e = run(
         "var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar w: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](4, 3, 2, 1)\nvar m: SIMD[DType.bool, 4] = v < w\n",
     );
-    assert_eq!(binding(&e, "m").to_string(), "[true, true, false, false]");
+    assert_eq!(binding(&e, "m").to_string(), "[True, True, False, False]");
 }
 
 #[test]
@@ -664,6 +734,30 @@ fn raise_propagates_across_a_function_call() {
 }
 
 #[test]
+fn raising_method_is_caught_at_runtime() {
+    let actual = output(
+        "@fieldwise_init\nstruct Bomb:\n    var code: Int\n    def explode(self) raises -> Int:\n        raise \"boom\"\n\ndef main():\n    var bomb = Bomb(7)\n    try:\n        var ignored = bomb.explode()\n    except error:\n        print(\"caught\")\n",
+    );
+    assert_eq!(actual, "caught\n");
+}
+
+#[test]
+fn typed_error_value_is_preserved_and_bound_by_except() {
+    let actual = output(
+        "@fieldwise_init\nstruct ValidationError:\n    var field: String\n    var reason: String\n\ndef validate() raises ValidationError -> Int:\n    raise ValidationError(\"name\", \"empty\")\n\ndef main():\n    try:\n        var ignored = validate()\n    except error:\n        print(error.field, error.reason)\n",
+    );
+    assert_eq!(actual, "name empty\n");
+}
+
+#[test]
+fn parametric_error_effect_erases_to_never_for_nonraising_callback() {
+    let actual = output(
+        "def run_action[E: AnyType](action: def() raises E -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 9\n\ndef main():\n    print(run_action(safe))\n",
+    );
+    assert_eq!(actual, "9\n");
+}
+
+#[test]
 fn reraise_with_transfer_sigil() {
     let e = run(
         "var out: String = \"none\"\ntry:\n    try:\n        raise \"inner\"\n    except e:\n        raise e^\nexcept e2:\n    out = \"reraised\"\n",
@@ -673,15 +767,16 @@ fn reraise_with_transfer_sigil() {
 
 #[test]
 fn uncaught_raise_is_a_runtime_error() {
-    let err = run_err("raise \"unhandled\"\n");
-    assert_eq!(err, RuntimeError::Raised("unhandled".into()));
+    let err = run_err("def main() raises:\n    raise \"unhandled\"\n");
+    assert_eq!(err, RuntimeError::Raised(Value::Error("unhandled".into())));
 }
 
 #[test]
 fn uncaught_raise_propagates_across_a_call() {
-    let err =
-        run_err("def f() raises -> Int:\n    raise \"from f\"\n    return 0\n\nvar z: Int = f()\n");
-    assert_eq!(err, RuntimeError::Raised("from f".into()));
+    let err = run_err(
+        "def f() raises -> Int:\n    raise \"from f\"\n    return 0\n\ndef main() raises:\n    var z: Int = f()\n",
+    );
+    assert_eq!(err, RuntimeError::Raised(Value::Error("from f".into())));
 }
 
 // --- print ---
@@ -713,9 +808,9 @@ fn empty_print_writes_a_blank_line() {
 #[test]
 fn print_displays_structs_and_simd() {
     let e = output(
-        "@fieldwise_init\nstruct P:\n    var x: Int\n    var y: Int\n\nprint(P(1, 2))\nprint(SIMD[DType.int32, 4](1, 2, 3, 4))\n",
+        "@fieldwise_init\nstruct P(Writable):\n    var x: Int\n    var y: Int\n    def __str__(self) -> String:\n        return \"P(\" + String(self.x) + \", \" + String(self.y) + \")\"\n\nprint(P(1, 2))\nprint(SIMD[DType.int32, 4](1, 2, 3, 4))\n",
     );
-    assert_eq!(e, "P(x=1, y=2)\n[1, 2, 3, 4]\n");
+    assert_eq!(e, "P(1, 2)\n[1, 2, 3, 4]\n");
 }
 
 // --- Builtins: String / abs / min / max / round / len ---
@@ -1281,6 +1376,16 @@ fn variadic_args_collects_extra_positional_args() {
         "def sum(*values: Int) -> Int:\n    var t: Int = 0\n    for v in values:\n        t = t + v\n    return t\n\ndef main():\n    print(sum())\n    print(sum(1, 2, 3))\n    print(sum(10, 20, 30, 40))\n",
     );
     assert_eq!(e, "0\n6\n100\n");
+}
+
+#[test]
+fn heterogeneous_variadic_pack_preserves_all_runtime_values() {
+    assert_eq!(
+        output(
+            "def count[*ArgTypes: AnyType](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    print(count(1, \"two\", True))\n"
+        ),
+        "3\n"
+    );
 }
 
 #[test]

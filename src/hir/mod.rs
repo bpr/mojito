@@ -73,6 +73,20 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
                 rename_expr(x, resolve);
             }
         }
+        ExprKind::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } => {
+            rename_expr(callee, resolve);
+            for arg in args {
+                rename_expr(arg, resolve);
+            }
+            for arg in kwargs {
+                rename_expr(&mut arg.value, resolve);
+            }
+        }
         ExprKind::Named { value, .. } => rename_expr(value, resolve),
         ExprKind::IfExpr {
             cond,
@@ -89,7 +103,6 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::TypeValue(_)
-        | ExprKind::Invoke { .. }
         | ExprKind::BraceLit(_)
         | ExprKind::TString { .. }
         | ExprKind::TypeApply { .. } => {}

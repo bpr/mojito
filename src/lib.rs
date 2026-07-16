@@ -8,6 +8,7 @@ pub mod compiler;
 pub mod comptime;
 pub mod ct;
 pub mod error;
+mod explicit_destroy;
 pub mod hir;
 pub mod lexer;
 pub mod mir;
@@ -28,7 +29,7 @@ pub use ast::{
 pub use backend::{Backend, BackendKind};
 pub use checked::{CheckedConst, CheckedProgram};
 pub use checker::{Checker, check, check_program};
-pub use compiler::{CompiledProgram, Compiler, CompilerError, Execution};
+pub use compiler::{CompiledProgram, Compiler, CompilerError, Execution, validate_module_scope};
 pub use comptime::{ComptimeError, elaborate};
 pub use ct::CtValue;
 pub use error::{LexError, OwnershipError, ParseError, RuntimeError, TypeError};

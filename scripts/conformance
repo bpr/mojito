@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cases="$root/conformance/cases.tsv"
+mojo_pixi_manifest="${MOJO_PIXI_MANIFEST:-}"
+
+usage() {
+    cat <<'EOF'
+usage: scripts/conformance --mojo-pixi-manifest PATH
+
+Runs shared fixtures under Mojito and Mojo and compares their observable result.
+MOJO_PIXI_MANIFEST may be used instead of the command-line option.
+EOF
+}
+
+while (($#)); do
+    case "$1" in
+        --mojo-pixi-manifest)
+            mojo_pixi_manifest="${2:-}"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [[ -z "$mojo_pixi_manifest" || ! -f "$mojo_pixi_manifest" ]]; then
+    echo "a valid --mojo-pixi-manifest PATH is required" >&2
+    exit 2
+fi
+
+cd "$root"
+env RUSTC_WRAPPER= cargo build --quiet
+mojito="$root/target/debug/mojito"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+passed=0
+failed=0
+
+while IFS=$'\t' read -r id mode fixture; do
+    [[ -z "$id" || "$id" == \#* || "$id" == "id" ]] && continue
+    source="$root/$fixture"
+    if [[ ! -f "$source" ]]; then
+        echo "FAIL $id: missing fixture $fixture"
+        ((failed += 1))
+        continue
+    fi
+
+    if "$mojito" run "$source" >"$tmp/$id.mojito.out" 2>"$tmp/$id.mojito.err"; then
+        mojito_status=0
+    else
+        mojito_status=$?
+    fi
+    if pixi run --manifest-path "$mojo_pixi_manifest" mojo run "$source" \
+        >"$tmp/$id.mojo.out" 2>"$tmp/$id.mojo.err"; then
+        mojo_status=0
+    else
+        mojo_status=$?
+    fi
+
+    case "$mode" in
+        run)
+            if ((mojito_status == 0 && mojo_status == 0)) \
+                && cmp -s "$tmp/$id.mojito.out" "$tmp/$id.mojo.out"; then
+                echo "PASS $id (matching output)"
+                ((passed += 1))
+            else
+                echo "FAIL $id: expected matching successful execution"
+                echo "  Mojito exit: $mojito_status; Mojo exit: $mojo_status"
+                diff -u "$tmp/$id.mojo.out" "$tmp/$id.mojito.out" || true
+                ((failed += 1))
+            fi
+            ;;
+        reject)
+            if ((mojito_status != 0 && mojo_status != 0)); then
+                echo "PASS $id (both rejected)"
+                ((passed += 1))
+            else
+                echo "FAIL $id: expected both implementations to reject"
+                echo "  Mojito exit: $mojito_status; Mojo exit: $mojo_status"
+                ((failed += 1))
+            fi
+            ;;
+        mojo-only)
+            if ((mojito_status != 0 && mojo_status == 0)); then
+                echo "PASS $id (documented strict-subset gap)"
+                ((passed += 1))
+            else
+                echo "FAIL $id: expected Mojo alone to accept"
+                echo "  Mojito exit: $mojito_status; Mojo exit: $mojo_status"
+                ((failed += 1))
+            fi
+            ;;
+        mojito-only)
+            if ((mojito_status == 0 && mojo_status != 0)); then
+                echo "PASS $id (documented Mojito divergence)"
+                ((passed += 1))
+            else
+                echo "FAIL $id: expected Mojito alone to accept"
+                echo "  Mojito exit: $mojito_status; Mojo exit: $mojo_status"
+                ((failed += 1))
+            fi
+            ;;
+        output-diff)
+            if ((mojito_status == 0 && mojo_status == 0)) \
+                && ! cmp -s "$tmp/$id.mojito.out" "$tmp/$id.mojo.out"; then
+                echo "PASS $id (documented output divergence)"
+                ((passed += 1))
+            else
+                echo "FAIL $id: expected successful execution with different output"
+                echo "  Mojito exit: $mojito_status; Mojo exit: $mojo_status"
+                ((failed += 1))
+            fi
+            ;;
+        *)
+            echo "FAIL $id: unknown mode '$mode'"
+            ((failed += 1))
+            ;;
+    esac
+done <"$cases"
+
+echo "$passed passed; $failed failed"
+((failed == 0))

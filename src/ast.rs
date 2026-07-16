@@ -45,14 +45,15 @@ pub enum Type {
     SelfType,
     /// A **function type** annotation: `def(T1, T2, …) [thin] [raises] -> R`
     /// (parameters are types only — no names or conventions). `thin` marks a
-    /// non-capturing function pointer (default is capturing). Parsed; the checker
-    /// flags a function-typed binding as unsupported (semantics deferred). Any
-    /// `abi("…")` effect is parsed and discarded.
+    /// non-capturing function pointer (default is capturing). Function signatures
+    /// and their `raises` effect are checked; any `abi("…")` effect is parsed and
+    /// discarded.
     Func {
         params: Vec<Type>,
         ret: Box<Type>,
         thin: bool,
         raises: bool,
+        raises_type: Option<Box<Type>>,
     },
     /// A **reference type** `ref [origin] T` (Mojo's parametric-mutability
     /// reference — used in a `ref[origin]` return type). The origin specifier is
@@ -82,6 +83,7 @@ pub type SourceType = Type;
 /// mean a type parameter. Value parameters are restricted to type `Int`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
+    /// The source name. A leading `*` is retained for a variadic type pack.
     pub name: String,
     /// The trait bound(s), or (for a value parameter) the single value type name.
     pub bounds: Vec<String>,
@@ -217,7 +219,7 @@ pub struct FnParam {
     pub default: Option<Expr>,
     /// `*args` (variadic) / `**kwargs` (keyword variadic) / a plain parameter.
     pub kind: ParamKind,
-    /// An argument convention (`read`/`mut`/`owned`/`out`); `None` = default.
+    /// An argument convention (`read`/`mut`/`var`/`out`); `None` = default.
     pub convention: Option<ArgConvention>,
     /// Retained source origin clause for a `ref[...]` convention.
     pub origin: Option<OriginSpec>,
@@ -234,20 +236,19 @@ pub enum ParamKind {
 }
 
 /// An argument-passing convention on an ordinary parameter (Mojo's `read`
-/// (a.k.a. borrowed, the default), `mut`, `owned`, `out`, and `ref` — a
-/// parametric-mutability reference). `read`, `mut`, `owned`, and call-scoped
-/// `ref` behavior are modeled; ordinary `out` and origin semantics are not. A
-/// parsed origin specifier is not retained by this enum.
+/// (a.k.a. borrowed, the default), `mut`, `var`, `out`, and `ref` — a
+/// parametric-mutability reference). `read`, `mut`, `var`, call-scoped `ref`,
+/// and a single free-function named `out` result are modeled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgConvention {
     Read,
     Mut,
-    Owned,
+    Var,
     Out,
     Ref,
     /// `deinit` — the destructor/consuming-move convention: grants exclusive
     /// ownership and marks the value destroyed at function end. Current Mojo's
-    /// `def __del__(deinit self)` (superseding the older `owned self`).
+    /// `def __del__(deinit self)`.
     Deinit,
 }
 
@@ -278,8 +279,8 @@ pub struct Decorator {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Method {
     pub name: String,
-    /// Whether the method has a `self` receiver. `false` for a `@staticmethod`
-    /// (no `self`); static method semantics are currently rejected by the checker.
+    /// Whether the method has a `self` receiver. `false` for a `@staticmethod`,
+    /// which uses the ordinary call ABI without an implicit receiver slot.
     pub has_self: bool,
     /// The receiver's argument convention: `None` = plain read-only `self`,
     /// `Some(Mut)` = `mut self` (writable, mutations persist). `out self` is the
@@ -294,8 +295,10 @@ pub struct Method {
     pub positional_only: Option<usize>,
     /// Index of a bare `*` (keyword-only) marker in `params`, if present (parsed).
     pub keyword_only: Option<usize>,
-    /// Whether the `raises` effect was declared (parsed, not enforced).
+    /// Whether the `raises` effect was declared.
     pub raises: bool,
+    /// The declared typed error, or `None` for bare `raises`/non-raising.
+    pub raises_type: Option<Type>,
     pub ret: Option<Type>,
     pub body: Vec<Stmt>,
 }
@@ -308,7 +311,7 @@ pub struct Method {
 pub struct TraitMethod {
     pub name: String,
     /// The receiver's argument convention: `None` = plain read-only `self`,
-    /// or one of Mojo's explicit receiver conventions (`mut self`, `owned self`,
+    /// or one of Mojo's explicit receiver conventions (`mut self`, `var self`,
     /// `ref self`, ...). Like `Method`, `self` is implicit and not stored in
     /// `params`.
     pub self_convention: Option<ArgConvention>,
@@ -459,11 +462,11 @@ pub enum StmtKind {
         positional_only: Option<usize>,
         /// Index of a bare `*` (keyword-only) marker in `params`, if present (parsed).
         keyword_only: Option<usize>,
-        /// Whether the `raises` effect was declared. Parsed (incl. a discarded
-        /// error type after `raises`) but not enforced — the effect analysis is
-        /// deferred (a `raises` function is not required to raise, and a call to
-        /// one is not required to be handled).
+        /// Whether the `raises` effect was declared. A following typed-error
+        /// annotation is currently parsed but not retained.
         raises: bool,
+        /// The typed error following `raises`, if present.
+        raises_type: Option<Type>,
         ret: Option<Type>,
         body: Vec<Stmt>,
     },
@@ -539,8 +542,8 @@ pub enum StmtKind {
     Return(Option<Expr>),
     /// `raise expr` — raise an error (an `Error` value, or a `String` shorthand).
     Raise(Expr),
-    /// `import a.b.c [as alias]`. The linker currently treats this as a no-op;
-    /// qualified module namespaces and aliases are not implemented.
+    /// `import a.b.c [as alias]`. The linker resolves the source module/package
+    /// and rewrites qualified member uses to module-unique linked symbols.
     Import {
         path: Vec<String>,
         alias: Option<String>,
@@ -548,7 +551,7 @@ pub enum StmtKind {
     /// `from [.]*module import <targets>`. `level` is the number of leading dots
     /// (0 = absolute; relative imports raise it); `path` is the dotted module
     /// name (possibly empty for `from . import x`). The linker resolves wildcard
-    /// and selective imports; imported aliases are still deferred.
+    /// and selective imports, including member aliases and package re-exports.
     FromImport {
         level: usize,
         path: Vec<String>,
@@ -652,8 +655,7 @@ pub enum ExprKind {
         kwargs: Vec<KwArg>,
     },
     /// A call whose callee is an expression rather than a bare source name,
-    /// including calls through fields and parameterized callable values. Parsed
-    /// for Mojo source compatibility; callable-expression semantics are deferred.
+    /// including calls through fields and parameterized callable values.
     Invoke {
         callee: Box<Expr>,
         param_args: Vec<ParamArg>,

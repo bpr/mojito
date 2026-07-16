@@ -31,3 +31,15 @@ fn compiler_driver_reports_the_failing_stage() {
         .expect_err("ownership error");
     assert!(matches!(error, CompilerError::Ownership(_)));
 }
+
+#[test]
+fn compiler_rejects_executable_file_scope() {
+    let compiler = Compiler::default();
+    let error = compiler
+        .compile_unlinked("var x: Int = 1\nprint(x)\n")
+        .expect_err("file-scope execution must be rejected");
+    assert!(matches!(
+        error,
+        CompilerError::Type(mojito::TypeError::InvalidModuleScope(_))
+    ));
+}

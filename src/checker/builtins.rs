@@ -120,56 +120,6 @@ pub(super) fn is_numeric_like(ty: &Ty) -> bool {
     is_numeric(&default_literal(ty))
 }
 
-/// Collect the field names assigned via `self.FIELD = …` anywhere in a body
-/// (recursing into nested `if`/`while`/`for`/`try` blocks) — the flow-insensitive
-/// basis of the `__init__` definite-initialization check. A nested write like
-/// `self.a.b = e` does *not* count as initializing `a` (its object isn't `self`).
-pub(super) fn collect_self_assigned_fields(
-    body: &[Stmt],
-    out: &mut std::collections::HashSet<String>,
-) {
-    for stmt in body {
-        match &stmt.kind {
-            StmtKind::SetPlace { place, .. } => {
-                if let ExprKind::Member { object, field } = &place.kind
-                    && matches!(&object.kind, ExprKind::Identifier(n) if n == "self")
-                {
-                    out.insert(field.clone());
-                }
-            }
-            StmtKind::If { branches, orelse } => {
-                for (_, b) in branches {
-                    collect_self_assigned_fields(b, out);
-                }
-                if let Some(b) = orelse {
-                    collect_self_assigned_fields(b, out);
-                }
-            }
-            StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
-                collect_self_assigned_fields(body, out);
-            }
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                collect_self_assigned_fields(body, out);
-                if let Some((_, b)) = except {
-                    collect_self_assigned_fields(b, out);
-                }
-                if let Some(b) = orelse {
-                    collect_self_assigned_fields(b, out);
-                }
-                if let Some(b) = finalbody {
-                    collect_self_assigned_fields(b, out);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Enforce that a builtin-driven dunder (`__len__`/`__str__`/`__contains__`)
 /// returns its Mojo-mandated type, so `len`/`String`/`in` on a user struct stay
 /// well-typed.
@@ -225,6 +175,9 @@ pub(super) fn is_numeric(ty: &Ty) -> bool {
 /// literal types coerce (to the concrete numeric types, or `IntLiteral` up to
 /// `FloatLiteral`); everything else must match exactly.
 pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
+    if *from == Ty::Never {
+        return true;
+    }
     if from == to {
         return true;
     }
@@ -241,6 +194,49 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
         }
         (Ty::List(a), Ty::List(b)) => coerces(a, b),
         (Ty::Pointer(a), Ty::Pointer(b)) => coerces(a, b),
+        (
+            Ty::Func {
+                params: from_params,
+                ret: from_ret,
+                required,
+                variadic,
+                conventions,
+                raises: from_raises,
+                error: from_error,
+                ..
+            },
+            Ty::Func {
+                params: to_params,
+                ret: to_ret,
+                required: to_required,
+                variadic: to_variadic,
+                conventions: to_conventions,
+                raises: to_raises,
+                error: to_error,
+                ..
+            },
+        ) => {
+            required == to_required
+                && variadic.is_none()
+                && to_variadic.is_none()
+                && conventions == to_conventions
+                && (!from_raises || *to_raises)
+                && match (from_error.as_deref(), to_error.as_deref()) {
+                    (None, None) => true,
+                    (None, Some(Ty::Never)) => true,
+                    (None, Some(_)) => true,
+                    (Some(from), Some(Ty::Error)) => from != &Ty::Never,
+                    (Some(from), Some(to)) => from == to,
+                    (Some(Ty::Never), None) => true,
+                    (Some(_), None) => false,
+                }
+                && from_params.len() == to_params.len()
+                && from_params
+                    .iter()
+                    .zip(to_params)
+                    .all(|(from, to)| from == to)
+                && from_ret == to_ret
+        }
         (Ty::IntLiteral, Ty::Int | Ty::UInt | Ty::Float64 | Ty::FloatLiteral) => true,
         (Ty::FloatLiteral, Ty::Float64) => true,
         // A tuple coerces element-wise (same arity) — so a literal element

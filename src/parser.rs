@@ -562,7 +562,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } = self.parse_params()?;
         self.expect(Token::RParen, "Expected ')' after parameters")?;
 
-        let raises = self.parse_raises_effect()?;
+        let (raises, raises_type) = self.parse_raises_effect()?;
         if matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "abi") {
             self.next_token()?;
             self.expect(Token::LParen, "Expected '(' after abi")?;
@@ -597,25 +597,26 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             positional_only,
             keyword_only,
             raises,
+            raises_type,
             ret,
             body,
         })
     }
 
     /// Parses an optional `raises` effect after a function's parameter list. An
-    /// error type may follow (`raises ValidationError`); it is parsed and
-    /// discarded (mojito models a single `Error` type). Returns whether the
-    /// effect was present.
-    fn parse_raises_effect(&mut self) -> Result<bool, ParseError> {
+    /// error type may follow (`raises ValidationError`).
+    fn parse_raises_effect(&mut self) -> Result<(bool, Option<Type>), ParseError> {
         if !matches!(self.peek_token()?, Some(Token::Raises)) {
-            return Ok(false);
+            return Ok((false, None));
         }
         // An optional error type follows, unless the next token ends the header.
         self.next_token()?; // consume 'raises'
-        if !matches!(self.peek_token()?, Some(Token::Arrow | Token::Colon)) {
-            self.parse_type()?; // discarded
-        }
-        Ok(true)
+        let error = if !matches!(self.peek_token()?, Some(Token::Arrow | Token::Colon)) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        Ok((true, error))
     }
 
     /// `raise expr`
@@ -859,7 +860,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         })
     }
 
-    /// The optional argument convention (`read`/`mut`/`owned`/`out`) prefixing a
+    /// The optional argument convention (`read`/`mut`/`var`/`out`) prefixing a
     /// regular parameter, plus its name. A convention word is only a convention
     /// when followed by the parameter name (another identifier); if it is followed
     /// by `:` it *is* the name (so `read` remains usable as a parameter name).
@@ -884,13 +885,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             return Ok((None, None, word));
         }
         let Some(convention) = (if word == "var" {
-            Some(ArgConvention::Owned)
+            Some(ArgConvention::Var)
         } else {
             convention_word(&word)
         }) else {
             return Err(ParseError::UnexpectedToken(
                 Token::Identifier(word),
-                "expected a parameter name (or a convention: read/mut/owned/out/ref)".into(),
+                "expected a parameter name (or a convention: read/mut/var/out/ref)".into(),
             ));
         };
         // A `ref` convention may carry an origin specifier: `ref[origin] name`.
@@ -1137,9 +1138,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
 
         self.expect(Token::LParen, "Expected '(' after the method name")?;
-        let first = self.expect_identifier("A method's first parameter must be 'self'")?;
-        let (self_name, self_convention, self_origin) = if let Some(conv) = convention_word(&first)
-        {
+        let first = if matches!(self.peek_token()?, Some(Token::Var)) {
+            self.next_token()?;
+            "var".to_string()
+        } else {
+            self.expect_identifier("A method's first parameter must be 'self'")?
+        };
+        let explicit = if first == "var" {
+            Some(ArgConvention::Var)
+        } else {
+            convention_word(&first)
+        };
+        let (self_name, self_convention, self_origin) = if let Some(conv) = explicit {
             let origin = if conv == ArgConvention::Ref {
                 self.parse_optional_origin_specifier()?
             } else {
@@ -1216,7 +1226,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         self.expect(Token::LParen, "Expected '(' after the method name")?;
         // Detect the receiver. An instance method starts with `self`, optionally
-        // carrying a convention (`mut self`, `out self`, `owned self`, `read self`
+        // carrying a convention (`mut self`, `out self`, `var self`, `read self`
         // — convention words are contextual identifiers). A `@staticmethod` has no
         // `self`: its parameters (if any) start immediately. (A convention word as
         // the first token is read as `<conv> self`, so a static method whose first
@@ -1231,7 +1241,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else if first_is_convention {
             let conv = match self.peek_token()? {
                 Some(Token::Identifier(id)) => convention_word(id),
-                Some(Token::Var) => Some(ArgConvention::Owned),
+                Some(Token::Var) => Some(ArgConvention::Var),
                 _ => None,
             };
             // `ref self` may carry an origin specifier: `ref[origin] self`.
@@ -1276,7 +1286,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         };
         self.expect(Token::RParen, "Expected ')' after the parameters")?;
 
-        let raises = self.parse_raises_effect()?;
+        let (raises, raises_type) = self.parse_raises_effect()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
             Some(self.parse_type()?)
@@ -1297,6 +1307,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             positional_only,
             keyword_only,
             raises,
+            raises_type,
             ret,
             body,
         })
@@ -1461,6 +1472,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// (`Pair[Int]`).
     fn parse_type(&mut self) -> Result<Type, ParseError> {
         let ty = match self.next_token()? {
+            // A variadic type-pack reference in `*args: *ArgTypes`.
+            Token::Star => {
+                let name = self.expect_identifier("Expected a type-pack name after '*'")?;
+                Ok(Type::Named(format!("*{name}"), Vec::new()))
+            }
             // A function type: `def(types) [effects] -> ret`.
             Token::Def => self.parse_function_type_tail(),
             Token::None => Ok(Type::None),
@@ -1561,6 +1577,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // Effects: `thin` / `raises` / `abi("…")` in any order, until `->`.
         let mut thin = false;
         let mut raises = false;
+        let mut raises_type = None;
         loop {
             match self.peek_token()? {
                 Some(Token::Identifier(id)) if id == "thin" => {
@@ -1570,6 +1587,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Some(Token::Raises) => {
                     self.next_token()?;
                     raises = true;
+                    if !matches!(self.peek_token()?, Some(Token::Arrow)) {
+                        raises_type = Some(Box::new(self.parse_type()?));
+                    }
                 }
                 Some(Token::Identifier(id)) if id == "abi" => {
                     self.next_token()?; // consume 'abi'
@@ -1599,6 +1619,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             ret: Box::new(ret),
             thin,
             raises,
+            raises_type,
         })
     }
 
@@ -1732,14 +1753,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 continue;
             }
             // Variadic compile-time parameter pack marker.
-            if matches!(self.peek_token()?, Some(Token::Star)) {
+            let variadic = if matches!(self.peek_token()?, Some(Token::Star)) {
                 self.next_token()?;
                 if matches!(self.peek_token()?, Some(Token::Comma)) {
                     self.next_token()?;
                     continue;
                 }
+                true
+            } else {
+                false
+            };
+            let mut name = self.expect_identifier("Expected a type-parameter name")?;
+            if variadic {
+                name.insert(0, '*');
             }
-            let name = self.expect_identifier("Expected a type-parameter name")?;
             self.expect(
                 Token::Colon,
                 "A type parameter requires a ': bound' (e.g. 'T: Copyable')",
@@ -2409,13 +2436,12 @@ fn parse_interpolation(src: &str) -> Result<Expr, ParseError> {
     Ok(expr)
 }
 
-/// Maps a contextual convention word (`read`/`mut`/`owned`/`out`/`ref`) to its
+/// Maps a contextual convention word (`read`/`mut`/`out`/`ref`) to its
 /// `ArgConvention`, or `None` for any other identifier.
 fn convention_word(word: &str) -> Option<ArgConvention> {
     match word {
         "read" => Some(ArgConvention::Read),
         "mut" => Some(ArgConvention::Mut),
-        "owned" => Some(ArgConvention::Owned),
         "out" => Some(ArgConvention::Out),
         "ref" => Some(ArgConvention::Ref),
         "deinit" => Some(ArgConvention::Deinit),

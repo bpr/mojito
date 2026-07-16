@@ -1,27 +1,10 @@
-//! Stage 1 module linking. `from module import name, …` loads a
-//! referenced `.mojo` file and **hoists its top-level declarations** (`def` /
-//! `struct` / `trait` / `comptime`) into a single flat program, with the import
-//! statement removed. Because the result is an ordinary `Vec<Stmt>`, the rest of
-//! the pipeline (checker → ownership → VM) is unchanged — a module is just more
-//! declarations spliced in ahead of the code that uses them.
-//!
-//! Scope of this first increment:
-//! - **`from module import Name, …`** and **`from module import *`** are resolved.
-//!   A plain **`import module`** is left as a no-op (qualified `module.Name` access
-//!   isn't modeled yet).
-//! - Relative module paths resolve from the importing file's directory:
-//!   `from .m import X` / `from ..pkg import X` climb from the importing directory
-//!   (each leading dot beyond the first goes up one level). Absolute imports first
-//!   try the importing directory, then configured search roots such as the bundled
-//!   `stdlib/`, so `from std.collections.list import List` works without
-//!   repository-relative dot paths.
-//! - A module's imports are resolved first (its dependencies' declarations land
-//!   ahead of its own), with **dedup + cycle-breaking** by canonical path. A
-//!   module's top-level executable statements and its `main()` are **not** hoisted.
-//! - Deferred: `as` aliases on imported names, plain `import module` (qualified
-//!   access), and running a module's top-level code.
+//! Stage 1 source-module and package linking. Imports load `.mojo` modules or
+//! package `__init__.mojo` files, assign declarations collision-free internal
+//! names, resolve qualified and selective aliases, and erase module objects before
+//! the flat checked-program pipeline. Imports are lexical, dependencies are
+//! deduplicated by canonical path, and source provenance survives rewriting.
 
-use crate::ast::{Stmt, StmtKind};
+use crate::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
 use crate::error::ParseError;
 use crate::parse;
 use std::collections::{HashMap, HashSet};
@@ -36,7 +19,7 @@ pub enum ModuleError {
     Parse { module: String, err: ParseError },
     /// `from module import Name` where `Name` isn't a top-level declaration of it.
     NameNotFound { module: String, name: String },
-    /// An import with no module path (e.g. `from . import x`), not yet supported.
+    /// An empty module path used with a form other than named sibling imports.
     EmptyModulePath,
 }
 
@@ -73,7 +56,7 @@ impl std::fmt::Display for ModuleError {
             ModuleError::EmptyModulePath => {
                 write!(
                     f,
-                    "'from . import …' (empty module path) is not supported yet"
+                    "an empty relative module path requires named sibling imports"
                 )
             }
         }
@@ -137,7 +120,7 @@ struct Linker {
     loaded: HashSet<PathBuf>,
     /// The top-level declaration names each loaded module exposes (for validating
     /// `from module import Name`).
-    exports: HashMap<PathBuf, HashSet<String>>,
+    exports: HashMap<PathBuf, HashMap<String, String>>,
     /// Hoisted declarations from all loaded modules, in dependency order.
     decls: Vec<Stmt>,
 }
@@ -155,24 +138,42 @@ impl Linker {
     /// Resolve the entry program's imports (loading their modules) and return its
     /// own non-import statements (declarations + top-level code + `main`).
     fn resolve_entry(&mut self, program: Vec<Stmt>, dir: &Path) -> Result<Vec<Stmt>, ModuleError> {
-        if program_uses_kwargs(&program)
-            && let Some(root) = option_env!("CARGO_MANIFEST_DIR")
-        {
+        let uses_kwargs = program_uses_kwargs(&program);
+        if uses_kwargs && let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
             let runtime = Path::new(root).join("stdlib/std/collections/hashdict.mojo");
             self.load_module(&runtime, "std.collections.hashdict")?;
+        }
+        let mut bindings = HashMap::new();
+        let mut namespaces = HashMap::new();
+        if uses_kwargs && let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
+            let runtime = Path::new(root).join("stdlib/std/collections/hashdict.mojo");
+            if let Some(target) = self.exports[&canonical(&runtime)].get("HashDict") {
+                bindings.insert("HashDict".to_string(), target.clone());
+            }
         }
         let mut body = Vec::new();
         for stmt in program {
             match &stmt.kind {
                 StmtKind::FromImport { level, path, names } => {
-                    let (module_path, module_name) = self.resolve_module(dir, *level, path)?;
-                    self.load_module(&module_path, &module_name)?;
-                    self.check_names(&module_path, &module_name, names)?;
+                    self.apply_from_import(
+                        dir,
+                        *level,
+                        path,
+                        names,
+                        &mut bindings,
+                        &mut namespaces,
+                    )?;
                 }
-                // A plain `import module` stays a no-op (qualified access deferred).
+                StmtKind::Import { path, alias } => {
+                    let (module_path, module_name) = self.resolve_module(dir, 0, path)?;
+                    self.load_module(&module_path, &module_name)?;
+                    let namespace = alias.clone().unwrap_or_else(|| path.join("."));
+                    namespaces.insert(namespace, self.exports[&canonical(&module_path)].clone());
+                }
                 _ => body.push(stmt),
             }
         }
+        self.resolve_scoped_imports(&mut body, dir, &bindings, &namespaces)?;
         Ok(body)
     }
 
@@ -185,29 +186,224 @@ impl Linker {
         }
         let program = read_and_parse_named(path, module_name)?;
         let dir = path.parent().unwrap_or_else(|| Path::new("."));
-        // Resolve this module's imports first, so a dependency's declarations are
-        // spliced in ahead of this module's (the checker binds names in order).
+        let mut bindings = HashMap::new();
+        let mut namespaces = HashMap::new();
         for stmt in &program {
-            if let StmtKind::FromImport {
-                level, path: mpath, ..
-            } = &stmt.kind
-            {
-                let (dep_path, dep_name) = self.resolve_module(dir, *level, mpath)?;
-                self.load_module(&dep_path, &dep_name)?;
-            }
-        }
-        let mut names = HashSet::new();
-        for mut stmt in program {
-            if let Some(name) = declared_name(&stmt) {
-                if name == "main" {
-                    continue; // a module's `main` is not part of its API
+            match &stmt.kind {
+                StmtKind::FromImport {
+                    level,
+                    path: mpath,
+                    names,
+                } => {
+                    self.apply_from_import(
+                        dir,
+                        *level,
+                        mpath,
+                        names,
+                        &mut bindings,
+                        &mut namespaces,
+                    )?;
                 }
-                names.insert(name.to_string());
-                crate::ast::stamp_source(std::slice::from_mut(&mut stmt), &display(path));
-                self.decls.push(stmt);
+                StmtKind::Import { path: mpath, alias } => {
+                    let (dep_path, dep_name) = self.resolve_module(dir, 0, mpath)?;
+                    self.load_module(&dep_path, &dep_name)?;
+                    let namespace = alias.clone().unwrap_or_else(|| mpath.join("."));
+                    namespaces.insert(namespace, self.exports[&canonical(&dep_path)].clone());
+                }
+                _ => {}
             }
         }
-        self.exports.insert(canon, names);
+        let mut local = HashMap::new();
+        for stmt in &program {
+            if let Some(name) = declared_name(stmt) {
+                if name == "main" {
+                    continue;
+                }
+                let linked_name = if module_name == "std.collections.hashdict" && name == "HashDict"
+                {
+                    name.to_string()
+                } else {
+                    qualified(module_name, name)
+                };
+                local.insert(name.to_string(), linked_name);
+            }
+        }
+        bindings.extend(local.clone());
+        let mut declarations: Vec<_> = program
+            .into_iter()
+            .filter(|stmt| declared_name(stmt).is_some_and(|name| name != "main"))
+            .collect();
+        self.resolve_scoped_imports(&mut declarations, dir, &bindings, &namespaces)?;
+        rewrite_program(&mut declarations, &bindings, &namespaces);
+        for mut stmt in declarations {
+            crate::ast::stamp_source(std::slice::from_mut(&mut stmt), &display(path));
+            self.decls.push(stmt);
+        }
+        let mut exports = local;
+        for (name, target) in bindings {
+            if !name.starts_with('_') && !exports.contains_key(&name) {
+                exports.insert(name, target);
+            }
+        }
+        self.exports.insert(canon, exports);
+        Ok(())
+    }
+
+    fn bind_imports(
+        &self,
+        path: &Path,
+        names: &ImportNames,
+        bindings: &mut HashMap<String, String>,
+    ) {
+        let exports = &self.exports[&canonical(path)];
+        match names {
+            ImportNames::Wildcard => bindings.extend(
+                exports
+                    .iter()
+                    .filter(|(n, _)| !n.starts_with('_'))
+                    .map(|(n, t)| (n.clone(), t.clone())),
+            ),
+            ImportNames::Names(items) => {
+                for item in items {
+                    bindings.insert(
+                        item.alias.clone().unwrap_or_else(|| item.name.clone()),
+                        exports[&item.name].clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn apply_from_import(
+        &mut self,
+        dir: &Path,
+        level: usize,
+        path: &[String],
+        names: &ImportNames,
+        bindings: &mut HashMap<String, String>,
+        namespaces: &mut HashMap<String, HashMap<String, String>>,
+    ) -> Result<(), ModuleError> {
+        if path.is_empty() {
+            let ImportNames::Names(items) = names else {
+                return Err(ModuleError::EmptyModulePath);
+            };
+            for item in items {
+                let submodule = vec![item.name.clone()];
+                let (module_path, module_name) = self.resolve_module(dir, level, &submodule)?;
+                self.load_module(&module_path, &module_name)?;
+                namespaces.insert(
+                    item.alias.clone().unwrap_or_else(|| item.name.clone()),
+                    self.exports[&canonical(&module_path)].clone(),
+                );
+            }
+            return Ok(());
+        }
+        let (module_path, module_name) = self.resolve_module(dir, level, path)?;
+        self.load_module(&module_path, &module_name)?;
+        self.check_names(&module_path, &module_name, names)?;
+        self.bind_imports(&module_path, names, bindings);
+        Ok(())
+    }
+
+    fn resolve_scoped_imports(
+        &mut self,
+        body: &mut Vec<Stmt>,
+        dir: &Path,
+        inherited_bindings: &HashMap<String, String>,
+        inherited_namespaces: &HashMap<String, HashMap<String, String>>,
+    ) -> Result<(), ModuleError> {
+        let mut bindings = inherited_bindings.clone();
+        let mut namespaces = inherited_namespaces.clone();
+        let mut resolved = Vec::with_capacity(body.len());
+        for mut statement in std::mem::take(body) {
+            match &statement.kind {
+                StmtKind::FromImport { level, path, names } => {
+                    self.apply_from_import(
+                        dir,
+                        *level,
+                        path,
+                        names,
+                        &mut bindings,
+                        &mut namespaces,
+                    )?;
+                }
+                StmtKind::Import { path, alias } => {
+                    let (module_path, module_name) = self.resolve_module(dir, 0, path)?;
+                    self.load_module(&module_path, &module_name)?;
+                    let namespace = alias.clone().unwrap_or_else(|| path.join("."));
+                    namespaces.insert(namespace, self.exports[&canonical(&module_path)].clone());
+                }
+                _ => {
+                    self.resolve_imports_in_statement(&mut statement, dir, &bindings, &namespaces)?;
+                    rewrite_stmt(&mut statement, &bindings, &namespaces);
+                    if let Some(local) = lexical_binding_name(&statement) {
+                        bindings.remove(local);
+                        namespaces.remove(local);
+                    }
+                    resolved.push(statement);
+                }
+            }
+        }
+        *body = resolved;
+        Ok(())
+    }
+
+    fn resolve_imports_in_statement(
+        &mut self,
+        statement: &mut Stmt,
+        dir: &Path,
+        bindings: &HashMap<String, String>,
+        namespaces: &HashMap<String, HashMap<String, String>>,
+    ) -> Result<(), ModuleError> {
+        match &mut statement.kind {
+            StmtKind::Def { body, .. } => {
+                self.resolve_scoped_imports(body, dir, bindings, namespaces)?
+            }
+            StmtKind::Struct { methods, .. } => {
+                for method in methods {
+                    self.resolve_scoped_imports(&mut method.body, dir, bindings, namespaces)?;
+                }
+            }
+            StmtKind::Trait { methods, .. } => {
+                for method in methods {
+                    if let Some(body) = &mut method.default_body {
+                        self.resolve_scoped_imports(body, dir, bindings, namespaces)?;
+                    }
+                }
+            }
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                for (_, block) in branches {
+                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                }
+                if let Some(block) = orelse {
+                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                }
+            }
+            StmtKind::While { body, .. }
+            | StmtKind::For { body, .. }
+            | StmtKind::ComptimeFor { body, .. }
+            | StmtKind::With { body, .. } => {
+                self.resolve_scoped_imports(body, dir, bindings, namespaces)?
+            }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                self.resolve_scoped_imports(body, dir, bindings, namespaces)?;
+                if let Some((_, block)) = except {
+                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                }
+                if let Some(block) = orelse {
+                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                }
+                if let Some(block) = finalbody {
+                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                }
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -223,7 +419,7 @@ impl Linker {
         let exports = self.exports.get(&canon);
         if let crate::ast::ImportNames::Names(list) = names {
             for item in list {
-                let known = exports.is_some_and(|e| e.contains(&item.name));
+                let known = exports.is_some_and(|e| e.contains_key(&item.name));
                 if !known {
                     return Err(ModuleError::NameNotFound {
                         module: module_name.to_string(),
@@ -242,6 +438,18 @@ impl Linker {
         path: &[String],
     ) -> Result<(PathBuf, String), ModuleError> {
         module_file(from_dir, level, path, &self.options.search_roots)
+    }
+}
+
+fn lexical_binding_name(statement: &Stmt) -> Option<&str> {
+    match &statement.kind {
+        StmtKind::VarDecl { name, .. }
+        | StmtKind::RefDecl { name, .. }
+        | StmtKind::Def { name, .. }
+        | StmtKind::Struct { name, .. }
+        | StmtKind::Trait { name, .. }
+        | StmtKind::Comptime { name, .. } => Some(name),
+        _ => None,
     }
 }
 
@@ -323,8 +531,498 @@ fn module_path_under(mut base: PathBuf, path: &[String]) -> PathBuf {
     for part in path {
         base.push(part);
     }
-    base.set_extension("mojo");
-    base
+    let module = base.with_extension("mojo");
+    if module.exists() {
+        module
+    } else {
+        base.join("__init__.mojo")
+    }
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn qualified(module: &str, name: &str) -> String {
+    format!(
+        "__module${}${name}",
+        module.replace(|c: char| !c.is_ascii_alphanumeric(), "$")
+    )
+}
+
+fn rewrite_program(
+    body: &mut [Stmt],
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    for stmt in body {
+        rewrite_stmt(stmt, names, namespaces);
+    }
+}
+
+fn rename(name: &mut String, names: &HashMap<String, String>) {
+    if let Some(replacement) = names.get(name) {
+        *name = replacement.clone();
+    }
+}
+
+fn expression_path(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Identifier(name) => Some(name.clone()),
+        ExprKind::Member { object, field } => {
+            Some(format!("{}.{}", expression_path(object)?, field))
+        }
+        _ => None,
+    }
+}
+
+fn namespace_member(
+    object: &Expr,
+    member: &str,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) -> Option<String> {
+    namespaces
+        .get(&expression_path(object)?)
+        .and_then(|exports| exports.get(member))
+        .cloned()
+}
+
+fn without_local_bindings(
+    names: &HashMap<String, String>,
+    params: impl IntoIterator<Item = String>,
+    body: &[Stmt],
+) -> HashMap<String, String> {
+    let mut visible = names.clone();
+    for name in params {
+        visible.remove(&name);
+    }
+    remove_bound_names(body, &mut visible);
+    visible
+}
+
+fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
+    for statement in body {
+        match &statement.kind {
+            StmtKind::VarDecl { name, .. }
+            | StmtKind::RefDecl { name, .. }
+            | StmtKind::Def { name, .. }
+            | StmtKind::Struct { name, .. }
+            | StmtKind::Trait { name, .. } => {
+                names.remove(name);
+            }
+            StmtKind::For { var, body, .. } | StmtKind::ComptimeFor { var, body, .. } => {
+                names.remove(var);
+                remove_bound_names(body, names);
+            }
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                for (_, block) in branches {
+                    remove_bound_names(block, names);
+                }
+                if let Some(block) = orelse {
+                    remove_bound_names(block, names);
+                }
+            }
+            StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
+                remove_bound_names(body, names)
+            }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                remove_bound_names(body, names);
+                if let Some((binding, block)) = except {
+                    if let Some(binding) = binding {
+                        names.remove(binding);
+                    }
+                    remove_bound_names(block, names);
+                }
+                if let Some(block) = orelse {
+                    remove_bound_names(block, names);
+                }
+                if let Some(block) = finalbody {
+                    remove_bound_names(block, names);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn rewrite_type(
+    ty: &mut Type,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    match ty {
+        Type::Named(name, args) => {
+            rename(name, names);
+            rewrite_args(args, names, namespaces);
+        }
+        Type::Assoc { base, name } => {
+            if let Some(namespace) = type_path(base)
+                && let Some(target) = namespaces
+                    .get(&namespace)
+                    .and_then(|exports| exports.get(name))
+            {
+                *ty = Type::Named(target.clone(), Vec::new());
+            } else {
+                rewrite_type(base, names, namespaces);
+            }
+        }
+        Type::Func { params, ret, .. } => {
+            for ty in params {
+                rewrite_type(ty, names, namespaces);
+            }
+            rewrite_type(ret, names, namespaces);
+        }
+        Type::Ref { referent, origin } => {
+            rewrite_type(referent, names, namespaces);
+            if let Some(origin) = origin {
+                for expr in origin {
+                    rewrite_expr(expr, names, namespaces);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn type_path(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Named(name, args) if args.is_empty() => Some(name.clone()),
+        Type::Assoc { base, name } => Some(format!("{}.{}", type_path(base)?, name)),
+        _ => None,
+    }
+}
+
+fn rewrite_args(
+    args: &mut [ParamArg],
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    for arg in args {
+        match arg {
+            ParamArg::Type(ty) => rewrite_type(ty, names, namespaces),
+            ParamArg::Value(expr) => rewrite_expr(expr, names, namespaces),
+        }
+    }
+}
+
+fn rewrite_expr(
+    expr: &mut Expr,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    match &mut expr.kind {
+        ExprKind::Identifier(name) => rename(name, names),
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            rename(name, names);
+            rewrite_args(param_args, names, namespaces);
+            for arg in args {
+                rewrite_expr(arg, names, namespaces);
+            }
+            for arg in kwargs {
+                rewrite_expr(&mut arg.value, names, namespaces);
+            }
+        }
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } => {
+            if let Some(target) = namespace_member(object, method, namespaces) {
+                for arg in args.iter_mut() {
+                    rewrite_expr(arg, names, namespaces);
+                }
+                for arg in kwargs.iter_mut() {
+                    rewrite_expr(&mut arg.value, names, namespaces);
+                }
+                expr.kind = ExprKind::Call {
+                    name: target,
+                    param_args: Vec::new(),
+                    args: std::mem::take(args),
+                    kwargs: std::mem::take(kwargs),
+                };
+            } else {
+                rewrite_expr(object, names, namespaces);
+                for arg in args {
+                    rewrite_expr(arg, names, namespaces);
+                }
+                for arg in kwargs {
+                    rewrite_expr(&mut arg.value, names, namespaces);
+                }
+            }
+        }
+        ExprKind::Member { object, field } => {
+            if let Some(target) = namespace_member(object, field, namespaces) {
+                expr.kind = ExprKind::Identifier(target);
+            } else {
+                rewrite_expr(object, names, namespaces);
+            }
+        }
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            rewrite_expr(callee, names, namespaces);
+            rewrite_args(param_args, names, namespaces);
+            for arg in args {
+                rewrite_expr(arg, names, namespaces);
+            }
+            for arg in kwargs {
+                rewrite_expr(&mut arg.value, names, namespaces);
+            }
+        }
+        ExprKind::TypeApply { name, args } => {
+            rename(name, names);
+            rewrite_args(args, names, namespaces);
+        }
+        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => {
+            rewrite_expr(value, names, namespaces)
+        }
+        ExprKind::Infix(_, left, right)
+        | ExprKind::Index {
+            object: left,
+            index: right,
+        } => {
+            rewrite_expr(left, names, namespaces);
+            rewrite_expr(right, names, namespaces);
+        }
+        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
+            for value in values {
+                rewrite_expr(value, names, namespaces);
+            }
+        }
+        ExprKind::BraceLit(entries) => {
+            for (key, value) in entries {
+                rewrite_expr(key, names, namespaces);
+                if let Some(value) = value {
+                    rewrite_expr(value, names, namespaces);
+                }
+            }
+        }
+        ExprKind::Named { value, .. } => rewrite_expr(value, names, namespaces),
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_expr(cond, names, namespaces);
+            rewrite_expr(then_branch, names, namespaces);
+            rewrite_expr(else_branch, names, namespaces);
+        }
+        ExprKind::Compare { first, rest } => {
+            rewrite_expr(first, names, namespaces);
+            for (_, value) in rest {
+                rewrite_expr(value, names, namespaces);
+            }
+        }
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+        } => {
+            rewrite_expr(object, names, namespaces);
+            for value in [lower, upper, step].into_iter().flatten() {
+                rewrite_expr(value, names, namespaces);
+            }
+        }
+        ExprKind::TString { parts, .. } => {
+            for part in parts {
+                if let TStringPart::Expr(value) = part {
+                    rewrite_expr(value, names, namespaces);
+                }
+            }
+        }
+        ExprKind::TypeValue(ty) => rewrite_type(ty, names, namespaces),
+        _ => {}
+    }
+}
+
+fn rewrite_stmt(
+    stmt: &mut Stmt,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    match &mut stmt.kind {
+        StmtKind::Def {
+            name,
+            type_params,
+            params,
+            ret,
+            body,
+            decorators,
+            ..
+        } => {
+            rename(name, names);
+            for tp in type_params {
+                for bound in &mut tp.bounds {
+                    rename(bound, names);
+                }
+            }
+            for p in &mut *params {
+                rewrite_type(&mut p.ty, names, namespaces);
+                if let Some(v) = &mut p.default {
+                    rewrite_expr(v, names, namespaces);
+                }
+            }
+            if let Some(ret) = ret {
+                rewrite_type(ret, names, namespaces);
+            }
+            for d in decorators {
+                for a in &mut d.args {
+                    rewrite_expr(a, names, namespaces);
+                }
+            }
+            let locals =
+                without_local_bindings(names, params.iter().map(|param| param.name.clone()), body);
+            rewrite_program(body, &locals, namespaces);
+        }
+        StmtKind::Struct {
+            name,
+            type_params,
+            conforms,
+            fields,
+            associated,
+            methods,
+            ..
+        } => {
+            rename(name, names);
+            for tp in type_params {
+                for b in &mut tp.bounds {
+                    rename(b, names);
+                }
+            }
+            for c in conforms {
+                rename(c, names);
+            }
+            for f in fields {
+                rewrite_type(&mut f.ty, names, namespaces);
+            }
+            for a in associated {
+                rewrite_expr(&mut a.value, names, namespaces);
+            }
+            for m in methods {
+                for p in &mut m.params {
+                    rewrite_type(&mut p.ty, names, namespaces);
+                    if let Some(v) = &mut p.default {
+                        rewrite_expr(v, names, namespaces);
+                    }
+                }
+                if let Some(ret) = &mut m.ret {
+                    rewrite_type(ret, names, namespaces);
+                }
+                let locals = without_local_bindings(
+                    names,
+                    m.params.iter().map(|param| param.name.clone()),
+                    &m.body,
+                );
+                rewrite_program(&mut m.body, &locals, namespaces);
+            }
+        }
+        StmtKind::Trait {
+            name,
+            refines,
+            methods,
+            comptime_members,
+        } => {
+            rename(name, names);
+            for r in refines {
+                rename(r, names);
+            }
+            for m in methods {
+                for p in &mut m.params {
+                    rewrite_type(&mut p.ty, names, namespaces);
+                }
+                if let Some(ret) = &mut m.ret {
+                    rewrite_type(ret, names, namespaces);
+                }
+                if let Some(body) = &mut m.default_body {
+                    rewrite_program(body, names, namespaces);
+                }
+            }
+            for c in comptime_members {
+                rewrite_type(&mut c.ty, names, namespaces);
+            }
+        }
+        StmtKind::VarDecl { ty, value, .. } => {
+            if let Some(ty) = ty {
+                rewrite_type(ty, names, namespaces);
+            }
+            rewrite_expr(value, names, namespaces);
+        }
+        StmtKind::Comptime { name, value } => {
+            rename(name, names);
+            rewrite_expr(value, names, namespaces);
+        }
+        StmtKind::RefDecl { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::Raise(value)
+        | StmtKind::Expr(value)
+        | StmtKind::Return(Some(value)) => rewrite_expr(value, names, namespaces),
+        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+            rewrite_expr(place, names, namespaces);
+            rewrite_expr(value, names, namespaces);
+        }
+        StmtKind::Unpack { targets, value } => {
+            for t in targets {
+                rewrite_expr(t, names, namespaces);
+            }
+            rewrite_expr(value, names, namespaces);
+        }
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            for (c, b) in branches {
+                rewrite_expr(c, names, namespaces);
+                rewrite_program(b, names, namespaces);
+            }
+            if let Some(b) = orelse {
+                rewrite_program(b, names, namespaces);
+            }
+        }
+        StmtKind::While { cond, body } => {
+            rewrite_expr(cond, names, namespaces);
+            rewrite_program(body, names, namespaces);
+        }
+        StmtKind::For { iter, body, .. } | StmtKind::ComptimeFor { iter, body, .. } => {
+            rewrite_expr(iter, names, namespaces);
+            rewrite_program(body, names, namespaces);
+        }
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            rewrite_program(body, names, namespaces);
+            if let Some((_, b)) = except {
+                rewrite_program(b, names, namespaces);
+            }
+            if let Some(b) = orelse {
+                rewrite_program(b, names, namespaces);
+            }
+            if let Some(b) = finalbody {
+                rewrite_program(b, names, namespaces);
+            }
+        }
+        StmtKind::With { items, body } => {
+            for i in items {
+                rewrite_expr(&mut i.context, names, namespaces);
+            }
+            rewrite_program(body, names, namespaces);
+        }
+        _ => {}
+    }
 }
 
 fn read_and_parse(path: &Path) -> Result<Vec<Stmt>, ModuleError> {

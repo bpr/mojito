@@ -33,8 +33,9 @@ mojito currently has:
 - a type checker with structs, functions, methods, overload sets, traits,
   generics, value parameters, builtin scalar types, lists, tuples, strings, and
   SIMD-like values
-- a simple module linker for `import` / `from ... import ...` across `.mojo`
-  files
+- source modules and packages with lexical, dotted, relative, qualified, and
+  aliased imports; `__init__.mojo` re-exports; isolated linked identities;
+  configurable roots; and bundled standard-library lookup
 - compile-time elaboration for `comptime if`, `comptime for`, richer compile-time
   values, and fuel-bounded pure-function CTFE through the MIR/VM path
 - a HIR control-flow graph lowering pass
@@ -67,15 +68,21 @@ Language deficiencies:
 
 - no complete Mojo standard library; a small self-hosted `stdlib/` exists, but it
   is a proof of direction, not a compatible replacement
-- no full trait system; structural conformance, common bounds, receiver
-  conventions, and associated compile-time facts exist, but default methods,
-  refinement, and the complete Mojo trait model remain incomplete
-- no full parametric polymorphism story comparable to Mojo; generics and value
-  parameters cover the current library, but not the full language
-- overload resolution is useful but intentionally conservative; same-name
-  functions, methods, and constructors can overload by arity and by clearly best
-  argument type, but the full Mojo ranking/coercion model is not implemented
-- no complete effect system; `raises` is only partially modeled
+- no full trait system; nominal conformance, common bounds, receiver conventions,
+  associated compile-time facts, refinement, and statically materialized default
+  methods run, but the complete Mojo protocol and constraint libraries remain
+  incomplete
+- no full parametric polymorphism story comparable to Mojo; generics, value
+  parameters, bound-checked heterogeneous pack iteration, and contextual generic
+  callable specialization cover the current library, but not per-index concrete
+  pack reflection or the full language
+- overload resolution ranks conversion count, variadic use, signature length,
+  and generic ties across functions, methods, and constructors; checked
+  user-defined `@implicit` constructors participate in that ranking, while the
+  full Mojo specialization lattice remains open
+- no complete effect system; direct, method, overloaded, and indirect callable
+  `raises` propagation is checked, including typed and parametric errors and
+  `Never`, but trait-requirement effects and full unwind semantics remain open
 - no full exception/unwind model beyond the VM-supported subset
 - no complete model of Mojo's ownership, origins, and lifetime semantics
 - limited nested-function/capture support; Mojo does not support general escaping
@@ -170,6 +177,33 @@ env RUSTC_WRAPPER= cargo test
 env RUSTC_WRAPPER= cargo clippy --all-targets
 ```
 
+## Differential Conformance
+
+`conformance/parity.tsv` is the authoritative Mojo comparison ledger. It pins the
+reference build and records, for every inventoried manual feature family, the
+status, scope, relationship to Mojo, each implementation's behavior, and
+evidence. Relations distinguish matching semantics, strict-subset rejection,
+true divergence, representation differences, explicit exclusions, and stretch
+goals. `conformance/manual-sections.tsv` fixes the official manual inventory
+boundary.
+
+Shared cases in `conformance/cases.tsv` run under both implementations. They can
+assert matching output, matching rejection, a documented strict-subset gap, or a
+documented acceptance or output divergence. `scripts/check-parity-manifest`
+validates the schema, IDs, classifications, evidence links, fixtures, manual
+coverage, the rule that every divergence has an executable differential case,
+and the rule that every implemented first-pass match cites differential evidence.
+
+Point the runner at a Pixi project containing the pinned Mojo compiler:
+
+```sh
+scripts/conformance --mojo-pixi-manifest /path/to/pixi.toml
+```
+
+The same path can be supplied through `MOJO_PIXI_MANIFEST`. The ordinary
+`scripts/check` gate does not require Mojo or network access; differential
+conformance is an explicit additional gate.
+
 ## CLI Usage
 
 Run a compiler stage over a file:
@@ -191,9 +225,9 @@ Commands:
 `FILE` is optional. Use a path, `-`, or omit it to read from standard input:
 
 ```sh
-cargo run -- parse assets/ok/arithmetic.mojo
+cargo run -- parse conformance/fixtures/integer_arithmetic.mojo
 cargo run -- check -
-echo 'var x: Int = 1' | cargo run -- lex
+echo 'def main(): print(1)' | cargo run -- lex
 cargo run -- run assets/ok/list_and_struct.mojo
 ```
 
@@ -212,8 +246,9 @@ is usable in scripts.
 
 ## Writing Programs
 
-mojito executes top-level statements. If a file defines a zero-argument
-`main()`, `main()` is called after top-level evaluation.
+Like Mojo, Mojito permits declarations, imports, and compile-time constants at
+file scope but rejects executable statements there. Put runtime work in a
+function; a zero-argument `main()` is called as the program entry point.
 
 Example:
 
@@ -288,7 +323,7 @@ Examples of modeled behavior:
 - moving a value on one branch and using it after the merge is rejected
 - partial field moves are tracked separately from sibling fields
 - assigning back to a moved field reinitializes it
-- `owned` parameters consume their argument
+- `var` parameters consume their argument; removed `owned` syntax is rejected
 - `mut` and `ref` parameters borrow and can write back through caller places
 - conflicting borrows in the same call are rejected
 - values with `__del__(deinit self)` are destroyed at last use, not scope end
