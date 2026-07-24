@@ -690,3 +690,25 @@ fn explicit_slice_values_expose_optional_fields_and_indices() {
     let src = "def main():\n    var span = Slice(None, None, -1)\n    print(span.start.is_some(), span.end.or_else(9), span.step.or_else(1))\n    print(span.indices(4))\n    print(slice(3).indices(10))\n";
     assert_eq!(parity(src), "False 9 -1\n(3, -1, -1)\n(0, 3, 1)\n");
 }
+
+#[test]
+fn struct_prefix_operators_dispatch_through_dunders() {
+    assert_eq!(
+        vm(
+            "@fieldwise_init\nstruct V:\n    var n: Int\n    def __neg__(self) -> V:\n        return V(-self.n)\n\ndef main():\n    var a = V(3)\n    print((-a).n)\n"
+        ),
+        "-3\n"
+    );
+    assert_eq!(
+        vm(
+            "@fieldwise_init\nstruct Flag:\n    var on: Bool\n    def __bool__(self) -> Bool:\n        return self.on\n\ndef main():\n    var f = Flag(False)\n    if not f:\n        print(\"off\")\n"
+        ),
+        "off\n"
+    );
+}
+
+#[test]
+fn struct_conversions_and_rounding_dispatch_through_dunders() {
+    let src = "@fieldwise_init\nstruct Money:\n    var cents: Int\n    def __int__(self) -> Int:\n        return self.cents\n    def __bool__(self) -> Bool:\n        return self.cents != 0\n    def __abs__(self) -> Money:\n        return Money(-self.cents) if self.cents < 0 else Money(self.cents)\n\ndef main():\n    print(Int(Money(-250)))\n    print(abs(Money(-250)).cents)\n    print(Bool(Money(0)))\n";
+    assert_eq!(vm(src), "-250\n250\nFalse\n");
+}

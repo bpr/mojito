@@ -3256,3 +3256,59 @@ fn any_type_bound_does_not_permit_numeric_operations() {
         TypeError::NoSuchMethod { .. }
     ));
 }
+
+#[test]
+fn operator_traits_gate_generic_numeric_code() {
+    // Generic arithmetic bounded by an operation trait type-checks.
+    ok(
+        "def sum3[T: Addable](a: T, b: T, c: T) -> T:\n    return a + b + c\n\ndef main():\n    print(sum3(1, 2, 3))\n    print(sum3(1.5, 2.5, 3.0))\n",
+    );
+    // Shift/bitwise operation traits are integer-only.
+    assert!(matches!(
+        err(
+            "def f[T: ShiftLeftable](a: T, b: T) -> T:\n    return a << b\n\ndef main():\n    print(f(1.5, 2.0))\n"
+        ),
+        TypeError::TraitNotSatisfied { .. }
+    ));
+    // Bool does not conform to an arithmetic trait.
+    assert!(matches!(
+        err("def g[T: Addable](a: T) -> T:\n    return a + a\n\ndef main():\n    print(g(True))\n"),
+        TypeError::TraitNotSatisfied { .. }
+    ));
+}
+
+#[test]
+fn operation_trait_conformance_requires_the_dunder() {
+    // Declaring an operation trait without its dunder is rejected.
+    assert!(matches!(
+        check_source("struct Bad(Addable):\n    pass\n"),
+        Err(TypeError::TraitNotSatisfied { .. })
+    ));
+    // Defining the dunder satisfies the declared conformance.
+    ok(
+        "@fieldwise_init\nstruct Good(Addable):\n    var n: Int\n    def __add__(self, other: Good) -> Good:\n        return Good(self.n + other.n)\n",
+    );
+}
+
+#[test]
+fn user_struct_prefix_operators_type_check() {
+    ok(
+        "@fieldwise_init\nstruct V:\n    var n: Int\n    def __neg__(self) -> V:\n        return V(-self.n)\n\ndef main():\n    var a = V(3)\n    print((-a).n)\n",
+    );
+    ok(
+        "@fieldwise_init\nstruct Flag:\n    var on: Bool\n    def __bool__(self) -> Bool:\n        return self.on\n\ndef main():\n    var f = Flag(False)\n    if not f:\n        print(\"off\")\n",
+    );
+}
+
+#[test]
+fn concrete_conversions_and_abs_route_through_dunders() {
+    // A concrete struct with the conversion/abs dunders type-checks the builtins.
+    ok(
+        "@fieldwise_init\nstruct M:\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n    def __abs__(self) -> M:\n        return M(self.n)\n\ndef main():\n    print(Int(M(1)))\n    print(abs(M(2)).n)\n",
+    );
+    // A struct lacking the dunder is still rejected.
+    assert!(matches!(
+        err("@fieldwise_init\nstruct P:\n    var n: Int\n\ndef main():\n    print(Int(P(1)))\n"),
+        TypeError::TypeMismatch { .. }
+    ));
+}

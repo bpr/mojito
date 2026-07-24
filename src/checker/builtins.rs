@@ -95,8 +95,68 @@ pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> 
         "Floatable" => Some("__float__() -> Float64"),
         "Boolable" => Some("__bool__() -> Bool"),
         "DivModable" => Some("__divmod__(Self) -> Tuple[Self, Self]"),
+        // Binary-operator traits: each names the dunder its operator dispatches
+        // through. `__truediv__` returns `Float64` (mojito's `/` is always
+        // floating); the rest return `Self`.
+        "Addable" => Some("__add__(Self) -> Self"),
+        "Subtractable" => Some("__sub__(Self) -> Self"),
+        "Multipliable" => Some("__mul__(Self) -> Self"),
+        "Divisible" => Some("__truediv__(Self) -> Float64"),
+        "FloorDivisible" => Some("__floordiv__(Self) -> Self"),
+        "Modable" => Some("__mod__(Self) -> Self"),
+        "ShiftLeftable" => Some("__lshift__(Self) -> Self"),
+        "ShiftRightable" => Some("__rshift__(Self) -> Self"),
+        "Andable" => Some("__and__(Self) -> Self"),
+        "Orable" => Some("__or__(Self) -> Self"),
+        "Xorable" => Some("__xor__(Self) -> Self"),
+        "Negatable" => Some("__neg__() -> Self"),
         _ => None,
     }
+}
+
+/// The operation trait a binary operator dispatches through, for both builtin
+/// scalars and user structs. `None` for operators that do not route this way:
+/// `and`/`or` (Bool short-circuit), `in`/`not in` (`__contains__` on the right
+/// operand), and `@`/matmul (no scalar meaning — struct dunder only).
+pub(super) fn infix_operation_trait(op: crate::ast::InfixOp) -> Option<&'static str> {
+    use crate::ast::InfixOp::*;
+    Some(match op {
+        Add => "Addable",
+        Sub => "Subtractable",
+        Mul => "Multipliable",
+        Div => "Divisible",
+        FloorDiv => "FloorDivisible",
+        Mod => "Modable",
+        Pow => "Powable",
+        Shl => "ShiftLeftable",
+        Shr => "ShiftRightable",
+        BitAnd => "Andable",
+        BitOr => "Orable",
+        BitXor => "Xorable",
+        Lt | Gt | Le | Ge => "Comparable",
+        Eq | Ne => "Equatable",
+        MatMul | And | Or | In | NotIn => return None,
+    })
+}
+
+/// The operation trait a prefix operator dispatches through.
+pub(super) fn prefix_operation_trait(op: crate::ast::PrefixOp) -> &'static str {
+    match op {
+        crate::ast::PrefixOp::Neg => "Negatable",
+        crate::ast::PrefixOp::Not => "Boolable",
+    }
+}
+
+/// Integer-kind scalars — the operands of bitwise and shift operators
+/// (`IntLiteral` materializes to `Int`).
+pub(super) fn is_integer_like(ty: &Ty) -> bool {
+    matches!(default_literal(ty), Ty::Int | Ty::UInt)
+}
+
+/// Signed numeric scalars — the operands of arithmetic negation (`-x`); `UInt`
+/// is excluded, matching the existing `infer_prefix` rule.
+pub(super) fn is_signed_numeric_like(ty: &Ty) -> bool {
+    matches!(default_literal(ty), Ty::Int | Ty::Float64)
 }
 
 /// The trait bounds that supply a numeric-rounding dunder (`method`/`argc`),

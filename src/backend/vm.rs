@@ -1060,6 +1060,26 @@ impl VmBackend {
         apply_infix(op, l, r)
     }
 
+    /// Prefix operator dispatch. A user struct routes through its dunder
+    /// (`-x` → `x.__neg__()`, `not x` → `not x.__bool__()`), mirroring
+    /// `apply_binop`; scalars use the primitive `apply_prefix`.
+    fn apply_prefix(
+        &mut self,
+        prog: &Prog,
+        op: crate::ast::PrefixOp,
+        value: Value,
+    ) -> Result<Value, RuntimeError> {
+        if let Value::Struct { name, .. } = &value {
+            let sname = name.clone();
+            let result = self.call_dunder(prog, &sname, op.dunder(), vec![value])?;
+            return Ok(match (op, result) {
+                (crate::ast::PrefixOp::Not, Value::Bool(b)) => Value::Bool(!b),
+                (_, v) => v,
+            });
+        }
+        apply_prefix(op, value)
+    }
+
     /// `c[i] = value` where the container `c` (at `parent`) is a user struct →
     /// `c.__setitem__(i, value)`, writing the mutated `self` back to `c`'s place.
     /// The MIR has already evaluated the receiver root, index, and RHS exactly once;
@@ -1722,7 +1742,7 @@ impl VmBackend {
                 }
             }
             MirInstr::UnOp { op, dest, a } => {
-                regs[dest.0 as usize] = apply_prefix(*op, regs[a.0 as usize].clone())?;
+                regs[dest.0 as usize] = self.apply_prefix(prog, *op, regs[a.0 as usize].clone())?;
             }
             MirInstr::BinOp { op, dest, a, b } => {
                 let l = regs[a.0 as usize].clone();
@@ -3282,8 +3302,16 @@ impl VmBackend {
                     step,
                 })
             }
-            // Utility numeric built-ins use the shared runtime value helpers.
-            "abs" => builtin_abs(arg1(name, args)?),
+            // Utility numeric built-ins use the shared runtime value helpers; a
+            // struct operand routes through the same dunder the checker resolved.
+            "abs" => {
+                let value = arg1(name, args)?;
+                if let Value::Struct { name: sname, .. } = &value {
+                    let sname = sname.clone();
+                    return self.call_dunder(prog, &sname, "__abs__", vec![value]);
+                }
+                builtin_abs(value)
+            }
             "min" => {
                 let (a, b) = arg2(name, args)?;
                 builtin_min_max(true, a, b)
@@ -3292,11 +3320,29 @@ impl VmBackend {
                 let (a, b) = arg2(name, args)?;
                 builtin_min_max(false, a, b)
             }
-            "round" => builtin_round(arg1(name, args)?),
-            "input" => builtin_input(arg1(name, args)?),
-            "Int" | "Scalar" | "UInt" | "Float64" | "Bool" => {
-                builtin_convert(name, arg1(name, args)?)
+            "round" => {
+                let value = arg1(name, args)?;
+                if let Value::Struct { name: sname, .. } = &value {
+                    let sname = sname.clone();
+                    return self.call_dunder(prog, &sname, "__round__", vec![value]);
+                }
+                builtin_round(value)
             }
+            "input" => builtin_input(arg1(name, args)?),
+            "Int" | "Float64" | "Bool" => {
+                let value = arg1(name, args)?;
+                if let Value::Struct { name: sname, .. } = &value {
+                    let dunder = match name {
+                        "Float64" => "__float__",
+                        "Bool" => "__bool__",
+                        _ => "__int__",
+                    };
+                    let sname = sname.clone();
+                    return self.call_dunder(prog, &sname, dunder, vec![value]);
+                }
+                builtin_convert(name, value)
+            }
+            "Scalar" | "UInt" => builtin_convert(name, arg1(name, args)?),
             "divmod" => {
                 let (a, b) = arg2(name, args)?;
                 builtin_divmod(a, b)

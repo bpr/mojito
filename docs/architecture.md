@@ -446,6 +446,21 @@ erasure. The standard `Indexer` contract is modeled separately as an index-value
 conversion through `__mlir_index__`; MIR/VM normalize its result to `Int` because
 the VM has no MLIR index representation.
 
+Scalar operators, comparisons, conversions, and rounding are typed through
+checked operation traits, not ad-hoc numeric rules. Each binary/prefix operator
+names a trait (`Addable`/`Subtractable`/…/`Comparable`/`Equatable`/`Negatable`,
+the bitwise and shift ones integer-only) whose dunder the checker resolves; the
+same traits serve as generic bounds, so `def f[T: Addable]` type-checks and a
+struct declaring an operation trait must define its dunder. Conversions
+(`Int`/`Float64`/`Bool` via `__int__`/`__float__`/`__bool__`) and `abs`/`round`
+(`__abs__`/`__round__`) route the same way for concrete structs, matching the
+paths opaque parameters already used. Builtin scalars keep primitive execution
+(`apply_infix`/`apply_prefix`) behind the protocol; a struct operand dispatches
+through its dunder (`apply_binop`/`apply_prefix`, and the `abs`/`round`/`Int`
+builtins). Recording the resolved operator dunder as a MIR adjustment for the
+textual schema is deferred to that milestone, where its shape can be validated
+against a real consumer.
+
 Printing and `String()` require `Writable`. A custom `write_to` or
 `write_repr_to` receives `Some[Writer]`; `Writer.write` accepts heterogeneous
 Writable values and ultimately feeds UTF-8 strings to `write_string`. The VM's

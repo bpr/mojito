@@ -4,6 +4,23 @@ All notable changes to Mojito will be documented in this file. The project uses
 Semantic Versioning while its public Rust API and supported Mojo subset continue
 to evolve under the `0.x` compatibility rules.
 
+## [Unreleased]
+
+### Added
+
+- Builtin scalar operators, comparisons, conversions, and rounding are typed
+  through checked operation traits rather than ad-hoc numeric rules. Per-operator
+  traits (`Addable`, `Subtractable`, `Multipliable`, `Divisible`,
+  `FloorDivisible`, `Modable`, the bitwise/shift set, and `Negatable`) join the
+  existing `Comparable`/`Equatable`/`Intable`/`Floatable`/`Boolable`/`Absable`/
+  `Roundable`/`Powable`, so generic numeric code (`def f[T: Addable](a: T, b: T)
+  -> T: return a + b`) type-checks and a struct declaring an operation trait must
+  define its dunder. User structs now dispatch prefix operators (`-x` →
+  `__neg__`, `not x` → `__bool__`) and concrete `Int()`/`Float64()`/`Bool()`
+  conversions and `abs()`/`round()` through their dunders, matching the paths
+  opaque generic parameters already used. Result types and execution are
+  unchanged for existing programs; scalar execution stays primitive.
+
 ## [0.2.0] - 2026-07-19
 
 Current-Mojo alignment through the pinned 1.0.0b3 nightly, executable origin

@@ -4240,9 +4240,20 @@ impl Checker {
                     })
                 })
             }),
-            // Layout/backend markers remain accepted-but-shallow until a backend
-            // needs them; operation traits are checked at their operations.
-            _ => true,
+            // An operation trait with a known dunder signature requires the
+            // struct to define that dunder (`Addable` needs `__add__`, etc.).
+            // Layout/backend markers without a dunder remain accepted-but-shallow.
+            _ => match builtin_trait_operation(tr) {
+                Some(signature) => {
+                    let dunder = signature.split('(').next().unwrap_or(signature);
+                    self.structs.get(name).is_some_and(|info| {
+                        info.methods
+                            .get(dunder)
+                            .is_some_and(|methods| methods.iter().any(|method| method.has_self))
+                    })
+                }
+                None => true,
+            },
         };
         if ok {
             Ok(())
@@ -5217,7 +5228,14 @@ impl Checker {
                 },
                 "Equatable" => has_equality_bound_or_concrete(self, ty),
                 "Comparable" => self.is_comparable(ty),
-                "Absable" | "Roundable" | "Powable" => is_numeric_like(ty),
+                "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable"
+                | "Multipliable" | "Divisible" | "FloorDivisible" | "Modable" => {
+                    is_numeric_like(ty)
+                }
+                "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
+                    is_integer_like(ty)
+                }
+                "Negatable" => is_signed_numeric_like(ty),
                 "Intable" => is_numeric_like(ty) || *ty == Ty::Bool,
                 "Floatable" => is_numeric_like(ty),
                 // Layout/backend markers and future operation traits stay shallow.
@@ -9655,13 +9673,34 @@ impl Checker {
         let t = self.infer(operand)?;
         match (op, &t) {
             // Negation preserves the (possibly literal) numeric type, except UInt.
-            (PrefixOp::Neg, Ty::Int | Ty::Float64 | Ty::IntLiteral | Ty::FloatLiteral) => Ok(t),
-            (PrefixOp::Not, Ty::Bool) => Ok(Ty::Bool),
-            _ => Err(TypeError::BadOperator {
-                op: prefix_symbol(op).to_string(),
-                operands: t.to_string(),
-            }),
+            (PrefixOp::Neg, Ty::Int | Ty::Float64 | Ty::IntLiteral | Ty::FloatLiteral) => {
+                return Ok(t);
+            }
+            (PrefixOp::Not, Ty::Bool) => return Ok(Ty::Bool),
+            _ => {}
         }
+        // An opaque type parameter bounded by the prefix operator's trait
+        // dispatches after erasure (`-x` needs `Negatable`, `not x` needs
+        // `Boolable`); the concrete impl runs on the erased type.
+        if param_has_bound(&t, prefix_operation_trait(op)) {
+            return Ok(match op {
+                PrefixOp::Neg => t,
+                PrefixOp::Not => Ty::Bool,
+            });
+        }
+        // A user struct routes through the operator's dunder (`-x` →
+        // `x.__neg__() -> Self`, `not x` → `not x.__bool__() -> Bool`).
+        if let Some(result) = self.struct_dunder(&t, op.dunder(), &[]) {
+            let ret = result?;
+            return match op {
+                PrefixOp::Neg => Ok(ret),
+                PrefixOp::Not => require_dunder_ret(ret, &Ty::Bool, "__bool__"),
+            };
+        }
+        Err(TypeError::BadOperator {
+            op: prefix_symbol(op).to_string(),
+            operands: t.to_string(),
+        })
     }
 
     fn infer_infix(&self, op: InfixOp, left: &Expr, right: &Expr) -> Result<Ty, TypeError> {
@@ -9733,6 +9772,26 @@ impl Checker {
                 .all(|alternative| has_equality_bound_or_concrete(self, alternative))
         {
             return Ok(Ty::Bool);
+        }
+
+        // Two equal opaque type parameters bounded by an arithmetic, bitwise,
+        // or shift operation trait dispatch after erasure
+        // (`def f[T: Addable](a: T, b: T) -> T: return a + b`). Comparison,
+        // equality, and `**` params are handled in the result match below via
+        // their (refinement-aware) bound helpers.
+        if lt == rt
+            && matches!(
+                op,
+                Add | Sub | Mul | FloorDiv | Mod | Div | Shl | Shr | BitAnd | BitOr | BitXor
+            )
+            && let Some(trait_name) = infix_operation_trait(op)
+            && param_has_bound(&lt, trait_name)
+        {
+            return Ok(if matches!(op, Div) {
+                Ty::Float64
+            } else {
+                lt.clone()
+            });
         }
 
         // `common` is the unified numeric type when both operands are numeric
@@ -10865,6 +10924,9 @@ impl Checker {
         // (`__abs__(self) -> Self`); the concrete impl runs after type erasure.
         if is_numeric(&tys[0]) || param_has_bound(&tys[0], "Absable") {
             Ok(tys[0].clone())
+        } else if let Some(result) = self.struct_dunder(&tys[0], "__abs__", &[]) {
+            // A concrete struct routes through `__abs__(self) -> Self`.
+            result
         } else {
             Err(TypeError::TypeMismatch {
                 expected: "a numeric value".to_string(),
@@ -10893,6 +10955,9 @@ impl Checker {
             Ok(Ty::Float64)
         } else if param_has_bound(&tys[0], "Roundable") {
             Ok(tys[0].clone())
+        } else if let Some(result) = self.struct_dunder(&tys[0], "__round__", &[]) {
+            // A concrete struct routes through `__round__(self) -> Self`.
+            result
         } else {
             Err(TypeError::TypeMismatch {
                 expected: "Float64".to_string(),
@@ -10975,6 +11040,21 @@ impl Checker {
             });
         }
         let arg_ty = self.infer(&args[0])?;
+        // A concrete value routes through its conversion dunder
+        // (`Int(x)` → `x.__int__() -> Int`, `Float64`/`Bool` likewise); the
+        // same protocol an opaque `T: Intable/Floatable/Boolable` uses.
+        let conversion = match target {
+            Ty::Int => Some(("__int__", Ty::Int)),
+            Ty::Float64 => Some(("__float__", Ty::Float64)),
+            Ty::Bool => Some(("__bool__", Ty::Bool)),
+            _ => None,
+        };
+        if let Some((dunder, expected)) = &conversion
+            && let Some(result) = self.struct_dunder(&arg_ty, dunder, &[])
+        {
+            require_dunder_ret(result?, expected, dunder)?;
+            return Ok(target);
+        }
         let bounded = match target {
             Ty::Int => param_has_bound(&arg_ty, "Intable"),
             Ty::Float64 => param_has_bound(&arg_ty, "Floatable"),
@@ -11047,6 +11127,18 @@ const BUILTIN_TRAITS: &[&str] = &[
     "CeilDivable",
     "CeilDivableRaising",
     "DivModable",
+    "Addable",
+    "Subtractable",
+    "Multipliable",
+    "Divisible",
+    "FloorDivisible",
+    "Modable",
+    "ShiftLeftable",
+    "ShiftRightable",
+    "Andable",
+    "Orable",
+    "Xorable",
+    "Negatable",
 ];
 
 mod places;

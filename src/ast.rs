@@ -898,6 +898,18 @@ pub enum PrefixOp {
     Not,
 }
 
+impl PrefixOp {
+    /// The dunder a prefix operator dispatches to on a user `struct` operand
+    /// (`-x` → `x.__neg__()`, `not x` → `not x.__bool__()`). Shared by the
+    /// checker (typing) and the VM (runtime dispatch) so they agree.
+    pub fn dunder(self) -> &'static str {
+        match self {
+            PrefixOp::Neg => "__neg__",
+            PrefixOp::Not => "__bool__",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InfixOp {
     Add,
