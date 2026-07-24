@@ -7,11 +7,13 @@
 //! the file fixtures under `assets/ownership_error/` (each pinned with `# expect:`)
 //! and `assets/ownership_ok/`.
 
-use mojito::{OwnershipError, check, check_ownership, parse};
+use mojito::{OwnershipError, check, check_ownership, elaborate, parse};
 
-/// Type-check `src`, then run the ownership analysis.
+/// Elaborate and type-check `src` (the production stage order), then run the
+/// ownership analysis.
 fn own(src: &str) -> Result<(), OwnershipError> {
     let program = parse(src).expect("parse error");
+    let program = elaborate(program).expect("comptime error");
     check(&program).expect("type error");
     check_ownership(&program)
 }

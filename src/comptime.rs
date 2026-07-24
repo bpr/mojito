@@ -2361,12 +2361,13 @@ impl<'a> Elab<'a> {
                 ComptimeError::NotComptime("type pack contains a non-type value".to_string())
             })?;
         let mut type_pack_expansions = HashMap::new();
-        type_pack_expansions.insert(binding.clone(), source_types);
-        let runtime_pack_lengths = HashMap::new();
+        type_pack_expansions.insert(binding.clone(), source_types.clone());
+        let mut runtime_pack_lengths = HashMap::new();
         // Elaborate each method body with the pack bound, so comptime constructs
         // select/unroll against the concrete element types.
         let mut elaborated_methods = Vec::with_capacity(methods.len());
         for method in methods {
+            let mut method = method.clone();
             let mut env = self.top_consts.borrow().clone();
             env.insert(binding.clone(), CtValue::Tuple(types.clone()));
             let mut subs = self.top_consts.borrow().clone();
@@ -2374,7 +2375,21 @@ impl<'a> Elab<'a> {
             for parameter in &method.params {
                 subs.remove(&parameter.name);
             }
-            let mut method = method.clone();
+            // A pack-typed runtime parameter (`var *args: *Ts`) becomes the
+            // concrete `$pack[T0, ...]`; its element sequence is exposed in the
+            // comptime env so `len(args)`/`args[i]`/`comptime for` evaluate
+            // while the body is elaborated (mirrors the def-pack path).
+            for parameter in &mut method.params {
+                if matches!(&parameter.ty, Type::Named(name, _) if name.trim_start_matches('*') == binding)
+                {
+                    runtime_pack_lengths.insert(parameter.name.clone(), source_types.len());
+                    parameter.ty = Type::Named(
+                        "$pack".to_string(),
+                        source_types.iter().cloned().map(ParamArg::Type).collect(),
+                    );
+                    env.insert(parameter.name.clone(), CtValue::Tuple(types.clone()));
+                }
+            }
             let elaborated = self.block(&method.body, &mut env, true)?;
             method.body = materialize_block(elaborated, &subs);
             elaborated_methods.push(method);
@@ -2691,7 +2706,10 @@ impl<'a> Elab<'a> {
                     let (vals, kept_type_args) = if self.struct_template(name) {
                         // A struct specialization is fully concrete: every
                         // compile-time argument is baked into the mangled name.
-                        (self.resolve_struct_spec_args(name, param_args, consts)?, Vec::new())
+                        (
+                            self.resolve_struct_spec_args(name, param_args, consts)?,
+                            Vec::new(),
+                        )
                     } else {
                         self.resolve_spec_args(name, param_args, args, consts)?
                     };
@@ -2836,12 +2854,7 @@ impl<'a> Elab<'a> {
             )));
         };
         let decls = classify_ct_params(type_params);
-        let [
-            ParamDecl::Type {
-                variadic: true, ..
-            },
-        ] = decls.as_slice()
-        else {
+        let [ParamDecl::Type { variadic: true, .. }] = decls.as_slice() else {
             return Err(ComptimeError::NotComptime(format!(
                 "variadic struct '{name}' supports exactly one type-parameter pack and no other compile-time parameters"
             )));

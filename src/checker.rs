@@ -27,7 +27,7 @@ use crate::call::{
 };
 use crate::ct::{CtExpr, CtValue};
 use crate::error::TypeError;
-use crate::token::{SourceSpan, Span};
+use crate::token::SourceSpan;
 use crate::types::{ConstraintOperand, GenericConstraint, ParamDecl, SliceKind, Ty, TyArg};
 
 /// The checked signature of a struct, kept in the checker's registry.
@@ -4502,7 +4502,12 @@ impl Checker {
         for p in &m.params {
             let mut pty = self.ty_from_anno(&p.ty)?;
             pty = match p.kind {
-                crate::ast::ParamKind::Variadic => Ty::List(Box::new(pty)),
+                // A specialized heterogeneous pack (`$pack` → tuple) binds as
+                // the tuple itself; an ordinary variadic collects into a list.
+                crate::ast::ParamKind::Variadic => match pty {
+                    Ty::Tuple(elements) => Ty::Tuple(elements),
+                    _ => Ty::List(Box::new(pty)),
+                },
                 crate::ast::ParamKind::KwVariadic => {
                     self.kwargs_collector_ty(pty, &format!("keyword collector '{}'", p.name))?
                 }
@@ -8927,16 +8932,40 @@ impl Checker {
             score += conversion_count(&actual, &params[index]);
         }
         if let Some(element) = variadic {
-            for position in overflow {
-                let actual = self.infer(&args[position])?;
-                if !coerces(&actual, element) {
+            // A specialized heterogeneous pack (`Ty::Tuple`) checks each overflow
+            // argument against its per-index element type with exact arity; an
+            // ordinary variadic checks every argument against one element type.
+            for (pack_index, &position) in overflow.iter().enumerate() {
+                let expected = match element {
+                    Ty::Tuple(elements) => {
+                        elements
+                            .get(pack_index)
+                            .ok_or_else(|| TypeError::ArityMismatch {
+                                name: "method".to_string(),
+                                expected: elements.len(),
+                                got: overflow.len(),
+                            })?
+                    }
+                    _ => element,
+                };
+                let actual = self.infer_with_expected(&args[position], expected, false)?;
+                if !coerces(&actual, expected) {
                     return Err(TypeError::TypeMismatch {
-                        expected: element.to_string(),
+                        expected: expected.to_string(),
                         found: actual.to_string(),
                         context: "variadic method argument".to_string(),
                     });
                 }
-                score += conversion_count(&actual, element);
+                score += conversion_count(&actual, expected);
+            }
+            if let Ty::Tuple(elements) = element
+                && elements.len() != overflow.len()
+            {
+                return Err(TypeError::ArityMismatch {
+                    name: "method".to_string(),
+                    expected: elements.len(),
+                    got: overflow.len(),
+                });
             }
         }
         let keyword_overflow = matched.keyword_overflow;

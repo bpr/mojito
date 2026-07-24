@@ -20,6 +20,14 @@ to evolve under the `0.x` compatibility rules.
   the struct's unique name and each specialization carries a distinct source
   tag, so checked facts no longer collide across specializations sharing the
   template's spans.
+- Variadic struct methods bind heterogeneous packs: real Mojo's pack
+  constructor `def __init__(out self, var *args: *Ts)` (with the scoped
+  `Tuple(*args^)` spread) specializes per instantiation, each constructor
+  argument is checked against its per-index element type with exact pack arity,
+  and method bodies can use `len(args)`/`args[i]`/`comptime for` over the pack.
+  Method calls with a specialized heterogeneous variadic now score per-position
+  everywhere (previously every overflow argument checked against one erased
+  element type).
 
 - Builtin scalar operators, comparisons, conversions, and rounding are typed
   through checked operation traits rather than ad-hoc numeric rules. Per-operator

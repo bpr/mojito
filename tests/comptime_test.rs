@@ -399,3 +399,35 @@ fn variadic_struct_runtime_index_is_rejected() {
     let err = run(src).unwrap_err();
     assert!(err.contains("compile-time Int index"), "got: {err}");
 }
+
+#[test]
+fn variadic_struct_pack_init_constructs_per_position() {
+    // Real Mojo's Tuple constructor shape: `var *args: *Ts` binds the
+    // heterogeneous pack (each argument checked against its per-index element
+    // type) and `Tuple(*args^)` transfers the elements into storage.
+    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"x\", False)\n    print(p.size())\n    print(p.storage[0])\n    print(p.storage[1])\n    print(p.storage[2])\n";
+    assert_eq!(run(src).unwrap(), "3\n7\nx\nFalse\n");
+}
+
+#[test]
+fn variadic_struct_pack_init_rejects_wrong_arity_and_types() {
+    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n";
+    // Too few arguments for the pack.
+    let arity = format!(
+        "{template}def main():\n    var p = Pair[Int, String](1)\n    print(p.storage[0])\n"
+    );
+    let err = run(&arity).unwrap_err();
+    assert!(
+        err.contains("no constructor overload matches"),
+        "got: {err}"
+    );
+    // A per-position element type mismatch (Bool where Int is declared).
+    let mistyped = format!(
+        "{template}def main():\n    var p = Pair[Int, String](True, \"hi\")\n    print(p.storage[0])\n"
+    );
+    let err = run(&mistyped).unwrap_err();
+    assert!(
+        err.contains("no constructor overload matches"),
+        "got: {err}"
+    );
+}
