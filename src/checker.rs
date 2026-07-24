@@ -52,7 +52,6 @@ struct StructInfo {
 /// The source-level pieces of a struct declaration passed through checking.
 struct StructDeclaration<'a> {
     module: &'a Option<String>,
-    span: Span,
     name: &'a str,
     type_params: &'a [crate::ast::TypeParam],
     conforms: &'a [String],
@@ -2840,7 +2839,6 @@ impl Checker {
                 }
                 self.check_struct(&StructDeclaration {
                     module: &stmt.module,
-                    span: stmt.span,
                     name,
                     type_params,
                     conforms,
@@ -3855,6 +3853,19 @@ impl Checker {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
         let decls = self.classify_params(type_params)?;
+        // A variadic struct template is compiled by compile-time specialization
+        // (each instantiation is a concrete struct); the unspecialized template
+        // has pack-dependent members and cannot be checked erased.
+        if decls.iter().any(|decl| {
+            matches!(
+                decl,
+                ParamDecl::Type { variadic: true, .. } | ParamDecl::Value { variadic: true, .. }
+            )
+        }) {
+            return Err(TypeError::Unsupported(format!(
+                "variadic struct '{name}' is compiled by compile-time specialization; instantiate it with explicit compile-time arguments (e.g. `{name}[Int, Bool](...)`) instead of checking the template"
+            )));
+        }
         for tr in conforms {
             self.check_trait_name(tr)?;
         }
@@ -3930,7 +3941,7 @@ impl Checker {
             self.declaration_types.borrow_mut().insert(
                 crate::checked::AnnotationSite::StructField {
                     module: declaration.module.clone(),
-                    declaration: declaration.span,
+                    declaration: name.to_string(),
                     field: field_index,
                 },
                 ty.clone(),
@@ -3982,7 +3993,7 @@ impl Checker {
                 self.declaration_types.borrow_mut().insert(
                     crate::checked::AnnotationSite::MethodParam {
                         module: declaration.module.clone(),
-                        declaration: declaration.span,
+                        declaration: name.to_string(),
                         method: method_index,
                         param,
                     },
@@ -3993,7 +4004,7 @@ impl Checker {
             self.declaration_types.borrow_mut().insert(
                 crate::checked::AnnotationSite::MethodReturn {
                     module: declaration.module.clone(),
-                    declaration: declaration.span,
+                    declaration: name.to_string(),
                     method: method_index,
                 },
                 sig.ret.clone(),
@@ -4001,7 +4012,7 @@ impl Checker {
             self.declaration_effects.borrow_mut().insert(
                 crate::checked::AnnotationSite::MethodReturn {
                     module: declaration.module.clone(),
-                    declaration: declaration.span,
+                    declaration: name.to_string(),
                     method: method_index,
                 },
                 crate::checked::DeclarationEffect {

@@ -222,14 +222,17 @@ pub(crate) enum AnnotationSite {
         declaration: Span,
         param: usize,
     },
+    /// Struct-owned sites are identified by the struct's unique name, not its
+    /// span: compile-time struct specializations share their template's span
+    /// (correct provenance), so spans cannot distinguish the declarations.
     StructField {
         module: Option<String>,
-        declaration: Span,
+        declaration: String,
         field: usize,
     },
     MethodParam {
         module: Option<String>,
-        declaration: Span,
+        declaration: String,
         method: usize,
         param: usize,
     },
@@ -248,7 +251,7 @@ pub(crate) enum AnnotationSite {
     /// The checked return type of a struct method declaration.
     MethodReturn {
         module: Option<String>,
-        declaration: Span,
+        declaration: String,
         method: usize,
     },
 }

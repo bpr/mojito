@@ -317,3 +317,85 @@ fn type_and_value_predicates_compose() {
     let src = "def tag[T: AnyType, n: Int]() -> String:\n    comptime if is_same_type[T, Int]():\n        comptime if n == 0:\n            return \"int-zero\"\n        else:\n            return \"int-n\"\n    else:\n        return \"other\"\n\ndef main():\n    print(tag[Int, 0]())\n    print(tag[Int, 5]())\n    print(tag[String, 0]())\n";
     assert_eq!(run(src).unwrap(), "int-zero\nint-n\nother\n");
 }
+
+// --- Variadic-generic structs (`struct S[*Ts: Bound]`) ----------------------
+//
+// Compile-time elaboration specializes a variadic struct template per
+// instantiation (mirroring pack functions): `Tuple[*Ts]` members expand to the
+// concrete element list, and the template itself is dropped.
+
+#[test]
+fn variadic_struct_specializes_with_per_index_typed_storage() {
+    // `p.storage[0]` has the exact element type (Int here), so it participates
+    // in Int arithmetic; `p.storage[1]` is exactly Bool.
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var n: Int = p.storage[0] + 41\n    var b: Bool = p.storage[1]\n    print(n)\n    print(b)\n";
+    assert_eq!(run(src).unwrap(), "42\nTrue\n");
+}
+
+#[test]
+fn variadic_struct_element_type_mismatch_is_rejected() {
+    // Per-index typing is exact: reading the Int element into a Bool is a type
+    // error, not a common-bound erasure.
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var b: Bool = p.storage[0]\n    print(b)\n";
+    let err = run(src).unwrap_err();
+    assert!(
+        err.contains(r#"expected: "Bool", found: "Int""#),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn variadic_struct_distinct_instantiations_coexist() {
+    // Two specializations of one template are distinct concrete structs with
+    // independent field types (regression: annotation sites keyed by span
+    // collided across specializations sharing the template's span).
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var a = Pair[Int, Bool]((1, True))\n    var b = Pair[Int, Int]((2, 3))\n    var c = Pair[String]((\"solo\",))\n    print(a.storage[0] + b.storage[1])\n    print(c.storage[0])\n";
+    assert_eq!(run(src).unwrap(), "4\nsolo\n");
+}
+
+#[test]
+fn variadic_struct_annotations_and_methods_use_the_specialization() {
+    // The struct type appears in a def parameter annotation (rewritten to the
+    // specialized struct), and a concrete method runs against the expanded
+    // storage.
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef first_int(p: Pair[Int, Bool]) -> Int:\n    return p.storage[0]\n\ndef main():\n    var p: Pair[Int, Bool] = Pair[Int, Bool]((1, True))\n    var q = p\n    print(first_int(q))\n    print(q.size())\n";
+    assert_eq!(run(src).unwrap(), "1\n2\n");
+}
+
+#[test]
+fn variadic_struct_requires_explicit_type_arguments() {
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair((1, True))\n    print(p.storage[0])\n";
+    let err = run(src).unwrap_err();
+    assert!(
+        err.contains("variadic struct 'Pair' requires explicit compile-time type arguments"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn variadic_struct_bare_template_use_is_rejected() {
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var x = Pair\n    print(\"unreachable\")\n";
+    let err = run(src).unwrap_err();
+    assert!(
+        err.contains("variadic struct 'Pair' requires explicit compile-time type arguments"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn variadic_struct_supports_exactly_one_pack() {
+    // One trailing pack and no other compile-time parameters (current scope).
+    let src = "@fieldwise_init\nstruct Bad[T: Copyable & Movable, *Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var x = Bad[Int, Bool]((True,))\n    print(\"unreachable\")\n";
+    let err = run(src).unwrap_err();
+    assert!(
+        err.contains("supports exactly one type-parameter pack"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn variadic_struct_runtime_index_is_rejected() {
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var i = 0\n    print(p.storage[i])\n";
+    let err = run(src).unwrap_err();
+    assert!(err.contains("compile-time Int index"), "got: {err}");
+}

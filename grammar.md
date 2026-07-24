@@ -261,7 +261,7 @@ optional effect.
 
 ```
 params_decl: '[' ','.param_decl+ ']'
-param_decl: NAME ':' ( bound | type )     # a type parameter, or a value parameter
+param_decl: ['*'] NAME ':' ( bound | type )   # a type parameter (or pack), or a value parameter
 bound: '&'.NAME+
 ```
 
@@ -277,6 +277,18 @@ apart from its bound traits' methods. **Value parameters** are restricted to typ
 `Int` and are usable as `Int` values in the body (`Self.n` in a struct, bare `n` in a
 function) and as the struct's type-identity arguments; they may **not** appear in field,
 parameter, or return **type** annotations (no dependent types yet).
+
+A leading `'*'` declares a **pack**: a variadic type parameter (`*Ts: Copyable &
+Movable`) or, on a `def` only, a variadic value parameter (`*ns: Int`). A pack
+must still carry its bound (bare `[*Ts]` is rejected; this is stricter than
+current Mojo). On a `def`, a type pack pairs with a `*args: *Ts` runtime
+parameter (heterogeneous variadic; see **def_stmt**). On a `struct`, a type pack
+makes the struct **variadic-generic**: compile-time elaboration specializes the
+struct per instantiation, expanding pack-typed member annotations such as
+`Tuple[*Ts]` to the concrete element list. A variadic struct currently supports
+exactly one type-parameter pack and no other compile-time parameters, and must
+be instantiated with explicit bracket arguments (`Pair[Int, Bool](...)`; the
+elaborator does not infer struct packs).
 
 **Supplying parameters.** Parameters are supplied with a bracketed argument list before
 the call/construction parentheses, or as type arguments in an annotation:
@@ -308,9 +320,10 @@ receiver: [convention] 'self'    # instance method; absent ⇒ a @staticmethod (
 
 An optional `params_decl` list after the name makes the struct generic
 (`struct Pair[T: Copyable & Movable]:`, or `struct FixedBuffer[size: Int]:` with a value
-parameter). Inside the struct body, refer to the struct's own type parameters as
-`Self.T` and value parameters as `Self.n` (an `Int` value), and to the struct type
-itself as `Self` (see **Types**); methods do not take their own parameters.
+parameter, or the variadic-generic `struct Pair[*Ts: Copyable & Movable]:` — see
+**Parameterization**). Inside the struct body, refer to the struct's own type
+parameters as `Self.T` and value parameters as `Self.n` (an `Int` value), and to the
+struct type itself as `Self` (see **Types**); methods do not take their own parameters.
 
 An optional `conformance` list — a parenthesized, comma-separated list of trait names
 after the name (and after any `params_decl`) — declares that the struct **conforms** to

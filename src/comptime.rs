@@ -227,19 +227,32 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
 fn collect_specializable(program: &[Stmt]) -> HashMap<String, &Stmt> {
     let mut m = HashMap::new();
     for s in program {
-        if let StmtKind::Def {
-            name,
-            type_params,
-            body,
-            ..
-        } = &s.kind
-            && !type_params.is_empty()
-            && (block_has_comptime(body)
-                || type_params
-                    .iter()
-                    .any(|parameter| parameter.name.starts_with('*')))
-        {
-            m.insert(name.clone(), s);
+        match &s.kind {
+            StmtKind::Def {
+                name,
+                type_params,
+                body,
+                ..
+            } if !type_params.is_empty()
+                && (block_has_comptime(body)
+                    || type_params
+                        .iter()
+                        .any(|parameter| parameter.name.starts_with('*'))) =>
+            {
+                m.insert(name.clone(), s);
+            }
+            // A variadic struct's pack determines member types per instantiation,
+            // so like a pack function it can only be resolved per use site; the
+            // template is specialized (and dropped) rather than checked erased.
+            StmtKind::Struct {
+                name, type_params, ..
+            } if type_params
+                .iter()
+                .any(|parameter| parameter.name.starts_with('*')) =>
+            {
+                m.insert(name.clone(), s);
+            }
+            _ => {}
         }
     }
     m
@@ -673,6 +686,12 @@ impl<'a> Elab<'a> {
                 methods,
                 fieldwise_init,
             } => {
+                // A variadic struct template's members reference the unbound pack;
+                // keep it verbatim for monomorphization (mirrors def templates).
+                if self.specializable.contains_key(name) {
+                    out.push(stmt.clone());
+                    return Ok(());
+                }
                 let methods = methods
                     .iter()
                     .map(|m| {
@@ -2098,7 +2117,7 @@ impl<'a> Elab<'a> {
         let mut program = program;
         // Rewrite call sites in every non-template statement, seeding the worklist.
         for stmt in program.iter_mut() {
-            if let StmtKind::Def { name, .. } = &stmt.kind
+            if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &stmt.kind
                 && self.specializable.contains_key(name)
             {
                 continue; // a template — replaced wholesale below
@@ -2114,11 +2133,18 @@ impl<'a> Elab<'a> {
                     mangle(&job.orig, &job.vals), job.site
                 ))
             })?;
-            let mut def = self.generate_spec(&job.orig, &job.vals)?;
-            if let StmtKind::Def { body, .. } = &mut def.kind {
-                self.mono_block(body, &consts, &mut mono)?;
+            let mut spec = match &self.specializable[&job.orig].kind {
+                StmtKind::Struct { .. } => self.generate_struct_spec(&job.orig, &job.vals)?,
+                _ => self.generate_spec(&job.orig, &job.vals)?,
+            };
+            match &mut spec.kind {
+                StmtKind::Def { body, .. } => self.mono_block(body, &consts, &mut mono)?,
+                // A struct specialization is fully concrete; walk its members for
+                // further template uses (nested instantiations, recursive packs).
+                StmtKind::Struct { .. } => self.mono_stmt(&mut spec, &consts, &mut mono)?,
+                _ => {}
             }
-            mono.generated.entry(job.orig).or_default().push(def);
+            mono.generated.entry(job.orig).or_default().push(spec);
         }
         // Rebuild the program, replacing each template with its specializations at
         // the template's original position. Specializations are emitted in reverse
@@ -2127,7 +2153,9 @@ impl<'a> Elab<'a> {
         let mut out = Vec::with_capacity(program.len());
         for stmt in program {
             match &stmt.kind {
-                StmtKind::Def { name, .. } if self.specializable.contains_key(name) => {
+                StmtKind::Def { name, .. } | StmtKind::Struct { name, .. }
+                    if self.specializable.contains_key(name) =>
+                {
                     if let Some(mut specs) = mono.generated.remove(name) {
                         specs.reverse();
                         out.extend(specs);
@@ -2280,6 +2308,106 @@ impl<'a> Elab<'a> {
         ))
     }
 
+    /// Generate one specialization of variadic-struct template `orig` for the
+    /// compile-time arguments `vals`: bind the type pack in the comptime env so
+    /// member bodies' `comptime if`/`for` resolve against the concrete element
+    /// types, expand pack-typed member annotations (`Tuple[*Ts]`) to the concrete
+    /// list, and emit a fully concrete (parameter-free) struct under the mangled
+    /// name. Unlike a def specialization, nothing stays symbolic.
+    fn generate_struct_spec(&self, orig: &str, vals: &[CtValue]) -> Result<Stmt, ComptimeError> {
+        let template = self.specializable[orig];
+        let StmtKind::Struct {
+            decorators,
+            type_params,
+            conforms,
+            callable_conformance,
+            conformance_conditions,
+            fields,
+            associated,
+            methods,
+            fieldwise_init,
+            ..
+        } = &template.kind
+        else {
+            return Err(ComptimeError::NotComptime(format!(
+                "specialization registry entry '{orig}' is not a struct"
+            )));
+        };
+        let decls = classify_ct_params(type_params);
+        let (
+            [
+                ParamDecl::Type {
+                    name: pack,
+                    variadic: true,
+                    ..
+                },
+            ],
+            [CtValue::Tuple(types)],
+        ) = (decls.as_slice(), vals)
+        else {
+            return Err(ComptimeError::NotComptime(format!(
+                "variadic struct '{orig}' supports exactly one type-parameter pack and no other compile-time parameters"
+            )));
+        };
+        let binding = pack.trim_start_matches('*').to_string();
+        let source_types = types
+            .iter()
+            .map(|value| match value {
+                CtValue::Type(ty) => source_type_from_ty(ty),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                ComptimeError::NotComptime("type pack contains a non-type value".to_string())
+            })?;
+        let mut type_pack_expansions = HashMap::new();
+        type_pack_expansions.insert(binding.clone(), source_types);
+        let runtime_pack_lengths = HashMap::new();
+        // Elaborate each method body with the pack bound, so comptime constructs
+        // select/unroll against the concrete element types.
+        let mut elaborated_methods = Vec::with_capacity(methods.len());
+        for method in methods {
+            let mut env = self.top_consts.borrow().clone();
+            env.insert(binding.clone(), CtValue::Tuple(types.clone()));
+            let mut subs = self.top_consts.borrow().clone();
+            subs.remove("self");
+            for parameter in &method.params {
+                subs.remove(&parameter.name);
+            }
+            let mut method = method.clone();
+            let elaborated = self.block(&method.body, &mut env, true)?;
+            method.body = materialize_block(elaborated, &subs);
+            elaborated_methods.push(method);
+        }
+        let mangled = mangle(orig, vals);
+        let mut spec = mk(
+            StmtKind::Struct {
+                name: mangled.clone(),
+                decorators: decorators.clone(),
+                type_params: Vec::new(),
+                conforms: conforms.clone(),
+                callable_conformance: callable_conformance.clone(),
+                conformance_conditions: conformance_conditions.clone(),
+                fields: fields.clone(),
+                associated: associated.clone(),
+                methods: elaborated_methods,
+                fieldwise_init: *fieldwise_init,
+            },
+            template.span,
+        );
+        expand_pack_spreads_in_stmt(&mut spec, &type_pack_expansions, &runtime_pack_lengths);
+        // Every specialization reuses the template's spans (correct provenance),
+        // so checked facts keyed by source location would collide across
+        // specializations of one template. Stamp each with a unique source tag —
+        // the mangled name layered on the template's module — to keep locations
+        // distinct; `elaborate` re-stamps the whole subtree from `Stmt::module`.
+        spec.module = Some(match &template.module {
+            Some(module) => format!("{module}${mangled}"),
+            None => mangled,
+        });
+        Ok(spec)
+    }
+
     fn mono_block(
         &self,
         stmts: &mut [Stmt],
@@ -2301,8 +2429,13 @@ impl<'a> Elab<'a> {
         // Monomorphization substitutes one concrete parameter environment and
         // rewrites nested calls to their specialized symbols.
         match &mut s.kind {
-            StmtKind::VarDecl { value, .. }
-            | StmtKind::RefDecl { value, .. }
+            StmtKind::VarDecl { ty, value, .. } => {
+                if let Some(ty) = ty {
+                    self.mono_type(ty, consts, mono)?;
+                }
+                self.mono_expr(value, consts, mono)
+            }
+            StmtKind::RefDecl { value, .. }
             | StmtKind::Assign { value, .. }
             | StmtKind::Comptime { value, .. }
             | StmtKind::Raise(value)
@@ -2367,13 +2500,124 @@ impl<'a> Elab<'a> {
                 }
                 self.mono_block(body, consts, mono)
             }
-            StmtKind::Def { body, .. } => self.mono_block(body, consts, mono),
-            StmtKind::Struct { methods, .. } => {
+            StmtKind::Def {
+                params,
+                raises_type,
+                ret,
+                body,
+                ..
+            } => {
+                for parameter in params.iter_mut() {
+                    self.mono_type(&mut parameter.ty, consts, mono)?;
+                    if let Some(default) = &mut parameter.default {
+                        self.mono_expr(default, consts, mono)?;
+                    }
+                }
+                if let Some(error) = raises_type {
+                    self.mono_type(error, consts, mono)?;
+                }
+                if let Some(ret) = ret {
+                    self.mono_type(ret, consts, mono)?;
+                }
+                self.mono_block(body, consts, mono)
+            }
+            StmtKind::Struct {
+                fields, methods, ..
+            } => {
+                for field in fields.iter_mut() {
+                    self.mono_type(&mut field.ty, consts, mono)?;
+                }
                 for m in methods.iter_mut() {
+                    for parameter in m.params.iter_mut() {
+                        self.mono_type(&mut parameter.ty, consts, mono)?;
+                        if let Some(default) = &mut parameter.default {
+                            self.mono_expr(default, consts, mono)?;
+                        }
+                    }
+                    if let Some(error) = &mut m.raises_type {
+                        self.mono_type(error, consts, mono)?;
+                    }
+                    if let Some(ret) = &mut m.ret {
+                        self.mono_type(ret, consts, mono)?;
+                    }
                     self.mono_block(&mut m.body, consts, mono)?;
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// Rewrite variadic-struct template names inside a type annotation to their
+    /// specialized (mangled) names, enqueueing the needed instantiations.
+    fn mono_type(
+        &self,
+        ty: &mut Type,
+        consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
+    ) -> Result<(), ComptimeError> {
+        match ty {
+            Type::Named(name, arguments) => {
+                for argument in arguments.iter_mut() {
+                    self.mono_param_arg(argument, consts, mono)?;
+                }
+                if self.specializable.contains_key(name.as_str())
+                    && matches!(
+                        self.specializable[name.as_str()].kind,
+                        StmtKind::Struct { .. }
+                    )
+                {
+                    let vals = self.resolve_struct_spec_args(name, arguments, consts)?;
+                    let mangled = mangle(name, &vals);
+                    if mono.done.insert(mangled.clone()) {
+                        mono.queue.push_back(Job {
+                            orig: name.clone(),
+                            vals,
+                            site: "a type annotation".to_string(),
+                        });
+                    }
+                    *name = mangled;
+                    arguments.clear();
+                }
+                Ok(())
+            }
+            Type::Assoc { base, .. } => self.mono_type(base, consts, mono),
+            Type::Func {
+                params,
+                ret,
+                raises_type,
+                ..
+            } => {
+                for param in params {
+                    self.mono_type(param, consts, mono)?;
+                }
+                self.mono_type(ret, consts, mono)?;
+                if let Some(error) = raises_type {
+                    self.mono_type(error, consts, mono)?;
+                }
+                Ok(())
+            }
+            Type::Ref { referent, .. } => self.mono_type(referent, consts, mono),
+            Type::Int
+            | Type::UInt
+            | Type::Bool
+            | Type::String
+            | Type::Float64
+            | Type::None
+            | Type::SelfParam(_)
+            | Type::SelfType => Ok(()),
+        }
+    }
+
+    fn mono_param_arg(
+        &self,
+        argument: &mut ParamArg,
+        consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
+    ) -> Result<(), ComptimeError> {
+        match argument {
+            ParamArg::Type(ty) => self.mono_type(ty, consts, mono),
+            ParamArg::Named { value, .. } => self.mono_param_arg(value, consts, mono),
+            ParamArg::Value(value) => self.mono_expr(value, consts, mono),
         }
     }
 
@@ -2390,9 +2634,33 @@ impl<'a> Elab<'a> {
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
             | ExprKind::None
-            | ExprKind::Identifier(_)
-            | ExprKind::TString { .. }
-            | ExprKind::TypeApply { .. } => Ok(()),
+            | ExprKind::TString { .. } => Ok(()),
+            ExprKind::Identifier(name) => {
+                // The template is dropped after monomorphization, so a bare
+                // (argument-less) use of a variadic struct can never resolve.
+                if self.struct_template(name) {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "variadic struct '{name}' requires explicit compile-time type arguments, e.g. `{name}[Int, Bool](...)`"
+                    )));
+                }
+                Ok(())
+            }
+            ExprKind::TypeApply { name, args } => {
+                if self.struct_template(name) {
+                    let vals = self.resolve_struct_spec_args(name, args, consts)?;
+                    let mangled = mangle(name, &vals);
+                    if mono.done.insert(mangled.clone()) {
+                        mono.queue.push_back(Job {
+                            orig: name.clone(),
+                            vals,
+                            site: request_site,
+                        });
+                    }
+                    *name = mangled;
+                    args.clear();
+                }
+                Ok(())
+            }
             ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) | ExprKind::Spread(inner) => {
                 self.mono_expr(inner, consts, mono)
             }
@@ -2420,8 +2688,13 @@ impl<'a> Elab<'a> {
                     self.mono_expr(&mut k.value, consts, mono)?;
                 }
                 if self.specializable.contains_key(name) {
-                    let (vals, kept_type_args) =
-                        self.resolve_spec_args(name, param_args, args, consts)?;
+                    let (vals, kept_type_args) = if self.struct_template(name) {
+                        // A struct specialization is fully concrete: every
+                        // compile-time argument is baked into the mangled name.
+                        (self.resolve_struct_spec_args(name, param_args, consts)?, Vec::new())
+                    } else {
+                        self.resolve_spec_args(name, param_args, args, consts)?
+                    };
                     let mangled = mangle(name, &vals);
                     if mono.done.insert(mangled.clone()) {
                         mono.queue.push_back(Job {
@@ -2538,6 +2811,54 @@ impl<'a> Elab<'a> {
                 self.mono_expr(else_branch, consts, mono)
             }
         }
+    }
+
+    /// Whether `name` is a specializable variadic-struct template.
+    fn struct_template(&self, name: &str) -> bool {
+        self.specializable
+            .get(name)
+            .is_some_and(|template| matches!(template.kind, StmtKind::Struct { .. }))
+    }
+
+    /// Resolve a variadic-struct instantiation's `[...]` arguments into the
+    /// specialization key: every argument is a type, collected into the pack
+    /// tuple. Instantiation requires explicit arguments (the elaborator does
+    /// not infer types), and a template supports exactly one trailing pack.
+    fn resolve_struct_spec_args(
+        &self,
+        name: &str,
+        param_args: &[ParamArg],
+        consts: &HashMap<String, CtValue>,
+    ) -> Result<Vec<CtValue>, ComptimeError> {
+        let StmtKind::Struct { type_params, .. } = &self.specializable[name].kind else {
+            return Err(ComptimeError::NotComptime(format!(
+                "specialization registry entry '{name}' is not a struct"
+            )));
+        };
+        let decls = classify_ct_params(type_params);
+        let [
+            ParamDecl::Type {
+                variadic: true, ..
+            },
+        ] = decls.as_slice()
+        else {
+            return Err(ComptimeError::NotComptime(format!(
+                "variadic struct '{name}' supports exactly one type-parameter pack and no other compile-time parameters"
+            )));
+        };
+        if param_args.is_empty() {
+            return Err(ComptimeError::NotComptime(format!(
+                "variadic struct '{name}' requires explicit compile-time type arguments, e.g. `{name}[Int, Bool](...)`"
+            )));
+        }
+        let types = param_args
+            .iter()
+            .map(|argument| {
+                self.param_arg_type(argument, consts)
+                    .map(|ty| CtValue::Type(Box::new(ty)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(vec![CtValue::Tuple(types)])
     }
 
     /// The classified compile-time parameters of a specializable template.

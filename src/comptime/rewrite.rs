@@ -107,7 +107,7 @@ pub(super) fn expand_pack_spreads_in_block(
     }
 }
 
-fn expand_pack_spreads_in_stmt(
+pub(super) fn expand_pack_spreads_in_stmt(
     statement: &mut Stmt,
     type_packs: &HashMap<String, Vec<Type>>,
     runtime_pack_lengths: &HashMap<String, usize>,

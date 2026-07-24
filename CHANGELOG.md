@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Variadic-generic structs: `struct S[*Ts: Bound]` declarations are specialized
+  by compile-time elaboration per explicit instantiation (`S[Int, Bool](...)`),
+  mirroring pack functions. Pack-typed members such as `var storage: Tuple[*Ts]`
+  expand to the concrete element list, per-index reads (`s.storage[0]`) carry
+  the exact element type, and specializations construct, copy, move, and drop as
+  ordinary concrete structs. One trailing type pack (and no other compile-time
+  parameters) is supported; instantiation requires explicit bracket arguments;
+  a bare or argument-less template use and runtime-varying pack indexing are
+  rejected with contextual errors. Struct annotation sites are now identified by
+  the struct's unique name and each specialization carries a distinct source
+  tag, so checked facts no longer collide across specializations sharing the
+  template's spans.
+
 - Builtin scalar operators, comparisons, conversions, and rounding are typed
   through checked operation traits rather than ad-hoc numeric rules. Per-operator
   traits (`Addable`, `Subtractable`, `Multipliable`, `Divisible`,

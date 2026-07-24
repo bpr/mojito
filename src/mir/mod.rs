@@ -3767,7 +3767,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                     checked,
                                     AnnotationSite::StructField {
                                         module: s.module.clone(),
-                                        declaration: s.span,
+                                        declaration: name.clone(),
                                         field: field_index,
                                     },
                                     &format!("field '{}' of struct '{name}'", field.name),
@@ -3817,7 +3817,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         .collect();
                     let return_site = AnnotationSite::MethodReturn {
                         module: s.module.clone(),
-                        declaration: s.span,
+                        declaration: name.clone(),
                         method: method_index,
                     };
                     let ret_ty = checked_type_or_record(
@@ -3849,7 +3849,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                     checked,
                                     AnnotationSite::MethodParam {
                                         module: s.module.clone(),
-                                        declaration: s.span,
+                                        declaration: name.clone(),
                                         method: method_index,
                                         param: m
                                             .params
@@ -3878,7 +3878,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                 checked,
                                 AnnotationSite::MethodParam {
                                     module: s.module.clone(),
-                                    declaration: s.span,
+                                    declaration: name.clone(),
                                     method: method_index,
                                     param: index,
                                 },
@@ -3892,7 +3892,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                 checked,
                                 AnnotationSite::MethodParam {
                                     module: s.module.clone(),
-                                    declaration: s.span,
+                                    declaration: name.clone(),
                                     method: method_index,
                                     param: index,
                                 },
@@ -3934,7 +3934,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             checked,
                             AnnotationSite::MethodParam {
                                 module: s.module.clone(),
-                                declaration: s.span,
+                                declaration: name.clone(),
                                 method: method_index,
                                 param,
                             },

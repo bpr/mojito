@@ -3312,3 +3312,14 @@ fn concrete_conversions_and_abs_route_through_dunders() {
         TypeError::TypeMismatch { .. }
     ));
 }
+
+#[test]
+fn variadic_struct_template_cannot_be_checked_raw() {
+    // A `struct S[*Ts]` template is compiled by compile-time specialization;
+    // reaching the checker unspecialized (i.e. without elaboration) is rejected
+    // with a contextual error rather than checked erased.
+    assert!(matches!(
+        err("struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    pass\n"),
+        TypeError::Unsupported(message) if message.contains("variadic struct 'Pair' is compiled by compile-time specialization")
+    ));
+}
