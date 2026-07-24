@@ -35,6 +35,14 @@ to evolve under the `0.x` compatibility rules.
   carried on MIR `Index` (`resolved`, like `Slice`/`MultiIndex`) so the VM
   dispatches without name guessing. Runtime-varying and out-of-range indices
   and element writes are rejected contextually.
+- Self-hosted `std.collections.pack_tuple.PackTuple[*Ts]`: a variadic-generic
+  prototype for the future self-hosted `Tuple`, reproducing native tuple
+  restrictions (heterogeneous construction, exact per-index typing,
+  immutability, non-iterability) as an ordinary stdlib struct. A pack element
+  violating the struct's declared conformance surface (a non-Copyable element
+  in a Copyable struct) is rejected by the specialization's conformance
+  verification; per-element diagnostics for specializable def pack bounds are
+  recorded as a roadmap gap.
 
 - Builtin scalar operators, comparisons, conversions, and rounding are typed
   through checked operation traits rather than ad-hoc numeric rules. Per-operator

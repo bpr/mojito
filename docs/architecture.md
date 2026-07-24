@@ -649,6 +649,22 @@ into the compile-time environment, and unrolls `args.__len__()`-driven loops.
 Each unrolled static index substitutes its concrete element type while retaining
 the declared common bound for operations that are not specialized to one index.
 
+A variadic **struct** template (`struct S[*Ts: Bound]`) is specialized the same
+way: compile-time elaboration keeps the template verbatim, resolves every
+explicit instantiation (calls, `TypeApply` expressions, and type annotations) to
+a mangled fully concrete struct, expands pack-typed member annotations such as
+`Tuple[*Ts]` to the concrete element list, rewrites a pack-typed method
+parameter to the `$pack` element list, unrolls the dependent accessor
+`__getitem__[i: Int] -> Ts[i]` into per-element concrete methods, and drops the
+template. Every specialization reuses the template's spans (correct
+provenance), so struct annotation sites are identified by the struct's unique
+name and each specialization's subtree — and each unrolled accessor body — is
+stamped with a distinct source tag, keeping span-keyed checked facts separate.
+The checker resolves a subscript on such a struct at a compile-time-constant
+index and records the selected accessor through the overload-target channel;
+MIR `Index` carries it (`resolved`, like `Slice`/`MultiIndex`) and the VM
+dispatches it without name derivation.
+
 ### If
 
 An `if`/`elif`/`else` chain lowers to a diamond or chain of diamonds:

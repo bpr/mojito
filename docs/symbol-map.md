@@ -76,7 +76,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `backend/vm.rs` owns frame execution and instruction dispatch.
 - `backend/vm/calls.rs` turns `CallSlots` into runtime values and frame slots.
 - `backend/vm/places.rs` navigates projected runtime storage.
-- `comptime.rs` owns evaluation, elaboration, and specialization orchestration.
+- `comptime.rs` owns evaluation, elaboration, and specialization orchestration —
+  including variadic-struct templates (`generate_struct_spec`, the `mono_type`
+  annotation rewrite, and per-specialization source stamping).
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
 
 ## Change Routing

@@ -138,6 +138,17 @@ that unlocks a real library pattern, with positive and negative tests.
   compiler gates on verification and ownership before execution, and the register
   VM re-verifies the drop-elaborated program it runs. This unblocks the textual
   MIR/VM schema and native backends.
+- [x] **Variadic-generic heterogeneous structs** — `struct S[*Ts: Bound]` is
+  specialized per explicit instantiation by compile-time elaboration (mirroring
+  pack functions): pack-typed members (`var storage: Tuple[*Ts]`) expand to the
+  concrete element list, real Mojo's pack constructor (`var *args: *Ts` with
+  `Tuple(*args^)`) binds per-position with exact arity, and the dependent
+  accessor `__getitem__[i: Int] -> Ts[i]` unrolls into per-element concrete
+  methods so `s[k]` has the exact element type and checked dispatch.
+  Specializations copy/move/drop as ordinary structs; the self-hosted
+  `std.collections.pack_tuple.PackTuple` prototype reproduces native tuple
+  restrictions (immutable, non-iterable, compile-time indices). Scope: one
+  trailing type pack, explicit bracket arguments, comptime-constant indexing.
 
 ## Ordered Work
 
@@ -154,16 +165,20 @@ them before freezing the textual format; API-only library growth follows it.
   scalar materialization. Scalar operators, comparisons, conversions, and
   rounding already route through checked operation traits; this is the remaining
   literal-representation half.
-- [ ] **Variadic-generic heterogeneous structs** — support `struct S[*Ts: Bound]`
-  with pack-determined heterogeneous fields and per-index concrete element typing
-  (deferred even for function packs today), so a self-hosted `Tuple[*Ts]` and
-  other variadic aggregates are expressible. Prerequisite for uniformly
-  self-hosting collections.
 - [ ] **Protocolize collections and iteration** — resolve `[...]`/`{...}`/`range`/
   tuple literals to self-hosted structs so list/set/dict/range/tuple indexing,
   sizing, containment, and iteration route through the same contracts as user
-  types, and remove the native collection reps. `Tuple` depends on
-  variadic-generic structs above.
+  types, and remove the native collection reps. Tuple literals resolve to the
+  variadic-generic `PackTuple`-style struct; native `Ty::Tuple`/`Value::Tuple`
+  remain only as the internal heterogeneous pack-storage primitive (the analog
+  of Mojo's MLIR pack), not a user-facing collection.
+- [ ] **Per-element pack-bound diagnostics** — a specializable def's declared
+  pack bound (`def f[*Ts: Intable]`) is enforced structurally (the specialized
+  body checks against the concrete element types) but not diagnosed
+  per-element at the instantiation site, because comptime specialization
+  consumes the call before checker generic binding; struct packs already
+  reject via the specialization's conformance verification. Needs a
+  conformance oracle callable from elaboration.
 - [ ] **Self-hosted Unicode String** — define storage, Unicode indexing/slicing,
   comparison, hashing, and formatting without VM-only semantics; distinguish
   compile-time `StringLiteral`, lazy captured `TString`, and explicit runtime

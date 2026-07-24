@@ -470,3 +470,16 @@ fn variadic_struct_dependent_getitem_rejects_bad_indices() {
     let err = run(&write).unwrap_err();
     assert!(err.contains("NotIndexable"), "got: {err}");
 }
+
+#[test]
+fn variadic_struct_bound_violation_rejects_via_spec_conformance() {
+    // A pack element that breaks the struct's own conformance surface
+    // (non-Copyable element inside a Copyable struct) is rejected when the
+    // specialization's declared conformances are verified. Declared pack
+    // bounds on specializable defs are otherwise enforced structurally by
+    // checking the specialized body against the concrete element types
+    // (per-element bound diagnostics for def packs are a recorded gap).
+    let src = "struct NoCopy(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var p = Pair[NoCopy, Int](NoCopy(1), 2)\n    print(p.storage[1])\n";
+    let err = run(src).unwrap_err();
+    assert!(err.contains("not Copyable"), "got: {err}");
+}

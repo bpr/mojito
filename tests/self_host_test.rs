@@ -369,3 +369,46 @@ fn self_hosted_algorithms_use_comptime_facts() {
         .join("self_hosted_algorithms.mojo");
     assert_eq!(run(&main).unwrap(), "1 2 0\n8 24\n4 17\n42\nfallback\n7\n");
 }
+
+#[test]
+fn self_hosted_pack_tuple_constructs_and_indexes_with_exact_types() {
+    // The variadic-generic prototype for a future self-hosted Tuple: pack
+    // construction, exact per-index element typing at compile-time-constant
+    // indices, length, and value-semantic copy/move.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "from std.collections.pack_tuple import PackTuple\n\ndef main():\n    var t = PackTuple[Int, String, Bool](3, \"mid\", True)\n    var n: Int = t[0]\n    print(n + 4)\n    print(t[1])\n    print(t[2])\n    print(len(t))\n    var copy = t\n    print(copy[0])\n    var moved = t^\n    print(moved[2])\n",
+    );
+    assert_eq!(run(&main).unwrap(), "7\nmid\nTrue\n3\n3\nTrue\n");
+}
+
+#[test]
+fn self_hosted_pack_tuple_preserves_tuple_restrictions() {
+    // Native-tuple parity: immutable (no `__setitem__`), non-iterable (no
+    // `__iter__`), and a compile-time-constant index is required.
+    let d = TempDir::new();
+    let imports = "from std.collections.pack_tuple import PackTuple\n\n";
+    let write = d.write(
+        "write.mojo",
+        &format!(
+            "{imports}def main():\n    var t = PackTuple[Int, Bool](1, True)\n    t[0] = 9\n    print(t[0])\n"
+        ),
+    );
+    assert!(run(&write).is_err(), "element writes must be rejected");
+    let iterate = d.write(
+        "iterate.mojo",
+        &format!(
+            "{imports}def main():\n    var t = PackTuple[Int, Bool](1, True)\n    for x in t:\n        print(x)\n"
+        ),
+    );
+    assert!(run(&iterate).is_err(), "iteration must be rejected");
+    let runtime_index = d.write(
+        "runtime_index.mojo",
+        &format!(
+            "{imports}def main():\n    var t = PackTuple[Int, Bool](1, True)\n    var i = 0\n    print(t[i])\n"
+        ),
+    );
+    let err = run(&runtime_index).unwrap_err();
+    assert!(err.contains("compile-time Int index"), "got: {err}");
+}
