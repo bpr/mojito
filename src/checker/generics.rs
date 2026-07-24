@@ -98,6 +98,9 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             Box::new(substitute(value, subst)),
         ),
         Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| substitute(t, subst)).collect()),
+        Ty::RuntimePack(elems) => {
+            Ty::RuntimePack(elems.iter().map(|t| substitute(t, subst)).collect())
+        }
         Ty::Variant(alternatives) => Ty::Variant(
             alternatives
                 .iter()
@@ -169,6 +172,12 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             Box::new(substitute_self(value, replacement)),
         ),
         Ty::Tuple(elems) => Ty::Tuple(
+            elems
+                .iter()
+                .map(|t| substitute_self(t, replacement))
+                .collect(),
+        ),
+        Ty::RuntimePack(elems) => Ty::RuntimePack(
             elems
                 .iter()
                 .map(|t| substitute_self(t, replacement))

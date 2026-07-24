@@ -85,6 +85,7 @@ expressions.
 | `neg` | `UnOp(Neg)` | Arithmetic negation |
 | `not` | `UnOp(Not)` | Logical negation |
 | `add` through `not_in` | `BinOp` | Binary arithmetic, comparison, logic, or membership |
+| `literal.materialize` | `MaterializeLiteral` | Convert an exact numeric literal once to its checked runtime scalar type |
 
 ### Calls
 
@@ -163,26 +164,41 @@ expressions.
 ```text
 const.i64  %dest, integer
 const.f64  %dest, float
+const.int_literal   %dest, arbitrary-precision-integer
+const.float_literal %dest, exact-finite-float
 const.bool %dest, true|false
 const.str  %dest, "text"
 const.none %dest
 ```
 
-Loads a compile-time literal into `%dest`.
-
-The available constant classes are signed `Int`, `Float64`, `Bool`, `String`,
-and `None`. More precise integer and SIMD materialization happens through typed
-variable stores, parameter coercion, conversions, or `simd.make`.
+Loads a constant into `%dest`. Source numeric literals use the exact
+`IntLiteral`/`FloatLiteral` classes; concrete `Int`/`Float64` constants remain
+available for compiler-synthesized runtime values. Boolean, String, function,
+and None constants are concrete.
 
 Examples:
 
 ```text
 const.i64  %r0, 42
 const.f64  %r1, 3.5
-const.bool %r2, true
-const.str  %r3, "mojito"
-const.none %r4
+const.int_literal   %r2, 1606938044258990275541962092341162602522202993782792835301376
+const.float_literal %r3, 1.000000059604644775390625
+const.bool %r4, true
+const.str  %r5, "mojito"
+const.none %r6
 ```
+
+### `literal.materialize` — Materialize Exact Numeric Literal
+
+```text
+literal.materialize %dest, %literal, target-type
+```
+
+Converts an exact `IntLiteral` or `FloatLiteral` register at the contextual
+boundary selected by the checker. Integer targets use destination-width
+two's-complement wrapping; floating targets round directly from the exact value
+to binary32 or binary64. The verifier rejects a concrete source, a literal-only
+target, or an incompatible integer/float target combination.
 
 ### `var.copy` — Copy Variable
 
@@ -611,13 +627,16 @@ drop.var $variable
 Removes the value from `$variable`, leaving `None`, and destroys the removed
 value. For a struct this can invoke `__del__`; fields are then dropped in reverse
 declaration order. Lists, sets, dictionaries, tuples, and nested structs are
-destroyed recursively. Moved fields are skipped, preventing double destruction
-after a partial move. This is also how an early exit destroys the residual state
-of an owned iterator when its elements are implicitly deletable.
+destroyed recursively. Native Tuple elements use Mojo's left-to-right order,
+independent of the reverse-order struct-field rule. Moved fields and relocated
+heterogeneous-pack storage are skipped at their old owner, preventing double
+destruction after a partial move. This is also how an early exit destroys the
+residual state of an owned iterator when its elements are implicitly deletable.
 
-Drop elaboration inserts this instruction at the variable's last use or on an
-appropriate control-flow edge. Values without observable destruction make it a
-semantic no-op.
+Drop elaboration conservatively inserts this instruction for every owned root at
+the variable's last use or on an appropriate control-flow edge. Runtime teardown
+then follows the value recursively; this also releases heap-backed storage whose
+destruction has no user-visible output.
 
 ### `drop.reg` — Reserved Register Drop
 

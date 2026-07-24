@@ -516,7 +516,7 @@ pub(super) fn lower_fn_nested(request: FunctionLowering<'_>, out: &mut Vec<(Stri
             names.extend(dparams.iter().map(|p| p.name.clone()));
             let mut ptys: Vec<Ty> = vec![cap_ty.clone(); captures.len()];
             ptys.extend(dparams.iter().enumerate().map(|(param, p)| {
-                checked
+                let ty = checked
                     .checked_type_at(&AnnotationSite::FunctionParam {
                         module: ds.module.clone(),
                         declaration: ds.span,
@@ -528,7 +528,8 @@ pub(super) fn lower_fn_nested(request: FunctionLowering<'_>, out: &mut Vec<(Stri
                             "checked type missing for parameter '{}' of nested function",
                             p.name
                         )
-                    })
+                    });
+                body_parameter_ty(p, ty)
             }));
             let mut owned2: Vec<bool> = captures
                 .iter()

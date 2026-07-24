@@ -1,11 +1,19 @@
-use mojito::Lexer;
 use mojito::token::{TStringChunk, Token};
+use mojito::{FloatLiteral, IntLiteral, Lexer};
 
 /// Collect all tokens, panicking if the lexer reports an error.
 fn lex_all(source: &str) -> Vec<Token> {
     Lexer::new(source)
         .map(|r| r.expect("lexer error").0)
         .collect()
+}
+
+fn int(value: i64) -> Token {
+    Token::IntLiteral(value.into())
+}
+
+fn float(source: &str) -> Token {
+    Token::FloatLiteral(FloatLiteral::parse_decimal(source).expect("valid float literal"))
 }
 
 #[test]
@@ -19,11 +27,11 @@ fn lexes_typed_var_with_arithmetic() {
             Token::Colon,
             Token::Identifier("Int".into()),
             Token::Assign,
-            Token::IntLiteral(1),
+            int(1),
             Token::Plus,
-            Token::IntLiteral(2),
+            int(2),
             Token::Star,
-            Token::IntLiteral(3),
+            int(3),
             Token::Newline, // synthesized at EOF since the line had content
             Token::Eof,
         ]
@@ -46,7 +54,7 @@ fn lexes_def_with_indented_body() {
             Token::Newline,
             Token::Indent,
             Token::Return,
-            Token::IntLiteral(1),
+            int(1),
             Token::Newline,
             Token::Dedent, // flushed at EOF
             Token::Eof,
@@ -63,7 +71,7 @@ fn disambiguates_two_char_operators() {
         vec![
             Token::Identifier("a".into()),
             Token::Minus,
-            Token::IntLiteral(1),
+            int(1),
             Token::EqEq,
             Token::Identifier("b".into()),
             Token::Le,
@@ -153,12 +161,12 @@ fn lexes_float_literals_and_slash() {
     assert_eq!(
         tokens,
         vec![
-            Token::FloatLiteral(12.5),
-            Token::FloatLiteral(1.0),
-            Token::FloatLiteral(1e5),
-            Token::FloatLiteral(2.5e-3),
+            float("12.5"),
+            float("1.0"),
+            float("1e5"),
+            float("2.5e-3"),
             Token::Slash,
-            Token::IntLiteral(10),
+            int(10),
             Token::Newline,
             Token::Eof,
         ]
@@ -167,25 +175,26 @@ fn lexes_float_literals_and_slash() {
 
 #[test]
 fn lexes_current_numeric_literal_spellings() {
-    assert_eq!(lex_literal(".5"), Token::FloatLiteral(0.5));
-    assert_eq!(lex_literal("2."), Token::FloatLiteral(2.0));
-    assert_eq!(lex_literal("2.e3"), Token::FloatLiteral(2_000.0));
-    assert_eq!(lex_literal("1__000_"), Token::IntLiteral(1_000));
-    assert_eq!(lex_literal("0x__FF_"), Token::IntLiteral(255));
+    assert_eq!(lex_literal(".5"), float(".5"));
+    assert_eq!(lex_literal("2."), float("2."));
+    assert_eq!(lex_literal("2.e3"), float("2.e3"));
+    assert_eq!(lex_literal("1__000_"), int(1_000));
+    assert_eq!(lex_literal("0x__FF_"), int(255));
     assert!(Lexer::new("0123").any(|token| token.is_err()));
     assert!(Lexer::new("1e+").any(|token| token.is_err()));
-    // Until Task 9 introduces arbitrary-precision literal storage, overflow is
-    // rejected instead of wrapping through the signed AST representation.
-    assert!(Lexer::new("18446744073709551615").any(|token| token.is_err()));
+    assert_eq!(
+        lex_literal("18446744073709551615"),
+        Token::IntLiteral(
+            IntLiteral::parse_radix("18446744073709551615", 10)
+                .expect("arbitrary-precision integer")
+        )
+    );
 }
 
 #[test]
 fn integer_without_point_stays_int() {
     // A bare trailing/leading context must not turn an int into a float.
-    assert_eq!(
-        lex_all("42"),
-        vec![Token::IntLiteral(42), Token::Newline, Token::Eof]
-    );
+    assert_eq!(lex_all("42"), vec![int(42), Token::Newline, Token::Eof]);
 }
 
 #[test]
@@ -200,9 +209,9 @@ fn newlines_suppressed_inside_parens() {
             Token::Identifier("Int".into()),
             Token::Assign,
             Token::LParen,
-            Token::IntLiteral(1),
+            int(1),
             Token::Plus,
-            Token::IntLiteral(2),
+            int(2),
             Token::RParen,
             Token::Newline,
             Token::Eof,
@@ -223,9 +232,9 @@ fn backslash_newline_is_a_line_continuation() {
             Token::Colon,
             Token::Identifier("Int".into()),
             Token::Assign,
-            Token::IntLiteral(1),
+            int(1),
             Token::Plus,
-            Token::IntLiteral(2),
+            int(2),
             Token::Newline,
             Token::Eof,
         ]
@@ -294,7 +303,7 @@ fn skips_full_line_and_inline_comments() {
             Token::Colon,
             Token::Identifier("Int".into()),
             Token::Assign,
-            Token::IntLiteral(1),
+            int(1),
             Token::Newline,
             Token::Eof,
         ]
@@ -325,7 +334,7 @@ fn comment_only_lines_do_not_affect_indentation() {
 fn comment_with_unicode_is_skipped_cleanly() {
     // Multi-byte characters in a comment must not break byte indexing.
     let tokens = lex_all("var x: Int = 1  # café ☕ \u{2764}\n");
-    assert!(tokens.contains(&Token::IntLiteral(1)));
+    assert!(tokens.contains(&int(1)));
     assert_eq!(tokens.last(), Some(&Token::Eof));
 }
 
@@ -337,9 +346,9 @@ fn comment_inside_parentheses_is_skipped() {
         vec![
             Token::Identifier("f".into()),
             Token::LParen,
-            Token::IntLiteral(1),
+            int(1),
             Token::Comma,
-            Token::IntLiteral(2),
+            int(2),
             Token::Comma,
             Token::RParen,
             Token::Newline,
@@ -424,17 +433,17 @@ fn lex_literal(lit: &str) -> Token {
 
 #[test]
 fn lexes_integer_bases() {
-    assert_eq!(lex_literal("0xFF"), Token::IntLiteral(255));
-    assert_eq!(lex_literal("0o77"), Token::IntLiteral(63));
-    assert_eq!(lex_literal("0b0111"), Token::IntLiteral(7));
-    assert_eq!(lex_literal("0x0"), Token::IntLiteral(0));
+    assert_eq!(lex_literal("0xFF"), int(255));
+    assert_eq!(lex_literal("0o77"), int(63));
+    assert_eq!(lex_literal("0b0111"), int(7));
+    assert_eq!(lex_literal("0x0"), int(0));
 }
 
 #[test]
 fn lexes_digit_separators() {
-    assert_eq!(lex_literal("1_000_000"), Token::IntLiteral(1_000_000));
-    assert_eq!(lex_literal("0xFF_00"), Token::IntLiteral(0xFF00));
-    assert_eq!(lex_literal("1_000.5"), Token::FloatLiteral(1000.5));
+    assert_eq!(lex_literal("1_000_000"), int(1_000_000));
+    assert_eq!(lex_literal("0xFF_00"), int(0xFF00));
+    assert_eq!(lex_literal("1_000.5"), float("1000.5"));
 }
 
 // --- String literals: single-quoted, triple-quoted ---

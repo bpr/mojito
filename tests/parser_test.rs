@@ -4,7 +4,7 @@ use mojito::ast::{
     PrefixOp, Stmt, StmtKind, StructComptime, TStringPart, TraitComptime, TraitMethod, Type,
     TypeParam, WithItem,
 };
-use mojito::{Lexer, Parser, parse_diagnostics};
+use mojito::{FloatLiteral, Lexer, Parser, parse_diagnostics};
 
 /// Box an `ExprKind` into a `Box<Expr>` child (dummy span; equality ignores it).
 fn bx(kind: ExprKind) -> Box<Expr> {
@@ -55,7 +55,15 @@ fn parse_expr(source: &str) -> Expr {
 }
 
 fn int(n: i64) -> Box<Expr> {
-    bx(ExprKind::Int(n))
+    bx(ExprKind::Int(n.into()))
+}
+
+fn int_expr(n: i64) -> Expr {
+    Expr::from(ExprKind::Int(n.into()))
+}
+
+fn float_literal(n: f64) -> FloatLiteral {
+    FloatLiteral::from_f64(n).expect("finite float literal")
 }
 
 fn ident(name: &str) -> Box<Expr> {
@@ -146,10 +154,7 @@ fn parses_call_with_args() {
         Expr::from(ExprKind::Call {
             name: "f".into(),
             param_args: vec![],
-            args: vec![
-                Expr::from(ExprKind::Int(1)),
-                Expr::from(ExprKind::Identifier("a".into()))
-            ],
+            args: vec![int_expr(1), Expr::from(ExprKind::Identifier("a".into()))],
             kwargs: vec![],
         })
     );
@@ -214,10 +219,7 @@ fn parses_member_access_and_method_call() {
         Expr::from(ExprKind::MethodCall {
             object: ident("p"),
             method: "move".into(),
-            args: vec![
-                Expr::from(ExprKind::Int(1)),
-                Expr::from(ExprKind::Identifier("a".into()))
-            ],
+            args: vec![int_expr(1), Expr::from(ExprKind::Identifier("a".into()))],
             kwargs: vec![],
         })
     );
@@ -285,8 +287,8 @@ fn parses_float_literal_and_division() {
             InfixOp::Add,
             bx(ExprKind::Infix(
                 InfixOp::Div,
-                bx(ExprKind::Float(1.0)),
-                bx(ExprKind::Float(2.0)),
+                bx(ExprKind::Float(float_literal(1.0))),
+                bx(ExprKind::Float(float_literal(2.0))),
             )),
             int(3),
         ))
@@ -303,7 +305,7 @@ fn parses_uint_and_float64_annotations() {
             value: Expr::from(ExprKind::Call {
                 name: "UInt".into(),
                 param_args: vec![],
-                args: vec![Expr::from(ExprKind::Int(0))],
+                args: vec![int_expr(0)],
                 kwargs: vec![]
             }),
         })
@@ -313,7 +315,7 @@ fn parses_uint_and_float64_annotations() {
         Stmt::from(StmtKind::VarDecl {
             name: "f".into(),
             ty: Some(Type::Float64),
-            value: Expr::from(ExprKind::Float(3.5)),
+            value: Expr::from(ExprKind::Float(float_literal(3.5))),
         })
     );
 }
@@ -762,7 +764,7 @@ fn parses_trait_default_method_body() {
             assert_eq!(
                 methods[0].default_body,
                 Some(vec![Stmt::from(StmtKind::Return(Some(Expr::from(
-                    ExprKind::Int(1)
+                    ExprKind::Int(1i64.into())
                 ))))])
             );
         }
@@ -864,7 +866,7 @@ fn parses_annotated_comptime_constant() {
         stmts[0],
         Stmt::from(StmtKind::Comptime {
             name: "counter".into(),
-            value: Expr::from(ExprKind::Int(1)),
+            value: int_expr(1),
         })
     );
 }
@@ -902,7 +904,7 @@ fn parses_comptime_for() {
             iter: Expr::from(ExprKind::Call {
                 name: "range".into(),
                 param_args: vec![],
-                args: vec![Expr::from(ExprKind::Int(4))],
+                args: vec![int_expr(4)],
                 kwargs: vec![],
             }),
             body: vec![Stmt::from(StmtKind::Pass)],
@@ -990,8 +992,8 @@ fn parses_explicit_value_argument_in_annotation_and_call() {
                 *value,
                 Expr::from(ExprKind::Call {
                     name: "FixedBuffer".into(),
-                    param_args: vec![ParamArg::Value(Expr::from(ExprKind::Int(5)))],
-                    args: vec![Expr::from(ExprKind::Int(0))],
+                    param_args: vec![ParamArg::Value(int_expr(5))],
+                    args: vec![int_expr(0)],
                     kwargs: vec![],
                 })
             );
@@ -1282,7 +1284,7 @@ fn parses_simd_type_and_construction() {
                             object: ident("DType"),
                             field: "int32".into(),
                         })),
-                        ParamArg::Value(Expr::from(ExprKind::Int(4))),
+                        ParamArg::Value(int_expr(4)),
                     ],
                 )
             );
@@ -1344,9 +1346,9 @@ fn parses_list_literal() {
     assert_eq!(
         parse_expr("[1, 2, 3]"),
         Expr::from(ExprKind::ListLit(vec![
-            Expr::from(ExprKind::Int(1)),
-            Expr::from(ExprKind::Int(2)),
-            Expr::from(ExprKind::Int(3))
+            int_expr(1),
+            int_expr(2),
+            int_expr(3)
         ]))
     );
 }
@@ -1511,7 +1513,7 @@ fn parses_augmented_assignment() {
         Stmt::from(StmtKind::AugAssign {
             place: Expr::from(ExprKind::Identifier("x".into())),
             op: InfixOp::Add,
-            value: Expr::from(ExprKind::Int(1))
+            value: int_expr(1)
         })
     );
     // A place target is allowed too.
@@ -1594,9 +1596,9 @@ fn parses_tuple_literals_and_grouping() {
     assert_eq!(
         parse_expr("(1, 2, 3)"),
         Expr::from(ExprKind::TupleLit(vec![
-            Expr::from(ExprKind::Int(1)),
-            Expr::from(ExprKind::Int(2)),
-            Expr::from(ExprKind::Int(3))
+            int_expr(1),
+            int_expr(2),
+            int_expr(3)
         ]))
     );
     assert_eq!(
@@ -1607,7 +1609,7 @@ fn parses_tuple_literals_and_grouping() {
     // Trailing comma: `(a,)` is a 1-tuple.
     assert_eq!(
         parse_expr("(7,)"),
-        Expr::from(ExprKind::TupleLit(vec![Expr::from(ExprKind::Int(7))]))
+        Expr::from(ExprKind::TupleLit(vec![int_expr(7)]))
     );
 }
 
@@ -1616,7 +1618,7 @@ fn parses_bare_comma_tuple_displays() {
     assert_eq!(
         parse_expr("1, \"one\"\n"),
         Expr::from(ExprKind::TupleLit(vec![
-            Expr::from(ExprKind::Int(1)),
+            int_expr(1),
             Expr::from(ExprKind::Str("one".into())),
         ]))
     );
@@ -1657,7 +1659,7 @@ fn parses_default_argument_value() {
     let (params, _, _) =
         def_params("def my_pow(base: Int, exp: Int = 2) -> Int:\n    return base\n");
     assert_eq!(params[0].default, None);
-    assert_eq!(params[1].default, Some(Expr::from(ExprKind::Int(2))));
+    assert_eq!(params[1].default, Some(int_expr(2)));
     assert_eq!(params[1].kind, ParamKind::Regular);
 }
 
@@ -1835,11 +1837,11 @@ fn parses_keyword_call_arguments() {
             kwargs: vec![
                 KwArg {
                     name: "a".into(),
-                    value: Expr::from(ExprKind::Int(1))
+                    value: int_expr(1)
                 },
                 KwArg {
                     name: "b".into(),
-                    value: Expr::from(ExprKind::Int(2))
+                    value: int_expr(2)
                 },
             ],
         })
@@ -1853,11 +1855,11 @@ fn parses_keyword_call_arguments() {
             kwargs: vec![
                 KwArg {
                     name: "a".into(),
-                    value: Expr::from(ExprKind::Int(1))
+                    value: int_expr(1)
                 },
                 KwArg {
                     name: "b".into(),
-                    value: Expr::from(ExprKind::Int(2))
+                    value: int_expr(2)
                 },
             ],
         })
@@ -1868,10 +1870,10 @@ fn parses_keyword_call_arguments() {
         Expr::from(ExprKind::Call {
             name: "f".into(),
             param_args: vec![],
-            args: vec![Expr::from(ExprKind::Int(1))],
+            args: vec![int_expr(1)],
             kwargs: vec![KwArg {
                 name: "b".into(),
-                value: Expr::from(ExprKind::Int(2))
+                value: int_expr(2)
             }],
         })
     );
@@ -1894,7 +1896,7 @@ fn parses_transferred_keyword_dictionary_forwarding() {
             kwargs: vec![
                 KwArg {
                     name: "prefix".into(),
-                    value: Expr::from(ExprKind::Int(1)),
+                    value: int_expr(1),
                 },
                 KwArg {
                     name: mojito::ast::FORWARDED_KWARGS_NAME.into(),
@@ -2007,9 +2009,9 @@ fn parses_slice_subscripts() {
             args: vec![
                 mojito::ast::SubscriptArg::Index(Expr::from(ExprKind::Identifier("row".into(),))),
                 mojito::ast::SubscriptArg::Slice {
-                    lower: Some(Box::new(Expr::from(ExprKind::Int(1)))),
-                    upper: Some(Box::new(Expr::from(ExprKind::Int(5)))),
-                    step: Some(Box::new(Expr::from(ExprKind::Int(2)))),
+                    lower: Some(Box::new(int_expr(1))),
+                    upper: Some(Box::new(int_expr(5))),
+                    step: Some(Box::new(int_expr(2))),
                     explicit_step: true,
                 },
             ],
@@ -2039,12 +2041,12 @@ fn parses_general_decorators_on_def() {
     assert_eq!(decorators.len(), 2);
     assert_eq!(decorators[0].path, vec!["staticmethod".to_string()]);
     assert_eq!(decorators[1].path, vec!["a".to_string(), "b".to_string()]);
-    assert_eq!(decorators[1].args, vec![Expr::from(ExprKind::Int(1))]);
+    assert_eq!(decorators[1].args, vec![int_expr(1)]);
     assert_eq!(
         decorators[1].kwargs,
         vec![KwArg {
             name: "k".into(),
-            value: Expr::from(ExprKind::Int(2))
+            value: int_expr(2)
         }]
     );
 }

@@ -8,12 +8,9 @@ fn compiler_driver_runs_the_authoritative_pipeline() {
         .expect("compile");
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "5\n");
-    assert!(
-        execution
-            .bindings
-            .iter()
-            .any(|(name, value)| { name == "n" && *value == Value::Int(5) })
-    );
+    assert!(execution.bindings.iter().any(|(name, value)| {
+        name == "n" && matches!(value, Value::IntLiteral(value) if value.to_i64() == Some(5))
+    }));
 }
 
 #[test]

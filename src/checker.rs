@@ -110,7 +110,7 @@ fn merge_associated_requirement(
 
 fn conformance_operand(expression: &Expr, arguments: &HashMap<&str, &TyArg>) -> Option<CtValue> {
     match &expression.kind {
-        ExprKind::Int(value) => Some(CtValue::Int(*value)),
+        ExprKind::Int(value) => Some(CtValue::IntLiteral(value.clone())),
         ExprKind::Bool(value) => Some(CtValue::Bool(*value)),
         ExprKind::Str(value) => Some(CtValue::Str(value.clone())),
         ExprKind::Identifier(name) => match arguments.get(name.as_str())? {
@@ -118,6 +118,42 @@ fn conformance_operand(expression: &Expr, arguments: &HashMap<&str, &TyArg>) -> 
             TyArg::Ty(_) => None,
         },
         _ => None,
+    }
+}
+
+fn ct_integer(value: &CtValue) -> Option<crate::literal::IntLiteral> {
+    match value {
+        CtValue::Int(value) => Some((*value).into()),
+        CtValue::UInt(value) => Some((*value).into()),
+        CtValue::IntLiteral(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn ct_values_equal(left: &CtValue, right: &CtValue) -> bool {
+    match (ct_integer(left), ct_integer(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn compare_ct_integers(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<bool> {
+    let (left, right) = (ct_integer(left)?, ct_integer(right)?);
+    Some(match op {
+        InfixOp::Eq => left == right,
+        InfixOp::Ne => left != right,
+        InfixOp::Lt => left < right,
+        InfixOp::Le => left <= right,
+        InfixOp::Gt => left > right,
+        InfixOp::Ge => left >= right,
+        _ => return None,
+    })
+}
+
+fn ty_args_equal(left: &TyArg, right: &TyArg) -> bool {
+    match (left, right) {
+        (TyArg::Val(left), TyArg::Val(right)) => ct_values_equal(left, right),
+        _ => left == right,
     }
 }
 
@@ -203,6 +239,14 @@ fn place_root_name(expr: &Expr) -> Option<&str> {
         | ExprKind::MultiIndex { object, .. } => place_root_name(object),
         ExprKind::TypeApply { name, .. } => Some(name),
         _ => None,
+    }
+}
+
+fn place_has_index(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Index { .. } | ExprKind::Slice { .. } | ExprKind::MultiIndex { .. } => true,
+        ExprKind::Member { object, .. } => place_has_index(object),
+        _ => false,
     }
 }
 
@@ -562,6 +606,7 @@ pub fn check_program(stmts: &[Stmt]) -> Result<crate::checked::CheckedProgram, T
         checker.overload_targets.into_inner(),
         checker.implicit_conversions.into_inner(),
         checker.declaration_types.into_inner(),
+        checker.generic_parameters.into_inner(),
         checker.expression_types.into_inner(),
         checker.expression_bindings.into_inner(),
         checker.comprehension_bindings.into_inner(),
@@ -576,6 +621,133 @@ pub fn check_program(stmts: &[Stmt]) -> Result<crate::checked::CheckedProgram, T
         checker.reference_value_uses.into_inner(),
         checker.declaration_effects.into_inner(),
     ))
+}
+
+/// A declaration-only view of the checker's conformance registry for phases
+/// that necessarily run before whole-program type checking.  Compile-time
+/// specialization uses this to validate an inferred heterogeneous type pack at
+/// its call site; it must not grow a second, subtly different implementation of
+/// trait conformance.
+///
+/// The oracle records trait refinement, nominal struct conformances,
+/// conformance conditions, field types, and lifecycle method presence.  Method
+/// bodies and full requirement signatures remain the ordinary checker's job
+/// after elaboration.
+pub(crate) struct ConformanceOracle {
+    checker: Checker,
+}
+
+/// Evidence retained when a pre-check conformance query fails.
+pub(crate) struct ConformanceFailure {
+    pub(crate) reason: Option<String>,
+}
+
+impl ConformanceOracle {
+    pub(crate) fn from_program(stmts: &[Stmt]) -> Result<Self, TypeError> {
+        let mut checker = Checker::new();
+
+        // Refinement is the only trait fact needed by `conforms_to`. Register
+        // every name first so the oracle is independent of body checking and
+        // can answer nominal queries while specialization is still rewriting
+        // the program.
+        for statement in stmts {
+            let StmtKind::Trait { name, refines, .. } = &statement.kind else {
+                continue;
+            };
+            checker.traits.insert(
+                name.clone(),
+                TraitInfo {
+                    refines: refines.clone(),
+                    methods: HashMap::new(),
+                    comptime_members: HashMap::new(),
+                },
+            );
+        }
+
+        // Struct facts are likewise signature-only. Full conformance
+        // verification still runs after elaboration, so accepting a declaration
+        // into this registry never bypasses method or associated-member checks.
+        for statement in stmts {
+            let StmtKind::Struct {
+                name,
+                type_params,
+                conforms,
+                conformance_conditions,
+                fields,
+                methods,
+                fieldwise_init,
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+
+            let decls = checker.classify_params(type_params)?;
+            let self_ty = Ty::Struct(name.clone(), decls.iter().map(param_as_arg).collect());
+            let saved_self_decls = std::mem::replace(&mut checker.self_decls, decls.clone());
+            let saved_type_params =
+                std::mem::replace(&mut checker.enclosing_type_params, type_params.clone());
+            let saved_self_ty = checker.self_ty.replace(self_ty);
+            let field_types = if decls.iter().any(|decl| {
+                matches!(
+                    decl,
+                    ParamDecl::Type { variadic: true, .. }
+                        | ParamDecl::Value { variadic: true, .. }
+                )
+            }) {
+                // Pack-dependent fields are expanded into ordinary concrete
+                // fields/types by specialization. The template itself cannot be
+                // resolved as a single erased type.
+                Ok(Vec::new())
+            } else {
+                fields
+                    .iter()
+                    .map(|field| {
+                        checker
+                            .ty_from_anno(&field.ty)
+                            .map(|ty| (field.name.clone(), ty))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            checker.self_decls = saved_self_decls;
+            checker.enclosing_type_params = saved_type_params;
+            checker.self_ty = saved_self_ty;
+
+            let mut method_names: HashMap<String, Vec<MethodSig>> = HashMap::new();
+            for method in methods {
+                method_names
+                    .entry(lifecycle_method_name(method).to_string())
+                    .or_default();
+            }
+            checker.structs.insert(
+                name.clone(),
+                StructInfo {
+                    decls,
+                    conforms: conforms.clone(),
+                    callable_conformance: None,
+                    conformance_conditions: conformance_conditions.iter().cloned().collect(),
+                    fields: field_types?,
+                    associated: HashMap::new(),
+                    methods: method_names,
+                    fieldwise_init: *fieldwise_init,
+                    explicit_destroy_message: None,
+                    explicit_destructors: HashMap::new(),
+                },
+            );
+        }
+
+        Ok(Self { checker })
+    }
+
+    pub(crate) fn require(&self, ty: &Ty, trait_name: &str) -> Result<(), ConformanceFailure> {
+        if self.checker.conforms_to(ty, trait_name) {
+            Ok(())
+        } else {
+            Err(ConformanceFailure {
+                reason: self.checker.trait_failure_reason(ty, trait_name),
+            })
+        }
+    }
 }
 
 /// Materialize trait default methods into each conforming struct before semantic
@@ -748,8 +920,8 @@ pub struct Checker {
     /// Trait-associated comptime requirements in scope while checking a trait's
     /// own method requirement signatures, so `Self.Element` can resolve.
     trait_self_comptime: Vec<HashMap<String, CtMemberReq>>,
-    /// Compile-time `Int` constants declared by `comptime NAME = value`.
-    comptimes: HashMap<String, i64>,
+    /// Exact integer constants declared by `comptime NAME = value`.
+    comptimes: HashMap<String, crate::literal::IntLiteral>,
     /// Whether `self` is writable in the method body being checked — set while
     /// checking a `mut self` method's body (so `self.x = e` is allowed there).
     self_mutable: bool,
@@ -769,6 +941,7 @@ pub struct Checker {
     /// syntax.
     operation_adjustments: RefCell<HashMap<SourceSpan, crate::checked::SemanticAdjustment>>,
     declaration_types: RefCell<HashMap<crate::checked::AnnotationSite, Ty>>,
+    generic_parameters: RefCell<HashMap<crate::checked::GenericSite, Vec<crate::types::ParamDecl>>>,
     /// Checked raising contract and reference-return fact per callable
     /// declaration; lowering never re-reads source `raises`/return syntax.
     declaration_effects:
@@ -827,6 +1000,7 @@ impl Checker {
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
             declaration_types: RefCell::new(HashMap::new()),
+            generic_parameters: RefCell::new(HashMap::new()),
             declaration_effects: RefCell::new(HashMap::new()),
             expression_types: RefCell::new(HashMap::new()),
             expression_bindings: RefCell::new(HashMap::new()),
@@ -1053,16 +1227,11 @@ impl Checker {
         if let Ty::Simd { dtype, width: 1 } = to
             && splats_to(from, *dtype)
         {
-            if !literal_fits_dtype(expression, *dtype) {
-                return Err(TypeError::TypeMismatch {
-                    expected: to.to_string(),
-                    found: from.to_string(),
-                    context: "numeric literal materialization".to_string(),
-                });
-            }
+            self.record_literal_materializations(expression, from, to)?;
             return Ok(true);
         }
         if self.value_coerces(from, to) {
+            self.record_literal_materializations(expression, from, to)?;
             return Ok(true);
         }
         let Some(target) = self.implicit_conversion_target(from, to)? else {
@@ -1072,6 +1241,87 @@ impl Checker {
             .borrow_mut()
             .insert(expression.source_span(), target);
         Ok(true)
+    }
+
+    /// Retain every exact-literal boundary selected by contextual typing.  The
+    /// recursion matters for aggregates: `(1, 2.0)` materialized as
+    /// `Tuple[Int, Float64]` has two scalar boundaries, not one tuple cast.
+    fn record_literal_materializations(
+        &self,
+        expression: &Expr,
+        from: &Ty,
+        to: &Ty,
+    ) -> Result<(), TypeError> {
+        let scalar_boundary = matches!(from, Ty::IntLiteral | Ty::FloatLiteral)
+            && matches!(
+                to,
+                Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }
+            );
+        if scalar_boundary {
+            if let Some(value) = self.exact_literal_value(expression)
+                && !self.literal_value_fits_target(&value, to)
+            {
+                return Err(TypeError::TypeMismatch {
+                    expected: to.to_string(),
+                    found: from.to_string(),
+                    context: format!("numeric literal materialization of '{value}'"),
+                });
+            }
+            self.operation_adjustments.borrow_mut().insert(
+                expression.source_span(),
+                crate::checked::SemanticAdjustment::MaterializeLiteral(to.clone()),
+            );
+            return Ok(());
+        }
+
+        match (from, to) {
+            (Ty::Tuple(actual), Ty::Tuple(expected)) if actual.len() == expected.len() => {
+                let values = match &expression.kind {
+                    ExprKind::TupleLit(values) => Some(values.as_slice()),
+                    ExprKind::Call { name, args, .. } if name == "Tuple" => Some(args.as_slice()),
+                    _ => None,
+                };
+                if let Some(values) = values {
+                    for ((value, actual), expected) in values.iter().zip(actual).zip(expected) {
+                        self.record_literal_materializations(value, actual, expected)?;
+                    }
+                }
+            }
+            (Ty::List(actual), Ty::List(expected)) => {
+                let values = match &expression.kind {
+                    ExprKind::ListLit(values) => Some(values.as_slice()),
+                    ExprKind::Call { name, args, .. } if name == "List" => Some(args.as_slice()),
+                    _ => None,
+                };
+                if let Some(values) = values {
+                    for value in values {
+                        self.record_literal_materializations(value, actual, expected)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn exact_literal_value(&self, expression: &Expr) -> Option<CtValue> {
+        match self.eval_associated_ct(expression, &HashMap::new()).ok()? {
+            value @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn literal_value_fits_target(&self, value: &CtValue, target: &Ty) -> bool {
+        match (value, target) {
+            (CtValue::IntLiteral(_), Ty::Simd { dtype, width: 1 }) => {
+                int_literal_materializes_to_dtype(*dtype)
+            }
+            (CtValue::FloatLiteral(_), Ty::Simd { dtype, width: 1 }) => dtype.is_float(),
+            (value, Ty::Int | Ty::UInt | Ty::Float64) => {
+                value.clone().materialize_as(target).is_some()
+            }
+            _ => false,
+        }
     }
 
     fn resolve_ty_from_anno(&self, ty: &SourceType) -> Result<Ty, TypeError> {
@@ -1240,7 +1490,10 @@ impl Checker {
                     return Ok(simd_ty(dtype_from_arg(&args[0])?, 1));
                 }
                 if name == "$pack" {
-                    return self.tuple_type(args);
+                    return self.tuple_type(args).map(|ty| match ty {
+                        Ty::Tuple(elements) => Ty::RuntimePack(elements),
+                        _ => unreachable!("tuple_type always returns Ty::Tuple"),
+                    });
                 }
                 if name == "Error" && args.is_empty() {
                     return Ok(Ty::Error);
@@ -1393,6 +1646,9 @@ impl Checker {
                 Box::new(self.resolve_assoc_ty(value)),
             ),
             Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| self.resolve_assoc_ty(t)).collect()),
+            Ty::RuntimePack(elems) => {
+                Ty::RuntimePack(elems.iter().map(|t| self.resolve_assoc_ty(t)).collect())
+            }
             Ty::Variant(alternatives) => Ty::Variant(
                 alternatives
                     .iter()
@@ -1543,6 +1799,15 @@ impl Checker {
                             context: format!("value parameter '{}'", name),
                         });
                     }
+                    self.record_literal_materializations(expr, &actual, ty)?;
+                    let rendered = value.to_string();
+                    let value = value.clone().materialize_as(ty).ok_or_else(|| {
+                        TypeError::TypeMismatch {
+                            expected: ty.to_string(),
+                            found: rendered,
+                            context: format!("value parameter '{}'", name),
+                        }
+                    })?;
                     Ok(TyArg::Val(value))
                 }
                 ParamArg::Type(_) => Err(TypeError::TypeMismatch {
@@ -1835,7 +2100,12 @@ impl Checker {
     /// Evaluate a SIMD width argument: a comptime `Int` that is a power of two.
     fn simd_width(&self, arg: &crate::ast::ParamArg) -> Result<i64, TypeError> {
         let w = match arg {
-            crate::ast::ParamArg::Value(expr) => self.eval_ct(expr)?,
+            crate::ast::ParamArg::Value(expr) => {
+                let value = self.eval_ct(expr)?;
+                value
+                    .to_i64()
+                    .ok_or_else(|| TypeError::BadSimdWidth(value.to_string()))?
+            }
             crate::ast::ParamArg::Type(_) => {
                 return Err(TypeError::BadSimdWidth("a type".to_string()));
             }
@@ -1863,24 +2133,45 @@ impl Checker {
     /// Evaluate a compile-time `Int` expression: literals, `comptime` constants,
     /// and `+ - * // % **` / unary `-`. Rejects anything non-comptime (a value
     /// parameter, a call, a non-`Int` operation).
-    fn eval_ct(&self, expr: &Expr) -> Result<i64, TypeError> {
+    fn eval_ct(&self, expr: &Expr) -> Result<crate::literal::IntLiteral, TypeError> {
         match &expr.kind {
-            ExprKind::Int(n) => Ok(*n),
+            ExprKind::Int(n) => Ok(n.clone()),
             ExprKind::Identifier(name) => self
                 .comptimes
                 .get(name)
-                .copied()
+                .cloned()
                 .ok_or_else(|| TypeError::NotComptime(name.clone())),
-            ExprKind::Prefix(PrefixOp::Neg, e) => Ok(-self.eval_ct(e)?),
+            ExprKind::Prefix(PrefixOp::Neg, e) => Ok(self.eval_ct(e)?.neg()),
             ExprKind::Infix(op, l, r) => {
                 let (a, b) = (self.eval_ct(l)?, self.eval_ct(r)?);
                 match op {
-                    InfixOp::Add => Ok(a + b),
-                    InfixOp::Sub => Ok(a - b),
-                    InfixOp::Mul => Ok(a * b),
-                    InfixOp::FloorDiv if b != 0 => Ok(a.div_euclid(b)),
-                    InfixOp::Mod if b != 0 => Ok(a.rem_euclid(b)),
-                    InfixOp::Pow if b >= 0 => Ok(a.pow(b as u32)),
+                    InfixOp::Add => Ok(a.add(&b)),
+                    InfixOp::Sub => Ok(a.sub(&b)),
+                    InfixOp::Mul => Ok(a.mul(&b)),
+                    InfixOp::FloorDiv => a.floor_div(&b).ok_or_else(|| {
+                        TypeError::NotComptime("compile-time division by zero".to_string())
+                    }),
+                    InfixOp::Mod => a.floor_mod(&b).ok_or_else(|| {
+                        TypeError::NotComptime("compile-time modulo by zero".to_string())
+                    }),
+                    InfixOp::Pow => a.pow(&b).ok_or_else(|| {
+                        TypeError::NotComptime(
+                            "invalid or resource-limited compile-time power".to_string(),
+                        )
+                    }),
+                    InfixOp::Shl => a.shl(&b).ok_or_else(|| {
+                        TypeError::NotComptime(
+                            "invalid or resource-limited compile-time shift".to_string(),
+                        )
+                    }),
+                    InfixOp::Shr => a.shr(&b).ok_or_else(|| {
+                        TypeError::NotComptime(
+                            "invalid or resource-limited compile-time shift".to_string(),
+                        )
+                    }),
+                    InfixOp::BitAnd => Ok(a.bitand(&b)),
+                    InfixOp::BitOr => Ok(a.bitor(&b)),
+                    InfixOp::BitXor => Ok(a.bitxor(&b)),
                     _ => Err(TypeError::NotComptime(
                         "unsupported comptime operation".to_string(),
                     )),
@@ -1956,13 +2247,13 @@ impl Checker {
         associated: &HashMap<String, CtValue>,
     ) -> Result<CtValue, TypeError> {
         match &expr.kind {
-            ExprKind::Int(n) => Ok(CtValue::Int(*n)),
-            ExprKind::Float(value) => Ok(CtValue::Float(value.to_bits())),
+            ExprKind::Int(n) => Ok(CtValue::IntLiteral(n.clone())),
+            ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => Ok(CtValue::Bool(*b)),
             ExprKind::Str(s) => Ok(CtValue::Str(s.clone())),
             ExprKind::Identifier(name) => {
                 if let Some(n) = self.comptimes.get(name) {
-                    return Ok(CtValue::Int(*n));
+                    return Ok(CtValue::IntLiteral(n.clone()));
                 }
                 self.ty_value_from_name(name, &[])
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
@@ -1986,38 +2277,21 @@ impl Checker {
                     "unsupported associated comptime member access".to_string(),
                 ))
             }
-            ExprKind::Prefix(PrefixOp::Neg, e) => {
-                let CtValue::Int(n) = self.eval_associated_ct(e, associated)? else {
-                    return Err(TypeError::NotComptime(
-                        "unary '-' expects a comptime Int".to_string(),
-                    ));
-                };
-                Ok(CtValue::Int(-n))
-            }
-            ExprKind::Infix(op, l, r) => {
-                let (CtValue::Int(a), CtValue::Int(b)) = (
-                    self.eval_associated_ct(l, associated)?,
-                    self.eval_associated_ct(r, associated)?,
-                ) else {
-                    return Err(TypeError::NotComptime(
-                        "integer comptime operation expects Int operands".to_string(),
-                    ));
-                };
-                let value = match op {
-                    InfixOp::Add => a + b,
-                    InfixOp::Sub => a - b,
-                    InfixOp::Mul => a * b,
-                    InfixOp::FloorDiv if b != 0 => a.div_euclid(b),
-                    InfixOp::Mod if b != 0 => a.rem_euclid(b),
-                    InfixOp::Pow if b >= 0 => a.pow(b as u32),
-                    _ => {
-                        return Err(TypeError::NotComptime(
-                            "unsupported associated comptime operation".to_string(),
-                        ));
-                    }
-                };
-                Ok(CtValue::Int(value))
-            }
+            ExprKind::Prefix(PrefixOp::Neg, e) => match self.eval_associated_ct(e, associated)? {
+                CtValue::Int(n) => n.checked_neg().map(CtValue::Int).ok_or_else(|| {
+                    TypeError::NotComptime("compile-time integer overflow".to_string())
+                }),
+                CtValue::IntLiteral(n) => Ok(CtValue::IntLiteral(n.neg())),
+                CtValue::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value.neg())),
+                _ => Err(TypeError::NotComptime(
+                    "unary '-' expects a comptime numeric value".to_string(),
+                )),
+            },
+            ExprKind::Infix(op, l, r) => self.eval_associated_ct_infix(
+                *op,
+                self.eval_associated_ct(l, associated)?,
+                self.eval_associated_ct(r, associated)?,
+            ),
             ExprKind::TupleLit(elems) => elems
                 .iter()
                 .map(|e| self.eval_associated_ct(e, associated))
@@ -2031,6 +2305,91 @@ impl Checker {
             _ => Err(TypeError::NotComptime(
                 "not an associated comptime expression".to_string(),
             )),
+        }
+    }
+
+    fn eval_associated_ct_infix(
+        &self,
+        op: InfixOp,
+        left: CtValue,
+        right: CtValue,
+    ) -> Result<CtValue, TypeError> {
+        let unsupported =
+            || TypeError::NotComptime("unsupported associated comptime operation".to_string());
+        match (left, right) {
+            (CtValue::Int(left), CtValue::Int(right)) => {
+                let value = match op {
+                    InfixOp::Add => left.checked_add(right),
+                    InfixOp::Sub => left.checked_sub(right),
+                    InfixOp::Mul => left.checked_mul(right),
+                    InfixOp::FloorDiv if right != 0 => left.checked_div_euclid(right),
+                    InfixOp::Mod if right != 0 => left.checked_rem_euclid(right),
+                    InfixOp::Pow if right >= 0 => u32::try_from(right)
+                        .ok()
+                        .and_then(|exponent| left.checked_pow(exponent)),
+                    _ => return Err(unsupported()),
+                };
+                value
+                    .map(CtValue::Int)
+                    .ok_or_else(|| TypeError::NotComptime("compile-time integer overflow".into()))
+            }
+            (CtValue::IntLiteral(left), CtValue::IntLiteral(right)) => {
+                let value = match op {
+                    InfixOp::Add => Some(CtValue::IntLiteral(left.add(&right))),
+                    InfixOp::Sub => Some(CtValue::IntLiteral(left.sub(&right))),
+                    InfixOp::Mul => Some(CtValue::IntLiteral(left.mul(&right))),
+                    InfixOp::Div => crate::literal::FloatLiteral::from_int(&left)
+                        .div(&crate::literal::FloatLiteral::from_int(&right))
+                        .map(CtValue::FloatLiteral),
+                    InfixOp::FloorDiv => left.floor_div(&right).map(CtValue::IntLiteral),
+                    InfixOp::Mod => left.floor_mod(&right).map(CtValue::IntLiteral),
+                    InfixOp::Pow => left.pow(&right).map(CtValue::IntLiteral),
+                    _ => return Err(unsupported()),
+                };
+                value.ok_or_else(|| {
+                    TypeError::NotComptime("invalid exact compile-time arithmetic".into())
+                })
+            }
+            (CtValue::FloatLiteral(left), CtValue::FloatLiteral(right)) => {
+                let value = match op {
+                    InfixOp::Add => Some(left.add(&right)),
+                    InfixOp::Sub => Some(left.sub(&right)),
+                    InfixOp::Mul => Some(left.mul(&right)),
+                    InfixOp::Div => left.div(&right),
+                    InfixOp::FloorDiv => left.floor_div(&right),
+                    InfixOp::Mod => left.floor_mod(&right),
+                    InfixOp::Pow => right
+                        .to_int_if_whole()
+                        .and_then(|exponent| left.pow_int(&exponent)),
+                    _ => return Err(unsupported()),
+                };
+                value.map(CtValue::FloatLiteral).ok_or_else(|| {
+                    TypeError::NotComptime("invalid exact compile-time arithmetic".into())
+                })
+            }
+            (CtValue::Int(value), CtValue::IntLiteral(literal)) => self.eval_associated_ct_infix(
+                op,
+                CtValue::IntLiteral(value.into()),
+                CtValue::IntLiteral(literal),
+            ),
+            (CtValue::IntLiteral(literal), CtValue::Int(value)) => self.eval_associated_ct_infix(
+                op,
+                CtValue::IntLiteral(literal),
+                CtValue::IntLiteral(value.into()),
+            ),
+            (CtValue::IntLiteral(integer), CtValue::FloatLiteral(float)) => self
+                .eval_associated_ct_infix(
+                    op,
+                    CtValue::FloatLiteral(crate::literal::FloatLiteral::from_int(&integer)),
+                    CtValue::FloatLiteral(float),
+                ),
+            (CtValue::FloatLiteral(float), CtValue::IntLiteral(integer)) => self
+                .eval_associated_ct_infix(
+                    op,
+                    CtValue::FloatLiteral(float),
+                    CtValue::FloatLiteral(crate::literal::FloatLiteral::from_int(&integer)),
+                ),
+            _ => Err(unsupported()),
         }
     }
 
@@ -2165,6 +2524,9 @@ impl Checker {
                     // Inferred `var x = e`: declare the value's materialized type.
                     None => self.inferred_binding_ty(&found, name)?,
                 };
+                if ty.is_none() {
+                    self.record_literal_materializations(value, &found, &declared)?;
+                }
                 self.binding_types
                     .borrow_mut()
                     .insert(value.source_span(), declared.clone());
@@ -2258,6 +2620,7 @@ impl Checker {
                     // lowering retains the explicit unsupported boundary.
                     None => {
                         let declared = self.inferred_binding_ty(&found, name)?;
+                        self.record_literal_materializations(value, &found, &declared)?;
                         let aggregate_origins = if !matches!(declared, Ty::Ref(_))
                             && self.type_carries_loans(&declared)
                         {
@@ -2407,10 +2770,7 @@ impl Checker {
                         ));
                     }
                 }
-                let ok = match &target {
-                    Ty::Simd { dtype, width: 1 } => splats_to(&found, *dtype),
-                    _ => coerces(&found, &target),
-                };
+                let ok = self.record_implicit_conversion(value, &found, &target)?;
                 if !ok {
                     return Err(TypeError::TypeMismatch {
                         expected: target.to_string(),
@@ -2503,6 +2863,13 @@ impl Checker {
                         | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
                     }
                 }
+                self.generic_parameters.borrow_mut().insert(
+                    crate::checked::GenericSite::Function {
+                        module: stmt.module.clone(),
+                        declaration: stmt.span,
+                    },
+                    decls.clone(),
+                );
                 // Type parameters are in scope while resolving the signature and
                 // checking the body (as bare `T`).
                 self.tparams.push(type_scope(&decls));
@@ -2726,7 +3093,7 @@ impl Checker {
                         // a regular parameter keeps its declared type.
                         let bind_ty = match param.kind {
                             crate::ast::ParamKind::Variadic => match ty {
-                                Ty::Tuple(elements) => Ty::Tuple(elements.clone()),
+                                Ty::RuntimePack(elements) => Ty::Tuple(elements.clone()),
                                 _ => Ty::List(Box::new(ty.clone())),
                             },
                             crate::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
@@ -2867,7 +3234,7 @@ impl Checker {
                 match self.eval_ct(value) {
                     Ok(v) => {
                         self.comptimes.insert(name.clone(), v);
-                        self.declare_immutable(name, Ty::Int)
+                        self.declare_immutable(name, Ty::IntLiteral)
                     }
                     Err(_) => {
                         let ty = self.infer(value)?;
@@ -3441,13 +3808,13 @@ impl Checker {
             ))
         };
         Ok(match &expr.kind {
-            ExprKind::Int(value) => CtExpr::Value(CtValue::Int(*value)),
-            ExprKind::Float(value) => CtExpr::Value(CtValue::Float(value.to_bits())),
+            ExprKind::Int(value) => CtExpr::Value(CtValue::IntLiteral(value.clone())),
+            ExprKind::Float(value) => CtExpr::Value(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(value) => CtExpr::Value(CtValue::Bool(*value)),
             ExprKind::Str(value) => CtExpr::Value(CtValue::Str(value.clone())),
             ExprKind::Identifier(name) => {
                 if let Some(value) = self.comptimes.get(name) {
-                    CtExpr::Value(CtValue::Int(*value))
+                    CtExpr::Value(CtValue::IntLiteral(value.clone()))
                 } else {
                     CtExpr::Param(name.clone())
                 }
@@ -3583,7 +3950,7 @@ impl Checker {
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 ConstraintOperand::Param(field.clone())
             }
-            ExprKind::Int(value) => ConstraintOperand::Value(CtValue::Int(*value)),
+            ExprKind::Int(value) => ConstraintOperand::Value(CtValue::IntLiteral(value.clone())),
             ExprKind::Bool(value) => ConstraintOperand::Value(CtValue::Bool(*value)),
             ExprKind::Str(value) => ConstraintOperand::Value(CtValue::Str(value.clone())),
             ExprKind::TypeValue(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
@@ -3853,6 +4220,13 @@ impl Checker {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
         let decls = self.classify_params(type_params)?;
+        self.generic_parameters.borrow_mut().insert(
+            crate::checked::GenericSite::Struct {
+                module: declaration.module.clone(),
+                declaration: name.to_string(),
+            },
+            decls.clone(),
+        );
         // A variadic struct template is compiled by compile-time specialization
         // (each instantiation is a concrete struct); the unspecialized template
         // has pack-dependent members and cannot be checked erased.
@@ -3987,6 +4361,14 @@ impl Checker {
         for (method_index, m) in methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m);
             let method_decls = self.classify_params(&m.type_params)?;
+            self.generic_parameters.borrow_mut().insert(
+                crate::checked::GenericSite::Method {
+                    module: declaration.module.clone(),
+                    declaration: name.to_string(),
+                    method: method_index,
+                },
+                method_decls.clone(),
+            );
             self.tparams.push(type_scope(&method_decls));
             let all_types = self.param_tys(&m.params)?;
             for (param, ty) in all_types.iter().enumerate() {
@@ -4297,6 +4679,8 @@ impl Checker {
             CtValue::Int(_) | CtValue::Param(_) => Some(Ty::Int),
             CtValue::UInt(_) => Some(Ty::UInt),
             CtValue::Float(_) => Some(Ty::Float64),
+            CtValue::IntLiteral(_) => Some(Ty::IntLiteral),
+            CtValue::FloatLiteral(_) => Some(Ty::FloatLiteral),
             CtValue::Bool(_) => Some(Ty::Bool),
             CtValue::Str(_) => Some(Ty::String),
             CtValue::Tuple(values) => values
@@ -4502,10 +4886,11 @@ impl Checker {
         for p in &m.params {
             let mut pty = self.ty_from_anno(&p.ty)?;
             pty = match p.kind {
-                // A specialized heterogeneous pack (`$pack` → tuple) binds as
-                // the tuple itself; an ordinary variadic collects into a list.
+                // A specialized heterogeneous pack (`$pack` → RuntimePack)
+                // binds as the tuple itself; an ordinary variadic collects into
+                // a list, even when its homogeneous element type is Tuple.
                 crate::ast::ParamKind::Variadic => match pty {
-                    Ty::Tuple(elements) => Ty::Tuple(elements),
+                    Ty::RuntimePack(elements) => Ty::Tuple(elements),
                     _ => Ty::List(Box::new(pty)),
                 },
                 crate::ast::ParamKind::KwVariadic => {
@@ -4969,12 +5354,23 @@ impl Checker {
                     self.resolve_param_arg(decl, argument)?
                 } else if let ParamDecl::Value {
                     default: Some(value),
+                    ty,
                     ..
                 } = decl
                 {
-                    TyArg::Val(value.evaluate(&value_environment).ok_or_else(|| {
+                    let value = value.evaluate(&value_environment).ok_or_else(|| {
                         TypeError::NotComptime(format!("default for parameter '{}'", decl.name()))
-                    })?)
+                    })?;
+                    let rendered = value.to_string();
+                    TyArg::Val(
+                        value
+                            .materialize_as(ty)
+                            .ok_or_else(|| TypeError::TypeMismatch {
+                                expected: ty.to_string(),
+                                found: rendered,
+                                context: format!("default for parameter '{}'", decl.name()),
+                            })?,
+                    )
                 } else if let ParamDecl::Type {
                     default: Some(ty), ..
                 } = decl
@@ -5043,12 +5439,22 @@ impl Checker {
                 ParamDecl::Value {
                     name: pname,
                     default,
+                    ty,
                     ..
                 } => {
                     if let Some(value) = default {
                         let value = value.evaluate(&value_environment).ok_or_else(|| {
                             TypeError::NotComptime(format!("default for parameter '{}'", pname))
                         })?;
+                        let rendered = value.to_string();
+                        let value =
+                            value
+                                .materialize_as(ty)
+                                .ok_or_else(|| TypeError::TypeMismatch {
+                                    expected: ty.to_string(),
+                                    found: rendered,
+                                    context: format!("default for parameter '{}'", pname),
+                                })?;
                         value_environment
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
@@ -5163,27 +5569,38 @@ impl Checker {
                 })
                 .unwrap_or(false),
             Eq(left, right) => {
-                self.constraint_value(left, environment)
-                    == self.constraint_value(right, environment)
+                match (
+                    self.constraint_value(left, environment),
+                    self.constraint_value(right, environment),
+                ) {
+                    (Some(left), Some(right)) => ty_args_equal(&left, &right),
+                    _ => false,
+                }
             }
             Ne(left, right) => {
-                self.constraint_value(left, environment)
-                    != self.constraint_value(right, environment)
+                match (
+                    self.constraint_value(left, environment),
+                    self.constraint_value(right, environment),
+                ) {
+                    (Some(left), Some(right)) => !ty_args_equal(&left, &right),
+                    _ => false,
+                }
             }
             Lt(left, right) | Le(left, right) | Gt(left, right) | Ge(left, right) => {
-                let (Some(TyArg::Val(CtValue::Int(left))), Some(TyArg::Val(CtValue::Int(right)))) = (
+                let (Some(TyArg::Val(left)), Some(TyArg::Val(right))) = (
                     self.constraint_value(left, environment),
                     self.constraint_value(right, environment),
                 ) else {
                     return false;
                 };
-                match constraint {
-                    Lt(_, _) => left < right,
-                    Le(_, _) => left <= right,
-                    Gt(_, _) => left > right,
-                    Ge(_, _) => left >= right,
+                let op = match constraint {
+                    Lt(_, _) => InfixOp::Lt,
+                    Le(_, _) => InfixOp::Le,
+                    Gt(_, _) => InfixOp::Gt,
+                    Ge(_, _) => InfixOp::Ge,
                     _ => unreachable!(),
-                }
+                };
+                compare_ct_integers(op, &left, &right).unwrap_or(false)
             }
         }
     }
@@ -5324,15 +5741,11 @@ impl Checker {
                 let Some(right) = conformance_operand(right, args) else {
                     return false;
                 };
-                match (op, left, right) {
-                    (InfixOp::Eq, left, right) => left == right,
-                    (InfixOp::Ne, left, right) => left != right,
-                    (InfixOp::Lt, CtValue::Int(left), CtValue::Int(right)) => left < right,
-                    (InfixOp::Le, CtValue::Int(left), CtValue::Int(right)) => left <= right,
-                    (InfixOp::Gt, CtValue::Int(left), CtValue::Int(right)) => left > right,
-                    (InfixOp::Ge, CtValue::Int(left), CtValue::Int(right)) => left >= right,
+                compare_ct_integers(*op, &left, &right).unwrap_or_else(|| match op {
+                    InfixOp::Eq => ct_values_equal(&left, &right),
+                    InfixOp::Ne => !ct_values_equal(&left, &right),
                     _ => false,
-                }
+                })
             }
             ExprKind::Call {
                 name,
@@ -5353,10 +5766,22 @@ impl Checker {
     }
 
     fn trait_refines(&self, candidate: &str, required: &str) -> bool {
+        self.trait_refines_inner(candidate, required, &mut HashSet::new())
+    }
+
+    fn trait_refines_inner(
+        &self,
+        candidate: &str,
+        required: &str,
+        visiting: &mut HashSet<String>,
+    ) -> bool {
+        if !visiting.insert(candidate.to_string()) {
+            return false;
+        }
         self.traits.get(candidate).is_some_and(|info| {
-            info.refines
-                .iter()
-                .any(|parent| parent == required || self.trait_refines(parent, required))
+            info.refines.iter().any(|parent| {
+                parent == required || self.trait_refines_inner(parent, required, visiting)
+            })
         })
     }
 
@@ -5407,7 +5832,9 @@ impl Checker {
         match ty {
             Ty::List(element) | Ty::Set(element) => self.is_copyable(element),
             Ty::Dict(key, value) => self.is_copyable(key) && self.is_copyable(value),
-            Ty::Tuple(elements) => elements.iter().all(|element| self.is_copyable(element)),
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+                elements.iter().all(|element| self.is_copyable(element))
+            }
             Ty::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.is_copyable(alternative)),
@@ -5468,7 +5895,7 @@ impl Checker {
             Ty::Dict(key, value) => {
                 self.is_implicitly_copyable(key) && self.is_implicitly_copyable(value)
             }
-            Ty::Tuple(elements) => elements
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
                 .iter()
                 .all(|element| self.is_implicitly_copyable(element)),
             Ty::Variant(alternatives) => alternatives
@@ -5494,7 +5921,7 @@ impl Checker {
             Ty::Dict(key, value) => {
                 self.is_implicitly_deletable(key) && self.is_implicitly_deletable(value)
             }
-            Ty::Tuple(elements) => elements
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
                 .iter()
                 .all(|element| self.is_implicitly_deletable(element)),
             Ty::Variant(alternatives) => alternatives
@@ -5889,7 +6316,7 @@ impl Checker {
                     contains(checker, key, pointer_loans, seen)
                         || contains(checker, value, pointer_loans, seen)
                 }
-                Ty::Tuple(elements) => elements
+                Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
                     .iter()
                     .any(|element| contains(checker, element, pointer_loans, seen)),
                 Ty::Variant(alternatives) => alternatives
@@ -5929,7 +6356,7 @@ impl Checker {
                 Self::type_contains_unsafe_any_pointer(key)
                     || Self::type_contains_unsafe_any_pointer(value)
             }
-            Ty::Tuple(elements) | Ty::Variant(elements) => {
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
                 elements.iter().any(Self::type_contains_unsafe_any_pointer)
             }
             _ => false,
@@ -6422,6 +6849,18 @@ impl Checker {
     fn infer(&self, expr: &Expr) -> Result<Ty, TypeError> {
         let result = self.infer_impl(expr);
         if let Ok(ty) = &result {
+            if matches!(
+                ty,
+                Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }
+            ) && let Some(value) = self.exact_literal_value(expr)
+            {
+                let literal_ty = match value {
+                    CtValue::IntLiteral(_) => Ty::IntLiteral,
+                    CtValue::FloatLiteral(_) => Ty::FloatLiteral,
+                    _ => unreachable!("exact_literal_value only returns literal values"),
+                };
+                self.record_literal_materializations(expr, &literal_ty, ty)?;
+            }
             self.expression_types
                 .borrow_mut()
                 .insert(expr.source_span(), ty.clone());
@@ -6810,8 +7249,20 @@ impl Checker {
             ExprKind::Index { object, index } => {
                 self.infer_index(expr.source_span(), object, index)
             }
-            // Transfer is identity for typing (ownership move is not modeled).
-            ExprKind::Transfer(inner) => self.infer(inner),
+            // A dynamic/indexed expression does not designate independently
+            // movable storage. Current Mojo permits `^` there only when the
+            // result is implicitly copyable (the transfer is effectively a
+            // copy); accepting a linear element would duplicate its destructor.
+            ExprKind::Transfer(inner) => {
+                let ty = self.infer(inner)?;
+                if place_has_index(inner) && !self.is_implicitly_copyable(&ty) {
+                    return Err(TypeError::Unsupported(
+                        "cannot transfer a non-implicitly-copyable indexed value; the expression does not designate independently movable storage"
+                            .to_string(),
+                    ));
+                }
+                Ok(ty)
+            }
             // An empty list literal needs a contextual element type; the
             // context-aware paths never reach this uncontextualized inference.
             ExprKind::ListLit(elems) if elems.is_empty() => Err(TypeError::CannotInferTypeParam {
@@ -7295,7 +7746,12 @@ impl Checker {
         let element = acc.ok_or_else(|| {
             TypeError::InvariantViolation("empty list reached non-empty inference".to_string())
         })?;
-        Ok(default_literal(&element))
+        let materialized = default_literal(&element);
+        for value in elems {
+            let actual = self.infer(value)?;
+            self.record_literal_materializations(value, &actual, &materialized)?;
+        }
+        Ok(materialized)
     }
 
     /// Type a `List` construction: `List[T](args)` (explicit element type) or
@@ -7324,6 +7780,7 @@ impl Checker {
                         context: format!("element {} of List", i + 1),
                     });
                 }
+                self.record_literal_materializations(arg, &aty, &elem)?;
                 self.mark_reference_storage_uses(arg, &elem);
             }
             return Ok(Ty::List(elem));
@@ -7513,7 +7970,7 @@ impl Checker {
     fn index_storage_ty(&self, object: &Expr, index: &Expr) -> Option<Ty> {
         match self.infer(object).ok()? {
             Ty::Tuple(elements) => {
-                let index = usize::try_from(self.eval_ct(index).ok()?).ok()?;
+                let index = usize::try_from(self.eval_ct(index).ok()?.to_i64()?).ok()?;
                 elements.get(index).cloned()
             }
             Ty::List(element) | Ty::Pointer { element, .. } => Some(*element),
@@ -8070,9 +8527,14 @@ impl Checker {
         // A tuple is heterogeneous, so its index must be a **compile-time** `Int`
         // constant — the result type is that element's type.
         if let Ty::Tuple(elems) = &obj_ty {
-            let i = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
+            let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
                 expected: "a compile-time Int index".to_string(),
                 found: "a runtime value".to_string(),
+                context: "tuple index".to_string(),
+            })?;
+            let i = exact.to_i64().ok_or_else(|| TypeError::TypeMismatch {
+                expected: format!("a tuple index in 0..{}", elems.len()),
+                found: exact.to_string(),
                 context: "tuple index".to_string(),
             })?;
             if i < 0 || i as usize >= elems.len() {
@@ -8106,9 +8568,14 @@ impl Checker {
                 let count = (0..)
                     .take_while(|k| info.methods.contains_key(&format!("__getitem__${k}")))
                     .count();
-                let k = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
+                let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
                     expected: "a compile-time Int index".to_string(),
                     found: "a runtime value".to_string(),
+                    context: format!("variadic struct '{name}' subscript"),
+                })?;
+                let k = exact.to_i64().ok_or_else(|| TypeError::TypeMismatch {
+                    expected: format!("a pack index in 0..{count}"),
+                    found: exact.to_string(),
                     context: format!("variadic struct '{name}' subscript"),
                 })?;
                 if k < 0 || k as usize >= count {
@@ -8193,7 +8660,7 @@ impl Checker {
             return Ok(());
         }
         match self.eval_ct(index) {
-            Ok(0) => Ok(()),
+            Ok(value) if value.is_zero() => Ok(()),
             _ => Err(TypeError::Unsupported(
                 "an origin-bearing UnsafePointer designates a single value; only \
                  offset 0 can be dereferenced"
@@ -8965,12 +9432,12 @@ impl Checker {
             score += conversion_count(&actual, &params[index]);
         }
         if let Some(element) = variadic {
-            // A specialized heterogeneous pack (`Ty::Tuple`) checks each overflow
+            // A specialized heterogeneous pack (`Ty::RuntimePack`) checks each overflow
             // argument against its per-index element type with exact arity; an
             // ordinary variadic checks every argument against one element type.
             for (pack_index, &position) in overflow.iter().enumerate() {
                 let expected = match element {
-                    Ty::Tuple(elements) => {
+                    Ty::RuntimePack(elements) => {
                         elements
                             .get(pack_index)
                             .ok_or_else(|| TypeError::ArityMismatch {
@@ -8991,7 +9458,7 @@ impl Checker {
                 }
                 score += conversion_count(&actual, expected);
             }
-            if let Ty::Tuple(elements) = element
+            if let Ty::RuntimePack(elements) = element
                 && elements.len() != overflow.len()
             {
                 return Err(TypeError::ArityMismatch {
@@ -9870,6 +10337,30 @@ impl Checker {
         // `common` is the unified numeric type when both operands are numeric
         // (literals coerced as needed), else None.
         let common = common_numeric(&lt, &rt);
+        if let Some(target) = common.as_ref()
+            && matches!(
+                target,
+                Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }
+            )
+        {
+            self.record_literal_materializations(left, &lt, target)?;
+            self.record_literal_materializations(right, &rt, target)?;
+        }
+        // Integer powers of exact literals stay exact. A fractional exponent
+        // is not rational in general, so this is the semantic boundary where
+        // both operands become Float64 and runtime `powf` takes over.
+        if matches!(op, Pow) && matches!(common.as_ref(), Some(Ty::FloatLiteral)) {
+            let exponent_is_integer = match self.exact_literal_value(right) {
+                Some(CtValue::IntLiteral(_)) => true,
+                Some(CtValue::FloatLiteral(value)) => value.to_int_if_whole().is_some(),
+                _ => false,
+            };
+            if !exponent_is_integer {
+                self.record_literal_materializations(left, &lt, &Ty::Float64)?;
+                self.record_literal_materializations(right, &rt, &Ty::Float64)?;
+                return Ok(Ty::Float64);
+            }
+        }
         let result = match op {
             // Short-circuiting boolean logic requires `Bool` operands.
             And | Or if lt == Ty::Bool && rt == Ty::Bool => Some(Ty::Bool),
@@ -9887,10 +10378,17 @@ impl Checker {
                     .as_ref()
                     .is_some_and(|ty| matches!(ty, Ty::Int | Ty::UInt | Ty::IntLiteral)) =>
             {
-                common.map(|ty| default_literal(&ty))
+                common
             }
-            // True division always yields Float64 (for any numeric operands).
-            Div if common.is_some() => Some(Ty::Float64),
+            // Literal division stays exact until a runtime context chooses
+            // Float64; concrete operands perform fixed-width runtime division.
+            Div if common.is_some() => Some(
+                if matches!(common.as_ref(), Some(Ty::IntLiteral | Ty::FloatLiteral)) {
+                    Ty::FloatLiteral
+                } else {
+                    Ty::Float64
+                },
+            ),
             // Ordering between numbers, or between equal opaque type parameters
             // whose bound promises an ordering (`T: Comparable`).
             Lt | Gt | Le | Ge if common.is_some() || (lt == rt && has_order_bound(&lt)) => {
@@ -10256,6 +10754,7 @@ impl Checker {
                                 context: "Set construction element".to_string(),
                             });
                         }
+                        self.record_literal_materializations(argument, &actual, &element)?;
                         self.check_consuming(argument, &actual, "Set construction element")?;
                     }
                     return Ok(Ty::Set(element));
@@ -10482,7 +10981,7 @@ impl Checker {
         if let Some(elem) = &variadic {
             for (pack_index, &p) in overflow.iter().enumerate() {
                 let expected = match &**elem {
-                    Ty::Tuple(elements) => {
+                    Ty::RuntimePack(elements) => {
                         elements
                             .get(pack_index)
                             .ok_or_else(|| TypeError::ArityMismatch {
@@ -10503,7 +11002,7 @@ impl Checker {
                 }
                 score += conversion_count(&arg_ty, expected);
             }
-            if let Ty::Tuple(elements) = &**elem
+            if let Ty::RuntimePack(elements) = &**elem
                 && elements.len() != overflow.len()
             {
                 return Err(TypeError::ArityMismatch {
@@ -10921,6 +11420,10 @@ impl Checker {
     fn infer_print(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         for (i, arg) in args.iter().enumerate() {
             let ty = self.infer(arg)?;
+            let runtime_ty = default_literal(&ty);
+            if runtime_ty != ty {
+                self.record_literal_materializations(arg, &ty, &runtime_ty)?;
+            }
             if matches!(ty, Ty::Struct(..) | Ty::Variant(_)) {
                 if self.conforms_to(&ty, "Writable") {
                     continue;
@@ -10978,6 +11481,10 @@ impl Checker {
     fn infer_stringify(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("String", 1, args)?;
         if is_numeric(&tys[0]) || tys[0] == Ty::Bool || tys[0] == Ty::String {
+            let runtime_ty = default_literal(&tys[0]);
+            if runtime_ty != tys[0] {
+                self.record_literal_materializations(&args[0], &tys[0], &runtime_ty)?;
+            }
             return Ok(Ty::String);
         }
         if self.conforms_to(&tys[0], "Writable") {
@@ -11094,6 +11601,7 @@ impl Checker {
                     context: format!("argument {} to 'range'", i + 1),
                 });
             }
+            self.record_literal_materializations(arg, &arg_ty, &Ty::Int)?;
         }
         Ok(Ty::Range)
     }

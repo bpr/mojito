@@ -95,10 +95,13 @@ The architecture prioritizes:
 
 mojito is not trying to reproduce Mojo's production architecture. First-pass
 parity targets single-threaded CPU language semantics and excludes GPU,
-concurrency/parallelism, distributed execution, Python interoperability, and
-MLIR. The register VM is the executable specification. A versioned textual
-MIR/VM assembly form is the next representation boundary; Cranelift and then
-LLVM are the planned native backends. eBPF and MLIR remain stretch goals.
+concurrency/parallelism, distributed execution, Python interoperability, and any
+requirement that MLIR be the compiler's internal IR layer. The register VM is
+the executable specification. A versioned textual MIR/VM assembly form is the
+next representation boundary; the prioritized native backends are LLVM and the
+MLIR-family frameworks — MLIR and the Rust-native, MLIR-inspired
+[Pliron](https://github.com/pliron-org/pliron) (its LLVM dialect emits LLVM IR) —
+with Cranelift and eBPF as lower-priority options that follow them.
 
 ### Source Module Boundaries
 
@@ -292,9 +295,9 @@ VmBackend::run_function_value(...)
 
 It executes a named top-level helper without running `__toplevel__` or `main`,
 burns the shared compile-time fuel budget, and returns a runtime `Value` plus the
-remaining fuel. The elaborator converts the result back to `CtValue`. Only
-runtime-materializable compile-time values can cross that boundary today:
-`Int`, `Bool`, `String`, `Tuple`, and `List`.
+remaining fuel. The elaborator converts the result back to `CtValue`. Exact
+`IntLiteral`/`FloatLiteral` values and runtime-materializable `Int`, `UInt`,
+`Float64`, `Bool`, `String`, `Tuple`, and `List` values can cross that boundary.
 
 ### Fuel
 
@@ -336,6 +339,35 @@ default. The shared `CtValue` model carries integers, booleans, strings,
 tuples/lists, types, symbolic parameters, and zero-sized reflection handles.
 Only literal-shaped values materialize into runtime AST; type and reflection
 handles are consumed and erased during elaboration.
+
+### Exact Numeric Literals
+
+Numeric source literals have dedicated compile-time types and representations.
+`IntLiteral` owns a `num_bigint::BigInt`; finite `FloatLiteral` owns a reduced
+`num_rational::BigRational` plus a negative-zero bit. Lexer tokens, AST nodes,
+`CtValue`, checked constants, MIR constants, and VM CTFE bridges preserve those
+values without first passing through an `i64` or `f64`. Literal arithmetic is
+therefore exact, subject only to the compiler's explicit exponent/shift resource
+quota.
+
+Contextual typing selects the one transition to a runtime scalar. The checker
+records `SemanticAdjustment::MaterializeLiteral(target)`, HIR retains that
+decision, and MIR emits `MaterializeLiteral { value, target }`; the verifier
+requires an exact-literal source and compatible concrete target. Integer targets
+use destination-width two's-complement wrapping. Floating targets round once
+from the exact rational directly to binary32 or binary64, preserving signed
+zero and producing IEEE infinity on overflow. Bindings, stores, calls, returns,
+typed tuple/list/set/dictionary elements, and `range` arguments all record their
+scalar boundaries rather than relying on VM container coercion.
+
+Generic value parameters are also materialization boundaries. Their resolved
+`ParamDecl`s cross `CheckedProgram` through stable declaration-owned
+`GenericSite`s into MIR declaration metadata, so the VM reifies a value at its
+declared type without reclassifying source bounds. This prevents an exact
+literal from leaking into an erased runtime slot and keeps hashing, equality,
+stores, calls, and returns consistent. The defensive erased-value path compares
+finite numeric values in one exact rational domain and hashes that canonical
+form, including treating positive and negative zero as numerically equal.
 
 Current Mojo reflection enters through the zero-sized `reflect[T]` compile-time
 handle. Mojito implements `is_struct`, `field_count`, `field_names`,
@@ -641,13 +673,29 @@ returning function and never supplies the `out` argument.
 A variadic type parameter retains a leading `*` in the checked parameter name.
 Generic-call inference recognizes the matching `*args: *Pack` element type and
 checks each overflow argument independently against the pack bounds instead of
-forcing all arguments to unify to one type. The VM deliberately erases those
-individual types into its existing variadic collection representation. This
-supports heterogeneous calls and pack length queries. Specialization infers
-literal and directly constructed call-argument types, binds the pack's type tuple
-into the compile-time environment, and unrolls `args.__len__()`-driven loops.
+forcing all arguments to unify to one type. Specialization records the concrete
+sequence as the internal checked `Ty::RuntimePack([T0, ...])` call ABI; the VM
+materializes that collector as native Tuple storage, while an ordinary
+homogeneous `*args: Tuple[...]` remains a List whose repeated element type is a
+Tuple. This supports heterogeneous calls and pack length queries without using
+the shape of `Ty::Tuple` to guess collector kind. Specialization infers literal
+and directly constructed call-argument types, binds the pack's type tuple into
+the compile-time environment, and unrolls `args.__len__()`-driven loops.
+Because specialization consumes this generic call before whole-program checking,
+it queries a declaration-only checker conformance oracle first. Every inferred
+element is tested against every declared pack bound at the requesting call site;
+a failure names the one-based element number, concrete type, pack, and trait.
+The oracle reuses the authoritative conformance rules and records trait
+refinement, nominal/conditional conformances, field types, and lifecycle-method
+presence without checking method bodies early. Full conformance verification
+still runs on the elaborated program.
 Each unrolled static index substitutes its concrete element type while retaining
 the declared common bound for operations that are not specialized to one index.
+Runtime-pack spread recognition still occurs before checked binding IDs exist
+and therefore keys the pack parameter by source name. Scope-stable pre-check
+binding facts are an explicit roadmap prerequisite before protocolized Tuple
+uses these transforms more broadly; until then, shadowing that spelling in a
+nested scope is a known elaboration limitation.
 
 A variadic **struct** template (`struct S[*Ts: Bound]`) is specialized the same
 way: compile-time elaboration keeps the template verbatim, resolves every
@@ -1267,7 +1315,7 @@ elaborate_drops_program(prog: MirProgram) -> MirProgram
 ```
 
 ASAP destruction is implemented as a MIR rewrite. The analysis computes where
-variables stop being live and splices explicit:
+owned variables stop being live and conservatively splices explicit:
 
 ```rust
 MirInstr::DropVar { var }
@@ -1280,7 +1328,11 @@ The VM does not need to discover last uses dynamically. It just executes
 
 ### What Gets Dropped
 
-Droppable roots are:
+Drop roots are selected independently of type: every owned local and consuming
+parameter receives drop glue. This conservative policy releases heap-backed
+runtime storage at its last use even when no user `__del__` call is observable,
+and it naturally covers destructor-less structs containing aggregate storage.
+Ownership is limited to:
 
 - locals
 - consuming `var` parameters
@@ -1297,7 +1349,10 @@ declaration order. Struct destruction runs:
 1. the struct's `__del__(deinit self)`, if present
 2. fields in reverse declaration order
 
-Lists and tuples drop their elements in reverse order.
+Native tuples drop elements left-to-right, matching current Mojo's heterogeneous
+tuple-storage lifecycle. Struct fields remain reverse declaration order; the
+other native VM collections retain their representation-specific reverse
+teardown order.
 
 Types whose `ImplicitlyDeletable` conformance is explicitly unavailable, such
 as `ImplicitlyDeletable where False`, are excluded from this automatic path.
@@ -1470,9 +1525,11 @@ This makes the VM a useful backstop and executable model for ownership semantics
 
 `DropVar` removes the value from a variable slot and recursively destroys it.
 
-Dropping is a no-op for scalars and destructor-less values. For structs with
-`__del__`, it calls the destructor and then drops fields. Moved-out fields are
-skipped so partial moves do not double-drop.
+Dropping is observably a no-op for scalars and destructor-less leaf values. For
+structs with `__del__`, it calls the destructor and then drops fields. A
+destructor-less struct still recursively destroys aggregate fields; native
+Tuple elements are visited left-to-right. Moved-out fields are skipped so
+partial moves do not double-drop.
 
 ### Exceptions And Non-Normal Flow
 
@@ -1634,7 +1691,7 @@ of verified MIR and the metadata needed to execute it. The format must support:
 - lossless print/parse/print round trips
 - disassembly of in-memory programs
 - execution by the register VM without reconstructing source AST semantics
-- consumption by future Cranelift and LLVM backends
+- consumption by future native backends (LLVM and the MLIR-family targets first)
 
 This is a Mojito format, not a generic interchange standard. The in-memory MIR
 remains authoritative; textual assembly is its stable inspection and artifact

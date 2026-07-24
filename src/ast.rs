@@ -726,8 +726,8 @@ impl PartialEq for Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
-    Int(i64),
-    Float(f64),
+    Int(crate::literal::IntLiteral),
+    Float(crate::literal::FloatLiteral),
     Bool(bool),
     Str(String),
     None,

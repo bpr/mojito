@@ -84,6 +84,8 @@ pub enum MirSubscriptArg {
 pub enum Const {
     Int(i64),
     Float(f64),
+    IntLiteral(crate::literal::IntLiteral),
+    FloatLiteral(crate::literal::FloatLiteral),
     Bool(bool),
     Str(String),
     Function(String),
@@ -198,6 +200,15 @@ pub enum MirInstr {
     Const {
         dest: Reg,
         k: Const,
+    },
+    /// Cross the compile-time literal boundary selected by the checker.  The
+    /// operand is an exact `IntLiteral`/`FloatLiteral`; `target` is a concrete
+    /// scalar (or width-one scalar alias).  Backends must implement this
+    /// conversion explicitly rather than infer it from a later store.
+    MaterializeLiteral {
+        dest: Reg,
+        value: Reg,
+        target: Ty,
     },
     /// `x`, `x^`, `borrow x`, … — a use of a variable, tagged with how (`mode`).
     UseVar {

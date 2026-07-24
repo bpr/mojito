@@ -1156,16 +1156,9 @@ fn accepts_scalar_alias_types_and_construction() {
 }
 
 #[test]
-fn byte_alias_contextually_materializes_in_range_literals() {
+fn byte_alias_contextually_materializes_with_integer_wrapping() {
     ok("var byte: Byte = 255\nvar same: UInt8 = byte\n");
-    assert!(matches!(
-        err("var byte: Byte = 256\n"),
-        TypeError::TypeMismatch { .. }
-    ));
-    assert!(matches!(
-        err("var byte: Byte = -1\n"),
-        TypeError::TypeMismatch { .. }
-    ));
+    ok("var wrapped_zero: Byte = 256\nvar wrapped_max: Byte = -1\n");
 }
 
 #[test]

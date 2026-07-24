@@ -11,6 +11,7 @@ pub mod error;
 mod explicit_destroy;
 pub mod hir;
 pub mod lexer;
+pub mod literal;
 pub mod mir;
 pub mod module;
 pub mod origin;
@@ -38,6 +39,7 @@ pub use comptime::{ComptimeError, elaborate};
 pub use ct::CtValue;
 pub use error::{LexError, OwnershipError, ParseError, RuntimeError, TypeError};
 pub use lexer::Lexer;
+pub use literal::{FloatLiteral, IntLiteral};
 pub use module::{
     LinkOptions, ModuleError, link, link_source, link_source_with_options, link_with_options,
 };

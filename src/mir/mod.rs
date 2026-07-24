@@ -22,11 +22,11 @@ use crate::ast::{
     StmtKind, TStringPart,
 };
 use crate::call::{effective_keyword_only_index, regular_marker_index};
-use crate::checked::AnnotationSite;
+use crate::checked::{AnnotationSite, GenericSite};
 use crate::checked::{CheckedConst, CheckedProgram};
 use crate::hir::{self, Cfg, HirInstr, Terminator, VarId};
 use crate::token::{DUMMY_SPAN, SourceSpan};
-use crate::types::Ty;
+use crate::types::{ParamDecl, Ty};
 use std::collections::{HashMap, HashSet};
 
 mod ir;
@@ -515,6 +515,25 @@ impl Flatten<'_> {
             .into_iter()
             .find_map(|adjustment| match adjustment {
                 crate::SemanticAdjustment::ImplicitConversion(target) => Some(target),
+                _ => None,
+            })
+    }
+
+    fn literal_materialization(&self, expression: &Expr) -> Option<Ty> {
+        if !matches!(
+            self.checked_ty(expression),
+            Some(Ty::IntLiteral | Ty::FloatLiteral)
+        ) {
+            // Checker fact tables are still keyed by source span while HIR owns
+            // stable node identities. Comptime expansion can produce several
+            // nodes at one source span; only a node whose checked source type is
+            // actually a literal may consume a materialization adjustment.
+            return None;
+        }
+        self.checked_adjustments(expression)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                crate::SemanticAdjustment::MaterializeLiteral(target) => Some(target),
                 _ => None,
             })
     }
@@ -1069,14 +1088,27 @@ impl Flatten<'_> {
             });
             return dest;
         }
+        if let Some(target) = self.literal_materialization(e) {
+            let value = self.expr_unconverted(e);
+            if let Some(source) = self.checked_ty(e) {
+                self.f.reg_types.entry(value.0).or_insert(source);
+            }
+            let dest = self.fresh_typed(span(e), None, target.clone());
+            self.emit(MirInstr::MaterializeLiteral {
+                dest,
+                value,
+                target,
+            });
+            return dest;
+        }
         self.expr_unconverted(e)
     }
 
     fn expr_unconverted(&mut self, e: &Expr) -> Reg {
         match &e.kind {
             // --- Literals ------------------------------------------------------
-            ExprKind::Int(n) => self.constant(e, Const::Int(*n)),
-            ExprKind::Float(x) => self.constant(e, Const::Float(*x)),
+            ExprKind::Int(n) => self.constant(e, Const::IntLiteral(n.clone())),
+            ExprKind::Float(x) => self.constant(e, Const::FloatLiteral(x.clone())),
             ExprKind::Bool(b) => self.constant(e, Const::Bool(*b)),
             ExprKind::Str(s) => self.constant(e, Const::Str(s.clone())),
             ExprKind::None => self.constant(e, Const::None),
@@ -1981,9 +2013,44 @@ impl Flatten<'_> {
 
     /// Emit a `Const` writing a fresh register.
     fn constant(&mut self, e: &Expr, k: Const) -> Reg {
-        let d = self.fresh(span(e), None);
+        let constant_ty = match &k {
+            Const::Int(_) => Some(Ty::Int),
+            Const::Float(_) => Some(Ty::Float64),
+            Const::IntLiteral(_) => Some(Ty::IntLiteral),
+            Const::FloatLiteral(_) => Some(Ty::FloatLiteral),
+            Const::Bool(_) => Some(Ty::Bool),
+            Const::Str(_) => Some(Ty::String),
+            Const::None => Some(Ty::None),
+            Const::Function(_) => None,
+        };
+        let d = match constant_ty {
+            Some(ty) => self.fresh_typed(span(e), None, ty),
+            None => self.fresh(span(e), None),
+        };
         self.emit(MirInstr::Const { dest: d, k });
         d
+    }
+
+    fn materialize_register(&mut self, value: Reg, target: &Ty, source: SourceSpan) -> Reg {
+        let Some(found) = self.f.reg_types.get(&value.0) else {
+            return value;
+        };
+        let compatible = match (found, target) {
+            (Ty::IntLiteral, Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }) => true,
+            (Ty::FloatLiteral, Ty::Float64) => true,
+            (Ty::FloatLiteral, Ty::Simd { dtype, width: 1 }) => dtype.is_float(),
+            _ => false,
+        };
+        if !compatible {
+            return value;
+        }
+        let dest = self.fresh_typed(source, None, target.clone());
+        self.emit(MirInstr::MaterializeLiteral {
+            dest,
+            value,
+            target: target.clone(),
+        });
+        dest
     }
 
     // --- The driver's per-instruction / per-terminator lowering -----------------
@@ -2001,7 +2068,10 @@ impl Flatten<'_> {
                 let mut index = HashMap::new();
                 index_hir_expression(&expr.syntax, expr, &mut index);
                 self.active_semantics.push(index);
-                let src = self.expr(&expr.syntax);
+                let mut src = self.expr(&expr.syntax);
+                if let Some(target) = binding_ty.as_ref() {
+                    src = self.materialize_register(src, target, expr.source_span());
+                }
                 if let Some(ty) = expr.ty.clone().or_else(|| binding_ty.clone()) {
                     self.var_types.insert(*dest, ty);
                 }
@@ -2550,7 +2620,10 @@ impl Flatten<'_> {
             }
             // --- Writes through a place (any nesting) --------------------------
             StmtKind::SetPlace { place, value } => {
-                let src = self.expr(value);
+                let mut src = self.expr(value);
+                if let Some(target) = self.checked_ty(place) {
+                    src = self.materialize_register(src, &target, value.source_span());
+                }
                 if self.lower_subscript_set(place, src) {
                     return;
                 }
@@ -2867,7 +2940,11 @@ impl Flatten<'_> {
                     self.emit(MirInstr::MakeRef { dest, place });
                     dest
                 } else {
-                    self.expr_hir(e)
+                    let value = self.expr_hir(e);
+                    match self.f.ret_ty.clone() {
+                        Some(target) => self.materialize_register(value, &target, e.source_span()),
+                        None => value,
+                    }
                 }
             })),
             Terminator::FallOff => MirTerm::FallOff,
@@ -3130,6 +3207,8 @@ fn close_register_types(
                                 Some(Ty::Int)
                             }
                             Const::Float(_) => Some(Ty::Float64),
+                            Const::IntLiteral(_) => Some(Ty::IntLiteral),
+                            Const::FloatLiteral(_) => Some(Ty::FloatLiteral),
                             Const::Bool(_) => Some(Ty::Bool),
                             Const::Str(_) => Some(Ty::String),
                             Const::None => Some(Ty::None),
@@ -3138,6 +3217,9 @@ fn close_register_types(
                             Const::Function(_) => None,
                         };
                         Some((dest, ty))
+                    }
+                    MirInstr::MaterializeLiteral { dest, target, .. } => {
+                        Some((dest, Some(target.clone())))
                     }
                     MirInstr::UseVar { dest, var, .. } => {
                         Some((dest, var_tys.get(var).cloned().map(deref)))
@@ -3480,7 +3562,7 @@ pub struct MirStructDeclaration {
     pub fields: Vec<(String, Ty)>,
     pub mut_self_methods: HashSet<String>,
     pub fieldwise_init: bool,
-    pub param_decls: Vec<(String, bool)>,
+    pub param_decls: Vec<ParamDecl>,
     pub explicit_destroy_message: Option<String>,
     pub explicit_destructors: HashMap<String, bool>,
 }
@@ -3498,7 +3580,7 @@ pub struct MirFunctionDeclaration {
     pub kw_variadic_index: Option<usize>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
-    pub param_decls: Vec<(String, bool)>,
+    pub param_decls: Vec<ParamDecl>,
     /// Checked return type of the callable.
     pub ret_ty: Ty,
     /// Checked raising contract and its declared error type.
@@ -3537,6 +3619,20 @@ fn runtime_variadic_index(params: &[FnParam], marker: Option<usize>) -> Option<u
             })
             .count()
     })
+}
+
+/// Translate a declaration-side parameter type into the type of the single
+/// runtime slot visible in the function body. `RuntimePack` is deliberately an
+/// ABI-only discriminator: the call matcher uses its per-position element
+/// types, then materializes one native `Tuple` value for the body binding.
+/// Keeping the discriminator out of `MirFunction` prevents ordinary tuple
+/// operations, ownership, and place typing from having to understand an
+/// artificial source-inexpressible aggregate kind.
+fn body_parameter_ty(parameter: &FnParam, ty: Ty) -> Ty {
+    match (parameter.kind, ty) {
+        (ParamKind::Variadic, Ty::RuntimePack(elements)) => Ty::Tuple(elements),
+        (_, ty) => ty,
+    }
 }
 
 mod nested;
@@ -3594,15 +3690,18 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             .iter()
                             .position(|candidate| std::ptr::eq(candidate, *p))
                             .expect("caller parameter belongs to declaration");
-                        checked_type_or_record(
-                            checked,
-                            AnnotationSite::FunctionParam {
-                                module: s.module.clone(),
-                                declaration: s.span,
-                                param,
-                            },
-                            &format!("parameter '{}' of function '{name}'", p.name),
-                            &mut invariant_errors,
+                        body_parameter_ty(
+                            p,
+                            checked_type_or_record(
+                                checked,
+                                AnnotationSite::FunctionParam {
+                                    module: s.module.clone(),
+                                    declaration: s.span,
+                                    param,
+                                },
+                                &format!("parameter '{}' of function '{name}'", p.name),
+                                &mut invariant_errors,
+                            ),
                         )
                     })
                     .collect();
@@ -3701,7 +3800,13 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     kw_variadic_index: runtime_parameter_index(params, kw_variadic_idx),
                     positional_only: regular_marker_index(params, *positional_only),
                     keyword_only: effective_keyword_only_index(params, *keyword_only, variadic_idx),
-                    param_decls: crate::runtime::classify_param_decls(type_params),
+                    param_decls: checked
+                        .generic_parameters_at(&GenericSite::Function {
+                            module: s.module.clone(),
+                            declaration: s.span,
+                        })
+                        .unwrap_or(&[])
+                        .to_vec(),
                     ret_ty: ret_ty.clone(),
                     raises: effect.raises,
                     error_ty: effect.error.clone(),
@@ -3782,7 +3887,13 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         .collect(),
                     mut_self_methods,
                     fieldwise_init: *fieldwise_init,
-                    param_decls: crate::runtime::classify_param_decls(type_params),
+                    param_decls: checked
+                        .generic_parameters_at(&GenericSite::Struct {
+                            module: s.module.clone(),
+                            declaration: name.clone(),
+                        })
+                        .unwrap_or(&[])
+                        .to_vec(),
                     explicit_destroy_message: checked
                         .explicit_destroy_types()
                         .get(name)
@@ -3911,7 +4022,14 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             m.keyword_only,
                             variadic_idx,
                         ),
-                        param_decls: Vec::new(),
+                        param_decls: checked
+                            .generic_parameters_at(&GenericSite::Method {
+                                module: s.module.clone(),
+                                declaration: name.clone(),
+                                method: method_index,
+                            })
+                            .unwrap_or(&[])
+                            .to_vec(),
                         ret_ty: ret_ty.clone(),
                         raises: effect.raises,
                         error_ty: effect.error.clone(),
@@ -3934,16 +4052,19 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     }
                     names.extend(m.params.iter().map(|p| p.name.clone()));
                     ptys.extend(m.params.iter().enumerate().map(|(param, p)| {
-                        checked_type_or_record(
-                            checked,
-                            AnnotationSite::MethodParam {
-                                module: s.module.clone(),
-                                declaration: name.clone(),
-                                method: method_index,
-                                param,
-                            },
-                            &format!("parameter '{}' of method '{source_mangled}'", p.name),
-                            &mut invariant_errors,
+                        body_parameter_ty(
+                            p,
+                            checked_type_or_record(
+                                checked,
+                                AnnotationSite::MethodParam {
+                                    module: s.module.clone(),
+                                    declaration: name.clone(),
+                                    method: method_index,
+                                    param,
+                                },
+                                &format!("parameter '{}' of method '{source_mangled}'", p.name),
+                                &mut invariant_errors,
+                            ),
                         )
                     }));
                     owned.extend(m.params.iter().map(|p| is_owned(&p.convention)));

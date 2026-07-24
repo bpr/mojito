@@ -13,6 +13,7 @@
 //! literal form; `Type`, `Reflected`, and `Param` are compile-time-only.
 
 use crate::ast::{Expr, ExprKind};
+use crate::literal::{FloatLiteral, IntLiteral};
 use crate::token::Span;
 use crate::types::Ty;
 use std::fmt;
@@ -23,10 +24,17 @@ use std::fmt;
 /// parameter while a generic body is being checked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CtValue {
+    /// An already-materialized machine `Int` compile-time value. Compiler
+    /// generated indices, lengths, and value parameters use this variant.
     Int(i64),
     UInt(u64),
-    /// IEEE-754 bits provide deterministic equality and specialization keys.
+    /// The bits of an already-materialized `Float64` compile-time value.
     Float(u64),
+    /// An arbitrary-precision integer literal which has not yet been
+    /// materialized into a fixed-width scalar.
+    IntLiteral(IntLiteral),
+    /// An exact finite floating literal which has not yet been materialized.
+    FloatLiteral(FloatLiteral),
     Bool(bool),
     Str(String),
     Tuple(Vec<CtValue>),
@@ -63,23 +71,61 @@ impl CtExpr {
             Value(value) => Some(value.clone()),
             Param(name) => parameters.get(name).cloned(),
             Neg(value) => match value.evaluate(parameters)? {
-                CtValue::Int(value) => Some(CtValue::Int(-value)),
+                CtValue::Int(value) => value.checked_neg().map(CtValue::Int),
+                CtValue::IntLiteral(value) => Some(CtValue::IntLiteral(value.neg())),
                 _ => None,
             },
             Add(left, right) => match (left.evaluate(parameters)?, right.evaluate(parameters)?) {
-                (CtValue::Int(left), CtValue::Int(right)) => Some(CtValue::Int(left + right)),
+                (CtValue::Int(left), CtValue::Int(right)) => {
+                    left.checked_add(right).map(CtValue::Int)
+                }
+                (CtValue::IntLiteral(left), CtValue::IntLiteral(right)) => {
+                    Some(CtValue::IntLiteral(left.add(&right)))
+                }
+                (CtValue::Int(left), CtValue::IntLiteral(right)) => {
+                    Some(CtValue::IntLiteral(IntLiteral::from(left).add(&right)))
+                }
+                (CtValue::IntLiteral(left), CtValue::Int(right)) => {
+                    Some(CtValue::IntLiteral(left.add(&IntLiteral::from(right))))
+                }
                 (CtValue::Str(left), CtValue::Str(right)) => Some(CtValue::Str(left + &right)),
                 _ => None,
             },
-            Sub(left, right) => int_binary(left, right, parameters, |a, b| a.checked_sub(b)),
-            Mul(left, right) => int_binary(left, right, parameters, |a, b| a.checked_mul(b)),
-            FloorDiv(left, right) => {
-                int_binary(left, right, parameters, |a, b| a.checked_div_euclid(b))
-            }
-            Mod(left, right) => int_binary(left, right, parameters, |a, b| a.checked_rem_euclid(b)),
-            Pow(left, right) => int_binary(left, right, parameters, |a, b| {
-                u32::try_from(b).ok().and_then(|b| a.checked_pow(b))
-            }),
+            Sub(left, right) => int_binary(
+                left,
+                right,
+                parameters,
+                |a, b| a.checked_sub(b),
+                |a, b| Some(a.sub(b)),
+            ),
+            Mul(left, right) => int_binary(
+                left,
+                right,
+                parameters,
+                |a, b| a.checked_mul(b),
+                |a, b| Some(a.mul(b)),
+            ),
+            FloorDiv(left, right) => int_binary(
+                left,
+                right,
+                parameters,
+                |a, b| a.checked_div_euclid(b),
+                IntLiteral::floor_div,
+            ),
+            Mod(left, right) => int_binary(
+                left,
+                right,
+                parameters,
+                |a, b| a.checked_rem_euclid(b),
+                IntLiteral::floor_mod,
+            ),
+            Pow(left, right) => int_binary(
+                left,
+                right,
+                parameters,
+                |a, b| u32::try_from(b).ok().and_then(|b| a.checked_pow(b)),
+                IntLiteral::pow,
+            ),
         }
     }
 }
@@ -89,22 +135,71 @@ fn int_binary(
     right: &CtExpr,
     parameters: &std::collections::HashMap<String, CtValue>,
     operation: impl FnOnce(i64, i64) -> Option<i64>,
+    literal_operation: impl FnOnce(&IntLiteral, &IntLiteral) -> Option<IntLiteral>,
 ) -> Option<CtValue> {
     match (left.evaluate(parameters)?, right.evaluate(parameters)?) {
         (CtValue::Int(left), CtValue::Int(right)) => operation(left, right).map(CtValue::Int),
+        (CtValue::IntLiteral(left), CtValue::IntLiteral(right)) => {
+            literal_operation(&left, &right).map(CtValue::IntLiteral)
+        }
+        (CtValue::Int(left), CtValue::IntLiteral(right)) => {
+            literal_operation(&left.into(), &right).map(CtValue::IntLiteral)
+        }
+        (CtValue::IntLiteral(left), CtValue::Int(right)) => {
+            literal_operation(&left, &right.into()).map(CtValue::IntLiteral)
+        }
         _ => None,
     }
 }
 
 impl CtValue {
+    /// Materialize an exact literal into the compile-time representation of a
+    /// declared scalar type. Values which are already materialized are kept as
+    /// is. This is the checked boundary used by value parameters and defaults;
+    /// it deliberately leaves uncontextualized literal values exact.
+    pub fn materialize_as(self, ty: &Ty) -> Option<Self> {
+        match (self, ty) {
+            (value @ CtValue::Int(_), Ty::Int)
+            | (value @ CtValue::UInt(_), Ty::UInt)
+            | (value @ CtValue::Float(_), Ty::Float64)
+            | (value @ CtValue::IntLiteral(_), Ty::IntLiteral)
+            | (value @ CtValue::FloatLiteral(_), Ty::FloatLiteral)
+            | (value @ CtValue::Bool(_), Ty::Bool)
+            | (value @ CtValue::Str(_), Ty::String) => Some(value),
+            (CtValue::IntLiteral(value), Ty::Int) => value.wrapping_signed(64).map(CtValue::Int),
+            (CtValue::IntLiteral(value), Ty::UInt) => {
+                value.wrapping_unsigned(64).map(CtValue::UInt)
+            }
+            (CtValue::IntLiteral(value), Ty::Float64) => {
+                value.to_f64().map(|value| CtValue::Float(value.to_bits()))
+            }
+            (CtValue::FloatLiteral(value), Ty::Float64) => {
+                value.to_f64().map(|value| CtValue::Float(value.to_bits()))
+            }
+            (CtValue::Tuple(values), Ty::Tuple(types)) if values.len() == types.len() => values
+                .into_iter()
+                .zip(types)
+                .map(|(value, ty)| value.materialize_as(ty))
+                .collect::<Option<Vec<_>>>()
+                .map(CtValue::Tuple),
+            (CtValue::List(values), Ty::List(element)) => values
+                .into_iter()
+                .map(|value| value.materialize_as(element))
+                .collect::<Option<Vec<_>>>()
+                .map(CtValue::List),
+            _ => None,
+        }
+    }
+
     /// Materialize this value as a literal expression, or `None` when it has no
     /// runtime form (a symbolic `Param`, or a collection containing one).
     pub fn materialize(&self, span: Span) -> Option<Expr> {
         let kind = match self {
-            CtValue::Int(n) => ExprKind::Int(*n),
-            CtValue::UInt(n) if *n <= i64::MAX as u64 => ExprKind::Int(*n as i64),
-            CtValue::UInt(_) => return None,
-            CtValue::Float(bits) => ExprKind::Float(f64::from_bits(*bits)),
+            CtValue::Int(n) => ExprKind::Int(IntLiteral::from(*n)),
+            CtValue::UInt(n) => ExprKind::Int(IntLiteral::from(*n)),
+            CtValue::Float(bits) => ExprKind::Float(FloatLiteral::from_f64(f64::from_bits(*bits))?),
+            CtValue::IntLiteral(value) => ExprKind::Int(value.clone()),
+            CtValue::FloatLiteral(value) => ExprKind::Float(value.clone()),
             CtValue::Bool(b) => ExprKind::Bool(*b),
             CtValue::Str(s) => ExprKind::Str(s.clone()),
             CtValue::Tuple(vs) => ExprKind::TupleLit(materialize_all(vs, span)?),
@@ -130,6 +225,8 @@ impl fmt::Display for CtValue {
             CtValue::Int(n) => write!(f, "{n}"),
             CtValue::UInt(n) => write!(f, "{n}u"),
             CtValue::Float(bits) => write!(f, "{:?}", f64::from_bits(*bits)),
+            CtValue::IntLiteral(value) => write!(f, "{value}"),
+            CtValue::FloatLiteral(value) => write!(f, "{value}"),
             CtValue::Bool(b) => write!(f, "{b}"),
             CtValue::Str(s) => write!(f, "{s:?}"),
             CtValue::Type(ty) => write!(f, "{ty}"),

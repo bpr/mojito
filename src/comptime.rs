@@ -61,6 +61,11 @@ impl CtValue {
     fn as_int(&self, ctx: &str) -> Result<i64, ComptimeError> {
         match self {
             CtValue::Int(n) => Ok(*n),
+            CtValue::IntLiteral(n) => n.wrapping_signed(64).ok_or_else(|| {
+                ComptimeError::BadArithmetic(format!(
+                    "integer literal cannot materialize as Int in {ctx}"
+                ))
+            }),
             _ => Err(ComptimeError::NotInt(ctx.to_string())),
         }
     }
@@ -88,8 +93,22 @@ pub enum ComptimeError {
     BadRange(String),
     /// A CTFE call had the wrong number of arguments.
     Arity(String),
+    /// An inferred type-pack element failed one of the pack's trait bounds at
+    /// the call that requested specialization.
+    PackBound(Box<PackBoundError>),
     /// The compile-time step/iteration quota was exceeded (a likely infinite loop).
     QuotaExceeded,
+}
+
+#[derive(Debug)]
+pub struct PackBoundError {
+    function: String,
+    pack: String,
+    index: usize,
+    ty: String,
+    trait_name: String,
+    site: String,
+    reason: Option<String>,
 }
 
 impl std::fmt::Display for ComptimeError {
@@ -103,6 +122,26 @@ impl std::fmt::Display for ComptimeError {
                 write!(f, "'comptime for' needs a range(...)/tuple/list: {s}")
             }
             ComptimeError::Arity(s) => write!(f, "compile-time call arity: {s}"),
+            ComptimeError::PackBound(error) => {
+                let PackBoundError {
+                    function,
+                    pack,
+                    index,
+                    ty,
+                    trait_name,
+                    site,
+                    reason,
+                } = error.as_ref();
+                write!(
+                    f,
+                    "type-pack bound failed at '{function}' instantiation {site}: element {} of type pack '{pack}' has type '{ty}', which does not conform to trait '{trait_name}'",
+                    index + 1
+                )?;
+                if let Some(reason) = reason {
+                    write!(f, " ({reason})")?;
+                }
+                Ok(())
+            }
             ComptimeError::QuotaExceeded => {
                 write!(f, "compile-time execution exceeded the step quota ({FUEL})")
             }
@@ -137,17 +176,27 @@ struct Elab<'a> {
     /// Top-level generic `def`s whose value parameters feed a `comptime if`/`for`
     /// (so they must be monomorphized per call), by name → the template `Stmt`.
     specializable: HashMap<String, &'a Stmt>,
+    /// Checker-owned declaration facts used to validate inferred pack bounds
+    /// before specialization consumes the source generic call.
+    conformance: crate::checker::ConformanceOracle,
     fuel: Cell<usize>,
     top_consts: RefCell<HashMap<String, CtValue>>,
 }
 
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
+    let conformance =
+        crate::checker::ConformanceOracle::from_program(&program).map_err(|error| {
+            ComptimeError::NotComptime(format!(
+                "could not build the specialization conformance oracle: {error}"
+            ))
+        })?;
     let elab = Elab {
         program: &program,
         fns: collect_fns(&program),
         structs: collect_structs(&program),
         specializable: collect_specializable(&program),
+        conformance,
         fuel: Cell::new(FUEL),
         top_consts: RefCell::new(HashMap::new()),
     };
@@ -334,8 +383,8 @@ fn classify_ct_params(tps: &[TypeParam]) -> Vec<ParamDecl> {
 
 fn literal_ct_value(expr: &Expr) -> Option<CtValue> {
     match &expr.kind {
-        ExprKind::Int(value) => Some(CtValue::Int(*value)),
-        ExprKind::Float(value) => Some(CtValue::Float(value.to_bits())),
+        ExprKind::Int(value) => Some(CtValue::IntLiteral(value.clone())),
+        ExprKind::Float(value) => Some(CtValue::FloatLiteral(value.clone())),
         ExprKind::Bool(value) => Some(CtValue::Bool(*value)),
         ExprKind::Str(value) => Some(CtValue::Str(value.clone())),
         ExprKind::TupleLit(values) => values
@@ -739,8 +788,8 @@ impl<'a> Elab<'a> {
     /// variable environment (module constants, or a CTFE call frame's locals).
     fn eval(&self, e: &Expr, scope: &HashMap<String, CtValue>) -> Result<CtValue, ComptimeError> {
         match &e.kind {
-            ExprKind::Int(n) => Ok(CtValue::Int(*n)),
-            ExprKind::Float(value) => Ok(CtValue::Float(value.to_bits())),
+            ExprKind::Int(n) => Ok(CtValue::IntLiteral(n.clone())),
+            ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => Ok(CtValue::Bool(*b)),
             ExprKind::Str(s) => Ok(CtValue::Str(s.clone())),
             ExprKind::Identifier(name) => {
@@ -847,18 +896,26 @@ impl<'a> Elab<'a> {
                 };
                 self.eval_parameterized_reflection_method(&ty, field, param_args, scope)
             }
-            ExprKind::Prefix(PrefixOp::Neg, inner) => {
-                Ok(CtValue::Int(-self.eval(inner, scope)?.as_int("unary '-'")?))
-            }
+            ExprKind::Prefix(PrefixOp::Neg, inner) => match self.eval(inner, scope)? {
+                CtValue::Int(value) => value.checked_neg().map(CtValue::Int).ok_or_else(|| {
+                    ComptimeError::BadArithmetic("compile-time integer overflow".to_string())
+                }),
+                CtValue::IntLiteral(value) => Ok(CtValue::IntLiteral(value.neg())),
+                CtValue::Float(value) => Ok(CtValue::Float((-f64::from_bits(value)).to_bits())),
+                CtValue::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value.neg())),
+                _ => Err(ComptimeError::NotComptime(
+                    "unary '-' expects a compile-time numeric value".to_string(),
+                )),
+            },
             ExprKind::Prefix(PrefixOp::Not, inner) => {
                 Ok(CtValue::Bool(!self.eval(inner, scope)?.as_bool("'not'")?))
             }
             ExprKind::Infix(op, l, r) => self.eval_infix(*op, l, r, scope),
             ExprKind::Compare { first, rest } => {
-                let mut left = self.eval(first, scope)?.as_int("chained comparison")?;
+                let mut left = self.eval(first, scope)?;
                 for (op, right) in rest {
-                    let r = self.eval(right, scope)?.as_int("chained comparison")?;
-                    if !compare_ints(*op, left, r)? {
+                    let r = self.eval(right, scope)?;
+                    if !compare_numeric_values(*op, &left, &r)? {
                         return Ok(CtValue::Bool(false));
                     }
                     left = r;
@@ -1059,11 +1116,11 @@ impl<'a> Elab<'a> {
             ComptimeError::NotComptime(format!("cannot reflect unknown struct '{name}'"))
         })?;
         let selected = self.eval(argument, scope)?;
-        let index = match (selector, selected) {
+        let index = match (selector, &selected) {
             ("field", CtValue::Str(field_name)) => info
                 .fields
                 .iter()
-                .position(|field| field.name == field_name)
+                .position(|field| field.name == *field_name)
                 .ok_or_else(|| {
                     ComptimeError::NotComptime(format!(
                         "struct '{name}' has no field named '{field_name}'"
@@ -1074,10 +1131,16 @@ impl<'a> Elab<'a> {
                     "Reflected.field expects a String field name, got {other}"
                 )));
             }
-            ("field_at", CtValue::Int(index)) if index >= 0 => {
-                let index = usize::try_from(index).map_err(|_| {
+            ("field_at", CtValue::Int(_) | CtValue::IntLiteral(_)) => {
+                let raw_index = selected.as_int("reflection field index")?;
+                if raw_index < 0 {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "reflection field index {raw_index} is out of range for struct '{name}'"
+                    )));
+                }
+                let index = usize::try_from(raw_index).map_err(|_| {
                     ComptimeError::NotComptime(format!(
-                        "reflection field index {index} is out of range for struct '{name}'"
+                        "reflection field index {raw_index} is out of range for struct '{name}'"
                     ))
                 })?;
                 if index >= info.fields.len() {
@@ -1087,11 +1150,6 @@ impl<'a> Elab<'a> {
                     )));
                 }
                 index
-            }
-            ("field_at", CtValue::Int(index)) => {
-                return Err(ComptimeError::NotComptime(format!(
-                    "reflection field index {index} is out of range for struct '{name}'"
-                )));
             }
             ("field_at", other) => {
                 return Err(ComptimeError::NotComptime(format!(
@@ -1224,43 +1282,124 @@ impl<'a> Elab<'a> {
                 )),
             };
         }
-        let a = self.eval(l, scope)?.as_int("integer operator")?;
-        let b = self.eval(r, scope)?.as_int("integer operator")?;
+        let left = self.eval(l, scope)?;
+        let right = self.eval(r, scope)?;
         use InfixOp::*;
         let bad = |m: &str| ComptimeError::BadArithmetic(m.to_string());
-        match op {
-            Add => a
-                .checked_add(b)
-                .map(CtValue::Int)
-                .ok_or_else(|| bad("compile-time integer overflow")),
-            Sub => a
-                .checked_sub(b)
-                .map(CtValue::Int)
-                .ok_or_else(|| bad("compile-time integer overflow")),
-            Mul => a
-                .checked_mul(b)
-                .map(CtValue::Int)
-                .ok_or_else(|| bad("compile-time integer overflow")),
-            FloorDiv if b != 0 => a
-                .checked_div_euclid(b)
-                .map(CtValue::Int)
-                .ok_or_else(|| bad("compile-time integer overflow")),
-            Mod if b != 0 => a
-                .checked_rem_euclid(b)
-                .map(CtValue::Int)
-                .ok_or_else(|| bad("compile-time integer overflow")),
-            FloorDiv | Mod => Err(bad("division by zero")),
-            Pow if b >= 0 => u32::try_from(b)
-                .ok()
-                .and_then(|exponent| a.checked_pow(exponent))
-                .map(CtValue::Int)
-                .ok_or_else(|| bad("compile-time integer overflow")),
-            Pow => Err(bad("negative exponent")),
-            Eq | Ne | Lt | Gt | Le | Ge => Ok(CtValue::Bool(compare_ints(op, a, b)?)),
+        if matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
+            return Ok(CtValue::Bool(compare_numeric_values(op, &left, &right)?));
+        }
+        match (left, right) {
+            (CtValue::Int(a), CtValue::Int(b)) => match op {
+                Add => a
+                    .checked_add(b)
+                    .map(CtValue::Int)
+                    .ok_or_else(|| bad("compile-time integer overflow")),
+                Sub => a
+                    .checked_sub(b)
+                    .map(CtValue::Int)
+                    .ok_or_else(|| bad("compile-time integer overflow")),
+                Mul => a
+                    .checked_mul(b)
+                    .map(CtValue::Int)
+                    .ok_or_else(|| bad("compile-time integer overflow")),
+                FloorDiv if b != 0 => a
+                    .checked_div_euclid(b)
+                    .map(CtValue::Int)
+                    .ok_or_else(|| bad("compile-time integer overflow")),
+                Mod if b != 0 => a
+                    .checked_rem_euclid(b)
+                    .map(CtValue::Int)
+                    .ok_or_else(|| bad("compile-time integer overflow")),
+                FloorDiv | Mod => Err(bad("division by zero")),
+                Pow if b >= 0 => u32::try_from(b)
+                    .ok()
+                    .and_then(|exponent| a.checked_pow(exponent))
+                    .map(CtValue::Int)
+                    .ok_or_else(|| bad("compile-time integer overflow")),
+                Pow => Err(bad("negative exponent")),
+                _ => Err(ComptimeError::NotComptime(
+                    "unsupported compile-time operator".to_string(),
+                )),
+            },
+            (CtValue::IntLiteral(a), CtValue::IntLiteral(b)) => {
+                let value = match op {
+                    Add => Some(CtValue::IntLiteral(a.add(&b))),
+                    Sub => Some(CtValue::IntLiteral(a.sub(&b))),
+                    Mul => Some(CtValue::IntLiteral(a.mul(&b))),
+                    Div => crate::literal::FloatLiteral::from_int(&a)
+                        .div(&crate::literal::FloatLiteral::from_int(&b))
+                        .map(CtValue::FloatLiteral),
+                    FloorDiv => a.floor_div(&b).map(CtValue::IntLiteral),
+                    Mod => a.floor_mod(&b).map(CtValue::IntLiteral),
+                    Pow => a.pow(&b).map(CtValue::IntLiteral),
+                    Shl => a.shl(&b).map(CtValue::IntLiteral),
+                    Shr => a.shr(&b).map(CtValue::IntLiteral),
+                    BitAnd => Some(CtValue::IntLiteral(a.bitand(&b))),
+                    BitOr => Some(CtValue::IntLiteral(a.bitor(&b))),
+                    BitXor => Some(CtValue::IntLiteral(a.bitxor(&b))),
+                    _ => {
+                        return Err(ComptimeError::NotComptime(
+                            "unsupported exact compile-time operator".to_string(),
+                        ));
+                    }
+                };
+                value.ok_or_else(|| bad("invalid exact compile-time arithmetic"))
+            }
+            (CtValue::FloatLiteral(a), CtValue::FloatLiteral(b)) => {
+                let value = match op {
+                    Add => Some(a.add(&b)),
+                    Sub => Some(a.sub(&b)),
+                    Mul => Some(a.mul(&b)),
+                    Div => a.div(&b),
+                    FloorDiv => a.floor_div(&b),
+                    Mod => a.floor_mod(&b),
+                    Pow => b.to_int_if_whole().and_then(|b| a.pow_int(&b)),
+                    _ => {
+                        return Err(ComptimeError::NotComptime(
+                            "unsupported exact compile-time float operator".to_string(),
+                        ));
+                    }
+                };
+                value
+                    .map(CtValue::FloatLiteral)
+                    .ok_or_else(|| bad("invalid exact compile-time arithmetic"))
+            }
+            (CtValue::Int(a), CtValue::IntLiteral(b)) => {
+                self.eval_infix_values(op, CtValue::IntLiteral(a.into()), CtValue::IntLiteral(b))
+            }
+            (CtValue::IntLiteral(a), CtValue::Int(b)) => {
+                self.eval_infix_values(op, CtValue::IntLiteral(a), CtValue::IntLiteral(b.into()))
+            }
+            (CtValue::IntLiteral(a), CtValue::FloatLiteral(b)) => self.eval_infix_values(
+                op,
+                CtValue::FloatLiteral(crate::literal::FloatLiteral::from_int(&a)),
+                CtValue::FloatLiteral(b),
+            ),
+            (CtValue::FloatLiteral(a), CtValue::IntLiteral(b)) => self.eval_infix_values(
+                op,
+                CtValue::FloatLiteral(a),
+                CtValue::FloatLiteral(crate::literal::FloatLiteral::from_int(&b)),
+            ),
             _ => Err(ComptimeError::NotComptime(
-                "unsupported compile-time operator".to_string(),
+                "unsupported compile-time operands".to_string(),
             )),
         }
+    }
+
+    fn eval_infix_values(
+        &self,
+        op: InfixOp,
+        left: CtValue,
+        right: CtValue,
+    ) -> Result<CtValue, ComptimeError> {
+        let scope = HashMap::from([("__left".to_string(), left), ("__right".to_string(), right)]);
+        let expression = |name: &str| Expr {
+            kind: ExprKind::Identifier(name.to_string()),
+            span: Span::default(),
+            source: None,
+        };
+        self.eval_infix(op, &expression("__left"), &expression("__right"), &scope)
     }
 
     /// Evaluate a `comptime for` / CTFE `for` iterable to the sequence of loop
@@ -1891,13 +2030,11 @@ impl<'a> Elab<'a> {
             ParamDecl::Value { name, ty, .. } => match arg {
                 ParamArg::Value(expr) => {
                     let value = self.eval(expr, scope)?;
-                    if ct_value_has_type(&value, ty) {
-                        Ok(value)
-                    } else {
-                        Err(ComptimeError::NotComptime(format!(
+                    materialize_ct_value(value.clone(), ty).ok_or_else(|| {
+                        ComptimeError::NotComptime(format!(
                             "value parameter '{name}' expects {ty}, got {value}"
-                        )))
-                    }
+                        ))
+                    })
                 }
                 ParamArg::Type(_) => {
                     Err(ComptimeError::NotInt(format!("value parameter '{name}'")))
@@ -2767,7 +2904,11 @@ impl<'a> Elab<'a> {
         consts: &HashMap<String, CtValue>,
         mono: &mut Mono,
     ) -> Result<(), ComptimeError> {
-        let request_site = format!("{:?}", e.source_span());
+        let source_span = e.source_span();
+        let request_site = match source_span.source {
+            Some(source) => format!("{source}:{}..{}", source_span.span.0, source_span.span.1),
+            None => format!("bytes {}..{}", source_span.span.0, source_span.span.1),
+        };
         match &mut e.kind {
             ExprKind::Int(_)
             | ExprKind::Float(_)
@@ -2836,7 +2977,7 @@ impl<'a> Elab<'a> {
                             Vec::new(),
                         )
                     } else {
-                        self.resolve_spec_args(name, param_args, args, consts)?
+                        self.resolve_spec_args(name, param_args, args, consts, &request_site)?
                     };
                     let mangled = mangle(name, &vals);
                     if mono.done.insert(mangled.clone()) {
@@ -3020,6 +3161,7 @@ impl<'a> Elab<'a> {
         param_args: &[ParamArg],
         call_args: &[Expr],
         consts: &HashMap<String, CtValue>,
+        request_site: &str,
     ) -> Result<(Vec<CtValue>, Vec<ParamArg>), ComptimeError> {
         let decls = self.template_decls(name)?;
         if let [
@@ -3044,7 +3186,11 @@ impl<'a> Elab<'a> {
             }
             return Ok((vec![CtValue::Tuple(values)], Vec::new()));
         }
-        if let [ParamDecl::Type { name: pack, .. }] = decls.as_slice()
+        if let [
+            ParamDecl::Type {
+                name: pack, bounds, ..
+            },
+        ] = decls.as_slice()
             && pack.starts_with('*')
         {
             let types = if param_args.is_empty() {
@@ -3057,10 +3203,26 @@ impl<'a> Elab<'a> {
                     .iter()
                     .map(|argument| self.param_arg_type(argument, consts))
                     .collect::<Result<Vec<_>, _>>()?
+            };
+            for (index, ty) in types.iter().enumerate() {
+                for trait_name in bounds {
+                    if let Err(failure) = self.conformance.require(ty, trait_name) {
+                        return Err(ComptimeError::PackBound(Box::new(PackBoundError {
+                            function: name.to_string(),
+                            pack: pack.trim_start_matches('*').to_string(),
+                            index,
+                            ty: ty.to_string(),
+                            trait_name: trait_name.clone(),
+                            site: request_site.to_string(),
+                            reason: failure.reason,
+                        })));
+                    }
+                }
             }
-            .into_iter()
-            .map(|ty| CtValue::Type(Box::new(ty)))
-            .collect();
+            let types = types
+                .into_iter()
+                .map(|ty| CtValue::Type(Box::new(ty)))
+                .collect();
             return Ok((vec![CtValue::Tuple(types)], Vec::new()));
         }
         if param_args.len() > decls.len()
@@ -3087,11 +3249,11 @@ impl<'a> Elab<'a> {
                 ParamDecl::Value { name: pn, ty, .. } => match arg {
                     ParamArg::Value(expr) => {
                         let value = self.eval(expr, consts)?;
-                        if !ct_value_has_type(&value, ty) {
-                            return Err(ComptimeError::NotComptime(format!(
+                        let value = materialize_ct_value(value.clone(), ty).ok_or_else(|| {
+                            ComptimeError::NotComptime(format!(
                                 "value parameter '{pn}' expects {ty}, got {value}"
-                            )));
-                        }
+                            ))
+                        })?;
                         vals.push(value);
                     }
                     ParamArg::Type(_) => {
@@ -3112,6 +3274,7 @@ impl<'a> Elab<'a> {
         for decl in &decls[param_args.len()..] {
             let ParamDecl::Value {
                 default: Some(value),
+                ty,
                 ..
             } = decl
             else {
@@ -3128,36 +3291,30 @@ impl<'a> Elab<'a> {
                     )
                 })
                 .collect();
-            vals.push(value.evaluate(&environment).ok_or_else(|| {
+            let evaluated = value.evaluate(&environment).ok_or_else(|| {
                 ComptimeError::NotComptime(format!(
                     "cannot evaluate default for parameter '{}'",
                     decl.name()
                 ))
-            })?);
+            })?;
+            let evaluated = materialize_ct_value(evaluated.clone(), ty).ok_or_else(|| {
+                ComptimeError::NotComptime(format!(
+                    "default for parameter '{}' expects {ty}, got {evaluated}",
+                    decl.name()
+                ))
+            })?;
+            vals.push(evaluated);
         }
         Ok((vals, kept_type_args))
     }
 }
 
+fn materialize_ct_value(value: CtValue, ty: &Ty) -> Option<CtValue> {
+    value.materialize_as(ty)
+}
+
 fn ct_value_has_type(value: &CtValue, ty: &Ty) -> bool {
-    match (value, ty) {
-        (CtValue::Int(_), Ty::Int)
-        | (CtValue::UInt(_), Ty::UInt)
-        | (CtValue::Float(_), Ty::Float64)
-        | (CtValue::Bool(_), Ty::Bool)
-        | (CtValue::Str(_), Ty::String) => true,
-        (CtValue::Tuple(values), Ty::Tuple(types)) => {
-            values.len() == types.len()
-                && values
-                    .iter()
-                    .zip(types)
-                    .all(|(value, ty)| ct_value_has_type(value, ty))
-        }
-        (CtValue::List(values), Ty::List(element)) => {
-            values.iter().all(|value| ct_value_has_type(value, element))
-        }
-        _ => false,
-    }
+    materialize_ct_value(value.clone(), ty).is_some()
 }
 
 fn infer_pack_argument_type(expr: &Expr) -> Result<Ty, ComptimeError> {
@@ -3302,6 +3459,14 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::Int(value) => out.push_str(&format!("i{value};")),
         CtValue::UInt(value) => out.push_str(&format!("u{value};")),
         CtValue::Float(bits) => out.push_str(&format!("f{bits:016x};")),
+        CtValue::IntLiteral(value) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("I{}:{rendered}", rendered.len()));
+        }
+        CtValue::FloatLiteral(value) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("F{}:{rendered}", rendered.len()));
+        }
         CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
         CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
         CtValue::Tuple(values) => {
@@ -3330,15 +3495,37 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
     }
 }
 
-fn compare_ints(op: InfixOp, a: i64, b: i64) -> Result<bool, ComptimeError> {
+fn compare_numeric_values(
+    op: InfixOp,
+    left: &CtValue,
+    right: &CtValue,
+) -> Result<bool, ComptimeError> {
+    let exact = |value: &CtValue| match value {
+        CtValue::Int(value) => Some(crate::literal::FloatLiteral::from_int(
+            &crate::literal::IntLiteral::from(*value),
+        )),
+        CtValue::UInt(value) => Some(crate::literal::FloatLiteral::from_int(
+            &crate::literal::IntLiteral::from(*value),
+        )),
+        CtValue::Float(bits) => crate::literal::FloatLiteral::from_f64(f64::from_bits(*bits)),
+        CtValue::IntLiteral(value) => Some(crate::literal::FloatLiteral::from_int(value)),
+        CtValue::FloatLiteral(value) => Some(value.clone()),
+        _ => None,
+    };
+    let (Some(left), Some(right)) = (exact(left), exact(right)) else {
+        return Err(ComptimeError::NotComptime(
+            "numeric comparison expects numeric operands".to_string(),
+        ));
+    };
+    let ordering = left.as_rational().cmp(right.as_rational());
     use InfixOp::*;
     Ok(match op {
-        Eq => a == b,
-        Ne => a != b,
-        Lt => a < b,
-        Gt => a > b,
-        Le => a <= b,
-        Ge => a >= b,
+        Eq => ordering.is_eq(),
+        Ne => !ordering.is_eq(),
+        Lt => ordering.is_lt(),
+        Gt => ordering.is_gt(),
+        Le => !ordering.is_gt(),
+        Ge => !ordering.is_lt(),
         _ => {
             return Err(ComptimeError::NotComptime(
                 "not a comparison operator".to_string(),
@@ -3368,6 +3555,8 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
         CtValue::Int(n) => Ok(Value::Int(*n)),
         CtValue::UInt(n) => Ok(Value::UInt(*n)),
         CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(*bits))),
+        CtValue::IntLiteral(value) => Ok(Value::IntLiteral(value.clone())),
+        CtValue::FloatLiteral(value) => Ok(Value::FloatLiteral(value.clone())),
         CtValue::Bool(b) => Ok(Value::Bool(*b)),
         CtValue::Str(s) => Ok(Value::Str(s.clone())),
         CtValue::Tuple(items) => Ok(Value::Tuple(
@@ -3389,6 +3578,8 @@ fn vm_to_ct(value: Value) -> Result<CtValue, ComptimeError> {
         Value::Int(n) => Ok(CtValue::Int(n)),
         Value::UInt(n) => Ok(CtValue::UInt(n)),
         Value::Float64(value) => Ok(CtValue::Float(value.to_bits())),
+        Value::IntLiteral(value) => Ok(CtValue::IntLiteral(value)),
+        Value::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value)),
         Value::Bool(b) => Ok(CtValue::Bool(b)),
         Value::Str(s) => Ok(CtValue::Str(s)),
         Value::Tuple(items) => Ok(CtValue::Tuple(

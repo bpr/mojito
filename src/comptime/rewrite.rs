@@ -253,6 +253,30 @@ fn expand_pack_spreads_in_expr(
     type_packs: &HashMap<String, Vec<Type>>,
     runtime_pack_lengths: &HashMap<String, usize>,
 ) {
+    // A specialized heterogeneous runtime pack already has the exact native
+    // Tuple shape selected for `*Ts`. Moving every element into `Tuple(*args^)`
+    // is therefore a whole-value relocation, not an indexed copy/rebuild. Keep
+    // that fact explicit in the checked AST so MIR emits one `UseVar { Move }`
+    // and tombstones the source pack before its callee-side cleanup.
+    if let ExprKind::Call {
+        name,
+        param_args,
+        args,
+        kwargs,
+    } = &expression.kind
+        && name == "Tuple"
+        && param_args.is_empty()
+        && kwargs.is_empty()
+        && let [argument] = args.as_slice()
+        && let ExprKind::Spread(spread) = &argument.kind
+        && let ExprKind::Transfer(inner) = &spread.kind
+        && let ExprKind::Identifier(pack) = &inner.kind
+        && runtime_pack_lengths.contains_key(pack)
+    {
+        expression.kind = ExprKind::Transfer(inner.clone());
+        return;
+    }
+
     match &mut expression.kind {
         ExprKind::Call {
             name,
@@ -453,7 +477,7 @@ fn expand_tuple_spread_arguments(
                 source: source.clone(),
             };
             let index = Expr {
-                kind: ExprKind::Int(index as i64),
+                kind: ExprKind::Int((index as i64).into()),
                 span,
                 source: source.clone(),
             };

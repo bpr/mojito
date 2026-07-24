@@ -8,6 +8,7 @@ pub(super) fn default_literal(ty: &Ty) -> Ty {
         Ty::FloatLiteral => Ty::Float64,
         // Materialize each element of a tuple literal (`(1, 2)` → `Tuple[Int, Int]`).
         Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(default_literal).collect()),
+        Ty::RuntimePack(elems) => Ty::RuntimePack(elems.iter().map(default_literal).collect()),
         Ty::Variant(alternatives) => {
             Ty::Variant(alternatives.iter().map(default_literal).collect())
         }

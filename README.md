@@ -37,6 +37,9 @@ mojito currently has:
   identities; configurable roots; and bundled standard-library lookup
 - compile-time elaboration for `comptime if`, `comptime for`, richer compile-time
   values, and fuel-bounded pure-function CTFE through the MIR/VM path
+- arbitrary-precision `IntLiteral` and exact finite `FloatLiteral` evaluation,
+  with checked, explicit MIR materialization into wrapping integer and rounded
+  floating runtime scalars
 - a HIR control-flow graph lowering pass
 - a MIR/A-normal lowering pass with explicit registers, variables, places, moves,
   drops, calls, method calls, exceptions, and loop control
@@ -188,7 +191,7 @@ boundary.
 
 The current language target is recorded in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md). Mojito presently tracks
-**Mojo 1.0.0b3.dev2026071705 (2026-07-17)**; the audit records nightly language
+**Mojo 1.0.0b3.dev2026072406 (2026-07-24)**; the audit records nightly language
 drift separately from claims of implemented parity.
 
 Shared cases in `conformance/cases.tsv` run under both implementations. They can

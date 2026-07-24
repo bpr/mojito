@@ -679,9 +679,9 @@ impl<'a> Iterator for Lexer<'a> {
                             .chars()
                             .filter(|&ch| ch != '_')
                             .collect();
-                        match cleaned.parse::<f64>() {
-                            Ok(value) => self.emit(Token::FloatLiteral(value)),
-                            Err(_) => return Some(Err(LexError::InvalidFloat(start))),
+                        match crate::literal::FloatLiteral::parse_decimal(&cleaned) {
+                            Some(value) => self.emit(Token::FloatLiteral(value)),
+                            None => return Some(Err(LexError::InvalidFloat(start))),
                         }
                     } else {
                         self.pos += 1;
@@ -912,9 +912,9 @@ impl<'a> Iterator for Lexer<'a> {
                             .chars()
                             .filter(|&c| c != '_')
                             .collect();
-                        match i64::from_str_radix(&cleaned, radix) {
-                            Ok(num) => self.emit(Token::IntLiteral(num)),
-                            Err(_) => return Some(Err(LexError::InvalidInteger(start))),
+                        match crate::literal::IntLiteral::parse_radix(&cleaned, radix) {
+                            Some(num) => self.emit(Token::IntLiteral(num)),
+                            None => return Some(Err(LexError::InvalidInteger(start))),
                         }
                         continue;
                     }
@@ -949,19 +949,20 @@ impl<'a> Iterator for Lexer<'a> {
                         .filter(|&c| c != '_')
                         .collect();
                     if is_float {
-                        match cleaned.parse::<f64>() {
-                            Ok(num) => self.emit(Token::FloatLiteral(num)),
-                            Err(_) => return Some(Err(LexError::InvalidFloat(start))),
+                        match crate::literal::FloatLiteral::parse_decimal(&cleaned) {
+                            Some(num) => self.emit(Token::FloatLiteral(num)),
+                            None => return Some(Err(LexError::InvalidFloat(start))),
                         }
                     } else if cleaned.len() > 1
                         && cleaned.starts_with('0')
                         && cleaned.chars().any(|digit| digit != '0')
                     {
                         return Some(Err(LexError::InvalidInteger(start)));
-                    } else if let Ok(num) = cleaned.parse::<i64>() {
-                        self.emit(Token::IntLiteral(num));
                     } else {
-                        return Some(Err(LexError::InvalidInteger(start)));
+                        match crate::literal::IntLiteral::parse_radix(&cleaned, 10) {
+                            Some(num) => self.emit(Token::IntLiteral(num)),
+                            None => return Some(Err(LexError::InvalidInteger(start))),
+                        }
                     }
                     continue;
                 }

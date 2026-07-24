@@ -1127,7 +1127,7 @@ impl Lower {
                     let index_var = self.var(&index_name);
                     self.push(HirInstr::Bind {
                         dest: index_var,
-                        expr: HirExpr::unchecked(Expr::new(ExprKind::Int(0), DUMMY_SPAN)),
+                        expr: HirExpr::unchecked(Expr::new(ExprKind::Int(0i64.into()), DUMMY_SPAN)),
                         binding_ty: None,
                     });
                     let header = self.new_block();
@@ -1198,7 +1198,7 @@ impl Lower {
                                 ExprKind::Identifier(index_name.clone()),
                                 DUMMY_SPAN,
                             )),
-                            Box::new(Expr::new(ExprKind::Int(1), DUMMY_SPAN)),
+                            Box::new(Expr::new(ExprKind::Int(1i64.into()), DUMMY_SPAN)),
                         ),
                         DUMMY_SPAN,
                     );

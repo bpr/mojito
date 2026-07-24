@@ -30,8 +30,8 @@ fn runtime_match_error(error: crate::call::MatchError, function: &str) -> Runtim
 /// default folds to `None` and errors only if that slot is actually taken.
 pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
     match value {
-        CheckedConst::Int(value) => Value::Int(*value),
-        CheckedConst::Float(value) => Value::Float64(*value),
+        CheckedConst::Int(value) => Value::IntLiteral(value.clone()),
+        CheckedConst::Float(value) => Value::FloatLiteral(value.clone()),
         CheckedConst::Bool(value) => Value::Bool(*value),
         CheckedConst::String(value) => Value::Str(value.clone()),
         CheckedConst::None => Value::None,
@@ -77,16 +77,40 @@ pub(super) fn bind_args(
         };
         regular_values.push(crate::runtime::coerce_checked(value, &sig.param_types[i]));
     }
-    // Collect overflow positional args into the `*args` list.
+    // Collect overflow positional args. Ordinary homogeneous `*args: T` becomes
+    // a List[T]. A compile-time-specialized heterogeneous pack has an explicit
+    // checked `RuntimePack[T0, ...]` ABI and must remain a Tuple: treating it as
+    // a List makes `Tuple(*args^)` copy indexed elements instead of relocating
+    // the pack, which can destroy a non-Copyable element twice.
     let (out, frame_slots) = if let Some(elem_ty) = &sig.variadic {
-        let items = overflow
-            .iter()
-            .map(|&idx| crate::runtime::coerce_checked(argv[idx].clone(), elem_ty))
-            .collect();
+        let packed = match elem_ty {
+            Ty::RuntimePack(element_types) if element_types.len() == overflow.len() => {
+                Value::Tuple(
+                    overflow
+                        .iter()
+                        .zip(element_types)
+                        .map(|(&idx, ty)| crate::runtime::coerce_checked(argv[idx].clone(), ty))
+                        .collect(),
+                )
+            }
+            Ty::RuntimePack(element_types) => {
+                return Err(RuntimeError::ArityMismatch {
+                    name: name.to_string(),
+                    expected: element_types.len(),
+                    got: overflow.len(),
+                });
+            }
+            _ => Value::List(
+                overflow
+                    .iter()
+                    .map(|&idx| crate::runtime::coerce_checked(argv[idx].clone(), elem_ty))
+                    .collect(),
+            ),
+        };
         let idx = sig.variadic_index.unwrap_or(regular_values.len());
         let mut out = Vec::with_capacity(regular_values.len() + 1);
         out.extend(regular_values[..idx].iter().cloned());
-        out.push(Value::List(items));
+        out.push(packed);
         out.extend(regular_values[idx..].iter().cloned());
         let mut frame_slots = Vec::with_capacity(slots.len() + 1);
         frame_slots.extend(slots[..idx].iter().copied());
@@ -137,8 +161,7 @@ pub(super) fn construct(
         .param_decls
         .iter()
         .zip(param_vals)
-        .filter(|((_, is_value), _)| *is_value)
-        .map(|((pname, _), val)| (pname.clone(), val.clone().unwrap_or(Value::None)))
+        .filter_map(|(decl, val)| reify_value_parameter(decl, val.clone().unwrap_or(Value::None)))
         .collect();
     Ok(Value::Struct {
         name: name.to_string(),

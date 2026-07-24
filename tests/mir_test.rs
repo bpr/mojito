@@ -302,7 +302,7 @@ fn checked_lowering_owns_typed_declarations_and_normalized_defaults() {
     assert_eq!(declaration.param_types, vec![mojito::Ty::UInt]);
     assert!(matches!(
         declaration.defaults.as_slice(),
-        [Some(mojito::CheckedConst::Int(3))]
+        [Some(mojito::CheckedConst::Int(value))] if value.to_i64() == Some(3)
     ));
 }
 
@@ -333,6 +333,67 @@ fn executable_mir_carries_checked_binding_and_parameter_types() {
                 }
             ))
     );
+}
+
+#[test]
+fn literal_materialization_is_explicit_in_typed_mir() {
+    let program =
+        parse("def main():\n    var value: Int = 18446744073709551623\n    print(value)\n")
+            .expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let instructions = main.blocks.iter().flat_map(|block| &block.instrs);
+    assert!(instructions.clone().any(|instruction| matches!(
+        instruction,
+        MirInstr::Const {
+            k: mojito::mir::Const::IntLiteral(value),
+            ..
+        } if value.to_string() == "18446744073709551623"
+    )));
+    assert!(instructions.clone().any(|instruction| matches!(
+        instruction,
+        MirInstr::MaterializeLiteral {
+            target: mojito::Ty::Int,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
+    let program = parse(
+        "def main():\n    var xs = List[Int](18446744073709551616)\n    var unique = Set[Int](18446744073709551616)\n    var table: Dict[Int, Int] = {18446744073709551616: 18446744073709551616}\n    for i in range(18446744073709551616):\n        pass\n",
+    )
+    .expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let materializations = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::MaterializeLiteral {
+                    target: mojito::Ty::Int,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(materializations, 5);
 }
 
 #[test]
@@ -623,4 +684,51 @@ fn checked_lowering_records_declaration_contracts() {
     assert_eq!(declaration("plain").ret_ty, Ty::Int);
     assert!(declaration("failing").raises);
     assert!(!declaration("plain").raises);
+}
+
+#[test]
+fn specialized_runtime_pack_is_abi_only_and_binds_as_a_tuple() {
+    use mojito::{Ty, check_program, elaborate};
+
+    let src = "def count[*Types: Copyable](*args: *Types) -> Int:\n    return len(args)\n\ndef main():\n    print(count(1, \"two\"))\n";
+    let program = parse(src).expect("parse");
+    let program = elaborate(program).expect("specialize heterogeneous pack");
+    let checked = check_program(&program).expect("check specialization");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+
+    let declaration = mir
+        .declarations
+        .functions
+        .iter()
+        .find(|declaration| matches!(declaration.variadic, Some(Ty::RuntimePack(_))))
+        .expect("specialized declaration retains the heterogeneous ABI marker");
+    assert!(matches!(
+        declaration.variadic,
+        Some(Ty::RuntimePack(ref elements)) if elements == &[Ty::Int, Ty::String]
+    ));
+
+    let function = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == &declaration.lowered_name)
+        .map(|(_, function)| function)
+        .expect("specialized body lowered");
+    assert_eq!(
+        function.param_types,
+        [Ty::Tuple(vec![Ty::Int, Ty::String])],
+        "the runtime frame exposes an ordinary Tuple collector to the body"
+    );
+    assert_eq!(
+        function.var_tys.get(&0),
+        Some(&Ty::Tuple(vec![Ty::Int, Ty::String]))
+    );
+    assert!(
+        mojito::mir::verify::verify(&mir).is_empty(),
+        "verified body types must not leak the ABI-only RuntimePack marker"
+    );
 }

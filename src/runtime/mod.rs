@@ -16,6 +16,11 @@ pub enum Value {
     Int(i64),
     UInt(u64),
     Float64(f64),
+    /// Arbitrary-precision compile-time integer, materialized before it can
+    /// inhabit an ordinary runtime binding.
+    IntLiteral(crate::literal::IntLiteral),
+    /// Exact finite compile-time float, materialized once into a runtime scalar.
+    FloatLiteral(crate::literal::FloatLiteral),
     Bool(bool),
     Str(String),
     None,
@@ -132,6 +137,8 @@ impl PartialEq for Value {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::UInt(a), Value::UInt(b)) => a == b,
             (Value::Float64(a), Value::Float64(b)) => a == b,
+            (Value::IntLiteral(a), Value::IntLiteral(b)) => a == b,
+            (Value::FloatLiteral(a), Value::FloatLiteral(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Str(a), Value::Str(b)) => a == b,
             (
@@ -244,6 +251,8 @@ impl fmt::Display for Value {
             Value::UInt(n) => write!(f, "{}", n),
             // `{:?}` keeps the decimal point (e.g. `3.0`), distinguishing from Int.
             Value::Float64(x) => write!(f, "{:?}", x),
+            Value::IntLiteral(value) => write!(f, "{value}"),
+            Value::FloatLiteral(value) => write!(f, "{value}"),
             Value::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
             Value::Str(s) => write!(f, "{}", s),
             Value::None => write!(f, "None"),
@@ -365,30 +374,14 @@ impl fmt::Display for Value {
     }
 }
 
-/// Classify a `[...]` parameter list into `(name, is_value)` pairs, mirroring the
-/// checker: a lone bound naming a scalar type marks a value parameter. Runtime
-/// only needs value parameters (type parameters are erased), but the full order
-/// is kept so explicit `[...]` arguments line up positionally.
-pub(crate) fn classify_param_decls(type_params: &[crate::ast::TypeParam]) -> Vec<(String, bool)> {
-    type_params
-        .iter()
-        .filter(|tp| tp.bounds.as_slice() != ["Origin"])
-        .map(|tp| {
-            let is_value = matches!(
-                tp.bounds.as_slice(),
-                [only] if matches!(only.as_str(), "Int" | "UInt" | "Bool" | "String" | "Float64")
-            );
-            (tp.name.clone(), is_value)
-        })
-        .collect()
-}
-
 /// The Mojo type name of a runtime value, for error messages.
 pub(crate) fn type_name(value: &Value) -> String {
     match value {
         Value::Int(_) => "Int".to_string(),
         Value::UInt(_) => "UInt".to_string(),
         Value::Float64(_) => "Float64".to_string(),
+        Value::IntLiteral(_) => "IntLiteral".to_string(),
+        Value::FloatLiteral(_) => "FloatLiteral".to_string(),
         Value::Bool(_) => "Bool".to_string(),
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),
@@ -424,6 +417,16 @@ pub(crate) fn type_name(value: &Value) -> String {
 /// Structural equality for `==`/`!=`. Numeric values use ordinary promotion;
 /// tuples recurse element-wise. Other scalar values must have the same type.
 pub(crate) fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
+    if let (Some(a), Some(b)) = (as_finite_numeric(a), as_finite_numeric(b)) {
+        return Ok(a.compare(&b) == Ordering::Equal);
+    }
+    // Exact literals are always finite. If the other numeric value could not
+    // enter the exact domain, it is an infinity or NaN and therefore unequal.
+    if (as_exact_num(a).is_some() && as_num(b).is_some())
+        || (as_num(a).is_some() && as_exact_num(b).is_some())
+    {
+        return Ok(false);
+    }
     if let (Some(a), Some(b)) = (as_num(a), as_num(b)) {
         return Ok(match a.rank().max(b.rank()) {
             2 => a.as_f64() == b.as_f64(),
@@ -501,6 +504,29 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
 /// use the same promotion ranks as arithmetic; strings and nested tuples compare
 /// structurally.
 fn compare_tuple_values(left: &Value, right: &Value) -> Result<Ordering, RuntimeError> {
+    if (as_exact_num(left).is_some() || as_exact_num(right).is_some())
+        && (as_exact_num(left).is_some() || as_num(left).is_some())
+        && (as_exact_num(right).is_some() || as_num(right).is_some())
+    {
+        let compare = |op| match apply_infix(op, left.clone(), right.clone())? {
+            Value::Bool(value) => Ok(value),
+            _ => Err(RuntimeError::TypeError(
+                "numeric tuple comparison did not produce Bool".into(),
+            )),
+        };
+        if compare(InfixOp::Eq)? {
+            return Ok(Ordering::Equal);
+        }
+        if compare(InfixOp::Lt)? {
+            return Ok(Ordering::Less);
+        }
+        if compare(InfixOp::Gt)? {
+            return Ok(Ordering::Greater);
+        }
+        return Err(RuntimeError::TypeError(
+            "cannot order NaN tuple elements".into(),
+        ));
+    }
     if let (Some(left), Some(right)) = (as_num(left), as_num(right)) {
         return match left.rank().max(right.rank()) {
             2 => left
@@ -549,9 +575,31 @@ pub(crate) fn builtin_hash(value: &Value) -> Result<u64, RuntimeError> {
         h
     }
     let h = match value {
-        Value::Int(n) => mix(FNV_OFFSET, &n.to_le_bytes()),
-        Value::UInt(n) => mix(FNV_OFFSET, &n.to_le_bytes()),
+        Value::Int(_)
+        | Value::UInt(_)
+        | Value::IntLiteral(_)
+        | Value::FloatLiteral(_)
+        | Value::Float64(_)
+            if as_finite_numeric(value).is_some() =>
+        {
+            // Numeric equality is mathematical across finite scalar kinds at
+            // erased boundaries, so hash the canonical reduced rational rather
+            // than a representation-specific integer or IEEE bit pattern.
+            // This also gives +0 and -0 the same hash.
+            let exact = as_finite_numeric(value)
+                .expect("the guarded finite numeric value has an exact form")
+                .into_float();
+            let numerator = exact.as_rational().numer().to_signed_bytes_le();
+            let denominator = exact.as_rational().denom().to_signed_bytes_le();
+            let mut hash = mix(FNV_OFFSET, b"numeric");
+            hash = mix(hash, &(numerator.len() as u64).to_le_bytes());
+            hash = mix(hash, &numerator);
+            hash = mix(hash, &(denominator.len() as u64).to_le_bytes());
+            mix(hash, &denominator)
+        }
         Value::Bool(b) => mix(FNV_OFFSET, &[*b as u8]),
+        // Non-finite floats cannot enter the exact rational domain. Equal
+        // infinities retain identical bits; NaNs never compare equal.
         Value::Float64(x) => mix(FNV_OFFSET, &x.to_bits().to_le_bytes()),
         Value::Str(s) => mix(FNV_OFFSET, s.as_bytes()),
         other => {
@@ -606,7 +654,7 @@ impl Num {
 
 /// View a value as a number, if it is one.
 fn as_num(v: &Value) -> Option<Num> {
-    match v {
+    match &v {
         Value::Int(n) => Some(Num::I(*n)),
         Value::UInt(n) => Some(Num::U(*n)),
         Value::Float64(x) => Some(Num::F(*x)),
@@ -614,13 +662,61 @@ fn as_num(v: &Value) -> Option<Num> {
     }
 }
 
-/// Apply a (strict) binary operator to two already-evaluated values — the shared
+#[derive(Clone)]
+enum ExactNum {
+    Int(crate::literal::IntLiteral),
+    Float(crate::literal::FloatLiteral),
+}
+
+impl ExactNum {
+    fn into_float(self) -> crate::literal::FloatLiteral {
+        match self {
+            ExactNum::Int(value) => crate::literal::FloatLiteral::from_int(&value),
+            ExactNum::Float(value) => value,
+        }
+    }
+
+    fn compare(&self, rhs: &Self) -> Ordering {
+        match (self, rhs) {
+            (ExactNum::Int(left), ExactNum::Int(right)) => left.cmp(right),
+            (left, right) => left
+                .clone()
+                .into_float()
+                .numeric_cmp(&right.clone().into_float()),
+        }
+    }
+}
+
+fn as_exact_num(value: &Value) -> Option<ExactNum> {
+    match value {
+        Value::IntLiteral(value) => Some(ExactNum::Int(value.clone())),
+        Value::FloatLiteral(value) => Some(ExactNum::Float(value.clone())),
+        _ => None,
+    }
+}
+
+/// Lift any finite runtime numeric value into the same exact comparison domain
+/// as a literal. This keeps erased/generic equality and hashing coherent even
+/// if an exact literal survives past a boundary that normally materializes it.
+fn as_finite_numeric(value: &Value) -> Option<ExactNum> {
+    match value {
+        Value::Int(value) => Some(ExactNum::Int((*value).into())),
+        Value::UInt(value) => Some(ExactNum::Int((*value).into())),
+        Value::Float64(value) => {
+            crate::literal::FloatLiteral::from_f64(*value).map(ExactNum::Float)
+        }
+        value => as_exact_num(value),
+    }
+}
+
 /// Apply a unary operator to an already-evaluated operand for VM execution and
 /// VM-backed compile-time evaluation.
 pub(crate) fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeError> {
     match (op, value) {
         (PrefixOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
         (PrefixOp::Neg, Value::Float64(x)) => Ok(Value::Float64(-x)),
+        (PrefixOp::Neg, Value::IntLiteral(value)) => Ok(Value::IntLiteral(value.neg())),
+        (PrefixOp::Neg, Value::FloatLiteral(value)) => Ok(Value::FloatLiteral(value.neg())),
         (PrefixOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
         (PrefixOp::Neg, v) => Err(RuntimeError::TypeError(format!(
             "cannot negate {}",
@@ -643,6 +739,15 @@ pub(crate) fn apply_infix(op: InfixOp, l: Value, r: Value) -> Result<Value, Runt
     // Elementwise SIMD operators (before the scalar-numeric path).
     if matches!(l, Value::Simd { .. }) || matches!(r, Value::Simd { .. }) {
         return simd_binop(op, &l, &r);
+    }
+    if let (Some(left), Some(right)) = (as_exact_num(&l), as_exact_num(&r)) {
+        return exact_numeric_op(op, left, right);
+    }
+    if as_exact_num(&l).is_some() && as_num(&r).is_some() {
+        return apply_infix(op, materialize_like_numeric(l, &r)?, r);
+    }
+    if as_num(&l).is_some() && as_exact_num(&r).is_some() {
+        return apply_infix(op, l.clone(), materialize_like_numeric(r, &l)?);
     }
     // `+` on two strings concatenates.
     if let (InfixOp::Add, Value::Str(a), Value::Str(b)) = (op, &l, &r) {
@@ -678,6 +783,141 @@ pub(crate) fn apply_infix(op: InfixOp, l: Value, r: Value) -> Result<Value, Runt
             type_name(&r)
         ))),
     }
+}
+
+fn materialize_like_numeric(literal: Value, concrete: &Value) -> Result<Value, RuntimeError> {
+    match (literal, concrete) {
+        (Value::IntLiteral(value), Value::Int(_)) => value
+            .wrapping_signed(64)
+            .map(Value::Int)
+            .ok_or_else(|| literal_materialization_error(&value, "Int")),
+        (Value::IntLiteral(value), Value::UInt(_)) => value
+            .wrapping_unsigned(64)
+            .map(Value::UInt)
+            .ok_or_else(|| literal_materialization_error(&value, "UInt")),
+        (Value::IntLiteral(value), Value::Float64(_)) => value
+            .to_f64()
+            .map(Value::Float64)
+            .ok_or_else(|| literal_materialization_error(&value, "Float64")),
+        (Value::FloatLiteral(value), Value::Float64(_)) => value
+            .to_f64()
+            .map(Value::Float64)
+            .ok_or_else(|| literal_materialization_error(&value, "Float64")),
+        (value, _) => Err(RuntimeError::TypeError(format!(
+            "cannot materialize {} for {}",
+            type_name(&value),
+            type_name(concrete)
+        ))),
+    }
+}
+
+fn literal_materialization_error(value: &impl fmt::Display, destination: &str) -> RuntimeError {
+    RuntimeError::TypeError(format!(
+        "literal value {value} cannot be represented as {destination}"
+    ))
+}
+
+fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Value, RuntimeError> {
+    use InfixOp::*;
+    if let (ExactNum::Int(left), ExactNum::Int(right)) = (&left, &right) {
+        let value =
+            match op {
+                Add => Value::IntLiteral(left.add(right)),
+                Sub => Value::IntLiteral(left.sub(right)),
+                Mul => Value::IntLiteral(left.mul(right)),
+                Div => Value::FloatLiteral(
+                    crate::literal::FloatLiteral::from_int(left)
+                        .div(&crate::literal::FloatLiteral::from_int(right))
+                        .ok_or_else(|| {
+                            RuntimeError::TypeError("integer division by zero".to_string())
+                        })?,
+                ),
+                FloorDiv => Value::IntLiteral(left.floor_div(right).ok_or_else(|| {
+                    RuntimeError::TypeError("integer division by zero".to_string())
+                })?),
+                Mod => Value::IntLiteral(left.floor_mod(right).ok_or_else(|| {
+                    RuntimeError::TypeError("integer modulo by zero".to_string())
+                })?),
+                Pow => Value::IntLiteral(left.pow(right).ok_or_else(|| {
+                    RuntimeError::TypeError(
+                        "integer literal exponent must be a non-negative u32".to_string(),
+                    )
+                })?),
+                Shl => Value::IntLiteral(left.shl(right).ok_or_else(|| {
+                    RuntimeError::TypeError("invalid integer literal shift".to_string())
+                })?),
+                Shr => Value::IntLiteral(left.shr(right).ok_or_else(|| {
+                    RuntimeError::TypeError("invalid integer literal shift".to_string())
+                })?),
+                BitAnd => Value::IntLiteral(left.bitand(right)),
+                BitOr => Value::IntLiteral(left.bitor(right)),
+                BitXor => Value::IntLiteral(left.bitxor(right)),
+                Lt | Le | Gt | Ge | Eq | Ne => {
+                    return Ok(Value::Bool(match op {
+                        Lt => left < right,
+                        Le => left <= right,
+                        Gt => left > right,
+                        Ge => left >= right,
+                        Eq => left == right,
+                        Ne => left != right,
+                        _ => unreachable!(),
+                    }));
+                }
+                MatMul | And | Or | In | NotIn => {
+                    return Err(RuntimeError::TypeError(format!(
+                        "operator '{op:?}' is invalid for IntLiteral"
+                    )));
+                }
+            };
+        return Ok(value);
+    }
+
+    let (left, right) = (left.into_float(), right.into_float());
+    Ok(match op {
+        Add => Value::FloatLiteral(left.add(&right)),
+        Sub => Value::FloatLiteral(left.sub(&right)),
+        Mul => Value::FloatLiteral(left.mul(&right)),
+        Div => Value::FloatLiteral(left.div(&right).ok_or_else(|| {
+            RuntimeError::TypeError("floating literal division by zero".to_string())
+        })?),
+        FloorDiv => Value::FloatLiteral(left.floor_div(&right).ok_or_else(|| {
+            RuntimeError::TypeError("floating literal division by zero".to_string())
+        })?),
+        Mod => Value::FloatLiteral(left.floor_mod(&right).ok_or_else(|| {
+            RuntimeError::TypeError("floating literal modulo by zero".to_string())
+        })?),
+        Pow => {
+            if let Some(exponent) = right.to_int_if_whole() {
+                Value::FloatLiteral(left.pow_int(&exponent).ok_or_else(|| {
+                    RuntimeError::TypeError("invalid FloatLiteral exponent".to_string())
+                })?)
+            } else {
+                Value::Float64(
+                    left.to_f64()
+                        .ok_or_else(|| literal_materialization_error(&left, "Float64"))?
+                        .powf(
+                            right
+                                .to_f64()
+                                .ok_or_else(|| literal_materialization_error(&right, "Float64"))?,
+                        ),
+                )
+            }
+        }
+        Lt | Le | Gt | Ge | Eq | Ne => Value::Bool(match op {
+            Lt => left.numeric_cmp(&right).is_lt(),
+            Le => !left.numeric_cmp(&right).is_gt(),
+            Gt => left.numeric_cmp(&right).is_gt(),
+            Ge => !left.numeric_cmp(&right).is_lt(),
+            Eq => left.numeric_cmp(&right).is_eq(),
+            Ne => !left.numeric_cmp(&right).is_eq(),
+            _ => unreachable!(),
+        }),
+        Shl | Shr | BitAnd | BitOr | BitXor | MatMul | And | Or | In | NotIn => {
+            return Err(RuntimeError::TypeError(format!(
+                "operator '{op:?}' is invalid for FloatLiteral"
+            )));
+        }
+    })
 }
 
 /// Apply a numeric binary operator, promoting operands to a common kind. The
@@ -834,6 +1074,9 @@ pub(crate) fn bounds_check(idx: i64, len: usize, what: &str) -> Result<usize, Ru
 pub(crate) fn value_as_index(v: &Value) -> Result<i64, RuntimeError> {
     match v {
         Value::Int(n) => Ok(*n),
+        Value::IntLiteral(value) => value
+            .to_i64()
+            .ok_or_else(|| literal_materialization_error(value, "Int index")),
         other => Err(RuntimeError::TypeError(format!(
             "index must be Int, got {}",
             type_name(other)
@@ -1160,6 +1403,9 @@ fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
 fn value_to_int(v: &Value) -> Result<i128, RuntimeError> {
     match v {
         Value::Int(n) => Ok(*n as i128),
+        Value::IntLiteral(value) => value
+            .to_i128()
+            .ok_or_else(|| literal_materialization_error(value, "integer SIMD lane")),
         Value::UInt(n) => Ok(*n as i128),
         Value::Bool(b) => Ok(*b as i128),
         Value::Simd {
@@ -1173,11 +1419,61 @@ fn value_to_int(v: &Value) -> Result<i128, RuntimeError> {
     }
 }
 
+fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
+    Some(match dtype {
+        Dtype::Int => (64, true),
+        Dtype::Int8 => (8, true),
+        Dtype::Int16 => (16, true),
+        Dtype::Int32 => (32, true),
+        Dtype::Int64 => (64, true),
+        Dtype::UInt8 => (8, false),
+        Dtype::UInt16 => (16, false),
+        Dtype::UInt32 => (32, false),
+        Dtype::UInt64 => (64, false),
+        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => return None,
+    })
+}
+
+fn materialize_literal_int_lane(value: &crate::literal::IntLiteral, dtype: Dtype) -> Option<i128> {
+    let (bits, signed) = integer_dtype_bits(dtype)?;
+    if signed {
+        value.wrapping_signed(bits).map(i128::from)
+    } else {
+        value.wrapping_unsigned(bits).map(i128::from)
+    }
+}
+
+fn value_to_int_lane(v: &Value, dtype: Dtype) -> Result<i128, RuntimeError> {
+    if let Value::IntLiteral(value) = v {
+        let (bits, signed) = integer_dtype_bits(dtype).ok_or_else(|| {
+            RuntimeError::TypeError(format!("{dtype:?} is not an integer SIMD dtype"))
+        })?;
+        return if signed {
+            value
+                .wrapping_signed(bits)
+                .map(i128::from)
+                .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
+        } else {
+            value
+                .wrapping_unsigned(bits)
+                .map(i128::from)
+                .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
+        };
+    }
+    Ok(wrap(dtype, value_to_int(v)?))
+}
+
 /// A scalar value's floating content, for building a float SIMD lane.
 fn value_to_float(v: &Value) -> Result<f64, RuntimeError> {
     match v {
         Value::Int(n) => Ok(*n as f64),
         Value::Float64(x) => Ok(*x),
+        Value::IntLiteral(value) => value
+            .to_f64()
+            .ok_or_else(|| literal_materialization_error(value, "floating SIMD lane")),
+        Value::FloatLiteral(value) => value
+            .to_f64()
+            .ok_or_else(|| literal_materialization_error(value, "floating SIMD lane")),
         Value::Simd {
             lanes: SimdLanes::Float(l),
             ..
@@ -1187,6 +1483,23 @@ fn value_to_float(v: &Value) -> Result<f64, RuntimeError> {
             type_name(other)
         ))),
     }
+}
+
+fn value_to_float_lane(v: &Value, dtype: Dtype) -> Result<f64, RuntimeError> {
+    if dtype == Dtype::Float32 {
+        return match v {
+            Value::IntLiteral(value) => crate::literal::FloatLiteral::from_int(value)
+                .to_f32()
+                .map(|value| value as f64)
+                .ok_or_else(|| literal_materialization_error(value, "Float32")),
+            Value::FloatLiteral(value) => value
+                .to_f32()
+                .map(|value| value as f64)
+                .ok_or_else(|| literal_materialization_error(value, "Float32")),
+            other => Ok(round_f32(value_to_float(other)?)),
+        };
+    }
+    value_to_float(v)
 }
 
 // --- Shared numeric/utility built-ins (value level) -------------------------
@@ -1200,6 +1513,12 @@ pub(crate) fn builtin_abs(v: Value) -> Result<Value, RuntimeError> {
     match v {
         Value::Int(n) => Ok(Value::Int(n.wrapping_abs())),
         Value::Float64(x) => Ok(Value::Float64(x.abs())),
+        Value::IntLiteral(value) => Ok(Value::IntLiteral(if value.is_negative() {
+            value.neg()
+        } else {
+            value
+        })),
+        Value::FloatLiteral(value) => Ok(Value::FloatLiteral(value.abs())),
         Value::UInt(n) => Ok(Value::UInt(n)),
         other => Err(RuntimeError::TypeError(format!(
             "abs() expects a numeric value, got {}",
@@ -1211,6 +1530,16 @@ pub(crate) fn builtin_abs(v: Value) -> Result<Value, RuntimeError> {
 /// `min(a, b)` / `max(a, b)`: promote the operands to a common numeric kind (as
 /// arithmetic does) and return the smaller/larger, rebuilt in that kind.
 pub(crate) fn builtin_min_max(is_min: bool, a: Value, b: Value) -> Result<Value, RuntimeError> {
+    if let (Some(left), Some(right)) = (as_exact_num(&a), as_exact_num(&b)) {
+        let left_first = (left.compare(&right) != Ordering::Greater) == is_min;
+        return Ok(if left_first { a } else { b });
+    }
+    if as_exact_num(&a).is_some() && as_num(&b).is_some() {
+        return builtin_min_max(is_min, materialize_like_numeric(a, &b)?, b);
+    }
+    if as_num(&a).is_some() && as_exact_num(&b).is_some() {
+        return builtin_min_max(is_min, a.clone(), materialize_like_numeric(b, &a)?);
+    }
     let (na, nb) = match (as_num(&a), as_num(&b)) {
         (Some(na), Some(nb)) => (na, nb),
         _ => {
@@ -1275,6 +1604,51 @@ pub(crate) fn builtin_input(prompt: Value) -> Result<Value, RuntimeError> {
 /// value (`Float64`→integer truncates toward zero, `Bool` is 0/1, `Bool(x)` is
 /// truthiness — a nonzero value is `True`), following Mojo.
 pub(crate) fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeError> {
+    match &v {
+        Value::IntLiteral(value) => {
+            return Ok(match name {
+                "Int" | "Scalar" => Value::Int(
+                    value
+                        .wrapping_signed(64)
+                        .ok_or_else(|| literal_materialization_error(&value, "Int"))?,
+                ),
+                "UInt" => Value::UInt(
+                    value
+                        .wrapping_unsigned(64)
+                        .ok_or_else(|| literal_materialization_error(&value, "UInt"))?,
+                ),
+                "Bool" => Value::Bool(!value.is_zero()),
+                _ => Value::Float64(
+                    value
+                        .to_f64()
+                        .ok_or_else(|| literal_materialization_error(&value, "Float64"))?,
+                ),
+            });
+        }
+        Value::FloatLiteral(value) => {
+            return Ok(match name {
+                "Int" | "Scalar" => Value::Int(
+                    value
+                        .trunc_to_int()
+                        .wrapping_signed(64)
+                        .ok_or_else(|| literal_materialization_error(&value, "Int"))?,
+                ),
+                "UInt" => Value::UInt(
+                    value
+                        .trunc_to_int()
+                        .wrapping_unsigned(64)
+                        .ok_or_else(|| literal_materialization_error(&value, "UInt"))?,
+                ),
+                "Bool" => Value::Bool(!value.is_zero()),
+                _ => Value::Float64(
+                    value
+                        .to_f64()
+                        .ok_or_else(|| literal_materialization_error(&value, "Float64"))?,
+                ),
+            });
+        }
+        _ => {}
+    }
     let (as_i, as_u, as_f, as_bool) = match v {
         Value::Int(n) => (n, n as u64, n as f64, n != 0),
         Value::UInt(n) => (n as i64, n, n as f64, n != 0),
@@ -1391,13 +1765,13 @@ pub(crate) fn simd_from_values(
     } else if dtype.is_float() {
         let mut v = Vec::with_capacity(width);
         for i in 0..width {
-            v.push(round_lane(dtype, value_to_float(pick(i))?));
+            v.push(value_to_float_lane(pick(i), dtype)?);
         }
         SimdLanes::Float(v)
     } else {
         let mut v = Vec::with_capacity(width);
         for i in 0..width {
-            v.push(wrap(dtype, value_to_int(pick(i))?));
+            v.push(value_to_int_lane(pick(i), dtype)?);
         }
         SimdLanes::Int(v)
     };
@@ -1428,8 +1802,8 @@ pub(crate) fn set_simd_lane(
 ) -> Result<(), RuntimeError> {
     let idx = bounds_check(i, lanes.width(), "SIMD lane")?;
     match lanes {
-        SimdLanes::Int(v) => v[idx] = wrap(dtype, value_to_int(&value)?),
-        SimdLanes::Float(v) => v[idx] = round_lane(dtype, value_to_float(&value)?),
+        SimdLanes::Int(v) => v[idx] = value_to_int_lane(&value, dtype)?,
+        SimdLanes::Float(v) => v[idx] = value_to_float_lane(&value, dtype)?,
         SimdLanes::Bool(v) => v[idx] = value_to_bool_lane(&value)?,
     }
     Ok(())
@@ -1575,7 +1949,7 @@ fn to_int_lanes(v: &Value, dtype: Dtype, width: usize) -> Result<Vec<i128>, Runt
             lanes: SimdLanes::Int(l),
             ..
         } => Ok(l.clone()),
-        scalar => Ok(vec![wrap(dtype, value_to_int(scalar)?); width]),
+        scalar => Ok(vec![value_to_int_lane(scalar, dtype)?; width]),
     }
 }
 
@@ -1585,7 +1959,7 @@ fn to_float_lanes(v: &Value, dtype: Dtype, width: usize) -> Result<Vec<f64>, Run
             lanes: SimdLanes::Float(l),
             ..
         } => Ok(l.clone()),
-        scalar => Ok(vec![round_lane(dtype, value_to_float(scalar)?); width]),
+        scalar => Ok(vec![value_to_float_lane(scalar, dtype)?; width]),
     }
 }
 
@@ -1607,11 +1981,25 @@ pub(crate) fn coerce(value: Value, ty: &Type) -> Value {
     match ty {
         Type::UInt => match value {
             Value::Int(n) => Value::UInt(n as u64),
+            Value::IntLiteral(value) => value
+                .to_u64()
+                .map(Value::UInt)
+                .unwrap_or_else(|| Value::IntLiteral(value)),
             v => v,
         },
         Type::Float64 => match value {
             Value::Int(n) => Value::Float64(n as f64),
             Value::UInt(n) => Value::Float64(n as f64),
+            Value::IntLiteral(value) => Value::Float64(
+                value
+                    .to_f64()
+                    .expect("an integer literal always rounds to binary64"),
+            ),
+            Value::FloatLiteral(value) => Value::Float64(
+                value
+                    .to_f64()
+                    .expect("a finite float literal always rounds to binary64"),
+            ),
             v => v,
         },
         // `Tuple[...]`: coerce each element to its annotated element type.
@@ -1636,8 +2024,69 @@ pub(crate) fn coerce(value: Value, ty: &Type) -> Value {
     }
 }
 
+/// Apply the exact literal-to-runtime conversion selected by checked HIR and
+/// represented explicitly in MIR.
+pub(crate) fn materialize_literal(
+    value: Value,
+    target: &crate::types::Ty,
+) -> Result<Value, RuntimeError> {
+    use crate::types::Ty;
+    match (value, target) {
+        (Value::IntLiteral(value), Ty::Int) => value
+            .wrapping_signed(64)
+            .map(Value::Int)
+            .ok_or_else(|| literal_materialization_error(&value, "Int")),
+        (Value::IntLiteral(value), Ty::UInt) => value
+            .wrapping_unsigned(64)
+            .map(Value::UInt)
+            .ok_or_else(|| literal_materialization_error(&value, "UInt")),
+        (Value::IntLiteral(value), Ty::Float64) => value
+            .to_f64()
+            .map(Value::Float64)
+            .ok_or_else(|| literal_materialization_error(&value, "Float64")),
+        (Value::FloatLiteral(value), Ty::Float64) => value
+            .to_f64()
+            .map(Value::Float64)
+            .ok_or_else(|| literal_materialization_error(&value, "Float64")),
+        (Value::IntLiteral(value), Ty::Simd { dtype, width: 1 }) if dtype.is_float() => {
+            let lane = if *dtype == Dtype::Float32 {
+                crate::literal::FloatLiteral::from_int(&value)
+                    .to_f32()
+                    .map(|value| value as f64)
+            } else {
+                value.to_f64()
+            }
+            .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
+            Ok(simd_value(*dtype, SimdLanes::Float(vec![lane])))
+        }
+        (Value::FloatLiteral(value), Ty::Simd { dtype, width: 1 }) if dtype.is_float() => {
+            let lane = if *dtype == Dtype::Float32 {
+                value.to_f32().map(|value| value as f64)
+            } else {
+                value.to_f64()
+            }
+            .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
+            Ok(simd_value(*dtype, SimdLanes::Float(vec![lane])))
+        }
+        (Value::IntLiteral(value), Ty::Simd { dtype, width: 1 }) => {
+            let lane = materialize_literal_int_lane(&value, *dtype)
+                .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
+            Ok(simd_value(*dtype, SimdLanes::Int(vec![lane])))
+        }
+        (value, target) => Err(RuntimeError::TypeError(format!(
+            "cannot materialize {} as {target}",
+            type_name(&value)
+        ))),
+    }
+}
+
 pub(crate) fn coerce_checked(value: Value, ty: &crate::types::Ty) -> Value {
     use crate::types::{Ty, TyArg};
+    if matches!(value, Value::IntLiteral(_) | Value::FloatLiteral(_))
+        && let Ok(materialized) = materialize_literal(value.clone(), ty)
+    {
+        return materialized;
+    }
     match ty {
         Ty::UInt => match value {
             Value::Int(n) => Value::UInt(n as u64),
@@ -1728,9 +2177,53 @@ pub(crate) fn coerce_checked(value: Value, ty: &crate::types::Ty) -> Value {
 /// Coerce a value to match an existing binding's numeric type (for assignment,
 /// where the declared type isn't carried but the current value's type is it).
 pub(crate) fn coerce_like(new: Value, existing: &Value) -> Value {
+    if matches!(new, Value::IntLiteral(_) | Value::FloatLiteral(_))
+        && let Ok(materialized) = materialize_like_numeric(new.clone(), existing)
+    {
+        return materialized;
+    }
     match existing {
         Value::UInt(_) => coerce(new, &Type::UInt),
         Value::Float64(_) => coerce(new, &Type::Float64),
         _ => new,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::literal::{FloatLiteral, IntLiteral};
+
+    #[test]
+    fn exact_signed_zero_uses_numeric_equality_abs_and_hashing() {
+        let positive = Value::FloatLiteral(FloatLiteral::parse_decimal("0.0").unwrap());
+        let negative = Value::FloatLiteral(FloatLiteral::parse_decimal("0.0").unwrap().neg());
+
+        assert!(values_equal(&positive, &negative).unwrap());
+        assert_eq!(
+            builtin_hash(&positive).unwrap(),
+            builtin_hash(&negative).unwrap()
+        );
+        let Value::FloatLiteral(magnitude) = builtin_abs(negative).unwrap() else {
+            panic!("literal abs changed the value kind");
+        };
+        assert_eq!(magnitude.to_f64().unwrap().to_bits(), 0.0f64.to_bits());
+    }
+
+    #[test]
+    fn finite_numeric_hashes_follow_cross_kind_equality() {
+        let values = [
+            Value::Int(1),
+            Value::UInt(1),
+            Value::Float64(1.0),
+            Value::IntLiteral(IntLiteral::from(1)),
+            Value::FloatLiteral(FloatLiteral::parse_decimal("1.0").unwrap()),
+        ];
+        for left in &values {
+            for right in &values {
+                assert!(values_equal(left, right).unwrap());
+                assert_eq!(builtin_hash(left).unwrap(), builtin_hash(right).unwrap());
+            }
+        }
     }
 }

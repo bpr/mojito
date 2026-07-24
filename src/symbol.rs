@@ -114,6 +114,10 @@ fn ty_raw(ty: &Ty) -> String {
             "Tuple${}",
             elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
         ),
+        Ty::RuntimePack(elems) => format!(
+            "$pack${}",
+            elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
+        ),
         Ty::Variant(alternatives) => format!(
             "Variant${}",
             alternatives
@@ -184,7 +188,7 @@ fn value_expr_raw(expr: &Expr, comptimes: &HashMap<String, i64>) -> String {
 fn eval_comptime_int(expr: &Expr, comptimes: &HashMap<String, i64>) -> Option<i64> {
     use crate::ast::{InfixOp, PrefixOp};
     match &expr.kind {
-        ExprKind::Int(value) => Some(*value),
+        ExprKind::Int(value) => value.to_i64(),
         ExprKind::Identifier(name) => comptimes.get(name).copied(),
         ExprKind::Prefix(PrefixOp::Neg, value) => {
             eval_comptime_int(value, comptimes)?.checked_neg()

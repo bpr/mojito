@@ -28,6 +28,7 @@ use crate::types::Ty;
 
 pub fn verify(program: &MirProgram) -> Vec<String> {
     let mut errors = Vec::new();
+    verify_runtime_pack_abi(&program.declarations, &mut errors);
     for (name, function) in &program.functions {
         verify_function(name, function, &program.declarations, &mut errors);
     }
@@ -41,6 +42,7 @@ pub(crate) fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>
         MirInstr::MakeRef { dest, .. }
         | MirInstr::ReadRef { dest, .. }
         | MirInstr::Const { dest, .. }
+        | MirInstr::MaterializeLiteral { dest, .. }
         | MirInstr::UseVar { dest, .. }
         | MirInstr::MovePlace { dest, .. }
         | MirInstr::UnOp { dest, .. }
@@ -92,6 +94,7 @@ fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::LoadPlace { place: p, .. } => place(p, out),
         MirInstr::ReadRef { reference, .. } => out.push(*reference),
         MirInstr::WriteRef { reference, value } => out.extend([*reference, *value]),
+        MirInstr::MaterializeLiteral { value, .. } => out.push(*value),
         MirInstr::UnOp { a, .. } => out.push(*a),
         MirInstr::BinOp { a, b, .. } => out.extend([*a, *b]),
         MirInstr::Store { place: p, src } => {
@@ -263,6 +266,37 @@ fn verify_function(
             function.n_vars
         ));
     }
+    for (index, ty) in function.param_types.iter().enumerate() {
+        if contains_runtime_pack(ty) {
+            errors.push(format!(
+                "MIR function '{name}' parameter slot {index} retains ABI-only RuntimePack type {ty}"
+            ));
+        }
+    }
+    for (slot, ty) in &function.var_tys {
+        if contains_runtime_pack(ty) {
+            errors.push(format!(
+                "MIR function '{name}' variable slot {slot} retains ABI-only RuntimePack type {ty}"
+            ));
+        }
+    }
+    for (register, ty) in &function.reg_types {
+        if contains_runtime_pack(ty) {
+            errors.push(format!(
+                "MIR function '{name}' register r{register} retains ABI-only RuntimePack type {ty}"
+            ));
+        }
+    }
+    for (description, ty) in [
+        ("return", function.ret_ty.as_ref()),
+        ("error", function.error_ty.as_ref()),
+    ] {
+        if ty.is_some_and(contains_runtime_pack) {
+            errors.push(format!(
+                "MIR function '{name}' {description} contract retains ABI-only RuntimePack type"
+            ));
+        }
+    }
     let context = RegionContext {
         region_len: function.blocks.len(),
         function_len: function.blocks.len(),
@@ -277,6 +311,59 @@ fn verify_function(
         &context,
         errors,
     );
+}
+
+/// `RuntimePack[T0, ...]` distinguishes a specialized heterogeneous `*args`
+/// declaration from an ordinary homogeneous `*args: Tuple[...]`. It may occur
+/// only as the top-level positional-variadic ABI type. Once arguments have
+/// been matched, the body sees an ordinary native `Tuple[T0, ...]` slot.
+fn verify_runtime_pack_abi(declarations: &MirDeclarations, errors: &mut Vec<String>) {
+    for declaration in &declarations.structs {
+        for (field, ty) in &declaration.fields {
+            if contains_runtime_pack(ty) {
+                errors.push(format!(
+                    "MIR struct '{}.{}' contains ABI-only RuntimePack type {ty}",
+                    declaration.name, field
+                ));
+            }
+        }
+    }
+    for declaration in &declarations.functions {
+        let name = &declaration.lowered_name;
+        for (index, ty) in declaration.param_types.iter().enumerate() {
+            if contains_runtime_pack(ty) {
+                errors.push(format!(
+                    "MIR declaration '{name}' regular parameter {index} contains ABI-only RuntimePack type {ty}"
+                ));
+            }
+        }
+        if let Some(variadic) = &declaration.variadic {
+            match variadic {
+                Ty::RuntimePack(elements) => {
+                    if elements.iter().any(contains_runtime_pack) {
+                        errors.push(format!(
+                            "MIR declaration '{name}' has a nested RuntimePack variadic ABI"
+                        ));
+                    }
+                }
+                other if contains_runtime_pack(other) => errors.push(format!(
+                    "MIR declaration '{name}' embeds RuntimePack below its variadic ABI root"
+                )),
+                _ => {}
+            }
+        }
+        for (description, ty) in [
+            ("keyword variadic", declaration.kw_variadic.as_ref()),
+            ("return", Some(&declaration.ret_ty)),
+            ("error", declaration.error_ty.as_ref()),
+        ] {
+            if ty.is_some_and(contains_runtime_pack) {
+                errors.push(format!(
+                    "MIR declaration '{name}' {description} type contains ABI-only RuntimePack"
+                ));
+            }
+        }
+    }
 }
 
 fn verify_blocks(
@@ -329,6 +416,31 @@ fn verify_instruction(
     }
     let reg_ty = |register: &Reg| function.reg_types.get(&register.0);
     match instruction {
+        MirInstr::MaterializeLiteral { value, target, .. } => {
+            let valid_target = matches!(target, Ty::Int | Ty::UInt | Ty::Float64)
+                || matches!(target, Ty::Simd { width: 1, .. });
+            if !valid_target {
+                errors.push(format!(
+                    "{prefix}: literal materialization has non-scalar target {target}"
+                ));
+            }
+            if let Some(found) = reg_ty(value) {
+                let valid_source = match found {
+                    Ty::IntLiteral => matches!(
+                        target,
+                        Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }
+                    ),
+                    Ty::FloatLiteral => {
+                        matches!(target, Ty::Float64)
+                            || matches!(target, Ty::Simd { dtype, width: 1 } if dtype.is_float())
+                    }
+                    _ => false,
+                };
+                if !valid_source {
+                    errors.push(format!("{prefix}: cannot materialize {found} as {target}"));
+                }
+            }
+        }
         MirInstr::Store { place, src } => {
             if let (Some(expected), Some(found)) = (place.ty.as_ref(), reg_ty(src)) {
                 let target = match expected {
@@ -646,14 +758,77 @@ fn contains_type_param(ty: &Ty) -> bool {
             contains_type_param(inner)
         }
         Ty::Dict(key, value) => contains_type_param(key) || contains_type_param(value),
-        Ty::Tuple(elements) | Ty::Variant(elements) => elements.iter().any(contains_type_param),
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            elements.iter().any(contains_type_param)
+        }
         Ty::Ref(reference) => contains_type_param(&reference.referent),
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             crate::types::TyArg::Ty(inner) => contains_type_param(inner),
             crate::types::TyArg::Val(_) => false,
         }),
-        Ty::Func { params, ret, .. } | Ty::GenericFunc { params, ret, .. } => {
-            params.iter().any(contains_type_param) || contains_type_param(ret)
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        } => {
+            params.iter().any(contains_type_param)
+                || contains_type_param(ret)
+                || variadic.as_deref().is_some_and(contains_type_param)
+                || kw_variadic.as_deref().is_some_and(contains_type_param)
+                || error.as_deref().is_some_and(contains_type_param)
+        }
+        _ => false,
+    }
+}
+
+fn contains_runtime_pack(ty: &Ty) -> bool {
+    match ty {
+        Ty::RuntimePack(_) => true,
+        Ty::List(inner) | Ty::Set(inner) | Ty::Pointer { element: inner, .. } => {
+            contains_runtime_pack(inner)
+        }
+        Ty::Dict(key, value) => contains_runtime_pack(key) || contains_runtime_pack(value),
+        Ty::Tuple(elements) | Ty::Variant(elements) | Ty::Overload(elements) => {
+            elements.iter().any(contains_runtime_pack)
+        }
+        Ty::Ref(reference) => contains_runtime_pack(&reference.referent),
+        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+            crate::types::TyArg::Ty(inner) => contains_runtime_pack(inner),
+            crate::types::TyArg::Val(_) => false,
+        }),
+        Ty::Assoc { base, .. } => contains_runtime_pack(base),
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        } => {
+            params.iter().any(contains_runtime_pack)
+                || contains_runtime_pack(ret)
+                || variadic.as_deref().is_some_and(contains_runtime_pack)
+                || kw_variadic.as_deref().is_some_and(contains_runtime_pack)
+                || error.as_deref().is_some_and(contains_runtime_pack)
         }
         _ => false,
     }
@@ -712,6 +887,15 @@ fn verify_place(
         ));
         return;
     }
+    if place.root_ty.as_ref().is_some_and(contains_runtime_pack)
+        || place.projection_tys.iter().any(contains_runtime_pack)
+        || place.ty.as_ref().is_some_and(contains_runtime_pack)
+    {
+        errors.push(format!(
+            "{prefix} place rooted at slot {} retains ABI-only RuntimePack type metadata",
+            place.root
+        ));
+    }
     let mut current = place.root_ty.clone();
     for (projection, projected) in place.proj.iter().zip(&place.projection_tys) {
         match projection {
@@ -744,7 +928,9 @@ fn verify_place(
                         None if declaration
                             .param_decls
                             .iter()
-                            .any(|(candidate, _)| candidate == field) => {}
+                            .any(|decl| {
+                                matches!(decl, crate::types::ParamDecl::Value { name, .. } if name == field)
+                            }) => {}
                         None => errors.push(format!(
                             "{prefix} place projects unknown field '{field}' of '{struct_name}'"
                         )),

@@ -1,8 +1,10 @@
 //! Execution-backend contract below the verified-MIR waist.
 //!
-//! The register VM is the executable semantic oracle. Future Cranelift, eBPF,
-//! LLVM, and MLIR implementations should consume the same checked program/MIR
-//! facts instead of reconstructing language semantics from source declarations.
+//! The register VM is the executable semantic oracle. The prioritized native
+//! backends are LLVM, MLIR, and Pliron (a Rust-native, MLIR-inspired IR
+//! framework whose LLVM dialect emits LLVM IR); Cranelift and eBPF follow them.
+//! Every implementation consumes the same checked program/MIR facts instead of
+//! reconstructing language semantics from source declarations.
 //!
 //! Dispatch is a static enum, not a trait object: each implemented backend is
 //! one [`Backend`] variant, so adding a backend extends the enum and every
@@ -51,13 +53,16 @@ impl Backend {
 /// Which backend to execute with (`--backend=…`). The register VM is the sole
 /// executor today; the other names are recognized seams for future backends
 /// behind the verified-MIR waist and refuse construction until implemented.
+/// The variants after `Vm` are listed in priority order: LLVM, MLIR, and
+/// Pliron are the prioritized native targets; Cranelift and eBPF follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
     Vm,
-    Cranelift,
-    Ebpf,
     Llvm,
     Mlir,
+    Pliron,
+    Cranelift,
+    Ebpf,
 }
 
 impl BackendKind {
@@ -65,22 +70,24 @@ impl BackendKind {
     pub fn name(self) -> &'static str {
         match self {
             BackendKind::Vm => "vm",
-            BackendKind::Cranelift => "cranelift",
-            BackendKind::Ebpf => "ebpf",
             BackendKind::Llvm => "llvm",
             BackendKind::Mlir => "mlir",
+            BackendKind::Pliron => "pliron",
+            BackendKind::Cranelift => "cranelift",
+            BackendKind::Ebpf => "ebpf",
         }
     }
 
     pub fn parse(s: &str) -> Result<BackendKind, String> {
         match s {
             "vm" => Ok(BackendKind::Vm),
-            "cranelift" => Ok(BackendKind::Cranelift),
-            "ebpf" => Ok(BackendKind::Ebpf),
             "llvm" => Ok(BackendKind::Llvm),
             "mlir" => Ok(BackendKind::Mlir),
+            "pliron" => Ok(BackendKind::Pliron),
+            "cranelift" => Ok(BackendKind::Cranelift),
+            "ebpf" => Ok(BackendKind::Ebpf),
             other => Err(format!(
-                "unknown backend '{other}' (expected: vm, cranelift, ebpf, llvm, mlir)"
+                "unknown backend '{other}' (expected: vm, llvm, mlir, pliron, cranelift, ebpf)"
             )),
         }
     }
@@ -96,9 +103,11 @@ impl BackendKind {
     pub fn instantiate(self) -> Result<Backend, String> {
         match self {
             BackendKind::Vm => Ok(Backend::Vm(VmBackend::new())),
-            BackendKind::Cranelift | BackendKind::Ebpf | BackendKind::Llvm | BackendKind::Mlir => {
-                Err(format!("backend '{}' is not implemented yet", self.name()))
-            }
+            BackendKind::Llvm
+            | BackendKind::Mlir
+            | BackendKind::Pliron
+            | BackendKind::Cranelift
+            | BackendKind::Ebpf => Err(format!("backend '{}' is not implemented yet", self.name())),
         }
     }
 }

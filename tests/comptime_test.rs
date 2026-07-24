@@ -64,13 +64,10 @@ fn comptime_for_quota_rejects_a_huge_unroll() {
 }
 
 #[test]
-fn fixed_width_comptime_overflow_is_a_diagnostic_not_a_panic() {
-    let error = run("def main():\n    comptime huge = 2 ** 200\n    print(huge)\n")
-        .expect_err("arbitrary-precision literal evaluation remains a recorded gap");
-    assert!(
-        error.contains("compile-time integer overflow"),
-        "got {error}"
-    );
+fn comptime_integer_arithmetic_is_arbitrary_precision() {
+    let output =
+        run("def main():\n    comptime huge = 2 ** 200\n    print((huge + 1) - huge)\n").unwrap();
+    assert_eq!(output, "1\n");
 }
 
 #[test]
@@ -282,6 +279,36 @@ fn heterogeneous_pack_length_drives_comptime_iteration() {
 }
 
 #[test]
+fn heterogeneous_pack_bound_failure_names_the_call_element() {
+    let src = "def count[*ArgTypes: Intable](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    print(count(1, \"two\", True))\n";
+    let error = run(src).unwrap_err();
+    assert!(
+        error.contains("type-pack bound failed at 'count' instantiation"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("element 2 of type pack 'ArgTypes' has type 'String'"),
+        "got: {error}"
+    );
+    assert!(error.contains("'Intable'"), "got: {error}");
+}
+
+#[test]
+fn heterogeneous_pack_bound_oracle_uses_nominal_user_conformance() {
+    let declarations = "trait Valued:\n    def value(self) -> Int: ...\n\n@fieldwise_init\nstruct Number(Valued):\n    var data: Int\n\n    def value(self) -> Int:\n        return self.data\n\n@fieldwise_init\nstruct Opaque:\n    var data: Int\n\ndef count[*Types: Valued](*args: *Types) -> Int:\n    return len(args)\n\n";
+    let accepted = format!("{declarations}def main():\n    print(count(Number(1), Number(2)))\n");
+    assert_eq!(run(&accepted).unwrap(), "2\n");
+
+    let rejected = format!("{declarations}def main():\n    print(count(Number(1), Opaque(2)))\n");
+    let error = run(&rejected).unwrap_err();
+    assert!(
+        error.contains("element 2 of type pack 'Types' has type 'Opaque'"),
+        "got: {error}"
+    );
+    assert!(error.contains("'Valued'"), "got: {error}");
+}
+
+#[test]
 fn heterogeneous_pack_indexes_expose_concrete_element_types() {
     let src = "def first_plus_one[*Types: Copyable](*args: *Types) -> Int:\n    comptime if is_same_type[Types[0], Int]():\n        return args[0] + 1\n    else:\n        return 0\n\ndef main():\n    print(first_plus_one(4, \"tail\"))\n    print(first_plus_one(\"head\", 4))\n";
     assert_eq!(run(src).unwrap(), "5\n0\n");
@@ -475,10 +502,8 @@ fn variadic_struct_dependent_getitem_rejects_bad_indices() {
 fn variadic_struct_bound_violation_rejects_via_spec_conformance() {
     // A pack element that breaks the struct's own conformance surface
     // (non-Copyable element inside a Copyable struct) is rejected when the
-    // specialization's declared conformances are verified. Declared pack
-    // bounds on specializable defs are otherwise enforced structurally by
-    // checking the specialized body against the concrete element types
-    // (per-element bound diagnostics for def packs are a recorded gap).
+    // specialization's declared conformances are verified. Def-pack bounds are
+    // diagnosed independently at their requesting call, before specialization.
     let src = "struct NoCopy(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var p = Pair[NoCopy, Int](NoCopy(1), 2)\n    print(p.storage[1])\n";
     let err = run(src).unwrap_err();
     assert!(err.contains("not Copyable"), "got: {err}");

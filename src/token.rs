@@ -79,8 +79,8 @@ pub enum Token {
     Identifier(String),
 
     // Literals
-    IntLiteral(i64),
-    FloatLiteral(f64),
+    IntLiteral(crate::literal::IntLiteral),
+    FloatLiteral(crate::literal::FloatLiteral),
     BoolLiteral(bool),
     StringLiteral(String),
     /// A triple-quoted string. Kept distinct through parsing so a standalone

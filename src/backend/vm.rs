@@ -20,7 +20,7 @@ use crate::runtime::{
     is_list_mutator, list_query, promote_numeric_elems, read_simd_lane, simd_from_values,
     value_as_index, values_equal,
 };
-use crate::types::Ty;
+use crate::types::{ParamDecl, Ty};
 use std::collections::HashMap;
 
 /// The control-flow outcome of executing an instruction or a `try` sub-region.
@@ -45,18 +45,17 @@ struct StructDef {
     fields: Vec<(String, Ty)>,
     mut_self_methods: std::collections::HashSet<String>,
     fieldwise_init: bool,
-    /// The struct's compile-time parameters (`[...]`), each `(name, is_value)` —
-    /// `true` for a value parameter (reified onto the instance at construction),
-    /// `false` for an erased type parameter. Aligns positionally with a
-    /// construction's supplied parameter arguments.
-    param_decls: Vec<(String, bool)>,
+    /// Checker-resolved compile-time parameters. Type parameters are erased;
+    /// value parameters are materialized to their declared type on reification.
+    param_decls: Vec<ParamDecl>,
     explicit_destroy: bool,
 }
 
 /// A free function's calling signature (the MIR doesn't keep it), for matching
 /// positional + keyword arguments to parameter slots — filling defaults and
-/// collecting a trailing `*args`. Covers only the *regular* parameters; `variadic`
-/// is the trailing `*args` element type, if any.
+/// collecting a trailing `*args`. Covers only the *regular* parameters;
+/// `variadic` is either the homogeneous element type or an explicit
+/// `Ty::RuntimePack` sequence for a specialized heterogeneous collector.
 struct FnSig {
     param_names: Vec<String>,
     param_types: Vec<Ty>,
@@ -73,9 +72,19 @@ struct FnSig {
     /// Indexes into the regular-parameter list.
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
-    /// The function's compile-time parameters (`def f[...]`), each `(name,
-    /// is_value)` — a value parameter is reified as a frame-local `Int` at the call.
-    param_decls: Vec<(String, bool)>,
+    /// Checker-resolved compile-time parameters. Value parameters become typed
+    /// frame locals; type parameters remain erased.
+    param_decls: Vec<ParamDecl>,
+}
+
+fn reify_value_parameter(decl: &ParamDecl, value: Value) -> Option<(String, Value)> {
+    let ParamDecl::Value { name, ty, .. } = decl else {
+        return None;
+    };
+    Some((
+        name.clone(),
+        crate::runtime::coerce_checked(value, ty.as_ref()),
+    ))
 }
 
 /// The whole program the VM executes: the lowered MIR plus the struct and
@@ -419,7 +428,10 @@ impl VmBackend {
         // body reads them as ordinary `Int` locals (`return n * 2`).
         for (pname, val) in value_params {
             if let Some(slot) = f.var_names.iter().position(|n| n == pname) {
-                vars[slot] = val.clone();
+                vars[slot] = match f.var_tys.get(&(slot as u32)) {
+                    Some(ty) => crate::runtime::coerce_checked(val.clone(), ty),
+                    None => val.clone(),
+                };
             }
         }
 
@@ -731,10 +743,9 @@ impl VmBackend {
                     .param_decls
                     .iter()
                     .zip(param_arg_regs)
-                    .filter(|((_, is_value), _)| *is_value)
-                    .map(|((name, _), reg)| {
-                        (
-                            name.clone(),
+                    .filter_map(|(decl, reg)| {
+                        reify_value_parameter(
+                            decl,
                             reg.map(|reg| caller.registers[reg.0 as usize].clone())
                                 .unwrap_or(Value::None),
                         )
@@ -996,11 +1007,38 @@ impl VmBackend {
         match (&l, &r, op) {
             (
                 Value::Pointer { allocation, offset },
+                Value::IntLiteral(delta),
+                InfixOp::Add | InfixOp::Sub,
+            ) => {
+                let delta = delta.wrapping_signed(64).ok_or_else(|| {
+                    RuntimeError::TypeError(
+                        "vm: UnsafePointer offset cannot materialize as Int".to_string(),
+                    )
+                })?;
+                let offset = if op == InfixOp::Sub {
+                    offset.checked_sub(delta)
+                } else {
+                    offset.checked_add(delta)
+                }
+                .ok_or_else(|| {
+                    RuntimeError::TypeError("vm: UnsafePointer offset overflow".to_string())
+                })?;
+                return Ok(Value::Pointer {
+                    allocation: *allocation,
+                    offset,
+                });
+            }
+            (
+                Value::Pointer { allocation, offset },
                 Value::Int(delta),
                 InfixOp::Add | InfixOp::Sub,
             ) => {
-                let delta = if op == InfixOp::Sub { -*delta } else { *delta };
-                let offset = offset.checked_add(delta).ok_or_else(|| {
+                let offset = if op == InfixOp::Sub {
+                    offset.checked_sub(*delta)
+                } else {
+                    offset.checked_add(*delta)
+                }
+                .ok_or_else(|| {
                     RuntimeError::TypeError("vm: UnsafePointer offset overflow".to_string())
                 })?;
                 return Ok(Value::Pointer {
@@ -1191,8 +1229,9 @@ impl VmBackend {
             .param_decls
             .iter()
             .zip(param_vals)
-            .filter(|((_, is_value), _)| *is_value)
-            .map(|((pname, _), val)| (pname.clone(), val.clone().unwrap_or(Value::None)))
+            .filter_map(|(decl, val)| {
+                reify_value_parameter(decl, val.clone().unwrap_or(Value::None))
+            })
             .collect();
         let skeleton = Value::Struct {
             name: name.to_string(),
@@ -1244,8 +1283,9 @@ impl VmBackend {
             .param_decls
             .iter()
             .zip(param_vals)
-            .filter(|((_, is_value), _)| *is_value)
-            .map(|((pname, _), val)| (pname.clone(), val.clone().unwrap_or(Value::None)))
+            .filter_map(|(decl, val)| {
+                reify_value_parameter(decl, val.clone().unwrap_or(Value::None))
+            })
             .collect();
         let skeleton = self.struct_skeleton(prog, name, value_params);
         let (_, frame_vars) =
@@ -1686,6 +1726,14 @@ impl VmBackend {
             }
             MirInstr::KeepAlive { .. } => {}
             MirInstr::Const { dest, k } => regs[dest.0 as usize] = const_value(k),
+            MirInstr::MaterializeLiteral {
+                dest,
+                value,
+                target,
+            } => {
+                regs[dest.0 as usize] =
+                    crate::runtime::materialize_literal(regs[value.0 as usize].clone(), target)?;
+            }
             MirInstr::UseVar { dest, var, mode } => {
                 let slot = *var as usize;
                 // A `^` move **transfers** the value out of the source slot, leaving
@@ -3174,8 +3222,16 @@ impl VmBackend {
                     self.drop_value(prog, fv)?;
                 }
             }
-            Value::List(items) | Value::Set(items) | Value::Tuple(items) => {
+            Value::List(items) | Value::Set(items) => {
                 for item in items.into_iter().rev() {
+                    self.drop_value(prog, item)?;
+                }
+            }
+            // Native heterogeneous Tuple storage follows Mojo's element
+            // destruction order (left-to-right). Struct fields retain their
+            // independent reverse-declaration-order rule above.
+            Value::Tuple(items) => {
+                for item in items {
                     self.drop_value(prog, item)?;
                 }
             }
@@ -3293,6 +3349,13 @@ impl VmBackend {
             "Slice" | "slice" => {
                 let optional = |value: &Value| match value {
                     Value::Int(value) => Ok(Some(*value)),
+                    Value::IntLiteral(value) => {
+                        value.wrapping_signed(64).map(Some).ok_or_else(|| {
+                            RuntimeError::TypeError(
+                                "slice bound cannot materialize as Int".to_string(),
+                            )
+                        })
+                    }
                     Value::None => Ok(None),
                     other => Err(RuntimeError::TypeError(format!(
                         "slice bound must be Int or None, got {}",
@@ -3432,15 +3495,7 @@ impl VmBackend {
             // `UnsafePointer[T].alloc(n)` — reserve `n` slots in the heap arena and
             // return a pointer to the base (the element type is erased).
             "UnsafePointer.alloc" => {
-                let n = match arg1(name, args)? {
-                    Value::Int(n) => n,
-                    other => {
-                        return Err(RuntimeError::TypeError(format!(
-                            "vm: UnsafePointer.alloc expects an Int, got {}",
-                            crate::runtime::type_name(&other)
-                        )));
-                    }
-                };
+                let n = crate::runtime::value_as_index(&arg1(name, args)?)?;
                 self.heap_alloc(n, std::mem::align_of::<Value>() as i64)
             }
             "UnsafePointer.alloc_aligned" => {
@@ -3451,16 +3506,8 @@ impl VmBackend {
                         got: args.len(),
                     });
                 }
-                let Value::Int(n) = args[0] else {
-                    return Err(RuntimeError::TypeError(
-                        "vm: UnsafePointer.alloc_aligned count must be Int".to_string(),
-                    ));
-                };
-                let Value::Int(alignment) = args[1] else {
-                    return Err(RuntimeError::TypeError(
-                        "vm: UnsafePointer.alloc_aligned alignment must be Int".to_string(),
-                    ));
-                };
+                let n = crate::runtime::value_as_index(&args[0])?;
+                let alignment = crate::runtime::value_as_index(&args[1])?;
                 self.heap_alloc(n, alignment)
             }
             "UnsafePointer.dangling" => {
@@ -3492,9 +3539,8 @@ impl VmBackend {
                             .param_decls
                             .iter()
                             .zip(param_vals)
-                            .filter(|((_, is_value), _)| *is_value)
-                            .map(|((pname, _), val)| {
-                                (pname.clone(), val.clone().unwrap_or(Value::None))
+                            .filter_map(|(decl, val)| {
+                                reify_value_parameter(decl, val.clone().unwrap_or(Value::None))
                             })
                             .collect(),
                         None => Vec::new(),
@@ -4019,15 +4065,12 @@ fn arg2(name: &str, args: Vec<Value>) -> Result<(Value, Value), RuntimeError> {
 fn build_range(args: &[Value]) -> Result<Value, RuntimeError> {
     let mut ints = Vec::with_capacity(args.len());
     for a in args {
-        match a {
-            Value::Int(n) => ints.push(*n),
-            other => {
-                return Err(RuntimeError::TypeError(format!(
-                    "range() expects Int arguments, got {}",
-                    crate::runtime::type_name(other)
-                )));
-            }
-        }
+        ints.push(crate::runtime::value_as_index(a).map_err(|_| {
+            RuntimeError::TypeError(format!(
+                "range() expects Int arguments, got {}",
+                crate::runtime::type_name(a)
+            ))
+        })?);
     }
     let (start, stop, step) = match ints.as_slice() {
         [stop] => (0, *stop, 1),
@@ -4060,6 +4103,8 @@ fn const_value(k: &Const) -> Value {
     match k {
         Const::Int(n) => Value::Int(*n),
         Const::Float(x) => Value::Float64(*x),
+        Const::IntLiteral(value) => Value::IntLiteral(value.clone()),
+        Const::FloatLiteral(value) => Value::FloatLiteral(value.clone()),
         Const::Bool(b) => Value::Bool(*b),
         Const::Str(s) => Value::Str(s.clone()),
         Const::Function(name) => Value::Function(name.clone()),

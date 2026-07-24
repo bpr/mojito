@@ -124,6 +124,12 @@ pub enum Ty {
     Dict(Box<Ty>, Box<Ty>),
     /// The built-in `Tuple[T1, ..., Tn]`.
     Tuple(Vec<Ty>),
+    /// Internal checked ABI type for a compile-time-specialized heterogeneous
+    /// runtime parameter pack. Unlike a source `Tuple[...]` used as the element
+    /// type of an ordinary homogeneous `*args`, each entry describes one
+    /// positional argument and the collector is represented by a native tuple.
+    /// This type cannot be written directly in Mojo source.
+    RuntimePack(Vec<Ty>),
     /// The built-in tagged union `Variant[T1, ..., Tn]`.  The ordering is part
     /// of the type: it determines the runtime tag used by typed projection.
     Variant(Vec<Ty>),
@@ -303,6 +309,16 @@ impl fmt::Display for Ty {
                         write!(f, ", ")?;
                     }
                     write!(f, "{}", t)?;
+                }
+                write!(f, "]")
+            }
+            Ty::RuntimePack(elems) => {
+                write!(f, "$pack[")?;
+                for (i, t) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{t}")?;
                 }
                 write!(f, "]")
             }

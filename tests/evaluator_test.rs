@@ -408,6 +408,38 @@ fn power_and_true_division() {
 }
 
 #[test]
+fn arbitrary_precision_literals_stay_exact_until_scalar_materialization() {
+    let e = run(
+        "comptime huge = 2 ** 200\nvar reduced: Int = (huge + 1) - huge\nvar wrapped: Int = huge + 7\nvar byte: UInt8 = 256 + 255\nvar exact: Float64 = 3.0 * (4.0 / 3.0 - 1.0)\n",
+    );
+    assert_eq!(binding(&e, "reduced"), Value::Int(1));
+    assert_eq!(binding(&e, "wrapped"), Value::Int(7));
+    assert_eq!(lane(&binding(&e, "byte"), 0), 255);
+    assert_eq!(binding(&e, "exact"), Value::Float64(1.0));
+}
+
+#[test]
+fn exact_float_signed_zero_uses_numeric_equality_and_abs() {
+    let e = run("var equal: Bool = -0.0 == 0.0\nvar magnitude: Float64 = abs(-0.0)\n");
+    assert_eq!(binding(&e, "equal"), Value::Bool(true));
+    let Value::Float64(magnitude) = binding(&e, "magnitude") else {
+        panic!("abs(-0.0) did not materialize as Float64");
+    };
+    assert_eq!(magnitude.to_bits(), 0.0f64.to_bits());
+}
+
+#[test]
+fn exact_literals_materialize_at_collection_and_range_boundaries() {
+    let e = run(
+        "var xs = List[Int](2 ** 64)\nvar unique = Set[Int](2 ** 64 + 1, 1)\nvar table: Dict[Int, Int] = {2 ** 64 + 1: 2 ** 64 + 2}\nvar key: Int = 1\nvar found: Int = table[key]\nvar total: Int = 0\nfor i in range(2 ** 64 + 2):\n    total += i\n",
+    );
+    assert_eq!(binding(&e, "xs"), Value::List(vec![Value::Int(0)]));
+    assert_eq!(binding(&e, "unique"), Value::Set(vec![Value::Int(1)]));
+    assert_eq!(binding(&e, "found"), Value::Int(2));
+    assert_eq!(binding(&e, "total"), Value::Int(1));
+}
+
+#[test]
 fn integer_division_by_zero_is_a_runtime_error() {
     assert!(matches!(
         run_err("var x: Int = 1 // 0\n"),

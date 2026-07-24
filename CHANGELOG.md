@@ -8,6 +8,33 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Heterogeneous function-pack bounds are now checked before specialization by a
+  declaration-only conformance oracle shared with the checker. A failed call
+  identifies the one-based pack element, its concrete type, the pack and trait,
+  and the requesting instantiation instead of failing later in a generated
+  body.
+- Native Tuple elements now follow Mojo's left-to-right destruction order under
+  conservative owned-root drop elaboration, including nested Tuple fields and
+  exceptional edges. Specialized heterogeneous `Tuple(*args^)` construction
+  relocates its whole moved pack through an explicit checked pack ABI, so the
+  callee's source cleanup cannot destroy an element a second time; ordinary
+  tuple-valued homogeneous variadics remain list collectors. Transfers from
+  non-implicitly-copyable indexed tuple values are rejected instead of being
+  silently copied and destroyed twice.
+- Arbitrary-precision numeric literals now survive the whole compiler pipeline:
+  integer spellings use `BigInt`, finite floating spellings use exact rationals
+  with signed-zero preservation, literal-only arithmetic and CTFE remain exact,
+  and typed MIR carries exact constants plus an explicit `MaterializeLiteral`
+  boundary. Integer scalar/lane materialization wraps to the destination width;
+  binary32/binary64 materialization rounds once from the exact value. Checked
+  generic value-parameter declarations now cross into MIR/VM metadata so
+  reification materializes at the declared type instead of leaking a literal
+  value into an erased runtime slot. The differential arbitrary-precision case
+  now matches Mojo.
+- The tracked nightly target advances to Mojo 1.0.0b3.dev2026072406. Newly
+  exposed interior-origin invalidation, collection-literal initializer
+  inference, and the `SIMDLength` rename are recorded in dependency order rather
+  than being folded into unrelated VM shortcuts.
 - Variadic-generic structs: `struct S[*Ts: Bound]` declarations are specialized
   by compile-time elaboration per explicit instantiation (`S[Int, Bool](...)`),
   mirroring pack functions. Pack-typed members such as `var storage: Tuple[*Ts]`
@@ -41,8 +68,8 @@ to evolve under the `0.x` compatibility rules.
   immutability, non-iterability) as an ordinary stdlib struct. A pack element
   violating the struct's declared conformance surface (a non-Copyable element
   in a Copyable struct) is rejected by the specialization's conformance
-  verification; per-element diagnostics for specializable def pack bounds are
-  recorded as a roadmap gap.
+  verification; specializable def pack bounds report the failing element at
+  the requesting instantiation.
 
 - Builtin scalar operators, comparisons, conversions, and rounding are typed
   through checked operation traits rather than ad-hoc numeric rules. Per-operator

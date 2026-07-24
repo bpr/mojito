@@ -178,6 +178,16 @@ fn verifier_rejects_return_type_mismatches() {
 }
 
 #[test]
+fn verifier_rejects_runtime_pack_types_in_function_body_slots() {
+    let mut f = function(vec![block(Vec::new(), MirTerm::Return(None))], 0, &[]);
+    f.n_params = 1;
+    f.param_types = vec![Ty::RuntimePack(vec![Ty::Int, Ty::String])];
+    f.var_tys
+        .insert(0, Ty::RuntimePack(vec![Ty::Int, Ty::String]));
+    expect_finding(&program(f), "retains ABI-only RuntimePack type");
+}
+
+#[test]
 fn verifier_rejects_unprotected_raises_in_nonraising_functions() {
     let f = function(
         vec![block(

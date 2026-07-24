@@ -63,6 +63,12 @@ pub struct IterationProtocol {
 pub enum SemanticAdjustment {
     ResolveCallable(String),
     ImplicitConversion(String),
+    /// Materialize an exact, compile-time-only numeric literal expression into
+    /// its checked runtime scalar type.  Keeping this distinct from a user
+    /// `@implicit` constructor preserves the language boundary: literal
+    /// arithmetic is unbounded, while the resulting scalar has fixed-width
+    /// runtime semantics.
+    MaterializeLiteral(Ty),
     BorrowShared,
     BorrowMutable,
     Move,
@@ -197,6 +203,7 @@ pub struct CheckedProgram {
     compatibility_overload_targets: HashMap<SourceSpan, String>,
     compatibility_implicit_conversions: HashMap<SourceSpan, String>,
     checked_types: HashMap<AnnotationSite, Ty>,
+    generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
     expressions: Vec<CheckedExpr>,
     expression_index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     declarations: Vec<CheckedDeclaration>,
@@ -256,6 +263,26 @@ pub(crate) enum AnnotationSite {
     },
 }
 
+/// Declaration-owned identity for a checked compile-time parameter list.
+/// Runtime reification consumes these already-resolved declarations instead of
+/// reclassifying source bounds in MIR or the VM.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum GenericSite {
+    Function {
+        module: Option<String>,
+        declaration: Span,
+    },
+    Struct {
+        module: Option<String>,
+        declaration: String,
+    },
+    Method {
+        module: Option<String>,
+        declaration: String,
+        method: usize,
+    },
+}
+
 /// Checked declaration-level control facts: the raising contract and whether
 /// the declaration returns a reference. Recorded per callable so lowering
 /// never re-reads source `raises`/return annotations.
@@ -269,8 +296,8 @@ pub(crate) struct DeclarationEffect {
 #[derive(Debug, Clone)]
 /// Literal value retained after semantic checking for declaration metadata.
 pub enum CheckedConst {
-    Int(i64),
-    Float(f64),
+    Int(crate::literal::IntLiteral),
+    Float(crate::literal::FloatLiteral),
     Bool(bool),
     String(String),
     None,
@@ -280,14 +307,14 @@ impl CheckedConst {
     /// Convert an expression that is already a literal constant.
     pub fn from_expr(expr: &Expr) -> Option<Self> {
         match &expr.kind {
-            ExprKind::Int(value) => Some(Self::Int(*value)),
-            ExprKind::Float(value) => Some(Self::Float(*value)),
+            ExprKind::Int(value) => Some(Self::Int(value.clone())),
+            ExprKind::Float(value) => Some(Self::Float(value.clone())),
             ExprKind::Bool(value) => Some(Self::Bool(*value)),
             ExprKind::Str(value) => Some(Self::String(value.clone())),
             ExprKind::None => Some(Self::None),
             ExprKind::Prefix(PrefixOp::Neg, inner) => match Self::from_expr(inner)? {
-                Self::Int(value) => Some(Self::Int(-value)),
-                Self::Float(value) => Some(Self::Float(-value)),
+                Self::Int(value) => Some(Self::Int(value.neg())),
+                Self::Float(value) => Some(Self::Float(value.neg())),
                 _ => None,
             },
             _ => None,
@@ -304,6 +331,7 @@ impl CheckedProgram {
         overload_targets: HashMap<SourceSpan, String>,
         implicit_conversions: HashMap<SourceSpan, String>,
         checked_types: HashMap<AnnotationSite, Ty>,
+        generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
         expression_types: HashMap<SourceSpan, Ty>,
         expression_bindings: HashMap<SourceSpan, crate::origin::OwnerId>,
         comprehension_bindings: HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
@@ -340,6 +368,7 @@ impl CheckedProgram {
             compatibility_overload_targets: overload_targets,
             compatibility_implicit_conversions: implicit_conversions,
             checked_types,
+            generic_parameters,
             expressions,
             expression_index,
             declarations,
@@ -366,6 +395,13 @@ impl CheckedProgram {
 
     pub(crate) fn checked_type_at(&self, site: &AnnotationSite) -> Option<&Ty> {
         self.checked_types.get(site)
+    }
+
+    pub(crate) fn generic_parameters_at(
+        &self,
+        site: &GenericSite,
+    ) -> Option<&[crate::types::ParamDecl]> {
+        self.generic_parameters.get(site).map(Vec::as_slice)
     }
 
     /// Checked raising contract and reference-return fact for a callable

@@ -40,43 +40,21 @@ pub(super) fn splats_to(ty: &Ty, dtype: Dtype) -> bool {
     }
 }
 
-/// Check a directly written numeric literal against a fixed-width scalar alias.
-/// Non-literal expressions are validated by their checked type and retain the
-/// scalar constructor's wrapping behavior; contextual literal materialization
-/// must not silently wrap (for example, `var b: Byte = 256`).
-pub(super) fn literal_fits_dtype(expression: &Expr, dtype: Dtype) -> bool {
-    let integer = match &expression.kind {
-        ExprKind::Int(value) => Some(*value as i128),
-        ExprKind::Prefix(PrefixOp::Neg, inner) => match &inner.kind {
-            ExprKind::Int(value) => Some(-(*value as i128)),
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(value) = integer {
-        return match dtype {
-            Dtype::Int => i64::try_from(value).is_ok(),
-            Dtype::Int8 => i8::try_from(value).is_ok(),
-            Dtype::Int16 => i16::try_from(value).is_ok(),
-            Dtype::Int32 => i32::try_from(value).is_ok(),
-            Dtype::Int64 => i64::try_from(value).is_ok(),
-            Dtype::UInt8 => u8::try_from(value).is_ok(),
-            Dtype::UInt16 => u16::try_from(value).is_ok(),
-            Dtype::UInt32 => u32::try_from(value).is_ok(),
-            Dtype::UInt64 => u64::try_from(value).is_ok(),
-            Dtype::Float32 => (value as f64).abs() <= f32::MAX as f64,
-            Dtype::Float64 => true,
-            Dtype::Bool => false,
-        };
-    }
-    match (&expression.kind, dtype) {
-        (ExprKind::Float(value), Dtype::Float32) => {
-            value.is_finite() && value.abs() <= f32::MAX as f64
-        }
-        (ExprKind::Prefix(PrefixOp::Neg, inner), Dtype::Float32) => {
-            matches!(&inner.kind, ExprKind::Float(value) if value.is_finite() && value.abs() <= f32::MAX as f64)
-        }
-        _ => true,
+pub(super) fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
+    match dtype {
+        Dtype::Int
+        | Dtype::Int8
+        | Dtype::Int16
+        | Dtype::Int32
+        | Dtype::Int64
+        | Dtype::UInt8
+        | Dtype::UInt16
+        | Dtype::UInt32
+        | Dtype::UInt64 => true,
+        // Integer and floating literals round during floating materialization;
+        // overflow is the corresponding IEEE infinity.
+        Dtype::Float32 | Dtype::Float64 => true,
+        Dtype::Bool => false,
     }
 }
 

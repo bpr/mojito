@@ -1,6 +1,6 @@
 # Mojo Nightly Target
 
-Mojito tracks **Mojo 1.0.0b3.dev2026071705 (2026-07-17)** as its language
+Mojito tracks **Mojo 1.0.0b3.dev2026072406 (2026-07-24)** as its language
 comparison target. The version is taken from the official cumulative nightly
 release page:
 
@@ -9,6 +9,23 @@ release page:
 The differential runner must still report the actual locally installed
 `mojo --version`; updating this document or the parity-manifest header does not
 claim that every nightly change has already been implemented.
+
+## July 24 Differential Audit
+
+The Step 2/3 cases pass against `Mojo 1.0.0b3.dev2026072406`: heterogeneous
+pack-bound rejection, homogeneous tuple-valued variadics, native Tuple-field
+destruction, and non-copyable indexed Tuple-transfer rejection all match. The
+separately recorded `Tuple.consume_elements` case is an expected Mojo-only gap.
+
+The complete differential run reported 75 passing and 13 failing pre-existing
+`run` cases before the `Tuple.consume_elements` case was added. The failures
+span closure fixtures, literal families, lifecycle fixtures, core protocols,
+context managers, reference iteration, interpolation, advanced origins,
+pointer provenance, and keyword forwarding; one closure invocation trapped the
+nightly compiler. These need fixture-versus-compiler triage and must not be read
+as regressions in the pack-bound or Tuple-destruction slices. Until that audit
+is complete, a passing `scripts/check` establishes the local compiler contract,
+while the full differential harness remains intentionally reported as non-green.
 
 ## Review Policy
 
@@ -31,17 +48,20 @@ The following CPU-language changes affect Mojito directly.
 
 | Area | Current nightly | Mojito consequence |
 |---|---|---|
+| Interior origins | Collections can bind element references to internal origins that are invalidated by structural mutation or reallocation without borrowing the entire owner forever. | Add explicit checked/MIR invalidation facts before protocolized collections expose reference-returning indexing. This is ordered in Task 1. |
+| Literal initializer inference | Partially specified collection annotations such as `List[_]` or bare `List` can infer element types from a literal initializer. | Fold contextual element inference into protocolized collection displays rather than adding another VM-native collection shortcut. |
 | Immutable convention | `imm` is the preferred spelling for the argument and closure-capture convention. `read` remains a synonym but is headed for deprecation. | Accept and emit `imm`; retain `read` only as a compatibility spelling. The linked commit `323dfd974e2f6fc83ce82a476d8fa5d51529eadf` documents this transition. |
 | Linear-value trait | `ImplicitlyDestructible` was renamed to `ImplicitlyDeletable`; `is_trivially_destructible` likewise became `is_trivially_deletable`. | Reverse Mojito's previous vocabulary migration and update constraints, diagnostics, tests, and bundled sources. |
 | Explicit destruction | `@explicit_destroy` no longer opts a type out of implicit deletion. A type narrows or removes `ImplicitlyDeletable` through conditional conformance, commonly `ImplicitlyDeletable where False`. The decorator is optional and only supplies an explanatory diagnostic; using it without a message is an error. | Separate the linearity fact from the diagnostic decorator and derive automatic deletion from conformance. |
 | Constraints | Parameter-list `where` clauses were removed. Only trailing declaration `where` clauses remain. Type equality now uses `==`/`!=`; `_type_is_eq` was removed. Pack operands such as `Ts.values` work with `conforms_to`. | Reject the formerly accepted parameter-list form, expand the checked predicate algebra, and update fixtures. |
 | Closures and callables | Unified closures use explicit captures with `imm`, `mut`, moves (`x^`), and optional default conventions. Dynamic function pointers can retain narrowly inferable unbound parameters. User structs must explicitly conform to a `def(...)` closure trait; compatible `__call__` alone is no longer enough. | Complete environment-bearing closure values, generic indirect calls, capture origins, and nominal callable-trait conformance. |
 | Reflection | `Reflected.field_type[name]` became `Reflected.field[name]`; the result is a chainable reflected handle whose type is `.T`. `field_at[index]` is the by-index counterpart. | Implemented with current `reflect[T]` syntax, nested handle chaining, named/indexed diagnostics, and rejection of `field_type`. |
-| Integer/SIMD model | `Int` is now an alias for `Scalar[DType.int]`. SIMD-width inference uses the new `SIMDSize` parameter type, or `_` for an unbound width. | Revisit Mojito's distinct `Ty::Int` representation and width-parameter classification before claiming scalar/SIMD parity. |
+| Integer/SIMD model | `Int` is an alias for `Scalar[DType.int]`. SIMD-width inference uses `SIMDLength` (briefly named `SIMDSize`), or `_` for an unbound width. | Int/Scalar identity is implemented. Migrate the deprecated width spelling and finish the dtype/literal/mask/reduction surface in Task 1 before claiming scalar/SIMD parity. |
 | Origins and pointers | Struct fields may not hide `UnsafeAnyOrigin`; use an explicit origin parameter or `UntrackedOrigin`. Implicit widening conversions to unsafe-any origins are deprecated or removed, and pointer optionals preserve concrete origins. | Hidden unsafe-any fields are rejected and there is no implicit unsafe-origin widening. `UnsafePointer(to=place)` infers a concrete place origin with executable owner loans; a place pointer coerces only to a declared origin parameter at aggregate-storage sites. |
 | Imports and artifacts | Resolution order is source package, `.mojoc`, source module, then legacy `.mojopkg`. Relative imports require `from`; dotted absolute imports bind every prefix; intra-package implicit visibility is deprecated. | Source precedence, prefix namespaces, and explicit intra-package visibility are implemented. `.mojoc`/`.mojopkg` loading remains in Packaging, Artifacts, And Developer Tooling. |
 | Keyword variadics | `**kwargs` may be forwarded with `**kwargs^`; the standard owning container is now `StringDict`. | Homogeneous free, generic, instance, static, and bounded-trait collectors use owned `StringDict[T]` values; consuming forwarding runs through the shared binder and its specialization, ownership, origin, duplicate, and effect checks. |
 | Owned iteration | `for var x in collection^` supports moving non-Copyable elements; collection deletion conformance is conditional on element capabilities. | Consuming collection iteration moves the source and each element, destroys implicitly deletable residual state on early exit, and rejects early exit when linear residual elements would be abandoned. |
+| Tuple ownership | `Tuple.consume_elements` transfers elements, including non-`ImplicitlyCopyable` values, one at a time to a parameterized closure; tuple indexing and destructuring do not provide an indexed partial-move place. | Keep indexed transfer rejection parity. Add `consume_elements` when user-facing Tuple moves from native VM representation to the protocolized collection in Task 1. |
 
 Python/NumPy additions, GPU changes, and distributed/concurrent facilities remain
 outside Mojito's declared first-pass scope.

@@ -651,10 +651,12 @@ calls. Origin unions in signatures, origin parameters, and reference returns are
 retained syntax but do not yet have interprocedural semantics.
 
 `comptime NAME = expression` declares a **compile-time constant** (`comptime N = 8`).
-The right-hand side must be a comptime `Int` expression (literals, other `comptime`
-constants, and `+ - * // % **` / unary `-`); the constant is usable both as a value
-parameter argument (`FixedBuffer[N]`) and as an ordinary `Int` at runtime. (Mojo
-removed `alias`; `comptime` replaces it.)
+The right-hand side must be a comptime integer expression (literals, other
+`comptime` constants, and arithmetic/bitwise/shift operators); its `IntLiteral`
+value remains arbitrary precision until a declared value-parameter or runtime
+scalar context materializes it. The constant is usable both as a value parameter
+argument (`FixedBuffer[N]`) and as an ordinary `Int` at runtime. (Mojo removed
+`alias`; `comptime` replaces it.)
 
 ```
 comptime_if_stmt:  'comptime' if_stmt      # 'comptime' 'if' … 'elif' … 'else' …
@@ -715,9 +717,13 @@ built-ins only when not shadowed by a binding.
 
 ## Numbers
 
-`Int` is a 64-bit signed integer, `UInt` a 64-bit unsigned integer, `Float64` a
-double. Two *concrete* numeric types never mix in one operator — `var i: Int = 1` then
-`i + f` (with `f: Float64`) is a type error; convert first.
+`Int` is a 64-bit signed integer, `UInt` a 64-bit unsigned integer, and `Float64`
+an IEEE binary64 value. Source numeric literals are not those runtime types:
+`IntLiteral` uses an arbitrary-precision integer, while finite `FloatLiteral`
+uses an exact rational and preserves negative zero. Literal-only arithmetic and
+compile-time folding therefore do not round or overflow between operations. Two
+*concrete* numeric types never mix in one operator — `var i: Int = 1` then `i +
+f` (with `f: Float64`) is a type error; convert first.
 
 **Literal coercion.** Numeric literals are flexible: an `INT` literal coerces to `Int`,
 `UInt`, or `Float64`, and a `FLOAT` literal to `Float64`, materializing to whatever the
@@ -725,7 +731,10 @@ context wants. So `var u: UInt = 0`, `var f: Float64 = 3`, `u + 1`, and `1 / 2` 
 `0.5`) all work without an explicit conversion. A literal combined only with other
 literals stays a literal (`var u: UInt = 1 + 2`); combined with a concrete numeric it
 takes that type (`u + 1 : UInt`). The explicit conversions `Int(x)` / `UInt(x)` /
-`Float64(x)` are still needed to convert *between concrete* numeric types.
+`Float64(x)` are still needed to convert *between concrete* numeric types. Integer
+materialization uses destination-width two's-complement wrapping; float materialization
+rounds the exact value once to binary32 or binary64. MIR represents this boundary with
+an explicit `MaterializeLiteral` instruction.
 
 ## SIMD
 
