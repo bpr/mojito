@@ -2390,6 +2390,55 @@ impl<'a> Elab<'a> {
                     env.insert(parameter.name.clone(), CtValue::Tuple(types.clone()));
                 }
             }
+            // The dependent-index accessor `def __getitem__[i: Int](self) ->
+            // Ts[i]` cannot survive as one checked method (its return type
+            // depends on the compile-time index), so it unrolls into one
+            // concrete accessor per element — `__getitem__$k` with `i`
+            // substituted and the `Ts[i]` annotation folded to that element.
+            if method.name == "__getitem__" && !method.type_params.is_empty() {
+                let index_decls = classify_ct_params(&method.type_params);
+                let (
+                    [
+                        ParamDecl::Value {
+                            name: index_name,
+                            ty: index_ty,
+                            ..
+                        },
+                    ],
+                    true,
+                    true,
+                ) = (
+                    index_decls.as_slice(),
+                    method.has_self,
+                    method.params.is_empty(),
+                )
+                else {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "variadic struct '{orig}': a compile-time-parameterized __getitem__ must take exactly one Int index parameter and only self"
+                    )));
+                };
+                if **index_ty != Ty::Int {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "variadic struct '{orig}': the __getitem__ index parameter must be Int, got {index_ty}"
+                    )));
+                }
+                for k in 0..source_types.len() {
+                    let mut unrolled = method.clone();
+                    unrolled.name = format!("__getitem__${k}");
+                    unrolled.type_params = Vec::new();
+                    let mut env_k = env.clone();
+                    env_k.insert(index_name.clone(), CtValue::Int(k as i64));
+                    let mut subs_k = subs.clone();
+                    subs_k.insert(index_name.clone(), CtValue::Int(k as i64));
+                    let elaborated = self.block(&unrolled.body, &mut env_k, true)?;
+                    unrolled.body = materialize_block(elaborated, &subs_k);
+                    if let Some(ret) = &mut unrolled.ret {
+                        self.fold_pack_index_annotation(ret, &binding, &source_types, &env_k)?;
+                    }
+                    elaborated_methods.push(unrolled);
+                }
+                continue;
+            }
             let elaborated = self.block(&method.body, &mut env, true)?;
             method.body = materialize_block(elaborated, &subs);
             elaborated_methods.push(method);
@@ -2413,14 +2462,90 @@ impl<'a> Elab<'a> {
         expand_pack_spreads_in_stmt(&mut spec, &type_pack_expansions, &runtime_pack_lengths);
         // Every specialization reuses the template's spans (correct provenance),
         // so checked facts keyed by source location would collide across
-        // specializations of one template. Stamp each with a unique source tag —
-        // the mangled name layered on the template's module — to keep locations
-        // distinct; `elaborate` re-stamps the whole subtree from `Stmt::module`.
-        spec.module = Some(match &template.module {
+        // specializations of one template. Stamp each subtree with a unique
+        // source tag — the mangled name layered on the template's module — and
+        // give each unrolled dependent accessor (a clone of one source method)
+        // its own tag on top, so their checked facts stay separate too.
+        let tag = match &template.module {
             Some(module) => format!("{module}${mangled}"),
             None => mangled,
-        });
+        };
+        crate::ast::stamp_source(std::slice::from_mut(&mut spec), &tag);
+        if let StmtKind::Struct { methods, .. } = &mut spec.kind {
+            for method in methods {
+                if method.name.starts_with("__getitem__$") {
+                    crate::ast::stamp_source(&mut method.body, &format!("{tag}.{}", method.name));
+                }
+            }
+        }
+        // The subtree is stamped; disarm `elaborate`'s uniform module re-stamp
+        // (it would collapse the per-accessor tags back into one).
+        spec.module = None;
         Ok(spec)
+    }
+
+    /// Fold a dependent pack-element annotation `Ts[expr]` (with `expr`
+    /// evaluable in `env`, e.g. the unrolled accessor's index) to the concrete
+    /// element type it selects.
+    fn fold_pack_index_annotation(
+        &self,
+        ty: &mut Type,
+        binding: &str,
+        elements: &[Type],
+        env: &HashMap<String, CtValue>,
+    ) -> Result<(), ComptimeError> {
+        match ty {
+            Type::Named(name, arguments) => {
+                if name.trim_start_matches('*') == binding
+                    && let [ParamArg::Value(index)] = arguments.as_slice()
+                {
+                    let index = self.eval(index, env)?.as_int("pack index")?;
+                    let element = elements.get(index as usize).ok_or_else(|| {
+                        ComptimeError::BadArithmetic(format!(
+                            "pack index {index} out of range for '{binding}' of length {}",
+                            elements.len()
+                        ))
+                    })?;
+                    *ty = element.clone();
+                    return Ok(());
+                }
+                for argument in arguments {
+                    if let ParamArg::Type(inner) = argument {
+                        self.fold_pack_index_annotation(inner, binding, elements, env)?;
+                    }
+                }
+                Ok(())
+            }
+            Type::Assoc { base, .. } => {
+                self.fold_pack_index_annotation(base, binding, elements, env)
+            }
+            Type::Func {
+                params,
+                ret,
+                raises_type,
+                ..
+            } => {
+                for param in params {
+                    self.fold_pack_index_annotation(param, binding, elements, env)?;
+                }
+                self.fold_pack_index_annotation(ret, binding, elements, env)?;
+                if let Some(error) = raises_type {
+                    self.fold_pack_index_annotation(error, binding, elements, env)?;
+                }
+                Ok(())
+            }
+            Type::Ref { referent, .. } => {
+                self.fold_pack_index_annotation(referent, binding, elements, env)
+            }
+            Type::Int
+            | Type::UInt
+            | Type::Bool
+            | Type::String
+            | Type::Float64
+            | Type::None
+            | Type::SelfParam(_)
+            | Type::SelfType => Ok(()),
+        }
     }
 
     fn mono_block(

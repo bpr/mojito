@@ -1927,16 +1927,34 @@ impl VmBackend {
             MirInstr::GetField { dest, base, field } => {
                 regs[dest.0 as usize] = get_field(&regs[base.0 as usize], field)?;
             }
-            MirInstr::Index { dest, base, index } => {
+            MirInstr::Index {
+                dest,
+                base,
+                index,
+                resolved,
+            } => {
                 match &regs[base.0 as usize] {
                     // A user struct with `__getitem__` is subscriptable: `c[i]` →
                     // `c.__getitem__(i)` (index passed as-is, not coerced to Int).
+                    // A checker-resolved implementation (a variadic struct's
+                    // per-element accessor) dispatches exactly; the argument is
+                    // dropped when the accessor takes only `self` (the element
+                    // was selected at compile time).
                     Value::Struct { name, .. } => {
                         let sname = name.clone();
                         let recv = regs[base.0 as usize].clone();
                         let idx = regs[index.0 as usize].clone();
-                        regs[dest.0 as usize] =
-                            self.call_dunder(prog, &sname, "__getitem__", vec![recv, idx])?;
+                        regs[dest.0 as usize] = match resolved {
+                            Some(_) => self.call_subscript_dunder(
+                                prog,
+                                recv,
+                                Vec::new(),
+                                resolved.as_deref(),
+                            )?,
+                            None => {
+                                self.call_dunder(prog, &sname, "__getitem__", vec![recv, idx])?
+                            }
+                        };
                     }
                     // `ptr[i]` loads the pointee at `base + i` from the heap arena.
                     Value::Pointer { allocation, offset } => {

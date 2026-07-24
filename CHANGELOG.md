@@ -28,6 +28,13 @@ to evolve under the `0.x` compatibility rules.
   Method calls with a specialized heterogeneous variadic now score per-position
   everywhere (previously every overflow argument checked against one erased
   element type).
+- Dependent pack subscripts: real Mojo's `def __getitem__[i: Int](self) ->
+  Ts[i]` on a variadic struct unrolls into one concrete accessor per element
+  at specialization; `s[k]` requires a compile-time-constant in-range index,
+  is typed by that element's exact type, and the checker-resolved accessor is
+  carried on MIR `Index` (`resolved`, like `Slice`/`MultiIndex`) so the VM
+  dispatches without name guessing. Runtime-varying and out-of-range indices
+  and element writes are rejected contextually.
 
 - Builtin scalar operators, comparisons, conversions, and rounding are typed
   through checked operation traits rather than ad-hoc numeric rules. Per-operator

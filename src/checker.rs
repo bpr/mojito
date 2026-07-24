@@ -6807,7 +6807,9 @@ impl Checker {
                 args,
                 kwargs,
             } => self.infer_method_call(expr.source_span(), object, method, args, kwargs),
-            ExprKind::Index { object, index } => self.infer_index(object, index),
+            ExprKind::Index { object, index } => {
+                self.infer_index(expr.source_span(), object, index)
+            }
             // Transfer is identity for typing (ownership move is not modeled).
             ExprKind::Transfer(inner) => self.infer(inner),
             // An empty list literal needs a contextual element type; the
@@ -8063,7 +8065,7 @@ impl Checker {
 
     /// Type a subscript over tuples, SIMD, lists, pointers, or a user-defined
     /// `__getitem__` implementation.
-    fn infer_index(&self, object: &Expr, index: &Expr) -> Result<Ty, TypeError> {
+    fn infer_index(&self, span: SourceSpan, object: &Expr, index: &Expr) -> Result<Ty, TypeError> {
         let obj_ty = self.infer(object)?;
         // A tuple is heterogeneous, so its index must be a **compile-time** `Int`
         // constant — the result type is that element's type.
@@ -8091,6 +8093,37 @@ impl Checker {
             let idx_ty = self.infer(index)?;
             if let Some(r) = self.struct_dunder(&obj_ty, "__getitem__", &[&idx_ty]) {
                 return r;
+            }
+            // A specialized variadic struct exposes its unrolled dependent
+            // accessors (`__getitem__$k`, one per pack element): the subscript
+            // requires a compile-time-constant index, is typed by that
+            // accessor's concrete return type, and records the resolved
+            // accessor for lowering (the VM never guesses the element).
+            if let Ty::Struct(name, _) = &obj_ty
+                && let Some(info) = self.structs.get(name)
+                && info.methods.contains_key("__getitem__$0")
+            {
+                let count = (0..)
+                    .take_while(|k| info.methods.contains_key(&format!("__getitem__${k}")))
+                    .count();
+                let k = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
+                    expected: "a compile-time Int index".to_string(),
+                    found: "a runtime value".to_string(),
+                    context: format!("variadic struct '{name}' subscript"),
+                })?;
+                if k < 0 || k as usize >= count {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("a pack index in 0..{count}"),
+                        found: k.to_string(),
+                        context: format!("variadic struct '{name}' subscript"),
+                    });
+                }
+                let method = format!("__getitem__${k}");
+                let ret = info.methods[&method][0].ret.clone();
+                self.overload_targets
+                    .borrow_mut()
+                    .insert(span, format!("{name}.{method}"));
+                return Ok(ret);
             }
             return Err(TypeError::NotIndexable(obj_ty.to_string()));
         }

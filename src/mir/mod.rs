@@ -1641,6 +1641,7 @@ impl Flatten<'_> {
                     dest: d,
                     base,
                     index: idx,
+                    resolved: self.resolved_callable(e),
                 });
                 d
             }
@@ -2773,6 +2774,7 @@ impl Flatten<'_> {
                         dest: elem,
                         base: tuple,
                         index: idx,
+                        resolved: None,
                     });
                     match &target.kind {
                         ExprKind::Identifier(name) => {
@@ -3201,7 +3203,9 @@ fn close_register_types(
                             .and_then(|base| struct_field(declarations, base, field))
                             .map(deref),
                     )),
-                    MirInstr::Index { dest, base, index } => Some((
+                    MirInstr::Index {
+                        dest, base, index, ..
+                    } => Some((
                         dest,
                         reg_types.get(&base.0).and_then(|base| match base {
                             Ty::List(element) | Ty::Set(element) => Some((**element).clone()),

@@ -431,3 +431,42 @@ fn variadic_struct_pack_init_rejects_wrong_arity_and_types() {
         "got: {err}"
     );
 }
+
+#[test]
+fn variadic_struct_dependent_getitem_unrolls_per_element() {
+    // Real Mojo's dependent accessor `def __getitem__[i: Int](self) -> Ts[i]`
+    // unrolls into one concrete accessor per pack element at specialization;
+    // `p[k]` requires a compile-time-constant index, has the exact element
+    // type, and dispatches the checker-resolved accessor.
+    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n\n    def __len__(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"mid\", True)\n    var n: Int = p[0]\n    var s: String = p[1]\n    var b: Bool = p[2]\n    print(n)\n    print(s)\n    print(b)\n    print(len(p))\n";
+    assert_eq!(run(src).unwrap(), "7\nmid\nTrue\n3\n");
+}
+
+#[test]
+fn variadic_struct_dependent_getitem_dispatches_per_instantiation() {
+    // Two specializations resolve their own accessor families independently.
+    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var a = Pair[Int, Bool](1, True)\n    var b = Pair[String, Int](\"s\", 5)\n    print(a[0] + b[1])\n    print(b[0])\n";
+    assert_eq!(run(src).unwrap(), "6\ns\n");
+}
+
+#[test]
+fn variadic_struct_dependent_getitem_rejects_bad_indices() {
+    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n\n";
+    // A runtime-varying index cannot select among heterogeneous elements.
+    let runtime = format!(
+        "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    var i = 0\n    print(p[i])\n"
+    );
+    let err = run(&runtime).unwrap_err();
+    assert!(err.contains("compile-time Int index"), "got: {err}");
+    // A constant index outside the pack.
+    let range =
+        format!("{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    print(p[5])\n");
+    let err = run(&range).unwrap_err();
+    assert!(err.contains("pack index in 0..2"), "got: {err}");
+    // No `__setitem__`: element writes are rejected (immutability preserved).
+    let write = format!(
+        "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    p[0] = 9\n    print(p[0])\n"
+    );
+    let err = run(&write).unwrap_err();
+    assert!(err.contains("NotIndexable"), "got: {err}");
+}

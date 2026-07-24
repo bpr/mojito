@@ -299,10 +299,14 @@ pub enum MirInstr {
         field: String,
     },
     /// Subscript *read* `base[index]` (List/Tuple/SIMD lane) inside an rvalue.
+    /// For a struct receiver, `resolved` is the checker-selected `__getitem__`
+    /// implementation (e.g. a variadic struct's per-element accessor); the
+    /// backend dispatches it without re-deriving overload resolution.
     Index {
         dest: Reg,
         base: Reg,
         index: Reg,
+        resolved: Option<String>,
     },
     /// Slice `object[lower:upper:step]` (List/String) → a new value. Each bound is
     /// optional (absent = a direction-aware default).
