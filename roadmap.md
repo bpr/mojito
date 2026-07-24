@@ -179,6 +179,12 @@ them before freezing the textual format; API-only library growth follows it.
   consumes the call before checker generic binding; struct packs already
   reject via the specialization's conformance verification. Needs a
   conformance oracle callable from elaboration.
+- [ ] **Destructor coverage for droppables inside native tuple fields** — a
+  struct field of native tuple type holding an element with `__del__` (e.g.
+  `var storage: Tuple[Noisy, Int]`) does not run the element's destructor when
+  the struct leaves scope (pre-existing; affects plain and variadic structs
+  alike). Drop elaboration's needs-drop analysis must see through native
+  tuple element types; fold into the protocolize-collections lifecycle work.
 - [ ] **Self-hosted Unicode String** — define storage, Unicode indexing/slicing,
   comparison, hashing, and formatting without VM-only semantics; distinguish
   compile-time `StringLiteral`, lazy captured `TString`, and explicit runtime
