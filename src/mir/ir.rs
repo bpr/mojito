@@ -2,10 +2,18 @@
 
 use super::*;
 
-/// Whether an argument convention transfers ownership to the callee (`var`, or
-/// the destructor's `deinit`).
+/// Whether the callee is responsible for running a parameter's `__del__` when
+/// it reaches its last use still initialized — i.e. a plain consuming `var`
+/// parameter (the caller transferred ownership; the callee must destroy it).
+///
+/// A `deinit` parameter is deliberately excluded: it is the destructor/
+/// move-source convention (`__del__(deinit self)`, `__moveinit__(out self,
+/// deinit other)`). Such a value is *consumed* — the function body transfers
+/// its resources (move-only fields with `^`, copyable fields by copy) — so
+/// auto-running its whole-value `__del__` at function end would destroy a value
+/// whose resources already moved elsewhere, double-freeing it.
 pub(super) fn is_owned(c: &Option<ArgConvention>) -> bool {
-    matches!(c, Some(ArgConvention::Var | ArgConvention::Deinit))
+    matches!(c, Some(ArgConvention::Var))
 }
 
 /// Whether a `try` region's statements contain a `break`/`continue` that **leaves**
