@@ -1,17 +1,3 @@
-# Minimal self-hosted iterator traits used by generic algorithms.
+# Legacy flat-import facade. The protocol definitions live in `std.iterable`.
 
-trait Iterator:
-    comptime Element: AnyType
-
-    def __len__(self) -> Int:
-        ...
-
-    def __next__(mut self) -> Self.Element:
-        ...
-
-trait Iterable:
-    comptime Element: AnyType
-    comptime Iter: AnyType
-
-    def __iter__(self) -> Self.Iter:
-        ...
+from std.iterable import Iterable, IterableOwned, Iterator, StopIteration

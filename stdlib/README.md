@@ -1,8 +1,12 @@
 # stdlib — the standard library, written in mojito itself
 
-These are ordinary mojito `.mojo` files (no compiler intrinsic): the north-star
-proof that the language is expressive enough to author its own collections and
-small generic algorithms.
+The public types and algorithms are ordinary mojito `.mojo` declarations rather
+than compiler-owned collection variants. The core implementations still use a
+few narrow compiler-supported storage and construction seams, notably
+`UnsafePointer` storage operations, literal/prelude hooks, and the private
+`__RuntimeTuple` pack carrier. Together they are the north-star proof that the
+language is expressive enough to author its own collections and small generic
+algorithms.
 
 The preferred import shape follows Mojo's `std` package layout:
 
@@ -14,22 +18,43 @@ from std.optional import Optional
 from std.math import floor, ceil
 ```
 
-The older flat files (`stdlib/list.mojo`, `stdlib/dict.mojo`, and friends)
-remain as compatibility mirrors for now, so legacy examples such as
-`from list import List` still work when `stdlib/` is on the search path.
+The older flat files (`stdlib/list.mojo`, `stdlib/dict.mojo`, and friends) are
+thin public re-export facades, so legacy examples such as `from list import
+List` still work when `stdlib/` is on the search path without maintaining a
+second implementation. Underscore-prefixed implementation types are available
+only from their authoritative `std` modules.
 
-- `std/collections/list.mojo` — a generic, growable `List[T]` backed by an `UnsafePointer[T]`, with
-  the full value-type lifecycle (`__init__`/`__copyinit__`/`__moveinit__`), subscript
-  read/write (`__getitem__`/`__setitem__`), `__len__`, and the iterator protocol
-  (`__iter__` → `_ListIter[T]` with `__next__`/`__len__`). Growth reallocs the buffer.
+- `std/collections/list.mojo` — a generic, growable `List[T]` backed by an
+  `UnsafePointer[T]`, with the full value-type lifecycle (ordinary `__init__`,
+  `__init__(..., copy:)`, and `__init__(..., deinit move:)`), subscript read/write
+  (`__getitem__`/`__setitem__`), `__len__`, and the iterator protocol
+  (`__iter__` → `_ListIter[T]` with typed-raising `__next__`; `__len__` remains a
+  compatibility/optimization hint). Exhaustion raises `StopIteration`. Growth
+  reallocs the buffer. `_get_copy(index)` is a library-private, non-overloaded
+  value accessor used by nested collection implementations until a
+  reference-returning subscript can retain its full selected-call contract as a
+  chained receiver/place in typed MIR. Ordinary public value reads already copy
+  through the returned reference, explicit `ref` bindings retain the alias, and
+  public indexing remains `__getitem__`.
+- `std/range.mojo` — the nominal `Range` returned by the bundled `range`
+  overloads, with length, indexing, containment, formatting, and borrowed
+  typed-raising iteration through `_RangeIter`.
+- `std/collections/tuple.mojo` — the public heterogeneous `Tuple[*Ts]`, with
+  current `__getitem_param__` indexing and element-conditional lifecycle,
+  comparison, formatting, concatenation, reversal, and consuming APIs. Its
+  `__RuntimeTuple[*Ts]` field is compiler-private heterogeneous pack storage;
+  public Tuple is nominal and is not a method-free runtime iterable.
 - `std/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
   including an empty constructor for generic absent values.
-- `std/iterable.mojo` — minimal self-hosted `Iterator` and `Iterable` traits. They
-  expose associated compile-time `Element` facts, and `Iterable` also exposes an
-  associated `Iter` type so containers can return a separate iterator object.
+- `std/iterable.mojo` — minimal self-hosted `Iterator` and `Iterable` proof
+  traits. They expose associated compile-time `Element` facts, and `Iterable`
+  exposes the legacy monomorphic `Iter` type so containers can return a separate
+  iterator object. Current Mojo's origin-parameterized `IteratorType[...]` and
+  `IteratorOwnedType` vocabulary remains compiler/roadmap work.
 - `std/collections/set.mojo` — a generic, list-backed `Set[T]` for `Equatable & Copyable & Movable`
   elements. It supports `add`, membership through `in`/`__contains__`, `len`, and
-  iteration by returning its backing `List[T]`. It conforms to `Iterable`.
+  borrowed iteration through the backing list's `_ListIter[T]`. It conforms to
+  `Iterable`.
 - `std/collections/dict.mojo` — a generic, insertion-ordered, list-backed
   `Dict[K, V]`. It supports subscripts, overloaded `get`, membership, key
   iteration, eager `keys`/`values`/`items` snapshots, public `DictEntry`, and
@@ -57,13 +82,18 @@ remain as compatibility mirrors for now, so legacy examples such as
   a key hashes into, so it is genuinely hash-backed (unlike the linear-scan `Set`).
   `Hashable` does not imply `Equatable`, so both bounds are named — the hash picks a
   bucket, equality resolves collisions within it. Its nested buckets use the
-  self-hosted `List`; the bucket count remains fixed pending a rehashing follow-up.
+  self-hosted `List`; `add` stages and writes back one copied bucket, and is
+  available only when `T: ImplicitlyDeletable` because replacement must satisfy
+  the nested List setter's lifecycle contract. The bucket count remains fixed
+  pending a rehashing follow-up.
 
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is
 public, matching Mojo's item-view element. Views are eager snapshots rather than
-reference views until origins and reference iterators are implemented.
+reference views until origin-parameterized reference iterators and live view
+APIs are implemented.
 
-The register VM executes these directly; `tests/self_host_test.rs` links and runs
-them. As the language gains features, more of the library moves out of Rust and into
-this directory (eventually retiring the built-in `List`/`Tuple` intrinsics).
+The register VM executes the ordinary MIR produced for these declarations;
+`tests/self_host_test.rs` links and runs them. Public List/Tuple runtime variants
+have already been retired. The remaining private storage, concrete borrowed-List,
+and iterator-family bridges are documented in the architecture and roadmap.

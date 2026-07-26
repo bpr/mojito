@@ -4,17 +4,67 @@
 /// and the MIR (whose `SpanTable` maps each temporary back to its origin span).
 pub type Span = (usize, usize);
 
+/// Identity of one concrete syntax occurrence in a checked program.
+///
+/// Byte spans are provenance, not identity: compile-time elaboration can clone
+/// the same source node more than once. The checker validates uniqueness on the
+/// final elaborated tree and re-keys every repeated clone before recording facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SyntaxId(pub u64);
+
+impl SyntaxId {
+    /// Allocate an identity for syntax synthesized outside the final checker
+    /// re-keying pass. The high bit keeps these process-local IDs disjoint from
+    /// traversal-ordered replacement IDs used for final-tree clones.
+    pub(crate) fn fresh() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self((1_u64 << 63) | NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 /// A byte range together with the linked source file it belongs to. Parser-only
 /// programs use `None`; the module linker stamps every nested AST node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceSpan {
     pub source: Option<String>,
     pub span: Span,
+    /// Present for an AST node and absent for source-only diagnostic locations.
+    /// This makes semantic maps occurrence-safe without changing displayed
+    /// source provenance.
+    pub syntax: Option<SyntaxId>,
 }
 
 impl SourceSpan {
     pub fn new(source: Option<String>, span: Span) -> Self {
-        Self { source, span }
+        Self {
+            source,
+            span,
+            syntax: None,
+        }
+    }
+
+    pub(crate) fn syntax(source: Option<String>, span: Span, syntax: SyntaxId) -> Self {
+        Self {
+            source,
+            span,
+            syntax: Some(syntax),
+        }
+    }
+
+    /// Return diagnostic provenance only. Semantic occurrence identity is a
+    /// phase-local lookup discriminator and must not leak into displayed spans,
+    /// MIR source maps, or source-only comparisons.
+    pub fn without_syntax(mut self) -> Self {
+        self.syntax = None;
+        self
+    }
+
+    /// Compare only the source file and byte range, ignoring which elaborated
+    /// syntax occurrence supplied the location.
+    pub fn same_provenance(&self, other: &Self) -> bool {
+        self.source == other.source && self.span == other.span
     }
 }
 
@@ -119,7 +169,7 @@ pub enum Token {
     RParen,
     LBracket, // `[`  (type-parameter / type-argument list)
     RBracket, // `]`
-    LBrace,   // `{`  (effect sets; collection literals are syntax-only for now)
+    LBrace,   // `{`  (effect sets and set/dictionary displays)
     RBrace,   // `}`
 
     // Arithmetic operators

@@ -1,5 +1,5 @@
 # Official Mojo manual families used as the inventory boundary; language drift is
-# additionally pinned to Mojo 1.0.0b3.dev2026072406 in parity.tsv.
+# additionally pinned to Mojo 1.0.0b3.dev2026072505 in parity.tsv.
 id	scope	url
 manual-root	first-pass	https://mojolang.org/docs/manual/
 basics	first-pass	https://mojolang.org/docs/manual/basics/

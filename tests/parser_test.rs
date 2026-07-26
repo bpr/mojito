@@ -1,8 +1,8 @@
 use mojito::ast::{
     ArgConvention, Capture, CaptureKind, CollectionKind, ComprehensionClause, Decorator, Expr,
-    ExprKind, FnParam, ImportName, ImportNames, InfixOp, KwArg, Method, Param, ParamArg, ParamKind,
-    PrefixOp, Stmt, StmtKind, StructComptime, TStringPart, TraitComptime, TraitMethod, Type,
-    TypeParam, WithItem,
+    ExprKind, FnParam, FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, Method, Param,
+    ParamArg, ParamKind, PrefixOp, Stmt, StmtKind, StructComptime, TStringPart, TraitComptime,
+    TraitMethod, Type, TypeParam, WithItem,
 };
 use mojito::{FloatLiteral, Lexer, Parser, parse_diagnostics};
 
@@ -509,6 +509,7 @@ fn parses_generic_struct_header_and_self_param_field() {
                 value_type: None,
                 name: "T".into(),
                 bounds: vec!["Copyable".into(), "Movable".into()],
+                callable_bound: None,
                 origin_mutability: None,
                 infer_only: false,
                 default: None,
@@ -547,6 +548,7 @@ fn parses_generic_def_with_type_param_signature() {
                 value_type: None,
                 name: "T".into(),
                 bounds: vec!["AnyType".into()],
+                callable_bound: None,
                 origin_mutability: None,
                 infer_only: false,
                 default: None,
@@ -822,6 +824,33 @@ fn parses_associated_type_annotation() {
 }
 
 #[test]
+fn parses_dependent_indexed_type_projection_structurally() {
+    let program = parse(
+        "def outer():\n    var values = (1, True)\n    def visit[index: Int](value: values.element_types[index + 1]):\n        pass\n",
+    );
+    let StmtKind::Def { body, .. } = &program[0].kind else {
+        panic!("expected outer def");
+    };
+    let StmtKind::Def { params, .. } = &body[1].kind else {
+        panic!("expected nested def");
+    };
+    assert_eq!(
+        params[0].ty,
+        Type::IndexedProjection {
+            base: Box::new(Type::Assoc {
+                base: Box::new(Type::Named("values".into(), vec![])),
+                name: "element_types".into(),
+            }),
+            index: Box::new(Expr::from(ExprKind::Infix(
+                InfixOp::Add,
+                Box::new(Expr::from(ExprKind::Identifier("index".into()))),
+                Box::new(int_expr(1)),
+            ))),
+        }
+    );
+}
+
+#[test]
 fn parses_struct_comptime_associated_member() {
     match &parse("@fieldwise_init\nstruct Box[T: AnyType]:\n    comptime Element = Self.T\n    var value: Self.T\n")[0].kind {
         StmtKind::Struct {
@@ -925,6 +954,7 @@ fn parses_value_parameter_header() {
                     value_type: None,
                     name: "size".into(),
                     bounds: vec!["Int".into()],
+                    callable_bound: None,
                     origin_mutability: None,
                     infer_only: false,
                     default: None,
@@ -1214,9 +1244,42 @@ fn parses_raises_effect_on_def() {
 }
 
 #[test]
-fn parses_current_unified_closure_capture_lists() {
+fn parses_capturing_and_raises_in_either_effect_order() {
+    for source in [
+        "def first() capturing raises -> Int:\n    raise Error(\"boom\")\n",
+        "def second() raises capturing -> Int:\n    raise Error(\"boom\")\n",
+    ] {
+        assert!(matches!(
+            &parse(source)[0].kind,
+            StmtKind::Def { raises: true, .. }
+        ));
+    }
+
+    let structure = parse(
+        "struct Callable:\n    def __call__(self) capturing raises -> Int:\n        raise Error(\"boom\")\n",
+    );
+    assert!(matches!(
+        &structure[0].kind,
+        StmtKind::Struct { methods, .. } if methods[0].raises
+    ));
+
+    let requirement =
+        parse("trait Callable:\n    def __call__(self) capturing raises -> Int: ...\n");
+    assert!(matches!(
+        &requirement[0].kind,
+        StmtKind::Trait { methods, .. } if methods[0].raises
+    ));
+
+    assert!(matches!(
+        var_anno_type("var callback: def() capturing raises -> Int = first\n"),
+        Type::Func { raises: true, .. }
+    ));
+}
+
+#[test]
+fn parses_current_and_legacy_closure_capture_lists() {
     let program = parse(
-        "def outer():\n    var a = 1\n    var b = 2\n    var c = 3\n    def inner() unified {mut a, b, c^, imm}:\n        pass\n",
+        "def outer():\n    var a = 1\n    var b = 2\n    var c = 3\n    var d = 4\n    var e = 5\n    def inner() raises {mut a, b, var c, var d^, ref e, imm}:\n        pass\n",
     );
     let StmtKind::Def { body, .. } = &program[0].kind else {
         panic!("expected outer def");
@@ -1224,11 +1287,11 @@ fn parses_current_unified_closure_capture_lists() {
     let StmtKind::Def {
         captures: Some(captures),
         ..
-    } = &body[3].kind
+    } = &body[5].kind
     else {
-        panic!("expected unified nested def");
+        panic!("expected nested closure");
     };
-    assert!(captures.default_read);
+    assert_eq!(captures.default, Some(CaptureKind::Read));
     assert_eq!(
         captures.entries,
         vec![
@@ -1242,10 +1305,32 @@ fn parses_current_unified_closure_capture_lists() {
             },
             Capture {
                 name: "c".into(),
+                kind: CaptureKind::Copy,
+            },
+            Capture {
+                name: "d".into(),
                 kind: CaptureKind::Move,
+            },
+            Capture {
+                name: "e".into(),
+                kind: CaptureKind::Ref,
             },
         ]
     );
+
+    let legacy =
+        parse("def outer():\n    var value = 1\n    def inner() unified {value}:\n        pass\n");
+    let StmtKind::Def { body, .. } = &legacy[0].kind else {
+        panic!("expected outer def");
+    };
+    let StmtKind::Def {
+        captures: Some(captures),
+        ..
+    } = &body[1].kind
+    else {
+        panic!("expected legacy nested closure");
+    };
+    assert_eq!(captures.entries[0].kind, CaptureKind::Read);
 }
 
 #[test]
@@ -1316,6 +1401,61 @@ fn parses_subscript_as_index() {
             index: int(0)
         })
     );
+}
+
+#[test]
+fn distinguishes_origin_specialization_from_runtime_indexing() {
+    let specialized = parse_expr("borrow[origin_of(value)]");
+    match specialized.kind {
+        ExprKind::TypeApply { name, args } => {
+            assert_eq!(name, "borrow");
+            assert!(matches!(
+                args.as_slice(),
+                [ParamArg::Value(Expr {
+                    kind: ExprKind::Call { name, args, .. },
+                    ..
+                })] if name == "origin_of"
+                    && matches!(args.as_slice(), [Expr { kind: ExprKind::Identifier(value), .. }] if value == "value")
+            ));
+        }
+        other => panic!("expected an origin-specialized function value, got {other:?}"),
+    }
+
+    assert!(matches!(
+        parse_expr("values[index]").kind,
+        ExprKind::Index { index, .. }
+            if matches!(index.kind, ExprKind::Identifier(ref name) if name == "index")
+    ));
+
+    let specialized = parse_expr("choose[origin_of(left), origin_of(right)]");
+    assert!(matches!(
+        specialized.kind,
+        ExprKind::TypeApply { name, args }
+            if name == "choose"
+                && args.len() == 2
+                && args.iter().all(|argument| matches!(
+                    argument,
+                    ParamArg::Value(Expr {
+                        kind: ExprKind::Call { name, .. },
+                        ..
+                    }) if name == "origin_of"
+                ))
+    ));
+
+    assert!(matches!(
+        parse_expr("grid[row, column]").kind,
+        ExprKind::MultiIndex { args, .. }
+            if matches!(args.as_slice(), [
+                mojito::ast::SubscriptArg::Index(Expr {
+                    kind: ExprKind::Identifier(row),
+                    ..
+                }),
+                mojito::ast::SubscriptArg::Index(Expr {
+                    kind: ExprKind::Identifier(column),
+                    ..
+                }),
+            ] if row == "row" && column == "column")
+    ));
 }
 
 #[test]
@@ -1521,6 +1661,26 @@ fn parses_augmented_assignment() {
         &parse("xs[0] *= 2\n")[0].kind,
         StmtKind::AugAssign {
             op: InfixOp::Mul,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &parse("grid[0, 1] += 2\n")[0].kind,
+        StmtKind::AugAssign {
+            place: Expr {
+                kind: ExprKind::MultiIndex { .. },
+                ..
+            },
+            ..
+        }
+    ));
+    assert!(matches!(
+        &parse("window[1:4] += 2\n")[0].kind,
+        StmtKind::AugAssign {
+            place: Expr {
+                kind: ExprKind::Slice { .. },
+                ..
+            },
             ..
         }
     ));
@@ -1778,7 +1938,8 @@ fn parses_origin_unions_parameters_and_reference_bindings() {
     assert_eq!(type_params[0].name, "is_mutable");
     assert_eq!(type_params[1].name, "origin");
     assert_eq!(type_params[1].bounds, vec!["Origin"]);
-    assert!(type_params[1].infer_only);
+    assert!(type_params[0].infer_only);
+    assert!(!type_params[1].infer_only);
     assert!(type_params[1].origin_mutability.is_some());
     assert_eq!(params[0].convention, Some(ArgConvention::Ref));
     assert_eq!(params[1].convention, Some(ArgConvention::Ref));
@@ -2106,14 +2267,25 @@ fn var_anno_type(src: &str) -> Type {
     }
 }
 
+fn function_type_param(ty: Type) -> FunctionTypeParam {
+    FunctionTypeParam {
+        name: None,
+        convention: None,
+        origin: None,
+        ty,
+    }
+}
+
 #[test]
 fn parses_function_type_annotations() {
     assert_eq!(
         var_anno_type("var f: def(Int) -> Int = g\n"),
         Type::Func {
-            params: vec![Type::Int],
+            type_params: vec![],
+            params: vec![function_type_param(Type::Int)],
             ret: Box::new(Type::Int),
             thin: false,
+            capturing: None,
             raises: false,
             raises_type: None
         }
@@ -2122,9 +2294,14 @@ fn parses_function_type_annotations() {
     assert_eq!(
         var_anno_type("var h: def(Int, Bool) thin -> String = k\n"),
         Type::Func {
-            params: vec![Type::Int, Type::Bool],
+            type_params: vec![],
+            params: vec![
+                function_type_param(Type::Int),
+                function_type_param(Type::Bool),
+            ],
             ret: Box::new(Type::String),
             thin: true,
+            capturing: None,
             raises: false,
             raises_type: None,
         }
@@ -2133,11 +2310,26 @@ fn parses_function_type_annotations() {
     assert_eq!(
         var_anno_type("var n: def() raises -> None = m\n"),
         Type::Func {
+            type_params: vec![],
             params: vec![],
             ret: Box::new(Type::None),
             thin: false,
+            capturing: None,
             raises: true,
             raises_type: None
+        }
+    );
+    // Current Mojo permits `-> None` to be omitted from callable types.
+    assert_eq!(
+        var_anno_type("var sink: def(Int) thin = callback\n"),
+        Type::Func {
+            type_params: vec![],
+            params: vec![function_type_param(Type::Int)],
+            ret: Box::new(Type::None),
+            thin: true,
+            capturing: None,
+            raises: false,
+            raises_type: None,
         }
     );
 }
@@ -2148,16 +2340,91 @@ fn parses_parameterized_capturing_function_type_values() {
         .into_iter()
         .next()
         .unwrap();
-    assert!(matches!(
-        stmt.kind,
-        StmtKind::Comptime {
-            value: Expr {
-                kind: ExprKind::TypeValue(Type::Func { .. }),
+    let StmtKind::Comptime {
+        value:
+            Expr {
+                kind:
+                    ExprKind::TypeValue(Type::Func {
+                        type_params,
+                        capturing,
+                        ..
+                    }),
                 ..
             },
+        ..
+    } = stmt.kind
+    else {
+        panic!("expected a parameterized function type value");
+    };
+    assert_eq!(type_params.len(), 1);
+    assert!(matches!(
+        capturing.as_deref(),
+        Some([Expr {
+            kind: ExprKind::Identifier(origin),
             ..
-        }
+        }]) if origin == "_"
     ));
+}
+
+#[test]
+fn retains_callable_parameter_bounds_and_capture_effects() {
+    let statements = parse(
+        "def invoke[F: def(Int) -> Int, callback: def(Int) capturing[origins], bare: def(Int) capturing, sink: def(Int) thin](value: Int):\n    pass\n",
+    );
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
+    assert_eq!(type_params.len(), 4);
+    assert_eq!(type_params[0].bounds, vec!["<function type>"]);
+    assert!(matches!(
+        &type_params[0].callable_bound,
+        Some(Type::Func {
+            ret,
+            thin: false,
+            capturing: None,
+            ..
+        }) if **ret == Type::Int
+    ));
+    assert!(matches!(
+        &type_params[1].callable_bound,
+        Some(Type::Func {
+            ret,
+            capturing: Some(origins),
+            ..
+        }) if **ret == Type::None
+            && matches!(origins.as_slice(), [Expr {
+                kind: ExprKind::Identifier(origin),
+                ..
+            }] if origin == "origins")
+    ));
+    assert!(matches!(
+        &type_params[2].callable_bound,
+        Some(Type::Func {
+            capturing: Some(origins),
+            ..
+        }) if origins.is_empty()
+    ));
+    assert!(matches!(
+        &type_params[3].callable_bound,
+        Some(Type::Func {
+            ret,
+            thin: true,
+            capturing: None,
+            ..
+        }) if **ret == Type::None
+    ));
+}
+
+#[test]
+fn infer_only_marker_applies_to_the_parameter_prefix() {
+    let statements =
+        parse("def select[first: Int, second: Bool, //, explicit: Int](value: Int):\n    pass\n");
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
+    assert!(type_params[0].infer_only);
+    assert!(type_params[1].infer_only);
+    assert!(!type_params[2].infer_only);
 }
 
 #[test]
@@ -2194,15 +2461,19 @@ fn function_type_return_nests() {
     assert_eq!(
         var_anno_type("var c: def(Int) -> def(Int) -> Int = mk\n"),
         Type::Func {
-            params: vec![Type::Int],
+            type_params: vec![],
+            params: vec![function_type_param(Type::Int)],
             ret: Box::new(Type::Func {
-                params: vec![Type::Int],
+                type_params: vec![],
+                params: vec![function_type_param(Type::Int)],
                 ret: Box::new(Type::Int),
                 thin: false,
+                capturing: None,
                 raises: false,
                 raises_type: None,
             }),
             thin: false,
+            capturing: None,
             raises: false,
             raises_type: None,
         }
@@ -2219,9 +2490,11 @@ fn parses_function_typed_parameter() {
     assert_eq!(
         params[0].ty,
         Type::Func {
-            params: vec![Type::Int],
+            type_params: vec![],
+            params: vec![function_type_param(Type::Int)],
             ret: Box::new(Type::Int),
             thin: true,
+            capturing: None,
             raises: false,
             raises_type: None
         }

@@ -8,9 +8,9 @@
 use std::iter::Peekable;
 
 use crate::ast::{
-    ArgConvention, Capture, CaptureKind, CaptureList, Decorator, Expr, ExprKind, FnParam, InfixOp,
-    KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind, SubscriptArg, TStringPart, Type,
-    WithItem,
+    ArgConvention, Capture, CaptureKind, CaptureList, Decorator, Expr, ExprKind, FnParam,
+    FunctionTypeParam, InfixOp, KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind,
+    SubscriptArg, TStringPart, Type, WithItem,
 };
 use crate::error::{LexError, ParseError};
 use crate::lexer::Lexer;
@@ -141,6 +141,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             kind,
             span: (start, self.last_span.1),
             source: None,
+            syntax_id: crate::token::SyntaxId::fresh(),
         }
     }
 
@@ -421,6 +422,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 ExprKind::Identifier(_)
                     | ExprKind::Member { .. }
                     | ExprKind::Index { .. }
+                    | ExprKind::Slice { .. }
+                    | ExprKind::MultiIndex { .. }
                     | ExprKind::TypeApply { .. }
             ) {
                 return Err(ParseError::UnexpectedToken(
@@ -626,17 +629,22 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } = self.parse_params()?;
         self.expect(Token::RParen, "Expected ')' after parameters")?;
 
-        let captures = self.parse_unified_captures()?;
-
-        let (raises, raises_type) = self.parse_raises_effect()?;
-        if matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "abi") {
-            self.next_token()?;
-            self.expect(Token::LParen, "Expected '(' after abi")?;
-            while !matches!(self.peek_token()?, Some(Token::RParen) | None) {
-                self.next_token()?;
+        // Mojito historically accepted `unified {...}` before effects. Keep it
+        // as an explicit compatibility spelling, but normalize it to the same
+        // AST as current Mojo's bare capture list below.
+        let legacy_captures = self.parse_capture_list(true)?;
+        let (raises, raises_type) = self.parse_callable_effects()?;
+        let current_captures = self.parse_capture_list(false)?;
+        let captures = match (legacy_captures, current_captures) {
+            (Some(_), Some(_)) => {
+                return Err(ParseError::UnexpectedToken(
+                    Token::LBrace,
+                    "a function may have only one capture list".to_string(),
+                ));
             }
-            self.expect(Token::RParen, "Expected ')' after abi")?;
-        }
+            (legacy @ Some(_), None) => legacy,
+            (None, current) => current,
+        };
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?; // consume '->'
             Some(self.parse_type()?)
@@ -679,49 +687,84 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         })
     }
 
-    fn parse_unified_captures(&mut self) -> Result<Option<CaptureList>, ParseError> {
-        if !matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "unified") {
+    /// Parse a closure capture list. Current Mojo spells this as bare `{...}`
+    /// after effects; `legacy=true` additionally consumes Mojito's old
+    /// `unified {...}` prefix before effects.
+    fn parse_capture_list(&mut self, legacy: bool) -> Result<Option<CaptureList>, ParseError> {
+        if legacy {
+            if !matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "unified") {
+                return Ok(None);
+            }
+            self.next_token()?;
+            self.expect(Token::LBrace, "Expected '{' after 'unified'")?;
+        } else if matches!(self.peek_token()?, Some(Token::LBrace)) {
+            self.next_token()?;
+        } else {
             return Ok(None);
         }
-        self.next_token()?;
-        self.expect(Token::LBrace, "Expected '{' after 'unified'")?;
         let mut entries = Vec::new();
-        let mut default_read = false;
+        let mut default = None;
         while !matches!(self.peek_token()?, Some(Token::RBrace)) {
-            let mutable =
-                matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "mut");
-            if mutable {
-                self.next_token()?;
-            }
-            let mut name = self.expect_identifier("Expected a captured name")?;
-            let immutable = matches!(name.as_str(), "imm" | "read")
-                && matches!(self.peek_token()?, Some(Token::Identifier(_)));
-            if immutable {
-                name = self.expect_identifier("Expected a name after the capture convention")?;
-            }
+            let convention = match self.peek_token()? {
+                Some(Token::Var) => {
+                    self.next_token()?;
+                    Some(CaptureKind::Copy)
+                }
+                Some(Token::Identifier(word)) if matches!(word.as_str(), "imm" | "read") => {
+                    self.next_token()?;
+                    Some(CaptureKind::Read)
+                }
+                Some(Token::Identifier(word)) if word == "mut" => {
+                    self.next_token()?;
+                    Some(CaptureKind::Mut)
+                }
+                Some(Token::Identifier(word)) if word == "ref" => {
+                    self.next_token()?;
+                    Some(CaptureKind::Ref)
+                }
+                _ => None,
+            };
+            let has_name = matches!(self.peek_token()?, Some(Token::Identifier(_)));
+            let name = if has_name {
+                Some(self.expect_identifier("Expected a captured name")?)
+            } else if convention.is_none() {
+                return Err(ParseError::UnexpectedToken(
+                    self.next_token()?,
+                    "Expected a capture convention or captured name".to_string(),
+                ));
+            } else {
+                None
+            };
             let moved = matches!(self.peek_token()?, Some(Token::Caret));
             if moved {
                 self.next_token()?;
             }
-            if matches!(name.as_str(), "imm" | "read") && !mutable && !immutable && !moved {
-                default_read = true;
+            if moved && !matches!(convention, None | Some(CaptureKind::Copy)) {
+                return Err(ParseError::UnexpectedToken(
+                    Token::Caret,
+                    "'^' requires the 'var' capture convention".to_string(),
+                ));
+            }
+            let kind = if moved {
+                CaptureKind::Move
             } else {
+                convention.unwrap_or(CaptureKind::Read)
+            };
+            if let Some(name) = name {
                 if entries.iter().any(|capture: &Capture| capture.name == name) {
                     return Err(ParseError::UnexpectedToken(
                         Token::Identifier(name.clone()),
                         format!("duplicate capture '{name}'"),
                     ));
                 }
-                entries.push(Capture {
-                    name,
-                    kind: if moved {
-                        CaptureKind::Move
-                    } else if mutable {
-                        CaptureKind::Mut
-                    } else {
-                        CaptureKind::Read
-                    },
-                });
+                entries.push(Capture { name, kind });
+            } else {
+                if default.replace(kind).is_some() {
+                    return Err(ParseError::UnexpectedToken(
+                        Token::Identifier("capture convention".to_string()),
+                        "default capture convention was already specified".to_string(),
+                    ));
+                }
             }
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?;
@@ -733,10 +776,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
         }
         self.next_token()?;
-        Ok(Some(CaptureList {
-            entries,
-            default_read,
-        }))
+        Ok(Some(CaptureList { entries, default }))
     }
 
     /// Parses an optional `raises` effect after a function's parameter list. An
@@ -747,12 +787,44 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         // An optional error type follows, unless the next token ends the header.
         self.next_token()?; // consume 'raises'
-        let error = if !matches!(self.peek_token()?, Some(Token::Arrow | Token::Colon)) {
+        let next_is_effect = matches!(
+            self.peek_token()?,
+            Some(Token::Identifier(word)) if matches!(word.as_str(), "capturing" | "thin" | "abi")
+        );
+        let error = if !next_is_effect
+            && !matches!(
+                self.peek_token()?,
+                Some(Token::Arrow | Token::Colon | Token::LBrace)
+            ) {
             Some(self.parse_type()?)
         } else {
             None
         };
         Ok((true, error))
+    }
+
+    /// Parse declaration effects in their source order. Current Mojo permits
+    /// `capturing raises`, `raises capturing`, and the other ABI-only effects in
+    /// one sequence; only the raising contract survives in the checked AST.
+    fn parse_callable_effects(&mut self) -> Result<(bool, Option<Type>), ParseError> {
+        let mut raises = false;
+        let mut raises_type = None;
+        loop {
+            match self.peek_token()? {
+                Some(Token::Raises) if !raises => {
+                    let (present, error) = self.parse_raises_effect()?;
+                    raises = present;
+                    raises_type = error;
+                }
+                Some(Token::Identifier(effect))
+                    if matches!(effect.as_str(), "capturing" | "thin" | "abi") =>
+                {
+                    self.parse_erased_callable_effects()?;
+                }
+                _ => break,
+            }
+        }
+        Ok((raises, raises_type))
     }
 
     /// `raise expr`
@@ -1409,7 +1481,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         };
         self.expect(Token::RParen, "Expected ')' after the parameters")?;
 
-        let (raises, raises_type) = self.parse_raises_effect()?;
+        let (raises, raises_type) = self.parse_callable_effects()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
             Some(self.parse_type()?)
@@ -1520,7 +1592,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         };
         self.expect(Token::RParen, "Expected ')' after the parameters")?;
 
-        let (raises, raises_type) = self.parse_raises_effect()?;
+        let (raises, raises_type) = self.parse_callable_effects()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
             Some(self.parse_type()?)
@@ -1555,6 +1627,37 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             where_clause,
             body,
         })
+    }
+
+    /// Parse callable ABI effects whose execution meaning is already represented
+    /// by the selected callable type/environment. `raises` is retained separately;
+    /// `capturing`, `thin`, and `abi(...)` need no additional declaration field.
+    fn parse_erased_callable_effects(&mut self) -> Result<(), ParseError> {
+        while let Some(Token::Identifier(effect)) = self.peek_token()?.cloned() {
+            match effect.as_str() {
+                "capturing" | "thin" => {
+                    self.next_token()?;
+                    if effect == "capturing" && matches!(self.peek_token()?, Some(Token::LBracket))
+                    {
+                        self.next_token()?;
+                        while !matches!(self.peek_token()?, Some(Token::RBracket) | None) {
+                            self.next_token()?;
+                        }
+                        self.expect(Token::RBracket, "Expected ']' after capturing origins")?;
+                    }
+                }
+                "abi" => {
+                    self.next_token()?;
+                    self.expect(Token::LParen, "Expected '(' after abi")?;
+                    while !matches!(self.peek_token()?, Some(Token::RParen) | None) {
+                        self.next_token()?;
+                    }
+                    self.expect(Token::RParen, "Expected ')' after abi")?;
+                }
+                _ => break,
+            }
+        }
+        Ok(())
     }
 
     /// Parses a `cond ':' NEWLINE block` clause shared by `if`/`elif`/`while`.
@@ -1805,29 +1908,53 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.parse_type_assoc_tail(ty)
     }
 
-    /// Parse zero or more `.Member` suffixes after a type atom.
+    /// Parse zero or more structured projections after a type atom. Associated
+    /// lookup and dependent indexing deliberately remain distinct AST nodes so
+    /// later phases never have to recover either operation from a flattened
+    /// source spelling.
     fn parse_type_assoc_tail(&mut self, mut ty: Type) -> Result<Type, ParseError> {
-        while matches!(self.peek_token()?, Some(Token::Dot)) {
-            self.next_token()?; // consume '.'
-            let name = self.expect_identifier("Expected an associated type name after '.'")?;
-            ty = Type::Assoc {
-                base: Box::new(ty),
-                name,
-            };
+        loop {
+            if matches!(self.peek_token()?, Some(Token::Dot)) {
+                self.next_token()?; // consume '.'
+                let name = self.expect_identifier("Expected an associated type name after '.'")?;
+                ty = Type::Assoc {
+                    base: Box::new(ty),
+                    name,
+                };
+                continue;
+            }
+            if matches!(self.peek_token()?, Some(Token::LBracket)) {
+                let arguments = self.parse_param_args()?;
+                let [crate::ast::ParamArg::Value(index)] = arguments.as_slice() else {
+                    return Err(ParseError::UnexpectedToken(
+                        Token::RBracket,
+                        "a dependent type projection requires exactly one compile-time value index"
+                            .to_string(),
+                    ));
+                };
+                ty = Type::IndexedProjection {
+                    base: Box::new(ty),
+                    index: Box::new(index.clone()),
+                };
+                continue;
+            }
+            break;
         }
         Ok(ty)
     }
 
     /// Parses a function type after its leading `def` has been consumed:
-    /// `'(' [type (',' type)*] ')' effects '->' type`. Effects between `)` and
-    /// `->` are `thin`, `raises`, and `abi(...)` (the last parsed and discarded).
+    /// `'(' [type (',' type)*] ')' effects ['->' type]`. Effects between `)` and
+    /// the optional return are `thin`, `capturing[origins]`, `raises`, and
+    /// `abi(...)` (the last parsed and discarded). An omitted return is `None`.
     fn parse_function_type_tail(&mut self) -> Result<Type, ParseError> {
         // Function signatures may themselves be parameterized, e.g.
-        // `def[width: Int](Int) capturing[_] -> None`. Their compile-time
-        // parameter declarations do not yet affect the syntax-only `Type` AST.
-        if matches!(self.peek_token()?, Some(Token::LBracket)) {
-            self.parse_type_params()?;
-        }
+        // `def[origin: Origin](ref[origin] Int) -> ref[origin] Int`.
+        let type_params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
+            self.parse_type_params()?
+        } else {
+            Vec::new()
+        };
         self.expect(Token::LParen, "Expected '(' in a function type")?;
         let mut params = Vec::new();
         if !matches!(self.peek_token()?, Some(Token::RParen)) {
@@ -1839,7 +1966,47 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     }
                     continue;
                 }
-                params.push(self.parse_type()?);
+                let convention = match self.peek_token()?.cloned() {
+                    Some(Token::Var) => {
+                        self.next_token()?;
+                        Some(ArgConvention::Var)
+                    }
+                    Some(Token::Identifier(word)) if convention_word(&word).is_some() => {
+                        self.next_token()?;
+                        convention_word(&word)
+                    }
+                    _ => None,
+                };
+                let origin = if convention == Some(ArgConvention::Ref) {
+                    self.parse_optional_origin_specifier()?
+                } else {
+                    None
+                };
+                let first = self.parse_type()?;
+                let (name, ty) = if matches!(self.peek_token()?, Some(Token::Colon)) {
+                    let Type::Named(name, arguments) = first else {
+                        return Err(ParseError::UnexpectedToken(
+                            Token::Colon,
+                            "a function-type parameter name must be an identifier".to_string(),
+                        ));
+                    };
+                    if !arguments.is_empty() {
+                        return Err(ParseError::UnexpectedToken(
+                            Token::Colon,
+                            "a function-type parameter name cannot have type arguments".to_string(),
+                        ));
+                    }
+                    self.next_token()?;
+                    (Some(name), self.parse_type()?)
+                } else {
+                    (None, first)
+                };
+                params.push(FunctionTypeParam {
+                    name,
+                    convention,
+                    origin,
+                    ty,
+                });
                 if matches!(self.peek_token()?, Some(Token::Comma)) {
                     self.next_token()?; // consume ','
                 } else {
@@ -1851,6 +2018,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         // Effects: `thin` / `raises` / `abi("…")` in any order, until `->`.
         let mut thin = false;
+        let mut capturing = None;
         let mut raises = false;
         let mut raises_type = None;
         loop {
@@ -1862,7 +2030,28 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Some(Token::Raises) => {
                     self.next_token()?;
                     raises = true;
-                    if !matches!(self.peek_token()?, Some(Token::Arrow)) {
+                    let next = self.peek_token()?.cloned();
+                    let next_is_effect = matches!(
+                        next.as_ref(),
+                        Some(Token::Identifier(effect))
+                            if matches!(effect.as_str(), "capturing" | "thin" | "abi")
+                    );
+                    let next_ends_type = matches!(
+                        next,
+                        None | Some(
+                            Token::Arrow
+                                | Token::RBracket
+                                | Token::RParen
+                                | Token::Comma
+                                | Token::Assign
+                                | Token::Colon
+                                | Token::Amp
+                                | Token::Newline
+                                | Token::Dedent
+                                | Token::Eof
+                        )
+                    );
+                    if !next_is_effect && !next_ends_type {
                         raises_type = Some(Box::new(self.parse_type()?));
                     }
                 }
@@ -1877,22 +2066,24 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 Some(Token::Identifier(id)) if id == "capturing" => {
                     self.next_token()?;
-                    self.expect(Token::LBracket, "Expected '[' after 'capturing'")?;
-                    while !matches!(self.peek_token()?, Some(Token::RBracket) | None) {
-                        self.next_token()?;
-                    }
-                    self.expect(Token::RBracket, "Expected ']' after capturing origins")?;
+                    capturing = Some(self.parse_optional_origin_specifier()?.unwrap_or_default());
                 }
                 _ => break,
             }
         }
 
-        self.expect(Token::Arrow, "Expected '->' in a function type")?;
-        let ret = self.parse_type()?;
+        let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
+            self.next_token()?;
+            self.parse_type()?
+        } else {
+            Type::None
+        };
         Ok(Type::Func {
+            type_params,
             params,
             ret: Box::new(ret),
             thin,
+            capturing,
             raises,
             raises_type,
         })
@@ -1976,6 +2167,22 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let id = self.expect_identifier("unreachable: peeked identifier")?;
             let id_span = self.last_span;
             if matches!(self.peek_token()?, Some(Token::LBracket)) {
+                // Mojo type names and type parameters are conventionally
+                // uppercase. A lowercase binding followed by brackets inside
+                // another bracket list is therefore a runtime indexed value
+                // (`mapping[indexes[i]]`), not a nested parameterized type.
+                // Parsing from the identifier atom preserves the complete
+                // postfix expression and lets the outer bracket choose Index.
+                if id
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_lowercase())
+                {
+                    let atom = Expr::new(ExprKind::Identifier(id), id_span);
+                    return Ok(ParamArg::Value(
+                        self.parse_expression_from(atom, Precedence::Lowest)?,
+                    ));
+                }
                 let args = self.parse_param_args()?;
                 if matches!(self.peek_token()?, Some(Token::LParen)) {
                     self.next_token()?;
@@ -2026,14 +2233,15 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             return Ok(Vec::new());
         }
         self.next_token()?; // consume '['
-        let mut params = Vec::new();
-        let mut infer_only = false;
+        let mut params: Vec<crate::ast::TypeParam> = Vec::new();
         loop {
-            // Mojo's `//` marker makes following parameters infer-only. Keep the
-            // syntax even though inference policy is not represented yet.
+            // Mojo's `//` marker ends the infer-only prefix. Parameters before it
+            // are inferred; parameters after it may be supplied explicitly.
             if matches!(self.peek_token()?, Some(Token::DoubleSlash)) {
                 self.next_token()?;
-                infer_only = true;
+                for parameter in &mut params {
+                    parameter.infer_only = true;
+                }
                 if matches!(self.peek_token()?, Some(Token::Comma)) {
                     self.next_token()?;
                 }
@@ -2061,11 +2269,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Token::Colon,
                 "A type parameter requires a ': bound' (e.g. 'T: Copyable')",
             )?;
-            let first_bound = if matches!(self.peek_token()?, Some(Token::Def)) {
-                self.parse_type()?;
-                "<function type>".to_string()
+            let (first_bound, callable_bound) = if matches!(self.peek_token()?, Some(Token::Def)) {
+                ("<function type>".to_string(), Some(self.parse_type()?))
             } else {
-                self.expect_identifier("Expected a trait or type in the type-parameter bound")?
+                (
+                    self.expect_identifier("Expected a trait or type in the type-parameter bound")?,
+                    None,
+                )
             };
             // Origin parameters use `Origin[mut=<bool expression>]`. Preserve the
             // Origin classification and parse the mutability expression; semantic
@@ -2114,8 +2324,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 name,
                 bounds,
                 value_type,
+                callable_bound,
                 origin_mutability,
-                infer_only,
+                infer_only: false,
                 default,
                 constraints: Vec::new(),
             });
@@ -2769,6 +2980,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
 
         match <[_; 1]>::try_from(param_args) {
+            // A bare value argument normally means runtime indexing, but
+            // `origin_of(place)` is itself a compile-time Origin value.  Mojo
+            // uses that spelling to specialize a function value without
+            // immediately calling it (`var f = borrow[origin_of(value)]`).
+            // Keep ordinary `values[index]` syntax on the Index path while
+            // preserving this compiler-known origin argument as TypeApply.
+            Ok([crate::ast::ParamArg::Value(origin)]) if is_explicit_origin_argument(&origin) => {
+                Ok(self.node(
+                    ExprKind::TypeApply {
+                        name: call_name(object)?,
+                        args: vec![crate::ast::ParamArg::Value(origin)],
+                    },
+                    start,
+                ))
+            }
             Ok([crate::ast::ParamArg::Value(index)]) => Ok(self.node(
                 ExprKind::Index {
                     object: Box::new(object),
@@ -2783,6 +3009,24 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 },
                 start,
             )),
+            // `origin_of(...)` has no runtime value, so a bracket list that
+            // contains one cannot be a multi-dimensional subscript. This is
+            // the multi-argument counterpart of the single-origin case above:
+            // `choose[origin_of(left), origin_of(right)]` specializes a
+            // callable, while `grid[row, column]` remains a runtime index.
+            Err(param_args)
+                if param_args.iter().any(|argument| {
+                    matches!(argument, crate::ast::ParamArg::Value(value) if is_explicit_origin_argument(value))
+                }) =>
+            {
+                Ok(self.node(
+                    ExprKind::TypeApply {
+                        name: call_name(object)?,
+                        args: param_args,
+                    },
+                    start,
+                ))
+            }
             Err(param_args)
                 if param_args
                     .iter()
@@ -3078,6 +3322,25 @@ fn expression_name_starts_lowercase(expression: &Expr) -> bool {
         &expression.kind,
         ExprKind::Identifier(name)
             if name.chars().next().is_some_and(|character| character.is_lowercase())
+    )
+}
+
+/// Whether a value-shaped bracket argument is unambiguously an Origin
+/// specialization rather than a runtime subscript. Most compile-time values
+/// cannot be distinguished syntactically from indices; `origin_of(...)` can,
+/// because it is a compiler-known operation that never has a runtime value.
+fn is_explicit_origin_argument(expression: &Expr) -> bool {
+    matches!(
+        &expression.kind,
+        ExprKind::Call {
+            name,
+            param_args,
+            kwargs,
+            args,
+        } if name == "origin_of"
+            && param_args.is_empty()
+            && kwargs.is_empty()
+            && !args.is_empty()
     )
 }
 

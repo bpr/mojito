@@ -1,6 +1,7 @@
 //! AST rewriting helpers used by compile-time elaboration and specialization.
 
 use super::*;
+use crate::ast::{FnParam, ImportNames, Method};
 
 // --- Substitution / materialization -----------------------------------------
 //
@@ -22,485 +23,793 @@ pub(super) fn materialize_block(stmts: Vec<Stmt>, consts: &HashMap<String, CtVal
         .collect()
 }
 
-/// Replace a specialized type-pack use such as `Tuple[*Ts]` with the concrete
-/// parameter list selected for this specialization.  The parser deliberately
-/// retains `*Ts` as a source type so expansion remains an explicit compile-time
-/// operation rather than something the checker has to reconstruct from names.
-pub(super) fn expand_type_packs(ty: &mut Type, packs: &HashMap<String, Vec<Type>>) {
-    match ty {
-        Type::Named(_, arguments) => {
-            expand_type_pack_arguments(arguments, packs);
-        }
-        Type::Assoc { base, .. } => expand_type_packs(base, packs),
-        Type::Func {
-            params,
-            ret,
-            raises_type,
-            ..
-        } => {
-            for param in params {
-                expand_type_packs(param, packs);
-            }
-            expand_type_packs(ret, packs);
-            if let Some(error) = raises_type {
-                expand_type_packs(error, packs);
-            }
-        }
-        Type::Ref { referent, .. } => expand_type_packs(referent, packs),
-        Type::Int
-        | Type::UInt
-        | Type::Bool
-        | Type::String
-        | Type::Float64
-        | Type::None
-        | Type::SelfParam(_)
-        | Type::SelfType => {}
-    }
+pub(super) fn materialize_expression(expr: &Expr, consts: &HashMap<String, CtValue>) -> Expr {
+    let mut expr = expr.clone();
+    let subs: Subs = &|name| consts.get(name).cloned();
+    rewrite_expr(&mut expr, subs);
+    expr
 }
 
-fn expand_type_pack_arguments(arguments: &mut Vec<ParamArg>, packs: &HashMap<String, Vec<Type>>) {
-    let mut expanded = Vec::with_capacity(arguments.len());
-    for mut argument in std::mem::take(arguments) {
-        match &mut argument {
-            ParamArg::Type(Type::Named(name, nested))
-                if name.starts_with('*') && nested.is_empty() =>
-            {
-                if let Some(types) = packs.get(name.trim_start_matches('*')) {
-                    expanded.extend(types.iter().cloned().map(ParamArg::Type));
-                } else {
+/// Identity assigned by the pre-check pack rewriter. These IDs are deliberately
+/// private to elaboration: checked `OwnerId`s do not exist yet, while source
+/// names are not identities in the presence of lexical shadowing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ElabBindingId(u32);
+
+/// Scope-aware resolver for the two namespaces pack rewriting touches. A
+/// specialized `$pack[T0, ...]` parameter records its length against the
+/// parameter's value binding, and a concrete type-pack expansion is associated
+/// with the type binding seeded for the specialization. Every shadowing binder
+/// receives a distinct ID even when it has the same source spelling.
+struct PackRewriter {
+    next_binding: u32,
+    value_scopes: Vec<HashMap<String, ElabBindingId>>,
+    type_scopes: Vec<HashMap<String, ElabBindingId>>,
+    runtime_packs: HashMap<ElabBindingId, usize>,
+    type_packs: HashMap<ElabBindingId, Vec<Type>>,
+}
+
+impl PackRewriter {
+    fn new(type_packs: &HashMap<String, Vec<Type>>) -> Self {
+        let mut rewriter = Self {
+            next_binding: 0,
+            value_scopes: vec![HashMap::new()],
+            type_scopes: vec![HashMap::new()],
+            runtime_packs: HashMap::new(),
+            type_packs: HashMap::new(),
+        };
+        let mut packs: Vec<_> = type_packs
+            .iter()
+            .map(|(name, types)| (name.clone(), types.clone()))
+            .collect();
+        packs.sort_by(|left, right| left.0.cmp(&right.0));
+        for (name, types) in packs {
+            let binding = rewriter.declare_type(&name);
+            rewriter.type_packs.insert(binding, types);
+        }
+        rewriter
+    }
+
+    fn fresh_binding(&mut self) -> ElabBindingId {
+        let binding = ElabBindingId(self.next_binding);
+        self.next_binding += 1;
+        binding
+    }
+
+    fn declare_value(&mut self, name: &str, runtime_pack: Option<usize>) -> ElabBindingId {
+        let binding = self.fresh_binding();
+        self.value_scopes
+            .last_mut()
+            .expect("pack rewriting always has a value scope")
+            .insert(name.to_string(), binding);
+        if let Some(length) = runtime_pack {
+            self.runtime_packs.insert(binding, length);
+        }
+        binding
+    }
+
+    fn declare_type(&mut self, name: &str) -> ElabBindingId {
+        let binding = self.fresh_binding();
+        self.type_scopes
+            .last_mut()
+            .expect("pack rewriting always has a type scope")
+            .insert(name.trim_start_matches('*').to_string(), binding);
+        binding
+    }
+
+    fn resolve_value(&self, name: &str) -> Option<ElabBindingId> {
+        self.value_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
+    }
+
+    fn resolve_type(&self, name: &str) -> Option<ElabBindingId> {
+        let name = name.trim_start_matches('*');
+        self.type_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
+    }
+
+    fn runtime_pack_length(&self, name: &str) -> Option<usize> {
+        self.resolve_value(name)
+            .and_then(|binding| self.runtime_packs.get(&binding).copied())
+    }
+
+    fn type_pack_expansion(&self, name: &str) -> Option<Vec<Type>> {
+        self.resolve_type(name)
+            .and_then(|binding| self.type_packs.get(&binding).cloned())
+    }
+
+    fn push_value_scope(&mut self) {
+        self.value_scopes.push(HashMap::new());
+    }
+
+    fn pop_value_scope(&mut self) {
+        self.value_scopes.pop();
+    }
+
+    fn push_type_scope(&mut self) {
+        self.type_scopes.push(HashMap::new());
+    }
+
+    fn pop_type_scope(&mut self) {
+        self.type_scopes.pop();
+    }
+
+    fn runtime_pack_parameter_length(parameter: &FnParam) -> Option<usize> {
+        match &parameter.ty {
+            Type::Named(name, elements) if name == "$pack" => Some(elements.len()),
+            _ => None,
+        }
+    }
+
+    fn declare_parameter(&mut self, parameter: &FnParam) {
+        self.declare_value(
+            &parameter.name,
+            Self::runtime_pack_parameter_length(parameter),
+        );
+    }
+
+    fn declare_parameters(&mut self, parameters: &[FnParam]) {
+        for parameter in parameters {
+            self.declare_parameter(parameter);
+        }
+    }
+
+    fn expand_type(&mut self, ty: &mut Type) {
+        match ty {
+            Type::Named(_, arguments) => self.expand_type_pack_arguments(arguments),
+            Type::Assoc { base, .. } => self.expand_type(base),
+            Type::IndexedProjection { base, index } => {
+                self.expand_type(base);
+                self.expand_expression(index);
+            }
+            Type::Func {
+                type_params,
+                params,
+                ret,
+                capturing,
+                raises_type,
+                ..
+            } => {
+                self.push_type_scope();
+                for parameter in type_params {
+                    self.expand_type_parameter(parameter);
+                    self.declare_type(&parameter.name);
+                }
+                for param in params {
+                    self.expand_type(&mut param.ty);
+                    if let Some(origins) = &mut param.origin {
+                        for origin in origins {
+                            self.expand_expression(origin);
+                        }
+                    }
+                }
+                self.expand_type(ret);
+                if let Some(origins) = capturing {
+                    for origin in origins {
+                        self.expand_expression(origin);
+                    }
+                }
+                if let Some(error) = raises_type {
+                    self.expand_type(error);
+                }
+                self.pop_type_scope();
+            }
+            Type::Ref { referent, origin } => {
+                self.expand_type(referent);
+                if let Some(origins) = origin {
+                    for origin in origins {
+                        self.expand_expression(origin);
+                    }
+                }
+            }
+            Type::Int
+            | Type::UInt
+            | Type::Bool
+            | Type::String
+            | Type::Float64
+            | Type::None
+            | Type::SelfParam(_)
+            | Type::SelfType
+            | Type::MaterializedCallable(_) => {}
+        }
+    }
+
+    fn expand_type_pack_arguments(&mut self, arguments: &mut Vec<ParamArg>) {
+        let mut expanded = Vec::with_capacity(arguments.len());
+        for mut argument in std::mem::take(arguments) {
+            match &mut argument {
+                ParamArg::Type(Type::Named(name, nested))
+                    if name.starts_with('*') && nested.is_empty() =>
+                {
+                    if let Some(types) = self.type_pack_expansion(name) {
+                        expanded.extend(types.into_iter().map(ParamArg::Type));
+                    } else {
+                        expanded.push(argument);
+                    }
+                }
+                ParamArg::Type(ty) => {
+                    self.expand_type(ty);
+                    expanded.push(argument);
+                }
+                ParamArg::Named { value, .. } => {
+                    self.expand_type_pack_argument(value);
+                    expanded.push(argument);
+                }
+                ParamArg::Value(value) => {
+                    self.expand_expression(value);
                     expanded.push(argument);
                 }
             }
-            ParamArg::Type(ty) => {
-                expand_type_packs(ty, packs);
-                expanded.push(argument);
-            }
-            ParamArg::Named { value, .. } => {
-                expand_type_pack_argument(value, packs);
-                expanded.push(argument);
-            }
-            ParamArg::Value(_) => expanded.push(argument),
+        }
+        *arguments = expanded;
+    }
+
+    fn expand_type_pack_argument(&mut self, argument: &mut ParamArg) {
+        match argument {
+            ParamArg::Type(ty) => self.expand_type(ty),
+            ParamArg::Named { value, .. } => self.expand_type_pack_argument(value),
+            ParamArg::Value(value) => self.expand_expression(value),
         }
     }
-    *arguments = expanded;
-}
 
-fn expand_type_pack_argument(argument: &mut ParamArg, packs: &HashMap<String, Vec<Type>>) {
-    match argument {
-        ParamArg::Type(ty) => expand_type_packs(ty, packs),
-        ParamArg::Named { value, .. } => expand_type_pack_argument(value, packs),
-        ParamArg::Value(_) => {}
+    fn expand_type_parameter(&mut self, parameter: &mut TypeParam) {
+        if let Some(value_type) = &mut parameter.value_type {
+            self.expand_type(value_type);
+        }
+        if let Some(callable) = &mut parameter.callable_bound {
+            self.expand_type(callable);
+        }
+        if let Some(mutability) = &mut parameter.origin_mutability {
+            self.expand_expression(mutability);
+        }
+        if let Some(default) = &mut parameter.default {
+            self.expand_expression(default);
+        }
+        for constraint in &mut parameter.constraints {
+            self.expand_expression(constraint);
+        }
     }
-}
 
-/// Expand `*args^` in a specialized `Tuple[*Ts](...)` construction.  Current
-/// Mojo intentionally does not permit arbitrary pack expansion into a
-/// fixed-arity call, so this rewrite is scoped to Tuple construction.  Other
-/// spreads survive to the checker and receive the normal unsupported diagnostic.
-pub(super) fn expand_pack_spreads_in_block(
-    statements: &mut [Stmt],
-    type_packs: &HashMap<String, Vec<Type>>,
-    runtime_pack_lengths: &HashMap<String, usize>,
-) {
-    for statement in statements {
-        expand_pack_spreads_in_stmt(statement, type_packs, runtime_pack_lengths);
+    fn expand_block(&mut self, statements: &mut [Stmt]) {
+        for statement in statements {
+            self.expand_statement(statement);
+        }
     }
-}
 
-pub(super) fn expand_pack_spreads_in_stmt(
-    statement: &mut Stmt,
-    type_packs: &HashMap<String, Vec<Type>>,
-    runtime_pack_lengths: &HashMap<String, usize>,
-) {
-    let expr =
-        |value: &mut Expr| expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths);
-    match &mut statement.kind {
-        StmtKind::VarDecl { ty, value, .. } => {
-            if let Some(ty) = ty {
-                expand_type_packs(ty, type_packs);
+    fn expand_scoped_block(&mut self, statements: &mut [Stmt]) {
+        self.push_value_scope();
+        self.expand_block(statements);
+        self.pop_value_scope();
+    }
+
+    fn expand_statement(&mut self, statement: &mut Stmt) {
+        match &mut statement.kind {
+            StmtKind::VarDecl { name, ty, value } => {
+                if let Some(ty) = ty {
+                    self.expand_type(ty);
+                }
+                self.expand_expression(value);
+                self.declare_value(name, None);
             }
-            expr(value);
-        }
-        StmtKind::RefDecl { value, .. }
-        | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
-        | StmtKind::Raise(value)
-        | StmtKind::Return(Some(value))
-        | StmtKind::Expr(value) => expr(value),
-        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
-            expr(place);
-            expr(value);
-        }
-        StmtKind::Unpack { targets, value } => {
-            for target in targets {
-                expr(target);
+            StmtKind::RefDecl { name, value } | StmtKind::Comptime { name, value } => {
+                self.expand_expression(value);
+                self.declare_value(name, None);
             }
-            expr(value);
-        }
-        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-            for (condition, body) in branches {
-                expr(condition);
-                expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            }
-            if let Some(body) = orelse {
-                expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            }
-        }
-        StmtKind::While { cond, body, orelse } => {
-            expr(cond);
-            expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            if let Some(body) = orelse {
-                expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            }
-        }
-        StmtKind::For {
-            iter, body, orelse, ..
-        } => {
-            expr(iter);
-            expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            if let Some(body) = orelse {
-                expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            }
-        }
-        StmtKind::ComptimeFor { iter, body, .. } => {
-            expr(iter);
-            expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-        }
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            if let Some((_, body)) = except {
-                expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            }
-            if let Some(body) = orelse {
-                expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            }
-            if let Some(body) = finalbody {
-                expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-            }
-        }
-        StmtKind::With { items, body } => {
-            for item in items {
-                expr(&mut item.context);
-            }
-            expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-        }
-        StmtKind::Def {
-            params,
-            raises_type,
-            ret,
-            body,
-            ..
-        } => {
-            for parameter in params {
-                expand_type_packs(&mut parameter.ty, type_packs);
-                if let Some(default) = &mut parameter.default {
-                    expr(default);
+            StmtKind::Assign { name, value } => {
+                self.expand_expression(value);
+                if self.resolve_value(name).is_none() {
+                    self.declare_value(name, None);
                 }
             }
-            if let Some(error) = raises_type {
-                expand_type_packs(error, type_packs);
+            StmtKind::Raise(value) | StmtKind::Return(Some(value)) | StmtKind::Expr(value) => {
+                self.expand_expression(value)
             }
-            if let Some(ret) = ret {
-                expand_type_packs(ret, type_packs);
+            StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+                self.expand_expression(place);
+                self.expand_expression(value);
             }
-            expand_pack_spreads_in_block(body, type_packs, runtime_pack_lengths);
-        }
-        StmtKind::Struct {
-            fields,
-            associated,
-            methods,
-            ..
-        } => {
-            for field in fields {
-                expand_type_packs(&mut field.ty, type_packs);
+            StmtKind::Unpack { targets, value } => {
+                self.expand_expression(value);
+                for target in targets {
+                    if let ExprKind::Identifier(name) = &target.kind {
+                        if self.resolve_value(name).is_none() {
+                            self.declare_value(name, None);
+                        }
+                    } else {
+                        self.expand_expression(target);
+                    }
+                }
             }
-            for item in associated {
-                expr(&mut item.value);
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                for (condition, body) in branches {
+                    self.expand_expression(condition);
+                    self.expand_scoped_block(body);
+                }
+                if let Some(body) = orelse {
+                    self.expand_scoped_block(body);
+                }
             }
-            for method in methods {
-                for parameter in &mut method.params {
-                    expand_type_packs(&mut parameter.ty, type_packs);
+            StmtKind::While { cond, body, orelse } => {
+                self.expand_expression(cond);
+                self.expand_scoped_block(body);
+                if let Some(body) = orelse {
+                    self.expand_scoped_block(body);
+                }
+            }
+            StmtKind::For {
+                var,
+                iter,
+                body,
+                orelse,
+                ..
+            } => {
+                self.expand_expression(iter);
+                self.push_value_scope();
+                self.declare_value(var, None);
+                self.expand_block(body);
+                self.pop_value_scope();
+                if let Some(body) = orelse {
+                    self.expand_scoped_block(body);
+                }
+            }
+            StmtKind::ComptimeFor { var, iter, body } => {
+                self.expand_expression(iter);
+                self.push_value_scope();
+                self.declare_value(var, None);
+                self.expand_block(body);
+                self.pop_value_scope();
+            }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                self.expand_scoped_block(body);
+                if let Some((name, body)) = except {
+                    self.push_value_scope();
+                    if let Some(name) = name {
+                        self.declare_value(name, None);
+                    }
+                    self.expand_block(body);
+                    self.pop_value_scope();
+                }
+                if let Some(body) = orelse {
+                    self.expand_scoped_block(body);
+                }
+                if let Some(body) = finalbody {
+                    self.expand_scoped_block(body);
+                }
+            }
+            StmtKind::With { items, body } => {
+                self.push_value_scope();
+                for item in items {
+                    self.expand_expression(&mut item.context);
+                    if let Some(name) = &item.var {
+                        self.declare_value(name, None);
+                    }
+                }
+                self.expand_block(body);
+                self.pop_value_scope();
+            }
+            StmtKind::Def {
+                name,
+                type_params,
+                params,
+                raises_type,
+                ret,
+                where_clause,
+                body,
+                ..
+            } => {
+                // The nested declaration itself is a binding in the enclosing
+                // scope. Its own parameters then shadow that scope in the body.
+                self.declare_value(name, None);
+                self.push_type_scope();
+                for parameter in type_params {
+                    self.expand_type_parameter(parameter);
+                    self.declare_type(&parameter.name);
+                }
+                self.push_value_scope();
+                for parameter in params {
+                    self.expand_type(&mut parameter.ty);
                     if let Some(default) = &mut parameter.default {
-                        expr(default);
+                        self.expand_expression(default);
+                    }
+                    self.declare_parameter(parameter);
+                }
+                if let Some(error) = raises_type {
+                    self.expand_type(error);
+                }
+                if let Some(ret) = ret {
+                    self.expand_type(ret);
+                }
+                if let Some(condition) = where_clause {
+                    self.expand_expression(condition);
+                }
+                self.expand_block(body);
+                self.pop_value_scope();
+                self.pop_type_scope();
+            }
+            StmtKind::Struct {
+                name,
+                type_params,
+                callable_conformance,
+                conformance_conditions,
+                fields,
+                associated,
+                methods,
+                ..
+            } => {
+                self.declare_value(name, None);
+                self.push_type_scope();
+                for parameter in type_params {
+                    self.expand_type_parameter(parameter);
+                    self.declare_type(&parameter.name);
+                }
+                if let Some(callable) = callable_conformance {
+                    self.expand_type(callable);
+                }
+                for (_, condition) in conformance_conditions {
+                    self.expand_expression(condition);
+                }
+                for field in fields {
+                    self.expand_type(&mut field.ty);
+                }
+                for item in associated {
+                    self.expand_expression(&mut item.value);
+                }
+                for method in methods {
+                    self.expand_method(method);
+                }
+                self.pop_type_scope();
+            }
+            StmtKind::Import { path, alias } => {
+                if let Some(name) = alias.as_ref().or_else(|| path.first()) {
+                    self.declare_value(name, None);
+                }
+            }
+            StmtKind::FromImport { names, .. } => {
+                if let ImportNames::Names(names) = names {
+                    for imported in names {
+                        self.declare_value(
+                            imported.alias.as_deref().unwrap_or(&imported.name),
+                            None,
+                        );
                     }
                 }
-                if let Some(error) = &mut method.raises_type {
-                    expand_type_packs(error, type_packs);
-                }
-                if let Some(ret) = &mut method.ret {
-                    expand_type_packs(ret, type_packs);
-                }
-                expand_pack_spreads_in_block(&mut method.body, type_packs, runtime_pack_lengths);
             }
+            StmtKind::Return(None)
+            | StmtKind::Pass
+            | StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Trait { .. } => {}
         }
-        StmtKind::Return(None)
-        | StmtKind::Pass
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Import { .. }
-        | StmtKind::FromImport { .. }
-        | StmtKind::Trait { .. } => {}
-    }
-}
-
-fn expand_pack_spreads_in_expr(
-    expression: &mut Expr,
-    type_packs: &HashMap<String, Vec<Type>>,
-    runtime_pack_lengths: &HashMap<String, usize>,
-) {
-    // A specialized heterogeneous runtime pack already has the exact native
-    // Tuple shape selected for `*Ts`. Moving every element into `Tuple(*args^)`
-    // is therefore a whole-value relocation, not an indexed copy/rebuild. Keep
-    // that fact explicit in the checked AST so MIR emits one `UseVar { Move }`
-    // and tombstones the source pack before its callee-side cleanup.
-    if let ExprKind::Call {
-        name,
-        param_args,
-        args,
-        kwargs,
-    } = &expression.kind
-        && name == "Tuple"
-        && param_args.is_empty()
-        && kwargs.is_empty()
-        && let [argument] = args.as_slice()
-        && let ExprKind::Spread(spread) = &argument.kind
-        && let ExprKind::Transfer(inner) = &spread.kind
-        && let ExprKind::Identifier(pack) = &inner.kind
-        && runtime_pack_lengths.contains_key(pack)
-    {
-        expression.kind = ExprKind::Transfer(inner.clone());
-        return;
     }
 
-    match &mut expression.kind {
-        ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } => {
-            expand_type_pack_arguments(param_args, type_packs);
-            for argument in args.iter_mut() {
-                expand_pack_spreads_in_expr(argument, type_packs, runtime_pack_lengths);
-            }
-            for argument in kwargs {
-                expand_pack_spreads_in_expr(&mut argument.value, type_packs, runtime_pack_lengths);
-            }
-            if name == "Tuple" {
-                *args = expand_tuple_spread_arguments(std::mem::take(args), runtime_pack_lengths);
-            }
+    fn expand_method(&mut self, method: &mut Method) {
+        self.push_type_scope();
+        for parameter in &mut method.type_params {
+            self.expand_type_parameter(parameter);
+            self.declare_type(&parameter.name);
         }
-        ExprKind::Invoke {
-            callee,
-            param_args,
-            args,
-            kwargs,
-        } => {
-            expand_pack_spreads_in_expr(callee, type_packs, runtime_pack_lengths);
-            expand_type_pack_arguments(param_args, type_packs);
-            for argument in args {
-                expand_pack_spreads_in_expr(argument, type_packs, runtime_pack_lengths);
+        self.push_value_scope();
+        if method.has_self {
+            self.declare_value("self", None);
+        }
+        for parameter in &mut method.params {
+            self.expand_type(&mut parameter.ty);
+            if let Some(default) = &mut parameter.default {
+                self.expand_expression(default);
             }
-            for argument in kwargs {
-                expand_pack_spreads_in_expr(&mut argument.value, type_packs, runtime_pack_lengths);
+            self.declare_parameter(parameter);
+        }
+        if let Some(error) = &mut method.raises_type {
+            self.expand_type(error);
+        }
+        if let Some(ret) = &mut method.ret {
+            self.expand_type(ret);
+        }
+        if let Some(condition) = &mut method.where_clause {
+            self.expand_expression(condition);
+        }
+        self.expand_block(&mut method.body);
+        self.pop_value_scope();
+        self.pop_type_scope();
+    }
+
+    fn expand_expression(&mut self, expression: &mut Expr) {
+        // A specialized heterogeneous runtime pack already has the exact native
+        // Tuple shape selected for `*Ts`. Moving every element into
+        // `Tuple(*args^)` is one whole-value relocation. The eligibility check is
+        // by the resolved parameter identity, never by the spelling `args`.
+        let whole_pack_transfer = matches!(
+            &expression.kind,
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "__RuntimeTuple"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && matches!(args.as_slice(), [argument]
+                    if matches!(&argument.kind, ExprKind::Spread(spread)
+                        if matches!(&spread.kind, ExprKind::Transfer(inner)
+                            if matches!(&inner.kind, ExprKind::Identifier(pack)
+                                if self.runtime_pack_length(pack).is_some()))))
+        );
+        if whole_pack_transfer {
+            let ExprKind::Call { args, .. } = &expression.kind else {
+                unreachable!();
+            };
+            let ExprKind::Spread(spread) = &args[0].kind else {
+                unreachable!();
+            };
+            let ExprKind::Transfer(inner) = &spread.kind else {
+                unreachable!();
+            };
+            expression.kind = ExprKind::Transfer(inner.clone());
+            return;
+        }
+
+        match &mut expression.kind {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                self.expand_type_pack_arguments(param_args);
+                for argument in args.iter_mut() {
+                    self.expand_expression(argument);
+                }
+                for argument in kwargs {
+                    self.expand_expression(&mut argument.value);
+                }
+                if name == "__RuntimeTuple" || name == "Tuple" {
+                    *args = self.expand_tuple_spread_arguments(std::mem::take(args));
+                }
             }
-        }
-        ExprKind::TypeApply { args, .. } => {
-            expand_type_pack_arguments(args, type_packs);
-        }
-        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) | ExprKind::Spread(value) => {
-            expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths)
-        }
-        ExprKind::Infix(_, left, right)
-        | ExprKind::Index {
-            object: left,
-            index: right,
-        } => {
-            expand_pack_spreads_in_expr(left, type_packs, runtime_pack_lengths);
-            expand_pack_spreads_in_expr(right, type_packs, runtime_pack_lengths);
-        }
-        ExprKind::Compare { first, rest } => {
-            expand_pack_spreads_in_expr(first, type_packs, runtime_pack_lengths);
-            for (_, value) in rest {
-                expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths);
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                self.expand_expression(callee);
+                self.expand_type_pack_arguments(param_args);
+                for argument in args {
+                    self.expand_expression(argument);
+                }
+                for argument in kwargs {
+                    self.expand_expression(&mut argument.value);
+                }
             }
-        }
-        ExprKind::Member { object, .. } => {
-            expand_pack_spreads_in_expr(object, type_packs, runtime_pack_lengths)
-        }
-        ExprKind::MethodCall {
-            object,
-            args,
-            kwargs,
-            ..
-        } => {
-            expand_pack_spreads_in_expr(object, type_packs, runtime_pack_lengths);
-            for argument in args {
-                expand_pack_spreads_in_expr(argument, type_packs, runtime_pack_lengths);
+            ExprKind::TypeApply { args, .. } => self.expand_type_pack_arguments(args),
+            ExprKind::Prefix(_, value) | ExprKind::Transfer(value) | ExprKind::Spread(value) => {
+                self.expand_expression(value)
             }
-            for argument in kwargs {
-                expand_pack_spreads_in_expr(&mut argument.value, type_packs, runtime_pack_lengths);
+            ExprKind::Infix(_, left, right)
+            | ExprKind::Index {
+                object: left,
+                index: right,
+            } => {
+                self.expand_expression(left);
+                self.expand_expression(right);
             }
-        }
-        ExprKind::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            ..
-        } => {
-            expand_pack_spreads_in_expr(object, type_packs, runtime_pack_lengths);
-            for bound in [lower, upper, step].into_iter().flatten() {
-                expand_pack_spreads_in_expr(bound, type_packs, runtime_pack_lengths);
+            ExprKind::Compare { first, rest } => {
+                self.expand_expression(first);
+                for (_, value) in rest {
+                    self.expand_expression(value);
+                }
             }
-        }
-        ExprKind::MultiIndex { object, args } => {
-            expand_pack_spreads_in_expr(object, type_packs, runtime_pack_lengths);
-            for argument in args {
-                match argument {
-                    crate::ast::SubscriptArg::Index(value) => {
-                        expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths)
-                    }
-                    crate::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    } => {
-                        for value in [lower, upper, step].into_iter().flatten() {
-                            expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths);
+            ExprKind::Member { object, .. } => self.expand_expression(object),
+            ExprKind::MethodCall {
+                object,
+                args,
+                kwargs,
+                ..
+            } => {
+                self.expand_expression(object);
+                for argument in args {
+                    self.expand_expression(argument);
+                }
+                for argument in kwargs {
+                    self.expand_expression(&mut argument.value);
+                }
+            }
+            ExprKind::Slice {
+                object,
+                lower,
+                upper,
+                step,
+                ..
+            } => {
+                self.expand_expression(object);
+                for bound in [lower, upper, step].into_iter().flatten() {
+                    self.expand_expression(bound);
+                }
+            }
+            ExprKind::MultiIndex { object, args } => {
+                self.expand_expression(object);
+                for argument in args {
+                    match argument {
+                        crate::ast::SubscriptArg::Index(value) => self.expand_expression(value),
+                        crate::ast::SubscriptArg::Slice {
+                            lower, upper, step, ..
+                        } => {
+                            for value in [lower, upper, step].into_iter().flatten() {
+                                self.expand_expression(value);
+                            }
                         }
                     }
                 }
             }
-        }
-        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
-            for value in values {
-                expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths);
-            }
-        }
-        ExprKind::BraceLit(entries) => {
-            for (key, value) in entries {
-                expand_pack_spreads_in_expr(key, type_packs, runtime_pack_lengths);
-                if let Some(value) = value {
-                    expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths);
+            ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
+                for value in values {
+                    self.expand_expression(value);
                 }
             }
-        }
-        ExprKind::Comprehension {
-            key,
-            value,
-            clauses,
-            ..
-        } => {
-            for clause in clauses {
-                match clause {
-                    crate::ast::ComprehensionClause::For { iter, .. } => {
-                        expand_pack_spreads_in_expr(iter, type_packs, runtime_pack_lengths)
-                    }
-                    crate::ast::ComprehensionClause::If(condition) => {
-                        expand_pack_spreads_in_expr(condition, type_packs, runtime_pack_lengths)
+            ExprKind::BraceLit(entries) => {
+                for (key, value) in entries {
+                    self.expand_expression(key);
+                    if let Some(value) = value {
+                        self.expand_expression(value);
                     }
                 }
             }
-            if let Some(key) = key {
-                expand_pack_spreads_in_expr(key, type_packs, runtime_pack_lengths);
+            ExprKind::Comprehension {
+                key,
+                value,
+                clauses,
+                ..
+            } => {
+                // Each generator binds to its right, but not in its own iterable.
+                self.push_value_scope();
+                for clause in clauses {
+                    match clause {
+                        crate::ast::ComprehensionClause::For { var, iter, .. } => {
+                            self.expand_expression(iter);
+                            self.declare_value(var, None);
+                        }
+                        crate::ast::ComprehensionClause::If(condition) => {
+                            self.expand_expression(condition)
+                        }
+                    }
+                }
+                if let Some(key) = key {
+                    self.expand_expression(key);
+                }
+                self.expand_expression(value);
+                self.pop_value_scope();
             }
-            expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths);
-        }
-        ExprKind::TypeValue(ty) => expand_type_packs(ty, type_packs),
-        ExprKind::Named { value, .. } => {
-            expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths)
-        }
-        ExprKind::IfExpr {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            expand_pack_spreads_in_expr(cond, type_packs, runtime_pack_lengths);
-            expand_pack_spreads_in_expr(then_branch, type_packs, runtime_pack_lengths);
-            expand_pack_spreads_in_expr(else_branch, type_packs, runtime_pack_lengths);
-        }
-        ExprKind::TString { parts, .. } => {
-            for part in parts {
-                if let crate::ast::TStringPart::Expr(value) = part {
-                    expand_pack_spreads_in_expr(value, type_packs, runtime_pack_lengths);
+            ExprKind::TypeValue(ty) => self.expand_type(ty),
+            ExprKind::Named { value, .. } => self.expand_expression(value),
+            ExprKind::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                self.expand_expression(cond);
+                self.expand_expression(then_branch);
+                self.expand_expression(else_branch);
+            }
+            ExprKind::TString { parts, .. } => {
+                for part in parts {
+                    if let crate::ast::TStringPart::Expr(value) = part {
+                        self.expand_expression(value);
+                    }
                 }
             }
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::None
+            | ExprKind::Uninitialized
+            | ExprKind::Identifier(_) => {}
         }
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Str(_)
-        | ExprKind::None
-        | ExprKind::Uninitialized
-        | ExprKind::Identifier(_) => {}
     }
-}
 
-fn expand_tuple_spread_arguments(
-    arguments: Vec<Expr>,
-    runtime_pack_lengths: &HashMap<String, usize>,
-) -> Vec<Expr> {
-    let mut expanded = Vec::new();
-    for argument in arguments {
-        let ExprKind::Spread(value) = &argument.kind else {
-            expanded.push(argument);
-            continue;
-        };
-        let (pack, transferring) = match &value.kind {
-            ExprKind::Identifier(name) => (name.as_str(), false),
-            ExprKind::Transfer(value) => match &value.kind {
-                ExprKind::Identifier(name) => (name.as_str(), true),
+    fn expand_tuple_spread_arguments(&self, arguments: Vec<Expr>) -> Vec<Expr> {
+        let mut expanded = Vec::new();
+        for argument in arguments {
+            let ExprKind::Spread(value) = &argument.kind else {
+                expanded.push(argument);
+                continue;
+            };
+            let (pack, transferring) = match &value.kind {
+                ExprKind::Identifier(name) => (name.as_str(), false),
+                ExprKind::Transfer(value) => match &value.kind {
+                    ExprKind::Identifier(name) => (name.as_str(), true),
+                    _ => {
+                        expanded.push(argument);
+                        continue;
+                    }
+                },
                 _ => {
                     expanded.push(argument);
                     continue;
                 }
-            },
-            _ => {
+            };
+            let Some(length) = self.runtime_pack_length(pack) else {
                 expanded.push(argument);
                 continue;
-            }
-        };
-        let Some(length) = runtime_pack_lengths.get(pack) else {
-            expanded.push(argument);
-            continue;
-        };
-        let source = argument.source.clone();
-        let span = argument.span;
-        for index in 0..*length {
-            let base = Expr {
-                kind: ExprKind::Identifier(pack.to_string()),
-                span,
-                source: source.clone(),
             };
-            let index = Expr {
-                kind: ExprKind::Int((index as i64).into()),
-                span,
-                source: source.clone(),
-            };
-            let indexed = Expr {
-                kind: ExprKind::Index {
-                    object: Box::new(base),
-                    index: Box::new(index),
-                },
-                span,
-                source: source.clone(),
-            };
-            expanded.push(if transferring {
-                Expr {
-                    kind: ExprKind::Transfer(Box::new(indexed)),
+            let source = argument.source.clone();
+            let span = argument.span;
+            for index in 0..length {
+                let base = Expr {
+                    kind: ExprKind::Identifier(pack.to_string()),
                     span,
                     source: source.clone(),
-                }
-            } else {
-                indexed
-            });
+                    syntax_id: crate::token::SyntaxId::fresh(),
+                };
+                let index = Expr {
+                    kind: ExprKind::Int((index as i64).into()),
+                    span,
+                    source: source.clone(),
+                    syntax_id: crate::token::SyntaxId::fresh(),
+                };
+                let indexed = Expr {
+                    kind: ExprKind::Index {
+                        object: Box::new(base),
+                        index: Box::new(index),
+                    },
+                    span,
+                    source: source.clone(),
+                    syntax_id: crate::token::SyntaxId::fresh(),
+                };
+                expanded.push(if transferring {
+                    Expr {
+                        kind: ExprKind::Transfer(Box::new(indexed)),
+                        span,
+                        source: source.clone(),
+                        syntax_id: crate::token::SyntaxId::fresh(),
+                    }
+                } else {
+                    indexed
+                });
+            }
         }
+        expanded
     }
-    expanded
+}
+
+/// Replace a specialized type-pack use such as `Tuple[*Ts]` with the concrete
+/// parameter list selected for this specialization. Root signature types have
+/// no nested binders, so they use a one-scope rewriter; bodies use the scoped
+/// entry points below.
+pub(super) fn expand_type_packs(ty: &mut Type, packs: &HashMap<String, Vec<Type>>) {
+    PackRewriter::new(packs).expand_type(ty);
+}
+
+/// Expand pack operations in one specialized function body. Runtime pack
+/// identity comes from the already-specialized `$pack[...]` parameter type, not
+/// from a name-to-length side table.
+pub(super) fn expand_pack_spreads_in_function_body(
+    statements: &mut [Stmt],
+    parameters: &[FnParam],
+    type_packs: &HashMap<String, Vec<Type>>,
+) {
+    let mut rewriter = PackRewriter::new(type_packs);
+    rewriter.declare_parameters(parameters);
+    rewriter.expand_block(statements);
+}
+
+/// Expand a declaration tree such as a specialized variadic struct. Each method
+/// establishes its own parameter identities, preventing pack metadata from one
+/// method leaking into a same-named ordinary parameter in another.
+pub(super) fn expand_pack_spreads_in_stmt(
+    statement: &mut Stmt,
+    type_packs: &HashMap<String, Vec<Type>>,
+) {
+    PackRewriter::new(type_packs).expand_statement(statement);
 }
 
 pub(super) fn rewrite_stmt_cloned(s: &Stmt, subs: Subs, into_defs: bool) -> Stmt {
@@ -625,9 +934,84 @@ fn rewrite_exprs(es: &mut [Expr], subs: Subs) {
 
 fn rewrite_param_args(args: &mut [crate::ast::ParamArg], subs: Subs) {
     for a in args {
-        if let crate::ast::ParamArg::Value(e) = a {
-            rewrite_expr(e, subs);
+        match a {
+            crate::ast::ParamArg::Type(ty) => rewrite_type(ty, subs),
+            crate::ast::ParamArg::Value(e) => rewrite_expr(e, subs),
+            crate::ast::ParamArg::Named { value, .. } => {
+                rewrite_param_args(std::slice::from_mut(value), subs);
+            }
         }
+    }
+}
+
+/// Substitute compile-time loop bindings inside nested type syntax as well as
+/// value arguments. A dependent type such as `Ts[i]` stores `i` below a
+/// `ParamArg::Type`, so rewriting only top-level value arguments leaves an
+/// unbound index in an otherwise-unrolled specialization.
+fn rewrite_type(ty: &mut Type, subs: Subs) {
+    match ty {
+        Type::Named(_, arguments) => rewrite_param_args(arguments, subs),
+        Type::Assoc { base, .. } => rewrite_type(base, subs),
+        Type::IndexedProjection { base, index } => {
+            rewrite_type(base, subs);
+            rewrite_expr(index, subs);
+        }
+        Type::Func {
+            type_params,
+            params,
+            ret,
+            capturing,
+            raises_type,
+            ..
+        } => {
+            for parameter in type_params {
+                if let Some(value_type) = &mut parameter.value_type {
+                    rewrite_type(value_type, subs);
+                }
+                if let Some(callable) = &mut parameter.callable_bound {
+                    rewrite_type(callable, subs);
+                }
+                if let Some(mutability) = &mut parameter.origin_mutability {
+                    rewrite_expr(mutability, subs);
+                }
+                if let Some(default) = &mut parameter.default {
+                    rewrite_expr(default, subs);
+                }
+                for constraint in &mut parameter.constraints {
+                    rewrite_expr(constraint, subs);
+                }
+            }
+            for parameter in params {
+                rewrite_type(&mut parameter.ty, subs);
+                if let Some(origins) = &mut parameter.origin {
+                    for origin in origins {
+                        rewrite_expr(origin, subs);
+                    }
+                }
+            }
+            rewrite_type(ret, subs);
+            for origin in capturing.iter_mut().flatten() {
+                rewrite_expr(origin, subs);
+            }
+            if let Some(error) = raises_type {
+                rewrite_type(error, subs);
+            }
+        }
+        Type::Ref { referent, origin } => {
+            rewrite_type(referent, subs);
+            for origin in origin.iter_mut().flatten() {
+                rewrite_expr(origin, subs);
+            }
+        }
+        Type::Int
+        | Type::UInt
+        | Type::Bool
+        | Type::String
+        | Type::Float64
+        | Type::None
+        | Type::SelfParam(_)
+        | Type::SelfType
+        | Type::MaterializedCallable(_) => {}
     }
 }
 

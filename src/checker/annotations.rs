@@ -84,13 +84,27 @@ pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
     }
 }
 
-/// The type-parameter scope (`name → bounds`) of a parameter list, for resolving
-/// a bare `T` annotation. Value parameters are excluded (they are `Int` locals).
-pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Vec<String>> {
+/// The type-parameter scope of a parameter list, for resolving a bare `T`
+/// annotation. Retaining the complete checked `Ty::Param` is important for
+/// callable bounds: a name-only/bounds-only scope would discard the signature
+/// needed to type `f(...)` inside `[F: def(...) -> ...]`.
+pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Ty> {
     decls
         .iter()
         .filter_map(|d| match d {
-            ParamDecl::Type { name, bounds, .. } => Some((name.clone(), bounds.clone())),
+            ParamDecl::Type {
+                name,
+                bounds,
+                callable_bound,
+                ..
+            } => Some((
+                name.clone(),
+                Ty::Param {
+                    name: name.clone(),
+                    bounds: bounds.clone(),
+                    callable_bound: callable_bound.clone(),
+                },
+            )),
             ParamDecl::Value { .. } => None,
         })
         .collect()
@@ -101,9 +115,15 @@ pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Vec<String>> {
 /// parameter as a symbolic `CtValue::Param`.
 pub(super) fn param_as_arg(decl: &ParamDecl) -> TyArg {
     match decl {
-        ParamDecl::Type { name, bounds, .. } => TyArg::Ty(Ty::Param {
+        ParamDecl::Type {
+            name,
+            bounds,
+            callable_bound,
+            ..
+        } => TyArg::Ty(Ty::Param {
             name: name.clone(),
             bounds: bounds.clone(),
+            callable_bound: callable_bound.clone(),
         }),
         ParamDecl::Value { name, .. } => TyArg::Val(CtValue::Param(name.clone())),
     }

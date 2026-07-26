@@ -51,6 +51,20 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Reg(pub u32);
 
+/// One source `[...]` argument after lowering. `name` preserves keyword
+/// binding (`callback=increment`); `value` is absent for an erased type
+/// argument. Semantic Origin/OriginSet arguments do not enter this list.
+///
+/// Keeping binding identity separate from the optional runtime register lets
+/// the VM normalize arguments to declaration order before applying defaults.
+/// A bare `None` register cannot express the difference between an omitted
+/// parameter and a supplied type argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirParamArg {
+    pub name: Option<String>,
+    pub value: Option<Reg>,
+}
+
 /// Index of a basic block within a [`MirFunction`]'s `blocks`.
 pub type MirBlockId = usize;
 
@@ -77,6 +91,24 @@ pub enum MirSubscriptArg {
         upper: Option<Reg>,
         step: Option<Reg>,
     },
+}
+
+/// Checked non-nominal dispatch for an index or slice instruction. A missing
+/// [`MirSubscriptCall`] is never an invitation for the VM to inspect the runtime
+/// value and guess semantics: lowering records the exact compiler/runtime
+/// storage family selected by the checked base type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirIntrinsicSubscript {
+    /// Compiler-private heterogeneous Tuple/RuntimePack storage, including a
+    /// nominal Tuple result whose intrinsic producer uses `Value::Tuple` as its
+    /// ABI (currently `Slice.indices`).
+    TupleStorage,
+    /// Compiler-private homogeneous `*args` storage.
+    VariadicStorage,
+    Simd,
+    Pointer,
+    ComptimeList,
+    String,
 }
 
 /// A compile-time-known literal.
@@ -110,6 +142,10 @@ impl FuncRef {
 pub enum Proj {
     Field(String),
     Index(Reg), // the subscript index, flattened to a register (evaluated once)
+    /// A statically selected element of compiler-private heterogeneous Tuple
+    /// storage. Unlike [`Proj::Index`], distinct constant indices are disjoint
+    /// ownership paths, so moving element 0 does not move element 1.
+    ConstIndex(usize),
     /// Payload of a checked `Variant` alternative.  The tag is static; runtime
     /// navigation traps if the active alternative differs.
     Variant(usize),
@@ -157,17 +193,67 @@ impl MirPlace {
     }
 }
 
+/// Canonical, runtime-erased identity of an interior storage generation after
+/// stable checker owners have been mapped to MIR slots. `Interior` path
+/// segments are invalidation domains; ordinary field/index segments retain
+/// field sensitivity.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MirInteriorOrigin {
+    pub root: VarId,
+    pub path: Vec<crate::origin::OriginSeg>,
+}
+
+/// One owner dependency carried by a reference or reference-bearing value.
+/// `place` is the executable target; `interior` is the distinct analytical
+/// generation identity when the target lives behind container-owned storage.
+#[derive(Debug, Clone)]
+pub struct MirLoan {
+    pub place: MirPlace,
+    pub mutable: bool,
+    pub interior: Option<MirInteriorOrigin>,
+}
+
+/// Complete checker-selected contract for a nominal subscript invocation.
+/// Intrinsic pointer/SIMD/private-storage operations carry no such payload.
+#[derive(Debug, Clone)]
+pub struct MirSubscriptCall {
+    pub target: String,
+    pub raises: Option<Ty>,
+    /// Checker-selected executable result type, including the instantiated
+    /// origin and mutability of a reference result.
+    pub result_ty: Ty,
+    pub receiver_requires_place: bool,
+    pub receiver_convention: Option<crate::ast::ArgConvention>,
+    pub arguments: Vec<crate::checked::CheckedCallArgument>,
+    pub capture_accesses: Vec<MirCaptureAccess>,
+    pub reference_result: Option<crate::origin::RefTy>,
+    pub param_arg_regs: Vec<MirParamArg>,
+    pub param_decls: Vec<crate::types::ParamDecl>,
+}
+
 /// A single three-address instruction. Each value-producing instruction writes a
 /// fresh `dest` register; control flow lives in the block's [`MirTerm`].
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum MirInstr {
-    /// Establish a persistent local loan. The reference has no runtime value in
-    /// this lowering; subsequent accesses carry `MirPlace::through` metadata.
-    BeginLoan {
+    /// Establish one fresh generation containing every owner loan carried by a
+    /// reference or aggregate binding. Grouping the loans makes rebinding reset
+    /// the old generation atomically instead of merging historical loans for
+    /// the same variable slot.
+    EstablishLoans {
         reference: VarId,
-        place: MirPlace,
-        mutable: bool,
+        loans: Vec<MirLoan>,
+        marker: Reg,
+    },
+    /// Invalidate established interior generations rooted below `base`.
+    /// `include_base_generation` also replaces the exact named generation at
+    /// `base`; `except` preserves the generation used to perform an ordinary
+    /// mutation through an interior reference while still invalidating nested
+    /// interiors.
+    InvalidateInteriors {
+        base: MirInteriorOrigin,
+        except: Option<VarId>,
+        include_base_generation: bool,
         marker: Reg,
     },
     /// Materialize a runtime reference handle to a verified place. If the root
@@ -180,13 +266,22 @@ pub enum MirInstr {
         dest: Reg,
         reference: Reg,
     },
+    /// Materialize an owned copy of a register value.  Reference-returning
+    /// expressions use this after `ReadRef` in ordinary value contexts; an
+    /// explicit `ref` binding retains the handle and therefore never emits it.
+    /// Keeping the operation explicit prevents the VM from guessing whether a
+    /// handle read is a borrow, a forwarding read, or a lifecycle copy.
+    CopyValue {
+        dest: Reg,
+        value: Reg,
+    },
     WriteRef {
         reference: Reg,
         value: Reg,
     },
     /// Build a non-escaping closure value from a lifted function and its explicit
-    /// environment. Reference captures are frame/slot handles; moved captures
-    /// transfer the value into the environment.
+    /// environment. The capture mode fixes whether declaration evaluation stores
+    /// a reference handle, an owned snapshot, or a transferred value.
     MakeClosure {
         dest: Reg,
         function: String,
@@ -216,13 +311,14 @@ pub enum MirInstr {
         var: VarId,
         mode: UseMode,
     },
-    /// A **partial move** `p.a^` — transfer one sub-place (a pure field chain,
-    /// no dynamic index) out of a variable, reading its value into `dest`. The
-    /// ownership analysis tracks this at place granularity (moving `p.a` leaves
-    /// `p.b` usable); at runtime the field slot is left a tombstone so a later
-    /// drop of the whole struct skips it (no double-drop). Whole-variable moves
-    /// stay `UseVar { mode: Move }`; an indexed transfer falls back to a plain
-    /// read (the move is not modeled — conservative for dynamic indices).
+    /// A **partial move** `p.a^`, or a constant-index move from compiler-private
+    /// Tuple storage — transfer one independently owned sub-place out of a
+    /// variable, reading its value into `dest`. The ownership analysis tracks
+    /// this at place granularity (moving `p.a` leaves `p.b` usable, and moving
+    /// Tuple element 0 leaves element 1 usable); at runtime the slot is left a
+    /// tombstone so a later aggregate drop skips it. Whole-variable moves stay
+    /// `UseVar { mode: Move }`; user-facing indexed transfers remain restricted
+    /// by checking to copyable value reads.
     MovePlace {
         dest: Reg,
         place: MirPlace,
@@ -247,15 +343,20 @@ pub enum MirInstr {
         dest: Reg,
         a: Reg,
         b: Reg,
+        /// Checker-selected operator implementation when nominal overload
+        /// resolution was required (notably a concrete Tuple membership
+        /// overload). Backends must not reselect it by name/arity.
+        resolved: Option<String>,
     },
     /// A free-function / constructor / builtin call. `args` are the flattened
     /// positional arguments; `kwargs` the keyword arguments (`name = value`). The
     /// backend matches them to the callee's parameter slots (filling defaults,
     /// collecting `*args`) via the phase-neutral call matcher.
-    /// A free-function call. `arg_places[i]` is `Some` when positional argument `i`
-    /// is a simple place (a variable or field chain, no dynamic index), so a
-    /// `mut`/`ref` parameter can write its final value back to the caller; `None`
-    /// otherwise (a temporary, or an indexed place).
+    /// A free-function call. `arg_places[i]` is `Some` only when checking selected
+    /// a `mut`/`ref` parameter and positional argument `i` is a simple place (a
+    /// variable or field chain, no dynamic index). It retains the caller place
+    /// for handle passing/write-back; ordinary copied arguments and unsupported
+    /// place shapes are `None`.
     Call {
         dest: Reg,
         func: FuncRef,
@@ -264,27 +365,63 @@ pub enum MirInstr {
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         arg_places: Vec<Option<MirPlace>>,
-        /// The supplied compile-time parameter arguments (`Name[param_args](args)`),
-        /// one entry per `[...]` slot: `Some(reg)` for a **value** parameter (a
-        /// comptime `Int` expression, flattened to a register) and `None` for a
-        /// **type** parameter (erased). The backend reifies the value arguments onto
-        /// a constructed struct's `value_params` (type parameters stay erased). Empty
-        /// for a plain call.
-        param_arg_regs: Vec<Option<Reg>>,
+        /// Retained caller places aligned with `kwargs`. Keyword binding is
+        /// reordered by the call ABI, so the backend resolves these by the
+        /// selected parameter name rather than by positional index.
+        kwarg_places: Vec<Option<MirPlace>>,
+        /// Concrete captured-owner effects performed transitively during this
+        /// call. Static verification consumes these; execution erases them.
+        capture_accesses: Vec<MirCaptureAccess>,
+        /// Supplied compile-time arguments in source order. Each entry retains
+        /// an optional keyword name and an optional value register; type
+        /// arguments have no register. Origin arguments are semantically erased
+        /// before this list. Consumers bind these entries to `ParamDecl` order
+        /// before applying defaults.
+        param_arg_regs: Vec<MirParamArg>,
     },
     /// A call through a runtime function value. Callable parameters use this
     /// instruction instead of treating the parameter name as a global symbol.
     CallIndirect {
         dest: Reg,
         callee: Reg,
+        /// Exact checker-selected nominal `__call__` target, or a
+        /// signature-qualified abstract target for a `def(...)` value. The VM
+        /// consults this only when `callee` is a nominal callable struct.
+        resolved: Option<String>,
         /// Checker-selected error contract of the callable value.
         raises: Option<Ty>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
+        /// The callable value's caller place, when it has one. This is needed
+        /// for a callable struct whose `__call__` receiver is `mut`/`ref`.
+        callee_place: Option<MirPlace>,
+        /// Like `Call::arg_places`: the retained caller place for each
+        /// positional argument selected for a `mut`/`ref` parameter.
+        arg_places: Vec<Option<MirPlace>>,
+        /// Like `Call::kwarg_places`, aligned with `kwargs`.
+        kwarg_places: Vec<Option<MirPlace>>,
+        capture_accesses: Vec<MirCaptureAccess>,
+        /// Compile-time arguments supplied while invoking a generic callable
+        /// value, in the same source-order representation as `Call`.
+        param_arg_regs: Vec<MirParamArg>,
+        /// The generic callable contract selected by checking. Contract-side
+        /// defaults govern omitted arguments even when the concrete function
+        /// value declares different defaults.
+        param_decls: Vec<ParamDecl>,
+        /// Fully instantiated checker contract for this invocation, when
+        /// explicit compile-time arguments resolve dependent parameter/result
+        /// types. Generic callable storage may remain symbolic; executable
+        /// operand verification uses this concrete view.
+        instantiated_contract: Option<Ty>,
+        /// Complete checker-resolved generic arguments in declaration order.
+        /// This semantic-only substitution witness lets verification validate
+        /// `instantiated_contract` without inspecting the instructions which
+        /// materialized compile-time argument registers.
+        instantiated_args: Vec<TyArg>,
     },
     /// A method call `recv.method(args)`. `recv_place` is `Some` when the receiver
     /// is a writable place (a variable / field-index chain), so a `mut self` method
-    /// or an in-place `List` mutator can write the updated receiver back; `None`
+    /// can write the updated receiver back; `None`
     /// for a temporary receiver (a call result), on which only read-only methods
     /// are valid (the checker guarantees this).
     MethodCall {
@@ -297,10 +434,37 @@ pub enum MirInstr {
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         recv_place: Option<MirPlace>,
-        /// Like `Call::arg_places`: `arg_places[i]` is `Some` when ordinary
-        /// argument `i` is a simple place, so a method's `mut`/`ref` ordinary
-        /// parameter can write its final value back to the caller.
+        /// Like `Call::arg_places`: `arg_places[i]` is `Some` only for a
+        /// checker-selected `mut`/`ref` ordinary argument with a supported
+        /// caller place.
         arg_places: Vec<Option<MirPlace>>,
+        /// Like `Call::kwarg_places`, aligned with `kwargs`.
+        kwarg_places: Vec<Option<MirPlace>>,
+        capture_accesses: Vec<MirCaptureAccess>,
+        /// Compile-time arguments supplied by direct parameterized-method
+        /// syntax, in source order. Callable/scalar value parameters retain a
+        /// runtime register; type parameters occupy an erased slot.
+        param_arg_regs: Vec<MirParamArg>,
+        /// Checker-selected generic method contract. This prevents lowering
+        /// from reconstructing a bound-method type from the source member.
+        param_decls: Vec<ParamDecl>,
+    },
+    /// Move an initialized element from compiler-private `UnsafePointer`
+    /// collection storage. The source slot becomes uninitialized, so subsequent
+    /// reads/takes/destroys are invalid until an explicit store initializes it.
+    PointerStorageTake {
+        dest: Reg,
+        pointer: Reg,
+        index: Reg,
+        element: Ty,
+    },
+    /// Destroy an initialized element in compiler-private `UnsafePointer`
+    /// collection storage and mark its slot uninitialized.
+    PointerStorageDestroy {
+        dest: Reg,
+        pointer: Reg,
+        index: Reg,
+        element: Ty,
     },
     /// Struct/field *read* `base.field` inside an rvalue (name-based; the backend
     /// resolves layout). Field/index *writes* go through `Store`/a `MirPlace`.
@@ -309,17 +473,24 @@ pub enum MirInstr {
         base: Reg,
         field: String,
     },
-    /// Subscript *read* `base[index]` (List/Tuple/SIMD lane) inside an rvalue.
-    /// For a struct receiver, `resolved` is the checker-selected `__getitem__`
-    /// implementation (e.g. a variadic struct's per-element accessor); the
-    /// backend dispatches it without re-deriving overload resolution.
+    /// Subscript *read* `base[index]` inside an rvalue. Nominal collection
+    /// subscripts carry their complete checker-selected invocation in `call`.
+    /// This includes the exact `__getitem__` target, effects, parameter access,
+    /// compile-time arguments, captures, and any reference-return contract; the
+    /// backend never re-derives overload resolution or borrowing semantics.
     Index {
         dest: Reg,
         base: Reg,
         index: Reg,
-        resolved: Option<String>,
+        /// Stable receiver storage retained by checking/lowering. Nominal
+        /// `__getitem__` dispatch uses this for a `ref self` handle and for any
+        /// reference returned into the caller's frame.
+        base_place: Option<MirPlace>,
+        index_place: Option<MirPlace>,
+        call: Option<MirSubscriptCall>,
+        intrinsic: Option<MirIntrinsicSubscript>,
     },
-    /// Slice `object[lower:upper:step]` (List/String) → a new value. Each bound is
+    /// Slice `object[lower:upper:step]` → a new value. Each bound is
     /// optional (absent = a direction-aware default).
     Slice {
         dest: Reg,
@@ -328,7 +499,10 @@ pub enum MirInstr {
         lower: Option<Reg>,
         upper: Option<Reg>,
         step: Option<Reg>,
-        resolved: Option<String>,
+        object_place: Option<MirPlace>,
+        arg_places: Vec<Option<MirPlace>>,
+        call: Option<MirSubscriptCall>,
+        intrinsic: Option<MirIntrinsicSubscript>,
     },
     /// `object[a, b:c]`: variadic `__getitem__` dispatch with every slice
     /// descriptor selected by the checker and constructed explicitly by the VM.
@@ -336,18 +510,23 @@ pub enum MirInstr {
         dest: Reg,
         object: Reg,
         args: Vec<MirSubscriptArg>,
-        resolved: Option<String>,
+        object_place: Option<MirPlace>,
+        arg_places: Vec<Option<MirPlace>>,
+        call: Option<MirSubscriptCall>,
     },
     /// `object[a, b:c] = value`: checked `__setitem__` dispatch. The receiver
     /// place is retained so a `mut self` implementation is written back after
     /// the call. Variadic setitem methods receive `value` in their keyword-only
     /// slot; fixed-arity methods receive it as the last positional argument.
     MultiSet {
-        receiver_place: MirPlace,
+        receiver: Reg,
+        receiver_place: Option<MirPlace>,
         args: Vec<MirSubscriptArg>,
+        arg_places: Vec<Option<MirPlace>>,
         value: Reg,
+        value_place: Option<MirPlace>,
         value_keyword: bool,
-        resolved: Option<String>,
+        call: MirSubscriptCall,
     },
     /// `place = src` — a write through a place (`p.x = e`, `xs[i] = e`, nested).
     Store {
@@ -366,34 +545,9 @@ pub enum MirInstr {
         dest: Reg,
         place: MirPlace,
     },
-    /// Aggregate construction from already-flattened element registers.
-    MakeList {
-        dest: Reg,
-        elems: Vec<Reg>,
-        element_type: Option<Ty>,
-    },
-    /// Construct a set display in source evaluation order. Duplicate elements
-    /// are discarded while the first insertion position is retained.
-    MakeSet {
-        dest: Reg,
-        elems: Vec<Reg>,
-        element_type: Option<Ty>,
-    },
-    /// Construct a dictionary display in source evaluation order. A later
-    /// duplicate key replaces the earlier value without moving its position.
-    MakeDict {
-        dest: Reg,
-        entries: Vec<(Reg, Reg)>,
-        key_type: Option<Ty>,
-        value_type: Option<Ty>,
-    },
-    /// The insertion protocol used by collection comprehensions: append for a
-    /// list, add for a set, and indexed assignment for a dictionary.
-    CollectionInsert {
-        collection: VarId,
-        key: Option<Reg>,
-        value: Reg,
-    },
+    /// Construct the compiler-private heterogeneous pack-storage primitive.
+    /// Source Tuple/List/Set/Dict values are nominal structs and therefore use
+    /// ordinary `Call`/`MethodCall` instructions instead of aggregate opcodes.
     MakeTuple {
         dest: Reg,
         elems: Vec<Reg>,
@@ -502,8 +656,8 @@ pub enum MirInstr {
     /// lowering-time `panic!` — so a backend can report a clean error instead of
     /// crashing on an otherwise-valid program.
     Unsupported(String),
-    /// Iterator protocol: normalize `iter` to an iterator (a user struct's
-    /// `__iter__()`); a no-op for a built-in `range`/`List`.
+    /// Iterator protocol: normalize `iter` through its checker-selected nominal
+    /// `__iter__()` implementation.
     GetIter {
         iter: VarId,
         mode: crate::IterationMode,
@@ -523,12 +677,39 @@ pub enum MirInstr {
         iter: VarId,
         method: Option<String>,
     },
+    /// Invoke a typed-raising iterator `__next__`. `yielded` is true when
+    /// `dest` contains an element and false when the call raises exactly the
+    /// checked `exhaustion` type; other raised values propagate.
+    TryNext {
+        dest: Reg,
+        yielded: Reg,
+        iter: VarId,
+        method: String,
+        exhaustion: Ty,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirCaptureMode {
+    Reference,
+    Copy,
+    Move,
 }
 
 #[derive(Debug, Clone)]
 pub struct MirClosureCapture {
     pub place: MirPlace,
-    pub moved: bool,
+    pub mode: MirCaptureMode,
+}
+
+/// A static access to owner storage performed by a callable environment while
+/// executing a call. Origin paths deliberately retain abstract indices; the VM
+/// never interprets this metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirCaptureAccess {
+    pub root: VarId,
+    pub path: Vec<crate::origin::OriginSeg>,
+    pub access: crate::origin::CaptureAccess,
 }
 
 /// How a basic block hands off control. Block targets are indices into
@@ -542,6 +723,13 @@ pub enum MirTerm {
         else_b: MirBlockId,
     },
     Return(Option<Reg>),
+    /// Return after evaluating `value`, carrying structured loop-owned cleanup
+    /// out through any enclosing `try/finally` regions. The VM performs these
+    /// drops only after every pending `finally` has run.
+    ReturnWithCleanup {
+        value: Option<Reg>,
+        cleanup: Vec<VarId>,
+    },
     /// Normal fall-through end of a `try` sub-region (see [`hir::Terminator::FallOff`]).
     /// The VM's region runner reads it as "completed normally". Never appears in a
     /// function body's blocks.

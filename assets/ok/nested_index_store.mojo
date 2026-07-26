@@ -1,4 +1,3 @@
-# expect: cannot index
 from std.collections.list import List
 
 def main():

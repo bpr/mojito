@@ -183,12 +183,18 @@ loader; once present, the complete per-directory order is source package,
 `.mojoc`, source module, then `.mojopkg`.
 
 Linking retains flat name-binding semantics, but recursively stamps every
-statement and expression with its source module path. A `SourceSpan` combines
-that path with the node's file-local byte range, so identical offsets in
-different modules remain distinct. `CheckedProgram`, overload selection, MIR
-register provenance, and ownership diagnostics preserve these locations without
-reintroducing module namespaces into ordinary lookup. Compile-time rewriting
-re-stamps generated subtrees from their owning declaration.
+statement and expression with its source module path. The file path and local
+byte range remain diagnostic provenance. After compile-time elaboration and the
+checker's final trait-default cloning pass, one exhaustive walk
+uniqueness-normalizes each concrete statement/expression `SyntaxId`: an
+already-unique input identity is retained, while every repeated clone receives a
+new occurrence identity before semantic facts are recorded. The transitional
+`SourceSpan` key carries that optional occurrence discriminator for checker/HIR
+lookups, but provenance comparison and MIR source maps deliberately ignore it.
+Thus two elaborated clones may point at the same source text without sharing a
+type, binding, overload, effect, or declaration fact. Compile-time rewriting
+still re-stamps generated subtrees from their owning declaration for diagnostics;
+source stamping is no longer relied on as semantic identity.
 
 ## Stage 2: Comptime Elaboration
 
@@ -297,7 +303,11 @@ It executes a named top-level helper without running `__toplevel__` or `main`,
 burns the shared compile-time fuel budget, and returns a runtime `Value` plus the
 remaining fuel. The elaborator converts the result back to `CtValue`. Exact
 `IntLiteral`/`FloatLiteral` values and runtime-materializable `Int`, `UInt`,
-`Float64`, `Bool`, `String`, `Tuple`, and `List` values can cross that boundary.
+`Float64`, `Bool`, and `String` values can cross that boundary. Compile-time
+lists cross through the CTFE-only `Ty::ComptimeList`/`Value::ComptimeList`
+carrier; compile-time tuples cross through the same private heterogeneous
+`Ty::Tuple`/`Value::Tuple` storage used by specialized runtime packs. Public
+`List` and `Tuple` values are nominal structs and do not use either bridge.
 
 ### Fuel
 
@@ -394,17 +404,35 @@ an explicit semantic arena. Every checked expression has a `CheckedNodeId`, chil
 edges, resolved runtime type, value/place/type category, stable owner identity for
 binding uses, extensible effect facts, and a list of semantic adjustments. Checked
 declarations have independent `CheckedDeclId` identities. Source spans index
-diagnostics only and are not semantic identity.
+diagnostics and associate a checker-approved compile-time value argument with
+the register produced from that same source occurrence; they are not used to
+re-resolve a type, overload, effect, or origin decision.
 
 Call targets, implicit conversions, moves, explicit-destruction decisions, and
 reference-handle preservation are stored canonically as `SemanticAdjustment`
 values on checked nodes. `HirExpr` recursively retains those checked children in
 AST structural order. MIR pairs the active HIR syntax tree with that recursive
-semantic tree by node identity; it never searches by source span. Register spans
-therefore serve diagnostics only. SIMD dtype and width selection is likewise a
-checked adjustment rather than MIR-side syntax evaluation. Span-indexed
-call/conversion maps remain only as public compatibility queries and are not part
-of lowering.
+semantic tree by node identity. One narrow association remains span-keyed:
+source-ordered compile-time value arguments reuse registers already evaluated
+for the corresponding checked subscript operand. This is a register handoff,
+not semantic reconstruction. Register spans otherwise serve diagnostics only.
+SIMD dtype and width selection is likewise a checked adjustment rather than
+MIR-side syntax evaluation. Span-indexed call/conversion maps remain only as
+public compatibility queries and are not part of lowering.
+
+`SemanticAdjustment::SelectedCall` is the canonical method-like boundary for
+ordinary method calls and method-dispatched nominal subscripts. It records the exact lowered
+target, executable result type, and typed raising effect; declared
+receiver/argument place requirements independently from origin-solved effective
+access; source-to-parameter binding,
+including defaults; capture origins; reference-result origin; and source-ordered
+compile-time parameter arguments and declarations. `SliceDescriptors` is an
+orthogonal adjustment, so descriptor selection and call semantics coexist
+instead of overwriting one another. Because a descriptor is compiler-synthesized
+rather than a checked source child, overload selection permits only exact or
+descriptor-family coercion for it; arbitrary user `@implicit` construction is
+rejected before HIR/MIR. Ordinary index operands remain recursively checked
+source expressions and retain their selected executable conversions.
 
 The arena deliberately does not encode constructs as a closed expression opcode
 ABI. Non-exhaustive declaration/category/adjustment families and independent child
@@ -435,7 +463,7 @@ It is responsible for:
 - default, keyword, and variadic arguments where supported
 - `var`, `mut`, `ref`, and `deinit` conventions
 - compile-time integer constants used as value parameters
-- list, tuple, Variant, string, and SIMD type rules
+- nominal collection, private runtime-pack, Variant, string, and SIMD type rules
 - typed and parametric raising effects, inferred handler types, and the `Never`
   bottom type
 - borrow checking for call arguments
@@ -452,8 +480,24 @@ CFG-shaped source joins: the name remains resolvable after the block, but a read
 is rejected unless every reachable predecessor initialized it. Loop joins retain
 the zero-iteration path.
 
-`Ty::Tuple(Vec<Ty>)` and `Ty::Variant(Vec<Ty>)` retain heterogeneous element or
-alternative order at the checked boundary. Variant construction and the
+Explicit declarations instead keep one runtime slot per stable checked binding,
+including same-spelled declarations in sibling scopes produced by compile-time
+unrolling. HIR may suffix the internal slot name, but downstream place lookup is
+by owner identity; independently inferred sibling types therefore never merge
+in `MirFunction::var_tys`. A substituted local `ref` alias has no runtime handle
+payload, yet its analytical slot retains the checked `Ty::Ref` capability used
+by every `MirPlace::through` access. Opaque structured statements may retain a
+source spelling after HIR has assigned a shadowed declaration a suffixed slot,
+so MIR resolves identifier writes through the checked `OwnerId` exactly as it
+does reads; the two halves of augmented assignment cannot select different
+same-spelled bindings.
+
+Public collection types, including heterogeneous `Tuple[*Ts]`, cross the checked
+boundary as `Ty::Struct` with their concrete type arguments. `Ty::ComptimeList`
+exists only while materializing `CtValue::List`; `Ty::Tuple(Vec<Ty>)` is the
+compiler-private heterogeneous pack carrier and is never the type of a public
+tuple expression. `Ty::Variant(Vec<Ty>)` retains alternative order at the
+checked boundary. Variant construction and the
 parameterized `isa[T]`, projection, and `set[T]` operations record the selected
 alternative as a `SemanticAdjustment`; MIR therefore receives a numeric tag and
 never guesses one from source spelling. `Value::Variant` repeats the checked
@@ -466,6 +510,15 @@ materialized as ordinary methods on each conforming struct. An explicit struct
 method wins; unresolved defaults from multiple paths are rejected. MIR and the
 VM retain static dispatch and need no trait-object representation.
 
+Associated compile-time members are currently monomorphic. `TraitComptime` and
+`StructComptime` retain a name and requirement/value but no member-local
+parameter list, while `Type::Assoc` and `Ty::Assoc` retain only a base and member
+name. They therefore cannot represent current Mojo declarations such as
+`IteratorType[iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]]`
+or the dependent application `Self.IteratorType[origin_of(self)]`. The concrete
+List borrowed/reference-iteration bridges described below preserve provenance
+without pretending to implement that generic associated-type contract.
+
 Trait method requirements retain `raises` and an optional concrete error type.
 A nonraising implementation may satisfy a raising requirement; a raising
 implementation must not widen the requirement's error family. Bounded method
@@ -474,9 +527,13 @@ and passes it through HIR to the call instruction just like direct dispatch.
 
 Opaque trait-bounded collection indexing uses the requirement signature for its
 index and result types, then executes through concrete dunder dispatch after
-erasure. The standard `Indexer` contract is modeled separately as an index-value
-conversion through `__mlir_index__`; MIR/VM normalize its result to `Int` because
-the VM has no MLIR index representation.
+erasure. The standard `Indexer` contract is modeled separately. When overload
+selection needs an `Int` index and no direct subscript overload accepts the
+source index type, the checker records the exact `__mlir_index__() -> Int`
+normalization. Lowering evaluates the source expression once, emits that selected
+call explicitly, and gives the later index operation its `Int` result; a backend
+does not rediscover the conversion from the runtime value. The VM uses `Int` for
+that result because it has no distinct MLIR index representation.
 
 Scalar operators, comparisons, conversions, and rounding are typed through
 checked operation traits, not ad-hoc numeric rules. Each binary/prefix operator
@@ -546,14 +603,10 @@ the lifting path can preserve their selected identities safely.
 
 The important architecture point is that overload selection is static. The VM
 does not inspect runtime value tags to choose between same-arity candidates.
-Instead, the checker records a side table:
-
-```text
-source-aware span -> lowered callee name
-```
-
-MIR lowering consults that table when it sees an overloaded call expression.
-This preserves the checker-selected callee through lowering and execution.
+The checker records the result on the checked node as `ResolveCallable` or the
+full `SelectedCall` adjustment; recursively checked HIR carries it into MIR,
+which preserves the selected callee through execution. A source-span map remains
+only for compatibility queries and is not a semantic lowering input.
 
 ### Generic Implicit Conversions
 
@@ -634,10 +687,16 @@ pub enum Terminator {
     Jump(BlockId),
     Branch { cond: Expr, then_b: BlockId, else_b: BlockId },
     Return(Option<Expr>),
+    ReturnWithCleanup { value: Option<Expr>, cleanup: Vec<VarId> },
     FallOff,
     EscapeJump(BlockId),
 }
 ```
+
+Iterator-driven loops use `ReturnWithCleanup` when a source `return` bypasses
+their common exit. The return expression is materialized first, then the current
+loop binding and synthetic iterator owners are destroyed from the innermost
+loop outward.
 
 The core invariant is:
 
@@ -675,10 +734,11 @@ Generic-call inference recognizes the matching `*args: *Pack` element type and
 checks each overflow argument independently against the pack bounds instead of
 forcing all arguments to unify to one type. Specialization records the concrete
 sequence as the internal checked `Ty::RuntimePack([T0, ...])` call ABI; the VM
-materializes that collector as native Tuple storage, while an ordinary
-homogeneous `*args: Tuple[...]` remains a List whose repeated element type is a
-Tuple. This supports heterogeneous calls and pack length queries without using
-the shape of `Ty::Tuple` to guess collector kind. Specialization infers literal
+materializes that collector in private `Value::Tuple` storage. An ordinary
+homogeneous `*args: Tuple[...]` instead remains a nominal `List` whose repeated
+element type is the public nominal `Tuple`. This supports heterogeneous calls
+and pack length queries without confusing a public tuple with the private
+`Ty::Tuple` carrier. Specialization infers literal
 and directly constructed call-argument types, binds the pack's type tuple into
 the compile-time environment, and unrolls `args.__len__()`-driven loops.
 Because specialization consumes this generic call before whole-program checking,
@@ -691,27 +751,124 @@ presence without checking method bodies early. Full conformance verification
 still runs on the elaborated program.
 Each unrolled static index substitutes its concrete element type while retaining
 the declared common bound for operations that are not specialized to one index.
-Runtime-pack spread recognition still occurs before checked binding IDs exist
-and therefore keys the pack parameter by source name. Scope-stable pre-check
-binding facts are an explicit roadmap prerequisite before protocolized Tuple
-uses these transforms more broadly; until then, shadowing that spelling in a
-nested scope is a known elaboration limitation.
+Pack expansion necessarily runs before checked `OwnerId`s exist, so it owns a
+small lexical resolver with private monotonic `ElabBindingId`s and independent
+value/type namespaces. A runtime pack is identified by its specialized
+`$pack[T0, ...]` parameter declaration and its length is keyed by that binding;
+concrete type-pack substitutions are likewise keyed by the specialization's
+type binding. The walker mirrors declaration order and the lexical scopes of
+branches, loops, handlers, comprehensions, nested definitions, generic
+parameters, and individual struct methods. A same-spelled local therefore gets
+a different identity, leaving an unsupported ordinary spread for the checker,
+while leaving the scope restores the outer pack. Presence in the binding map —
+not a nonzero length — identifies an empty pack. HIR loop lowering follows the
+same rule by assigning the loop target a scoped runtime slot instead of
+reusing/leaking an outer same-named slot.
+
+After top-level specialization, a contextual nested pass gives every
+specializable nested declaration a private scope-qualified marker. Calls resolve
+that marker through lexical value scopes, request independent specializations,
+and emit the generated declarations at the template's original source site.
+The parent specialization is part of the marker identity, so the same nested
+syntax in two outer instances cannot collide. A parallel lexical runtime-pack
+environment snapshots explicitly captured outer packs, masks them under local,
+parameter, loop, comprehension, import, and walrus bindings, and restores them
+when a scope ends. Generated declarations retain defaults, keywords, named
+results, capture lists, effects, and their concrete variadic ABI when nested
+function lowering registers the lifted MIR declaration.
+
+Pack forwarding first flattens the one known spread into a virtual positional
+type sequence and runs the shared call-slot matcher; only positional overflow
+becomes the target pack's inferred type list. The spread must follow every fixed
+positional argument, while parameters after the variadic collector are supplied
+as keywords or defaults. Specialization gives that target instance a regular
+private runtime-pack collector slot and moves the complete collector as one
+value. This
+preserves linear elements without inventing an illegal move through `args[i]`.
+Both the top-level and lexical nested specialization passes reject a second
+spread, explicit positional overflow after the spread, or a non-pack target;
+those are current-Mojo rejections, not deferred concatenation features.
 
 A variadic **struct** template (`struct S[*Ts: Bound]`) is specialized the same
 way: compile-time elaboration keeps the template verbatim, resolves every
 explicit instantiation (calls, `TypeApply` expressions, and type annotations) to
-a mangled fully concrete struct, expands pack-typed member annotations such as
-`Tuple[*Ts]` to the concrete element list, rewrites a pack-typed method
-parameter to the `$pack` element list, unrolls the dependent accessor
-`__getitem__[i: Int] -> Ts[i]` into per-element concrete methods, and drops the
-template. Every specialization reuses the template's spans (correct
+a mangled fully concrete struct, resolves pack-applied member annotations such
+as `Tuple[*Ts]` to the corresponding concrete nominal specialization, rewrites
+a pack-typed method
+parameter to the `$pack` element list, unrolls current Mojo's dependent
+accessor `__getitem_param__[i: Int] -> Ts[i]` into per-element concrete methods,
+and drops the template. The earlier `__getitem__` spelling follows the same
+path only as an explicit compatibility fallback. Every specialization reuses
+the template's spans (correct
 provenance), so struct annotation sites are identified by the struct's unique
 name and each specialization's subtree — and each unrolled accessor body — is
 stamped with a distinct source tag, keeping span-keyed checked facts separate.
+If an element is a function value, its exact checked `Func`/`GenericFunc`
+contract cannot be losslessly respelled as a source `def(...)` annotation:
+defaults, variadics, generic declarations, capture origins, and typed errors are
+richer semantic facts. Generated Tuple AST therefore carries only an opaque,
+parser-unconstructible callable-type id. The compiler seeds the final checker
+pass with the corresponding `Ty`; the source AST never embeds or reconstructs
+that semantic type.
 The checker resolves a subscript on such a struct at a compile-time-constant
-index and records the selected accessor through the overload-target channel;
-MIR `Index` carries it (`resolved`, like `Slice`/`MultiIndex`) and the VM
-dispatches it without name derivation.
+index and records its complete selected accessor contract. MIR `Index.call`
+carries the resulting `MirSubscriptCall`, and the VM dispatches ordinary value
+reads, explicit reference bindings, and chained receiver/place uses without
+name or effect derivation.
+
+A non-pack struct may also define `__getitem_param__[i: Int]`: subscript
+checking supplies the source index as a compile-time value parameter, retains
+the exact generic-method target, and reuses the already evaluated source-index
+register for the value-parameter ABI. This is separate from runtime
+`__getitem__(index)` dispatch and does not add an ordinary positional argument.
+
+The implicit prelude exposes `List`, `Set`, `Dict`, `Range`, and `Tuple` as
+ordinary bundled structs. List, set, and dictionary displays lower to the
+selected nominal constructor; comprehension leaves lower to ordinary
+`append`, `add`, or `__setitem__` calls. Range syntax is an ordinary overload of
+the bundled `range` function. Tuple displays request a concrete specialization
+of `Tuple[*Ts]`, whose private `__RuntimeTuple[*Ts]` field is the only source
+construct that lowers to `MakeTuple`. Indexing, sizing, containment, comparison,
+reversal, concatenation, and tuple-element consumption therefore use checked
+methods just as they do on user structs. List, Set, Dict, and Range borrowed
+iteration likewise follows selected nominal methods; consuming bundled
+iteration is currently List-specific. Public Tuple has no runtime `__iter__`
+contract.
+Conditional lifecycle conformances are folded per specialization: a `deinit`
+method may implicitly copy a named tuple only when every element is
+`ImplicitlyCopyable`; otherwise the call must transfer the tuple with `^`.
+
+Concrete borrowed List, Set, and Dict place iteration also records the source's
+`element` interior origin. HIR `BorrowIter` preserves the source place instead
+of invoking its value copy lifecycle; MIR makes the load and `EstablishLoans`
+operation explicit, so the outer owner remains live through iteration. List
+iteration additionally observes element replacement and rejects structural
+invalidation before a later iterator use; concrete List `for ref` binds checked
+indexed element places directly. These are deliberately narrow collection
+bridges until parameterized associated iterator types can derive the same facts
+for generic and user-defined iterables. The only method-free collection behavior
+in the VM is the explicitly CTFE-only `ComptimeList` bridge; the separate
+method-free tuple-shaped path is compiler-private runtime-pack storage, not a
+public collection.
+
+Tuple specialization is a closed-set, two-phase handoff. The discovery check
+collects every public Tuple element sequence and only the transforms actually
+called on each receiver; flexible numeric literal types are default-materialized
+at this runtime-storage boundary so a constructor and its later receiver cannot
+request different specializations. The elaborator then emits that complete set
+of concrete declarations. Before checking their members, the checker
+predeclares each generated Tuple symbol together with the fixed arguments
+retained in its materialized `element_types` member. Method signatures and
+compiler-owned constructors may refer to those predeclared identities, but the
+gate does not enable forward references in user source.
+
+This predeclaration is necessary for reciprocal transforms. If both
+`Tuple[Int, String].reverse()` and `Tuple[String, Int].reverse()` occur, each
+generated method returns and constructs the other specialization, so no linear
+declaration order can place both callees first. Reverse-result edges are
+therefore forward-safe and are not hard edges in specialization ordering;
+dependencies that need a declaration's checked storage layout, such as the
+right operand of generated concatenation, remain topologically ordered.
 
 ### If
 
@@ -742,21 +899,29 @@ preheader -> header -> body -> header
 ### For
 
 A `for` lowers to the same control-flow shape as a `while`, with explicit
-iterator protocol instructions:
+iterator protocol instructions. Current typed-raising iterators call
+`__next__` exactly once per trip and treat only the checked `StopIteration` type
+as normal exhaustion:
 
 ```text
 bind iterator
+initialize iterator through selected __iter__ chain
 header:
-    has_next(iterator) -> Bool
+    try_next(iterator) -> (loop variable, yielded)
+    branch yielded, body, exit
 body:
-    next(iterator) -> loop variable
     user body
     jump header
 exit:
 ```
 
-This keeps loop control explicit while leaving the runtime details of `range` and
-`List` iteration to MIR/VM.
+The compatibility path for a nonraising iterator instead executes
+`has_next(iterator)` through its selected `__len__`, then `next(iterator)` in the
+body. For a concrete borrowed List, Set, or Dict place, the preheader carries its
+checked interior origin through `BorrowIter`; concrete List `for ref` uses
+checked indexed element places. These bridges preserve concrete provenance but
+are not a substitute for current Mojo's origin-parameterized associated
+`IteratorType`.
 
 ### Try Regions
 
@@ -881,6 +1046,7 @@ pub enum MirTerm {
     Jump(MirBlockId),
     Branch { cond: Reg, then_b: MirBlockId, else_b: MirBlockId },
     Return(Option<Reg>),
+    ReturnWithCleanup { value: Option<Reg>, cleanup: Vec<VarId> },
     FallOff,
     EscapeJump { target: MirBlockId, cleanup: Vec<VarId> },
 }
@@ -888,7 +1054,18 @@ pub enum MirTerm {
 
 Function bodies should not normally end with `FallOff`; that is for try
 sub-regions. `EscapeJump` is for a `break`/`continue` inside a try region whose
-target belongs to the enclosing function.
+target belongs to the enclosing function. `ReturnWithCleanup` carries
+loop-owned cleanup through structured regions; the VM runs every pending
+`finally` before destroying those owners and completing the return.
+
+The continuation-driven VM frame path binds reference parameters directly to
+caller frame/slot handles. Structured `try` sub-regions execute calls
+synchronously, so the VM temporarily pushes a mirror containing the retained
+caller's real `FrameId`, registers, and variables. Direct, indirect, method,
+callable-struct, and constructor calls can then use the ordinary handle ABI:
+mutations update the mirror even when the child raises, and projected or
+aggregate reference returns already name caller storage. The mirror is copied
+back and removed on every outcome; there is no separate result-rebasing rule.
 
 ### Places
 
@@ -901,11 +1078,14 @@ pub struct MirPlace {
     pub proj: Vec<Proj>,
     pub projection_tys: Vec<Ty>,
     pub ty: Option<Ty>,
+    pub through: Option<VarId>,
 }
 
 pub enum Proj {
     Field(String),
     Index(Reg),
+    ConstIndex(usize),
+    Variant(usize),
 }
 ```
 
@@ -928,6 +1108,19 @@ unchecked phase-test API. HIR carries the same information earlier as
 `HirPlace`: stable `OwnerId`, root type, typed field/index projections, and
 final storage type.
 
+Dynamic `Index(Reg)` projections conservatively overlap every index. A
+`ConstIndex` is emitted only for an exact nonnegative literal selecting an
+element of compiler-private heterogeneous `Ty::Tuple` storage. This gives each
+pack element a distinct ownership path without changing nominal collection
+subscript dispatch.
+
+When an accessor returns a reference used immediately as another receiver or
+place, lowering evaluates it once into a hidden `Ty::Ref` local. `DefVar` stores
+the handle and `EstablishLoans` retains its owner generation; the derived place
+names that local in `through`. Later chained loads, projections, and calls
+therefore preserve provenance without rerunning the accessor or treating its
+referent as owner storage.
+
 Every register is typed. Expression results record their checked type as they
 lower; synthetic registers (handles, markers, short-circuit and iterator
 temporaries) are typed at their emission site; and a `close_register_types`
@@ -946,7 +1139,20 @@ predicate — never re-derived rules), CFG-edge validity (jump-target bounds per
 region, `FallOff`/`EscapeJump` only inside `try` sub-regions), effect
 protection (a raising site in a nonraising function must sit under a handler),
 and reference invariants (`StoreRef` targets reference storage; declared
-write-back parameters receive caller places). The pipeline composes it with
+write-back parameters receive caller places). For method-dispatched nominal subscripts it also
+verifies the selected target against its declaration, exact positional/keyword/
+default and variadic source binding, operand and collector types, generic value
+arguments, receiver and argument place requirements, capture slots,
+checker-selected executable result (including exact reference origin and
+permission), and protection of every raising subscript form. Function
+declarations retain whether a receiver exists, its declared convention, aligned
+explicit-parameter conventions, and the reference-return ABI. The verifier
+permits only declared `Ref` to effective `Read` narrowing. An abstract
+trait-bound target has no concrete declaration until runtime retargeting, so the
+verifier checks its retained operand/result contract for internal consistency
+but cannot yet compare it with a retained abstract trait requirement; concrete
+targets are additionally checked against `MirDeclarations`. The
+pipeline composes it with
 `analysis::check_ownership_program`, which owns the ownership dataflow; the
 compiler rejects findings as `CompilerError::Verify`, and the VM re-verifies
 the drop-elaborated program it actually executes.
@@ -976,10 +1182,6 @@ MultiIndex
 MultiSet
 Store
 LoadPlace
-MakeList
-MakeSet
-MakeDict
-CollectionInsert
 MakeTuple
 MakeVariant
 VariantIs
@@ -995,6 +1197,85 @@ HasNext
 Next
 Unsupported
 ```
+
+Public collection displays and comprehensions use ordinary `Call` and
+`MethodCall` instructions. `MakeTuple` is reserved for the compiler-private
+heterogeneous pack behind `__RuntimeTuple`; constructing the public nominal
+`Tuple` uses an ordinary constructor call.
+
+Every method-dispatched nominal subscript carries a `MirSubscriptCall`
+containing the exact target,
+typed raising effect and executable result type, receiver place requirement and
+effective convention,
+source-bound argument types/conventions/places, capture accesses,
+reference-result origin, and source-ordered compile-time value arguments plus
+their declarations. `Index` carries exactly one nominal call or a checked
+`MirIntrinsicSubscript` discriminator for Tuple/runtime-pack storage, variadic
+storage, SIMD, pointers, or the CTFE-only compile-time-list bridge. `Slice`
+similarly carries exactly one nominal call or the temporary VM String intrinsic.
+`MultiIndex` and `MultiSet` always require a nominal call contract. Checked
+assignment, including the single-index spelling
+`value[index] = replacement`, retains whether the right-hand side binds as the
+last positional argument or the keyword-only `value` after a variadic index
+pack. A mutable receiver place may be rooted in a `mut`/`ref` parameter, so the
+VM commits setter write-back through the same caller handle instead of
+flattening the access into raw backing storage.
+
+One narrow representation bridge is intentionally call-less despite its
+nominal checked result: `Slice.indices()` currently produces transient private
+`Value::Tuple` storage typed as the public result Tuple. Its subsequent indexing
+is explicitly tagged `MirIntrinsicSubscript::TupleStorage`; this exception is
+not permission to infer dispatch from an arbitrary nominal runtime value.
+
+A projection below a nominal reference-returning accessor is rooted in a hidden
+caller handle. Lowering executes the selected accessor once, materializes its
+typed `ref` result and loans, then appends ordinary field/private-storage
+projections to that handle. It must not recursively turn
+`container[index].field` into a raw `MirPlace` rooted at the nominal container;
+the extended handle is also the caller place passed to a later `mut` or `ref`
+parameter or forwarded from a reference-returning function. Pointer, SIMD, and
+private Tuple steps below that field retain typed dynamic/constant projections.
+Verification distinguishes a place that forwards the `ref T` handle slot from
+one that addresses its `T` referent, validates the `through` slot and every
+concrete projected element type, and treats nominal `owner[index]` paths in
+`EstablishLoans` as analytical origins rather than executable VM navigation.
+Register-type closure makes the same root-sensitive distinction: borrowing an
+ordinary field whose stored value is `ref T` produces an outer `ref (ref T)`
+handle, while a projection through an existing `ref` or origin-bearing Pointer
+forwards that capability and can never recover stronger mutability.
+Assignment through a runtime alias likewise preserves the local slot's checked
+`ref` type: the right-hand side types the referent write, never the handle
+storage. This matters for union-origin free-function results, whose one handle
+may designate any of several caller places.
+
+Reference-valued List elements add one deliberate handle layer: indexing the
+List first produces a handle to the element slot, whose stored value is itself a
+reference handle. Lowering peels that outer slot handle before an augmented
+write or chained method receiver is formed. The operation therefore reaches the
+ultimate referent and never replaces the reference stored in the List element.
+
+Augmented nominal subscripts cross the checked boundary with call-local
+adaptation and invalidation snapshots. For a value result this includes both
+complete `CheckedCallContract`s plus the computed-result setter slot. MIR
+evaluates the receiver and raw subscript operands once, evaluates the RHS,
+applies getter-specific conversions and calls the getter, performs the operator,
+then independently reloads any getter-mutated caller place and applies the
+setter conversions before `MultiSet`. A mutable-reference getter instead is the
+complete operation: MIR invokes it before the RHS, reads and updates its handle,
+and emits `WriteRef` without selecting or calling a setter. The getter uses
+`Index`/`Slice`/`MultiIndex` in either path, so neither source expressions nor
+overloads are reconstructed.
+
+Checked membership on a nominal struct likewise lowers to the selected
+`__contains__` `MethodCall`, with a retained container place and the source value
+as its argument. It does not use the value-only `BinOp` form: doing so would lose
+the borrow and let a short-lived shallow receiver appear to own pointer-backed
+fields. `not in` negates that checked call's Boolean result.
+
+Intrinsic `print`, `String`, and `repr` formatting retain a nominal argument's
+place, when one exists, through its `Writable` call. This is a liveness fact,
+not a runtime ownership guess: drop elaboration cannot release the original
+pointer-backed owner after loading the value but before formatting finishes.
 
 `UseVar` is tagged with a `UseMode`:
 
@@ -1018,7 +1299,7 @@ Whole-variable moves use:
 UseVar { mode: UseMode::Move, ... }
 ```
 
-Field moves use:
+Field moves and constant-index moves from compiler-private Tuple storage use:
 
 ```rust
 MovePlace { place, ... }
@@ -1033,6 +1314,9 @@ print(p.b)
 
 as valid when `a` and `b` are distinct fields, while rejecting a later read of
 `p.a` or a whole-value move of `p` before `p.a` is reinitialized.
+The same rule lets generated heterogeneous-pack code move `storage[0]` and
+`storage[1]` independently; runtime-indexed places remain conservatively
+overlapping.
 
 ### Calls
 
@@ -1040,17 +1324,47 @@ MIR calls keep the information the VM needs for Mojo-style conventions:
 
 - positional argument registers
 - keyword argument registers
-- simple caller places for `mut`/`ref` write-back
-- compile-time parameter argument registers for value parameters
+- simple caller places aligned with both positional and keyword `mut`/`ref`
+  arguments
+- an optional callable-value place for a nominal `mut`/`ref __call__` receiver
+- source-ordered compile-time parameter arguments, retaining an optional name
+  separately from the optional value register (type arguments have no register)
 - the resolved lowered callee name when the checker selected an overload
 - the checker-selected concrete error type when the call may raise
 
 Non-capturing functions also have a runtime `Value::Function` representation.
 Calls through a function-typed local or a general callable expression lower to
 `CallIndirect`, whose callee register is resolved to a MIR function symbol by the
-VM before it pushes the ordinary explicit frame. The checker has already matched
-the arguments against the callable signature, so indirect execution shares the
-same function ABI without adding dynamic overload selection.
+VM before it pushes the ordinary explicit frame. It retains positional and
+keyword argument places and, for nominal callable values, the callee place plus
+the exact checker-selected `__call__` symbol. A `def(...)`-typed parameter
+retains the same signature as an abstract dispatch symbol; if its runtime value
+is a nominal callable, the VM retargets that suffix to the concrete struct.
+Consequently same-arity `__call__` overloads do not fall back to runtime value
+tags or source-name/arity selection. The checker has already matched the
+arguments against the callable signature, so indirect execution shares the same
+function/reference ABI without adding dynamic overload ranking.
+
+For a generic indirect call, `CallIndirect` also carries the checked anonymous
+callable's `ParamDecl` list. The VM first binds source-ordered positional and
+named bracket arguments to that contract, then evaluates omitted scalar and
+symbolic callable defaults in declaration order. Only after the contract has
+produced concrete value slots are they renamed positionally to the
+alpha-equivalent implementation binders. Contract defaults therefore govern
+partial and named calls even when the runtime function value declares different
+defaults. Origin/OriginSet arguments remain semantic-only and never enter this
+runtime vector. When checking has concretely instantiated a generic callable,
+MIR additionally retains its complete declaration-order `TyArg` list (including
+defaults) and the resulting monomorphic contract. This pair is semantic-only:
+the verifier reconstructs type/value substitution from it rather than searching
+earlier `Const` instructions. A dependent indexed type must thereby resolve to
+one concrete operand/result type before executable argument verification. A
+call which remains inside an unspecialized generic body may retain a symbolic
+dependent type only when every referenced compile-time name is owned by an
+explicit enclosing value binder. The MIR verifier also checks the retained
+declaration list against the callee register type, validates every value
+register, and rejects malformed raising and statically decidable
+reference-result metadata.
 
 `Ty::Func` and `Ty::GenericFunc` retain both the `raises` effect and its optional
 error type. Direct overload resolution carries the selected candidate's effect
@@ -1062,31 +1376,175 @@ and gives the `except` binding that type. Effect checking therefore happens
 after candidate selection instead of conservatively attaching one effect to
 every declaration sharing a source name, and before lowering. The same path is
 used for trait requirements and bounded method calls. `Call`, `CallIndirect`,
-and `MethodCall` retain the selected optional error type for MIR verification;
-the VM does not rediscover an effect from a source declaration.
+`MethodCall`, `Index`, `Slice`, `MultiIndex`, and `MultiSet` retain the selected
+optional error type for MIR verification; the VM does not rediscover an effect
+from a source declaration.
 
-When a `Ty::GenericFunc` appears where a concrete `Ty::Func` is
-expected, the checker solves its type parameters from the expected parameter and
-result types and validates the resulting monomorphic signature. This is a
-Mojito runtime-value extension; current Mojo normally spells the equivalent
-specialization as a compile-time function alias.
+When a `Ty::GenericFunc` appears where a concrete `Ty::Func` is expected, the
+checker solves its type parameters from the expected parameter and result types
+and validates the resulting monomorphic signature. When both sides are generic,
+it alpha-normalizes their binder names, preserves arity and bounds, and compares
+the resulting callable shapes directionally. Binder defaults and the infer-only
+marker govern calls through the contract but are not part of current Mojo's
+generic-callable conformance identity.
+
+There are two source forms that otherwise look similar in a declaration's
+compile-time parameter list:
+
+- `F: def(T) -> T` declares a type parameter with a checked anonymous callable
+  constraint. Its `ParamDecl::Type { callable_bound, ... }` retains the complete
+  dependent `Ty::Func` or `Ty::GenericFunc`, so a call through `F` inside the
+  template is checked against that signature. A monomorphic contract requires
+  one monomorphic function type or a struct with nominal `def(...)` conformance;
+  a contract with its own `def[...]` binders accepts an alpha-equivalent generic
+  function. A shape-compatible `__call__` and an unresolved overload set do not
+  satisfy either form. A nonraising/read-only implementation may satisfy a
+  raising/mutable contract because it demands no more capability, while binder
+  bounds, ownership-changing conventions, and reference origins remain exact.
+- `callback: def(...) thin` and `callback: def(...) capturing[...]` declare
+  callable **value** parameters. `Origin` and `OriginSet` binders are
+  semantic-only, and `//` separates infer-only binders from explicitly supplied
+  ones. The bracket argument is evaluated to a callable register, then reified
+  under the parameter name as a hidden typed MIR local; it is not counted among
+  the function's ordinary source-call ABI parameters. Calls through that local
+  use `CallIndirect` like any other callable value. The callable type may have
+  its own nested `def[...]` binder scope; ordinary runtime parameters cannot use
+  that parametric type directly and must use one of these compile-time forms.
+
+An omitted callable-value argument is represented by `CallableDefault`, not by
+`CtValue`. `Symbol` retains the checker-selected function specialization,
+`Parameter` aliases an earlier reified callable, and `If` selects recursively
+between those plans using a dependent compile-time condition. The VM evaluates
+the plan in declaration order after preceding scalar and callable parameters
+have been reified. The generic identity carries only a symbolic occupied-slot
+marker, so neither a static function nor a captured environment is serialized
+as a compile-time closure payload.
+
+An explicit `function[origin_of(place)]` expression is the current-Mojo spelling
+for materializing an origin-generic function as a value without erasing its loan
+contract. The checker binds the function's semantic-only Origin parameters to
+the caller's checked origins and produces a concrete `Ty::Func`; its parameter
+reference signatures and reference-result signature are then ordinary indirect-
+call facts. The runtime value still needs only the resolved MIR symbol because
+the origin substitution has already constrained legal calls and escapes. A
+non-overloaded stateless nested function combines the same substitution with its
+resolved lifted symbol, so top-level and lexical function values share indirect
+lowering. Origin arguments are split from ordinary compile-time arguments before
+candidate checking. They therefore participate in direct overload selection,
+compose with inferred generic arguments on direct calls, and compose with
+explicit ordinary generic arguments on function values. Specialization binds
+the complete source parameter layout: a variadic type/value pack consumes only
+the positional segment available before required suffix parameters, while a
+named Origin may follow the pack and remains on the rewritten call. Origins,
+OriginSets, and callable-value parameters stay symbolic on generated
+specializations instead of shifting the evaluated type/value arguments. An
+overloaded function value requires an expected `def(...)` type; the checker
+specializes every candidate, retains the unique compatible lowered symbol, and rejects an
+uncontextualized or still-ambiguous set. Mojito can also combine a captured
+nested environment with an explicit-Origin contract; the pinned nightly rejects
+materializing that form, so it is classified as an acceptance divergence.
 
 Overloaded function values remain overload sets until an expected `def(...)`
 type selects one candidate; the selected lowered symbol and its raising effect
 are retained in checked data. A struct is callable only when its declaration
 nominally lists a `def(...)` conformance and its `__call__` method matches that
-contract. Indirect VM calls dispatch such values to the checked method.
+contract. Function-type generic parameters, `mut`/`ref` conventions, reference
+origins/results, and raising effects are retained while checking that contract.
+This applies both to parameters declared inside `def[...]` and to a dependent
+outer `F: def(...)` bound. Indirect VM calls dispatch such values to the checked
+method—including a signature-qualified same-arity overload—and carry the
+receiver place when `__call__` needs writable/reference access. Typed-MIR
+verification checks an abstract target against the callable type, then checks a
+concrete nominal target against its declaration and argument types whenever the
+receiver is statically known.
 
-Nested functions are lifted with explicit closure environments. Immutable and
-mutable captures are persistent frame/slot references, moved captures transfer
-their value, and direct nested calls use the same `MakeClosure`/`CallIndirect`
-path as closure values. Sibling environments are forwarded transitively, and a
-`KeepAlive` marker prevents ASAP destruction from invalidating a referenced
-owner during the call. The checker rejects undeclared captures and every path
-that would let an environment outlive its defining function.
+The environment is semantic callable-type data. `CallableEnvironment`
+distinguishes an unqualified contract, an explicitly `thin` function, and a
+`capturing` contract. A capture set is one of `Infer` (`capturing[_]`), a stable
+declaration-order `OriginSet` parameter, or a canonical concrete list of
+`CaptureOrigin { origin, access }` entries. The latter records read versus write
+access, flattens origin unions, removes duplicates, and lets a write subsume a
+read of the same origin. An `OriginSet` is deliberately not a reference-origin
+union: it describes storage retained and accessed by a callable environment,
+not storage a returned reference may designate. Substitution and nominal
+callable conformance preserve the environment contract, and origin escape
+checking recursively visits concrete environment dependencies.
+
+Nested functions are lifted with explicit closure environments. Current source
+capture lists appear directly as `{...}` after effects; Mojito normalizes the
+removed `unified {...}` spelling only as a compatibility extension. `imm`, `mut`,
+and `ref` captures become stable frame/slot handles with their checked
+permissions, `var` clones the value when the declaration executes, and move
+capture transfers the value at that same point. Direct nested calls use the same
+materialized closure and `CallIndirect` path as closure values rather than
+rebuilding an environment at each call.
+
+The stored reference handle is not itself a persistent loan spanning declaration
+to invocation. The enclosing code may access or update its owner between those
+events, and an `imm` capture observes that current value. Loan conflicts apply
+when the closure is used under its checked capture convention; owned copy/move
+captures instead operate on their independent environment slot.
+
+The checker resolves every explicit, defaulted, and intermediate forwarding
+capture to a stable `OwnerId`, exact storage `Ty`, and capture convention. This
+includes explicit captures unused by the body: copy/move still happens when the
+declaration executes. Checked call, identifier, type-application, and declaration
+occurrence identities then select a nested registry keyed by `OwnerId`; same-name
+declarations in disjoint blocks cannot alias. Lifted capture parameters and MIR
+declarations use the retained storage type rather than an opaque environment
+placeholder.
+
+Each checked capture also carries the origins retained by its stored value and,
+for `imm`/`ref`/`mut`, the read or write access to its source place. Finalizing a
+nested declaration folds those facts into its concrete callable environment.
+At every direct, indirect, method, constructor, or nominal subscript call, the
+checker collects the concrete environment accesses of both the callee and
+non-escaping callable arguments into
+`SemanticAdjustment::CallableCaptureAccesses`. Checked HIR keeps that
+adjustment; MIR maps stable owners to local places and stores the result on the
+call instruction as `capture_accesses`. Verification checks the typed call,
+and persistent-loan analysis treats each entry as an access only for the call's
+duration. This is why a mutable closure invocation conflicts with a live alias
+of its captured owner even across a downward-funarg boundary, while ordinary
+owner mutation between closure declaration and invocation remains valid.
+
+Capture discovery builds a lexical tree and lifts descendants recursively at
+arbitrary depth. Each lifted symbol encodes its complete lexical path; the
+nearest declaration wins under shadowing, and each intermediate environment
+forwards only captures permitted by its own explicit/default policy. Capturing a
+sibling captures the already materialized sibling closure slot, not a rebuilt or
+flattened copy of its transitive environment, so declaration-time snapshots and
+moved state remain stable. `KeepAlive` retains exact existing callable/reference
+slots and never fabricates a slot for a transitive capture. Lifted
+specializations retain their exact regular/default/variadic/keyword/marker/effect
+ABI; reference returns and a named `out` result remain part of that checked ABI.
+The checker rejects undeclared captures and every path that would let an
+environment outlive its defining function.
+
+Compile-time specialization distinguishes evaluated parameters from retained
+runtime/semantic parameters. Scalar values, ordinary types, and packs may drive
+`comptime if` or `comptime for` and are baked into the generated body. Origin,
+OriginSet, and explicit callable-value parameters remain on its signature, and
+their source arguments remain on the rewritten call. A scalar-controlled branch
+can therefore select code that later invokes a captured callback without asking
+the compile-time universe to own that callback. `CtValue` intentionally has no
+function or closure variant: this residualization is not arbitrary callable
+CTFE, and it does not make closures escaping. An unqualified `def(...)`
+accepting a materialized stateful downward funarg is a Mojito extension over the
+pinned nightly; portable code states `capturing[origins]` explicitly.
+
+Runtime `for`, tuple-unpack, and `except` targets likewise retain checked owner
+identity and storage type across HIR and structured-region lowering. Unpack uses
+each target expression's occurrence/owner facts; loop and handler declarations
+seed exact owner slots. A handler may therefore shadow an outer same-name value,
+host a nested closure over its `Error`, and restore the differently typed outer
+binding afterward without name-based slot reuse. Future pattern and coroutine
+binders can extend this declaration/binder boundary instead of forging source
+locations.
 
 For method calls, MIR also records whether the receiver was a writable place.
-That lets a `mut self` method write the mutated receiver back to the caller.
+That lets a `mut`/`ref self` method bind directly to caller storage, including
+when the call executes synchronously inside a structured region.
 For overloaded method calls, MIR also carries the resolved function name, such as
 `Counter.bump$ov$Int`, so the VM does not have to reconstruct type-directed
 dispatch dynamically.
@@ -1222,36 +1680,109 @@ explicit.
 ### Persistent local loans
 
 Local `ref name = place` bindings are checked references, not copied referent
-values. MIR emits `BeginLoan`; statically resolvable aliases use the frozen owner
-`MirPlace`, while cross-call aliases use explicit reference operations.
-`MirPlace::through` records which reference authorized an access. The VM ignores
-loan metadata after checking.
+values. MIR emits one grouped `EstablishLoans` operation for each fresh binding
+generation; every `MirLoan` retains the executable owner `MirPlace`, permission,
+and optional canonical `MirInteriorOrigin`. Statically resolvable aliases use
+the frozen place, while cross-call aliases use explicit reference operations.
+`MirPlace::through` records which reference authorized an access. The VM erases
+both loan and interior-generation metadata after checking.
 
 Reference variables participate in backward CFG liveness. A loan is active from
 its binding through its last use, including joins and loop back-edges. While it
 is active, direct or differently-authorized overlapping mutation, replacement,
 move, drop, or mutating call is rejected. Projection overlap is field-sensitive
-and index-conservative. Because alias uses also use the owner root, ordinary drop
-elaboration expands a live reference to every possible owner root, keeping union
-and substituted owners alive through the reference's last use.
+and index-conservative. Drop elaboration combines that liveness with the
+forward reaching `EstablishLoans` generation: every possible owner of a live
+union/reference value remains alive, but rebinding a reference-bearing aggregate
+retires only its old generation instead of permanently retaining every owner
+ever stored in that variable slot.
+
+Reference handles can temporarily leave a variable slot while one MIR
+expression is evaluated. Drop elaboration therefore propagates owner provenance
+through the SSA registers of that expression (`MakeRef` through `ReadRef` and
+the consuming call/operator). The owner dies after the final consuming
+instruction, while `DefVar` is an explicit handoff to a newly established
+variable generation. This preserves ASAP destruction without dropping storage
+between creation and use of a transient handle.
 
 Cross-call aliases lower to explicit `MakeRef`, `ReadRef`, and `WriteRef`
 operations. Runtime handles contain a monotonic frame identity, variable slot,
 and captured field/index projection. Returning a reference forwards the caller's
 handle, so a union return preserves whichever argument was selected dynamically.
+An ordinary value context requires a `Copyable` referent and follows `ReadRef`
+with typed `CopyValue`, invoking the referent's copy lifecycle instead of
+aliasing pointer-backed storage. An explicit `ref` binding retains the handle,
+omits that copy, and therefore remains legal for a linear referent.
+The checker uses the same explicit `CopyValue` boundary for a projected place in
+a consuming context such as a new binding, assignment, or return. This fact is
+recorded while conditional `Copyable` constraints are in scope; plain
+`LoadPlace` remains handle-preserving for borrowed method receivers, formatting,
+and iteration.
+The checker marks only actual arguments selected for `mut`/`ref` parameters as
+caller-place dependencies; MIR retains those places through the call while an
+ordinary copied place argument remains eligible for ASAP destruction after its
+value is evaluated.
+
+A bare `ref` parameter or receiver has parametric mutability. Its checked body
+may read and return/reborrow it, and the call substitutes the actual caller
+capability into a reference result, but the body cannot assume write access.
+Writing requires an explicit `ref[origin]` whose `Origin` is mutable (or the
+ordinary `mut` convention). Call solving rejects any attempt to pass an
+immutable reference to that mutable contract, so capability cannot be escalated.
+
+### Collection-owned interior origins
+
+An origin path may contain `Interior("tag")`, distinct from an unknown runtime
+index. It names storage owned behind a container, such as
+`values["element"]`, `mapping["value"]`, or a Variant payload. Each
+`EstablishLoans` marker is a fresh generation and may retain several possible
+origins for a union-valued return. Multiple overlapping interior references may
+coexist, ordinary owner reads remain legal, and a direct List element write
+updates the storage those references designate.
+
+The checker, rather than MIR syntax inspection, records every operation that may
+redefine an interior. Lowering preserves those facts as
+`InvalidateInteriors { base, except, include_base_generation, marker }`
+immediately before the operation.
+Whole-owner replacement (including writes through references, reference-valued
+aggregate fields, and origin-bearing pointers), replacement of an interior that
+owns deeper interiors, structural List mutation, mutable/ref calls, Dict lookup
+or replacement, and Variant tag replacement invalidate matching old
+generations. `except` preserves the generation used to mutate through an
+interior reference while still invalidating any nested interiors below it.
+Ordinary mutation leaves the exact base generation valid;
+`include_base_generation` instead records Mojo's owned-interior refresh, where a
+new generation replaces that exact named region. Dict `__getitem__` uses this
+mode for `mapping["value"]`, invalidating an earlier value reference without
+invalidating the sibling `mapping["element"]` generation retained by key
+iteration.
+
+A separate forward may-analysis carries generation sets through CFG joins and
+loop back-edges. An invalidation on any incoming path makes a later use of that
+generation an error; the diagnostic identifies the canonical origin and points
+both to the stale use and the invalidating operation. Prefix matching is
+field-sensitive, so mutating `pair.left` cannot invalidate
+`pair.right["element"]`. Structured `try` regions carry distinct normal,
+raising, and return/escape channels: handlers join only actual raising sites,
+`finally` is checked on every channel, and only normal fallthrough reaches the
+instruction after the region. This generation analysis is deliberately
+separate from ordinary shared/exclusive loans: interior invalidation governs
+storage identity, while ordinary loans continue to govern direct place access.
 
 Origin-parametric aggregate fields store those same handles rather than reading
 and copying their referents. A normal field access reads through the handle;
-assignment writes through it. MIR transfers the originating loan to the aggregate
-binding, so the owner remains alive and conflicting access remains rejected until
-the aggregate's final reference use. Stored `UnsafeAnyOrigin` is rejected because
-it would hide an untracked mutable capability behind an otherwise safe value.
+assignment writes through it. MIR transfers the originating loan to the
+aggregate binding. Reaching-generation-aware drop liveness keeps the current
+owner alive through aggregate handle use, releases the old owner when the
+aggregate is rebound, and retains the replacement generation independently.
+Stored `UnsafeAnyOrigin` is rejected because it would hide an untracked mutable
+capability behind an otherwise safe value.
 
 `UnsafePointer(to=place)` rides the same machinery. The checker infers
 `PointerOrigin::Place` from the source place — mutability follows the owner
 binding — and the checked pointer type retains that provenance through HIR and
 MIR while the VM value stays an origin-free frame/slot handle. Construction
-lowers to `MakeRef` plus a `BeginLoan` on the pointer binding; a stably bound
+lowers to `MakeRef` plus `EstablishLoans` on the pointer binding; a stably bound
 pointer's `p[0]` deref substitutes the frozen owner place (`MirPlace::through`
 names the pointer), so owner liveness, ASAP destruction, and loan conflicts stay
 exact, while reassigned or field-loaded pointers read and write through their
@@ -1277,12 +1808,33 @@ for i in range(3):
 The back-edge makes the moved state flow to the next iteration. The analysis can
 therefore reject the second iteration's attempted move.
 
-Consuming iteration lowers `for var item in collection^` by moving the source
-once into the iterator slot. Each `Next` removes one element, so the current loop
-binding and the residual iterator state have disjoint ownership. Normal
-exhaustion leaves no residual elements; return, raise, and `break` paths run the
-ordinary edge cleanup. The checker rejects an early exit when the element type
-is not `ImplicitlyDeletable`, because the residual state would otherwise conceal
+Borrowed iteration, and consuming iteration for a type with `__iter__(var self)`,
+first execute the checker-selected nominal `__iter__` normalization chain.
+Bundled borrowed paths cover List, Set, Dict, and Range; the bundled owned path
+is currently List-specific. For a current typed-raising iterator, `TryNext`
+invokes `__next__(mut self)`, writes the mutated iterator back, and branches on
+whether the call returned an element or raised the exact checked
+`StopIteration`. The older `HasNext`/`Next` pair remains for nonraising iterators
+whose selected `__len__` reports exhaustion. Bundled Range/list/set/dict
+iterators and concrete user iterators use those nominal paths. The only
+method-free fallbacks are the CTFE-only `ComptimeList` carrier and the
+compiler-private heterogeneous runtime-pack carrier; public `Tuple` values are
+nominal and do not use that fallback.
+
+Borrowed concrete List, Set, and Dict place iteration retains an `element`
+interior-origin loan for the live iterator. For List, nonstructural replacement
+remains visible, while a structural mutation invalidates that generation and a
+subsequent iterator use is rejected. Concrete List `for ref` similarly creates
+write-through indexed element references. Generic `T: Iterable` and user-defined
+reference-yielding iterators cannot yet derive these facts because parameterized
+associated iterator types are not represented.
+
+Consuming `for var item in collection^` moves the source once into the iterator
+slot. Each `Next` transfers one element, so the current loop binding and the
+residual iterator state have disjoint ownership. Normal exhaustion leaves no
+residual elements; return, raise, and `break` paths run the ordinary edge
+cleanup. The checker rejects an early exit when the element type is not
+`ImplicitlyDeletable`, because the residual state would otherwise conceal
 undischarged explicit-destroy obligations.
 
 ### Partial Move Tree
@@ -1299,6 +1851,11 @@ print(p.left)    # error
 ```
 
 Dynamic indexed moves are more conservative because arbitrary indices can alias.
+Compiler-private heterogeneous Tuple storage is the narrow exception: a
+compile-time element index lowers to `Proj::ConstIndex`, so the move tree can
+distinguish element 0 from element 1. This lets `Tuple(*args^)` and
+`consume_elements` relocate linear pack elements exactly once while public
+runtime-varying indexed transfers remain rejected.
 
 ## Stage 7: Liveness And ASAP Destruction
 
@@ -1349,10 +1906,11 @@ declaration order. Struct destruction runs:
 1. the struct's `__del__(deinit self)`, if present
 2. fields in reverse declaration order
 
-Native tuples drop elements left-to-right, matching current Mojo's heterogeneous
-tuple-storage lifecycle. Struct fields remain reverse declaration order; the
-other native VM collections retain their representation-specific reverse
-teardown order.
+The compiler-private heterogeneous pack carrier drops elements left-to-right,
+matching current Mojo's pack-storage lifecycle. Public collections, including
+`Tuple`, are nominal structs and otherwise follow the ordinary reverse
+declaration order for fields; their library destructors own any element-specific
+teardown.
 
 Types whose `ImplicitlyDeletable` conformance is explicitly unavailable, such
 as `ImplicitlyDeletable where False`, are excluded from this automatic path.
@@ -1362,8 +1920,12 @@ is violated and is inert on an implicitly deletable type. A checked,
 stable-binding obligation analysis requires every initialized linear value to
 reach exactly one named `deinit self` method on every exit. It rejects
 abandonment, overwrite, and inconsistent branch or loop states.
-MIR retains the resulting declaration metadata, and the VM suppresses
-`DropVar` for these types.
+MIR retains the resulting declaration metadata. The checked obligation ensures
+that an intact linear value is consumed before it can reach automatic
+`DropVar`; the VM therefore does not guess concrete deletability from an open
+generic struct name. If any aggregate field has already moved, drop glue skips
+the whole-value `__del__` for every struct and recursively destroys only its
+initialized residual fields.
 
 A named explicit destructor is lowered as a call followed by `ConsumeVar` for a
 whole binding or `ConsumePlace` for a projected field.
@@ -1409,6 +1971,12 @@ continue.
 hidden try-region exits explicit enough for the VM to run destructors before
 jumping to the enclosing loop target.
 
+Iterator-driven loops also place an explicit drop at their common exhaustion or
+`break` exit. A `return` cannot reach that block, so HIR and MIR retain its
+current binding and iterator owners on `ReturnWithCleanup`; this preserves
+return-value evaluation order and carries destruction through nested
+`try/finally` regions.
+
 ## Stage 8: Register VM
 
 Module:
@@ -1422,8 +1990,10 @@ byte-addressable:
 
 - registers hold rich `runtime::Value`s
 - variables are frame slots
-- structs, lists, sets, dictionaries, tuples, strings, errors, ranges, and SIMD
-  values are ordinary runtime values
+- public collections are ordinary nominal struct values; their storage uses the
+  same pointer arena and struct fields available to user code
+- private heterogeneous packs, CTFE-only lists, strings, errors, variants,
+  slices, and SIMD values retain dedicated runtime carriers
 - field and index operations work through high-level value navigation
 - calls allocate a new VM frame
 
@@ -1485,9 +2055,14 @@ duplicate/missing-keyword diagnostics and the checker-selected effect contract.
 7. runs the callee's block loop
 8. returns the result and, where needed, final variable slots for write-back
 
-`mut` and `ref` parameters are implemented by write-back. The caller supplies a
-simple place for such arguments. After the callee returns, the VM copies the
-callee's final parameter value back into the caller place.
+`mut` and explicitly mutable `ref[origin]` parameters receive handles to the
+simple caller places retained in MIR. Keyword places are resolved after argument
+binding by the selected parameter name, so reordering and ordinary defaults do
+not lose identity; a value synthesized by `**kwargs^` has no writable source
+place. Inside a structured region, a temporary caller-frame mirror makes these
+the same frame/slot handles used by continuation-driven calls and is committed
+on both normal and raising outcomes. Bare `ref` remains parametrically mutable
+and may not write in an unspecialized body.
 
 Overloaded function calls arrive at the VM already resolved to a lowered
 signature name. For constructor overloads, a direct resolved callee such as
@@ -1506,8 +2081,19 @@ Method calls are normal function calls with a receiver convention:
 - ordinary arguments use the same positional/keyword/default/variadic slot
   matcher as free functions before `self` is prepended
 - `mut self` writes the final receiver back to the caller place
-- ordinary `mut`/`ref` method parameters also write back
-- list mutators operate through the receiver place
+- ordinary `mut` and explicitly mutable `ref[origin]` method parameters also
+  bind through retained positional or keyword caller places
+- nominal collection mutators commit through a reference-aware receiver place,
+  including pointer-backed self-hosted `List` fields
+
+Method-dispatched nominal `Index`, `Slice`, `MultiIndex`, and `MultiSet` enter
+this same selected-method dispatcher and argument binder. They never choose a dunder by
+runtime name or arity: the retained `MirSubscriptCall` supplies the lowered
+target, value-parameter arguments, typed raising contract, caller places, and
+reference-result metadata. The VM only materializes slice descriptors, invokes
+that contract, performs selected write-back, and returns or propagates its
+result. The call-less `Slice.indices()` Tuple-storage bridge described above is
+the sole nominally typed exception.
 
 ### Moves At Runtime
 
@@ -1527,9 +2113,9 @@ This makes the VM a useful backstop and executable model for ownership semantics
 
 Dropping is observably a no-op for scalars and destructor-less leaf values. For
 structs with `__del__`, it calls the destructor and then drops fields. A
-destructor-less struct still recursively destroys aggregate fields; native
-Tuple elements are visited left-to-right. Moved-out fields are skipped so
-partial moves do not double-drop.
+destructor-less struct still recursively destroys aggregate fields; elements
+inside the compiler-private heterogeneous pack carrier are visited
+left-to-right. Moved-out fields are skipped so partial moves do not double-drop.
 
 ### Exceptions And Non-Normal Flow
 
@@ -1569,12 +2155,11 @@ runtime values:
 - integers, unsigned integers, floats, booleans
 - strings
 - `None`
-- structs
-- lists
-- tuples
+- structs, including public `List`, `Set`, `Dict`, `Range`, and `Tuple`
+- CTFE-only `ComptimeList` values
+- compiler-private heterogeneous pack tuples
 - variants (checked alternative list, active tag, and payload)
 - slice descriptors (contiguous, strided, or general, with optional bounds)
-- ranges
 - SIMD-like lane vectors
 - errors
 - moved/tombstone markers
@@ -1708,15 +2293,23 @@ The main pressure points are:
   string-to-AST macro channel
 - ABI-sensitive reflection such as byte offsets belongs to the future native
   backends; VM reflection exposes semantic field indexes and checked projections
-- MIR is fully register-typed and semantically verified; the named deferrals
-  are capture-set discovery in `mir/nested.rs` (still free-variable name
-  analysis over AST, though bodies and parameter types are checked facts),
-  name-based callee fallbacks kept for the unchecked phase-test path, nominal
-  callable-conformance facts in `MirDeclarations`, and caching the verified
-  `MirProgram` in `CompiledProgram` to avoid the compiler/VM double lowering
+- MIR is fully register-typed and semantically verified; checked capture and
+  binder facts cross HIR without source-name/span reconstruction. The remaining
+  compatibility boundaries are name-based callee fallbacks kept only for the
+  unchecked phase-test path, nominal callable-conformance facts in
+  `MirDeclarations`, and caching the verified `MirProgram` in `CompiledProgram`
+  to avoid the compiler/VM double lowering
 - source modules and packages are flattened after lexical namespace resolution;
   compiled `.mojoc` artifacts remain future distribution tooling
-- trait support is intentionally incomplete
+- trait support is intentionally incomplete; in particular, associated
+  compile-time types are monomorphic, so origin-parameterized iterator families
+  must cross the checked/MIR boundary before its textual schema freezes
+- abstract trait-dispatch subscripts are verified from their complete
+  checker-retained argument/result contract and retargeted to a concrete method
+  at execution; the backend-ready MIR checkpoint should retain abstract trait
+  requirement declarations themselves, and any witness needed to independently
+  validate effective `ref`-to-`read` narrowing, before accepting textual MIR as
+  a standalone artifact
 - exception modeling is structured, not a fully general unwind-edge MIR
 - nested-function and capture support should match Mojo's non-escaping patterns
   without growing into a general escaping-closure system

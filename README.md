@@ -16,8 +16,8 @@ interesting features associated with C++, Rust, and Zig.
   Mojo. All mojito programs should be runnable by Mojo, though platform-specific
   Mojo programs will remain outside the target.
 - Keep the register VM as the executable semantic oracle while adding a stable,
-  human-readable MIR/VM assembly format and, later, native Cranelift and LLVM
-  backends.
+  human-readable MIR/VM assembly format and, later, an LLVM backend followed by
+  optional MLIR-family, Cranelift, and eBPF backends.
 
 ## Status
 
@@ -37,12 +37,20 @@ mojito currently has:
   identities; configurable roots; and bundled standard-library lookup
 - compile-time elaboration for `comptime if`, `comptime for`, richer compile-time
   values, and fuel-bounded pure-function CTFE through the MIR/VM path
+- checked callable contracts and values: dependent `F: def(...)` bounds,
+  generic anonymous `def[...]` contracts, symbolic defaults for
+  `thin`/`capturing[origins]` callable-value parameters, residual callable
+  specialization, explicit-Origin overload/generic/pack selection, nominal
+  callable structs, and read/write capture effects carried into loan analysis
 - arbitrary-precision `IntLiteral` and exact finite `FloatLiteral` evaluation,
   with checked, explicit MIR materialization into wrapping integer and rounded
   floating runtime scalars
 - a HIR control-flow graph lowering pass
 - a MIR/A-normal lowering pass with explicit registers, variables, places, moves,
   drops, calls, method calls, exceptions, and loop control
+- complete checked contracts for method-dispatched nominal subscripts,
+  including raising/reference results and one-evaluation augmented assignment
+  through either value-getter/setter or mutable-reference-getter paths
 - ownership analysis for `^` moves, including use-after-move, conditional moves,
   double moves, partial field moves, and reinitialization
 - borrow checking for ordinary call arguments, including mutable/shared aliasing
@@ -50,8 +58,8 @@ mojito currently has:
 - liveness-driven ASAP destruction via `__del__(deinit self)`
 - a register VM backend used as the runtime implementation
 - self-hosted standard-library proofs in `stdlib/`, including generic
-  `Optional`, `List`, `Set`, `Dict`, and keyword-owning `StringDict`
-  implementations
+  `Optional`, `List`, `Set`, `Dict`, `Range`, heterogeneous `Tuple`, and
+  keyword-owning `StringDict` implementations
 - basic collection/protocol traits such as `Iterable`, `Iterator`, `Sized`,
   `Equatable`, and `Comparable` where the current self-hosted library needs
   them
@@ -76,24 +84,38 @@ Language deficiencies:
   incomplete
 - no full parametric polymorphism story comparable to Mojo; generics, value
   parameters, bound-checked heterogeneous packs with per-index concrete types,
-  dependent parameters, and contextual generic callable specialization cover the
-  current library, but not the full language
+  dependent parameters, recursive lexical specialization, one-segment linear
+  pack forwarding, dependent callable bounds, callable-value parameters, and
+  contextual/origin-specialized callable values cover the current library, but
+  not the full language. Callable defaults and `def[...]` contracts are
+  represented symbolically, while specialization retains runtime callable
+  arguments instead of admitting functions or closures into `CtValue`; arbitrary
+  callable execution during CTFE is not supported
 - overload resolution ranks conversion count, variadic use, signature length,
   and generic ties across functions, methods, and constructors; checked
   user-defined `@implicit` constructors participate in that ranking, while the
   full Mojo specialization lattice remains open
-- no complete effect system; direct, method, overloaded, and indirect callable
-  `raises` propagation is checked, including typed and parametric errors and
-  `Never`, but trait-requirement effects and full unwind semantics remain open
+- no complete effect system; direct, method, overloaded, indirect callable,
+  trait-requirement, and bounded-dispatch `raises` propagation is checked,
+  including typed and parametric errors and `Never`. Concrete closure
+  environments also contribute read/write owner effects to persistent-loan
+  analysis, but suspension and fully general unwind effects remain open
 - no full exception/unwind model beyond the VM-supported subset
 - no complete model of Mojo's ownership, origins, and lifetime semantics
-- non-escaping nested functions use explicit unified capture lists and support
-  sibling calls, recursion, generics, mutable/reference environments, and nominal
-  callable structs; escaping closures remain intentionally rejected to match Mojo
+- non-escaping nested functions use current `{imm ...}`/`{mut ...}`/`{ref ...}`/
+  `{var ...}` capture lists and lift recursively through lexical scopes while
+  preserving sibling calls, generics, callable environment origins, effects,
+  reference returns, and call conventions. Explicit `capturing[origins]`
+  contracts preserve the environment across non-escaping callable parameters;
+  accepting a stateful closure through an unqualified `def(...)` and captured
+  nested Origin specialization are pinned-nightly Mojito extensions. The removed
+  `unified {...}` spelling is accepted only as an explicit compatibility
+  extension, and escaping closures remain intentionally rejected
 - no self-hosted `String`; string literals and runtime strings still rely on VM
   support while storage, Unicode, slicing, and literal interop are designed
-- `Tuple` remains mostly compiler/runtime-shaped; fully self-hosting arbitrary
-  heterogeneous tuples would need deeper type-level/variadic machinery
+- public heterogeneous `Tuple` is a nominal variadic-generic library struct,
+  but its field uses a compiler-private heterogeneous pack carrier; that carrier
+  is also the ABI for specialized `*args` and is not a source-level collection
 - no complete support for every Mojo expression form; some advanced forms still
   parse before they are fully checked or executed
 
@@ -191,7 +213,7 @@ boundary.
 
 The current language target is recorded in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md). Mojito presently tracks
-**Mojo 1.0.0b3.dev2026072406 (2026-07-24)**; the audit records nightly language
+**Mojo 1.0.0b3.dev2026072505 (2026-07-25)**; the audit records nightly language
 drift separately from claims of implemented parity.
 
 Shared cases in `conformance/cases.tsv` run under both implementations. They can
@@ -331,7 +353,9 @@ Examples of modeled behavior:
 - partial field moves are tracked separately from sibling fields
 - assigning back to a moved field reinitializes it
 - `var` parameters consume their argument; removed `owned` syntax is rejected
-- `mut` and `ref` parameters borrow and can write back through caller places
+- `mut` and explicitly mutable `ref[origin]` parameters borrow and can write
+  through caller frame/slot places on normal and raising paths, including calls
+  inside `try`; bare `ref` propagates the caller's mutability
 - conflicting borrows in the same call are rejected
 - values with `__del__(deinit self)` are destroyed at last use, not scope end
 - moved values are dropped once, at their new owner
@@ -395,12 +419,17 @@ Current self-hosted proof types include:
 - `List[T]`
 - `Set[T]`
 - `Dict[K, V]`
+- `HashDict[K, V]`
+- `HashSet[T]`
+- `Range`
+- `Tuple[*Ts]`
+- `StringDict[V]`
 
 The point is not that these are production collections. The point is that user
 structs now have enough language hooks to behave like real value types:
 
 - dunder operator and builtin dispatch
-- subscript read/write
+- subscript read/write and augmented assignment with accessor-specific effects
 - type-directed function, method, and constructor overloading
 - `__len__`
 - user iteration
@@ -420,7 +449,8 @@ Near-term work:
 - deepen self-hosted `stdlib/` coverage while deleting or shrinking Rust
   intrinsics where practical
 - design self-hosted `String`
-- clarify what remains compiler-primitive about `Tuple`
+- keep the private heterogeneous pack carrier smaller than the public
+  variadic-generic `Tuple` API
 - improve diagnostics and source spans
 - expand trait and generic support
 - document the architecture in `docs/architecture.md`
@@ -432,14 +462,16 @@ Longer-term possible directions:
 - a versioned assembler/disassembler for flattened MIR/VM programs, including
   textual serialization, parsing, verification, round-tripping, and execution
 - optional compact bytecode serialization derived from the same schema
-- Cranelift as the first native backend, followed by LLVM
+- LLVM as the primary native backend, followed by optional MLIR-family targets;
+  investigate Cranelift and eBPF afterward
 - richer borrow checking and lifetime diagnostics
 - better specialization of value-parameterized code
 - deeper comptime specialization and generated declarations
 - an explicitly documented unsafe/unsupported boundary
 
-eBPF and MLIR are stretch backends. GPU, Python interoperability, and
-parallel/distributed execution are not goals for the first parity pass.
+MLIR-family targets, Cranelift, and eBPF are optional later backends. GPU,
+Python interoperability, and parallel/distributed execution are not goals for
+the first parity pass.
 
 ## Library API
 

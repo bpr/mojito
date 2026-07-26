@@ -10,6 +10,29 @@ use crate::parse;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+const PRELUDE_MODULE: &str = "std.prelude";
+const PRELUDE_PATH: &str = "stdlib/std/prelude.mojo";
+const PRELUDE_EXPORTS: &[&str] = &["List", "Set", "Dict", "Tuple", "Range", "range"];
+
+/// Compiler-bundled declarations whose public identity is intentionally stable
+/// and unqualified. Their implementation helpers remain module-qualified.
+fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static str> {
+    match (module, declaration) {
+        ("std.collections.list", "List") => Some("List"),
+        ("std.collections.set", "Set") => Some("Set"),
+        ("std.collections.dict", "Dict") => Some("Dict"),
+        ("std.collections.tuple", "Tuple") => Some("Tuple"),
+        ("std.range", "Range") => Some("Range"),
+        ("std.range", "range") => Some("range"),
+        ("std.collections.string_dict", "StringDict") => Some("StringDict"),
+        _ => None,
+    }
+}
+
+fn bundled_path(relative: &str) -> Option<PathBuf> {
+    option_env!("CARGO_MANIFEST_DIR").map(|root| Path::new(root).join(relative))
+}
+
 /// An error from resolving/loading modules.
 #[derive(Debug)]
 pub enum ModuleError {
@@ -114,6 +137,29 @@ pub fn link_source_with_options(
     Ok(result)
 }
 
+/// Inject the compiler-bundled implicit prelude into an already parsed program.
+///
+/// This is the reusable bridge for focused parse -> elaborate -> check pipelines
+/// which do not have an entry file to pass through [`link`]. Ordinary production
+/// compilation should continue to use `link*`, which performs the same injection
+/// while also resolving imports relative to the entry path.
+pub fn inject_prelude(program: Vec<Stmt>) -> Result<Vec<Stmt>, ModuleError> {
+    inject_prelude_with_options(program, LinkOptions::default())
+}
+
+/// [`inject_prelude`] with explicit module search roots. Relative imports, when
+/// present in the parsed program, are resolved from the current directory.
+pub fn inject_prelude_with_options(
+    program: Vec<Stmt>,
+    options: LinkOptions,
+) -> Result<Vec<Stmt>, ModuleError> {
+    let mut linker = Linker::new(options);
+    let body = linker.resolve_entry(program, Path::new("."))?;
+    let mut result = linker.decls;
+    result.extend(body);
+    Ok(result)
+}
+
 struct Linker {
     options: LinkOptions,
     /// Module files already hoisted (canonical path) — dedup + cycle break.
@@ -129,28 +175,68 @@ struct Linker {
     namespace_exports: HashMap<PathBuf, HashMap<String, HashMap<String, String>>>,
     /// Hoisted declarations from all loaded modules, in dependency order.
     decls: Vec<Stmt>,
+    /// Stable public bindings exported by the fully loaded implicit prelude.
+    /// `None` while the prelude and its own dependency graph are bootstrapping.
+    prelude_bindings: Option<HashMap<String, String>>,
 }
 
 impl Linker {
-    fn new(options: LinkOptions) -> Self {
+    fn new(mut options: LinkOptions) -> Self {
+        // Explicit LinkOptions replace `Default`, but the compiler-bundled
+        // prelude must remain resolvable. Keep user roots ahead of the bundled
+        // fallback so their ordinary import-resolution order is unchanged.
+        if let Some(root) = bundled_path("stdlib")
+            && !options.search_roots.contains(&root)
+        {
+            options.search_roots.push(root);
+        }
         Linker {
             options,
             loaded: HashSet::new(),
             exports: HashMap::new(),
             namespace_exports: HashMap::new(),
             decls: Vec::new(),
+            prelude_bindings: None,
         }
+    }
+
+    fn ensure_prelude(&mut self) -> Result<(), ModuleError> {
+        if self.prelude_bindings.is_some() {
+            return Ok(());
+        }
+        let Some(path) = bundled_path(PRELUDE_PATH) else {
+            // `CARGO_MANIFEST_DIR` is present for normal Cargo builds. Keeping
+            // this branch permits parse-only consumers on unusual build systems.
+            self.prelude_bindings = Some(HashMap::new());
+            return Ok(());
+        };
+        self.load_module(&path, PRELUDE_MODULE)?;
+        let exports = self
+            .exports
+            .get(&canonical(&path))
+            .expect("a loaded prelude records its exports");
+        let mut bindings = HashMap::with_capacity(PRELUDE_EXPORTS.len());
+        for &name in PRELUDE_EXPORTS {
+            let target = exports.get(name).ok_or_else(|| ModuleError::NameNotFound {
+                module: PRELUDE_MODULE.to_string(),
+                name: name.to_string(),
+            })?;
+            bindings.insert(name.to_string(), target.clone());
+        }
+        self.prelude_bindings = Some(bindings);
+        Ok(())
     }
 
     /// Resolve the entry program's imports (loading their modules) and return its
     /// own non-import statements (declarations + top-level code + `main`).
     fn resolve_entry(&mut self, program: Vec<Stmt>, dir: &Path) -> Result<Vec<Stmt>, ModuleError> {
+        self.ensure_prelude()?;
         let uses_kwargs = program_uses_kwargs(&program);
         if uses_kwargs && let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
             let runtime = Path::new(root).join("stdlib/std/collections/string_dict.mojo");
             self.load_module(&runtime, "std.collections.string_dict")?;
         }
-        let mut bindings = HashMap::new();
+        let mut bindings = self.prelude_bindings.clone().unwrap_or_default();
         let mut namespaces = HashMap::new();
         if uses_kwargs && let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
             let runtime = Path::new(root).join("stdlib/std/collections/string_dict.mojo");
@@ -190,8 +276,13 @@ impl Linker {
         }
         let program = read_and_parse_named(path, module_name)?;
         let dir = path.parent().unwrap_or_else(|| Path::new("."));
-        let mut bindings = HashMap::new();
+        // Modules loaded after prelude bootstrap see the same implicit names as
+        // the entry module. Prelude dependencies themselves are loaded while the
+        // table is `None` and therefore use only their explicit imports.
+        let implicit_bindings = self.prelude_bindings.clone().unwrap_or_default();
+        let mut bindings = implicit_bindings.clone();
         let mut namespaces = HashMap::new();
+        let mut explicit_exports = HashSet::new();
         if module_name != "std.collections.string_dict"
             && program_uses_kwargs(&program)
             && let Some(root) = option_env!("CARGO_MANIFEST_DIR")
@@ -217,6 +308,13 @@ impl Linker {
                         &mut bindings,
                         &mut namespaces,
                     )?;
+                    if let ImportNames::Names(items) = names {
+                        explicit_exports.extend(
+                            items.iter().map(|item| {
+                                item.alias.clone().unwrap_or_else(|| item.name.clone())
+                            }),
+                        );
+                    }
                 }
                 StmtKind::Import { path: mpath, alias } => {
                     self.apply_import(dir, mpath, alias.as_deref(), &mut namespaces)?;
@@ -230,12 +328,9 @@ impl Linker {
                 if name == "main" {
                     continue;
                 }
-                let linked_name =
-                    if module_name == "std.collections.string_dict" && name == "StringDict" {
-                        name.to_string()
-                    } else {
-                        qualified(module_name, name)
-                    };
+                let linked_name = implicit_public_identity(module_name, name)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| qualified(module_name, name));
                 local.insert(name.to_string(), linked_name);
             }
         }
@@ -252,7 +347,16 @@ impl Linker {
         }
         let mut exports = local;
         for (name, target) in bindings {
-            if !name.starts_with('_') && !exports.contains_key(&name) {
+            // Implicit prelude visibility is not an implicit re-export from every
+            // user module. A source-level named import is different: facades such
+            // as `from std.collections.list import List` deliberately re-export
+            // that binding even though the same public identity is also implicit.
+            // The prelude module itself is built before this table is populated,
+            // so its deliberate imports remain public exports as well.
+            if !name.starts_with('_')
+                && !exports.contains_key(&name)
+                && (!implicit_bindings.contains_key(&name) || explicit_exports.contains(&name))
+            {
                 exports.insert(name, target);
             }
         }
@@ -838,6 +942,31 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
     }
 }
 
+fn rewrite_type_param(
+    parameter: &mut crate::ast::TypeParam,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    for bound in &mut parameter.bounds {
+        rename(bound, names);
+    }
+    if let Some(ty) = &mut parameter.value_type {
+        rewrite_type(ty, names, namespaces);
+    }
+    if let Some(ty) = &mut parameter.callable_bound {
+        rewrite_type(ty, names, namespaces);
+    }
+    if let Some(value) = &mut parameter.origin_mutability {
+        rewrite_expr(value, names, namespaces);
+    }
+    if let Some(value) = &mut parameter.default {
+        rewrite_expr(value, names, namespaces);
+    }
+    for condition in &mut parameter.constraints {
+        rewrite_expr(condition, names, namespaces);
+    }
+}
+
 fn rewrite_type(
     ty: &mut Type,
     names: &HashMap<String, String>,
@@ -859,11 +988,34 @@ fn rewrite_type(
                 rewrite_type(base, names, namespaces);
             }
         }
-        Type::Func { params, ret, .. } => {
-            for ty in params {
-                rewrite_type(ty, names, namespaces);
+        Type::Func {
+            type_params,
+            params,
+            ret,
+            capturing,
+            raises_type,
+            ..
+        } => {
+            for parameter in type_params {
+                rewrite_type_param(parameter, names, namespaces);
+            }
+            for param in params {
+                rewrite_type(&mut param.ty, names, namespaces);
+                if let Some(origin) = &mut param.origin {
+                    for expr in origin {
+                        rewrite_expr(expr, names, namespaces);
+                    }
+                }
             }
             rewrite_type(ret, names, namespaces);
+            if let Some(origins) = capturing {
+                for origin in origins {
+                    rewrite_expr(origin, names, namespaces);
+                }
+            }
+            if let Some(error) = raises_type {
+                rewrite_type(error, names, namespaces);
+            }
         }
         Type::Ref { referent, origin } => {
             rewrite_type(referent, names, namespaces);
@@ -1071,15 +1223,14 @@ fn rewrite_stmt(
             params,
             raises_type,
             ret,
+            where_clause,
             body,
             decorators,
             ..
         } => {
             rename(name, names);
             for tp in type_params {
-                for bound in &mut tp.bounds {
-                    rename(bound, names);
-                }
+                rewrite_type_param(tp, names, namespaces);
             }
             for p in &mut *params {
                 rewrite_type(&mut p.ty, names, namespaces);
@@ -1092,6 +1243,9 @@ fn rewrite_stmt(
             }
             if let Some(ret) = ret {
                 rewrite_type(ret, names, namespaces);
+            }
+            if let Some(condition) = where_clause {
+                rewrite_expr(condition, names, namespaces);
             }
             for d in decorators {
                 for a in &mut d.args {
@@ -1111,6 +1265,8 @@ fn rewrite_stmt(
             name,
             type_params,
             conforms,
+            callable_conformance,
+            conformance_conditions,
             fields,
             associated,
             methods,
@@ -1118,12 +1274,17 @@ fn rewrite_stmt(
         } => {
             rename(name, names);
             for tp in type_params {
-                for b in &mut tp.bounds {
-                    rename(b, names);
-                }
+                rewrite_type_param(tp, names, namespaces);
             }
             for c in conforms {
                 rename(c, names);
+            }
+            if let Some(callable) = callable_conformance {
+                rewrite_type(callable, names, namespaces);
+            }
+            for (conformance, condition) in conformance_conditions {
+                rename(conformance, names);
+                rewrite_expr(condition, names, namespaces);
             }
             for f in fields {
                 rewrite_type(&mut f.ty, names, namespaces);
@@ -1132,6 +1293,9 @@ fn rewrite_stmt(
                 rewrite_expr(&mut a.value, names, namespaces);
             }
             for m in methods {
+                for parameter in &mut m.type_params {
+                    rewrite_type_param(parameter, names, namespaces);
+                }
                 for p in &mut m.params {
                     rewrite_type(&mut p.ty, names, namespaces);
                     if let Some(v) = &mut p.default {
@@ -1143,6 +1307,9 @@ fn rewrite_stmt(
                 }
                 if let Some(ret) = &mut m.ret {
                     rewrite_type(ret, names, namespaces);
+                }
+                if let Some(condition) = &mut m.where_clause {
+                    rewrite_expr(condition, names, namespaces);
                 }
                 let locals = without_local_bindings(
                     names,
@@ -1168,6 +1335,9 @@ fn rewrite_stmt(
                 rename(r, names);
             }
             for m in methods {
+                for parameter in &mut m.type_params {
+                    rewrite_type_param(parameter, names, namespaces);
+                }
                 for p in &mut m.params {
                     rewrite_type(&mut p.ty, names, namespaces);
                 }
@@ -1176,6 +1346,9 @@ fn rewrite_stmt(
                 }
                 if let Some(ret) = &mut m.ret {
                     rewrite_type(ret, names, namespaces);
+                }
+                if let Some(condition) = &mut m.where_clause {
+                    rewrite_expr(condition, names, namespaces);
                 }
                 if let Some(body) = &mut m.default_body {
                     rewrite_program(body, names, namespaces);

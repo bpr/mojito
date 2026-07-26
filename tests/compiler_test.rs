@@ -14,6 +14,18 @@ fn compiler_driver_runs_the_authoritative_pipeline() {
 }
 
 #[test]
+fn compiler_materializes_only_closed_public_tuple_signatures() {
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_unlinked(
+            "def quotient_rem[T: DivModable](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n\ndef main():\n    var first: Tuple[Int, Int] = quotient_rem(7, 2)\n    var second: Tuple[Int, Int] = quotient_rem(-7, 2)\n    print(first[0], first[1])\n    print(second[0], second[1])\n",
+        )
+        .expect("a generic Tuple signature waits for concrete call-site substitution");
+    let execution = compiler.execute(&program).expect("execute divmod tuples");
+    assert_eq!(execution.output, "3 1\n-4 1\n");
+}
+
+#[test]
 fn compiler_driver_reports_the_failing_stage() {
     let compiler = Compiler::default();
     let error = compiler

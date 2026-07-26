@@ -1,6 +1,6 @@
 //! End-to-end conformance fixtures for checked origins and executable references.
 
-use mojito::{BackendKind, check_ownership, check_program, parse};
+use mojito::Compiler;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -30,14 +30,12 @@ fn expected(source: &str) -> Option<&str> {
 #[test]
 fn origin_ok_fixtures_execute() {
     for path in fixtures("origin_ok") {
-        let source = fs::read_to_string(&path).expect("read origin fixture");
-        let program = parse(&source).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        let checked =
-            check_program(&program).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        check_ownership(&program).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-        backend
-            .run(&checked)
+        let compiler = Compiler::default();
+        let program = compiler
+            .compile_path(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        compiler
+            .execute(&program)
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     }
 }
@@ -46,13 +44,10 @@ fn origin_ok_fixtures_execute() {
 fn origin_error_fixtures_are_rejected() {
     for path in fixtures("origin_error") {
         let source = fs::read_to_string(&path).expect("read origin fixture");
-        let program = parse(&source).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        let message = match check_program(&program) {
-            Err(error) => error.to_string(),
-            Ok(_) => check_ownership(&program)
-                .expect_err("origin error fixture must fail checking or ownership")
-                .to_string(),
-        };
+        let message = Compiler::default()
+            .compile_path(&path)
+            .expect_err("origin error fixture must fail compilation")
+            .to_string();
         if let Some(expected) = expected(&source) {
             assert!(
                 message.contains(expected),

@@ -29,9 +29,9 @@ pub use ast::{
 };
 pub use backend::{Backend, BackendKind};
 pub use checked::{
-    CheckedConst, CheckedDeclId, CheckedDeclKind, CheckedDeclaration, CheckedExpr, CheckedNodeId,
-    CheckedProgram, EffectFacts, IterationMode, IterationProtocol, SemanticAdjustment,
-    ValueCategory,
+    CheckedCapture, CheckedConst, CheckedDeclId, CheckedDeclKind, CheckedDeclaration, CheckedExpr,
+    CheckedNodeId, CheckedProgram, EffectFacts, IterationMode, IterationProtocol,
+    SemanticAdjustment, ValueCategory,
 };
 pub use checker::{Checker, check, check_program};
 pub use compiler::{CompiledProgram, Compiler, CompilerError, Execution, validate_module_scope};
@@ -41,14 +41,16 @@ pub use error::{LexError, OwnershipError, ParseError, RuntimeError, TypeError};
 pub use lexer::Lexer;
 pub use literal::{FloatLiteral, IntLiteral};
 pub use module::{
-    LinkOptions, ModuleError, link, link_source, link_source_with_options, link_with_options,
+    LinkOptions, ModuleError, inject_prelude, inject_prelude_with_options, link, link_source,
+    link_source_with_options, link_with_options,
 };
 pub use origin::{
+    CallableEnvironment, CaptureAccess, CaptureOrigin, CaptureOriginSet, CaptureSetParamId,
     Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefTy,
 };
 pub use parser::{ParseReport, Parser};
 pub use runtime::Value;
-pub use token::{SourceSpan, Token};
+pub use token::{SourceSpan, SyntaxId, Token};
 pub use types::{ParamDecl, Ty, TyArg};
 
 /// Lex `source` into its full token stream (a convenience for the **lex-only**

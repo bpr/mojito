@@ -7,11 +7,12 @@ struct Token(Copyable, Movable):
     def __init__(out self, *, copy: Self):
         self.value = copy.value
 
-    def __init__(out self, *, move: Self):
+    def __init__(out self, *, deinit move: Self):
+        print("move")
         self.value = move.value
 
 def main():
     var original = Token(7)
-    var copied = original
+    var copied = Token(copy=original)
     var moved = copied^
     print(original.value, moved.value)

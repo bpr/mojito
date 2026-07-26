@@ -1,9 +1,9 @@
 //! Module system (Phase 3): `from module import …` links a referenced `.mojo`
 //! file's top-level declarations into the program. These tests write a small
-//! multi-file layout into a unique temp directory, link the entry file, then check
-//! + run it on the VM.
+//! multi-file layout into a unique temp directory, then either inspect linking or
+//! compile and run the entry through the authoritative whole-program pipeline.
 
-use mojito::{BackendKind, LinkOptions, check_program, link, link_with_options};
+use mojito::{BackendKind, Compiler, LinkOptions, inject_prelude, link, parse};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -34,15 +34,130 @@ impl Drop for TempDir {
     }
 }
 
-/// Link + check + run the entry file, returning its captured VM output.
+/// Compile and run the entry file through the authoritative whole-program
+/// pipeline, returning its captured VM output.
 fn run(entry: &Path) -> Result<String, String> {
-    let program = link(entry).map_err(|e| e.to_string())?;
-    let checked = check_program(&program).map_err(|e| format!("type error: {e:?}"))?;
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend
-        .run(&checked)
-        .map_err(|e| format!("runtime error: {e:?}"))?;
-    Ok(backend.output())
+    let compiler = Compiler::default();
+    let program = compiler.compile_path(entry).map_err(|e| e.to_string())?;
+    let execution = compiler.execute(&program).map_err(|e| e.to_string())?;
+    Ok(execution.output)
+}
+
+fn declaration_count(program: &[mojito::Stmt], expected: &str) -> usize {
+    program
+        .iter()
+        .filter(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, .. }
+            | mojito::ast::StmtKind::Struct { name, .. }
+            | mojito::ast::StmtKind::Trait { name, .. }
+            | mojito::ast::StmtKind::Comptime { name, .. } => name == expected,
+            _ => false,
+        })
+        .count()
+}
+
+#[test]
+fn implicit_prelude_loads_each_core_collection_identity_once() {
+    let d = TempDir::new();
+    let main = d.write("main.mojo", "def main():\n    pass\n");
+    let program = link(&main).expect("link implicit prelude");
+
+    for (name, expected) in [
+        ("List", 1),
+        ("Set", 1),
+        ("Dict", 1),
+        ("Tuple", 1),
+        ("Range", 1),
+        // `range` is one public overload set with one-, two-, and three-argument
+        // declarations, all under the same stable identity.
+        ("range", 3),
+    ] {
+        assert_eq!(
+            declaration_count(&program, name),
+            expected,
+            "unexpected declaration count for {name}"
+        );
+    }
+}
+
+#[test]
+fn explicit_core_imports_and_aliases_reuse_prelude_declarations() {
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "from std.collections.list import List as ExplicitList\nfrom std.collections.tuple import Tuple\nimport std.range as ranges\n\ndef consume(values: ExplicitList[Int], pair: Tuple[Int, Bool], span: ranges.Range):\n    pass\n\ndef main():\n    for i in ranges.range(1):\n        pass\n",
+    );
+    let program = link(&main).expect("link explicit core aliases");
+
+    for (name, expected) in [("List", 1), ("Tuple", 1), ("Range", 1), ("range", 3)] {
+        assert_eq!(
+            declaration_count(&program, name),
+            expected,
+            "explicit import duplicated {name}"
+        );
+    }
+
+    let consume = program
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, params, .. } if name == "consume" => Some(params),
+            _ => None,
+        })
+        .expect("entry function");
+    let type_names: Vec<_> = consume
+        .iter()
+        .map(|parameter| match &parameter.ty {
+            mojito::Type::Named(name, _) => name.clone(),
+            other => panic!("expected a named core type, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(type_names, ["List", "Tuple", "Range"]);
+}
+
+#[test]
+fn parsed_snippets_can_inject_the_same_prelude_without_an_entry_path() {
+    let parsed = parse("def main():\n    pass\n").expect("parse snippet");
+    let program = inject_prelude(parsed).expect("inject implicit prelude");
+
+    for (name, expected) in [
+        ("List", 1),
+        ("Set", 1),
+        ("Dict", 1),
+        ("Tuple", 1),
+        ("Range", 1),
+        ("range", 3),
+    ] {
+        assert_eq!(
+            declaration_count(&program, name),
+            expected,
+            "missing or duplicated {name}"
+        );
+    }
+}
+
+#[test]
+fn implicit_prelude_is_visible_but_not_reexported_by_every_module() {
+    let d = TempDir::new();
+    d.write(
+        "helper.mojo",
+        "def size(values: List[Int]) -> Int:\n    return len(values)\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "from helper import size\n\ndef main():\n    pass\n",
+    );
+    let program = link(&main).expect("module sees implicit prelude");
+    assert_eq!(declaration_count(&program, "List"), 1);
+
+    let bad = d.write(
+        "bad.mojo",
+        "from helper import List\n\ndef main():\n    pass\n",
+    );
+    assert!(matches!(
+        link(&bad),
+        Err(mojito::ModuleError::NameNotFound { module, name })
+            if module == "helper" && name == "List"
+    ));
 }
 
 #[test]
@@ -57,6 +172,76 @@ fn selective_import_brings_struct_and_fn_into_scope() {
         "from collections import Pair, twice\n\ndef main():\n    print(Pair(3, 4).sum())\n    print(twice(21))\n",
     );
     assert_eq!(run(&main).unwrap(), "7\n42\n");
+}
+
+#[test]
+fn linking_rewrites_conditional_conformance_and_where_clause_names() {
+    let d = TempDir::new();
+    d.write(
+        "contracts.mojo",
+        "trait Capability:\n    def use(self): ...\n\nstruct Conditional[T: Movable](Capability where conforms_to(T, Capability)):\n    def use(self) where conforms_to(Self.T, Capability):\n        pass\n\ndef constrained[T: Movable](value: T) where conforms_to(T, Capability):\n    pass\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "from contracts import Conditional, constrained\n\ndef main():\n    pass\n",
+    );
+    let program = link(&main).expect("link conditional declarations");
+
+    let (trait_name, struct_stmt, function_stmt) = {
+        let trait_name = program
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                mojito::ast::StmtKind::Trait { name, .. } if name.ends_with("$Capability") => {
+                    Some(name.clone())
+                }
+                _ => None,
+            })
+            .expect("qualified trait");
+        let struct_stmt = program
+            .iter()
+            .find(|statement| {
+                matches!(&statement.kind, mojito::ast::StmtKind::Struct { name, .. } if name.ends_with("$Conditional"))
+            })
+            .expect("qualified struct");
+        let function_stmt = program
+            .iter()
+            .find(|statement| {
+                matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name.ends_with("$constrained"))
+            })
+            .expect("qualified function");
+        (trait_name, struct_stmt, function_stmt)
+    };
+
+    let mojito::ast::StmtKind::Struct {
+        conforms,
+        conformance_conditions,
+        methods,
+        ..
+    } = &struct_stmt.kind
+    else {
+        unreachable!()
+    };
+    assert_eq!(conforms, std::slice::from_ref(&trait_name));
+    assert_eq!(conformance_conditions[0].0, trait_name);
+    let condition_names_trait = |condition: &mojito::Expr| {
+        matches!(
+            &condition.kind,
+            mojito::ast::ExprKind::Call { args, .. }
+                if matches!(&args[1].kind, mojito::ast::ExprKind::Identifier(name) if name == &trait_name)
+        )
+    };
+    assert!(condition_names_trait(&conformance_conditions[0].1));
+    assert!(
+        methods[0]
+            .where_clause
+            .as_ref()
+            .is_some_and(condition_names_trait)
+    );
+
+    let mojito::ast::StmtKind::Def { where_clause, .. } = &function_stmt.kind else {
+        unreachable!()
+    };
+    assert!(where_clause.as_ref().is_some_and(condition_names_trait));
 }
 
 #[test]
@@ -109,18 +294,14 @@ fn custom_search_root_is_used_after_importer_directory() {
         "src/main.mojo",
         "from pkg.tool import answer\n\ndef main():\n    print(answer())\n",
     );
-    let program = link_with_options(
-        &main,
+    let compiler = Compiler::new(
         LinkOptions {
             search_roots: vec![d.0.join("lib")],
         },
-    )
-    .map_err(|e| e.to_string())
-    .unwrap();
-    let checked = check_program(&program).unwrap();
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).unwrap();
-    assert_eq!(backend.output(), "42\n");
+        BackendKind::Vm,
+    );
+    let execution = compiler.run_path(&main).unwrap();
+    assert_eq!(execution.output, "42\n");
 }
 
 #[test]
@@ -138,17 +319,14 @@ fn custom_search_roots_are_tried_in_order() {
         "src/main.mojo",
         "from pkg.tool import answer\n\ndef main():\n    print(answer())\n",
     );
-    let program = link_with_options(
-        &main,
+    let compiler = Compiler::new(
         LinkOptions {
             search_roots: vec![d.0.join("first"), d.0.join("second")],
         },
-    )
-    .unwrap();
-    let checked = check_program(&program).unwrap();
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).unwrap();
-    assert_eq!(backend.output(), "1\n");
+        BackendKind::Vm,
+    );
+    let execution = compiler.run_path(&main).unwrap();
+    assert_eq!(execution.output, "1\n");
 }
 
 #[test]
@@ -160,17 +338,14 @@ fn importer_directory_precedes_custom_search_roots() {
         "src/main.mojo",
         "from pkg.tool import answer\n\ndef main():\n    print(answer())\n",
     );
-    let program = link_with_options(
-        &main,
+    let compiler = Compiler::new(
         LinkOptions {
             search_roots: vec![d.0.join("root")],
         },
-    )
-    .unwrap();
-    let checked = check_program(&program).unwrap();
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).unwrap();
-    assert_eq!(backend.output(), "9\n");
+        BackendKind::Vm,
+    );
+    let execution = compiler.run_path(&main).unwrap();
+    assert_eq!(execution.output, "9\n");
 }
 
 #[test]
@@ -210,7 +385,11 @@ fn linked_declarations_preserve_module_identity_in_checked_program() {
         "main.mojo",
         "from library import answer\n\ndef main():\n    print(answer())\n",
     );
-    let checked = mojito::check_program(&link(&main).unwrap()).unwrap();
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_path(&main)
+        .expect("compile linked modules");
+    let checked = program.checked();
     let answer = checked
         .statements()
         .iter()
@@ -238,7 +417,11 @@ fn linked_expression_locations_include_their_source_module() {
         "main.mojo",
         "from lib import pick, from_lib\n\ndef pick(x: Bool) -> Bool:\n    return x\n\ndef main():\n    print(from_lib(), pick(True))\n",
     );
-    let checked = mojito::check_program(&link(&entry).expect("link")).expect("check");
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_path(&entry)
+        .expect("compile linked modules");
+    let checked = program.checked();
 
     let sources: std::collections::HashSet<_> = checked
         .overload_targets()

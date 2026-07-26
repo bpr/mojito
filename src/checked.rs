@@ -34,6 +34,114 @@ pub struct EffectFacts {
     pub diverges: bool,
 }
 
+/// One source argument after ordinary call binding selected a concrete method
+/// parameter.  Keeping the source slot and effective convention together lets
+/// HIR/MIR retain caller storage without rebuilding keyword/default binding or
+/// origin-dependent `ref` mutability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedCallArgument {
+    pub source: CheckedCallArgumentSource,
+    pub parameter_ty: Ty,
+    /// The declared ABI requires a caller place even when origin solving turns
+    /// an immutable `ref` into an effective read for conflict analysis.
+    pub requires_place: bool,
+    /// Effective access after parametric reference mutability is solved.
+    pub convention: Option<crate::ast::ArgConvention>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckedCallArgumentSource {
+    Positional(usize),
+    Keyword(usize),
+    Default,
+}
+
+/// One source-ordered compile-time method argument. Type arguments occupy a
+/// declaration slot with no runtime value; value arguments name the checked
+/// expression occurrence whose already-evaluated register lowering must reuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedCallParameterArgument {
+    pub name: Option<String>,
+    pub value_source: Option<SourceSpan>,
+}
+
+/// One checker-selected adaptation of an already-evaluated call argument.
+/// These are deliberately call-local: augmented subscripts may send the same
+/// source value through different getter and setter parameter contracts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedCallValueAdjustment {
+    ResolveCallable { target: String },
+    ImplicitConversion { target: String },
+    IndexNormalization { target: String },
+    MaterializeLiteral { target: Box<Ty> },
+}
+
+/// Call-boundary facts for one supplied argument. `value_source` identifies the
+/// source occurrence which MIR evaluates once. Lowering must derive a separate
+/// per-call register by applying `adjustments`, retain the original caller place
+/// when the corresponding [`CheckedCallArgument`] requires it, and emit the
+/// invalidations immediately at this call rather than at source evaluation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedCallArgumentBoundary {
+    pub source: CheckedCallArgumentSource,
+    pub value_source: SourceSpan,
+    pub adjustments: Vec<CheckedCallValueAdjustment>,
+    pub invalidations: Vec<InteriorInvalidation>,
+}
+
+/// Effects and value adaptations whose semantic location is one selected call.
+/// Keeping this on the contract makes two calls over shared syntax independent:
+/// the source operands are still evaluated once, but conversions and mutation
+/// effects occur according to each callee's own signature.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CheckedCallBoundary {
+    pub arguments: Vec<CheckedCallArgumentBoundary>,
+    /// Receiver/call-site generation changes, emitted at the call boundary.
+    pub invalidations: Vec<InteriorInvalidation>,
+}
+
+/// Canonical checker-to-lowering contract for one selected method-like call.
+/// Nominal subscripts use this exact record rather than a reduced parallel
+/// resolver.  Future syntactic call forms can share it without teaching MIR
+/// overload resolution, origin solving, or effect inference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedCallContract {
+    pub target: String,
+    pub raises: Option<Ty>,
+    /// Executable result type of the selected call. Reference-returning calls
+    /// carry the full instantiated `ref` type here; surface expression typing
+    /// still exposes the referent as a place-like value.
+    pub result_ty: Ty,
+    pub receiver_requires_place: bool,
+    /// Effective receiver access; `receiver_requires_place` independently
+    /// retains the declared ABI handle requirement.
+    pub receiver_convention: Option<crate::ast::ArgConvention>,
+    pub arguments: Vec<CheckedCallArgument>,
+    pub captures: Vec<crate::origin::CaptureOrigin>,
+    pub reference_result: Option<crate::origin::RefTy>,
+    pub parameter_arguments: Vec<CheckedCallParameterArgument>,
+    pub param_decls: Vec<crate::types::ParamDecl>,
+    pub boundary: CheckedCallBoundary,
+}
+
+/// The operation selected for `receiver[index] OP= rhs`. A value-returning
+/// getter is followed by a setter, while a mutable-reference getter writes the
+/// computed result directly through that handle and therefore has no setter.
+/// In either case the receiver and indices are evaluated only once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedAugmentedSubscript {
+    pub getter: CheckedCallContract,
+    /// Absent exactly when `getter.reference_result` is mutable and lowering
+    /// must finish with `WriteRef` instead of invoking `__setitem__`.
+    pub setter: Option<CheckedCallContract>,
+    /// Ordinary value type read from the getter (the referent for `ref` results).
+    pub operand_ty: Ty,
+    pub result_ty: Ty,
+    /// Synthetic checker-only source used to bind the computed result into the
+    /// selected setter, including inferred compile-time value arguments.
+    pub value_source: Option<SourceSpan>,
+}
+
 /// Ownership mode selected for a checked iteration expression.  This is a
 /// semantic distinction, not a runtime guess: owned iteration must dispatch to
 /// an `__iter__(var self)` implementation, while ordinary iteration uses a
@@ -44,17 +152,51 @@ pub enum IterationMode {
     Owned,
 }
 
+/// Exact operations used by the concrete List `for ref` bridge.  This remains
+/// separate from the ordinary iterator protocol because the bundled List
+/// iterator yields copied values; reference iteration indexes the original
+/// owner so each loop binding is an executable write-through handle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceIterationProtocol {
+    pub len: CheckedCallContract,
+    pub getitem: CheckedCallContract,
+}
+
 /// Fully resolved iterator protocol retained across the checked boundary.
 /// `prepare` contains the exact `__iter__` symbols needed to normalize a user
 /// iterable; builtin ranges/collections leave it empty.  User iterators carry
-/// exact `__len__`/`__next__` symbols so the VM never performs name/arity
-/// overload reconstruction.
+/// exact iterator-operation symbols so the VM never performs name/arity
+/// overload reconstruction. `exhaustion` is the checked typed error caught by
+/// a raising `__next__`; when absent, `has_next` selects the legacy bounded
+/// `__len__` protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IterationProtocol {
     pub mode: IterationMode,
+    /// Concrete borrowed collection storage retained by this iteration.  The
+    /// checker records the canonical owner identity and interior generation;
+    /// HIR/MIR use it both to avoid an accidental value copy and to keep the
+    /// owner live while rejecting a use of an iterator after structural
+    /// invalidation.  Generic `Iterable` remains `None` until its associated
+    /// iterator type can carry an origin parameter.
+    pub borrowed_origin: Option<crate::origin::OriginPlace>,
+    pub reference: Option<Box<ReferenceIterationProtocol>>,
     pub prepare: Vec<String>,
     pub has_next: Option<String>,
     pub next: Option<String>,
+    pub exhaustion: Option<Ty>,
+}
+
+/// A checked mutation of an origin that owns interior storage. `except` names
+/// the reference through which the mutation occurs, when there is one: writing
+/// through `element` keeps that reference's generation valid while still
+/// invalidating interiors nested below the element. `include_base_generation`
+/// distinguishes defining a fresh named owned-interior generation (which
+/// replaces that exact generation) from an ordinary write through its storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InteriorInvalidation {
+    pub base: crate::origin::OriginPlace,
+    pub except: Option<crate::origin::OwnerId>,
+    pub include_base_generation: bool,
 }
 
 /// Checker decisions which lowering must apply explicitly.
@@ -62,6 +204,41 @@ pub struct IterationProtocol {
 #[non_exhaustive]
 pub enum SemanticAdjustment {
     ResolveCallable(String),
+    /// Complete selected method/subscript contract.  `ResolveCallable` remains
+    /// as a compatibility projection while downstream consumers migrate; this
+    /// record is authoritative whenever both are present.
+    SelectedCall(Box<CheckedCallContract>),
+    /// Complete two-call contract for an augmented nominal subscript. The
+    /// coexisting `SelectedCall` is the setter for consumers that only inspect
+    /// assignment syntax; MIR uses this record as the authoritative pair.
+    AugmentedSubscript(Box<CheckedAugmentedSubscript>),
+    /// Normalize an `Indexer` expression through the exact checked
+    /// `__mlir_index__() -> Int` method before a concrete indexing operation.
+    /// MIR evaluates the source expression once and emits this call explicitly;
+    /// backends receive an ordinary `Int` index and never guess by runtime type.
+    IndexNormalization {
+        target: String,
+    },
+    /// Direct invocation of a parameterized method written
+    /// `receiver.method[parameters](arguments)`. The source parser represents
+    /// this as `Invoke(Member(..))`; retaining the selected generic declaration
+    /// here lets HIR/MIR lower an ordinary method call without treating a bound
+    /// method as an escapable first-class value.
+    ParameterizedMethodCall {
+        param_decls: Vec<crate::types::ParamDecl>,
+    },
+    /// Monomorphic callable contract selected after applying explicit
+    /// compile-time arguments to a generic callable value. Indirect-call MIR
+    /// retains this typed fact so verification never has to recover a value
+    /// parameter by scanning preceding constant instructions.
+    InstantiatedCallableContract {
+        contract: Ty,
+        /// Complete checker-resolved generic arguments in declaration order,
+        /// including defaults. These are the substitution witness for the
+        /// monomorphic contract; executable MIR must not rediscover them from
+        /// the instructions which happened to materialize parameter registers.
+        arguments: Vec<crate::types::TyArg>,
+    },
     ImplicitConversion(String),
     /// Materialize an exact, compile-time-only numeric literal expression into
     /// its checked runtime scalar type.  Keeping this distinct from a user
@@ -71,6 +248,45 @@ pub enum SemanticAdjustment {
     MaterializeLiteral(Ty),
     BorrowShared,
     BorrowMutable,
+    /// A place expression occurs in an ownership-producing context (binding,
+    /// assignment, return, or another consuming slot) and was proven Copyable
+    /// in the checker's active generic environment. MIR must materialize an
+    /// independent value rather than leave a projected-place load as a shallow
+    /// handle alias.
+    CopyPlaceValue,
+    /// A call produced a reference handle, while ordinary expression typing
+    /// reads through that handle to the referent. Reference-valued contexts
+    /// retain the handle; MIR emits an explicit `ReadRef` everywhere else.
+    ReferenceResult {
+        reference: crate::origin::RefTy,
+    },
+    /// Exact per-element extraction selected for one tuple-unpacking RHS. The
+    /// unpack syntax has no source `Index` child nodes, so checking carries the
+    /// synthetic result type, concrete accessor, and reference-return contract
+    /// explicitly instead of asking MIR to reconstruct them from a nominal
+    /// type name.
+    TupleUnpack {
+        elements: Vec<CheckedTupleUnpackElement>,
+    },
+    /// This actual argument must retain its caller place through the call
+    /// because the selected parameter uses `mut`/`ref` handle or write-back
+    /// semantics. Ordinary copied arguments intentionally omit this marker so
+    /// ASAP destruction may still occur after argument evaluation.
+    RetainCallPlace,
+    /// Concrete owner accesses performed by a callable environment during this
+    /// call. The checker derives these from the selected callable and any
+    /// non-escaping callable arguments; MIR translates stable owner identities
+    /// to function-local slots and loan analysis treats them as call effects.
+    CallableCaptureAccesses(Vec<crate::origin::CaptureOrigin>),
+    /// This checked compile-time argument is semantic-only. MIR retains its
+    /// source position for declaration alignment but must not evaluate it into
+    /// a runtime register (notably an explicitly supplied `Origin`).
+    EraseCompileTimeArgument,
+    /// A consuming method receiver is a source place, but the selected type is
+    /// `ImplicitlyCopyable`, so the call consumes a copied value rather than
+    /// tombstoning the caller's place. This coexists with parameterized-method
+    /// metadata and is consumed directly by MIR lowering.
+    ImplicitlyCopyConsumingReceiver,
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),
@@ -82,6 +298,13 @@ pub enum SemanticAdjustment {
     ConstructVariant {
         alternatives: Vec<Ty>,
         index: usize,
+    },
+    /// A collection display/comprehension resolved to a nominal constructor and
+    /// insertion protocol. MIR lowers this as ordinary construction plus exact
+    /// method calls; it must not reconstruct a native collection from syntax.
+    ConstructCollection {
+        target: Ty,
+        insert: Option<String>,
     },
     /// Test the active runtime tag (`value.isa[T]()`).
     VariantIs {
@@ -123,6 +346,18 @@ pub enum SemanticAdjustment {
     PointerToPlace {
         mutable: bool,
     },
+    /// Move one initialized element out of compiler-private raw collection
+    /// storage, leaving that heap slot uninitialized. Only bundled collection
+    /// sources may acquire this adjustment.
+    PointerStorageTake {
+        element: Ty,
+    },
+    /// Destroy one initialized element in compiler-private raw collection
+    /// storage, leaving that heap slot uninitialized. Only bundled collection
+    /// sources may acquire this adjustment.
+    PointerStorageDestroy {
+        element: Ty,
+    },
     /// Descriptor types selected for a subscript's arguments. `None` denotes an
     /// ordinary index; `Some` denotes a source slice and records whether overload
     /// selection chose the contiguous, strided, or general Slice protocol.
@@ -133,6 +368,24 @@ pub enum SemanticAdjustment {
         /// this false.
         set_value_keyword: bool,
     },
+    /// This place expression produces a reference into a named storage region
+    /// owned by a container. The full stable path is a checker fact; MIR must
+    /// not reconstruct it from source indexing syntax.
+    InteriorReference {
+        origin: crate::origin::OriginPlace,
+    },
+    /// Mutating this expression may invalidate existing interior-reference
+    /// generations rooted below one or more checked base origins.
+    InvalidateInteriors {
+        invalidations: Vec<InteriorInvalidation>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedTupleUnpackElement {
+    pub ty: Ty,
+    pub accessor: Option<String>,
+    pub reference: Option<crate::origin::RefTy>,
 }
 
 /// One expression in the typed semantic arena. `syntax` is retained for
@@ -167,6 +420,10 @@ pub struct CheckedComprehensionBinding {
     pub owner: crate::origin::OwnerId,
     pub ty: Ty,
     pub mutable: bool,
+    /// Whether this binding's storage is droppable in the checked constraint
+    /// environment at its introduction site. Conditional generic conformances
+    /// cannot be reconstructed from the nominal type after checking.
+    pub implicitly_deletable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -191,8 +448,29 @@ pub struct CheckedDeclaration {
     pub kind: CheckedDeclKind,
     pub name: String,
     pub location: SourceSpan,
+    /// Stable value-binding identity for declarations which introduce a runtime
+    /// name. This is independent of spelling and therefore survives shadowing.
+    pub binding: Option<crate::origin::OwnerId>,
+    /// Explicit closure captures resolved in the declaration's enclosing scope.
+    /// Default captures are discovered from checked expression bindings.
+    pub captures: Vec<CheckedCapture>,
     pub ty: Option<Ty>,
     pub children: Vec<CheckedDeclId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedCapture {
+    pub name: String,
+    pub binding: crate::origin::OwnerId,
+    /// Exact storage type at the captured binding. This is retained even when
+    /// the capture is explicit but unused by the closure body, so forwarding
+    /// through an intermediate lifted function remains fully typed.
+    pub ty: Ty,
+    pub kind: crate::ast::CaptureKind,
+    /// Canonical outer-owner effects retained by this environment entry. Owned
+    /// copy/move captures contribute only loans already stored in their value;
+    /// read/ref/mut captures also contribute their source place.
+    pub origins: Vec<crate::origin::CaptureOrigin>,
 }
 
 /// A successfully checked program plus semantic facts that downstream phases
@@ -227,6 +505,7 @@ pub(crate) enum AnnotationSite {
     FunctionParam {
         module: Option<String>,
         declaration: Span,
+        syntax: crate::token::SyntaxId,
         param: usize,
     },
     /// Struct-owned sites are identified by the struct's unique name, not its
@@ -247,6 +526,7 @@ pub(crate) enum AnnotationSite {
     FunctionReturn {
         module: Option<String>,
         declaration: Span,
+        syntax: crate::token::SyntaxId,
     },
     /// The checked callable type of a free function declaration — the exact
     /// `Func`/`GenericFunc` type the checker binds the name to. Lowering uses
@@ -254,6 +534,7 @@ pub(crate) enum AnnotationSite {
     FunctionType {
         module: Option<String>,
         declaration: Span,
+        syntax: crate::token::SyntaxId,
     },
     /// The checked return type of a struct method declaration.
     MethodReturn {
@@ -271,6 +552,7 @@ pub(crate) enum GenericSite {
     Function {
         module: Option<String>,
         declaration: Span,
+        syntax: crate::token::SyntaxId,
     },
     Struct {
         module: Option<String>,
@@ -334,16 +616,26 @@ impl CheckedProgram {
         generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
         expression_types: HashMap<SourceSpan, Ty>,
         expression_bindings: HashMap<SourceSpan, crate::origin::OwnerId>,
+        statement_bindings: HashMap<SourceSpan, crate::origin::OwnerId>,
+        declaration_captures: HashMap<SourceSpan, Vec<CheckedCapture>>,
         comprehension_bindings: HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
         expression_place_types: HashMap<SourceSpan, Ty>,
         binding_types: HashMap<SourceSpan, Ty>,
         expression_effects: HashMap<SourceSpan, EffectFacts>,
+        selected_calls: HashMap<SourceSpan, CheckedCallContract>,
+        subscript_descriptors: HashMap<SourceSpan, (Vec<Option<crate::types::SliceKind>>, bool)>,
         iteration_protocols: HashMap<SourceSpan, IterationProtocol>,
         simd_constructions: HashMap<SourceSpan, (crate::ast::Dtype, i64)>,
         operation_adjustments: HashMap<SourceSpan, SemanticAdjustment>,
+        tuple_unpack_plans: HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
+        interior_references: HashMap<SourceSpan, crate::origin::OriginPlace>,
+        interior_invalidations: HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
         explicit_destroy_calls: HashSet<SourceSpan>,
         reference_value_uses: HashMap<SourceSpan, bool>,
+        copy_place_value_uses: HashSet<SourceSpan>,
+        call_place_uses: HashSet<SourceSpan>,
+        implicitly_copied_consuming_receivers: HashSet<SourceSpan>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
         let (expressions, expression_index) = build_checked_expressions(
@@ -354,15 +646,29 @@ impl CheckedProgram {
             &expression_place_types,
             &binding_types,
             &expression_effects,
+            &selected_calls,
+            &subscript_descriptors,
             &iteration_protocols,
             &simd_constructions,
             &operation_adjustments,
+            &tuple_unpack_plans,
+            &interior_references,
+            &interior_invalidations,
             &overload_targets,
             &implicit_conversions,
             &explicit_destroy_calls,
             &reference_value_uses,
+            &copy_place_value_uses,
+            &call_place_uses,
+            &implicitly_copied_consuming_receivers,
         );
-        let declarations = build_checked_declarations(&statements, &checked_types);
+        let declarations = build_checked_declarations(
+            &statements,
+            &checked_types,
+            &statement_bindings,
+            &declaration_captures,
+            &binding_types,
+        );
         Self {
             statements,
             compatibility_overload_targets: overload_targets,
@@ -421,6 +727,10 @@ impl CheckedProgram {
         &self.declarations
     }
 
+    pub fn declaration(&self, id: CheckedDeclId) -> Option<&CheckedDeclaration> {
+        self.declarations.get(id.0 as usize)
+    }
+
     pub fn expression(&self, id: CheckedNodeId) -> Option<&CheckedExpr> {
         self.expressions.get(id.0 as usize)
     }
@@ -456,13 +766,21 @@ fn build_checked_expressions(
     place_types: &HashMap<SourceSpan, Ty>,
     binding_types: &HashMap<SourceSpan, Ty>,
     effects: &HashMap<SourceSpan, EffectFacts>,
+    selected_calls: &HashMap<SourceSpan, CheckedCallContract>,
+    subscript_descriptors: &HashMap<SourceSpan, (Vec<Option<crate::types::SliceKind>>, bool)>,
     iteration_protocols: &HashMap<SourceSpan, IterationProtocol>,
     simd_constructions: &HashMap<SourceSpan, (crate::ast::Dtype, i64)>,
     operation_adjustments: &HashMap<SourceSpan, SemanticAdjustment>,
+    tuple_unpack_plans: &HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
+    interior_references: &HashMap<SourceSpan, crate::origin::OriginPlace>,
+    interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
     calls: &HashMap<SourceSpan, String>,
     conversions: &HashMap<SourceSpan, String>,
     explicit_destroy: &HashSet<SourceSpan>,
     reference_value_uses: &HashMap<SourceSpan, bool>,
+    copy_place_value_uses: &HashSet<SourceSpan>,
+    call_place_uses: &HashSet<SourceSpan>,
+    implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
     struct Builder<'a> {
         nodes: Vec<CheckedExpr>,
@@ -473,13 +791,22 @@ fn build_checked_expressions(
         place_types: &'a HashMap<SourceSpan, Ty>,
         binding_types: &'a HashMap<SourceSpan, Ty>,
         effects: &'a HashMap<SourceSpan, EffectFacts>,
+        selected_calls: &'a HashMap<SourceSpan, CheckedCallContract>,
+        subscript_descriptors:
+            &'a HashMap<SourceSpan, (Vec<Option<crate::types::SliceKind>>, bool)>,
         iteration_protocols: &'a HashMap<SourceSpan, IterationProtocol>,
         simd_constructions: &'a HashMap<SourceSpan, (crate::ast::Dtype, i64)>,
         operation_adjustments: &'a HashMap<SourceSpan, SemanticAdjustment>,
+        tuple_unpack_plans: &'a HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
+        interior_references: &'a HashMap<SourceSpan, crate::origin::OriginPlace>,
+        interior_invalidations: &'a HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         calls: &'a HashMap<SourceSpan, String>,
         conversions: &'a HashMap<SourceSpan, String>,
         explicit_destroy: &'a HashSet<SourceSpan>,
         reference_value_uses: &'a HashMap<SourceSpan, bool>,
+        copy_place_value_uses: &'a HashSet<SourceSpan>,
+        call_place_uses: &'a HashSet<SourceSpan>,
+        implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
     }
     impl Builder<'_> {
         fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
@@ -498,7 +825,23 @@ fn build_checked_expressions(
                     add(self, left);
                     add(self, right);
                 }
-                Call { args, kwargs, .. } => {
+                Call {
+                    param_args,
+                    args,
+                    kwargs,
+                    ..
+                } => {
+                    for argument in param_args {
+                        match argument {
+                            crate::ast::ParamArg::Value(value) => add(self, value),
+                            crate::ast::ParamArg::Named { value, .. } => {
+                                if let crate::ast::ParamArg::Value(value) = &**value {
+                                    add(self, value);
+                                }
+                            }
+                            crate::ast::ParamArg::Type(_) => {}
+                        }
+                    }
                     for value in args {
                         add(self, value);
                     }
@@ -508,11 +851,22 @@ fn build_checked_expressions(
                 }
                 Invoke {
                     callee,
+                    param_args,
                     args,
                     kwargs,
-                    ..
                 } => {
                     add(self, callee);
+                    for argument in param_args {
+                        match argument {
+                            crate::ast::ParamArg::Value(value) => add(self, value),
+                            crate::ast::ParamArg::Named { value, .. } => {
+                                if let crate::ast::ParamArg::Value(value) = &**value {
+                                    add(self, value);
+                                }
+                            }
+                            crate::ast::ParamArg::Type(_) => {}
+                        }
+                    }
                     for value in args {
                         add(self, value);
                     }
@@ -614,23 +968,44 @@ fn build_checked_expressions(
                         }
                     }
                 }
-                Int(_)
-                | Float(_)
-                | Bool(_)
-                | Str(_)
-                | None
-                | Uninitialized
-                | Identifier(_)
-                | TypeValue(_)
-                | TypeApply { .. } => {}
+                Int(_) | Float(_) | Bool(_) | Str(_) | None | Uninitialized | Identifier(_)
+                | TypeValue(_) => {}
+                TypeApply { args, .. } => {
+                    for argument in args {
+                        match argument {
+                            crate::ast::ParamArg::Value(value) => add(self, value),
+                            crate::ast::ParamArg::Named { value, .. } => {
+                                if let crate::ast::ParamArg::Value(value) = &**value {
+                                    add(self, value);
+                                }
+                            }
+                            crate::ast::ParamArg::Type(_) => {}
+                        }
+                    }
+                }
             }
             let span = expression.source_span();
             let mut adjustments = Vec::new();
             if let Some(target) = self.calls.get(&span) {
                 adjustments.push(SemanticAdjustment::ResolveCallable(target.clone()));
             }
+            if let Some(call) = self.selected_calls.get(&span) {
+                adjustments.push(SemanticAdjustment::SelectedCall(Box::new(call.clone())));
+            }
+            if let Some((descriptors, set_value_keyword)) = self.subscript_descriptors.get(&span) {
+                adjustments.push(SemanticAdjustment::SliceDescriptors {
+                    descriptors: descriptors.clone(),
+                    set_value_keyword: *set_value_keyword,
+                });
+            }
             if let Some(target) = self.conversions.get(&span) {
-                adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
+                if crate::symbol::is_index_normalization_symbol(target) {
+                    adjustments.push(SemanticAdjustment::IndexNormalization {
+                        target: target.clone(),
+                    });
+                } else {
+                    adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
+                }
             }
             if matches!(expression.kind, Transfer(_)) {
                 adjustments.push(SemanticAdjustment::Move);
@@ -648,6 +1023,15 @@ fn build_checked_expressions(
                     SemanticAdjustment::BorrowShared
                 });
             }
+            if self.copy_place_value_uses.contains(&span) {
+                adjustments.push(SemanticAdjustment::CopyPlaceValue);
+            }
+            if self.call_place_uses.contains(&span) {
+                adjustments.push(SemanticAdjustment::RetainCallPlace);
+            }
+            if self.implicitly_copied_consuming_receivers.contains(&span) {
+                adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
+            }
             if let Some((dtype, width)) = self.simd_constructions.get(&span) {
                 adjustments.push(SemanticAdjustment::ConstructSimd {
                     dtype: *dtype,
@@ -657,27 +1041,56 @@ fn build_checked_expressions(
             if let Some(operation) = self.operation_adjustments.get(&span) {
                 adjustments.push(operation.clone());
             }
+            if let Some(elements) = self.tuple_unpack_plans.get(&span) {
+                adjustments.push(SemanticAdjustment::TupleUnpack {
+                    elements: elements.clone(),
+                });
+            }
+            if let Some(origin) = self.interior_references.get(&span) {
+                adjustments.push(SemanticAdjustment::InteriorReference {
+                    origin: origin.clone(),
+                });
+            }
+            if let Some(invalidations) = self.interior_invalidations.get(&span) {
+                adjustments.push(SemanticAdjustment::InvalidateInteriors {
+                    invalidations: invalidations.clone(),
+                });
+            }
             let variant_projection =
                 self.operation_adjustments
                     .get(&span)
                     .is_some_and(|operation| {
                         matches!(operation, SemanticAdjustment::VariantProject { .. })
                     });
+            let resolved_callable_value = self.calls.contains_key(&span);
+            let ty = self.types.get(&span).cloned();
+            let place_ty = self.place_types.get(&span).cloned();
+            let binding_ty = self.binding_types.get(&span).cloned();
+            let binding = self.bindings.get(&span).copied();
             let category = match expression.kind {
-                Identifier(_) | Member { .. } | Index { .. } => ValueCategory::Place,
                 TypeApply { .. } if variant_projection => ValueCategory::Place,
+                TypeApply { .. } if resolved_callable_value => ValueCategory::Value,
                 TypeApply { .. } | TypeValue(_) => ValueCategory::Type,
+                // Expressions retained only inside constraints, reflection, and
+                // other erased parameter metadata are deliberately absent from
+                // the runtime type/place maps. They still cross the checked
+                // boundary as explicit compile-time nodes rather than being
+                // mislabeled as untyped runtime places.
+                _ if ty.is_none() && place_ty.is_none() && binding.is_none() => {
+                    ValueCategory::CompileTime
+                }
+                Identifier(_) | Member { .. } | Index { .. } => ValueCategory::Place,
                 _ => ValueCategory::Value,
             };
             let id = CheckedNodeId(self.nodes.len() as u32);
             self.nodes.push(CheckedExpr {
                 id,
                 syntax: expression.clone(),
-                ty: self.types.get(&span).cloned(),
-                place_ty: self.place_types.get(&span).cloned(),
-                binding_ty: self.binding_types.get(&span).cloned(),
+                ty,
+                place_ty,
+                binding_ty,
                 category,
-                binding: self.bindings.get(&span).copied(),
+                binding,
                 effects: self.effects.get(&span).cloned().unwrap_or_default(),
                 adjustments,
                 children,
@@ -839,13 +1252,21 @@ fn build_checked_expressions(
         place_types,
         binding_types,
         effects,
+        selected_calls,
+        subscript_descriptors,
         iteration_protocols,
         simd_constructions,
         operation_adjustments,
+        tuple_unpack_plans,
+        interior_references,
+        interior_invalidations,
         calls,
         conversions,
         explicit_destroy,
         reference_value_uses,
+        copy_place_value_uses,
+        call_place_uses,
+        implicitly_copied_consuming_receivers,
     };
     builder.block(statements);
     (builder.nodes, builder.index)
@@ -853,9 +1274,19 @@ fn build_checked_expressions(
 
 fn build_checked_declarations(
     statements: &[Stmt],
-    _annotation_types: &HashMap<AnnotationSite, Ty>,
+    annotation_types: &HashMap<AnnotationSite, Ty>,
+    statement_bindings: &HashMap<SourceSpan, crate::origin::OwnerId>,
+    declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
+    binding_types: &HashMap<SourceSpan, Ty>,
 ) -> Vec<CheckedDeclaration> {
-    fn block(statements: &[Stmt], out: &mut Vec<CheckedDeclaration>) -> Vec<CheckedDeclId> {
+    fn block(
+        statements: &[Stmt],
+        out: &mut Vec<CheckedDeclaration>,
+        annotation_types: &HashMap<AnnotationSite, Ty>,
+        statement_bindings: &HashMap<SourceSpan, crate::origin::OwnerId>,
+        declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
+        binding_types: &HashMap<SourceSpan, Ty>,
+    ) -> Vec<CheckedDeclId> {
         use crate::ast::StmtKind;
         let mut ids = Vec::new();
         for statement in statements {
@@ -864,6 +1295,19 @@ fn build_checked_declarations(
                 StmtKind::Struct { name, .. } => (CheckedDeclKind::Struct, name.clone()),
                 StmtKind::Trait { name, .. } => (CheckedDeclKind::Trait, name.clone()),
                 StmtKind::VarDecl { name, .. } | StmtKind::RefDecl { name, .. } => {
+                    (CheckedDeclKind::Binding, name.clone())
+                }
+                StmtKind::For { var, .. } => (CheckedDeclKind::Binding, var.clone()),
+                StmtKind::Try {
+                    except: Some((Some(name), _)),
+                    ..
+                } => (CheckedDeclKind::Binding, name.clone()),
+                // A bare assignment can introduce a binding in Mojo. The
+                // checker records a statement identity only for that case;
+                // ordinary reassignments remain operations, not declarations.
+                StmtKind::Assign { name, .. }
+                    if statement_bindings.contains_key(&statement.source_span()) =>
+                {
                     (CheckedDeclKind::Binding, name.clone())
                 }
                 StmtKind::Comptime { name, .. } => (CheckedDeclKind::CompileTime, name.clone()),
@@ -897,25 +1341,107 @@ fn build_checked_declarations(
                         _ => Vec::new(),
                     };
                     for body in nested {
-                        ids.extend(block(body, out));
+                        ids.extend(block(
+                            body,
+                            out,
+                            annotation_types,
+                            statement_bindings,
+                            declaration_captures,
+                            binding_types,
+                        ));
                     }
                     continue;
                 }
             };
             let id = CheckedDeclId(out.len() as u32);
+            let location = statement.source_span();
+            let ty = match kind {
+                CheckedDeclKind::Function => annotation_types
+                    .get(&AnnotationSite::FunctionType {
+                        module: statement.module.clone(),
+                        declaration: statement.span,
+                        syntax: statement.syntax_id,
+                    })
+                    .cloned(),
+                CheckedDeclKind::Binding | CheckedDeclKind::CompileTime => {
+                    binding_types.get(&location).cloned()
+                }
+                CheckedDeclKind::Struct | CheckedDeclKind::Trait => None,
+            };
             out.push(CheckedDeclaration {
                 id,
                 kind,
                 name,
-                location: statement.source_span(),
-                ty: None,
+                binding: statement_bindings.get(&location).copied(),
+                captures: declaration_captures
+                    .get(&location)
+                    .cloned()
+                    .unwrap_or_default(),
+                location,
+                ty,
                 children: Vec::new(),
             });
             let children = match &statement.kind {
-                StmtKind::Def { body, .. } => block(body, out),
+                StmtKind::Def { body, .. } => block(
+                    body,
+                    out,
+                    annotation_types,
+                    statement_bindings,
+                    declaration_captures,
+                    binding_types,
+                ),
                 StmtKind::Struct { methods, .. } => methods
                     .iter()
-                    .flat_map(|method| block(&method.body, out))
+                    .flat_map(|method| {
+                        block(
+                            &method.body,
+                            out,
+                            annotation_types,
+                            statement_bindings,
+                            declaration_captures,
+                            binding_types,
+                        )
+                    })
+                    .collect(),
+                StmtKind::For { body, orelse, .. } => block(
+                    body,
+                    out,
+                    annotation_types,
+                    statement_bindings,
+                    declaration_captures,
+                    binding_types,
+                )
+                .into_iter()
+                .chain(orelse.iter().flat_map(|body| {
+                    block(
+                        body,
+                        out,
+                        annotation_types,
+                        statement_bindings,
+                        declaration_captures,
+                        binding_types,
+                    )
+                }))
+                .collect(),
+                StmtKind::Try {
+                    body,
+                    except,
+                    orelse,
+                    finalbody,
+                } => std::iter::once(body.as_slice())
+                    .chain(except.iter().map(|(_, body)| body.as_slice()))
+                    .chain(orelse.iter().map(Vec::as_slice))
+                    .chain(finalbody.iter().map(Vec::as_slice))
+                    .flat_map(|body| {
+                        block(
+                            body,
+                            out,
+                            annotation_types,
+                            statement_bindings,
+                            declaration_captures,
+                            binding_types,
+                        )
+                    })
                     .collect(),
                 _ => Vec::new(),
             };
@@ -925,6 +1451,13 @@ fn build_checked_declarations(
         ids
     }
     let mut declarations = Vec::new();
-    let _ = block(statements, &mut declarations);
+    let _ = block(
+        statements,
+        &mut declarations,
+        annotation_types,
+        statement_bindings,
+        declaration_captures,
+        binding_types,
+    );
     declarations
 }

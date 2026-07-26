@@ -11,7 +11,8 @@
 use crate::ast::{Expr, ExprKind, Stmt, StmtKind};
 use crate::token::{DUMMY_SPAN, SourceSpan};
 use crate::{
-    CheckedExpr, CheckedNodeId, CheckedProgram, EffectFacts, SemanticAdjustment, Ty, ValueCategory,
+    CheckedDeclId, CheckedDeclaration, CheckedExpr, CheckedNodeId, CheckedProgram, EffectFacts,
+    SemanticAdjustment, Ty, ValueCategory,
 };
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use std::collections::{HashMap, HashSet};
@@ -22,6 +23,9 @@ pub struct HirExpr {
     pub checked: Option<CheckedNodeId>,
     pub ty: Option<Ty>,
     pub category: ValueCategory,
+    /// Stable checked binding selected by lexical lookup. Calls and type
+    /// applications carry this even though they are not places.
+    pub binding: Option<crate::origin::OwnerId>,
     /// Checker-selected effect contract for this expression. Calls through a
     /// trait bound retain the requirement's typed error here just like direct
     /// and indirect calls.
@@ -68,12 +72,51 @@ impl HirExpr {
             checked: None,
             ty: None,
             category: ValueCategory::Value,
+            binding: None,
             effects: EffectFacts::default(),
             adjustments: Vec::new(),
             children: Vec::new(),
             place: None,
             comprehension_bindings: Vec::new(),
         }
+    }
+
+    fn synthetic(
+        kind: ExprKind,
+        ty: Ty,
+        category: ValueCategory,
+        children: Vec<HirExpr>,
+        adjustments: Vec<SemanticAdjustment>,
+    ) -> Self {
+        let raises = adjustments.iter().find_map(|adjustment| match adjustment {
+            SemanticAdjustment::SelectedCall(contract) => contract.raises.clone(),
+            _ => None,
+        });
+        Self {
+            syntax: Expr::new(kind, DUMMY_SPAN),
+            checked: None,
+            ty: Some(ty),
+            category,
+            binding: None,
+            effects: EffectFacts {
+                raises,
+                ..EffectFacts::default()
+            },
+            adjustments,
+            children,
+            place: None,
+            comprehension_bindings: Vec::new(),
+        }
+    }
+
+    fn synthetic_identifier(name: String, ty: Ty) -> Self {
+        Self::synthetic(
+            ExprKind::Identifier(name),
+            ty,
+            ValueCategory::Place,
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -87,6 +130,8 @@ impl std::ops::Deref for HirExpr {
 #[derive(Debug, Clone)]
 pub struct HirStmt {
     pub syntax: Stmt,
+    pub declaration: Option<CheckedDeclId>,
+    pub binding: Option<crate::origin::OwnerId>,
     /// Checked roots directly owned by this opaque statement, in source/AST
     /// order. Nested control-flow regions build their own CFGs.
     pub expressions: Vec<HirExpr>,
@@ -514,6 +559,18 @@ pub enum HirInstr {
         dest: VarId,
         expr: HirExpr,
         binding_ty: Option<Ty>,
+        /// Stable checker identity introduced by this binding, when this is a
+        /// declaration rather than a write to an existing slot.
+        binding: Option<crate::origin::OwnerId>,
+    },
+    /// Bind a concrete borrowed collection place without invoking its value-copy
+    /// lifecycle. `origin` is the checker-proven interior generation retained by
+    /// the iterator. MIR lowers this to an explicit place load plus
+    /// `EstablishLoans`; it is not a VM type-name special case.
+    BorrowIter {
+        dest: VarId,
+        expr: HirExpr,
+        origin: crate::origin::OriginPlace,
     },
     /// A bare expression evaluated for its effect/value (`f(x)`).
     Eval(HirExpr),
@@ -524,7 +581,7 @@ pub enum HirInstr {
     /// lowerer — present so later stages share the type).
     Drop(VarId),
     /// Iterator protocol: normalize the iterable in `iter` to an *iterator* — for a
-    /// user struct, `iter = iter.__iter__()`; a built-in `range`/`List` iterates in
+    /// nominal iterable, `iter = iter.__iter__()`; compiler-private storage iterates in
     /// place, so this is a no-op. Emitted once before the loop header.
     GetIter {
         iter: VarId,
@@ -544,16 +601,35 @@ pub enum HirInstr {
         iter: VarId,
         dest: VarId,
         method: Option<String>,
+        /// Checker-resolved element type for the loop binding. Keeping it on
+        /// HIR makes legacy bounded iteration as typed as the raising path;
+        /// MIR must not recover it from a later consumer or iterator spelling.
+        element_ty: Ty,
+        binding: Option<crate::origin::OwnerId>,
+    },
+    /// Current iterator protocol: call a typed-raising `__next__` exactly once,
+    /// storing its element in `dest` and whether it yielded in `yielded`.
+    /// Raising the checked exhaustion type sets `yielded = False`; every other
+    /// runtime error propagates normally.
+    TryNext {
+        iter: VarId,
+        dest: VarId,
+        yielded: VarId,
+        method: String,
+        exhaustion: Ty,
+        element_ty: Ty,
+        binding: Option<crate::origin::OwnerId>,
     },
     /// A `try` statement whose sub-regions are lowered in Stage 5 as mini-CFGs.
     /// `loop_targets` snapshots the enclosing **function-level** loop stack
-    /// (`(continue → header, break → exit)`, innermost-last) at this point, so a
-    /// `break`/`continue` inside the `try` that targets an outer loop can be
-    /// resolved to that loop's block (an `EscapeJump`). Only produced when every
-    /// enclosing loop is function-level; otherwise the `try` stays a `Stmt`.
+    /// (`(continue → header, break → exit, return cleanup)`, innermost-last)
+    /// at this point, so control leaving a `try` retains both the outer target and
+    /// the iterator storage that a return must destroy after `finally`. Only
+    /// produced when every enclosing loop is function-level; otherwise the `try`
+    /// stays a `Stmt`.
     Try {
         stmt: HirStmt,
-        loop_targets: Vec<(BlockId, BlockId)>,
+        loop_targets: Vec<(BlockId, BlockId, Vec<VarId>)>,
     },
 }
 
@@ -567,6 +643,14 @@ pub enum Terminator {
         else_b: BlockId,
     },
     Return(Option<HirExpr>),
+    /// A return nested in one or more iterator-driven loops. The value is
+    /// evaluated before `cleanup` is destroyed (innermost iterator first), so
+    /// moving or copying the current element into the result remains valid while
+    /// residual owned iterator storage cannot leak past the function boundary.
+    ReturnWithCleanup {
+        value: Option<HirExpr>,
+        cleanup: Vec<VarId>,
+    },
     /// The normal fall-through end of a **seeded region** (a `try` sub-body). Unlike
     /// `Return(None)` (an explicit bare `return`), this means "the region completed
     /// normally" — the VM continues to the `else`/`finally`, not out of the frame.
@@ -603,6 +687,7 @@ pub struct Cfg {
     /// Typed semantic nodes available to region lowering. Kept by stable node id;
     /// source locations are used only once, when AST syntax enters checked HIR.
     pub checked_expressions: HashMap<CheckedNodeId, CheckedExpr>,
+    pub checked_declarations: Vec<CheckedDeclaration>,
     /// Checked storage types for variable slots known at HIR construction.
     pub var_types: HashMap<VarId, Ty>,
 }
@@ -623,7 +708,13 @@ impl Cfg {
     }
 
     pub fn build_checked_fn(checked: &CheckedProgram, params: &[String], body: &[Stmt]) -> Cfg {
-        Self::build_fn_with_context(params, HashSet::new(), body, checked.expressions())
+        Self::build_fn_with_context(
+            params,
+            HashSet::new(),
+            body,
+            checked.expressions(),
+            checked.declarations(),
+        )
     }
 
     pub(crate) fn build_fn_with_captures(
@@ -631,7 +722,7 @@ impl Cfg {
         shadow_captures: HashSet<String>,
         body: &[Stmt],
     ) -> Cfg {
-        Self::build_fn_with_context(params, shadow_captures, body, &[])
+        Self::build_fn_with_context(params, shadow_captures, body, &[], &[])
     }
 
     pub(crate) fn build_checked_fn_with_captures(
@@ -640,7 +731,13 @@ impl Cfg {
         shadow_captures: HashSet<String>,
         body: &[Stmt],
     ) -> Cfg {
-        Self::build_fn_with_context(params, shadow_captures, body, checked.expressions())
+        Self::build_fn_with_context(
+            params,
+            shadow_captures,
+            body,
+            checked.expressions(),
+            checked.declarations(),
+        )
     }
 
     fn build_fn_with_context(
@@ -648,6 +745,7 @@ impl Cfg {
         shadow_captures: HashSet<String>,
         body: &[Stmt],
         checked: &[CheckedExpr],
+        declarations: &[CheckedDeclaration],
     ) -> Cfg {
         let mut g = StableGraph::new();
         let entry = g.add_node(BasicBlock::default());
@@ -675,6 +773,11 @@ impl Cfg {
             is_function: true,
             checked_by_span: checked_index(checked),
             checked_expressions: checked.iter().cloned().map(|n| (n.id, n)).collect(),
+            checked_declarations: declarations
+                .iter()
+                .cloned()
+                .map(|declaration| (declaration.location.clone(), declaration))
+                .collect(),
         };
         for s in body {
             lower.stmt(s);
@@ -687,6 +790,7 @@ impl Cfg {
             vars: lower.vars,
             n_params: params.len(),
             checked_expressions: lower.checked_expressions,
+            checked_declarations: declarations.to_vec(),
             var_types,
         }
     }
@@ -719,14 +823,29 @@ impl Cfg {
         external_loops: &[(BlockId, BlockId)],
         checked: &[CheckedExpr],
     ) -> Cfg {
+        let external_loops = external_loops
+            .iter()
+            .map(|&(header, exit)| (header, exit, Vec::new()))
+            .collect::<Vec<_>>();
+        Self::build_seeded_checked_with_declarations(seed_vars, body, &external_loops, checked, &[])
+    }
+
+    pub(crate) fn build_seeded_checked_with_declarations(
+        seed_vars: Vec<String>,
+        body: &[Stmt],
+        external_loops: &[(BlockId, BlockId, Vec<VarId>)],
+        checked: &[CheckedExpr],
+        declarations: &[CheckedDeclaration],
+    ) -> Cfg {
         let mut g = StableGraph::new();
         let entry = g.add_node(BasicBlock::default());
         let loops = external_loops
             .iter()
-            .map(|&(header, exit)| LoopFrame {
-                header,
-                exit,
+            .map(|(header, exit, cleanup)| LoopFrame {
+                header: *header,
+                exit: *exit,
                 escape: true,
+                cleanup: cleanup.clone(),
             })
             .collect();
         let mut lower = Lower {
@@ -739,6 +858,11 @@ impl Cfg {
             is_function: false,
             checked_by_span: checked_index(checked),
             checked_expressions: checked.iter().cloned().map(|n| (n.id, n)).collect(),
+            checked_declarations: declarations
+                .iter()
+                .cloned()
+                .map(|declaration| (declaration.location.clone(), declaration))
+                .collect(),
         };
         for s in body {
             lower.stmt(s);
@@ -751,6 +875,7 @@ impl Cfg {
             vars: lower.vars,
             n_params: 0,
             checked_expressions: lower.checked_expressions,
+            checked_declarations: declarations.to_vec(),
             var_types,
         }
     }
@@ -783,11 +908,14 @@ impl Cfg {
 /// in *this* CFG (a `break`/`continue` is a `Jump`); `escape = true` for a loop in
 /// the enclosing **function** CFG (seeded into a `try` region — a `break`/
 /// `continue` becomes an `EscapeJump` the VM propagates out).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct LoopFrame {
     header: BlockId,
     exit: BlockId,
     escape: bool,
+    /// Values to destroy when a return bypasses this loop's common exit. For a
+    /// `for`, this is the current element followed by the normalized iterator.
+    cleanup: Vec<VarId>,
 }
 
 /// Lowering cursor: appends to the "current" block, splitting on control flow.
@@ -808,6 +936,7 @@ struct Lower {
     is_function: bool,
     checked_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     checked_expressions: HashMap<CheckedNodeId, CheckedExpr>,
+    checked_declarations: HashMap<SourceSpan, CheckedDeclaration>,
 }
 
 fn checked_index(nodes: &[CheckedExpr]) -> HashMap<SourceSpan, Vec<CheckedNodeId>> {
@@ -932,7 +1061,10 @@ impl Lower {
             }
             // No in-graph edge: `Return`/`FallOff` leave the CFG; `EscapeJump`
             // targets a block in the *enclosing* CFG (not a node here).
-            Terminator::Return(_) | Terminator::FallOff | Terminator::EscapeJump(_) => {}
+            Terminator::Return(_)
+            | Terminator::ReturnWithCleanup { .. }
+            | Terminator::FallOff
+            | Terminator::EscapeJump(_) => {}
         }
         self.g[self.cur].term = Some(t);
     }
@@ -957,17 +1089,23 @@ impl Lower {
     }
 
     fn declare_var(&mut self, name: &str) -> VarId {
-        let runtime = if self
+        // A source name can denote several checker bindings even when their
+        // lexical scopes are siblings rather than nested. Compile-time
+        // unrolling makes that distinction observable when the cloned
+        // declarations infer different types, so never recycle a slot that was
+        // already assigned to an earlier declaration.
+        let shadows_active_binding = self
             .scopes
             .iter()
             .rev()
             .skip(1)
-            .any(|s| s.contains_key(name))
-        {
-            format!("{name}$shadow{}", self.vars.len())
-        } else {
-            name.to_string()
-        };
+            .any(|scope| scope.contains_key(name));
+        let runtime =
+            if shadows_active_binding || self.vars.iter().any(|candidate| candidate == name) {
+                format!("{name}$shadow{}", self.vars.len())
+            } else {
+                name.to_string()
+            };
         if self.scopes.is_empty() {
             self.scopes.push(HashMap::new());
         }
@@ -992,6 +1130,7 @@ impl Lower {
                 checked: Some(node.id),
                 ty: node.ty.clone(),
                 category: node.category,
+                binding: node.binding,
                 effects: node.effects.clone(),
                 adjustments: node.adjustments.clone(),
                 children: node
@@ -1014,6 +1153,7 @@ impl Lower {
             checked: Some(node.id),
             ty: node.ty.clone(),
             category: node.category,
+            binding: node.binding,
             effects: node.effects.clone(),
             adjustments: node.adjustments.clone(),
             children: node
@@ -1028,12 +1168,15 @@ impl Lower {
     }
 
     fn statement(&self, syntax: Stmt) -> HirStmt {
+        let declaration = self.checked_declarations.get(&syntax.source_span());
         let expressions = statement_expression_roots(&syntax)
             .into_iter()
             .map(|expression| self.expr(expression))
             .collect();
         HirStmt {
             syntax,
+            declaration: declaration.map(|declaration| declaration.id),
+            binding: declaration.and_then(|declaration| declaration.binding),
             expressions,
         }
     }
@@ -1091,8 +1234,9 @@ impl Lower {
                     header,
                     exit,
                     escape: false,
+                    cleanup: Vec::new(),
                 });
-                self.block(body);
+                self.scoped_block(body);
                 self.loops.pop();
                 self.seal(Terminator::Jump(header)); // back-edge (unless body sealed via break/return)
                 if let Some(body) = orelse {
@@ -1116,19 +1260,48 @@ impl Lower {
                 orelse,
             } => {
                 if *reference {
-                    let ExprKind::Identifier(source_name) = &iter.kind else {
+                    let ExprKind::Identifier(_) = &iter.kind else {
                         self.push(HirInstr::Stmt(
                             self.statement(Stmt::new(StmtKind::Pass, s.span)),
                         ));
                         return;
                     };
-                    let source_name = source_name.clone();
+                    let checked_iter = self.expr(iter);
+                    let protocol = checked_iter
+                        .adjustments
+                        .iter()
+                        .find_map(|adjustment| match adjustment {
+                            SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
+                            _ => None,
+                        })
+                        .expect("checked reference iteration has a protocol");
+                    let reference_protocol = protocol
+                        .reference
+                        .expect("checked List reference iteration has exact calls");
+                    let declaration = self
+                        .checked_declarations
+                        .get(&s.source_span())
+                        .cloned()
+                        .expect("checked reference-loop binding declaration");
+                    let reference_ty = match declaration.ty.clone() {
+                        Some(Ty::Ref(reference)) => reference,
+                        other => panic!(
+                            "checked reference-loop binding must be a reference, got {other:?}"
+                        ),
+                    };
                     let index_name = format!("$refindex{}", self.vars.len());
                     let index_var = self.var(&index_name);
                     self.push(HirInstr::Bind {
                         dest: index_var,
-                        expr: HirExpr::unchecked(Expr::new(ExprKind::Int(0i64.into()), DUMMY_SPAN)),
-                        binding_ty: None,
+                        expr: HirExpr::synthetic(
+                            ExprKind::Int(0i64.into()),
+                            Ty::IntLiteral,
+                            ValueCategory::Value,
+                            Vec::new(),
+                            Vec::new(),
+                        ),
+                        binding_ty: Some(Ty::Int),
+                        binding: None,
                     });
                     let header = self.new_block();
                     let body_b = self.new_block();
@@ -1136,76 +1309,117 @@ impl Lower {
                     let normal_exit = orelse.as_ref().map(|_| self.new_block()).unwrap_or(exit);
                     self.seal(Terminator::Jump(header));
                     self.cur = header;
-                    let length = Expr::new(
-                        ExprKind::Call {
-                            name: "len".to_string(),
-                            param_args: Vec::new(),
-                            args: vec![Expr::new(
-                                ExprKind::Identifier(source_name.clone()),
-                                DUMMY_SPAN,
-                            )],
+                    let length = HirExpr::synthetic(
+                        ExprKind::MethodCall {
+                            object: Box::new(checked_iter.syntax.clone()),
+                            method: "__len__".to_string(),
+                            args: Vec::new(),
                             kwargs: Vec::new(),
                         },
-                        DUMMY_SPAN,
+                        Ty::Int,
+                        ValueCategory::Value,
+                        vec![checked_iter.clone()],
+                        vec![SemanticAdjustment::SelectedCall(Box::new(
+                            reference_protocol.len.clone(),
+                        ))],
                     );
+                    let index_read = HirExpr::synthetic_identifier(index_name.clone(), Ty::Int);
                     self.seal(Terminator::Branch {
-                        cond: HirExpr::unchecked(Expr::new(
+                        cond: HirExpr::synthetic(
                             ExprKind::Infix(
                                 crate::ast::InfixOp::Lt,
-                                Box::new(Expr::new(
-                                    ExprKind::Identifier(index_name.clone()),
-                                    DUMMY_SPAN,
-                                )),
-                                Box::new(length),
+                                Box::new(index_read.syntax.clone()),
+                                Box::new(length.syntax.clone()),
                             ),
-                            DUMMY_SPAN,
-                        )),
+                            Ty::Bool,
+                            ValueCategory::Value,
+                            vec![index_read, length],
+                            Vec::new(),
+                        ),
                         then_b: body_b,
                         else_b: normal_exit,
                     });
                     self.cur = body_b;
-                    let target = Expr::new(
+                    self.scopes.push(HashMap::new());
+                    let binding_var = self.declare_var(var);
+                    let binding_name = self.vars[binding_var as usize].clone();
+                    let index_read = HirExpr::synthetic_identifier(index_name.clone(), Ty::Int);
+                    let reference = reference_protocol
+                        .getitem
+                        .reference_result
+                        .clone()
+                        .expect("checked reference iteration getter returns a reference");
+                    debug_assert_eq!(reference, reference_ty);
+                    let borrow = if reference.mutability == crate::origin::Mutability::Mutable {
+                        SemanticAdjustment::BorrowMutable
+                    } else {
+                        SemanticAdjustment::BorrowShared
+                    };
+                    let target = HirExpr::synthetic(
                         ExprKind::Index {
-                            object: Box::new(Expr::new(
-                                ExprKind::Identifier(source_name),
-                                DUMMY_SPAN,
-                            )),
-                            index: Box::new(Expr::new(
-                                ExprKind::Identifier(index_name.clone()),
-                                DUMMY_SPAN,
-                            )),
+                            object: Box::new(checked_iter.syntax.clone()),
+                            index: Box::new(index_read.syntax.clone()),
                         },
-                        DUMMY_SPAN,
+                        (*reference.referent).clone(),
+                        ValueCategory::Place,
+                        vec![checked_iter, index_read],
+                        vec![
+                            SemanticAdjustment::SelectedCall(Box::new(
+                                reference_protocol.getitem.clone(),
+                            )),
+                            SemanticAdjustment::ReferenceResult {
+                                reference: reference.clone(),
+                            },
+                            borrow,
+                        ],
                     );
-                    self.stmt(&Stmt::new(
+                    let mut syntax = Stmt::new(
                         StmtKind::RefDecl {
-                            name: var.clone(),
-                            value: target,
+                            name: binding_name,
+                            value: target.syntax.clone(),
                         },
                         s.span,
-                    ));
+                    );
+                    syntax.module = s.module.clone();
+                    self.push(HirInstr::Stmt(HirStmt {
+                        syntax,
+                        declaration: Some(declaration.id),
+                        binding: declaration.binding,
+                        expressions: vec![target],
+                    }));
                     self.loops.push(LoopFrame {
                         header,
                         exit,
                         escape: false,
+                        cleanup: Vec::new(),
                     });
                     self.block(body);
                     self.loops.pop();
-                    let next = Expr::new(
+                    self.scopes.pop();
+                    let index_read = HirExpr::synthetic_identifier(index_name.clone(), Ty::Int);
+                    let one = HirExpr::synthetic(
+                        ExprKind::Int(1i64.into()),
+                        Ty::IntLiteral,
+                        ValueCategory::Value,
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    let next = HirExpr::synthetic(
                         ExprKind::Infix(
                             crate::ast::InfixOp::Add,
-                            Box::new(Expr::new(
-                                ExprKind::Identifier(index_name.clone()),
-                                DUMMY_SPAN,
-                            )),
-                            Box::new(Expr::new(ExprKind::Int(1i64.into()), DUMMY_SPAN)),
+                            Box::new(index_read.syntax.clone()),
+                            Box::new(one.syntax.clone()),
                         ),
-                        DUMMY_SPAN,
+                        Ty::Int,
+                        ValueCategory::Value,
+                        vec![index_read, one],
+                        Vec::new(),
                     );
                     self.push(HirInstr::Bind {
                         dest: index_var,
-                        expr: HirExpr::unchecked(next),
+                        expr: next,
                         binding_ty: None,
+                        binding: None,
                     });
                     self.seal(Terminator::Jump(header));
                     if let Some(body) = orelse {
@@ -1235,17 +1449,29 @@ impl Lower {
                         } else {
                             crate::IterationMode::Borrowed
                         },
+                        borrowed_origin: None,
+                        reference: None,
                         prepare: Vec::new(),
                         has_next: None,
                         next: None,
+                        exhaustion: None,
                     });
-                self.push(HirInstr::Bind {
-                    dest: it_var,
-                    expr: checked_iter,
-                    binding_ty: None,
-                });
+                if let Some(origin) = protocol.borrowed_origin.clone() {
+                    self.push(HirInstr::BorrowIter {
+                        dest: it_var,
+                        expr: checked_iter,
+                        origin,
+                    });
+                } else {
+                    self.push(HirInstr::Bind {
+                        dest: it_var,
+                        expr: checked_iter,
+                        binding_ty: None,
+                        binding: None,
+                    });
+                }
                 // Normalize the iterable to an iterator (a user struct's `__iter__`;
-                // a no-op for a built-in `range`/`List`).
+                // a no-op only for compiler-private iterator storage).
                 self.push(HirInstr::GetIter {
                     iter: it_var,
                     protocol: protocol.clone(),
@@ -1255,38 +1481,71 @@ impl Lower {
                 let body_b = self.new_block();
                 let exit = self.new_block();
                 let normal_exit = orelse.as_ref().map(|_| self.new_block()).unwrap_or(exit);
+                self.scopes.push(HashMap::new());
+                let v = self.declare_var(var);
+                let declaration = self.checked_declarations.get(&s.source_span());
+                let binding = declaration.and_then(|declaration| declaration.binding);
+                let element_ty = declaration.and_then(|declaration| declaration.ty.clone());
                 self.seal(Terminator::Jump(header));
 
-                // header: has_next(it) → branch.
+                // A current typed-raising iterator calls `__next__` in the
+                // header and branches on whether it returned an element. The
+                // legacy bounded path retains `has_next` followed by `next`.
                 self.cur = header;
                 let hn_name = format!("$hasnext{}", self.vars.len());
                 let hn_var = self.var(&hn_name);
-                self.push(HirInstr::HasNext {
-                    iter: it_var,
-                    dest: hn_var,
-                    method: protocol.has_next.clone(),
-                });
+                if let Some(exhaustion) = protocol.exhaustion.clone() {
+                    let element_ty = element_ty
+                        .clone()
+                        .expect("checked raising for-loop binding type");
+                    self.push(HirInstr::TryNext {
+                        iter: it_var,
+                        dest: v,
+                        yielded: hn_var,
+                        method: protocol
+                            .next
+                            .clone()
+                            .expect("raising iterator has checked __next__ symbol"),
+                        exhaustion,
+                        element_ty,
+                        binding,
+                    });
+                } else {
+                    self.push(HirInstr::HasNext {
+                        iter: it_var,
+                        dest: hn_var,
+                        method: protocol.has_next.clone(),
+                    });
+                }
                 self.seal(Terminator::Branch {
                     cond: HirExpr::unchecked(Expr::new(ExprKind::Identifier(hn_name), DUMMY_SPAN)),
                     then_b: body_b,
                     else_b: normal_exit,
                 });
 
-                // body: x = next(it); <body>; back-edge to header.
+                // body: the raising path already bound x; the bounded path now
+                // advances and binds it. Then execute the source body.
                 self.cur = body_b;
-                let v = self.var(var);
-                self.push(HirInstr::Next {
-                    iter: it_var,
-                    dest: v,
-                    method: protocol.next.clone(),
-                });
+                if protocol.exhaustion.is_none() {
+                    self.push(HirInstr::Next {
+                        iter: it_var,
+                        dest: v,
+                        method: protocol.next.clone(),
+                        element_ty: element_ty
+                            .clone()
+                            .expect("checked bounded for-loop binding type"),
+                        binding,
+                    });
+                }
                 self.loops.push(LoopFrame {
                     header,
                     exit,
                     escape: false,
+                    cleanup: vec![v, it_var],
                 });
                 self.block(body);
                 self.loops.pop();
+                self.scopes.pop();
                 self.seal(Terminator::Jump(header));
                 if let Some(body) = orelse {
                     self.cur = normal_exit;
@@ -1294,10 +1553,18 @@ impl Lower {
                     self.seal(Terminator::Jump(exit));
                 }
                 self.cur = exit;
+                // The synthetic iterator owns the normalized iterator value for
+                // the lifetime of the loop.  A normal exhaustion edge is visible
+                // to backward liveness, but a `break` block has no later iterator
+                // use from which drop elaboration could infer that ownership dies.
+                // Make the structured lifetime boundary explicit at the common
+                // exit so every path (including `break`) destroys residual owned
+                // iterator storage before execution continues after the loop.
+                self.push(HirInstr::Drop(it_var));
             }
 
             StmtKind::Break => {
-                let Some(f) = self.loops.last().copied() else {
+                let Some(f) = self.loops.last().cloned() else {
                     self.push(HirInstr::Stmt(self.statement(s.clone())));
                     return;
                 };
@@ -1310,7 +1577,7 @@ impl Lower {
                 });
             }
             StmtKind::Continue => {
-                let Some(f) = self.loops.last().copied() else {
+                let Some(f) = self.loops.last().cloned() else {
                     self.push(HirInstr::Stmt(self.statement(s.clone())));
                     return;
                 };
@@ -1320,11 +1587,28 @@ impl Lower {
                     Terminator::Jump(f.header)
                 });
             }
-            StmtKind::Return(e) => self.seal(Terminator::Return(e.as_ref().map(|e| self.expr(e)))),
+            StmtKind::Return(e) => {
+                let value = e.as_ref().map(|e| self.expr(e));
+                let cleanup = self
+                    .loops
+                    .iter()
+                    .rev()
+                    .flat_map(|frame| frame.cleanup.iter().copied())
+                    .collect::<Vec<_>>();
+                self.seal(if cleanup.is_empty() {
+                    Terminator::Return(value)
+                } else {
+                    Terminator::ReturnWithCleanup { value, cleanup }
+                });
+            }
 
             StmtKind::VarDecl { name, ty: _, value } => {
                 let value = self.expr(value);
                 let v = self.declare_var(name);
+                let binding = self
+                    .checked_declarations
+                    .get(&s.source_span())
+                    .and_then(|declaration| declaration.binding);
                 let binding_ty = value.checked.and_then(|id| {
                     self.checked_expressions
                         .get(&id)
@@ -1334,6 +1618,7 @@ impl Lower {
                     dest: v,
                     expr: value,
                     binding_ty,
+                    binding,
                 });
             }
             StmtKind::RefDecl { name, value } => {
@@ -1348,6 +1633,10 @@ impl Lower {
             }
             StmtKind::Assign { name, value } => {
                 let value = self.expr(value);
+                let binding = self
+                    .checked_declarations
+                    .get(&s.source_span())
+                    .and_then(|declaration| declaration.binding);
                 let captured = self.captures.remove(name);
                 if !self.scopes.iter().any(|s| s.contains_key(name))
                     && let Some(scope) = self.scopes.last_mut()
@@ -1367,6 +1656,7 @@ impl Lower {
                     dest: v,
                     expr: value,
                     binding_ty: None,
+                    binding,
                 });
             }
             StmtKind::Expr(e) => self.push(HirInstr::Eval(self.expr(e))),
@@ -1380,7 +1670,11 @@ impl Lower {
             StmtKind::Try { .. } => {
                 let escapable = self.is_function || self.loops.iter().all(|f| f.escape);
                 if escapable {
-                    let loop_targets = self.loops.iter().map(|f| (f.header, f.exit)).collect();
+                    let loop_targets = self
+                        .loops
+                        .iter()
+                        .map(|f| (f.header, f.exit, f.cleanup.clone()))
+                        .collect();
                     self.push(HirInstr::Try {
                         stmt: self.statement(s.clone()),
                         loop_targets,

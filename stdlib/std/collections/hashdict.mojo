@@ -4,7 +4,7 @@
 # bucket to entry positions. Views are eager value-semantic snapshots until
 # origins and reference iterators are implemented.
 
-from std.collections.dict import DictEntry
+from std.collections.dict import DictEntry, _DictKeyIter
 from std.collections.list import List
 from std.hashing import bucket_index
 from std.iterable import Iterable
@@ -12,7 +12,7 @@ from std.optional import Optional
 
 struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Movable](Copyable, Iterable):
     comptime Element = Self.K
-    comptime Iter = List[Self.K]
+    comptime Iter = _DictKeyIter[Self.K, Self.V]
 
     var entries: List[DictEntry[Self.K, Self.V]]
     var index: List[List[Int]]
@@ -40,8 +40,8 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
 
     def find_index(self, key: Self.K) -> Int:
         var bucket: Int = bucket_index(key, self.nbuckets)
-        for entry_index in self.index[bucket]:
-            if self.entries[entry_index].key == key:
+        for entry_index in self.index._get_copy(bucket):
+            if self.entries._get_copy(entry_index).key == key:
                 return entry_index
         return -1
 
@@ -51,10 +51,12 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
     def __getitem__(self, key: Self.K) raises -> Self.V:
         var i: Int = self.find_index(key)
         if i >= 0:
-            return self.entries[i].value
+            return self.entries._get_copy(i).value
         raise Error("missing key")
 
-    def __setitem__(mut self, key: Self.K, value: Self.V):
+    def __setitem__(mut self, key: Self.K, value: Self.V) where conforms_to(
+        Self.K, ImplicitlyDeletable
+    ) and conforms_to(Self.V, ImplicitlyDeletable):
         var existing: Int = self.find_index(key)
         if existing >= 0:
             self.entries[existing] = DictEntry[Self.K, Self.V](key, value)
@@ -63,7 +65,9 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
         var entry_index: Int = len(self.entries)
         self.entries.append(DictEntry[Self.K, Self.V](key, value))
         var bucket: Int = bucket_index(key, self.nbuckets)
-        self.index[bucket].append(entry_index)
+        var bucket_entries: List[Int] = self.index._get_copy(bucket)
+        bucket_entries.append(entry_index)
+        self.index[bucket] = bucket_entries^
         self.count = self.count + 1
         if self.count == self.nbuckets:
             self.rehash(self.nbuckets * 2)
@@ -76,8 +80,12 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
             i = i + 1
         i = 0
         while i < len(self.entries):
-            var bucket: Int = bucket_index(self.entries[i].key, new_bucket_count)
-            new_index[bucket].append(i)
+            var bucket: Int = bucket_index(
+                self.entries._get_copy(i).key, new_bucket_count
+            )
+            var bucket_entries: List[Int] = new_index._get_copy(bucket)
+            bucket_entries.append(i)
+            new_index[bucket] = bucket_entries^
             i = i + 1
         self.index = new_index
         self.nbuckets = new_bucket_count
@@ -88,13 +96,13 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
     def get(self, key: Self.K) -> Optional[Self.V]:
         var i: Int = self.find_index(key)
         if i >= 0:
-            return Optional[Self.V](self.entries[i].value, True)
+            return Optional[Self.V](self.entries._get_copy(i).value, True)
         return Optional[Self.V]()
 
     def get(self, key: Self.K, default: Self.V) -> Self.V:
         var i: Int = self.find_index(key)
         if i >= 0:
-            return self.entries[i].value
+            return self.entries._get_copy(i).value
         return default
 
     def __len__(self) -> Int:
@@ -102,18 +110,22 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
 
     def keys(self) -> List[Self.K]:
         var result: List[Self.K] = List[Self.K]()
-        for entry in self.entries:
-            result.append(entry.key)
-        return result
+        var i: Int = 0
+        while i < len(self.entries):
+            result.append(self.entries._get_copy(i).key)
+            i = i + 1
+        return result^
 
     def values(self) -> List[Self.V]:
         var result: List[Self.V] = List[Self.V]()
-        for entry in self.entries:
-            result.append(entry.value)
-        return result
+        var i: Int = 0
+        while i < len(self.entries):
+            result.append(self.entries._get_copy(i).value)
+            i = i + 1
+        return result^
 
     def items(self) -> List[DictEntry[Self.K, Self.V]]:
         return self.entries
 
-    def __iter__(self) -> List[Self.K]:
-        return self.keys()
+    def __iter__(self) -> _DictKeyIter[Self.K, Self.V]:
+        return _DictKeyIter[Self.K, Self.V](self.entries)

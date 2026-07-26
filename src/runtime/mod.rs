@@ -1,6 +1,6 @@
 //! Runtime values and their operations, used by the register-VM `backend`. This
-//! module owns the `Value` type (`SimdLanes` and all), the scalar/`SIMD`/`List`
-//! operations, coercion, and the utility built-ins — the shared value layer the
+//! module owns the `Value` type (`SimdLanes` and all), scalar/`SIMD` operations,
+//! coercion, and the utility built-ins — the shared value layer the
 //! backend consumes.
 
 use std::cmp::Ordering;
@@ -29,15 +29,7 @@ pub enum Value {
     /// A lifted non-escaping function plus its explicit capture environment.
     Closure {
         function: String,
-        captures: Vec<Value>,
-    },
-    /// A half-open integer range `[start, stop)` with the given `step`, produced
-    /// by the built-in `range(...)` and consumed by `for`. Not a first-class
-    /// value: there is no annotation for it, so it only lives in a `for` header.
-    Range {
-        start: i64,
-        stop: i64,
-        step: i64,
+        captures: Vec<ClosureCapture>,
     },
     /// A checked slice descriptor. Unlike the old fabricated struct layout,
     /// omitted bounds and descriptor kind are first-class runtime data.
@@ -64,16 +56,12 @@ pub enum Value {
     },
     /// An `Error` value carrying its message (what `raise` raises).
     Error(String),
-    /// A `List` value — a value type (`Clone` deep-copies its elements, so
-    /// assigning/passing a list copies it, matching Mojo's value semantics).
-    List(Vec<Value>),
-    /// Insertion-ordered set storage used by set displays/comprehensions.
-    Set(Vec<Value>),
-    /// Insertion-ordered dictionary storage used by dictionary displays and
-    /// comprehensions. Equality/lookup compare keys with checked value equality.
-    Dict(Vec<(Value, Value)>),
-    /// A `Tuple` value — a fixed-size, heterogeneous value type (`Clone`
-    /// deep-copies; immutable — no element write).
+    /// A list-shaped compile-time value crossing the narrow VM-CTFE bridge.
+    /// This is never a language-level runtime collection: executable List values
+    /// are ordinary nominal [`Value::Struct`] instances from the bundled library.
+    ComptimeList(Vec<Value>),
+    /// Internal heterogeneous pack storage shared by MIR and VM-CTFE. Public
+    /// `Tuple` values are nominal structs and must not use this representation.
     Tuple(Vec<Value>),
     /// A tagged union. `alternatives` is the checked type-level ordering and
     /// `index` selects the active payload.
@@ -108,6 +96,17 @@ pub enum RefProjection {
     Field(String),
     Index(usize),
     Variant(usize),
+    /// One owned slot in a closure's declaration-created environment.
+    Capture(usize),
+}
+
+/// One slot in a lifted closure's environment. Reference captures retain their
+/// original frame handle; copy/move captures own the declaration-time value and
+/// are subsequently borrowed in place on every invocation.
+#[derive(Debug, Clone)]
+pub struct ClosureCapture {
+    pub value: Value,
+    pub owned: bool,
 }
 
 /// The lanes of a SIMD value, one representation per element-type kind. Integer
@@ -154,18 +153,6 @@ impl PartialEq for Value {
             (Value::None, Value::None) => true,
             // Closures have identity, not structural, equality.
             (
-                Value::Range {
-                    start: s1,
-                    stop: e1,
-                    step: t1,
-                },
-                Value::Range {
-                    start: s2,
-                    stop: e2,
-                    step: t2,
-                },
-            ) => s1 == s2 && e1 == e2 && t1 == t2,
-            (
                 Value::Slice {
                     kind: ak,
                     start: as_,
@@ -202,18 +189,7 @@ impl PartialEq for Value {
                 },
             ) => d1 == d2 && l1 == l2,
             (Value::Error(a), Value::Error(b)) => a == b,
-            (Value::List(a), Value::List(b)) => a == b,
-            (Value::Set(a), Value::Set(b)) => {
-                a.len() == b.len() && a.iter().all(|item| b.contains(item))
-            }
-            (Value::Dict(a), Value::Dict(b)) => {
-                a.len() == b.len()
-                    && a.iter().all(|(key, value)| {
-                        b.iter()
-                            .find(|(candidate, _)| candidate == key)
-                            .is_some_and(|(_, candidate)| candidate == value)
-                    })
-            }
+            (Value::ComptimeList(a), Value::ComptimeList(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (
                 Value::Variant {
@@ -258,7 +234,6 @@ impl fmt::Display for Value {
             Value::None => write!(f, "None"),
             Value::Function(name) => write!(f, "<function {name}>"),
             Value::Closure { function, .. } => write!(f, "<closure {function}>"),
-            Value::Range { start, stop, step } => write!(f, "range({}, {}, {})", start, stop, step),
             Value::Slice {
                 kind,
                 start,
@@ -325,35 +300,15 @@ impl fmt::Display for Value {
             }
             Value::Ref { frame, slot, .. } => write!(f, "<ref {frame}:{slot}>"),
             Value::Moved => write!(f, "<moved>"),
-            Value::List(items) => {
-                write!(f, "[")?;
+            Value::ComptimeList(items) => {
+                write!(f, "<comptime-list [")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{}", item)?;
                 }
-                write!(f, "]")
-            }
-            Value::Set(items) => {
-                write!(f, "{{")?;
-                for (index, item) in items.iter().enumerate() {
-                    if index > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", item)?;
-                }
-                write!(f, "}}")
-            }
-            Value::Dict(entries) => {
-                write!(f, "{{")?;
-                for (index, (key, value)) in entries.iter().enumerate() {
-                    if index > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", key, value)?;
-                }
-                write!(f, "}}")
+                write!(f, "]>")
             }
             Value::Tuple(items) => {
                 write!(f, "(")?;
@@ -386,7 +341,6 @@ pub(crate) fn type_name(value: &Value) -> String {
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),
         Value::Function(_) | Value::Closure { .. } => "function".to_string(),
-        Value::Range { .. } => "range".to_string(),
         Value::Slice { kind, .. } => kind.type_name().to_string(),
         Value::Struct { name, .. } => name.clone(),
         Value::Simd { dtype, lanes } => {
@@ -400,9 +354,7 @@ pub(crate) fn type_name(value: &Value) -> String {
         Value::Pointer { .. } => "UnsafePointer".to_string(),
         Value::Ref { .. } => "ref".to_string(),
         Value::Moved => "<moved>".to_string(),
-        Value::List(_) => "List".to_string(),
-        Value::Set(_) => "Set".to_string(),
-        Value::Dict(_) => "Dict".to_string(),
+        Value::ComptimeList(_) => "<comptime-list>".to_string(),
         Value::Tuple(items) => {
             let elems: Vec<String> = items.iter().map(type_name).collect();
             format!("Tuple[{}]", elems.join(", "))
@@ -471,26 +423,16 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             }
             Ok(true)
         }
-        (Value::Set(left), Value::Set(right)) => {
+        (Value::ComptimeList(left), Value::ComptimeList(right)) => {
             if left.len() != right.len() {
                 return Ok(false);
             }
-            Ok(left.iter().all(|item| {
-                right
-                    .iter()
-                    .any(|candidate| values_equal(item, candidate).unwrap_or(false))
-            }))
-        }
-        (Value::Dict(left), Value::Dict(right)) => {
-            if left.len() != right.len() {
-                return Ok(false);
+            for (left, right) in left.iter().zip(right) {
+                if !values_equal(left, right).unwrap_or(false) {
+                    return Ok(false);
+                }
             }
-            Ok(left.iter().all(|(key, value)| {
-                right.iter().any(|(candidate_key, candidate_value)| {
-                    values_equal(key, candidate_key).unwrap_or(false)
-                        && values_equal(value, candidate_value).unwrap_or(false)
-                })
-            }))
+            Ok(true)
         }
         _ => Err(RuntimeError::TypeError(format!(
             "cannot compare {} and {}",
@@ -1147,9 +1089,10 @@ pub(crate) fn normalize_slice_bounds(
     Ok((start, stop, step))
 }
 
-/// Slice a `List`/`String` value (`a[lower:upper:step]`), returning a new value of
-/// the same kind. `String` is sliced over its **bytes** (consistent with `len`),
-/// rebuilt lossily if a multibyte boundary is split.
+/// Slice a primitive `String` value (`a[lower:upper:step]`). Nominal collection
+/// slicing dispatches through the collection's checked `__getitem__` method.
+/// Strings are sliced over their **bytes** (consistent with `len`), rebuilt
+/// lossily if a multibyte boundary is split.
 pub(crate) fn slice_value(
     v: &Value,
     lower: Option<i64>,
@@ -1157,12 +1100,6 @@ pub(crate) fn slice_value(
     step: Option<i64>,
 ) -> Result<Value, RuntimeError> {
     match v {
-        Value::List(items) => {
-            let idxs = slice_indices(items.len() as i64, lower, upper, step)?;
-            Ok(Value::List(
-                idxs.into_iter().map(|i| items[i].clone()).collect(),
-            ))
-        }
         Value::Str(s) => {
             let bytes = s.as_bytes();
             let idxs = slice_indices(bytes.len() as i64, lower, upper, step)?;
@@ -1176,130 +1113,12 @@ pub(crate) fn slice_value(
     }
 }
 
-/// Whether a `List` method mutates the list (vs. the read-only queries).
-pub(crate) fn is_list_mutator(method: &str) -> bool {
-    matches!(
-        method,
-        "append" | "insert" | "remove" | "pop" | "clear" | "reverse" | "extend"
-    )
-}
-
-/// Apply a `List` method to an owned (mutable) list. Mutating methods change
-/// `items`; the query methods (`count`/`index`) delegate to [`list_query`]. An
-/// incoming element is coerced to the existing elements' numeric kind.
-pub(crate) fn apply_list_method(
-    items: &mut Vec<Value>,
-    method: &str,
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
-    let first = items.first().cloned();
-    let coerce_elem = |v: Value| match &first {
-        Some(f) => coerce_like(v, f),
-        None => v,
-    };
-    match method {
-        "append" => {
-            items.push(coerce_elem(args[0].clone()));
-            Ok(Value::None)
-        }
-        "insert" => {
-            let i = value_as_index(&args[0])?;
-            if i < 0 || i as usize > items.len() {
-                return Err(RuntimeError::TypeError(format!(
-                    "insert index {} out of range 0..={}",
-                    i,
-                    items.len()
-                )));
-            }
-            items.insert(i as usize, coerce_elem(args[1].clone()));
-            Ok(Value::None)
-        }
-        "remove" => {
-            let target = coerce_elem(args[0].clone());
-            match items
-                .iter()
-                .position(|it| values_equal(it, &target).unwrap_or(false))
-            {
-                Some(p) => {
-                    items.remove(p);
-                    Ok(Value::None)
-                }
-                None => Err(RuntimeError::TypeError(
-                    "remove(x): x is not in the list".to_string(),
-                )),
-            }
-        }
-        "pop" => {
-            let i = if let Some(a) = args.first() {
-                bounds_check(value_as_index(a)?, items.len(), "list")?
-            } else if items.is_empty() {
-                return Err(RuntimeError::TypeError(
-                    "pop() from an empty list".to_string(),
-                ));
-            } else {
-                items.len() - 1
-            };
-            Ok(items.remove(i))
-        }
-        "clear" => {
-            items.clear();
-            Ok(Value::None)
-        }
-        "reverse" => {
-            items.reverse();
-            Ok(Value::None)
-        }
-        "extend" => {
-            if let Value::List(other) = &args[0] {
-                items.extend(other.iter().cloned());
-                Ok(Value::None)
-            } else {
-                Err(RuntimeError::TypeError(format!(
-                    "extend() expects a List, got {}",
-                    type_name(&args[0])
-                )))
-            }
-        }
-        "count" | "index" => list_query(items, method, args),
-        _ => Err(RuntimeError::TypeError(format!(
-            "List has no method '{}'",
-            method
-        ))),
-    }
-}
-
-/// A read-only `List` query: `count(x)` → the number of equal elements;
-/// `index(x)` → the first equal element's index (a runtime error if absent).
-pub(crate) fn list_query(
-    items: &[Value],
-    method: &str,
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
-    let target = match items.first() {
-        Some(f) => coerce_like(args[0].clone(), f),
-        None => args[0].clone(),
-    };
-    let eq = |it: &Value| values_equal(it, &target).unwrap_or(false);
-    match method {
-        "count" => Ok(Value::Int(items.iter().filter(|it| eq(it)).count() as i64)),
-        "index" => match items.iter().position(eq) {
-            Some(p) => Ok(Value::Int(p as i64)),
-            None => Err(RuntimeError::TypeError(
-                "index(x): x is not in the list".to_string(),
-            )),
-        },
-        _ => Err(RuntimeError::TypeError(format!(
-            "List has no method '{}'",
-            method
-        ))),
-    }
-}
-
-/// Evaluate `x in c` / `x not in c` → `Bool`. `c` is a `List`/`Tuple` (element
-/// membership) or a `String` (substring test).
+/// Evaluate primitive/internal `x in c` / `x not in c`. Nominal collections
+/// dispatch through `__contains__`; this helper handles only internal pack
+/// storage, the compile-time-only list bridge, and `String`.
 pub(crate) fn eval_membership(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeError> {
     let found = match r {
-        Value::List(items) | Value::Set(items) => {
+        Value::ComptimeList(items) => {
             let target = match items.first() {
                 Some(f) => coerce_like(l.clone(), f),
                 None => l.clone(),
@@ -1308,9 +1127,6 @@ pub(crate) fn eval_membership(op: InfixOp, l: &Value, r: &Value) -> Result<Value
                 .iter()
                 .any(|it| values_equal(it, &target).unwrap_or(false))
         }
-        Value::Dict(entries) => entries
-            .iter()
-            .any(|(key, _)| values_equal(key, l).unwrap_or(false)),
         Value::Tuple(items) => items
             .iter()
             .any(|item| values_equal(item, l).unwrap_or(false)),
@@ -1325,32 +1141,13 @@ pub(crate) fn eval_membership(op: InfixOp, l: &Value, r: &Value) -> Result<Value
         },
         other => {
             return Err(RuntimeError::TypeError(format!(
-                "'in' requires a List, Set, Dict, Tuple, or String, got {}",
+                "'in' requires a nominal collection, internal Tuple, or String, got {}",
                 type_name(other)
             )));
         }
     };
     let result = if op == InfixOp::NotIn { !found } else { found };
     Ok(Value::Bool(result))
-}
-
-/// If every element is numeric, promote them all to a common kind
-/// (`Int < UInt < Float64`), so a mixed-literal list like `[1, 2.0]` becomes
-/// uniform `Float64`. A list with any non-numeric element is left unchanged.
-pub(crate) fn promote_numeric_elems(items: &mut [Value]) {
-    let Some(nums): Option<Vec<Num>> = items.iter().map(as_num).collect() else {
-        return; // some element is non-numeric
-    };
-    let Some(rank) = nums.iter().map(|n| n.rank()).max() else {
-        return; // empty
-    };
-    for (item, n) in items.iter_mut().zip(nums) {
-        *item = match rank {
-            2 => Value::Float64(n.as_f64()),
-            1 => Value::UInt(n.as_u64()),
-            _ => Value::Int(n.as_i64()),
-        };
-    }
 }
 
 // --- SIMD ---
@@ -1711,8 +1508,10 @@ pub(crate) fn builtin_ceildiv(a: &Value, b: &Value) -> Result<Value, RuntimeErro
     }
 }
 
-/// `divmod(a, b)` (a prelude built-in, `DivModable`): the pair `(a // b, a % b)`
-/// as a `Tuple`, using the same Python flooring `//`/`%` as the operators.
+/// Primitive core of `divmod(a, b)` (`DivModable`): compute `(a // b, a % b)`
+/// in private pack storage using the operators' flooring rules. The VM wraps
+/// this transient value in the checker-selected nominal public Tuple before it
+/// crosses the instruction-result boundary.
 pub(crate) fn builtin_divmod(a: Value, b: Value) -> Result<Value, RuntimeError> {
     let q = apply_infix(InfixOp::FloorDiv, a.clone(), b.clone())?;
     let r = apply_infix(InfixOp::Mod, a, b)?;
@@ -1977,7 +1776,6 @@ fn to_bool_lanes(v: &Value, width: usize) -> Result<Vec<bool>, RuntimeError> {
 /// numeric literal's default (`Int`/`Float64`) into another numeric type; all
 /// other values pass through unchanged.
 pub(crate) fn coerce(value: Value, ty: &Type) -> Value {
-    use crate::ast::{Expr, ExprKind, ParamArg};
     match ty {
         Type::UInt => match value {
             Value::Int(n) => Value::UInt(n as u64),
@@ -1999,24 +1797,6 @@ pub(crate) fn coerce(value: Value, ty: &Type) -> Value {
                 value
                     .to_f64()
                     .expect("a finite float literal always rounds to binary64"),
-            ),
-            v => v,
-        },
-        // `Tuple[...]`: coerce each element to its annotated element type.
-        Type::Named(name, args) if name == "Tuple" => match value {
-            Value::Tuple(items) => Value::Tuple(
-                items
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, v)| match args.get(i) {
-                        Some(ParamArg::Type(t)) => coerce(v, t),
-                        Some(ParamArg::Value(Expr {
-                            kind: ExprKind::Identifier(id),
-                            ..
-                        })) => coerce(v, &Type::Named(id.clone(), Vec::new())),
-                        _ => v,
-                    })
-                    .collect(),
             ),
             v => v,
         },
@@ -2081,7 +1861,7 @@ pub(crate) fn materialize_literal(
 }
 
 pub(crate) fn coerce_checked(value: Value, ty: &crate::types::Ty) -> Value {
-    use crate::types::{Ty, TyArg};
+    use crate::types::Ty;
     if matches!(value, Value::IntLiteral(_) | Value::FloatLiteral(_))
         && let Ok(materialized) = materialize_literal(value.clone(), ty)
     {
@@ -2113,34 +1893,11 @@ pub(crate) fn coerce_checked(value: Value, ty: &crate::types::Ty) -> Value {
             ),
             value => value,
         },
-        Ty::List(element) => match value {
-            Value::List(items) => Value::List(
+        Ty::ComptimeList(element) => match value {
+            Value::ComptimeList(items) => Value::ComptimeList(
                 items
                     .into_iter()
                     .map(|value| coerce_checked(value, element))
-                    .collect(),
-            ),
-            value => value,
-        },
-        Ty::Set(element) => match value {
-            Value::Set(items) => Value::Set(
-                items
-                    .into_iter()
-                    .map(|value| coerce_checked(value, element))
-                    .collect(),
-            ),
-            value => value,
-        },
-        Ty::Dict(key, element) => match value {
-            Value::Dict(entries) => Value::Dict(
-                entries
-                    .into_iter()
-                    .map(|(actual_key, value)| {
-                        (
-                            coerce_checked(actual_key, key),
-                            coerce_checked(value, element),
-                        )
-                    })
                     .collect(),
             ),
             value => value,
@@ -2155,19 +1912,6 @@ pub(crate) fn coerce_checked(value: Value, ty: &crate::types::Ty) -> Value {
                 index,
                 value: Box::new(coerce_checked(*value, &types[index])),
             },
-            value => value,
-        },
-        Ty::Struct(name, args) if name == "Tuple" => match value {
-            Value::Tuple(items) => Value::Tuple(
-                items
-                    .into_iter()
-                    .zip(args)
-                    .map(|(value, arg)| match arg {
-                        TyArg::Ty(ty) => coerce_checked(value, ty),
-                        TyArg::Val(_) => value,
-                    })
-                    .collect(),
-            ),
             value => value,
         },
         _ => value,

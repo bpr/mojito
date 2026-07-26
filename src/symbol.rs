@@ -97,6 +97,7 @@ fn ast_raw(
             encode_identifier(name)
         ),
         Type::SelfType => "Self".to_string(),
+        Type::MaterializedCallable(key) => key.clone(),
         other => format!("{other:?}"),
     }
 }
@@ -109,7 +110,7 @@ fn ty_raw(ty: &Ty) -> String {
         Ty::Bool => "Bool".to_string(),
         Ty::String => "String".to_string(),
         Ty::None => "None".to_string(),
-        Ty::List(elem) => format!("List${}", ty_raw(elem)),
+        Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw(elem)),
         Ty::Tuple(elems) => format!(
             "Tuple${}",
             elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
@@ -118,6 +119,7 @@ fn ty_raw(ty: &Ty) -> String {
             "$pack${}",
             elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
         ),
+        Ty::VariadicPack(element) => format!("$variadic${}", ty_raw(element)),
         Ty::Variant(alternatives) => format!(
             "Variant${}",
             alternatives
@@ -140,11 +142,19 @@ fn ty_raw(ty: &Ty) -> String {
             s
         }
         // A type parameter spells as the bare annotation `T` does.
-        Ty::Param { name, bounds } => {
+        Ty::Param {
+            name,
+            bounds,
+            callable_bound,
+        } => {
             let mut result = encode_identifier(name);
             for bound in bounds {
                 result.push('$');
                 result.push_str(&encode_identifier(bound));
+            }
+            if let Some(callable) = callable_bound {
+                result.push_str("$Callable$");
+                result.push_str(&ty_raw(callable));
             }
             result
         }
@@ -297,6 +307,18 @@ pub fn iterator_method_symbol(
     method_symbol(type_name, "__iter__", &sig.with_receiver(convention))
 }
 
+/// Convention-qualified abstract `__iter__` symbol for a bounded generic
+/// receiver. The checker records this exact symbol in the iteration protocol;
+/// the VM only retargets its receiver prefix once the erased generic value's
+/// nominal runtime type is known.
+pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
+    iterator_method_symbol(
+        "__trait_dispatch",
+        Some(convention),
+        &SignatureKey(Vec::new()),
+    )
+}
+
 /// Retarget a checker-selected method symbol from an abstract receiver (for
 /// example `__trait_dispatch.pick$ov$Int`) to the concrete runtime type while
 /// preserving the exact selected method/signature suffix. Keeping this parsing
@@ -304,6 +326,18 @@ pub fn iterator_method_symbol(
 pub fn retarget_method_symbol(symbol: &str, type_name: &str) -> Option<String> {
     let (_, method_and_signature) = symbol.rsplit_once('.')?;
     Some(format!("{type_name}.{method_and_signature}"))
+}
+
+/// Whether a resolved method symbol denotes the `Indexer` normalization hook.
+/// Keep this knowledge beside the overload encoding so checked/MIR consumers do
+/// not parse `$ov$` spellings independently.
+pub fn is_index_normalization_symbol(symbol: &str) -> bool {
+    symbol.rsplit_once('.').is_some_and(|(_, method)| {
+        method == "__mlir_index__"
+            || method
+                .strip_prefix("__mlir_index__")
+                .is_some_and(|suffix| suffix.starts_with(OV_SEP))
+    })
 }
 
 /// The overloaded declarations of a program, scanned from its top level: which
@@ -472,7 +506,10 @@ fn is_mojo_move_constructor(m: &Method) -> bool {
         && m.params[0].name == "move"
         && m.params[0].default.is_none()
         && m.params[0].kind == ParamKind::Regular
-        && m.params[0].convention.is_none()
+        // Current Mojo requires the consuming `deinit move: Self`
+        // convention. Keep the earlier bare `move: Self` shape as the
+        // documented source-compatibility spelling.
+        && matches!(m.params[0].convention, None | Some(ArgConvention::Deinit))
         && matches!(m.params[0].ty, Type::SelfType)
         && m.ret.is_none()
 }
@@ -495,6 +532,17 @@ fn is_mojo_copy_constructor(m: &Method) -> bool {
 /// The lifted name of a nested `def` (`inner` declared inside `outer`).
 pub fn nested_lifted_name(outer: &str, inner: &str) -> String {
     format!("{outer}${inner}")
+}
+
+/// A same-spelled nested declaration's lifted name. Declaration identity, not
+/// a source offset, provides the disambiguator so cloned/synthesized syntax and
+/// ordinary block shadowing follow one stable scheme.
+pub fn nested_lifted_declaration_name(
+    outer: &str,
+    inner: &str,
+    declaration: crate::CheckedDeclId,
+) -> String {
+    format!("{outer}${inner}$decl{}", declaration.0)
 }
 
 /// A deliberate **poison name** for an overloaded call the checker recorded no

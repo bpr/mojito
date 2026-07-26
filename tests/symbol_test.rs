@@ -91,6 +91,48 @@ fn nested_defs_lift_to_dollar_joined_names() {
     assert!(names.contains("outer$inner"), "{names:?}");
 }
 
+#[test]
+fn deeply_nested_defs_use_the_full_lexical_symbol_path() {
+    let names = lowered_names(
+        "def outer(x: Int) -> Int:\n\
+         \x20   def middle() unified {x} -> Int:\n\
+         \x20       def inner() unified {x} -> Int:\n\
+         \x20           return x\n\
+         \x20       return inner()\n\
+         \x20   return middle()\n",
+    );
+    assert!(names.contains("outer$middle"), "{names:?}");
+    assert!(names.contains("outer$middle$inner"), "{names:?}");
+}
+
+#[test]
+fn same_named_nested_defs_in_distinct_blocks_receive_distinct_lifted_symbols() {
+    let names = lowered_names(
+        "def outer(flag: Bool) -> Int:\n\
+         \x20   if flag:\n\
+         \x20       def choose(value: Int) -> Int:\n\
+         \x20           return value\n\
+         \x20       return choose(1)\n\
+         \x20   else:\n\
+         \x20       def choose(value: Int) -> Int:\n\
+         \x20           return value + 1\n\
+         \x20       return choose(1)\n",
+    );
+    let lifted: Vec<_> = names
+        .iter()
+        .filter(|name| name.starts_with("outer$choose$decl"))
+        .collect();
+    assert_eq!(lifted.len(), 2, "{names:?}");
+}
+
+#[test]
+fn nested_declaration_symbols_are_derived_from_checked_ids() {
+    assert_eq!(
+        mojito::symbol::nested_lifted_declaration_name("outer", "choose", mojito::CheckedDeclId(7),),
+        "outer$choose$decl7"
+    );
+}
+
 /// The drift regression: every callee the checker records for an overloaded
 /// call must name a function the MIR actually emits — including struct-typed,
 /// generic, and `Self.T`-typed parameters, which previously mangled differently

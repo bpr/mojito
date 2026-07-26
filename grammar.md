@@ -202,7 +202,7 @@ unsupported.
 ### function_def
 
 ```
-function_def: decorators 'def' NAME [params_decl] '(' [params] ')' [unified_captures] ['raises' [type]] ['->' type] [where_clause] ':' block
+function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] [where_clause] ':' block
 decorators: decorator*
 decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name (only `@fieldwise_init` is acted on)
 dotted_name: NAME ('.' NAME)*
@@ -214,8 +214,11 @@ param_item:
     | '**' NAME ':' type                   # **kwargs (keyword variadic)
     | [convention] NAME ':' type ['=' expression]   # regular, optional default
 convention: 'imm' | 'read' | 'mut' | 'var' | 'out' | 'ref' [origin_spec] | 'deinit'
-unified_captures: 'unified' '{' [capture_entry (',' capture_entry)* [',']] '}'
-capture_entry: ['mut'] NAME ['^'] | 'imm' | 'read'
+function_effect: 'raises' [type] | 'capturing' ['[' ... ']'] | 'thin' | 'abi' '(' ... ')'
+capture_list: '{' [capture_entry (',' capture_entry)* [',']] '}'
+capture_entry:
+    | [('imm' | 'read' | 'mut' | 'ref' | 'var')] NAME ['^']
+    | ('imm' | 'read' | 'mut' | 'ref' | 'var') ['^']
 origin_spec: '[' ','.expression+ ']'   # an expression, a named origin, origin_of(...), or '_'
 reference_binding: 'ref' NAME '=' expression
 ```
@@ -249,19 +252,37 @@ function generic: its type/value parameters are in scope as bare `NAME`s in the
 signature and body (e.g. `def first[T: Copyable & Movable](p: Pair[T]) -> T`, or
 `def repeat[count: Int](msg: String)` with `count` a value parameter).
 
-The optional **`raises`** effect (before `->`) marks a function that may raise an
+The optional **`raises`** effect (before a capture list and `->`) marks a function that may raise an
 error (Mojo's `def` is non-raising by default). An error type may follow (`raises
 ValidationError`). Calls must be protected by `try` or propagated by an enclosing
 function with the same concrete error contract. Effects survive free/method
 overload selection, callable values, trait requirements, and bounded dispatch;
 `raises Never` is nonraising. Methods and trait requirements take the same
-optional effect.
+optional effect. `capturing` and `raises` may appear in either current Mojo
+order; the parser normalizes the sequence while retaining the raising contract.
+
+A current Mojo closure writes its capture list directly after declaration effects:
+`def inner() raises {imm x, mut y}:`. A bare captured name means `imm`; bare
+`imm`/`mut`/`ref`/`var` supplies the convention for otherwise-unlisted free
+variables. `imm` and `mut` retain immutable or mutable references, `ref` retains
+the captured origin's mutability, `var name` copies at declaration time, and
+`var name^` (or `name^`) transfers at declaration time. Only `var` or a bare
+name may carry `^`, and at most one default convention is allowed. `{}` is an
+explicit empty environment. A reference capture stores a live handle but does
+not hold a persistent loan from declaration until invocation: intervening outer
+access remains legal, and an `imm` closure observes the then-current value when
+called. The call is still checked under the capture's access convention. Mojito
+also accepts the removed
+`unified {capture-list}` position as a source-compatibility extension; it is
+normalized to the current representation and is intentionally recorded as a
+Mojito-only conformance case.
 
 ### Parameterization (generics)
 
 ```
 params_decl: '[' ','.param_decl+ ']'
-param_decl: ['*'] NAME ':' ( bound | type )   # a type parameter (or pack), or a value parameter
+param_decl: ['*'] NAME ':' ( bound | type ) ['=' expression]
+                                             # a type/callable parameter (or pack), or a value parameter
 bound: '&'.NAME+
 ```
 
@@ -273,10 +294,23 @@ uniformly; the checker classifies each by whether the annotation names a trait o
 type. Every type parameter must carry a bound (Mojo requires this — no unconstrained
 parameters; least restrictive is `AnyType`); a bound names a **built-in** trait
 (`AnyType`, `Copyable`, `Movable`, …) or a user `trait`. A type parameter is *opaque*
-apart from its bound traits' methods. **Value parameters** are restricted to type
-`Int` and are usable as `Int` values in the body (`Self.n` in a struct, bare `n` in a
-function) and as the struct's type-identity arguments; they may **not** appear in field,
-parameter, or return **type** annotations (no dependent types yet).
+apart from its bound traits' methods. **Value parameters** accept the supported
+scalar and aggregate compile-time value types and are usable in a function body
+(or as `Self.n` inside a struct) and in generic identity; scalar-dependent types
+are limited to the explicitly implemented type constructors.
+
+Current Mojo also permits a function type as a generic bound (`F: def(Int) ->
+Int`). Mojito retains that shape as a dependent checked callable constraint:
+conventions, effects, reference origins, and the result type survive substitution,
+nominal conformance, bounded indirect dispatch, HIR, and verified MIR. The
+function type may declare its own parameter list, as in
+`F: def[T: ImplicitlyCopyable](T) -> T`; binder names are alpha-equivalent, while
+arity and bounds remain part of the checked contract. An explicit `thin` or
+`capturing[...]` qualifier instead declares a compile-time callable-value
+parameter; an `OriginSet` binder before `//` is inferred from that value and erased
+from the runtime ABI. Such a parameter may default to a selected function, an
+earlier callable parameter, or a compile-time conditional of those values. The
+default is a symbolic runtime-reification plan, not a function/closure `CtValue`.
 
 A leading `'*'` declares a **pack**: a variadic type parameter (`*Ts: Copyable &
 Movable`) or, on a `def` only, a variadic value parameter (`*ns: Int`). A pack
@@ -295,16 +329,21 @@ the call/construction parentheses, or as type arguments in an annotation:
 
 ```
 param_args: '[' ','.param_arg+ ']'
-param_arg: type | expression            # a type argument, or a comptime value expression
+param_arg: [NAME '='] (type | expression)
+                                           # a positional/named type or comptime value
 ```
 
 A type parameter receives a `type`; a value parameter receives a **comptime value
 expression** — an `Int` expression over literals, `comptime` constants, and the
 arithmetic operators `+ - * // % **` (and unary `-`) — evaluated at compile time
-(`Pair[2 + 3]` is `Pair[5]`). Explicit `param_args` supply *all* parameters positionally
-(`Pair[Int]`, `FixedBuffer[8]`, `Foo[Int, 5]`). If the bracket list is **omitted**, the
-checker **infers** the type parameters from the argument types (as before); a generic
-with any value parameter must be supplied explicitly (a value cannot be inferred).
+(`Pair[2 + 3]` is `Pair[5]`). Explicit `param_args` may bind positionally or by
+name (`Pair[Int]`, `FixedBuffer[8]`, `Foo[Int, 5]`, `borrow[origin=origin_of(x)]`).
+A variadic compile-time pack consumes its available positional segment while a
+required suffix can be named, so packs and semantic-only `Origin` parameters may
+be interleaved without changing source argument identity. If the bracket list is
+**omitted**, the checker infers type parameters from argument types and applies
+declared value/type/callable defaults in declaration order; any remaining
+required unsolved parameter is an error.
 
 ### struct_def
 
@@ -411,11 +450,17 @@ with_item: expression ['as' NAME]
 Conditions are any `expression` (the checker requires `Bool`). `while` / `for`
 support loop `else`; `break` bypasses it. A `for` target is a single `NAME`, optionally
 introduced with `ref` for mutable list-element iteration; its
-iterable is any `expression` — in practice a `range(...)` call or a `List` (see
-**Collections** and Built-ins). `for var item in collection^` moves the collection
-and successively transfers its elements, including non-Copyable elements. An
-early exit destroys an implicitly deletable residual collection; it is rejected
-when residual linear elements would require explicit destruction. `break` /
+iterable is any `expression` whose nominal type supplies the checked iteration
+protocol. The implicit prelude provides this for `Range`, `List`, `Set`, and
+`Dict`, and user structs may provide the same methods. `for ref` currently has
+an origin-preserving concrete List-place bridge; generic reference-yielding
+iteration awaits parameterized associated iterator types. `for var item in
+collection^` moves the collection and successively transfers its elements,
+including non-Copyable elements. An early exit destroys an implicitly deletable
+residual collection; it is rejected when residual linear elements would require
+explicit destruction. The bundled List owned iterator still requires
+`ImplicitlyDeletable` elements even for guaranteed full exhaustion; lifting that
+restriction is tracked with the associated-iterator/origin work. `break` /
 `continue` outside a loop are checker errors.
 
 ### with_stmt
@@ -508,7 +553,7 @@ primary:
     | primary '.' NAME '(' [args] ')'    # method call
     | primary '.' NAME                   # field access / value-parameter read (Self.n)
     | atom [param_args] '(' [args] ')'   # call/construction, optionally with explicit params
-    | NAME param_args                    # parameterized type in expr position (TypeApply), e.g. UnsafePointer[Int]
+    | NAME param_args                    # parameterized type or explicitly specialized function value
     | primary '[' ','.subscript_arg+ ']' # index/slice arguments; one or many
     | primary '^'                        # transfer sigil; lowered and ownership-checked as a move
     | atom
@@ -542,8 +587,9 @@ tuple_or_group:
 subscript_arg:
     | expression
     | [expression] ':' [expression] [':' [expression]]
-args: ','.arg+ [',']              # positional args, then keyword args/forwarding
-arg: NAME '=' expression | forwarded_kwargs | expression
+args: ','.arg+ [',']              # positional args/spread, then keyword args/forwarding
+arg: NAME '=' expression | forwarded_kwargs | spread_arg | expression
+spread_arg: '*' expression        # a specialized runtime pack, normally transferred as `*args^`
 forwarded_kwargs: '**' expression # expression must be a final transferred value (`kwargs^`)
 ```
 
@@ -558,11 +604,13 @@ Notes:
 - **A single comparison is an `Infix`; a chain of ≥ 2 (`a < b < c`, `0 <= i < n`) is a
   `Compare` node** — implemented as `(a < b) and (b < c)` with each operand evaluated
   **once**, left to right, short-circuiting (a false link stops the rest). Result `Bool`.
-- **Membership `x in c` / `x not in c`** share the comparison level and return `Bool`
-  (`not in` is two words). `c` is a `List[T]` (is `x` an element? — `x` must coerce to an
-  **equatable** `T`) or a `String` (is `x` a substring? — `x` a `String`). In infix
-  position `not` can only begin `not in`; note that the prefix form `not x in c` instead
-  parses as `not (x in c)` (the same truth value).
+- **Membership `x in c` / `x not in c`** share the comparison level and return
+  `Bool` (`not in` is two words). Nominal receivers dispatch their checked
+  `__contains__`; the implicit prelude supplies it for `List`, `Set`, `Dict`,
+  `Range`, and compatible `Tuple` specializations. `String` retains its intrinsic
+  substring path. In infix position `not` can only begin `not in`; note that the
+  prefix form `not x in c` instead parses as `not (x in c)` (the same truth
+  value).
 - **The walrus / named expression `NAME := e`** binds looser than every operator (so
   `(n := a + b)` is `n := (a + b)`); the target must be a bare `NAME`. It evaluates
   the right side once, introduces the target in the containing function scope, and
@@ -575,11 +623,20 @@ Notes:
 - **`[` after a `primary` is disambiguated by what follows**: `NAME '[' param_args ']'
   '(' args ')'` is a call/construction with explicit compile-time parameters;
   `primary '[' subscript_arg, ... ']'` *not* followed by `(` is a **subscript**.
+  A bare `NAME[param_args]` is a parameterized type value unless `NAME` resolves
+  to a function; an origin-generic function can therefore be materialized as
+  `borrow[origin_of(value)]` and invoked later through its origin-specialized
+  callable type.
   A slice preserves omitted bounds and whether a stride was written, selecting
   `ContiguousSlice` or `StridedSlice`; mixed/multiple arguments dispatch through
-  variadic `__getitem__`/`__setitem__`. Lists, tuples, SIMD values, unsafe pointers,
-  and supported user indexing protocols provide reads; writable containers also
-  support indexed assignment.
+  variadic `__getitem__`/`__setitem__`. Nominal List slicing receives the same
+  checked descriptor through its ordinary `__getitem__` as any other user
+  receiver; it is not a VM collection shortcut. Lists, tuples, SIMD values,
+  unsafe pointers, and supported user indexing protocols provide reads;
+  writable containers also support indexed assignment. The slice-specific MIR
+  instructions do not yet carry every ordinary method-call contract (effects,
+  conventions, captures, and reference-return origins), so full user-defined
+  slicing parity remains a pre-schema roadmap item.
 - **`^` (transfer sigil)** is a postfix that marks an ownership *move* of its operand
   (`x^`, `raise e^`). MIR represents whole-value and projected-field moves;
   ownership analysis rejects use-after-move, double moves, conditional moves,
@@ -597,6 +654,13 @@ Notes:
   `**kwargs^` consumes an owned `StringDict` into a compatible collector. Callee
   signatures may use defaults, `/`, bare `*`, homogeneous `*args`, and homogeneous
   `**kwargs`; structural matching is shared by checking and VM frame binding.
+- A specialized heterogeneous runtime pack can be forwarded once as `*args^`.
+  The spread must follow every fixed positional argument; parameters after the
+  target's variadic collector are supplied by keyword. The complete Tuple-backed
+  collector moves as one value, so linear elements are never synthesized as
+  illegal `args[i]^` moves. Current Mojo and Mojito both reject a second spread,
+  an explicit positional argument after the spread, and forwarding to a
+  non-variadic target.
 - **Collection displays and comprehensions** are homogeneous. Set/dictionary
   elements must be Hashable, dictionary keys evaluate before values, and
   generator/filter clauses evaluate left to right with normal nested-loop scope.
@@ -608,11 +672,12 @@ type:
     | 'Int' | 'UInt' | 'Bool' | 'String' | 'Float64' | 'None'
     | 'Self' '.' NAME              # a struct's own type parameter, inside its body
     | 'Self'                       # the enclosing struct/trait type
-    | function_type               # a function/closure type — parsed, deferred
-    | 'ref' [origin_spec] type    # a reference type `ref[origin] T` — retained, signature semantics deferred
+    | function_type               # a checked function/closure contract or value type
+    | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T`
     | NAME [param_args]            # struct type, optionally with type/value arguments
-function_type: 'def' '(' [','.type+] ')' fn_effect* '->' type
-fn_effect: 'thin' | 'raises' | 'abi' '(' ... ')'    # `abi(...)` is parsed and discarded
+function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
+function_type_param: [convention] [NAME ':'] type
+fn_effect: 'capturing' ['[' ... ']'] | 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
 `None` is a reserved keyword; `Int`, `UInt`, `Bool`, `String`, `Float64` are ordinary `NAME`s recognized
@@ -625,17 +690,23 @@ of the enclosing struct's type parameters (Mojo spelling — a bare `T` is not i
 inside a struct body); bare `Self` names the enclosing struct type (in a struct method)
 or the conforming type (in a trait method). Inside a value-parameterized struct, bare
 `Self` as a *type* is not supported (a value parameter can't appear in a type).
-A **function/closure type** `def(T1, …) [thin] [raises] -> R` (parameters are types
-only; `thin` marks a non-capturing function pointer, default capturing) parses
-into `Type::Func` and participates in checked callable bindings. Current unified
-closure capture lists parse explicitly: a plain name is an immutable capture,
-`mut name` is mutable, `name^` moves ownership, and a trailing `imm` (legacy
-`read`) supplies the default convention for otherwise-unlisted free variables.
-Ordinary nested functions do not capture implicitly.
-A **reference type** `ref[origin] T` (used in a `ref` return, `def f(…) -> ref[o] T:`)
-likewise **parses** into `Type::Ref` with its origin retained, but the checker flags it as
-unsupported. `ref` is contextual here — only the reference form when a type-starting
-token follows.
+A **function/closure type** can retain its own compile-time parameters, parameter
+conventions, origins, result-reference origin, and `thin`/`raises` effects. The
+current `capturing` spelling (including an optional origin list) is accepted;
+checked callable environments distinguish default, thin, inferred/parametric
+capturing, and canonical concrete capture-origin sets with read/write access. For example,
+`def[o: Origin[mut=True]](ref[o] Int) capturing -> ref[o] Int` is the nominal
+contract implemented by a matching `__call__`. `thin` marks a non-capturing
+function pointer; the default function type can carry an environment. These facts
+parse into `Type::Func`, participate in callable conformance, escape and
+indirect-call checking, and are preserved in checked HIR and the MIR call ABI.
+Own `def[...]` binders form a nested generic scope for a callable constraint or
+compile-time callable value; a parametric function type is not an ordinary
+runtime-parameter annotation.
+A **reference type** `ref[origin] T` parses into `Type::Ref` with its origin
+retained. Signature checking substitutes parameter/receiver origins at calls and
+rejects invalid escapes. `ref` is contextual here — it is the reference form only
+when a type-starting token follows.
 
 A `NAME` is also a **SIMD type** when it is `SIMD[DType.<dt>, <width>]`,
 `Scalar[DType.<dt>]`, or one of the
@@ -685,15 +756,18 @@ code (values, value-parameter arguments), so a top-level comptime value is usabl
 functions. Deferred: compile-time *type* values, CTFE of methods/generic functions, and
 comptime constants of non-`Int`/`Bool` kind as value parameters.
 
-## Built-ins
+## Implicit prelude and intrinsics
 
-Built-ins are not grammar — they are ordinary `NAME`s used in a call, resolved as
-built-ins only when not shadowed by a binding.
+These facilities are not grammar — they are ordinary `NAME`s used in calls.
+Public collections and `range` are declarations supplied by the implicit
+self-hosted prelude; scalar conversion and a few host services retain compiler
+intrinsics. Ordinary lexical bindings still shadow an implicit name.
 
-- `range(stop)` / `range(start, stop)` / `range(start, stop, step)` — the only
-  iterable (the value a `for` consumes). The checker types it (1–3 `Int` arguments,
-  result `range`); the VM implements it (half-open `[start, stop)`, zero `step`
-  is a runtime error).
+- `range(stop)` / `range(start, stop)` / `range(start, stop, step)` — prelude
+  overloads constructing the nominal `Range` struct (half-open `[start, stop)`).
+  `Range` participates in the same checked `__iter__`/`__next__` protocol as
+  nominal collections and user iterable structs; a zero step produces an empty
+  iterator in the bundled proof implementation.
 - `Int(x)` / `UInt(x)` / `Float64(x)` — numeric conversions: one argument of type
   `Int`, `UInt`, `Float64`, or `Bool`, producing the named type. (`Float64`→integer
   truncates toward zero; `Bool` is 0/1.)
@@ -711,9 +785,10 @@ built-ins only when not shadowed by a binding.
   concrete-type mixing), returning their common type.
 - `round(x)` — round a `Float64` to the nearest whole `Float64` (ties round half away
   from zero).
-- `len(x)` — the length of a `String` (in bytes) or a `List` → `Int`.
-- `List[T]()` / `List[T](a, b, …)` / `List(a, b, …)` — construct a `List` (see
-  **Collections**).
+- `len(x)` — the length of a `String` (in bytes) or the result of the selected
+  nominal `__len__` method (including List, Set, Dict, Range, and Tuple) → `Int`.
+- `List[T]()` / `List[T](a, b, …)` / `List(a, b, …)` — call a concrete
+  specialization of the nominal prelude `List` struct (see **Collections**).
 
 ## Numbers
 
@@ -771,16 +846,28 @@ argument, never as a value).
 
 ## Collections
 
-`List[T]` is a growable homogeneous sequence — a built-in generic type. Like Mojo, it
-is a **value type**: assigning or passing a `List` **copies** it (no aliasing).
+Public `List`, `Set`, `Dict`, `Range`, and heterogeneous `Tuple` values are
+self-hosted nominal structs supplied by the implicit prelude. Collection
+displays lower to their constructors, and comprehensions call ordinary
+`append`, `add`, or `__setitem__` methods. The VM has no native public
+List/Set/Dict/Range representation; only compile-time lists and the private
+heterogeneous runtime-pack carrier remain compiler-owned aggregates.
+
+`List[T]` is a growable homogeneous value type. It is `Copyable` when `T` is
+`Copyable`; otherwise a transfer requires `^`, so assigning or passing a linear
+List is not an implicit copy.
 
 - **Construction**: `List[T]()` (empty), `List[T](a, b, …)` (explicit element type), or
   `List(a, b, …)` / the literal `[a, b, …]` (element type **inferred** from the
   arguments — numeric literals unify, so `[1, 2.0]` is `List[Float64]`). An empty
   literal `[]` and empty `List()` can't infer `T`, so use `List[T]()`.
-- **`len(xs)`** → the number of elements.
+- **`len(xs)`** calls the selected nominal `__len__` → the number of elements.
 - **Index read**: `xs[i]` (`i` an `Int`, in `0..len`) → the element (type `T`). Negative
   indices are not supported yet; a runtime out-of-range index is an error.
+- **Slice read**: `xs[start:stop]` or `xs[start:stop:step]` preserves omitted,
+  negative, and strided bounds in a `ContiguousSlice` or `StridedSlice`
+  descriptor and invokes List's ordinary checked `__getitem__`; the bundled
+  proof API returns an eager `List[T]` copy.
 - **Iteration**: `for x in xs:` binds `x` to each element (type `T`).
 - **Mutation**: `xs[i] = e` (index assignment) and the mutating methods `append(e)`,
   `insert(i, e)`, `remove(e)` (removes the first equal element), `pop([i])` (removes and
@@ -792,12 +879,19 @@ is a **value type**: assigning or passing a `List` **copies** it (no aliasing).
 - **Queries** (read-only, allowed on any list): `count(e)` (number of equal elements) and
   `index(e)` (index of the first equal element; a runtime error if absent). `remove`,
   `count`, and `index` compare elements, so they require an **equatable** element type
-  (`Int`/`UInt`/`Float64`/`Bool`/`String`/`None`). Deferred: negative indices, `insert`/
-  `pop` at a negative index, `sort`, and `Dict`/`Set`. (Membership `in` / `not in` on a
-  `List` is implemented — see **Expressions**.)
+  (`Int`/`UInt`/`Float64`/`Bool`/`String`/`None`). Negative scalar indexes and
+  complete standard-library APIs such as `sort` remain outside the proof subset.
 
-`Tuple[T1, …, Tn]` is a built-in **fixed-size, heterogeneous** value type (also
-`Clone`-copies).
+`Set[T]` and `Dict[K, V]` are likewise nominal proof-library structs, not deferred
+syntax or VM values. Set/dictionary displays and comprehensions infer homogeneous
+types and construct them through ordinary calls. Set provides checked add,
+membership, sizing, value iteration, and writing; Dict provides checked key
+lookup/update, membership, sizing, key iteration, eager key/value/item views,
+and writing. Their current generic bounds and APIs are narrower than Mojo's full
+standard library.
+
+`Tuple[T1, …, Tn]` is a nominal **fixed-size, heterogeneous** value type whose
+protocol conformances are synthesized conditionally from its elements.
 
 - **Construction**: the literal `(a, b, …)` (`()` empty, `(a,)` a 1-tuple; a plain `(e)`
   is grouping). Element types are inferred; element-wise coercion means `(1, 2)` fits
@@ -807,7 +901,11 @@ is a **value type**: assigning or passing a `List` **copies** it (no aliasing).
   depends on the (statically known) index. A runtime index, or one out of range, is a
   checker error.
 - **Immutable**: no element write (`t[0] = e` is rejected), though the whole `var` can be
-  re-assigned. Deferred: tuple unpacking (`var (a, b) = t`) and `for` over a tuple.
+  re-assigned.
+- **Unpacking**: declaration destructuring (`var a, b = t`) and simultaneous
+  assignment (`a, b = t`) check arity, evaluate the tuple once, and bind or write
+  each destination. Tuple does not currently declare the runtime `Iterable`
+  protocol; compile-time pack/tuple iteration is a separate elaboration path.
 
 `UnsafePointer[T]` is the built-in low-level pointer — a handle to contiguous heap
 storage of element type `T`. Unlike the value-type collections, a pointer **aliases**:

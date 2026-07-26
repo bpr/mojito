@@ -13,7 +13,10 @@
 from std.collections.list import List
 from std.hashing import bucket_index
 
-struct HashSet[T: Hashable & Equatable & Copyable & Movable](Copyable):
+struct HashSet[T: Hashable & Equatable & Copyable & Movable](
+    Copyable,
+    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
+):
     var buckets: List[List[Self.T]]
     var nbuckets: Int
     var count: Int
@@ -37,16 +40,20 @@ struct HashSet[T: Hashable & Equatable & Copyable & Movable](Copyable):
 
     def contains(self, key: Self.T) -> Bool:
         var idx: Int = bucket_index(key, self.nbuckets)
-        for existing in self.buckets[idx]:
+        for existing in self.buckets._get_copy(idx):
             if existing == key:
                 return True
         return False
 
-    def add(mut self, key: Self.T):
+    def add(mut self, key: Self.T) where conforms_to(
+        Self.T, ImplicitlyDeletable
+    ):
         if self.contains(key):
             return
         var idx: Int = bucket_index(key, self.nbuckets)
-        self.buckets[idx].append(key)
+        var bucket: List[Self.T] = self.buckets._get_copy(idx)
+        bucket.append(key)
+        self.buckets[idx] = bucket^
         self.count = self.count + 1
 
     def __len__(self) -> Int:

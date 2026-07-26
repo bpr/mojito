@@ -88,7 +88,7 @@ pub(super) fn is_move_param(p: &FnParam) -> bool {
     p.name == "move"
         && p.default.is_none()
         && p.kind == crate::ast::ParamKind::Regular
-        && p.convention.is_none()
+        && matches!(p.convention, None | Some(ArgConvention::Deinit))
         && matches!(p.ty, SourceType::SelfType)
 }
 

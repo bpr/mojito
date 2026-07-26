@@ -14,6 +14,13 @@ pub struct OwnerId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OriginParamId(pub u32);
 
+/// Stable identity of an `OriginSet` parameter appearing in a callable
+/// environment contract. Like [`OriginParamId`], this is the declaration-order
+/// identity selected by checking rather than a source spelling, so independently
+/// named but otherwise identical callable contracts remain alpha-equivalent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CaptureSetParamId(pub u32);
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// One projection step within an origin-tracked place.
 pub enum OriginSeg {
@@ -21,6 +28,12 @@ pub enum OriginSeg {
     Field(String),
     /// An index whose value is not part of the static origin identity.
     AnyIndex,
+    /// Storage owned behind a container, identified by a compile-time tag.
+    ///
+    /// Unlike `AnyIndex`, an interior segment denotes an invalidation domain:
+    /// mutating its base starts a new generation without making ordinary reads
+    /// of the base conflict with references into the old generation.
+    Interior(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -38,6 +51,110 @@ pub enum Origin {
     Union(Vec<Origin>),
     Static,
     Untracked { mutable: bool },
+}
+
+/// Access performed through one captured origin when a callable is invoked.
+/// This is deliberately part of the static environment summary: an OriginSet
+/// by itself extends lifetimes but cannot tell persistent-loan analysis whether
+/// an indirect call reads or may mutate captured storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CaptureAccess {
+    Read,
+    Write,
+}
+
+/// One canonical concrete dependency in a capturing callable environment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CaptureOrigin {
+    pub origin: Origin,
+    pub access: CaptureAccess,
+}
+
+impl CaptureOrigin {
+    pub fn read(origin: Origin) -> Self {
+        Self {
+            origin,
+            access: CaptureAccess::Read,
+        }
+    }
+
+    pub fn write(origin: Origin) -> Self {
+        Self {
+            origin,
+            access: CaptureAccess::Write,
+        }
+    }
+}
+
+/// The origin dependencies of a parametric capturing callable.
+///
+/// Mojo's `OriginSet` is deliberately separate from an [`Origin`] union: it is
+/// the set of owner origins retained by a callable environment, not an origin a
+/// reference value can designate. `Infer` is the checked placeholder introduced
+/// by `capturing[_]`; `Param` names a source `OriginSet` binder after resolution;
+/// and `Concrete` is the canonical set attached to a materialized environment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CaptureOriginSet {
+    Infer,
+    Param(CaptureSetParamId),
+    Concrete(Vec<CaptureOrigin>),
+}
+
+impl CaptureOriginSet {
+    /// Construct a concrete set with nested unions flattened, duplicates
+    /// removed, and members in the same canonical order used by [`Origin`]. If
+    /// the same exact origin is both read and written, the write summary
+    /// subsumes the read.
+    pub fn concrete(captures: impl IntoIterator<Item = CaptureOrigin>) -> Self {
+        let mut members = Vec::new();
+        for capture in captures {
+            match capture.origin {
+                Origin::Union(origins) => {
+                    members.extend(origins.into_iter().map(|origin| CaptureOrigin {
+                        origin,
+                        access: capture.access,
+                    }))
+                }
+                origin => members.push(CaptureOrigin {
+                    origin,
+                    access: capture.access,
+                }),
+            }
+        }
+        members.sort_by(|left, right| {
+            cmp_origin(&left.origin, &right.origin).then(left.access.cmp(&right.access))
+        });
+        let mut canonical: Vec<CaptureOrigin> = Vec::with_capacity(members.len());
+        for member in members {
+            if let Some(previous) = canonical.last_mut()
+                && previous.origin == member.origin
+            {
+                previous.access = previous.access.max(member.access);
+            } else {
+                canonical.push(member);
+            }
+        }
+        Self::Concrete(canonical)
+    }
+
+    pub fn empty() -> Self {
+        Self::Concrete(Vec::new())
+    }
+}
+
+/// How a checked callable relates to an environment.
+///
+/// `Default` is the unqualified `def(...)` callable constraint. It is not an
+/// implicit wildcard coercion: later bound solving may explicitly accept a
+/// concrete environment for such a constraint, but ordinary value coercion
+/// compares this fact exactly. `Thin` is an explicitly non-capturing function;
+/// `Capturing` retains its `OriginSet` contract.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum CallableEnvironment {
+    #[default]
+    Default,
+    Thin,
+    Capturing(CaptureOriginSet),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -103,8 +220,14 @@ pub struct RefTy {
 pub enum SigOrigin {
     Self_,
     Param(usize),
+    /// A concrete caller-side origin captured by an explicitly specialized
+    /// function value. Unlike `Param`, this contract is no longer relative to
+    /// the eventual call's argument slots.
+    Bound(Origin),
     Static,
-    Untracked { mutable: bool },
+    Untracked {
+        mutable: bool,
+    },
     Projected(Box<SigOrigin>, Vec<OriginSeg>),
     Union(Vec<SigOrigin>),
     Infer,
@@ -115,7 +238,11 @@ pub enum SigOrigin {
 pub enum SigMutability {
     Immutable,
     Mutable,
-    BoolParam(String),
+    /// Position of the compile-time `Bool` binder controlling an Origin's
+    /// mutability. A binder index, rather than its source spelling, makes
+    /// callable contracts alpha-equivalent across independently named
+    /// declarations.
+    BoolParam(usize),
     Infer,
 }
 
@@ -161,6 +288,30 @@ impl Origin {
     }
 }
 
+impl SigOrigin {
+    /// Construct a canonical signature-origin union. Callable contracts are
+    /// compared structurally, so union order and duplicate spelling must not
+    /// make otherwise identical contracts differ. Canonicalization recurses
+    /// through projected bases because those are the common nontrivial union
+    /// members in reference-return signatures.
+    pub fn union(origins: impl IntoIterator<Item = SigOrigin>) -> SigOrigin {
+        let mut members = Vec::new();
+        for origin in origins {
+            match canonical_sig_origin(origin) {
+                SigOrigin::Union(inner) => members.extend(inner),
+                other => members.push(other),
+            }
+        }
+        members.sort_by(cmp_sig_origin);
+        members.dedup();
+        match members.len() {
+            0 => SigOrigin::Union(Vec::new()),
+            1 => members.pop().expect("one signature-origin union member"),
+            _ => SigOrigin::Union(members),
+        }
+    }
+}
+
 /// Whether two projected owner places may designate overlapping storage.
 pub fn places_overlap(left: &OriginPlace, right: &OriginPlace) -> bool {
     if left.root != right.root {
@@ -198,6 +349,50 @@ fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
         })
 }
 
+fn canonical_sig_origin(origin: SigOrigin) -> SigOrigin {
+    match origin {
+        SigOrigin::Projected(base, path) => {
+            SigOrigin::Projected(Box::new(canonical_sig_origin(*base)), path)
+        }
+        SigOrigin::Union(members) => SigOrigin::union(members),
+        other => other,
+    }
+}
+
+fn cmp_sig_origin(left: &SigOrigin, right: &SigOrigin) -> Ordering {
+    fn tag(origin: &SigOrigin) -> u8 {
+        match origin {
+            SigOrigin::Self_ => 0,
+            SigOrigin::Param(_) => 1,
+            SigOrigin::Bound(_) => 2,
+            SigOrigin::Static => 3,
+            SigOrigin::Untracked { .. } => 4,
+            SigOrigin::Projected(_, _) => 5,
+            SigOrigin::Infer => 6,
+            SigOrigin::Union(_) => 7,
+        }
+    }
+
+    tag(left)
+        .cmp(&tag(right))
+        .then_with(|| match (left, right) {
+            (SigOrigin::Param(a), SigOrigin::Param(b)) => a.cmp(b),
+            (SigOrigin::Bound(a), SigOrigin::Bound(b)) => cmp_origin(a, b),
+            (SigOrigin::Untracked { mutable: a }, SigOrigin::Untracked { mutable: b }) => a.cmp(b),
+            (SigOrigin::Projected(a_base, a_path), SigOrigin::Projected(b_base, b_path)) => {
+                cmp_sig_origin(a_base, b_base).then_with(|| a_path.cmp(b_path))
+            }
+            (SigOrigin::Union(a), SigOrigin::Union(b)) => a.len().cmp(&b.len()).then_with(|| {
+                a.iter()
+                    .zip(b)
+                    .map(|(x, y)| cmp_sig_origin(x, y))
+                    .find(|ordering| !ordering.is_eq())
+                    .unwrap_or(Ordering::Equal)
+            }),
+            _ => Ordering::Equal,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +415,46 @@ mod tests {
     }
 
     #[test]
+    fn concrete_capture_sets_are_ordered_and_write_subsumes_read() {
+        let first = place(1, &[]);
+        let second = place(2, &[]);
+        assert_eq!(
+            CaptureOriginSet::concrete([
+                CaptureOrigin::read(second.clone()),
+                CaptureOrigin::read(first.clone()),
+                CaptureOrigin::write(first.clone()),
+                CaptureOrigin::read(Origin::union([second.clone(), first.clone()])),
+            ]),
+            CaptureOriginSet::Concrete(vec![
+                CaptureOrigin::write(first),
+                CaptureOrigin::read(second),
+            ])
+        );
+    }
+
+    #[test]
+    fn signature_unions_order_projected_members_canonically() {
+        let left = SigOrigin::Projected(
+            Box::new(SigOrigin::Param(0)),
+            vec![OriginSeg::Field("value".into())],
+        );
+        let right = SigOrigin::Projected(
+            Box::new(SigOrigin::Param(1)),
+            vec![OriginSeg::Field("value".into())],
+        );
+        assert_eq!(
+            SigOrigin::union([right.clone(), left.clone(), right]),
+            SigOrigin::Union(vec![
+                left,
+                SigOrigin::Projected(
+                    Box::new(SigOrigin::Param(1)),
+                    vec![OriginSeg::Field("value".into())],
+                )
+            ])
+        );
+    }
+
+    #[test]
     fn projected_places_use_prefix_and_wildcard_overlap() {
         let field_a = OriginSeg::Field("a".into());
         let field_b = OriginSeg::Field("b".into());
@@ -227,5 +462,13 @@ mod tests {
         assert!(!place(1, std::slice::from_ref(&field_a)).overlaps(&place(1, &[field_b])));
         assert!(place(1, &[OriginSeg::AnyIndex]).overlaps(&place(1, &[field_a])));
         assert!(!place(1, &[]).overlaps(&place(2, &[])));
+    }
+
+    #[test]
+    fn interior_tags_are_distinct_but_remain_under_their_base() {
+        let elements = OriginSeg::Interior("element".into());
+        let values = OriginSeg::Interior("value".into());
+        assert!(place(1, &[]).overlaps(&place(1, std::slice::from_ref(&elements))));
+        assert!(!place(1, &[elements]).overlaps(&place(1, &[values])));
     }
 }

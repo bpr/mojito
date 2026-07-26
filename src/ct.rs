@@ -15,7 +15,7 @@
 use crate::ast::{Expr, ExprKind};
 use crate::literal::{FloatLiteral, IntLiteral};
 use crate::token::Span;
-use crate::types::Ty;
+use crate::types::{Ty, list_element, tuple_elements};
 use std::fmt;
 
 /// A compile-time value. Scalar values drive folding; `Tuple`/`List`
@@ -62,6 +62,63 @@ pub enum CtExpr {
 }
 
 impl CtExpr {
+    /// Collect the symbolic compile-time binders referenced by this expression.
+    /// The verifier uses this to reject dependent types whose index escaped its
+    /// generic declaration scope.
+    pub fn referenced_parameters(&self, output: &mut std::collections::HashSet<String>) {
+        use CtExpr::*;
+        match self {
+            Param(name) => {
+                output.insert(name.clone());
+            }
+            Value(_) => {}
+            Neg(value) => value.referenced_parameters(output),
+            Add(left, right)
+            | Sub(left, right)
+            | Mul(left, right)
+            | FloorDiv(left, right)
+            | Mod(left, right)
+            | Pow(left, right) => {
+                left.referenced_parameters(output);
+                right.referenced_parameters(output);
+            }
+        }
+    }
+
+    /// Alpha-rename symbolic binders while preserving the expression tree.
+    pub fn rename_parameters(&self, names: &std::collections::HashMap<String, String>) -> Self {
+        use CtExpr::*;
+        match self {
+            Value(value) => Value(value.clone()),
+            Param(name) => Param(names.get(name).cloned().unwrap_or_else(|| name.clone())),
+            Neg(value) => Neg(Box::new(value.rename_parameters(names))),
+            Add(left, right) => Add(
+                Box::new(left.rename_parameters(names)),
+                Box::new(right.rename_parameters(names)),
+            ),
+            Sub(left, right) => Sub(
+                Box::new(left.rename_parameters(names)),
+                Box::new(right.rename_parameters(names)),
+            ),
+            Mul(left, right) => Mul(
+                Box::new(left.rename_parameters(names)),
+                Box::new(right.rename_parameters(names)),
+            ),
+            FloorDiv(left, right) => FloorDiv(
+                Box::new(left.rename_parameters(names)),
+                Box::new(right.rename_parameters(names)),
+            ),
+            Mod(left, right) => Mod(
+                Box::new(left.rename_parameters(names)),
+                Box::new(right.rename_parameters(names)),
+            ),
+            Pow(left, right) => Pow(
+                Box::new(left.rename_parameters(names)),
+                Box::new(right.rename_parameters(names)),
+            ),
+        }
+    }
+
     pub fn evaluate(
         &self,
         parameters: &std::collections::HashMap<String, CtValue>,
@@ -182,11 +239,29 @@ impl CtValue {
                 .map(|(value, ty)| value.materialize_as(ty))
                 .collect::<Option<Vec<_>>>()
                 .map(CtValue::Tuple),
-            (CtValue::List(values), Ty::List(element)) => values
+            (CtValue::List(values), Ty::ComptimeList(element)) => values
                 .into_iter()
                 .map(|value| value.materialize_as(element))
                 .collect::<Option<Vec<_>>>()
                 .map(CtValue::List),
+            (CtValue::List(values), target) if list_element(target).is_some() => {
+                let element = list_element(target).expect("guard established List element");
+                values
+                    .into_iter()
+                    .map(|value| value.materialize_as(element))
+                    .collect::<Option<Vec<_>>>()
+                    .map(CtValue::List)
+            }
+            (CtValue::Tuple(values), target)
+                if tuple_elements(target).is_some_and(|types| types.len() == values.len()) =>
+            {
+                values
+                    .into_iter()
+                    .zip(tuple_elements(target).expect("guard established Tuple elements"))
+                    .map(|(value, ty)| value.materialize_as(ty))
+                    .collect::<Option<Vec<_>>>()
+                    .map(CtValue::Tuple)
+            }
             _ => None,
         }
     }
@@ -211,6 +286,7 @@ impl CtValue {
             kind,
             span,
             source: None,
+            syntax_id: crate::token::SyntaxId::fresh(),
         })
     }
 }

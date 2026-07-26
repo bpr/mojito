@@ -6,8 +6,19 @@ pub(super) fn default_literal(ty: &Ty) -> Ty {
     match ty {
         Ty::IntLiteral => Ty::Int,
         Ty::FloatLiteral => Ty::Float64,
-        // Materialize each element of a tuple literal (`(1, 2)` → `Tuple[Int, Int]`).
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
+                    TyArg::Val(value) => TyArg::Val(value.clone()),
+                })
+                .collect(),
+        ),
+        // Internal heterogeneous pack storage also materializes its elements.
         Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(default_literal).collect()),
+        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(default_literal(element))),
         Ty::RuntimePack(elems) => Ty::RuntimePack(elems.iter().map(default_literal).collect()),
         Ty::Variant(alternatives) => {
             Ty::Variant(alternatives.iter().map(default_literal).collect())
@@ -267,9 +278,7 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         | Ty::Struct(_, _)
         | Ty::Simd { .. }
         | Ty::Error
-        | Ty::List(_)
-        | Ty::Set(_)
-        | Ty::Dict(_, _) => true,
+        | Ty::ComptimeList(_) => true,
         // A tuple prints if every element prints.
         Ty::Tuple(elems) => elems.iter().all(is_printable),
         Ty::Variant(alternatives) => alternatives.iter().all(is_printable),
@@ -304,6 +313,15 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
         {
             true
         }
+        // Public Tuple remains nominal, but its generated specialization symbol
+        // deliberately differs from the canonical discovery-pass name. Compare
+        // the retained semantic element arguments instead of requiring those
+        // implementation symbols to match.
+        (from, to) if tuple_elements(from).is_some() && tuple_elements(to).is_some() => {
+            let from = tuple_elements(from).expect("guard established Tuple elements");
+            let to = tuple_elements(to).expect("guard established Tuple elements");
+            from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
+        }
         (Ty::Param { name: a, .. }, Ty::Param { name: b, .. }) => a == b,
         (Ty::Struct(an, aargs), Ty::Struct(bn, bargs)) => {
             an == bn
@@ -314,9 +332,7 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
                     _ => false,
                 })
         }
-        (Ty::List(a), Ty::List(b)) => coerces(a, b),
-        (Ty::Set(a), Ty::Set(b)) => coerces(a, b),
-        (Ty::Dict(ak, av), Ty::Dict(bk, bv)) => coerces(ak, bk) && coerces(av, bv),
+        (Ty::ComptimeList(a), Ty::ComptimeList(b)) => coerces(a, b),
         (
             Ty::Pointer {
                 element: a,
@@ -329,6 +345,7 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
         ) => coerces(a, b) && ao == bo,
         (
             Ty::Func {
+                environment: from_environment,
                 params: from_params,
                 ret: from_ret,
                 required,
@@ -336,9 +353,12 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
                 conventions,
                 raises: from_raises,
                 error: from_error,
+                ref_params: from_ref_params,
+                ref_return: from_ref_return,
                 ..
             },
             Ty::Func {
+                environment: to_environment,
                 params: to_params,
                 ret: to_ret,
                 required: to_required,
@@ -346,13 +366,23 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
                 conventions: to_conventions,
                 raises: to_raises,
                 error: to_error,
+                ref_params: to_ref_params,
+                ref_return: to_ref_return,
                 ..
             },
         ) => {
-            required == to_required
+            callable_environment_coerces(from_environment, to_environment)
+                && required == to_required
                 && variadic.is_none()
                 && to_variadic.is_none()
                 && conventions == to_conventions
+                // Reference conventions are not represented by the ordinary
+                // parameter/result `Ty`s. They carry the storage origin and
+                // permission contract, so erasing them here could coerce a
+                // value-returning callable to a reference-returning contract,
+                // or silently rebase a result from one argument to another.
+                && from_ref_params == to_ref_params
+                && from_ref_return == to_ref_return
                 && (!from_raises || *to_raises)
                 && match (from_error.as_deref(), to_error.as_deref()) {
                     (None, None) => true,
@@ -391,6 +421,38 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
         (Ty::Variant(a), Ty::Variant(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| coerces(x, y))
         }
+        _ => false,
+    }
+}
+
+pub(crate) fn callable_environment_coerces(
+    from: &crate::origin::CallableEnvironment,
+    to: &crate::origin::CallableEnvironment,
+) -> bool {
+    use crate::origin::{CallableEnvironment, CaptureOriginSet};
+    if from == to {
+        return true;
+    }
+    match (from, to) {
+        // An unqualified callable contract does not constrain the environment.
+        // This is the contract used by ordinary `def(...)` annotations and by
+        // anonymous callable bounds without an explicit effect.  Mojito's
+        // downward-funarg extension therefore accepts both a stateless function
+        // and a materialized non-escaping closure here; `thin` and
+        // `capturing[...]` remain the spellings that impose an environment
+        // constraint.
+        (
+            CallableEnvironment::Thin | CallableEnvironment::Capturing(_),
+            CallableEnvironment::Default,
+        ) => true,
+        (
+            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(_)),
+            CallableEnvironment::Capturing(CaptureOriginSet::Infer | CaptureOriginSet::Param(_)),
+        ) => true,
+        (
+            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(actual)),
+            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(allowed)),
+        ) => actual.iter().all(|capture| allowed.contains(capture)),
         _ => false,
     }
 }

@@ -17,8 +17,21 @@ Mojito has one production path: source is linked and elaborated, checked into
 typed HIR, lowered to verified MIR, ownership- and liveness-analyzed, drop
 elaborated, and executed by the register VM. The supported CPU surface includes
 exact numeric literals, type/value/origin generics and heterogeneous packs,
-refined and conditional traits, origin-bearing references and unsafe pointers,
-explicit lifecycle semantics, and a self-hosted proof-subset standard library.
+scope-stable and lexical nested-pack specialization, refined and conditional
+traits, recursively lifted typed closure environments, linear whole-pack
+forwarding, generic-anonymous callable contracts, symbolic callable defaults,
+residual callable specialization, origin-bearing references and unsafe pointers,
+collection-owned interior-origin generations, explicit lifecycle semantics, and
+a self-hosted proof-subset standard library. Method-dispatched nominal
+subscripts retain ordinary checked method selection in one complete verified
+call contract, including effects, caller places, capture access, generic values,
+and reference results; call-less index and slice operations name their exact
+compiler-owned intrinsic family instead of asking the VM to infer one from a
+runtime value. The narrow nominally typed `Slice.indices()` result still crosses
+private Tuple storage through that explicit intrinsic bridge. Public
+`List`, `Set`, `Dict`, `Range`, and heterogeneous `Tuple` values are nominal
+library structs; only compile-time lists and the private heterogeneous
+runtime-pack carrier retain compiler-owned aggregate representations.
 
 [`docs/features.md`](docs/features.md) is the authoritative support matrix;
 [`conformance/parity.tsv`](conformance/parity.tsv) and
@@ -29,9 +42,10 @@ explicit lifecycle semantics, and a self-hosted proof-subset standard library.
 Work proceeds in dependency order through the numbered sections below:
 
 1. **Finish MIR-schema-prerequisite CPU semantics.** Anything that can still
-   change MIR value, constant, or instruction schemas lands first. The next task
-   adds interior-origin invalidation, followed by scope-stable pack elaboration,
-   before displays, `range`, and tuple literals resolve to self-hosted structs.
+   change MIR value, constant, or instruction schemas lands first.
+   Current in-place operator dispatch, parameterized associated types and
+   borrowed iterator origins, Unicode strings, SIMD, and CPU layout/tensor
+   contracts are the remaining seams.
 2. **Freeze a textual MIR/VM assembly** once the checked-declaration + verified
    MIR contract is confirmed sufficient, giving backend-independent artifacts,
    snapshots, and a disassembler/assembler pair.
@@ -50,33 +64,44 @@ default next task.
 ### 1. Complete MIR-Schema-Prerequisite CPU Semantics
 
 These tasks may change MIR value, constant, or instruction schemas. Complete
-them before freezing the textual format; API-only library growth follows it.
+them before freezing the textual format; later library/API and source-syntax
+growth must lower to the frozen operations unless it deliberately reopens the
+schema.
 
-- [ ] **Interior-origin collection loans** — model the current nightly's
-  collection-owned interior origins so an element reference is invalidated by
-  structural mutation/reallocation without treating every unrelated owner use
-  as conflicting. Preserve the checked origin/invalidation fact explicitly in
-  HIR/MIR before self-hosted collections depend on it.
-- [ ] **Scope-stable pack elaboration** — replace the pre-check runtime-pack
-  spread rewrite's source-name lookup with a scope-aware stable binding fact, so
-  nested definitions and block-local binders that shadow a pack parameter cannot
-  be rewritten as that pack. Land this before protocolized Tuple depends more
-  broadly on pack transforms.
-- [ ] **Protocolize collections and iteration** — resolve `[...]`/`{...}`/`range`/
-  tuple literals to self-hosted structs so list/set/dict/range/tuple indexing,
-  sizing, containment, and iteration route through the same contracts as user
-  types, and remove the native collection reps. Support current literal-driven
-  element inference for partially specified collection annotations. Tuple
-  literals resolve to the variadic-generic `PackTuple`-style struct; native
-  `Ty::Tuple`/`Value::Tuple` remain only as the internal heterogeneous
-  pack-storage primitive (the analog of Mojo's MLIR pack), not a user-facing
-  collection. Provide `Tuple.consume_elements` for transferring elements that
-  are not `ImplicitlyCopyable` through a caller-provided closure; indexed tuple
-  transfer remains invalid, matching current Mojo.
-- [ ] **Self-hosted Unicode String** — define storage, Unicode indexing/slicing,
-  comparison, hashing, and formatting without VM-only semantics; distinguish
-  compile-time `StringLiteral`, lazy captured `TString`, and explicit runtime
-  `String` materialization.
+- [ ] **Current in-place operator dispatch** — replace the compatibility
+  lowering of `OP=` through the ordinary `__add__`/`__sub__` family with current
+  Mojo's `__iadd__`, `__isub__`, and corresponding in-place protocols. Retain
+  the selected target, conventions, effects, conversions, and result contract
+  through checked HIR and verified MIR for variables, projected fields, and
+  nominal subscripts. Preserve the distinct subscript paths: a value getter
+  computes and sends a value through `__setitem__`, while a mutable-reference
+  getter establishes the lvalue before the RHS and writes through it directly.
+  Cover exact one-evaluation order plus missing, immutable, raising, and
+  type-mismatched in-place contracts.
+- [ ] **Parameterized associated types and borrowed iterator origins** —
+  generalize trait and struct compile-time members to retain parameter
+  declarations and associated-type applications, including current Mojo's
+  `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
+  Origin[mut=iterable_mut]]: Iterator` and
+  `Self.IteratorType[origin_of(self)]`. Substitute those applications through
+  checked declarations, specialization, HIR, typed MIR, verification, and
+  origin/loan analysis; migrate the bundled iterator protocols to
+  `IteratorType[...]` and `IteratorOwnedType`; make borrowed reference iteration
+  generic over origin-bearing iterator elements; and remove the concrete
+  List/Set/Dict collection-specific borrow bridges. Cover immutable and mutable
+  origins, generic bounds, structural invalidation, escape rejection, and owned
+  iteration; give a borrowed temporary distinct retained source-owner and
+  iterator slots instead of overwriting its only owner during normalization. In
+  the owned path, permit a List of non-`ImplicitlyDeletable`/linear elements
+  when every element is transferred by guaranteed exhaustion; reject only control-flow
+  paths that can abandon a residual linear iterator, with its remaining
+  obligations reported explicitly.
+- [ ] **Self-hosted Unicode String** — define storage; current explicit
+  `s[byte=i]`, `s[codepoint=i]`, and `s[grapheme=i]` indexing plus Unicode
+  slicing; comparison, hashing, and formatting without VM-only semantics;
+  distinguish compile-time `StringLiteral`, lazy captured `TString`, and
+  explicit runtime `String` materialization. Bare positional `s[i]` remains
+  rejected because a UTF-8 offset is ambiguous.
 - [ ] **SIMD semantic completion** — finish dtype/literal conversions, masks,
   reductions, shuffles, and other CPU-visible VM semantics; migrate the brief
   `SIMDSize` spelling to current `SIMDLength` while retaining only an explicit
@@ -89,7 +114,16 @@ them before freezing the textual format; API-only library growth follows it.
 
 - [ ] **Backend-ready MIR checkpoint** — confirm that checked declarations plus
   typed verified MIR are sufficient inputs, with no source-AST reconstruction,
-  before freezing a serialized schema.
+  before freezing a serialized schema. Retain any final verification witnesses
+  needed to validate abstract trait-dispatch signatures and checker-selected
+  `ref`-to-`read` convention narrowing without trusting an unavailable source
+  declaration or source binding-mutability fact, and retain declared
+  conventions for variadic overflow parameters if the serialized ABI exposes
+  those conventions independently of their fixed-parameter prefix. Prove that
+  every `MirPlace::through` derives from its exact source capability/loan, check
+  `MirLoan::mutable` against that capability's permission, and cross-check each
+  canonical interior origin with its executable place and declared reference
+  origin before accepting assembled artifacts.
 - [ ] **Text format schema** — specify versioning, deterministic identifiers,
   declarations, blocks, instructions, constants, types, and source locations.
 - [ ] **Disassembler** — print every verified MIR program deterministically and
@@ -114,6 +148,12 @@ them before freezing the textual format; API-only library growth follows it.
   special cases for every standard-library method.
 - [ ] **HashSet growth and rehashing** — add load-factor growth while preserving
   deterministic behavior and value semantics.
+- [ ] **Current memory and pointer API** — replace the legacy static
+  `UnsafePointer[T].alloc[_aligned]` surface with free `alloc[T](...)`, add the
+  current empty `pointer[]` dereference and initialization/deinitialization
+  operations, and grow `Layout`/`Allocation`/`dealloc` as demanded by CPU
+  library code. Lower the syntax to the existing typed Pointer MIR operations;
+  do not add a second allocation representation.
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
   the Writer and explicit-destroy foundations.
 - [ ] **Time, random, and testing slices** — add deterministic testable cores and

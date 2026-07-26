@@ -1,33 +1,82 @@
-# A self-hosted, generic growable `List[T]`, backed by an `UnsafePointer[T]` and
-# written entirely in mojito. Exercises the whole language stack: parametric
-# types, heap pointers, the value-type lifecycle (init/copy/move), the operator/
-# subscript/len dunders, and the iterator protocol.
+# A self-hosted growable List.  Heap slots in `[0, size)` are initialized;
+# slots in `[size, cap)` are not.  `UnsafePointer.take(index)` moves an
+# initialized slot out and `destroy(index)` destroys one in place.  Both are
+# compiler-private unsafe operations used only by the bundled core library.
 
-from std.iterable import Iterable, Iterator
+from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
-struct _ListIter[T: Copyable & Movable](Iterator):
+struct _ListIter[T: Movable](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
 
     var data: UnsafePointer[Self.T]
     var size: Int
-    var idx: Int
+    var index: Int
 
     def __init__(out self, data: UnsafePointer[Self.T], size: Int):
         self.data = data
         self.size = size
-        self.idx = 0
+        self.index = 0
+
+    # Kept as an optimization hint and compatibility API.  Exhaustion is
+    # reported by StopIteration, not by the old HasNext/length sentinel.
+    def __len__(self) -> Int:
+        return self.size - self.index
+
+    def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
+        Self.T, Copyable
+    ):
+        if self.index >= self.size:
+            raise StopIteration()
+        var result: Self.T = self.data[self.index]
+        self.index += 1
+        return result^
+
+struct _ListOwnedIter[T: Movable](
+    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
+    Iterator where conforms_to(T, ImplicitlyDeletable),
+    Movable,
+):
+    comptime Element = Self.T
+
+    var data: UnsafePointer[Self.T]
+    var size: Int
+    var index: Int
+
+    def __init__(out self, data: UnsafePointer[Self.T], size: Int):
+        self.data = data
+        self.size = size
+        self.index = 0
 
     def __len__(self) -> Int:
-        return self.size - self.idx
+        return self.size - self.index
 
-    def __next__(mut self) -> Self.T:
-        var v: Self.T = self.data[self.idx]
-        self.idx = self.idx + 1
-        return v
+    def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
+        Self.T, ImplicitlyDeletable
+    ):
+        if self.index >= self.size:
+            raise StopIteration()
+        var result = self.data.take(self.index)
+        self.index += 1
+        return result^
 
-struct List[T: Copyable & Movable](Copyable, Iterable):
+    def __del__(deinit self) where conforms_to(Self.T, ImplicitlyDeletable):
+        var i = self.index
+        while i < self.size:
+            self.data.destroy(i)
+            i += 1
+        self.data.free()
+
+struct List[T: Movable](
+    Copyable where conforms_to(T, Copyable),
+    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
+    Iterable where conforms_to(T, Copyable),
+    IterableOwned where conforms_to(T, ImplicitlyDeletable),
+    Movable,
+    Writable where conforms_to(T, Writable),
+):
     comptime Element = Self.T
     comptime Iter = _ListIter[Self.T]
+    comptime OwnedIter = _ListOwnedIter[Self.T]
 
     var data: UnsafePointer[Self.T]
     var size: Int
@@ -36,50 +85,201 @@ struct List[T: Copyable & Movable](Copyable, Iterable):
     def __init__(out self):
         self.cap = 4
         self.size = 0
-        self.data = UnsafePointer[Self.T].alloc(4)
+        self.data = UnsafePointer[Self.T].alloc(self.cap)
 
-    def __init__(out self, *, copy: Self):
+    def __init__(out self, var *values: Self.T, __list_literal__: NoneType):
+        self.cap = 4
+        self.size = 0
+        self.data = UnsafePointer[Self.T].alloc(self.cap)
+        for var value in values^:
+            self.append(value^)
+
+    def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self.cap = copy.cap
         self.size = copy.size
         self.data = UnsafePointer[Self.T].alloc(copy.cap)
-        var i: Int = 0
+        var i = 0
         while i < copy.size:
             self.data[i] = copy.data[i]
-            i = i + 1
+            i += 1
 
-    def copy(self) -> Self:
+    def copy(self) -> Self where conforms_to(Self.T, Copyable):
         return List[Self.T](copy: self)
 
-    def __init__(out self, *, move: Self):
+    def __init__(out self, *, deinit move: Self):
         self.cap = move.cap
         self.size = move.size
-        self.data = move.data
+        self.data = move.data^
+
+    def __del__(deinit self) where conforms_to(Self.T, ImplicitlyDeletable):
+        var i = 0
+        while i < self.size:
+            self.data.destroy(i)
+            i += 1
+        self.data.free()
 
     def grow(mut self):
-        var new_cap: Int = self.cap * 2
-        var new_data: UnsafePointer[Self.T] = UnsafePointer[Self.T].alloc(new_cap)
-        var i: Int = 0
+        var new_cap = self.cap * 2
+        var new_data = UnsafePointer[Self.T].alloc(new_cap)
+        var i = 0
         while i < self.size:
-            new_data[i] = self.data[i]
-            i = i + 1
+            new_data[i] = self.data.take(i)
+            i += 1
         self.data.free()
         self.data = new_data
         self.cap = new_cap
 
-    def append(mut self, v: Self.T):
+    def append(mut self, var value: Self.T):
         if self.size == self.cap:
             self.grow()
-        self.data[self.size] = v
-        self.size = self.size + 1
+        self.data[self.size] = value^
+        self.size += 1
+
+    def insert(mut self, index: Int, var value: Self.T):
+        if self.size == self.cap:
+            self.grow()
+        var i = self.size
+        while i > index:
+            self.data[i] = self.data.take(i - 1)
+            i -= 1
+        self.data[index] = value^
+        self.size += 1
 
     def __len__(self) -> Int:
         return self.size
 
-    def __getitem__(self, i: Int) -> Self.T:
-        return self.data[i]
+    def __getitem__(
+        ref self, index: Int
+    ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
+        return self.data[index]
 
-    def __setitem__(mut self, i: Int, v: Self.T):
-        self.data[i] = v
+    # Internal value accessor for generic library code that needs an owned copy.
+    # Keeping this distinct from overloaded `__getitem__` also avoids erasing the
+    # selected Int subscript contract when the access is nested in a larger place.
+    def _get_copy(self, index: Int) -> Self.T where conforms_to(
+        Self.T, Copyable
+    ):
+        return self.data[index]
 
-    def __iter__(self) -> _ListIter[Self.T]:
+    def __getitem__(self, slice: Slice) -> Self where conforms_to(
+        Self.T, Copyable
+    ):
+        var bounds = slice.indices(self.size)
+        var start = bounds[0]
+        var stop = bounds[1]
+        var step = bounds[2]
+        var result = List[Self.T]()
+        if step > 0:
+            while start < stop:
+                result.append(self.data[start])
+                start += step
+        else:
+            while start > stop:
+                result.append(self.data[start])
+                start += step
+        return result^
+
+    def __setitem__(mut self, index: Int, var value: Self.T) where conforms_to(
+        Self.T, ImplicitlyDeletable
+    ):
+        self.data.destroy(index)
+        self.data[index] = value^
+
+    def __contains__(self, value: Self.T) -> Bool where conforms_to(
+        Self.T, Equatable
+    ):
+        var i = 0
+        while i < self.size:
+            if self.data[i] == value:
+                return True
+            i += 1
+        return False
+
+    def remove(mut self, value: Self.T) where conforms_to(
+        Self.T, Equatable
+    ) and conforms_to(Self.T, ImplicitlyDeletable):
+        var i = 0
+        while i < self.size:
+            if self.data[i] == value:
+                var removed = self.pop(i)
+                return
+            i += 1
+
+    def pop(mut self) -> Self.T:
+        return self.pop(self.size - 1)^
+
+    def pop(mut self, index: Int) -> Self.T:
+        var result = self.data.take(index)
+        var i = index
+        while i + 1 < self.size:
+            self.data[i] = self.data.take(i + 1)
+            i += 1
+        self.size -= 1
+        return result^
+
+    def clear(mut self) where conforms_to(Self.T, ImplicitlyDeletable):
+        var i = 0
+        while i < self.size:
+            self.data.destroy(i)
+            i += 1
+        self.size = 0
+
+    def reverse(mut self):
+        var left = 0
+        var right = self.size - 1
+        while left < right:
+            var left_value = self.data.take(left)
+            var right_value = self.data.take(right)
+            self.data[left] = right_value^
+            self.data[right] = left_value^
+            left += 1
+            right -= 1
+
+    def extend(mut self, other: Self) where conforms_to(Self.T, Copyable):
+        var i = 0
+        while i < len(other):
+            self.append(other[i])
+            i += 1
+
+    def count(self, value: Self.T) -> Int where conforms_to(Self.T, Equatable):
+        var result = 0
+        var i = 0
+        while i < self.size:
+            if self.data[i] == value:
+                result += 1
+            i += 1
+        return result
+
+    def index(self, value: Self.T) -> Int where conforms_to(Self.T, Equatable):
+        var i = 0
+        while i < self.size:
+            if self.data[i] == value:
+                return i
+            i += 1
+        return -1
+
+    def __iter__(self) -> _ListIter[Self.T] where conforms_to(
+        Self.T, Copyable
+    ):
         return _ListIter[Self.T](self.data, self.size)
+
+    def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
+        Self.T, ImplicitlyDeletable
+    ):
+        var result = _ListOwnedIter[Self.T](self.data, self.size)
+        self.data = UnsafePointer[Self.T].alloc(0)
+        self.size = 0
+        self.cap = 0
+        return result^
+
+    def write_to(self, mut writer: Some[Writer]) where conforms_to(
+        Self.T, Writable
+    ):
+        writer.write("[")
+        var i = 0
+        while i < self.size:
+            if i > 0:
+                writer.write(", ")
+            writer.write(self.data[i])
+            i += 1
+        writer.write("]")

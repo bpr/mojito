@@ -672,6 +672,14 @@ pub enum OwnershipError {
         loan: String,
         span: crate::token::SourceSpan,
     },
+    /// A reference into container-owned storage was used after an operation
+    /// that may have replaced or reallocated that storage generation.
+    InvalidatedInteriorReference {
+        reference: String,
+        origin: String,
+        span: crate::token::SourceSpan,
+        invalidated_at: Box<crate::token::SourceSpan>,
+    },
 }
 
 impl fmt::Display for OwnershipError {
@@ -694,6 +702,19 @@ impl fmt::Display for OwnershipError {
                 f,
                 "access to '{place}' conflicts with live reference '{loan}'"
             ),
+            OwnershipError::InvalidatedInteriorReference {
+                reference,
+                origin,
+                invalidated_at,
+                ..
+            } => {
+                let (start, end) = invalidated_at.span;
+                write!(
+                    f,
+                    "use of invalidated interior reference '{reference}' to '{origin}'\n\
+                     note: origin was invalidated here (bytes {start}..{end})"
+                )
+            }
         }
     }
 }
@@ -705,7 +726,8 @@ impl OwnershipError {
             OwnershipError::InvalidInput(_) => crate::token::DUMMY_SPAN,
             OwnershipError::UseAfterMove { span, .. }
             | OwnershipError::ConditionallyMoved { span, .. }
-            | OwnershipError::LoanConflict { span, .. } => span.span,
+            | OwnershipError::LoanConflict { span, .. }
+            | OwnershipError::InvalidatedInteriorReference { span, .. } => span.span,
         }
     }
 
@@ -714,7 +736,19 @@ impl OwnershipError {
             OwnershipError::InvalidInput(_) => None,
             OwnershipError::UseAfterMove { span, .. }
             | OwnershipError::ConditionallyMoved { span, .. }
-            | OwnershipError::LoanConflict { span, .. } => span.source.as_deref(),
+            | OwnershipError::LoanConflict { span, .. }
+            | OwnershipError::InvalidatedInteriorReference { span, .. } => span.source.as_deref(),
+        }
+    }
+
+    /// The mutation/replacement site that invalidated an interior generation,
+    /// when this is an invalidated-reference diagnostic.
+    pub fn invalidation_span(&self) -> Option<&crate::token::SourceSpan> {
+        match self {
+            OwnershipError::InvalidatedInteriorReference { invalidated_at, .. } => {
+                Some(invalidated_at.as_ref())
+            }
+            _ => None,
         }
     }
 }

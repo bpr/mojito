@@ -3,23 +3,33 @@
 //! the phase-distinction semantics: unselected branches are dropped before checking,
 //! and `comptime for` unrolls with the loop variable substituted as a literal.
 
-use mojito::{BackendKind, CtValue, Ty, elaborate, parse};
+use mojito::{Compiler, CtValue, Ty, elaborate, parse};
 
 fn run(src: &str) -> Result<String, String> {
-    let program = parse(src).map_err(|e| format!("parse: {e}"))?;
-    let program = elaborate(program).map_err(|e| format!("comptime: {e}"))?;
-    let checked = mojito::check_program(&program).map_err(|e| format!("check: {e:?}"))?;
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).map_err(|e| format!("run: {e:?}"))?;
-    Ok(backend.output())
+    run_compiled(src)
+}
+
+/// Run source through the authoritative two-pass compiler pipeline. Public
+/// `Tuple` is a nominal variadic struct, so tests that construct a Tuple from
+/// inferred argument types must include the discovery/materialization pass
+/// rather than invoking the lower-level elaborator directly.
+fn run_compiled(src: &str) -> Result<String, String> {
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_unlinked(src)
+        .map_err(|error| error.to_string())?;
+    compiler
+        .execute(&program)
+        .map(|execution| execution.output)
+        .map_err(|error| error.to_string())
 }
 
 #[test]
 fn ct_value_can_carry_a_type_without_runtime_materialization() {
-    let ty = Ty::List(Box::new(Ty::Int));
+    let ty = Ty::ComptimeList(Box::new(Ty::Int));
     let value = CtValue::Type(Box::new(ty));
 
-    assert_eq!(value.to_string(), "List[Int]");
+    assert_eq!(value.to_string(), "<comptime-list[Int]>");
     assert!(value.materialize((0, 0)).is_none());
 }
 
@@ -80,6 +90,12 @@ fn comptime_for_iterates_a_heterogeneous_tuple() {
 }
 
 #[test]
+fn cloned_comptime_bodies_keep_distinct_checked_occurrence_facts() {
+    let src = "def outer[n: Int]():\n    comptime for value in (1, True):\n        if True:\n            var x = value\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer[0]()\n";
+    assert_eq!(run(src).unwrap(), "1\nTrue\n");
+}
+
+#[test]
 fn comptime_for_over_a_tuple_of_strings() {
     // The codex-direction milestone: iterate a compile-time tuple of strings.
     let src = "comptime states = (\"empty\", \"occupied\", \"deleted\")\n\ndef main():\n    comptime for state in states:\n        print(state)\n";
@@ -92,6 +108,244 @@ fn heterogeneous_type_pack_round_trips_through_tuple_spread() {
     // into `Tuple[*Ts]`; this is not general fixed-arity call spreading.
     let src = "def repack[*Ts: Movable](var *args: *Ts) -> Tuple[*Ts]:\n    return Tuple[*Ts](*args^)\n\ndef main():\n    var values: Tuple[Int, String, Bool] = repack(3, \"seven\", True)\n    print(values)\n";
     assert_eq!(run(src).unwrap(), "(3, seven, True)\n");
+}
+
+#[test]
+fn runtime_pack_spread_rejects_shadowing_value_bindings() {
+    let block = "def inspect[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts):\n    if True:\n        var args = Tuple(9, 10)\n        var local = Tuple(*args^)\n        print(local)\n\ndef main():\n    inspect(1, True)\n";
+    let nested = "def inspect[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts):\n    def nested(var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n    nested(Tuple(9, 10))\n\ndef main():\n    inspect(1, True)\n";
+    let loop_binding = "def inspect[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts):\n    for args in [Tuple(9, 10)]:\n        print(Tuple(*args))\n\ndef main():\n    inspect(1, True)\n";
+    let comprehension = "def inspect[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts):\n    var lengths = [len(Tuple(*args)) for args in [Tuple(9, 10)]]\n    print(lengths[0])\n\ndef main():\n    inspect(1, True)\n";
+    let sibling_method = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n    def shadow(self, var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n\ndef main():\n    var pair = Pair[Int](1)\n    pair.shadow(Tuple(9, 10))\n";
+
+    for source in [block, nested, loop_binding, comprehension, sibling_method] {
+        let error = run(source).unwrap_err();
+        assert!(
+            error.contains("call spread outside a specialized type pack"),
+            "got: {error}"
+        );
+    }
+}
+
+#[test]
+fn runtime_pack_binding_is_restored_after_block_and_loop_shadows() {
+    let src = "def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n    if True:\n        var args = Tuple(7, 8)\n        print(len(args))\n    for args in [Tuple(9, 10)]:\n        print(len(args))\n    var packed = Tuple(*args^)\n    return len(packed)\n\ndef main():\n    print(count(1, \"two\", True))\n";
+    assert_eq!(run(src).unwrap(), "2\n2\n3\n");
+}
+
+#[test]
+fn empty_runtime_pack_is_recognized_by_binding_presence() {
+    let src = "def repack[*Ts: Movable](var *args: *Ts) -> Tuple[*Ts]:\n    return Tuple[*Ts](*args^)\n\ndef main():\n    var values = repack()\n    print(len(values))\n";
+    assert_eq!(run(src).unwrap(), "0\n");
+}
+
+#[test]
+fn type_pack_expansion_respects_nested_type_parameter_shadowing() {
+    let src = "def inspect[*Ts: Copyable & ImplicitlyDeletable](*args: *Ts):\n    def nested[Ts: AnyType](value: Tuple[*Ts]) -> Int:\n        return len(value)\n    print(nested[Int](Tuple(1, True)))\n\ndef main():\n    inspect(9, False)\n";
+    let error = run(src).unwrap_err();
+    assert!(error.contains("unknown type '*Ts'"), "got: {error}");
+}
+
+#[test]
+fn nested_heterogeneous_pack_specializes_at_its_lexical_declaration() {
+    let src = "def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n    def nested[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return len(Tuple(*args^))\n    return nested(1, \"two\", True) + len(Tuple(*args^))\n\ndef main():\n    print(count(9, False))\n";
+    assert_eq!(run(src).unwrap(), "5\n");
+}
+
+#[test]
+fn nested_pack_supports_empty_and_distinct_specializations() {
+    let src = "def outer():\n    def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return len(args)\n    print(count())\n    print(count(1))\n    print(count(1, \"two\"))\n\ndef main():\n    outer()\n";
+    assert_eq!(run(src).unwrap(), "0\n1\n2\n");
+}
+
+#[test]
+fn nested_value_parameter_specialization_resolves_comptime_control_flow() {
+    let src = "def outer():\n    def choose[flag: Bool]() -> Int:\n        comptime if flag:\n            return 41\n        else:\n            return 1\n    print(choose[True]() + choose[False]())\n\ndef main():\n    outer()\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn nested_pack_can_forward_to_an_earlier_pack_sibling() {
+    let src = "def outer() -> Int:\n    def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return len(args)\n    def relay[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return count(*args^)\n    return relay(1, \"two\", True)\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(src).unwrap(), "3\n");
+}
+
+#[test]
+fn captured_outer_pack_forwarding_infers_only_the_variadic_overflow() {
+    let src = "def outer[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n    def score[*Us: Movable & ImplicitlyDeletable](head: Int, var *values: *Us) -> Int:\n        return head + len(values)\n    def relay() unified {args^} -> Int:\n        return score(40, *args^)\n    return relay()\n\ndef main():\n    print(outer(1, True))\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn nested_pack_reference_return_preserves_the_caller_handle() {
+    let src = "def main():\n    var value = 40\n    def borrow[*Ts: Movable & ImplicitlyDeletable](ref item: Int, var *args: *Ts) -> ref[item] Int:\n        return item\n    ref borrowed = borrow(value, True)\n    borrowed += 2\n    print(value)\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn nested_pack_forwarding_transfers_move_only_elements() {
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __del__(deinit self):\n        print(\"drop\", self.value)\n\ndef outer() -> Int:\n    def first[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return args[0].value\n    def relay[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return first(*args^)\n    return relay(Item(42))\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(src).unwrap(), "drop 42\n42\n");
+}
+
+#[test]
+fn nested_whole_pack_forwarding_preserves_fixed_prefix_and_keyword_tail() {
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __del__(deinit self):\n        print(\"drop\", self.value)\n\ndef outer() -> Int:\n    def score[*Ts: Movable & ImplicitlyDeletable](out result: Int, head: Int, var *values: *Ts, scale: Int = 1):\n        result = (head + values[0].value) * scale\n    def relay[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n        return score(1, *values^, scale=2)\n    return relay(Item(20))\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(src).unwrap(), "drop 20\n42\n");
+}
+
+#[test]
+fn top_level_whole_pack_forwarding_preserves_fixed_prefix_and_linear_values() {
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __del__(deinit self):\n        print(\"drop\", self.value)\n\ndef score[*Ts: Movable & ImplicitlyDeletable](head: Int, var *values: *Ts) -> Int:\n    return head + values[0].value\n\ndef inner_relay[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n    return score(2, *values^)\n\ndef relay[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n    return inner_relay(*values^)\n\ndef main():\n    print(relay(Item(40)))\n";
+    assert_eq!(run(src).unwrap(), "drop 40\n42\n");
+}
+
+#[test]
+fn whole_pack_forwarding_reaches_mir_as_one_tuple_move() {
+    let src = "def sink[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n    return len(values)\n\ndef relay[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n    return sink(*values^)\n\ndef main():\n    print(relay(42))\n";
+    let program = elaborate(parse(src).expect("parse")).expect("specialize");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let relay = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("relay$") && !name.ends_with("$whole_pack"))
+        .map(|(_, function)| function)
+        .expect("relay specialization");
+    let instructions = relay
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        mojito::mir::MirInstr::UseVar {
+            mode: mojito::mir::UseMode::Move,
+            ..
+        }
+    )));
+    assert!(
+        instructions
+            .iter()
+            .all(|instruction| !matches!(instruction, mojito::mir::MirInstr::MovePlace { .. })),
+        "forwarding must not synthesize indexed movable places"
+    );
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        mojito::mir::MirInstr::Call { func, args, .. }
+            if func.0.ends_with("$whole_pack") && args.len() == 1
+    )));
+}
+
+#[test]
+fn nested_pack_forwarding_rejects_multiple_or_mixed_segments() {
+    let multiple = "def outer() -> Int:\n    def count[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n        return len(values)\n    def relay[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n        return count(*values^, *values^)\n    return relay(1, True)\n\ndef main():\n    print(outer())\n";
+    let mixed = "def outer() -> Int:\n    def count[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n        return len(values)\n    def relay[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n        return count(*values^, 9)\n    return relay(1, True)\n\ndef main():\n    print(outer())\n";
+    let top_level_multiple = "def count[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n    return len(values)\n\ndef relay[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n    return count(*values^, *values^)\n\ndef main():\n    print(relay(1, True))\n";
+    let top_level_mixed = "def count[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n    return len(values)\n\ndef relay[*Ts: Movable & ImplicitlyDeletable](var *values: *Ts) -> Int:\n    return count(*values^, 9)\n\ndef main():\n    print(relay(1, True))\n";
+
+    for source in [multiple, top_level_multiple] {
+        let error = run(source).unwrap_err();
+        assert!(
+            error.contains("at most one runtime-pack spread"),
+            "got: {error}"
+        );
+    }
+    for source in [mixed, top_level_mixed] {
+        let error = run(source).unwrap_err();
+        assert!(
+            error.contains("cannot be mixed with explicit overflow arguments"),
+            "got: {error}"
+        );
+    }
+}
+
+#[test]
+fn method_local_nested_pack_preserves_self_capture() {
+    let src = "@fieldwise_init\nstruct Box:\n    var base: Int\n    def run(self) -> Int:\n        def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) unified {self} -> Int:\n            return self.base + len(args)\n        return count(1, True)\n\ndef main():\n    print(Box(40).run())\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn pack_forwarding_to_fixed_arity_remains_rejected() {
+    let src = "def outer() -> Int:\n    def fixed(value: Int) -> Int:\n        return value\n    def relay[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return fixed(*args^)\n    return relay(42)\n\ndef main():\n    print(outer())\n";
+    let error = run(src).unwrap_err();
+    assert!(
+        error.contains("call spread outside a specialized type pack"),
+        "got: {error}"
+    );
+}
+
+#[test]
+fn nested_pack_forwarding_preserves_nested_call_keywords_and_defaults() {
+    let src = "def outer() -> Int:\n    def score[*Ts: Movable & ImplicitlyDeletable](head: Int, /, var *args: *Ts, scale: Int = 1) -> Int:\n        return (head + len(args)) * scale\n    return score[Int, Bool](10, 1, True, scale=3) + score[Int, Bool](10, 1, True)\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(src).unwrap(), "48\n");
+}
+
+#[test]
+fn heterogeneous_pack_inference_uses_only_variadic_overflow_arguments() {
+    let top_level = "def count[*Ts: Movable & ImplicitlyDeletable](head: Int, var *args: *Ts) -> Int:\n    return head + len(args)\n\ndef main():\n    print(count(40, \"one\", True))\n";
+    let nested = "def outer() -> Int:\n    def count[*Ts: Movable & ImplicitlyDeletable](head: Int, var *args: *Ts) -> Int:\n        return head + len(args)\n    return count(40, \"one\", True)\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(top_level).unwrap(), "42\n");
+    assert_eq!(run(nested).unwrap(), "42\n");
+}
+
+#[test]
+fn nested_pack_named_result_is_not_part_of_the_call_abi() {
+    let src = "def outer() -> Int:\n    def count[*Ts: Movable & ImplicitlyDeletable](out result: Int, var *args: *Ts):\n        result = len(args)\n    return count[Int, Bool](1, True)\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(src).unwrap(), "2\n");
+}
+
+#[test]
+fn nested_whole_pack_forwarding_can_chain_without_copying() {
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n\ndef outer() -> Int:\n    def first[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return args[0].value\n    def second[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return first(*args^)\n    def third[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return second(*args^)\n    return third(Item(42))\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn walrus_bindings_shadow_pack_templates_for_the_whole_function() {
+    let top_level = "def choose[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n    return len(args)\n\ndef main():\n    if True:\n        var ignored = (choose := 5)\n    print(choose(2))\n";
+    let nested = "def outer():\n    def choose[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n        return len(args)\n    if True:\n        var ignored = (choose := 5)\n    print(choose(2))\n\ndef main():\n    outer()\n";
+    for source in [top_level, nested] {
+        let error = run(source).unwrap_err();
+        assert!(
+            error.contains("'choose' has type Int and is not callable"),
+            "got: {error}"
+        );
+    }
+}
+
+#[test]
+fn specialization_materializes_runtime_defaults_that_use_value_parameters() {
+    let top_level = "def choose[n: Int](value: Int = n) -> Int:\n    comptime if n >= 0:\n        pass\n    return value\n\ndef main():\n    print(choose[42]())\n";
+    let nested = "def outer() -> Int:\n    def choose[n: Int](value: Int = n) -> Int:\n        comptime if n >= 0:\n            pass\n        return value\n    return choose[42]()\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(top_level).unwrap(), "42\n");
+    assert_eq!(run(nested).unwrap(), "42\n");
+}
+
+#[test]
+fn nested_pack_identity_includes_the_outer_specialization() {
+    let src = "def outer[n: Int]() -> Int:\n    comptime if n >= 0:\n        pass\n    def nested[*InnerTypes: Movable & ImplicitlyDeletable](var *inner_args: *InnerTypes) -> Int:\n        return n * 10 + len(inner_args)\n    return nested(1, \"two\", True)\n\ndef main():\n    print(outer[2]())\n    print(outer[1]())\n";
+    assert_eq!(run(src).unwrap(), "23\n13\n");
+}
+
+#[test]
+fn nested_pack_specialization_preserves_explicit_captures() {
+    let src = "def outer() -> Int:\n    var base = 40\n    def nested[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) unified {base} -> Int:\n        return base + len(args)\n    return nested(1, True)\n\ndef main():\n    print(outer())\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn same_spelled_nested_pack_templates_have_distinct_lexical_identities() {
+    let src = "def outer():\n    if True:\n        def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n            return len(args)\n        print(count(1))\n    if True:\n        def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n            return 40 + len(args)\n        print(count(1, True))\n\ndef main():\n    outer()\n";
+    assert_eq!(run(src).unwrap(), "1\n42\n");
+}
+
+#[test]
+fn local_callable_shadows_a_top_level_pack_template_during_specialization() {
+    let src = "def choose[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n    return len(args)\n\ndef main():\n    def choose(value: Int) -> Int:\n        return value + 40\n    print(choose(2))\n";
+    assert_eq!(run(src).unwrap(), "42\n");
 }
 
 #[test]
@@ -238,7 +492,7 @@ fn string_value_parameter_rejects_a_value_of_the_wrong_type() {
     let src = "def label[text: String]() -> String:\n    return text\n\ndef main():\n    print(label[1]())\n";
     let error = run(src).unwrap_err();
     assert!(
-        error.contains("expected: \"String\"") && error.contains("found: \"Int\""),
+        error.contains("expected String") && error.contains("found Int"),
         "got {error}"
     );
 }
@@ -257,10 +511,7 @@ fn instantiated_comptime_if_branch_is_checked() {
     // Instantiating `f[1]` selects the bad `else` branch, so its type error surfaces.
     let src = "def f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        return \"bad\"\n\ndef main():\n    print(f[1]())\n";
     let err = run(src).unwrap_err();
-    assert!(
-        err.contains("expected: \"Int\", found: \"String\""),
-        "got {err}"
-    );
+    assert!(err.contains("expected Int, found String"), "got {err}");
 }
 
 #[test]
@@ -345,6 +596,54 @@ fn type_and_value_predicates_compose() {
     assert_eq!(run(src).unwrap(), "int-zero\nint-n\nother\n");
 }
 
+#[test]
+fn specialization_retains_thin_callable_value_arguments() {
+    let src = "def increment(value: Int) -> Int:\n    return value + 1\n\ndef select[enabled: Bool, callback: def(Int) thin -> Int](value: Int) -> Int:\n    comptime if enabled:\n        return callback(value)\n    else:\n        return value\n\ndef main():\n    print(select[True, increment](41))\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn specialization_retains_defaulted_thin_callable_arguments() {
+    let src = "def increment(value: Int) -> Int:\n    return value + 1\n\ndef select[enabled: Bool, callback: def(Int) thin -> Int = increment](value: Int) -> Int:\n    comptime if enabled:\n        return callback(value)\n    else:\n        return value\n\ndef main():\n    print(select[True](41))\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn specialization_retains_capturing_callable_and_inferred_origin_set() {
+    let src = "def select[origins: OriginSet, //, enabled: Bool, callback: def(Int) capturing[origins] -> Int](value: Int) -> Int:\n    comptime if enabled:\n        return callback(value)\n    else:\n        return value\n\ndef main():\n    var offset = 1\n    @parameter\n    def add(value: Int) -> Int:\n        return value + offset\n    print(select[True, add](41))\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn nested_specialization_retains_capturing_callable_arguments() {
+    let src = "def main():\n    var offset = 1\n    @parameter\n    def add(value: Int) -> Int:\n        return value + offset\n    def select[origins: OriginSet, //, enabled: Bool, callback: def(Int) capturing[origins] -> Int](value: Int) -> Int:\n        comptime if enabled:\n            return callback(value)\n        else:\n            return value\n    print(select[True, add](41))\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn type_pack_specialization_accepts_explicit_origin_before_pack() {
+    let src = "def choose[origin: Origin[mut=True], *Ts: Copyable & ImplicitlyDeletable](ref[origin] value: Int, var *args: *Ts) -> ref[origin] Int:\n    comptime for i in range(args.__len__()):\n        pass\n    return value\n\ndef main():\n    var value = 40\n    ref result = choose[origin_of(value), Int, Bool](value, 1, True)\n    result += 2\n    print(value)\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn type_pack_specialization_accepts_named_origin_after_pack() {
+    let src = "def choose[*Ts: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: Int, var *args: *Ts) -> ref[origin] Int:\n    comptime for i in range(args.__len__()):\n        pass\n    return value\n\ndef main():\n    var value = 40\n    ref result = choose[Int, Bool, origin=origin_of(value)](value, 1, True)\n    result += 2\n    print(value)\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn type_pack_specialization_skips_infer_only_origin_before_pack() {
+    let src = "def choose[origin: Origin[mut=True], //, *Ts: Copyable & ImplicitlyDeletable](ref[origin] value: Int, var *args: *Ts) -> ref[origin] Int:\n    comptime for i in range(args.__len__()):\n        pass\n    return value\n\ndef main():\n    var value = 40\n    ref result = choose[Int, Bool](value, 1, True)\n    result += 2\n    print(value)\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
+#[test]
+fn value_pack_specialization_accepts_named_origin_after_pack() {
+    let src = "def add_all[*values: Int, origin: Origin[mut=True]](ref[origin] result: Int):\n    comptime for value in values:\n        result += value\n\ndef main():\n    var result = 40\n    add_all[1, 1, origin=origin_of(result)](result)\n    print(result)\n";
+    assert_eq!(run(src).unwrap(), "42\n");
+}
+
 // --- Variadic-generic structs (`struct S[*Ts: Bound]`) ----------------------
 //
 // Compile-time elaboration specializes a variadic struct template per
@@ -365,10 +664,7 @@ fn variadic_struct_element_type_mismatch_is_rejected() {
     // error, not a common-bound erasure.
     let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var b: Bool = p.storage[0]\n    print(b)\n";
     let err = run(src).unwrap_err();
-    assert!(
-        err.contains(r#"expected: "Bool", found: "Int""#),
-        "got: {err}"
-    );
+    assert!(err.contains("expected Bool, found Int"), "got: {err}");
 }
 
 #[test]
@@ -466,14 +762,35 @@ fn variadic_struct_dependent_getitem_unrolls_per_element() {
     // `p[k]` requires a compile-time-constant index, has the exact element
     // type, and dispatches the checker-resolved accessor.
     let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n\n    def __len__(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"mid\", True)\n    var n: Int = p[0]\n    var s: String = p[1]\n    var b: Bool = p[2]\n    print(n)\n    print(s)\n    print(b)\n    print(len(p))\n";
-    assert_eq!(run(src).unwrap(), "7\nmid\nTrue\n3\n");
+    assert_eq!(run_compiled(src).unwrap(), "7\nmid\nTrue\n3\n");
+}
+
+#[test]
+fn current_getitem_param_hook_handles_places_and_rvalues() {
+    // Current Mojo spells a compile-time parameter subscript hook
+    // `__getitem_param__`. A place preserves its reference result, while an
+    // implicitly-copyable rvalue uses the generated value-returning twin.
+    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self)] Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    print(pair[0], pair[1])\n    print(CurrentPair[Int, String](9, \"rvalue\")[0])\n";
+    assert_eq!(run_compiled(src).unwrap(), "7 current\n9\n");
+}
+
+#[test]
+fn current_getitem_param_reference_result_can_bind_an_explicit_ref() {
+    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self)] Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    ref alias = pair[0]\n    alias += 5\n    print(alias)\n    print(pair[0])\n";
+    assert_eq!(run_compiled(src).unwrap(), "12\n12\n");
+}
+
+#[test]
+fn general_getitem_param_hook_uses_a_checked_value_parameter() {
+    let source = include_str!("../conformance/fixtures/current_parameter_indexing.mojo");
+    assert_eq!(run_compiled(source).unwrap(), "7 8\n9\n");
 }
 
 #[test]
 fn variadic_struct_dependent_getitem_dispatches_per_instantiation() {
     // Two specializations resolve their own accessor families independently.
     let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var a = Pair[Int, Bool](1, True)\n    var b = Pair[String, Int](\"s\", 5)\n    print(a[0] + b[1])\n    print(b[0])\n";
-    assert_eq!(run(src).unwrap(), "6\ns\n");
+    assert_eq!(run_compiled(src).unwrap(), "6\ns\n");
 }
 
 #[test]
@@ -495,7 +812,7 @@ fn variadic_struct_dependent_getitem_rejects_bad_indices() {
         "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    p[0] = 9\n    print(p[0])\n"
     );
     let err = run(&write).unwrap_err();
-    assert!(err.contains("NotIndexable"), "got: {err}");
+    assert!(err.contains("cannot be indexed here"), "got: {err}");
 }
 
 #[test]
@@ -507,4 +824,10 @@ fn variadic_struct_bound_violation_rejects_via_spec_conformance() {
     let src = "struct NoCopy(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var p = Pair[NoCopy, Int](NoCopy(1), 2)\n    print(p.storage[1])\n";
     let err = run(src).unwrap_err();
     assert!(err.contains("not Copyable"), "got: {err}");
+}
+
+#[test]
+fn associated_type_facts_request_nested_variadic_struct_specializations() {
+    let src = "@fieldwise_init\nstruct Nested[*Ts: Movable](Movable):\n    pass\n\n@fieldwise_init\nstruct Family[*Ts: Movable](Movable):\n    comptime NestedType = Nested[*Ts]\n    var marker: Int\n\ndef main():\n    var value = Family[Int, Bool](42)\n    print(value.marker)\n";
+    assert_eq!(run(src).unwrap(), "42\n");
 }

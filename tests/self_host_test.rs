@@ -32,6 +32,9 @@ impl Drop for TempDir {
     }
 }
 
+/// Exercise the library and VM at the explicit link/elaborate/check boundary.
+/// Authoritative executable coverage lives in `assets/ok`; the regression case
+/// below also pins chained reference-returning subscript receivers.
 fn run(entry: &Path) -> Result<String, String> {
     let program = link(entry).map_err(|e| e.to_string())?;
     let program = elaborate(program).map_err(|e| format!("comptime error: {e}"))?;
@@ -90,9 +93,23 @@ fn self_hosted_generic_dict_sets_gets_updates_iterates() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.dict import Dict\n\ndef main():\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 10\n    d[\"b\"] = 20\n    d[\"a\"] = 15\n    print(len(d))\n    print(\"a\" in d, \"z\" in d)\n    print(d[\"a\"], d.get(\"z\", -1))\n    var total: Int = 0\n    for key in d:\n        total = total + d[key]\n    print(total)\n",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 10\n    d[\"b\"] = 20\n    d[\"a\"] = 15\n    print(len(d))\n    print(\"a\" in d, \"z\" in d)\n    print(d[\"a\"], d.get(\"z\", -1))\n    var total: Int = 0\n    for key in d:\n        total = total + d[key]\n    print(total)\n",
     );
     assert_eq!(run(&main).unwrap(), "2\nTrue False\n15 -1\n35\n");
+}
+
+#[test]
+fn borrowed_set_and_dict_iterators_retain_their_collection_owners() {
+    // Neither loop body touches its source collection. The iterable expression
+    // is therefore the collection's apparent last source use, but the checked
+    // borrowed-origin loan must keep its pointer-owning storage alive until the
+    // synthetic iterator is exhausted and destroyed.
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        "from std.collections.set import Set\nfrom std.collections.dict import Dict\n\ndef main():\n    var values = Set[Int]()\n    values.add(3)\n    values.add(5)\n    var total = 0\n    for value in values:\n        total += value\n    print(total)\n    var mapping = Dict[String, Int]()\n    mapping[\"first\"] = 1\n    mapping[\"second\"] = 2\n    var keys = \"\"\n    for key in mapping:\n        keys += key\n    print(keys)\n",
+    );
+    assert_eq!(run(&main).unwrap(), "8\nfirstsecond\n");
 }
 
 #[test]
@@ -120,17 +137,27 @@ fn incremental_hasher_accumulates_multiple_hash_parts() {
 // --- Nested self-hosted lists (roadmap §2: the hash-set bucket-array shape) ---
 //
 // Characterization matrix for `List[List[T]]` where `List` is the self-hosted
-// `std.collections.list` struct. The `#[ignore]`d tests assert the *correct*
-// value semantics and graduate when the VM copy/write-back fixes land.
+// `std.collections.list` struct. Positive cases use the public copy/assignment
+// surface; one regression sentinel records the deferred chained-ref contract.
 
 #[test]
-fn nested_list_builds_and_reads_chained_index() {
+fn nested_list_builds_and_reads_via_explicit_rows() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var r0: List[Int] = List[Int]()\n    r0.append(1)\n    r0.append(2)\n    var r1: List[Int] = List[Int]()\n    r1.append(3)\n    m.append(r0)\n    m.append(r1)\n    print(len(m))\n    print(m[0][0], m[0][1], m[1][0])\n    print(len(m[1]))\n    var total: Int = 0\n    for x in m[0]:\n        total = total + x\n    print(total)\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var r0: List[Int] = List[Int]()\n    r0.append(1)\n    r0.append(2)\n    var r1: List[Int] = List[Int]()\n    r1.append(3)\n    m.append(r0)\n    m.append(r1)\n    var first: List[Int] = m[0]\n    var second: List[Int] = m[1]\n    print(len(m))\n    print(first[0], first[1], second[0])\n    print(len(second))\n    var total: Int = 0\n    for x in first:\n        total = total + x\n    print(total)\n",
     );
     assert_eq!(run(&main).unwrap(), "2\n1 2 3\n1\n3\n");
+}
+
+#[test]
+fn nested_list_chained_reference_receiver_uses_subscript_contracts() {
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "from std.collections.list import List\n\ndef main():\n    var rows = List[List[Int]]()\n    var row = List[Int]()\n    row.append(7)\n    rows.append(row)\n    rows[0].append(8)\n    rows[0][0] = 9\n    print(rows[0][0], rows[0][1])\n",
+    );
+    assert_eq!(run(&main).unwrap(), "9 8\n");
 }
 
 #[test]
@@ -140,7 +167,7 @@ fn nested_list_append_copies_row() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    row[0] = 42\n    row.append(7)\n    print(m[0][0], len(m[0]))\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    row[0] = 42\n    row.append(7)\n    var stored: List[Int] = m[0]\n    print(stored[0], len(stored))\n",
     );
     assert_eq!(run(&main).unwrap(), "1 1\n");
 }
@@ -152,42 +179,42 @@ fn nested_list_copy_is_deep() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    var n: List[List[Int]] = m\n    var r: List[Int] = n[0]\n    r[0] = 99\n    n[0] = r\n    print(m[0][0], n[0][0])\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    var n: List[List[Int]] = m\n    var changed: List[Int] = n[0]\n    changed[0] = 99\n    n[0] = changed^\n    var original: List[Int] = m[0]\n    var updated: List[Int] = n[0]\n    print(original[0], updated[0])\n",
     );
     assert_eq!(run(&main).unwrap(), "1 99\n");
 }
 
 #[test]
 fn nested_list_getitem_returns_a_copy() {
-    // `m[0]` yields a value-semantic copy of the row, not an alias of its buffer.
+    // Binding the ref-returning `m[0]` as an owned `List[Int]` copies the row;
+    // mutating that owned value does not change the original element.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    var r: List[Int] = m[0]\n    r[0] = 77\n    print(m[0][0], r[0])\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    var copied: List[Int] = m[0]\n    copied[0] = 77\n    var original: List[Int] = m[0]\n    print(original[0], copied[0])\n",
     );
     assert_eq!(run(&main).unwrap(), "1 77\n");
 }
 
 #[test]
-fn nested_list_mut_method_through_index_chain() {
-    // `m[0].append(5)` — a mutating method through an indexed place: read the
-    // row, mutate the copy, write it back via `__setitem__`.
+fn nested_list_explicit_row_writeback() {
+    // The explicit value-copy and assignment form remains useful alongside
+    // direct chained reference mutation.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    m[0].append(5)\n    print(len(m[0]), m[0][1])\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    var updated: List[Int] = m[0]\n    updated.append(5)\n    m[0] = updated^\n    var stored: List[Int] = m[0]\n    print(len(stored), stored[1])\n",
     );
     assert_eq!(run(&main).unwrap(), "2 5\n");
 }
 
 #[test]
 fn nested_list_as_struct_field_bucket_shape() {
-    // The exact hash-set shape: `self.buckets[i].append(v)` inside a `mut self`
-    // method, with `buckets: List[List[Int]]` a field.
+    // The exact hash-set shape, using explicit public copy/mutate/write-back.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\nstruct Grid:\n    var buckets: List[List[Int]]\n\n    def __init__(out self):\n        self.buckets = List[List[Int]]()\n        self.buckets.append(List[Int]())\n        self.buckets.append(List[Int]())\n\n    def add(mut self, i: Int, v: Int):\n        self.buckets[i].append(v)\n\n    def total(self, i: Int) -> Int:\n        var t: Int = 0\n        for x in self.buckets[i]:\n            t = t + x\n        return t\n\ndef main():\n    var g: Grid = Grid()\n    g.add(0, 3)\n    g.add(1, 4)\n    g.add(0, 5)\n    print(g.total(0), g.total(1))\n",
+        "from std.collections.list import List\n\nstruct Grid:\n    var buckets: List[List[Int]]\n\n    def __init__(out self):\n        self.buckets = List[List[Int]]()\n        self.buckets.append(List[Int]())\n        self.buckets.append(List[Int]())\n\n    def add(mut self, i: Int, v: Int):\n        var bucket: List[Int] = self.buckets[i]\n        bucket.append(v)\n        self.buckets[i] = bucket^\n\n    def total(self, i: Int) -> Int:\n        var bucket: List[Int] = self.buckets[i]\n        var t: Int = 0\n        for x in bucket:\n            t = t + x\n        return t\n\ndef main():\n    var g: Grid = Grid()\n    g.add(0, 3)\n    g.add(1, 4)\n    g.add(0, 5)\n    print(g.total(0), g.total(1))\n",
     );
     assert_eq!(run(&main).unwrap(), "8 4\n");
 }
@@ -207,7 +234,7 @@ fn self_hosted_dict_views_get_and_snapshots() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.dict import Dict\n\ndef main():\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 1\n    d[\"b\"] = 2\n    var keys = d.keys()\n    var values = d.values()\n    var items = d.items()\n    d[\"c\"] = 3\n    print(len(keys), len(values), len(items), len(d))\n    print(keys[0], keys[1], values[0], values[1])\n    print(items[0].key, items[0].value)\n    print(d.get(\"a\").is_some(), d.get(\"z\").is_some())\n    print(d.get(\"z\", 99))\n    for key in d:\n        print(key, d[key])\n",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 1\n    d[\"b\"] = 2\n    var keys = d.keys()\n    var values = d.values()\n    var items = d.items()\n    d[\"c\"] = 3\n    print(len(keys), len(values), len(items), len(d))\n    print(keys[0], keys[1], values[0], values[1])\n    print(items[0].key, items[0].value)\n    print(d.get(\"a\").is_some(), d.get(\"z\").is_some())\n    print(d.get(\"z\", 99))\n    for key in d:\n        print(key, d[key])\n",
     );
     assert_eq!(
         run(&main).unwrap(),
@@ -220,7 +247,7 @@ fn hash_dict_matches_list_dict_and_preserves_order() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.dict import Dict\nfrom std.collections.hashdict import HashDict\n\ndef main():\n    var a: Dict[Int, Int] = Dict[Int, Int]()\n    var b: HashDict[Int, Int] = HashDict[Int, Int]()\n    var i: Int = 0\n    while i < 20:\n        a[i] = i * 10\n        b[i] = i * 10\n        i = i + 1\n    a[3] = 333\n    b[3] = 333\n    print(len(a), len(b), b.bucket_count())\n    for key in a:\n        print(key, a[key])\n    print(\"---\")\n    for key in b:\n        print(key, b[key])\n    print(b.get(100).is_some(), b.get(100, -1))\n",
+        "from std.collections.dict import Dict\nfrom std.collections.hashdict import HashDict\n\ndef main() raises:\n    var a: Dict[Int, Int] = Dict[Int, Int]()\n    var b: HashDict[Int, Int] = HashDict[Int, Int]()\n    var i: Int = 0\n    while i < 20:\n        a[i] = i * 10\n        b[i] = i * 10\n        i = i + 1\n    a[3] = 333\n    b[3] = 333\n    print(len(a), len(b), b.bucket_count())\n    for key in a:\n        print(key, a[key])\n    print(\"---\")\n    for key in b:\n        print(key, b[key])\n    print(b.get(100).is_some(), b.get(100, -1))\n",
     );
     let output = run(&main).unwrap();
     let mut lines = output.lines();
@@ -236,7 +263,7 @@ fn hash_dict_copy_has_value_semantics() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.hashdict import HashDict\n\ndef main():\n    var a: HashDict[String, Int] = HashDict[String, Int]()\n    a[\"x\"] = 1\n    var b = a.copy()\n    b[\"x\"] = 9\n    b[\"y\"] = 2\n    print(len(a), a[\"x\"], \"y\" in a)\n    print(len(b), b[\"x\"], \"y\" in b)\n",
+        "from std.collections.hashdict import HashDict\n\ndef main() raises:\n    var a: HashDict[String, Int] = HashDict[String, Int]()\n    a[\"x\"] = 1\n    var b = a.copy()\n    b[\"x\"] = 9\n    b[\"y\"] = 2\n    print(len(a), a[\"x\"], \"y\" in a)\n    print(len(b), b[\"x\"], \"y\" in b)\n",
     );
     assert_eq!(run(&main).unwrap(), "1 1 False\n2 9 True\n");
 }
@@ -256,7 +283,7 @@ fn kwargs_are_owned_self_hosted_string_dicts() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def show(prefix: Int, **options: Int):\n    print(prefix, len(options))\n    for key in options:\n        print(key, options[key])\n    options[\"local\"] = 9\n    print(options.get(\"missing\", -1), len(options))\n\ndef main():\n    show(7, first=1, second=2)\n    show(8)\n",
+        "def show(prefix: Int, **options: Int) raises:\n    print(prefix, len(options))\n    for key in options:\n        print(key, options[key])\n    options[\"local\"] = 9\n    print(options.get(\"missing\", -1), len(options))\n\ndef main() raises:\n    show(7, first=1, second=2)\n    show(8)\n",
     );
     assert_eq!(
         run(&main).unwrap(),
@@ -269,7 +296,7 @@ fn transferred_string_dict_forwards_keywords_in_order() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def show(prefix: Int, **options: Int):\n    print(prefix, len(options))\n    for key in options:\n        print(key, options[key])\n\ndef relay(**options: Int):\n    show(prefix=7, **options^)\n\ndef main():\n    relay(left=20, right=22)\n",
+        "def show(prefix: Int, **options: Int) raises:\n    print(prefix, len(options))\n    for key in options:\n        print(key, options[key])\n\ndef relay(**options: Int) raises:\n    show(prefix=7, **options^)\n\ndef main() raises:\n    relay(left=20, right=22)\n",
     );
     assert_eq!(run(&main).unwrap(), "7 2\nleft 20\nright 22\n");
 }
@@ -319,7 +346,7 @@ fn keyword_overflow_records_implicit_conversions_for_every_call_kind() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "struct Box(Copyable):\n    var value: Int\n    @implicit\n    def __init__(out self, value: Int):\n        self.value = value\n\ndef free(**options: Box) -> Int:\n    return options[\"item\"].value\n\n@fieldwise_init\nstruct Collector:\n    var bias: Int\n    def method(self, **options: Box) -> Int:\n        return self.bias + options[\"item\"].value\n    @staticmethod\n    def static(**options: Box) -> Int:\n        return options[\"item\"].value\n\ntrait Collects:\n    def bounded(self, **options: Box) -> Int: ...\n\n@fieldwise_init\nstruct BoundedCollector(Collects):\n    var bias: Int\n    def bounded(self, **options: Box) -> Int:\n        return self.bias + options[\"item\"].value\n\ndef through_bound[Target: Collects](target: Target) -> Int:\n    return target.bounded(item=4)\n\ndef main():\n    var collector = Collector(10)\n    var bounded = BoundedCollector(20)\n    print(free(item=1))\n    print(collector.method(item=2))\n    print(Collector.static(item=3))\n    print(through_bound(bounded))\n",
+        "struct Box(Copyable):\n    var value: Int\n    @implicit\n    def __init__(out self, value: Int):\n        self.value = value\n\ndef free(**options: Box) raises -> Int:\n    return options[\"item\"].value\n\n@fieldwise_init\nstruct Collector:\n    var bias: Int\n    def method(self, **options: Box) raises -> Int:\n        return self.bias + options[\"item\"].value\n    @staticmethod\n    def static(**options: Box) raises -> Int:\n        return options[\"item\"].value\n\ntrait Collects:\n    def bounded(self, **options: Box) raises -> Int: ...\n\n@fieldwise_init\nstruct BoundedCollector(Collects):\n    var bias: Int\n    def bounded(self, **options: Box) raises -> Int:\n        return self.bias + options[\"item\"].value\n\ndef through_bound[Target: Collects](target: Target) raises -> Int:\n    return target.bounded(item=4)\n\ndef main() raises:\n    var collector = Collector(10)\n    var bounded = BoundedCollector(20)\n    print(free(item=1))\n    print(collector.method(item=2))\n    print(Collector.static(item=3))\n    print(through_bound(bounded))\n",
     );
     assert_eq!(run(&main).unwrap(), "1\n12\n3\n24\n");
 }
@@ -368,6 +395,24 @@ fn self_hosted_algorithms_use_comptime_facts() {
         .join("ok")
         .join("self_hosted_algorithms.mojo");
     assert_eq!(run(&main).unwrap(), "1 2 0\n8 24\n4 17\n42\nfallback\n7\n");
+}
+
+#[test]
+fn linked_vm_ctfe_keeps_nominal_helpers_without_unrelated_templates() {
+    let d = TempDir::new();
+    d.write(
+        "library.mojo",
+        "def _increment(value: Int) -> Int:\n    return value + 1\n\ndef _trait_default() -> Int:\n    return 7\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def incremented(self) -> Int:\n        return _increment(self.value)\n\ntrait HasDefault:\n    def default_value(self) -> Int:\n        return _trait_default()\n\ndef compile_answer() -> Int:\n    return 6 * 7\n\ndef uninstantiated[T: AnyType]() -> Int:\n    comptime if is_same_type[T, Int]():\n        return 1\n    else:\n        return \"this template must not cross the CTFE boundary\"\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "from library import Box, compile_answer\n\ncomptime ANSWER = compile_answer()\n\ndef main():\n    print(ANSWER)\n    print(Box(8).incremented())\n",
+    );
+
+    // VM CTFE checks retained nominal method bodies. Their linked, module-qualified
+    // free helpers therefore belong to the declaration closure, while the unused
+    // generic `comptime if` template must stay outside that checked subprogram.
+    assert_eq!(run(&main).unwrap(), "42\n9\n");
 }
 
 #[test]

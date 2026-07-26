@@ -40,21 +40,50 @@ pub enum Type {
         base: Box<Type>,
         name: String,
     },
+    /// Index a compile-time sequence of types while remaining in type position.
+    ///
+    /// This is deliberately a structured projection rather than a synthesized
+    /// name: the base can itself be an associated projection and the index is a
+    /// retained expression whose value may depend on a compile-time binder.
+    /// For example, `values.element_types[index]` is represented as an indexed
+    /// projection over `values.element_types`, not as the text
+    /// `"values.element_types[index]"`.
+    IndexedProjection {
+        base: Box<Type>,
+        index: Box<Expr>,
+    },
     /// Bare `Self` — the enclosing struct type (in a struct method) or the
     /// conforming type (in a trait method requirement).
     SelfType,
-    /// A **function type** annotation: `def(T1, T2, …) [thin] [raises] -> R`
-    /// (parameters are types only — no names or conventions). `thin` marks a
-    /// non-capturing function pointer (default is capturing). Function signatures
-    /// and their `raises` effect are checked; any `abi("…")` effect is parsed and
-    /// discarded.
+    /// A **function type** annotation: `def(T1, mut T2, …) [thin | capturing[...]]
+    /// [raises] [-> R]`.
+    /// Parameters retain optional conventions, origins, and diagnostic names
+    /// because those facts affect indirect-call ownership and reference results.
+    /// `thin` marks a non-capturing function pointer (default is capturing).
     Func {
-        params: Vec<Type>,
+        /// Compile-time parameters declared by the callable contract.
+        type_params: Vec<TypeParam>,
+        params: Vec<FunctionTypeParam>,
         ret: Box<Type>,
         thin: bool,
+        /// `None` when no explicit `capturing` effect was written,
+        /// `Some([])` for bare `capturing`, and `Some(origins)` for
+        /// `capturing[origins]`.
+        capturing: Option<OriginSpec>,
         raises: bool,
         raises_type: Option<Box<Type>>,
     },
+    /// An opaque checked callable id carried through compiler-generated AST.
+    ///
+    /// Public variadic `Tuple` specializations are still generated as source
+    /// declarations, but source `def(...)` annotations cannot represent every
+    /// semantic callable fact: generic declaration metadata, ordinary default
+    /// masks/variadics, bound capture origins, and selected error types are all
+    /// richer than [`Type::Func`]. The elaborator therefore uses this variant
+    /// only for already-checked `Func`/`GenericFunc` element types and the
+    /// compiler seeds the second checker pass with the exact type keyed by this
+    /// id. The parser never constructs it.
+    MaterializedCallable(String),
     /// A **reference type** `ref [origin] T` (Mojo's parametric-mutability
     /// reference — used in a `ref[origin]` return type). The origin specifier is
     /// parsed but **discarded** (origins are not modeled); `ty` is the referent
@@ -63,6 +92,17 @@ pub enum Type {
         referent: Box<Type>,
         origin: Option<OriginSpec>,
     },
+}
+
+/// One parameter in a source-level function/closure type. Unlike [`FnParam`],
+/// it has no default or variadic role; a name is optional and retained only
+/// when the annotation spells one (`def(mut writer: Writer)`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionTypeParam {
+    pub name: Option<String>,
+    pub convention: Option<ArgConvention>,
+    pub origin: Option<OriginSpec>,
+    pub ty: Type,
 }
 
 /// Source syntax inside a `ref[...]` clause. Expressions are deliberately
@@ -91,9 +131,13 @@ pub struct TypeParam {
     /// Full source type for a syntactically unambiguous value parameter such as
     /// `items: List[Int]`. Scalar value parameters are classified semantically.
     pub value_type: Option<Type>,
+    /// A retained callable right-hand side (`F: def(...)`). Whether it denotes a
+    /// callable type constraint or a compile-time function-value parameter is a
+    /// semantic decision; the parser preserves the complete function type.
+    pub callable_bound: Option<Type>,
     /// `Some(expr)` for `Origin[mut=expr]`; `None` for type/value parameters.
     pub origin_mutability: Option<Expr>,
-    /// Whether this parameter follows the `//` infer-only marker.
+    /// Whether this parameter precedes the `//` infer-only marker.
     pub infer_only: bool,
     /// A retained compile-time default. Semantic classification and dependency
     /// checking happen after all earlier parameters have entered scope.
@@ -438,6 +482,9 @@ pub struct Stmt {
     /// Source module identity assigned by the linker. Parser-created statements
     /// use `None`; linked entry/import declarations carry their originating path.
     pub module: Option<String>,
+    /// Concrete occurrence identity. It is deliberately ignored by structural
+    /// AST equality, like source spans and module provenance.
+    pub syntax_id: crate::token::SyntaxId,
 }
 
 impl Stmt {
@@ -447,11 +494,12 @@ impl Stmt {
             kind,
             span,
             module: None,
+            syntax_id: crate::token::SyntaxId::fresh(),
         }
     }
 
     pub fn source_span(&self) -> crate::token::SourceSpan {
-        crate::token::SourceSpan::new(self.module.clone(), self.span)
+        crate::token::SourceSpan::syntax(self.module.clone(), self.span, self.syntax_id)
     }
 }
 
@@ -471,6 +519,7 @@ impl From<StmtKind> for Stmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum StmtKind {
     /// `var name[: Type] = value` — declares (and initializes) a new variable.
     /// The annotation is optional: `ty: None` is an **inferred** `var` (the type
@@ -520,8 +569,10 @@ pub enum StmtKind {
         positional_only: Option<usize>,
         /// Index of a bare `*` (keyword-only) marker in `params`, if present (parsed).
         keyword_only: Option<usize>,
-        /// Current Mojo unified-closure captures. `None` is an ordinary function
-        /// (which cannot capture); `Some` marks a `unified { ... }` closure.
+        /// Current Mojo closure captures. `None` is an ordinary nested function
+        /// (which cannot capture); `Some` is the explicit `{ ... }` environment.
+        /// The parser also accepts legacy `unified { ... }` as a Mojito-only
+        /// compatibility spelling, but normalizes both forms here.
         captures: Option<CaptureList>,
         /// Whether the `raises` effect was declared. A following typed-error
         /// annotation is currently parsed but not retained.
@@ -660,13 +711,13 @@ pub enum StmtKind {
     Expr(Expr),
 }
 
-/// The explicit environment of a nested `unified` closure.
+/// The explicit environment of a nested closure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureList {
     pub entries: Vec<Capture>,
-    /// A trailing bare `imm` captures otherwise-unlisted free variables by
-    /// immutable reference.
-    pub default_read: bool,
+    /// A bare convention (`imm`, `mut`, `ref`, `var`, or `var^`) applies to
+    /// otherwise-unlisted free variables. At most one default is permitted.
+    pub default: Option<CaptureKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -677,8 +728,15 @@ pub struct Capture {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureKind {
+    /// Immutable reference (`imm`; legacy `read` is normalized to this).
     Read,
+    /// Mutable reference.
     Mut,
+    /// Reference whose mutability is inherited from the captured origin.
+    Ref,
+    /// Owned copy (`var name`).
+    Copy,
+    /// Owned transfer (`var name^`, bare `name^`, or default `var^`).
     Move,
 }
 
@@ -690,6 +748,8 @@ pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
     pub source: Option<String>,
+    /// Concrete occurrence identity; ignored by structural AST equality.
+    pub syntax_id: crate::token::SyntaxId,
 }
 
 impl Expr {
@@ -699,11 +759,12 @@ impl Expr {
             kind,
             span,
             source: None,
+            syntax_id: crate::token::SyntaxId::fresh(),
         }
     }
 
     pub fn source_span(&self) -> crate::token::SourceSpan {
-        crate::token::SourceSpan::new(self.source.clone(), self.span)
+        crate::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
     }
 }
 
@@ -971,6 +1032,492 @@ impl InfixOp {
     }
 }
 
+/// Ensure a unique identity for every statement and expression occurrence in a
+/// final syntax tree. This must run after cloning transformations (trait-default
+/// expansion and compile-time specialization) and before semantic facts are
+/// recorded. Already-unique parser IDs are retained so source-oriented public
+/// lookups remain compatible with the input AST; a repeated ID is never trusted
+/// and receives a deterministic final-tree identity here.
+pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
+    struct Rekey {
+        next: u64,
+        used: std::collections::HashSet<crate::token::SyntaxId>,
+    }
+
+    impl Rekey {
+        fn id(&mut self, current: crate::token::SyntaxId) -> crate::token::SyntaxId {
+            if self.used.insert(current) {
+                return current;
+            }
+            loop {
+                let id = crate::token::SyntaxId(self.next);
+                self.next += 1;
+                if self.used.insert(id) {
+                    return id;
+                }
+            }
+        }
+
+        fn block(&mut self, statements: &mut [Stmt]) {
+            for statement in statements {
+                statement.syntax_id = self.id(statement.syntax_id);
+                self.statement(&mut statement.kind);
+            }
+        }
+
+        fn expr(&mut self, expr: &mut Expr) {
+            expr.syntax_id = self.id(expr.syntax_id);
+            match &mut expr.kind {
+                ExprKind::Prefix(_, value)
+                | ExprKind::Transfer(value)
+                | ExprKind::Spread(value) => self.expr(value),
+                ExprKind::Infix(_, left, right)
+                | ExprKind::Index {
+                    object: left,
+                    index: right,
+                } => {
+                    self.expr(left);
+                    self.expr(right);
+                }
+                ExprKind::Call {
+                    param_args,
+                    args,
+                    kwargs,
+                    ..
+                } => {
+                    self.param_args(param_args);
+                    for arg in args {
+                        self.expr(arg);
+                    }
+                    for arg in kwargs {
+                        self.expr(&mut arg.value);
+                    }
+                }
+                ExprKind::Invoke {
+                    callee,
+                    param_args,
+                    args,
+                    kwargs,
+                } => {
+                    self.expr(callee);
+                    self.param_args(param_args);
+                    for arg in args {
+                        self.expr(arg);
+                    }
+                    for arg in kwargs {
+                        self.expr(&mut arg.value);
+                    }
+                }
+                ExprKind::Member { object, .. } => self.expr(object),
+                ExprKind::MethodCall {
+                    object,
+                    args,
+                    kwargs,
+                    ..
+                } => {
+                    self.expr(object);
+                    for arg in args {
+                        self.expr(arg);
+                    }
+                    for arg in kwargs {
+                        self.expr(&mut arg.value);
+                    }
+                }
+                ExprKind::TypeApply { args, .. } => self.param_args(args),
+                ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
+                    for value in values {
+                        self.expr(value);
+                    }
+                }
+                ExprKind::BraceLit(entries) => {
+                    for (key, value) in entries {
+                        self.expr(key);
+                        if let Some(value) = value {
+                            self.expr(value);
+                        }
+                    }
+                }
+                ExprKind::Comprehension {
+                    key,
+                    value,
+                    clauses,
+                    ..
+                } => {
+                    if let Some(key) = key {
+                        self.expr(key);
+                    }
+                    self.expr(value);
+                    for clause in clauses {
+                        match clause {
+                            ComprehensionClause::For { iter, .. } => self.expr(iter),
+                            ComprehensionClause::If(condition) => self.expr(condition),
+                        }
+                    }
+                }
+                ExprKind::Named { value, .. } => self.expr(value),
+                ExprKind::IfExpr {
+                    cond,
+                    then_branch,
+                    else_branch,
+                } => {
+                    self.expr(cond);
+                    self.expr(then_branch);
+                    self.expr(else_branch);
+                }
+                ExprKind::Compare { first, rest } => {
+                    self.expr(first);
+                    for (_, value) in rest {
+                        self.expr(value);
+                    }
+                }
+                ExprKind::Slice {
+                    object,
+                    lower,
+                    upper,
+                    step,
+                    ..
+                } => {
+                    self.expr(object);
+                    for value in [lower, upper, step].into_iter().flatten() {
+                        self.expr(value);
+                    }
+                }
+                ExprKind::MultiIndex { object, args } => {
+                    self.expr(object);
+                    for argument in args {
+                        match argument {
+                            SubscriptArg::Index(value) => self.expr(value),
+                            SubscriptArg::Slice {
+                                lower, upper, step, ..
+                            } => {
+                                for value in [lower, upper, step].into_iter().flatten() {
+                                    self.expr(value);
+                                }
+                            }
+                        }
+                    }
+                }
+                ExprKind::TString { parts, .. } => {
+                    for part in parts {
+                        if let TStringPart::Expr(value) = part {
+                            self.expr(value);
+                        }
+                    }
+                }
+                ExprKind::TypeValue(ty) => self.ty(ty),
+                ExprKind::Int(_)
+                | ExprKind::Float(_)
+                | ExprKind::Bool(_)
+                | ExprKind::Str(_)
+                | ExprKind::None
+                | ExprKind::Uninitialized
+                | ExprKind::Identifier(_) => {}
+            }
+        }
+
+        fn param_args(&mut self, args: &mut [ParamArg]) {
+            for arg in args {
+                match arg {
+                    ParamArg::Type(ty) => self.ty(ty),
+                    ParamArg::Value(value) => self.expr(value),
+                    ParamArg::Named { value, .. } => {
+                        self.param_args(std::slice::from_mut(value.as_mut()))
+                    }
+                }
+            }
+        }
+
+        fn type_params(&mut self, params: &mut [TypeParam]) {
+            for param in params {
+                if let Some(ty) = &mut param.value_type {
+                    self.ty(ty);
+                }
+                if let Some(ty) = &mut param.callable_bound {
+                    self.ty(ty);
+                }
+                if let Some(value) = &mut param.origin_mutability {
+                    self.expr(value);
+                }
+                if let Some(value) = &mut param.default {
+                    self.expr(value);
+                }
+                for condition in &mut param.constraints {
+                    self.expr(condition);
+                }
+            }
+        }
+
+        fn ty(&mut self, ty: &mut Type) {
+            match ty {
+                Type::Named(_, args) => self.param_args(args),
+                Type::Assoc { base, .. } => self.ty(base),
+                Type::IndexedProjection { base, index } => {
+                    self.ty(base);
+                    self.expr(index);
+                }
+                Type::Ref { referent, origin } => {
+                    self.ty(referent);
+                    if let Some(origins) = origin {
+                        for expression in origins {
+                            self.expr(expression);
+                        }
+                    }
+                }
+                Type::Func {
+                    type_params,
+                    params,
+                    ret,
+                    capturing,
+                    raises_type,
+                    ..
+                } => {
+                    self.type_params(type_params);
+                    for param in params {
+                        self.ty(&mut param.ty);
+                        if let Some(origins) = &mut param.origin {
+                            for expression in origins {
+                                self.expr(expression);
+                            }
+                        }
+                    }
+                    self.ty(ret);
+                    if let Some(origins) = capturing {
+                        for expression in origins {
+                            self.expr(expression);
+                        }
+                    }
+                    if let Some(error) = raises_type {
+                        self.ty(error);
+                    }
+                }
+                Type::Int
+                | Type::UInt
+                | Type::Bool
+                | Type::String
+                | Type::Float64
+                | Type::None
+                | Type::SelfParam(_)
+                | Type::SelfType
+                | Type::MaterializedCallable(_) => {}
+            }
+        }
+
+        fn param(&mut self, param: &mut FnParam) {
+            self.ty(&mut param.ty);
+            if let Some(value) = &mut param.default {
+                self.expr(value);
+            }
+        }
+
+        fn decorators(&mut self, decorators: &mut [Decorator]) {
+            for decorator in decorators {
+                for arg in &mut decorator.args {
+                    self.expr(arg);
+                }
+                for arg in &mut decorator.kwargs {
+                    self.expr(&mut arg.value);
+                }
+            }
+        }
+
+        fn statement(&mut self, kind: &mut StmtKind) {
+            match kind {
+                StmtKind::VarDecl { ty, value, .. } => {
+                    if let Some(ty) = ty {
+                        self.ty(ty);
+                    }
+                    self.expr(value);
+                }
+                StmtKind::RefDecl { value, .. }
+                | StmtKind::Assign { value, .. }
+                | StmtKind::Comptime { value, .. }
+                | StmtKind::Raise(value)
+                | StmtKind::Return(Some(value))
+                | StmtKind::Expr(value) => self.expr(value),
+                StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+                    self.expr(place);
+                    self.expr(value);
+                }
+                StmtKind::Unpack { targets, value } => {
+                    for target in targets {
+                        self.expr(target);
+                    }
+                    self.expr(value);
+                }
+                StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                    for (condition, block) in branches {
+                        self.expr(condition);
+                        self.block(block);
+                    }
+                    if let Some(block) = orelse {
+                        self.block(block);
+                    }
+                }
+                StmtKind::While { cond, body, orelse } => {
+                    self.expr(cond);
+                    self.block(body);
+                    if let Some(body) = orelse {
+                        self.block(body);
+                    }
+                }
+                StmtKind::For {
+                    iter, body, orelse, ..
+                } => {
+                    self.expr(iter);
+                    self.block(body);
+                    if let Some(body) = orelse {
+                        self.block(body);
+                    }
+                }
+                StmtKind::ComptimeFor { iter, body, .. } => {
+                    self.expr(iter);
+                    self.block(body);
+                }
+                StmtKind::With { items, body } => {
+                    for item in items {
+                        self.expr(&mut item.context);
+                    }
+                    self.block(body);
+                }
+                StmtKind::Try {
+                    body,
+                    except,
+                    orelse,
+                    finalbody,
+                } => {
+                    self.block(body);
+                    if let Some((_, block)) = except {
+                        self.block(block);
+                    }
+                    if let Some(block) = orelse {
+                        self.block(block);
+                    }
+                    if let Some(block) = finalbody {
+                        self.block(block);
+                    }
+                }
+                StmtKind::Def {
+                    type_params,
+                    params,
+                    raises_type,
+                    ret,
+                    body,
+                    decorators,
+                    where_clause,
+                    ..
+                } => {
+                    self.type_params(type_params);
+                    for param in params {
+                        self.param(param);
+                    }
+                    if let Some(error) = raises_type {
+                        self.ty(error);
+                    }
+                    if let Some(ret) = ret {
+                        self.ty(ret);
+                    }
+                    self.decorators(decorators);
+                    if let Some(condition) = where_clause {
+                        self.expr(condition);
+                    }
+                    self.block(body);
+                }
+                StmtKind::Struct {
+                    type_params,
+                    fields,
+                    associated,
+                    methods,
+                    decorators,
+                    conformance_conditions,
+                    callable_conformance,
+                    ..
+                } => {
+                    self.type_params(type_params);
+                    if let Some(callable) = callable_conformance {
+                        self.ty(callable);
+                    }
+                    for field in fields {
+                        self.ty(&mut field.ty);
+                    }
+                    for member in associated {
+                        self.expr(&mut member.value);
+                    }
+                    for (_, condition) in conformance_conditions {
+                        self.expr(condition);
+                    }
+                    self.decorators(decorators);
+                    for method in methods {
+                        self.type_params(&mut method.type_params);
+                        if let Some(origins) = &mut method.self_origin {
+                            for origin in origins {
+                                self.expr(origin);
+                            }
+                        }
+                        for param in &mut method.params {
+                            self.param(param);
+                        }
+                        if let Some(error) = &mut method.raises_type {
+                            self.ty(error);
+                        }
+                        if let Some(ret) = &mut method.ret {
+                            self.ty(ret);
+                        }
+                        self.decorators(&mut method.decorators);
+                        if let Some(condition) = &mut method.where_clause {
+                            self.expr(condition);
+                        }
+                        self.block(&mut method.body);
+                    }
+                }
+                StmtKind::Trait {
+                    methods,
+                    comptime_members,
+                    ..
+                } => {
+                    for method in methods {
+                        self.type_params(&mut method.type_params);
+                        if let Some(origins) = &mut method.self_origin {
+                            for origin in origins {
+                                self.expr(origin);
+                            }
+                        }
+                        for param in &mut method.params {
+                            self.param(param);
+                        }
+                        if let Some(error) = &mut method.raises_type {
+                            self.ty(error);
+                        }
+                        if let Some(ret) = &mut method.ret {
+                            self.ty(ret);
+                        }
+                        if let Some(condition) = &mut method.where_clause {
+                            self.expr(condition);
+                        }
+                        if let Some(body) = &mut method.default_body {
+                            self.block(body);
+                        }
+                    }
+                    for member in comptime_members {
+                        self.ty(&mut member.ty);
+                    }
+                }
+                StmtKind::Return(None)
+                | StmtKind::Import { .. }
+                | StmtKind::FromImport { .. }
+                | StmtKind::Pass
+                | StmtKind::Break
+                | StmtKind::Continue => {}
+            }
+        }
+    }
+
+    Rekey {
+        next: 1,
+        used: std::collections::HashSet::new(),
+    }
+    .block(statements);
+}
+
 /// Attach one linked source path to an entire AST subtree. Spans remain local
 /// byte ranges; `source_span()` combines them with this provenance.
 pub(crate) fn stamp_source(statements: &mut [Stmt], source: &str) {
@@ -1142,10 +1689,34 @@ fn stamp_param_args(args: &mut [ParamArg], source: &str) {
     }
 }
 
+fn stamp_type_params(params: &mut [TypeParam], source: &str) {
+    for param in params {
+        if let Some(ty) = &mut param.value_type {
+            stamp_type(ty, source);
+        }
+        if let Some(ty) = &mut param.callable_bound {
+            stamp_type(ty, source);
+        }
+        if let Some(value) = &mut param.origin_mutability {
+            stamp_expr(value, source);
+        }
+        if let Some(value) = &mut param.default {
+            stamp_expr(value, source);
+        }
+        for condition in &mut param.constraints {
+            stamp_expr(condition, source);
+        }
+    }
+}
+
 fn stamp_type(ty: &mut Type, source: &str) {
     match ty {
         Type::Named(_, args) => stamp_param_args(args, source),
         Type::Assoc { base, .. } => stamp_type(base, source),
+        Type::IndexedProjection { base, index } => {
+            stamp_type(base, source);
+            stamp_expr(index, source);
+        }
         Type::Ref { referent, origin } => {
             stamp_type(referent, source);
             if let Some(origins) = origin {
@@ -1154,11 +1725,32 @@ fn stamp_type(ty: &mut Type, source: &str) {
                 }
             }
         }
-        Type::Func { params, ret, .. } => {
+        Type::Func {
+            type_params,
+            params,
+            ret,
+            capturing,
+            raises_type,
+            ..
+        } => {
+            stamp_type_params(type_params, source);
             for param in params {
-                stamp_type(param, source);
+                stamp_type(&mut param.ty, source);
+                if let Some(origins) = &mut param.origin {
+                    for expression in origins {
+                        stamp_expr(expression, source);
+                    }
+                }
             }
             stamp_type(ret, source);
+            if let Some(origins) = capturing {
+                for expression in origins {
+                    stamp_expr(expression, source);
+                }
+            }
+            if let Some(error) = raises_type {
+                stamp_type(error, source);
+            }
         }
         Type::Int
         | Type::UInt
@@ -1167,7 +1759,8 @@ fn stamp_type(ty: &mut Type, source: &str) {
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
-        | Type::SelfType => {}
+        | Type::SelfType
+        | Type::MaterializedCallable(_) => {}
     }
 }
 
@@ -1257,6 +1850,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             }
         }
         StmtKind::Def {
+            type_params,
             params,
             raises_type,
             ret,
@@ -1264,6 +1858,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             decorators,
             ..
         } => {
+            stamp_type_params(type_params, source);
             for param in params {
                 stamp_fn_param(param, source);
             }
@@ -1277,12 +1872,22 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             stamp_block(body, source);
         }
         StmtKind::Struct {
+            type_params,
+            callable_conformance,
+            conformance_conditions,
             fields,
             associated,
             methods,
             decorators,
             ..
         } => {
+            stamp_type_params(type_params, source);
+            if let Some(callable) = callable_conformance {
+                stamp_type(callable, source);
+            }
+            for (_, condition) in conformance_conditions {
+                stamp_expr(condition, source);
+            }
             for field in fields {
                 stamp_type(&mut field.ty, source);
             }
@@ -1291,6 +1896,12 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             }
             stamp_decorators(decorators, source);
             for method in methods {
+                stamp_type_params(&mut method.type_params, source);
+                if let Some(origins) = &mut method.self_origin {
+                    for origin in origins {
+                        stamp_expr(origin, source);
+                    }
+                }
                 for param in &mut method.params {
                     stamp_fn_param(param, source);
                 }
@@ -1299,6 +1910,9 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
                 }
                 if let Some(ret) = &mut method.ret {
                     stamp_type(ret, source);
+                }
+                if let Some(condition) = &mut method.where_clause {
+                    stamp_expr(condition, source);
                 }
                 stamp_decorators(&mut method.decorators, source);
                 stamp_block(&mut method.body, source);
@@ -1310,6 +1924,12 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             ..
         } => {
             for method in methods {
+                stamp_type_params(&mut method.type_params, source);
+                if let Some(origins) = &mut method.self_origin {
+                    for origin in origins {
+                        stamp_expr(origin, source);
+                    }
+                }
                 for param in &mut method.params {
                     stamp_fn_param(param, source);
                 }
@@ -1318,6 +1938,9 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
                 }
                 if let Some(ret) = &mut method.ret {
                     stamp_type(ret, source);
+                }
+                if let Some(condition) = &mut method.where_clause {
+                    stamp_expr(condition, source);
                 }
                 if let Some(body) = &mut method.default_body {
                     stamp_block(body, source);

@@ -600,10 +600,14 @@ fn iterable_element_ty(&self, ty: &Ty) -> Result<Ty, TypeError>
 
 Cases:
 
-- `Ty::Range` -> `Int`
-- `Ty::List(elem)` -> `elem`
-- `Ty::Struct(..)` -> current user iterator protocol
+- nominal `Range` -> its checked `Iterator.Element` (`Int` in the bundled CPU range)
+- nominal `List[T]` -> its checked `Iterator.Element` (`T`)
+- any other `Ty::Struct(..)` -> the same checked user iterator protocol
 - `Ty::Param { bounds, .. }` with `Iterable` -> associated type `Element`
+
+There are no executable `Ty::Range` or `Ty::List` variants. Public collections
+remain nominal across checking, MIR, and execution; only the explicitly
+compile-time list carrier bypasses method dispatch.
 
 ### Acceptance Tests
 

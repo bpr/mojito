@@ -3,11 +3,19 @@
 //! since Phase 1 is about structure, not instruction contents.
 
 use mojito::hir::{Cfg, Terminator};
-use mojito::parse;
+use mojito::{check_program, parse};
 
 /// Parse a source snippet and lower it to a CFG.
 fn cfg(src: &str) -> Cfg {
     Cfg::build(&parse(src).expect("parse error"))
+}
+
+/// Lower through the checked HIR handoff when an instruction requires semantic
+/// facts such as an iterator element type.
+fn checked_cfg(src: &str) -> Cfg {
+    let program = parse(src).expect("parse error");
+    let checked = check_program(&program).expect("type error");
+    Cfg::build_checked_fn(&checked, &[], checked.statements())
 }
 
 /// Every block must be sealed with exactly one terminator (CFG well-formedness).
@@ -179,7 +187,7 @@ fn code_after_a_return_in_a_branch_does_not_flow_to_the_join() {
 fn for_loop_lowers_to_a_while_shaped_graph() {
     // A `for` gets the same header/body/exit skeleton as a `while` (the iterator
     // protocol is a Phase 2 refinement; the shape is what Phase 1 fixes).
-    let c = cfg("for i in range(3):\n    pass\n");
+    let c = checked_cfg("for i in range(3):\n    pass\n");
     let header = c.successors(c.entry)[0];
     let (body, _exit) = match c.term(header) {
         Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
@@ -346,4 +354,120 @@ fn checked_hir_retains_distinct_comprehension_binding_owners() {
         expression.comprehension_bindings[0].owner,
         expression.comprehension_bindings[1].owner
     );
+}
+
+#[test]
+fn checked_hir_carries_nested_declaration_and_call_binding_identity() {
+    let program = mojito::parse(
+        "def main():\n    if True:\n        def choose() -> Int:\n            return 1\n        choose()\n    if True:\n        def choose() -> Int:\n            return 42\n        choose()\n",
+    )
+    .expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let body = match &checked.statements()[0].kind {
+        mojito::ast::StmtKind::Def { body, .. } => body,
+        _ => panic!("expected function"),
+    };
+    let cfg = Cfg::build_checked_fn(&checked, &[], body);
+
+    let declarations: Vec<_> = cfg
+        .g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            mojito::hir::HirInstr::Stmt(statement)
+                if matches!(
+                    &statement.syntax.kind,
+                    mojito::ast::StmtKind::Def { name, .. } if name == "choose"
+                ) =>
+            {
+                statement.binding
+            }
+            _ => None,
+        })
+        .collect();
+    let calls: Vec<_> = cfg
+        .g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            mojito::hir::HirInstr::Eval(expression)
+                if matches!(
+                    &expression.syntax.kind,
+                    mojito::ast::ExprKind::Call { name, .. } if name == "choose"
+                ) =>
+            {
+                expression.binding
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(declarations.len(), 2);
+    assert_eq!(calls.len(), 2);
+    assert_ne!(declarations[0], declarations[1]);
+    assert_eq!(calls, declarations);
+}
+
+#[test]
+fn checked_hir_next_retains_a_shadowed_loop_binder_identity() {
+    let program = mojito::parse(
+        "def main():\n    var item = 1\n    for item in [40]:\n        def read() {item} -> Int:\n            return item\n        print(read())\n",
+    )
+    .expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let body = match &checked.statements()[0].kind {
+        mojito::ast::StmtKind::Def { body, .. } => body,
+        _ => panic!("expected function"),
+    };
+    let cfg = Cfg::build_checked_fn(&checked, &[], body);
+    let outer = cfg
+        .g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            mojito::hir::HirInstr::Bind { binding, .. } => *binding,
+            _ => None,
+        })
+        .expect("outer item binding");
+    let loop_item = cfg
+        .g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            mojito::hir::HirInstr::Next { binding, .. } => *binding,
+            _ => None,
+        })
+        .expect("loop item binding");
+    assert_ne!(outer, loop_item);
+}
+
+#[test]
+fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
+    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
+    let program = mojito::parse(source).expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let body = checked
+        .statements()
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, body, .. } if name == "main" => Some(body),
+            _ => None,
+        })
+        .expect("main body");
+    let cfg = Cfg::build_checked_fn(&checked, &[], body);
+    let operations: Vec<_> = cfg
+        .g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .collect();
+    assert!(operations.iter().any(|instruction| matches!(
+        instruction,
+        mojito::hir::HirInstr::TryNext {
+            exhaustion: mojito::Ty::Struct(name, arguments),
+            ..
+        } if name == "StopIteration" && arguments.is_empty()
+    )));
+    assert!(!operations.iter().any(|instruction| matches!(
+        instruction,
+        mojito::hir::HirInstr::HasNext { .. } | mojito::hir::HirInstr::Next { .. }
+    )));
 }

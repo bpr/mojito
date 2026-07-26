@@ -1,12 +1,23 @@
 //! Checked explicit-destruction obligations over structured source CFGs.
 
 use crate::ast::{ArgConvention, Expr, ExprKind, SourceType, Stmt, StmtKind, TStringPart};
-use crate::checked::ExplicitDestroyInfo;
+use crate::checked::{AnnotationSite, ExplicitDestroyInfo};
 use crate::error::TypeError;
 use crate::token::SourceSpan;
 use crate::types::Ty;
 use std::collections::HashMap;
 use std::collections::HashSet;
+
+/// Positive deletability facts proved by the type checker in the lexical
+/// constraint environment where each binding is introduced. Conditional
+/// conformances cannot be recovered from a nominal type name after checking:
+/// `List[T]` is linear in general, while it is ordinarily droppable under a
+/// proven `T: ImplicitlyDeletable` constraint.
+#[derive(Default)]
+pub(crate) struct CheckedDeletability {
+    pub(crate) declarations: HashSet<AnnotationSite>,
+    pub(crate) bindings: HashSet<SourceSpan>,
+}
 
 #[derive(Clone)]
 struct Var {
@@ -99,6 +110,7 @@ pub(crate) fn check(
     statements: &[Stmt],
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<SourceSpan, Vec<crate::checked::CheckedComprehensionBinding>>,
+    deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     if types.is_empty() {
@@ -107,20 +119,49 @@ pub(crate) fn check(
     for statement in statements {
         match &statement.kind {
             StmtKind::Def { params, body, .. } => {
+                let params = params.iter().enumerate().map(|(param, p)| {
+                    let site = AnnotationSite::FunctionParam {
+                        module: statement.module.clone(),
+                        declaration: statement.span,
+                        syntax: statement.syntax_id,
+                        param,
+                    };
+                    (
+                        &p.name,
+                        &p.ty,
+                        p.convention,
+                        deletability.declarations.contains(&site),
+                    )
+                });
                 check_function(
-                    params.iter().map(|p| (&p.name, &p.ty, p.convention)),
+                    params,
                     body,
                     binding_types,
                     comprehension_bindings,
+                    deletability,
                     types,
                 )?;
             }
-            StmtKind::Struct { methods, .. } => {
-                for method in methods {
+            StmtKind::Struct { name, methods, .. } => {
+                for (method_index, method) in methods.iter().enumerate() {
                     let mut params = method
                         .params
                         .iter()
-                        .map(|p| (&p.name, &p.ty, p.convention))
+                        .enumerate()
+                        .map(|(param, p)| {
+                            let site = AnnotationSite::MethodParam {
+                                module: statement.module.clone(),
+                                declaration: name.clone(),
+                                method: method_index,
+                                param,
+                            };
+                            (
+                                &p.name,
+                                &p.ty,
+                                p.convention,
+                                deletability.declarations.contains(&site),
+                            )
+                        })
                         .collect::<Vec<_>>();
                     if method.has_self && method.self_convention != Some(ArgConvention::Deinit) {
                         // `self` is borrowed or initialized here, never a new obligation.
@@ -131,6 +172,7 @@ pub(crate) fn check(
                         &method.body,
                         binding_types,
                         comprehension_bindings,
+                        deletability,
                         types,
                     )?;
                 }
@@ -142,16 +184,21 @@ pub(crate) fn check(
 }
 
 fn check_function<'a>(
-    params: impl Iterator<Item = (&'a String, &'a SourceType, Option<ArgConvention>)>,
+    params: impl Iterator<Item = (&'a String, &'a SourceType, Option<ArgConvention>, bool)>,
     body: &[Stmt],
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<SourceSpan, Vec<crate::checked::CheckedComprehensionBinding>>,
+    deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     let mut env = Env::default();
     env.push();
-    for (name, ty, convention) in params {
-        let explicit = source_explicit_name(ty, types);
+    for (name, ty, convention, implicitly_deletable) in params {
+        let explicit = if implicitly_deletable {
+            None
+        } else {
+            source_explicit_name(ty, types)
+        };
         let live = explicit.is_some()
             && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit));
         let message = explicit
@@ -166,6 +213,7 @@ fn check_function<'a>(
         false,
         binding_types,
         comprehension_bindings,
+        deletability,
         types,
     )?;
     if let Some(env) = normal {
@@ -180,13 +228,21 @@ fn check_block(
     scoped: bool,
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<SourceSpan, Vec<crate::checked::CheckedComprehensionBinding>>,
+    deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
     if scoped {
         env.push();
     }
     for statement in body {
-        let Some(next) = check_stmt(statement, env, binding_types, comprehension_bindings, types)?
+        let Some(next) = check_stmt(
+            statement,
+            env,
+            binding_types,
+            comprehension_bindings,
+            deletability,
+            types,
+        )?
         else {
             return Ok(None);
         };
@@ -203,14 +259,19 @@ fn check_stmt(
     mut env: Env,
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<SourceSpan, Vec<crate::checked::CheckedComprehensionBinding>>,
+    deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
     match &stmt.kind {
         StmtKind::VarDecl { name, value, .. } => {
             check_expr(value, &mut env, comprehension_bindings, types)?;
-            let explicit = binding_types
-                .get(&value.source_span())
-                .and_then(|ty| ty_explicit_name(ty, types));
+            let explicit = if deletability.bindings.contains(&value.source_span()) {
+                None
+            } else {
+                binding_types
+                    .get(&value.source_span())
+                    .and_then(|ty| ty_explicit_name(ty, types))
+            };
             let message = explicit
                 .as_ref()
                 .and_then(|name| types.get(name))
@@ -256,6 +317,7 @@ fn check_stmt(
                     true,
                     binding_types,
                     comprehension_bindings,
+                    deletability,
                     types,
                 )? {
                     exits.push(exit);
@@ -268,6 +330,7 @@ fn check_stmt(
                     true,
                     binding_types,
                     comprehension_bindings,
+                    deletability,
                     types,
                 )? {
                     exits.push(exit);
@@ -285,6 +348,7 @@ fn check_stmt(
                 true,
                 binding_types,
                 comprehension_bindings,
+                deletability,
                 types,
             )? {
                 ensure_same(&env, &after)?;
@@ -296,6 +360,7 @@ fn check_stmt(
                     true,
                     binding_types,
                     comprehension_bindings,
+                    deletability,
                     types,
                 )?
             {
@@ -310,9 +375,13 @@ fn check_stmt(
             ..
         } => {
             check_expr(iter, &mut env, comprehension_bindings, types)?;
-            let explicit = binding_types
-                .get(&stmt.source_span())
-                .and_then(|ty| ty_explicit_name(ty, types));
+            let explicit = if deletability.bindings.contains(&stmt.source_span()) {
+                None
+            } else {
+                binding_types
+                    .get(&stmt.source_span())
+                    .and_then(|ty| ty_explicit_name(ty, types))
+            };
             let message = explicit
                 .as_ref()
                 .and_then(|name| types.get(name))
@@ -326,6 +395,7 @@ fn check_stmt(
                 false,
                 binding_types,
                 comprehension_bindings,
+                deletability,
                 types,
             )? {
                 after.pop_checked()?;
@@ -338,6 +408,7 @@ fn check_stmt(
                     true,
                     binding_types,
                     comprehension_bindings,
+                    deletability,
                     types,
                 )?
             {
@@ -357,6 +428,7 @@ fn check_stmt(
                 true,
                 binding_types,
                 comprehension_bindings,
+                deletability,
                 types,
             )?;
             let mut exits = Vec::new();
@@ -368,6 +440,7 @@ fn check_stmt(
                         true,
                         binding_types,
                         comprehension_bindings,
+                        deletability,
                         types,
                     )? {
                         exits.push(out);
@@ -379,14 +452,35 @@ fn check_stmt(
             if let Some((_, handler)) = except
                 && let Some(out) = check_block(
                     handler,
-                    before,
+                    before.clone(),
                     true,
                     binding_types,
                     comprehension_bindings,
+                    deletability,
                     types,
                 )?
             {
                 exits.push(out);
+            }
+            if exits.is_empty() {
+                // Every route through the try/except is terminal (return,
+                // raise, break, or continue).  There is no normal environment
+                // to join, but the finally body must still be checked.  Use the
+                // pre-try environment so its lexical scope stack remains
+                // intact; constructing Env::default() here used to lose the
+                // enclosing loop/function scopes and panic on their next pop.
+                if let Some(finalbody) = finalbody {
+                    let _ = check_block(
+                        finalbody,
+                        before,
+                        true,
+                        binding_types,
+                        comprehension_bindings,
+                        deletability,
+                        types,
+                    )?;
+                }
+                return Ok(None);
             }
             env = join(exits)?;
             if let Some(finalbody) = finalbody {
@@ -396,6 +490,7 @@ fn check_stmt(
                     true,
                     binding_types,
                     comprehension_bindings,
+                    deletability,
                     types,
                 )?
                 else {
@@ -616,7 +711,11 @@ fn check_comprehension_expr(
                         )
                     })?;
                     binding_index += 1;
-                    let explicit = ty_explicit_name(&binding.ty, types);
+                    let explicit = if binding.implicitly_deletable {
+                        None
+                    } else {
+                        ty_explicit_name(&binding.ty, types)
+                    };
                     let message = explicit
                         .as_ref()
                         .and_then(|name| types.get(name))

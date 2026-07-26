@@ -31,6 +31,19 @@ impl SliceKind {
     }
 }
 
+/// A checked type expression whose final member is selected by compile-time
+/// evaluation. Candidate types and the canonical [`CtExpr`] remain structural
+/// semantic data; no phase has to encode or recover this operation from a
+/// synthesized name.
+///
+/// The enum leaves room for future dependent projection forms without making
+/// them special cases in the nominal type namespace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DependentType {
+    /// Index a finite, already-checked sequence of types.
+    Indexed { elements: Vec<Ty>, index: CtExpr },
+}
+
 /// A type in mojito's semantic lattice. Scalars mirror `ast::Type`; `Func` is
 /// synthesized from a `def` signature or lowered from a function-type annotation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,10 +61,17 @@ pub enum Ty {
     IntLiteral,
     /// The flexible type of a float literal: coerces to `Float64`.
     FloatLiteral,
+    /// A direct initializer-inference hole written `_`. It is legal only in a
+    /// type application whose constructor participates in literal inference and
+    /// must be solved before checked HIR is produced.
+    Infer,
     /// A non-generic function. `params`/`names` describe the regular parameters;
     /// `required[i]` is true when regular parameter `i` has no default. The
     /// marker fields are indexes into this regular-parameter list.
     Func {
+        /// Checked callable-environment contract. This is semantic type
+        /// information even though the VM erases it at execution.
+        environment: crate::origin::CallableEnvironment,
         params: Vec<Ty>,
         names: Vec<String>,
         ret: Box<Ty>,
@@ -70,6 +90,7 @@ pub enum Ty {
     },
     /// A generic function synthesized from a `def` with a `[params]` list.
     GenericFunc {
+        environment: crate::origin::CallableEnvironment,
         decls: Vec<ParamDecl>,
         params: Vec<Ty>,
         names: Vec<String>,
@@ -95,6 +116,11 @@ pub enum Ty {
     Param {
         name: String,
         bounds: Vec<String>,
+        /// Anonymous callable-trait contract from a declaration such as
+        /// `F: def(T) -> T`. Unlike an ordinary trait name, the full checked
+        /// signature is needed both to validate specializations and to type
+        /// calls through `F` inside the generic body.
+        callable_bound: Option<Box<Ty>>,
     },
     /// A symbolic associated type lookup such as `C.Element` where `C` is an
     /// opaque type parameter. It may resolve to a concrete type once `C` is
@@ -103,10 +129,11 @@ pub enum Ty {
         base: Box<Ty>,
         name: String,
     },
+    /// Structured dependent type metadata. Generic declarations may retain it,
+    /// but executable uses must substitute its index to a concrete type.
+    Dependent(DependentType),
     /// `Self` inside a trait method requirement.
     SelfType,
-    /// The iterable produced by the built-in `range(...)`.
-    Range,
     /// A nominal struct type, named, with its parameter arguments.
     Struct(String, Vec<TyArg>),
     /// A SIMD vector type `SIMD[DType.<dtype>, width]`.
@@ -116,20 +143,23 @@ pub enum Ty {
     },
     /// The built-in `Error` type.
     Error,
-    /// The built-in `List[T]` collection type.
-    List(Box<Ty>),
-    /// The default type of a set display/comprehension.
-    Set(Box<Ty>),
-    /// The default type of a dictionary display/comprehension.
-    Dict(Box<Ty>, Box<Ty>),
-    /// The built-in `Tuple[T1, ..., Tn]`.
+    /// Compile-time-only list shape used while materializing `CtValue::List`.
+    /// Checked executable List values use `Struct("List", ...)`.
+    ComptimeList(Box<Ty>),
+    /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
+    /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
     Tuple(Vec<Ty>),
     /// Internal checked ABI type for a compile-time-specialized heterogeneous
     /// runtime parameter pack. Unlike a source `Tuple[...]` used as the element
     /// type of an ordinary homogeneous `*args`, each entry describes one
-    /// positional argument and the collector is represented by a native tuple.
+    /// positional argument and the collector uses private tuple-shaped storage.
     /// This type cannot be written directly in Mojo source.
     RuntimePack(Vec<Ty>),
+    /// Internal checked ABI type for an ordinary homogeneous runtime variadic.
+    /// Source `List[T]` is a nominal standard-library struct; a `*args: T`
+    /// collector is compiler storage and must therefore not masquerade as that
+    /// user-facing collection.
+    VariadicPack(Box<Ty>),
     /// The built-in tagged union `Variant[T1, ..., Tn]`.  The ordering is part
     /// of the type: it determines the runtime tag used by typed projection.
     Variant(Vec<Ty>),
@@ -144,6 +174,172 @@ pub enum Ty {
     Ref(crate::origin::RefTy),
 }
 
+pub const LIST_TYPE_NAME: &str = "List";
+pub const SET_TYPE_NAME: &str = "Set";
+pub const DICT_TYPE_NAME: &str = "Dict";
+pub const TUPLE_TYPE_NAME: &str = "Tuple";
+pub const RANGE_TYPE_NAME: &str = "Range";
+
+/// Construct a nominal standard-library type from ordinary type arguments.
+pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
+    Ty::Struct(name.into(), arguments.into_iter().map(TyArg::Ty).collect())
+}
+
+fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    // Linked stdlib declarations used module-qualified symbols historically.
+    // Accept that spelling during the representation migration; the implicit
+    // prelude canonicalizes new programs to the unqualified public identity.
+    if name != expected && !name.ends_with(&format!("${expected}")) {
+        return None;
+    }
+    arguments
+        .iter()
+        .map(|argument| match argument {
+            TyArg::Ty(ty) => Some(ty),
+            TyArg::Val(_) => None,
+        })
+        .collect()
+}
+
+pub fn list_type(element: Ty) -> Ty {
+    nominal_type(LIST_TYPE_NAME, vec![element])
+}
+
+pub fn list_element(ty: &Ty) -> Option<&Ty> {
+    let arguments = nominal_type_arguments(ty, LIST_TYPE_NAME)?;
+    let [element] = arguments.as_slice() else {
+        return None;
+    };
+    Some(*element)
+}
+
+pub fn set_type(element: Ty) -> Ty {
+    nominal_type(SET_TYPE_NAME, vec![element])
+}
+
+pub fn set_element(ty: &Ty) -> Option<&Ty> {
+    let arguments = nominal_type_arguments(ty, SET_TYPE_NAME)?;
+    let [element] = arguments.as_slice() else {
+        return None;
+    };
+    Some(*element)
+}
+
+pub fn dict_type(key: Ty, value: Ty) -> Ty {
+    nominal_type(DICT_TYPE_NAME, vec![key, value])
+}
+
+pub fn dict_elements(ty: &Ty) -> Option<(&Ty, &Ty)> {
+    let arguments = nominal_type_arguments(ty, DICT_TYPE_NAME)?;
+    let [key, value] = arguments.as_slice() else {
+        return None;
+    };
+    Some((*key, *value))
+}
+
+pub fn tuple_type(elements: Vec<Ty>) -> Ty {
+    nominal_type(TUPLE_TYPE_NAME, elements)
+}
+
+pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    // `$` cannot be written in a source identifier. Besides the ordinary and
+    // historically module-qualified public names, accept the concrete symbols
+    // emitted for variadic Tuple specializations. Their retained type arguments
+    // are semantic metadata; the symbol itself is never decoded.
+    if name != TUPLE_TYPE_NAME
+        && !name.ends_with(&format!("${TUPLE_TYPE_NAME}"))
+        && !name.starts_with(&format!("{TUPLE_TYPE_NAME}$"))
+        && !name.contains(&format!("${TUPLE_TYPE_NAME}$"))
+    {
+        return None;
+    }
+    arguments
+        .iter()
+        .map(|argument| match argument {
+            TyArg::Ty(ty) => Some(ty),
+            TyArg::Val(_) => None,
+        })
+        .collect()
+}
+
+pub fn range_type() -> Ty {
+    nominal_type(RANGE_TYPE_NAME, Vec::new())
+}
+
+pub fn is_range_type(ty: &Ty) -> bool {
+    nominal_type_arguments(ty, RANGE_TYPE_NAME).is_some_and(|arguments| arguments.is_empty())
+}
+
+#[cfg(test)]
+mod collection_representation_tests {
+    use super::*;
+
+    #[test]
+    fn public_collection_helpers_construct_only_nominal_types() {
+        let runtime_list = list_type(Ty::Int);
+        for ty in [
+            runtime_list.clone(),
+            set_type(Ty::Int),
+            dict_type(Ty::String, Ty::Int),
+            range_type(),
+        ] {
+            assert!(matches!(ty, Ty::Struct(..)), "got {ty:?}");
+        }
+        assert_ne!(runtime_list, Ty::ComptimeList(Box::new(Ty::Int)));
+        assert_eq!(
+            Ty::ComptimeList(Box::new(Ty::Int)).to_string(),
+            "<comptime-list[Int]>"
+        );
+    }
+}
+
+pub fn contains_infer(ty: &Ty) -> bool {
+    match ty {
+        Ty::Infer => true,
+        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+            TyArg::Ty(ty) => contains_infer(ty),
+            TyArg::Val(_) => false,
+        }),
+        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
+            contains_infer(element)
+        }
+        Ty::Dependent(DependentType::Indexed { elements, .. }) => {
+            elements.iter().any(contains_infer)
+        }
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            elements.iter().any(contains_infer)
+        }
+        Ty::Assoc { base, .. } => contains_infer(base),
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            ..
+        } => {
+            params.iter().any(contains_infer)
+                || contains_infer(ret)
+                || variadic.as_deref().is_some_and(contains_infer)
+                || kw_variadic.as_deref().is_some_and(contains_infer)
+        }
+        Ty::Overload(candidates) => candidates.iter().any(contains_infer),
+        _ => false,
+    }
+}
+
 /// A declared compile-time parameter of a generic `struct`/`def`, classified
 /// from `[name: X]` by whether `X` is a trait or a type.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +348,9 @@ pub enum ParamDecl {
     Type {
         name: String,
         bounds: Vec<String>,
+        /// Checked anonymous callable-trait contract, when this parameter was
+        /// declared with `F: def(...) -> ...`.
+        callable_bound: Option<Box<Ty>>,
         default: Option<Box<Ty>>,
         infer_only: bool,
         variadic: bool,
@@ -164,9 +363,31 @@ pub enum ParamDecl {
         name: String,
         ty: Box<Ty>,
         default: Option<CtExpr>,
+        /// A callable default is deliberately not a `CtValue`: captured
+        /// closures contain frame-relative runtime state and therefore cannot
+        /// be serialized into generic identity.  This symbolic plan is
+        /// evaluated in declaration order when the call frame is built.
+        callable_default: Option<CallableDefault>,
         infer_only: bool,
         variadic: bool,
         constraints: Vec<GenericConstraint>,
+    },
+}
+
+/// Symbolic default for a compile-time callable-value parameter.
+///
+/// Static functions lower to their checker-selected symbol, aliases reuse an
+/// earlier reified callable parameter, and conditional defaults select between
+/// two such plans using ordinary scalar compile-time parameters.  No variant
+/// stores a closure payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallableDefault {
+    Symbol(String),
+    Parameter(String),
+    If {
+        condition: CtExpr,
+        then_value: Box<CallableDefault>,
+        else_value: Box<CallableDefault>,
     },
 }
 
@@ -226,15 +447,18 @@ impl fmt::Display for Ty {
             Ty::Bool => write!(f, "Bool"),
             Ty::String => write!(f, "String"),
             Ty::Float64 | Ty::FloatLiteral => write!(f, "Float64"),
+            Ty::Infer => write!(f, "_"),
             Ty::None => write!(f, "None"),
             Ty::Never => write!(f, "Never"),
             Ty::Func {
+                environment,
                 params,
                 ret,
                 raises,
                 ..
             }
             | Ty::GenericFunc {
+                environment,
                 params,
                 ret,
                 raises,
@@ -248,6 +472,48 @@ impl fmt::Display for Ty {
                     write!(f, "{}", p)?;
                 }
                 write!(f, ")")?;
+                match environment {
+                    crate::origin::CallableEnvironment::Default => {}
+                    crate::origin::CallableEnvironment::Thin => write!(f, " thin")?,
+                    crate::origin::CallableEnvironment::Capturing(origins) => {
+                        write!(f, " capturing[")?;
+                        match origins {
+                            crate::origin::CaptureOriginSet::Infer => write!(f, "_")?,
+                            crate::origin::CaptureOriginSet::Param(id) => {
+                                write!(f, "origin_set#{}", id.0)?
+                            }
+                            crate::origin::CaptureOriginSet::Concrete(members) => {
+                                for (index, capture) in members.iter().enumerate() {
+                                    if index > 0 {
+                                        write!(f, ", ")?;
+                                    }
+                                    if capture.access == crate::origin::CaptureAccess::Write {
+                                        write!(f, "mut ")?;
+                                    }
+                                    match &capture.origin {
+                                        crate::origin::Origin::Param(id) => {
+                                            write!(f, "origin#{}", id.0)?
+                                        }
+                                        crate::origin::Origin::Place(place) => {
+                                            write!(f, "origin@{}", place.root.0)?
+                                        }
+                                        crate::origin::Origin::Static => write!(f, "static")?,
+                                        crate::origin::Origin::Untracked { mutable: true } => {
+                                            write!(f, "mut-untracked")?
+                                        }
+                                        crate::origin::Origin::Untracked { mutable: false } => {
+                                            write!(f, "immut-untracked")?
+                                        }
+                                        crate::origin::Origin::Union(_) => {
+                                            write!(f, "origin-union")?
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        write!(f, "]")?;
+                    }
+                }
                 if *raises {
                     write!(f, " raises")?;
                 }
@@ -265,6 +531,16 @@ impl fmt::Display for Ty {
             }
             Ty::Param { name, .. } => write!(f, "{}", name),
             Ty::Assoc { base, name } => write!(f, "{}.{}", base, name),
+            Ty::Dependent(DependentType::Indexed { elements, index }) => {
+                write!(f, "type_sequence[")?;
+                for (position, element) in elements.iter().enumerate() {
+                    if position > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{element}")?;
+                }
+                write!(f, "][{index:?}]")
+            }
             Ty::SelfType => write!(f, "Self"),
             Ty::Simd { dtype, width: 1 } => match dtype.scalar_alias() {
                 Some(alias) => write!(f, "{}", alias),
@@ -299,9 +575,7 @@ impl fmt::Display for Ty {
                 write!(f, "]")
             }
             Ty::Ref(reference) => write!(f, "ref {}", reference.referent),
-            Ty::List(elem) => write!(f, "List[{}]", elem),
-            Ty::Set(elem) => write!(f, "Set[{}]", elem),
-            Ty::Dict(key, value) => write!(f, "Dict[{}, {}]", key, value),
+            Ty::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
             Ty::Tuple(elems) => {
                 write!(f, "Tuple[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -322,6 +596,7 @@ impl fmt::Display for Ty {
                 }
                 write!(f, "]")
             }
+            Ty::VariadicPack(element) => write!(f, "$variadic[{element}]"),
             Ty::Variant(alternatives) => {
                 write!(f, "Variant[")?;
                 for (i, ty) in alternatives.iter().enumerate() {
@@ -332,7 +607,6 @@ impl fmt::Display for Ty {
                 }
                 write!(f, "]")
             }
-            Ty::Range => write!(f, "range"),
             Ty::Struct(name, args) => {
                 write!(f, "{}", name)?;
                 if !args.is_empty() {

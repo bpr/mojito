@@ -35,22 +35,8 @@ fn nav_step<'a>(
             ))),
         },
         Proj::Index(reg) => {
-            if let Value::Dict(entries) = slot {
-                let key = &regs[reg.0 as usize];
-                return entries
-                    .iter_mut()
-                    .find(|(candidate, _)| candidate == key)
-                    .map(|(_, value)| value)
-                    .ok_or_else(|| {
-                        RuntimeError::TypeError("dictionary key not found".to_string())
-                    });
-            }
             let idx = value_as_index(&regs[reg.0 as usize])?;
             match slot {
-                Value::List(items) => {
-                    let i = crate::runtime::bounds_check(idx, items.len(), "list index")?;
-                    Ok(&mut items[i])
-                }
                 Value::Tuple(items) => {
                     let i = crate::runtime::bounds_check(idx, items.len(), "tuple index")?;
                     Ok(&mut items[i])
@@ -61,6 +47,15 @@ fn nav_step<'a>(
                 ))),
             }
         }
+        Proj::ConstIndex(index) => match slot {
+            Value::Tuple(items) => items
+                .get_mut(*index)
+                .ok_or_else(|| RuntimeError::TypeError("tuple index out of bounds".to_string())),
+            other => Err(RuntimeError::TypeError(format!(
+                "cannot apply a constant Tuple projection to {}",
+                crate::runtime::type_name(other)
+            ))),
+        },
         Proj::Variant(expected) => match slot {
             Value::Variant {
                 alternatives,
@@ -90,9 +85,10 @@ fn nav_step<'a>(
 }
 
 /// Navigate a [`MirPlace`] to a mutable slot: the root variable followed by field
-/// and index projections. Used for method write-back and `MovePlace` (a pure
-/// field chain). A SIMD lane isn't a `Value` slot; use `store_place`/`load_place`
-/// for a place that may end in a lane.
+/// and index projections. Used for method write-back and `MovePlace` (a field
+/// chain or statically selected compiler-private Tuple element). A SIMD lane
+/// isn't a `Value` slot; use `store_place`/`load_place` for a place that may end
+/// in a lane.
 pub(super) fn nav_mut<'a>(
     vars: &'a mut [Value],
     regs: &[Value],
@@ -129,19 +125,6 @@ pub(super) fn store_place(
             {
                 let idx = value_as_index(&regs[ireg.0 as usize])?;
                 return crate::runtime::set_simd_lane(*dtype, lanes, idx, value);
-            }
-            if let Proj::Index(ireg) = last
-                && let Value::Dict(entries) = slot
-            {
-                let key = regs[ireg.0 as usize].clone();
-                if let Some((_, existing)) =
-                    entries.iter_mut().find(|(candidate, _)| *candidate == key)
-                {
-                    *existing = value;
-                } else {
-                    entries.push((key, value));
-                }
-                return Ok(());
             }
             *nav_step(slot, last, regs)? = value;
             Ok(())

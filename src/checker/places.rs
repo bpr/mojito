@@ -5,7 +5,7 @@ use super::*;
 pub(super) fn parameter_is_writable(convention: Option<ArgConvention>) -> bool {
     matches!(
         convention,
-        Some(ArgConvention::Mut | ArgConvention::Ref | ArgConvention::Out)
+        Some(ArgConvention::Mut | ArgConvention::Out | ArgConvention::Var | ArgConvention::Deinit)
     )
 }
 
@@ -30,15 +30,16 @@ pub(super) fn is_place_expr(e: &Expr) -> bool {
 /// The root variable of a place expression (`p` for `p`, `p.a.b`, `p.items[i]`),
 /// or `None` if the expression isn't rooted at a variable. A `mut`/shared borrow of
 /// a place borrows its root, so the borrow checker keys on this.
-/// Mojo's borrow rule (mutable-XOR-shared), checked per call and **place-sensitive**
+/// Mojo's within-call mutable-XOR-shared rule is **place-sensitive**
 /// (field-aware). An argument accesses its place either **exclusively** (a
-/// `mut`/`ref` borrow, or a `^` move) or **shared** (a plain `read`/default borrow).
+/// `mut`/effectively mutable `ref` borrow, or a `^` move) or **shared** (an
+/// immutable/default borrow).
 /// Any number of shared accesses to overlapping places is fine, but an exclusive
 /// access requires no *overlapping* place elsewhere in the call — so `f(mut a, a)`,
 /// `f(mut a, mut a)`, `f(a, a^)`, and `f(mut p, p.a)` are rejected, while
 /// `f(mut p.a, mut p.b)` (disjoint fields) is allowed. mojito's borrows are
-/// call-scoped (no references persist in variables), so this per-call check is
-/// complete — no cross-block loan dataflow is needed.
+/// also checked by persistent cross-block loan dataflow; this routine handles
+/// conflicts among actuals evaluated at one call site.
 pub(super) fn check_call_aliasing(
     slots: &[ArgSlot],
     conventions: &[Option<ArgConvention>],
@@ -88,6 +89,54 @@ pub(super) fn check_call_aliasing(
                     var: ra.to_string(),
                 });
             }
+        }
+    }
+    Ok(())
+}
+
+/// Extend the within-call alias check to a method receiver. A mutable or
+/// mutability-preserving reference receiver participates in the same exclusive
+/// access set as `mut`/`ref` arguments; otherwise `value[value.field]` could
+/// smuggle an overlapping mutable argument through subscript syntax even though
+/// the equivalent ordinary method call is exclusive on `self`.
+pub(super) fn check_receiver_aliasing(
+    receiver: &Expr,
+    receiver_convention: Option<ArgConvention>,
+    slots: &[ArgSlot],
+    copied_reads: &[bool],
+    args: &[Expr],
+    kwargs: &[crate::ast::KwArg],
+) -> Result<(), TypeError> {
+    if !matches!(
+        receiver_convention,
+        Some(ArgConvention::Mut | ArgConvention::Ref)
+    ) {
+        return Ok(());
+    }
+    let Some((receiver_root, receiver_path)) = place_path(receiver) else {
+        return Ok(());
+    };
+    for (index, slot) in slots.iter().enumerate() {
+        let argument = match slot {
+            ArgSlot::Positional(position) => &args[*position],
+            ArgSlot::Keyword(position) => &kwargs[*position].value,
+            ArgSlot::Default => continue,
+        };
+        let place = match &argument.kind {
+            ExprKind::Transfer(inner) => place_path(inner),
+            _ => place_path(argument),
+        };
+        let Some((argument_root, argument_path)) = place else {
+            continue;
+        };
+        let argument_is_copied = copied_reads.get(index).copied().unwrap_or(false);
+        if receiver_root == argument_root
+            && !argument_is_copied
+            && places_overlap(&receiver_path, &argument_path)
+        {
+            return Err(TypeError::AliasingViolation {
+                var: receiver_root.to_string(),
+            });
         }
     }
     Ok(())

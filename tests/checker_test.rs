@@ -1,4 +1,4 @@
-use mojito::{Lexer, Parser, TypeError, check};
+use mojito::{Lexer, Parser, SemanticAdjustment, TypeError, check, check_program, parse};
 
 /// Parse `source` and run the type checker, returning its result.
 fn check_source(source: &str) -> Result<(), TypeError> {
@@ -56,6 +56,208 @@ fn accepts_recursion() {
 fn accepts_lexical_capture_downward_funarg() {
     ok(
         "def adder(n: Int) -> Int:\n    def add_n(x: Int) unified {n} -> Int:\n        return x + n\n    return add_n(100)\n\nvar c: Int = adder(42)\n",
+    );
+}
+
+#[test]
+fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities() {
+    let source = "def main():\n    var values = [40]\n    var marker = 1\n    if True:\n        def choose() -> Int:\n            return 1\n        print(choose())\n    if True:\n        def choose() -> Int:\n            return 42\n        print(choose())\n    def inspect() {var marker}:\n        pass\n    def take() {var values^}:\n        pass\n";
+    let program = parse(source).expect("parse");
+    let checked = check_program(&program).expect("check");
+
+    let choices: Vec<_> = checked
+        .declarations()
+        .iter()
+        .filter(|declaration| declaration.name == "choose")
+        .collect();
+    assert_eq!(choices.len(), 2);
+    assert_ne!(choices[0].id, choices[1].id);
+    assert_ne!(choices[0].binding, choices[1].binding);
+
+    let call_bindings: Vec<_> = checked
+        .expressions()
+        .iter()
+        .filter_map(|expression| match &expression.syntax.kind {
+            mojito::ast::ExprKind::Call { name, .. } if name == "choose" => expression.binding,
+            _ => None,
+        })
+        .collect();
+    assert_eq!(call_bindings.len(), 2);
+    assert_ne!(call_bindings[0], call_bindings[1]);
+
+    let values = checked
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.name == "values")
+        .and_then(|declaration| declaration.binding)
+        .expect("values binding");
+    let take = checked
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.name == "take")
+        .expect("take declaration");
+    assert!(matches!(
+        take.captures.as_slice(),
+        [capture]
+            if capture.binding == values
+                && capture.kind == mojito::ast::CaptureKind::Move
+    ));
+    assert_eq!(
+        take.captures[0].ty,
+        mojito::types::list_type(mojito::Ty::Int)
+    );
+    let marker = checked
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.name == "marker")
+        .and_then(|declaration| declaration.binding)
+        .expect("marker binding");
+    let inspect = checked
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.name == "inspect")
+        .expect("inspect declaration");
+    assert!(matches!(
+        inspect.captures.as_slice(),
+        [capture]
+            if capture.binding == marker
+                && capture.kind == mojito::ast::CaptureKind::Copy
+    ));
+    assert_eq!(inspect.captures[0].ty, mojito::Ty::Int);
+}
+
+#[test]
+fn checked_boundary_rekeys_cloned_source_provenance_by_occurrence() {
+    let source = "def outer[n: Int]():\n    comptime for value in (1, True):\n        if True:\n            var x = value\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer[0]()\n";
+    let parsed = parse(source).expect("parse");
+    let elaborated = mojito::elaborate(parsed).expect("elaborate");
+    let checked = check_program(&elaborated).expect("check");
+    let xs: Vec<_> = checked
+        .declarations()
+        .iter()
+        .filter(|declaration| declaration.name == "x")
+        .collect();
+    assert_eq!(xs.len(), 2);
+    assert!(xs[0].location.same_provenance(&xs[1].location));
+    assert_ne!(xs[0].location.syntax, xs[1].location.syntax);
+
+    for expression in checked.expressions() {
+        assert_eq!(
+            checked.expression_ids_at(&expression.syntax.source_span()),
+            &[expression.id],
+            "one checked syntax occurrence must resolve to exactly one node"
+        );
+    }
+}
+
+#[test]
+fn occurrence_keys_preserve_public_lookup_from_unique_input_syntax() {
+    let program = parse(
+        "def pick(value: Int) -> Int:\n    return value\ndef pick(value: String) -> String:\n    return value\ndef main():\n    print(pick(1))\n",
+    )
+    .expect("parse");
+    let call = match &program[2].kind {
+        mojito::ast::StmtKind::Def { body, .. } => match &body[0].kind {
+            mojito::ast::StmtKind::Expr(expression) => match &expression.kind {
+                mojito::ast::ExprKind::Call { args, .. } => &args[0],
+                _ => panic!("expected print call"),
+            },
+            _ => panic!("expected expression statement"),
+        },
+        _ => panic!("expected main"),
+    };
+    let checked = check_program(&program).expect("check");
+    assert_eq!(
+        checked.overload_targets().get(&call.source_span()),
+        Some(&"pick$ov$Int".to_string())
+    );
+}
+
+#[test]
+fn copied_capture_requires_implicit_copy_capability() {
+    let explicit = err(
+        "@fieldwise_init\nstruct Item:\n    var value: Int\n\ndef main():\n    var item = Item(42)\n    def read() {var item} -> Int:\n        return item.value\n    print(read())\n",
+    );
+    assert!(matches!(
+        explicit,
+        TypeError::TraitNotSatisfied { trait_name, .. }
+            if trait_name == "ImplicitlyCopyable"
+    ));
+
+    let defaulted = err(
+        "@fieldwise_init\nstruct Item:\n    var value: Int\n\ndef main():\n    var item = Item(42)\n    def read() {var} -> Int:\n        return item.value\n    print(read())\n",
+    );
+    assert!(matches!(
+        defaulted,
+        TypeError::TraitNotSatisfied { trait_name, .. }
+            if trait_name == "ImplicitlyCopyable"
+    ));
+}
+
+#[test]
+fn nominal_callable_rejects_a_value_result_for_a_reference_result_contract() {
+    let error = err(
+        "struct Bad(def[origin: Origin[mut=True]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[origin: Origin[mut=True]](self, ref[origin] value: Int, /) capturing -> Int:\n        return value\n",
+    );
+    assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
+}
+
+#[test]
+fn nominal_callable_selects_the_contract_matching_same_arity_overload() {
+    let source = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef main():\n    print(Choose()(41))\n    print(invoke(Choose()))\n";
+    let program = mojito::parse(source).expect("parse overloaded nominal callable");
+    let checked = mojito::check_program(&program).expect("check overloaded nominal callable");
+    assert!(
+        checked
+            .overload_targets()
+            .values()
+            .any(|target| target == "Choose.__call__$ov$Int"),
+        "the concrete callable target must retain the selected Int overload"
+    );
+    assert!(
+        checked
+            .overload_targets()
+            .values()
+            .any(|target| target == "__trait_dispatch.__call__$ov$Int"),
+        "the def-typed parameter call must retain its contract signature"
+    );
+}
+
+#[test]
+fn nominal_callable_rejects_when_no_same_arity_overload_matches_the_contract() {
+    let error = err(
+        "struct Bad(def(String) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value\n",
+    );
+    assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
+}
+
+#[test]
+fn nominal_callable_rejects_a_reference_result_from_the_wrong_parameter() {
+    let error = err(
+        "struct Bad(def[left: Origin[mut=True], right: Origin[mut=True]](ref[left] Int, ref[right] Int) -> ref[left] Int):\n    def __call__[left: Origin[mut=True], right: Origin[mut=True]](self, ref[left] first: Int, ref[right] second: Int, /) capturing -> ref[right] Int:\n        return second\n",
+    );
+    assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
+}
+
+#[test]
+fn nominal_callable_accepts_alpha_equivalent_mutability_binders() {
+    ok(
+        "struct Good(def[is_mutable: Bool, origin: Origin[mut=is_mutable]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[mutable: Bool, other: Origin[mut=mutable]](self, ref[other] value: Int, /) capturing -> ref[other] Int:\n        return value\n",
+    );
+}
+
+#[test]
+fn nominal_callable_rejects_a_reference_mutability_mismatch() {
+    let error = err(
+        "struct Bad(def[origin: Origin[mut=True]](ref[origin] Int) -> None):\n    def __call__[origin: Origin[mut=False]](self, ref[origin] value: Int, /) capturing:\n        print(value)\n",
+    );
+    assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
+}
+
+#[test]
+fn nominal_callable_origin_unions_ignore_projected_member_order() {
+    ok(
+        "@fieldwise_init\nstruct Pair:\n    var left: Int\n    var right: Int\n\nstruct Good(def(ref[origin_of(first.left)] first: Pair, ref[origin_of(second.left)] second: Pair) -> ref[origin_of(first.left), origin_of(second.left)] Int):\n    def __call__(self, ref[origin_of(a.left)] a: Pair, ref[origin_of(b.left)] b: Pair, /) capturing -> ref[origin_of(b.left), origin_of(a.left)] Int:\n        return a.left\n",
     );
 }
 
@@ -498,7 +700,7 @@ fn rejects_for_over_non_range() {
         } => {
             assert_eq!(
                 expected,
-                "range, a builtin collection, or a type with borrowed __iter__"
+                "a nominal collection or a type with borrowed __iter__"
             );
             assert_eq!(found, "Int");
         }
@@ -1496,6 +1698,25 @@ fn infers_list_element_type_with_widening() {
 }
 
 #[test]
+fn collection_literal_annotations_solve_only_direct_type_holes() {
+    ok(
+        "var inferred_list: List[_] = [1, 2]\nvar bare_list: List = [3, 4]\nvar inferred_set: Set[_] = {1, 2}\nvar inferred_dict: Dict[_, _] = {\"one\": 1}\nvar value_hole: Dict[String, _] = {\"two\": 2}\n",
+    );
+
+    assert!(matches!(
+        err("var empty: List[_] = []\n"),
+        TypeError::CannotInferTypeParam { .. }
+    ));
+    let nested = err("var nested: List[List[_]] = [[1, 2]]\n");
+    assert!(
+        nested.to_string().contains("Infer")
+            || nested.to_string().contains("concrete")
+            || nested.to_string().contains("_"),
+        "got {nested:?}"
+    );
+}
+
+#[test]
 fn accepts_len_index_and_iteration() {
     ok(
         "var xs: List[Int] = [10, 20, 30]\nvar n: Int = len(xs)\nvar first: Int = xs[0]\nvar sum: Int = 0\nfor x in xs:\n    sum = sum + x\n",
@@ -1856,13 +2077,8 @@ fn rejects_inferred_var_of_a_closure() {
 }
 
 #[test]
-fn rejects_inferred_var_of_range() {
-    let e = err("var r = range(5)\n");
-    assert!(
-        matches!(&e, TypeError::TypeMismatch { found, .. } if found == "range"),
-        "got {:?}",
-        e
-    );
+fn accepts_inferred_nominal_range() {
+    ok("var r = range(5)\nvar n: Int = len(r)\n");
 }
 
 // --- Tuples ---
@@ -1896,6 +2112,61 @@ fn accepts_tuple_constructors_and_structural_operations() {
     ok(
         "var pair = Tuple(1, \"one\")\nvar reversed: Tuple[String, Int] = pair.reverse()\nvar joined: Tuple[Int, String, Bool] = pair.concat(Tuple(True))\n",
     );
+}
+
+#[test]
+fn consuming_tuple_transforms_copy_only_implicitly_copyable_places() {
+    ok(
+        "def main():\n    var pair = Tuple(1, 2)\n    var suffix = Tuple(3)\n    var reversed = pair.reverse()\n    var joined = pair.concat(suffix)\n    print(pair, suffix, reversed, joined)\n",
+    );
+
+    let source = "@fieldwise_init\nstruct Token(Movable, ImplicitlyDeletable):\n    var id: Int\n\ndef main():\n    var pair = Tuple(Token(1), Token(2))\n    var reversed = pair.reverse()\n    print(reversed[0].id)\n";
+    assert!(matches!(err(source), TypeError::NonCopyable { .. }));
+
+    ok(
+        "@fieldwise_init\nstruct Token(Movable, ImplicitlyDeletable):\n    var id: Int\n\ndef main():\n    var pair = Tuple(Token(1), Token(2))\n    var reversed = pair^.reverse()\n    print(reversed[0].id)\n",
+    );
+}
+
+#[test]
+fn public_tuple_structurally_satisfies_comparable_during_discovery() {
+    ok(
+        "def ordered[T: Comparable](left: T, right: T) -> Bool:\n    return left < right\n\ndef main():\n    print(ordered(Tuple(1, 2), Tuple(1, 3)))\n",
+    );
+}
+
+#[test]
+fn checked_calls_mark_ordinary_and_parameterized_implicit_receiver_copies() {
+    let source = "@fieldwise_init\nstruct Counter(ImplicitlyCopyable):\n    var value: Int\n    def take(deinit self) -> Int:\n        return self.value\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter.take())\n    print(counter.take_param[2]())\n    print(counter.value)\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let copied_calls = checked
+        .expressions()
+        .iter()
+        .filter(|expression| {
+            expression.adjustments.iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    SemanticAdjustment::ImplicitlyCopyConsumingReceiver
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(copied_calls.len(), 2, "{copied_calls:#?}");
+    assert!(copied_calls.iter().any(|expression| {
+        matches!(
+            expression.syntax.kind,
+            mojito::ast::ExprKind::MethodCall { .. }
+        )
+    }));
+    assert!(copied_calls.iter().any(|expression| {
+        matches!(expression.syntax.kind, mojito::ast::ExprKind::Invoke { .. })
+            && expression.adjustments.iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    SemanticAdjustment::ParameterizedMethodCall { .. }
+                )
+            })
+    }));
 }
 
 #[test]
@@ -1952,7 +2223,14 @@ fn rejects_out_of_range_tuple_index() {
 fn rejects_tuple_element_write() {
     // Tuples are immutable — no element assignment.
     let e = err("var t: Tuple[Int, Int] = (1, 2)\nt[0] = 9\n");
-    assert!(matches!(e, TypeError::NotIndexable(_)), "got {:?}", e);
+    assert!(
+        matches!(
+            e,
+            TypeError::NotIndexable(_) | TypeError::InvalidAssignTarget(_)
+        ),
+        "got {:?}",
+        e
+    );
 }
 
 // --- Function-argument forms ---
@@ -2500,9 +2778,142 @@ fn checks_callable_parameters_and_indirect_invocation() {
 }
 
 #[test]
+fn callable_type_bounds_are_dependent_nominal_and_directional() {
+    ok(
+        "def apply[T: Copyable & ImplicitlyDeletable, F: def(T) -> T](callback: F, value: T) -> T:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(apply(increment, 41))\n",
+    );
+    ok(
+        "@fieldwise_init\nstruct Add(def(Int) -> Int):\n    var delta: Int\n    def __call__(self, value: Int) -> Int:\n        return value + self.delta\n\ndef apply[F: def(Int) -> Int](callback: F, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(apply(Add(1), 41))\n",
+    );
+    // A read-only implementation demands less access than the mutable bound
+    // promises to provide, and a non-raising implementation satisfies a raising
+    // bound.
+    ok(
+        "def inspect(value: Int):\n    pass\n\ndef apply[F: def(mut Int) raises -> None](callback: F, mut value: Int) raises:\n    callback(value)\n\ndef main() raises:\n    var value = 1\n    apply(inspect, value)\n",
+    );
+}
+
+#[test]
+fn generic_anonymous_callable_bounds_are_alpha_equivalent_and_invokable() {
+    ok(
+        "def identity[U: ImplicitlyCopyable & ImplicitlyDeletable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",
+    );
+}
+
+#[test]
+fn generic_anonymous_callable_contracts_preserve_binder_shape_and_bounds() {
+    let wrong_bounds = err(
+        "def identity[U: ImplicitlyCopyable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",
+    );
+    assert!(matches!(wrong_bounds, TypeError::TraitNotSatisfied { .. }));
+
+    let wrong_arity = err(
+        "def first[U: ImplicitlyCopyable & ImplicitlyDeletable](left: U, right: U) -> U:\n    return left\n\ndef apply[F: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(first))\n",
+    );
+    assert!(matches!(wrong_arity, TypeError::TraitNotSatisfied { .. }));
+}
+
+#[test]
+fn rejects_parametric_function_types_as_runtime_parameter_annotations() {
+    let error = err(
+        "def consume(callback: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T):\n    pass\n",
+    );
+    assert!(matches!(
+        error,
+        TypeError::Unsupported(ref feature)
+            if feature.contains("runtime parameter cannot use a parametric function type")
+    ));
+}
+
+#[test]
+fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effects() {
+    let structural = err(
+        "@fieldwise_init\nstruct Structural:\n    def __call__(self, value: Int) -> Int:\n        return value\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(Structural()))\n",
+    );
+    assert!(matches!(structural, TypeError::TraitNotSatisfied { .. }));
+
+    let raising = err(
+        "def fail(value: Int) raises -> Int:\n    raise Error(\"failure\")\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(fail))\n",
+    );
+    assert!(matches!(raising, TypeError::TraitNotSatisfied { .. }));
+
+    let mutable = err(
+        "def change(mut value: Int):\n    value += 1\n\ndef apply[F: def(Int) -> None](callback: F, value: Int):\n    callback(value)\n\ndef main():\n    apply(change, 1)\n",
+    );
+    assert!(matches!(mutable, TypeError::TraitNotSatisfied { .. }));
+
+    let generic = err(
+        "def identity[T: Copyable & ImplicitlyDeletable](value: T) -> T:\n    return value\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(identity))\n",
+    );
+    assert!(matches!(generic, TypeError::TraitNotSatisfied { .. }));
+
+    let overloaded = err(
+        "def choose(value: Int) -> Int:\n    return value\n\ndef choose(value: String) -> Int:\n    return len(value)\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(choose))\n",
+    );
+    assert!(matches!(overloaded, TypeError::TraitNotSatisfied { .. }));
+}
+
+#[test]
 fn contextually_instantiates_a_generic_callable_value() {
     ok(
         "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) -> Int = identity\n    print(callback(42))\n",
+    );
+}
+
+#[test]
+fn explicitly_specializes_callable_origin_values() {
+    let declaration = "def borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\n";
+    ok(&format!(
+        "{declaration}def main():\n    var value = 40\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += 2\n"
+    ));
+
+    let error = err(&format!(
+        "{declaration}def main():\n    var value = 40\n    var other = 2\n    var function = borrow[origin_of(value)]\n    ref result = function(other)\n"
+    ));
+    assert!(
+        matches!(error, TypeError::TypeMismatch { ref context, .. }
+            if context == "call through an origin-specialized function value"),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn explicitly_specializes_nested_callable_origin_values() {
+    ok(include_str!(
+        "../conformance/fixtures/nested_origin_specialized_function_value.mojo"
+    ));
+    ok(
+        "def main():\n    var marker = 2\n    var value = 40\n    def borrow[origin: Origin[mut=True]](ref[origin] item: Int) {imm marker} -> ref[origin] Int:\n        print(marker)\n        return item\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += marker\n",
+    );
+}
+
+#[test]
+fn explicit_origins_participate_in_overload_and_generic_candidate_selection() {
+    ok(
+        "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = choose[origin_of(value)](value)\n    selected += 2\n",
+    );
+    ok(
+        "def borrow[T: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[Int, origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n",
+    );
+    ok(
+        "def borrow[T: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = borrow[origin=origin_of(value)](value)\n    selected += 2\n",
+    );
+}
+
+#[test]
+fn contextual_type_selects_an_origin_specialized_overload_value() {
+    let declarations = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\n";
+    ok(&format!(
+        "{declarations}def main():\n    var value = 40\n    var function: def(ref[origin_of(value)] Int) thin -> ref[origin_of(value)] Int = choose[origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n"
+    ));
+
+    let error = err(&format!(
+        "{declarations}def main():\n    var value = 40\n    var function = choose[origin_of(value)]\n"
+    ));
+    assert!(
+        matches!(error, TypeError::BadCall { ref reason, .. }
+            if reason.contains("contextual callable type")),
+        "got {error:?}"
     );
 }
 
@@ -2553,6 +2964,28 @@ fn nightly_implicit_deletion_controls_linearity_independently_of_the_decorator()
 }
 
 #[test]
+fn conditional_deletability_is_retained_at_checked_binding_sites() {
+    let conditional = "@explicit_destroy(\"close Box\")\nstruct Box[T: Movable](\n    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable)\n):\n    var value: Self.T\n    def __init__(out self, value: Self.T):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
+
+    // A positive `where` fact applies to both the consuming parameter and the
+    // local that receives it. The explicit-destroy pass must consume the exact
+    // checked-site facts rather than reclassifying the nominal `Box[T]` later.
+    ok(&format!(
+        "{conditional}def consume[T: Movable](var incoming: Box[T]) where conforms_to(T, ImplicitlyDeletable):\n    var local = incoming^\n\nstruct Owner[T: Movable]:\n    def consume(self, var incoming: Box[Self.T]) where conforms_to(Self.T, ImplicitlyDeletable):\n        var local = incoming^\n"
+    ));
+
+    // Without the positive constraint a generic `Box[T]` remains linear. This
+    // guards against accidentally making the nominal type globally deletable.
+    let error = err(&format!(
+        "{conditional}def abandon[T: Movable](var incoming: Box[T]):\n    var local = incoming^\n"
+    ));
+    assert!(
+        matches!(error, TypeError::ExplicitDestroy { ref var, .. } if var == "local"),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn explicit_destroy_requires_a_diagnostic_message() {
     assert!(matches!(
         err("@explicit_destroy\nstruct Resource:\n    pass\n"),
@@ -2562,16 +2995,23 @@ fn explicit_destroy_requires_a_diagnostic_message() {
 }
 
 #[test]
-fn named_out_result_and_ref_self_are_accepted() {
-    // A named `out` result is caller-transparent; `ref self` is a writable,
-    // caller-place-backed receiver with checked reference semantics.
+fn named_out_result_mut_self_and_parametric_ref_self_are_checked() {
+    // A named `out` result is caller-transparent. `mut self` is writable;
+    // bare `ref self` propagates caller mutability but cannot assume it while
+    // checking the unspecialized method body.
     assert!(check_source("def f(out a: Int):\n    a = 1\n").is_ok());
     assert!(
         check_source(
-            "@fieldwise_init\nstruct R:\n    var x: Int\n    def m(ref self):\n        self.x = 2\n"
+            "@fieldwise_init\nstruct R:\n    var x: Int\n    def m(mut self):\n        self.x = 2\n    def get(ref self) -> Int:\n        return self.x\n"
         )
         .is_ok()
     );
+    assert!(matches!(
+        check_source(
+            "@fieldwise_init\nstruct R:\n    var x: Int\n    def m(ref self):\n        self.x = 2\n"
+        ),
+        Err(TypeError::ImmutableSelf)
+    ));
 }
 
 #[test]
@@ -2656,6 +3096,24 @@ fn checks_reference_aggregate_permissions_initialization_and_escape() {
         "@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Int]\n\ndef main():\n    var left = 1\n    var right = 2\n    ref a = left\n    ref b = right\n    var pair = RefList([a, b])\n    pair.values[1] += 1\n    print(right)\n"
     )
     .is_ok());
+}
+
+#[test]
+fn handwritten_reference_constructor_borrows_a_noncopyable_actual() {
+    assert!(check_source(
+        "struct Item:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Item\n    def __init__(out self, ref[origin] value: Item):\n        self.value = value\n\ndef main():\n    var item = Item(1)\n    var box = RefBox(item)\n    print(box.value.value)\n"
+    )
+    .is_ok());
+}
+
+#[test]
+fn immutable_returned_reference_cannot_escalate_to_mutable() {
+    assert!(matches!(
+        check_source(
+            "def borrow[origin: Origin[mut=False]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef alter[origin: Origin[mut=True]](ref[origin] value: Int):\n    value = 2\n\ndef main():\n    var value = 1\n    ref alias = borrow(value)\n    alter(alias)\n"
+        ),
+        Err(TypeError::ImmutableBinding(_))
+    ));
 }
 
 #[test]
@@ -2810,6 +3268,24 @@ fn structs_are_non_copyable_by_default() {
         check_source("def main():\n    var a: Int = 1\n    var b: Int = a\n    print(a + b)\n")
             .is_ok()
     );
+}
+
+#[test]
+fn ordinary_reference_result_reads_require_copyable_referents() {
+    let declarations = "@fieldwise_init\nstruct Token:\n    var value: Int\n    def __del__(deinit self):\n        pass\n\n@fieldwise_init\nstruct Holder:\n    var token: Token\n    def get(ref self) -> ref[origin_of(self.token)] Token:\n        return self.token\n\n";
+
+    assert!(matches!(
+        check_source(&format!(
+            "{declarations}def main():\n    var holder = Holder(Token(1))\n    var duplicate = holder.get()\n"
+        )),
+        Err(TypeError::NonCopyable { ty, context })
+            if ty == "Token" && context.contains("reference result")
+    ));
+
+    assert!(check_source(&format!(
+        "{declarations}def main():\n    var holder = Holder(Token(1))\n    ref alias = holder.get()\n    print(alias.value)\n"
+    ))
+    .is_ok());
 }
 
 #[test]
@@ -3007,11 +3483,303 @@ fn setitem_dunder_typing_and_errors() {
     let e = err(
         "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        self.a = value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = \"wrong\"\n",
     );
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    assert!(
+        matches!(
+            e,
+            TypeError::TypeMismatch { .. } | TypeError::BadCall { .. }
+        ),
+        "got {e:?}"
+    );
     let e = err(
         "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __setitem__(self, row: Int, columns: Slice, value: Int):\n        pass\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n",
     );
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+
+    // Generic setter parameters are inferred from the implicit assignment RHS.
+    ok(
+        "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __setitem__[T: Copyable & ImplicitlyDeletable](mut self, index: Int, value: T):\n        self.value = index\n\ndef main():\n    var sink = Sink(0)\n    sink[42] = True\n",
+    );
+}
+
+#[test]
+fn slice_literals_do_not_use_user_implicit_conversions() {
+    ok(include_str!(
+        "../conformance/fixtures/index_implicit_conversion.mojo"
+    ));
+    let source = include_str!("../conformance/fixtures/slice_implicit_conversion_rejected.mojo");
+    assert!(matches!(
+        err(source),
+        TypeError::BadCall { .. } | TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn setitem_assignment_scores_positional_and_keyword_rhs_shapes_together() {
+    // Mojito extension over the pinned nightly, which currently rejects this
+    // focused positional-only/keyword-only setter-overload pair.
+    let source = include_str!("../conformance/fixtures/setter_overload_extension.mojo");
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let contracts = checked
+        .expressions()
+        .iter()
+        .filter(|expression| matches!(expression.syntax.kind, mojito::ast::ExprKind::Index { .. }))
+        .filter_map(|expression| {
+            expression
+                .adjustments
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    SemanticAdjustment::SelectedCall(contract) => Some(contract),
+                    _ => None,
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(contracts.len(), 2);
+    assert!(contracts.iter().any(|contract| {
+        contract.arguments.iter().any(|argument| {
+            argument.source == mojito::checked::CheckedCallArgumentSource::Keyword(0)
+                && argument.parameter_ty == mojito::Ty::Bool
+        })
+    }));
+    assert!(contracts.iter().any(|contract| {
+        contract.arguments.iter().any(|argument| {
+            argument.source == mojito::checked::CheckedCallArgumentSource::Positional(1)
+                && argument.parameter_ty == mojito::Ty::Int
+        })
+    }));
+
+    assert!(matches!(
+        err(
+            "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __setitem__(mut self, index: Int, value: Int, /):\n        self.value = value\n    def __setitem__(mut self, index: Int, *, value: Bool):\n        pass\n\ndef main():\n    var sink = Sink(0)\n    sink[1] = \"wrong\"\n"
+        ),
+        TypeError::BadCall { .. }
+    ));
+}
+
+#[test]
+fn augmented_subscript_retains_distinct_getter_and_setter_contracts() {
+    let source = include_str!("../conformance/fixtures/augmented_subscript_contract.mojo");
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let expression = checked
+        .expressions()
+        .iter()
+        .find(|expression| {
+            expression
+                .adjustments
+                .iter()
+                .any(|adjustment| matches!(adjustment, SemanticAdjustment::AugmentedSubscript(_)))
+        })
+        .expect("augmented subscript checked node");
+    let pair = expression
+        .adjustments
+        .iter()
+        .find_map(|adjustment| match adjustment {
+            SemanticAdjustment::AugmentedSubscript(pair) => Some(pair),
+            _ => None,
+        })
+        .expect("augmented pair");
+    assert!(pair.getter.target.starts_with("Counter.__getitem__"));
+    assert!(
+        pair.setter
+            .as_ref()
+            .is_some_and(|setter| setter.target.starts_with("Counter.__setitem__"))
+    );
+    assert_eq!(pair.operand_ty, mojito::Ty::Int);
+    assert_eq!(pair.result_ty, mojito::Ty::Int);
+    assert!(expression.adjustments.iter().any(|adjustment| {
+        matches!(
+            adjustment,
+            SemanticAdjustment::SelectedCall(contract)
+                if contract.target.starts_with("Counter.__setitem__")
+        )
+    }));
+}
+
+#[test]
+fn augmented_subscript_freezes_distinct_getter_and_setter_value_adjustments() {
+    use mojito::checked::CheckedCallValueAdjustment;
+
+    let source = "struct Wrapped(Copyable, Movable):\n    var value: Int\n    @implicit\n    def __init__(out self, value: Int):\n        self.value = value\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(self, index: Wrapped) -> Int:\n        return self.value + index.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\ndef index() -> Int:\n    return 2\n\ndef main():\n    var box = Box(1)\n    box[index()] += 3\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let pair = checked
+        .expressions()
+        .iter()
+        .flat_map(|expression| &expression.adjustments)
+        .find_map(|adjustment| match adjustment {
+            SemanticAdjustment::AugmentedSubscript(pair) => Some(pair),
+            _ => None,
+        })
+        .expect("augmented pair");
+    let getter_index = &pair.getter.boundary.arguments[0];
+    assert!(
+        matches!(
+        getter_index.adjustments.as_slice(),
+        [CheckedCallValueAdjustment::ImplicitConversion { target }]
+            if target.starts_with("Wrapped")
+        ),
+        "getter adjustments: {:?}",
+        getter_index.adjustments
+    );
+    let setter = pair.setter.as_ref().expect("value getter needs setter");
+    let setter_index = &setter.boundary.arguments[0];
+    assert!(setter_index.adjustments.is_empty());
+    assert_eq!(getter_index.value_source, setter_index.value_source);
+}
+
+#[test]
+fn augmented_subscript_freezes_setter_only_index_normalization() {
+    use mojito::checked::CheckedCallValueAdjustment;
+
+    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        return self.value\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(self, index: Axis) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\ndef main():\n    var box = Box(1)\n    var axis = Axis(0)\n    box[axis] += 2\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let pair = checked
+        .expressions()
+        .iter()
+        .flat_map(|expression| &expression.adjustments)
+        .find_map(|adjustment| match adjustment {
+            SemanticAdjustment::AugmentedSubscript(pair) => Some(pair),
+            _ => None,
+        })
+        .expect("augmented pair");
+    assert!(pair.getter.boundary.arguments[0].adjustments.is_empty());
+    let setter = pair.setter.as_ref().expect("value getter needs setter");
+    assert!(matches!(
+        setter.boundary.arguments[0].adjustments.as_slice(),
+        [CheckedCallValueAdjustment::IndexNormalization { target }]
+            if target.starts_with("Axis.__mlir_index__")
+    ));
+}
+
+#[test]
+fn augmented_subscript_call_effects_remain_attached_to_their_call() {
+    let source = "@fieldwise_init\nstruct Box:\n    var value: Int\n    var seen: Int\n    def __getitem__(self, mut index: Int) -> Int:\n        index += 1\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.seen = index\n        self.value = value\n\ndef main():\n    var box = Box(40, -1)\n    var index = 0\n    box[index] += 2\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let pair = checked
+        .expressions()
+        .iter()
+        .flat_map(|expression| &expression.adjustments)
+        .find_map(|adjustment| match adjustment {
+            SemanticAdjustment::AugmentedSubscript(pair) => Some(pair),
+            _ => None,
+        })
+        .expect("augmented pair");
+    assert!(!pair.getter.boundary.arguments[0].invalidations.is_empty());
+    assert!(
+        pair.setter
+            .as_ref()
+            .expect("value getter needs setter")
+            .boundary
+            .arguments[0]
+            .invalidations
+            .is_empty()
+    );
+}
+
+#[test]
+fn augmented_subscript_mutable_reference_getter_writes_without_a_setter() {
+    let source = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(mut self, index: Int) -> ref[origin_of(self.value)] Int:\n        return self.value\n\ndef main():\n    var box = Box(40)\n    box[0] += 2\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let pair = checked
+        .expressions()
+        .iter()
+        .flat_map(|expression| &expression.adjustments)
+        .find_map(|adjustment| match adjustment {
+            SemanticAdjustment::AugmentedSubscript(pair) => Some(pair),
+            _ => None,
+        })
+        .expect("augmented pair");
+    assert_eq!(
+        pair.getter
+            .reference_result
+            .as_ref()
+            .expect("reference getter")
+            .mutability,
+        mojito::origin::Mutability::Mutable
+    );
+    assert!(pair.setter.is_none());
+    assert!(pair.value_source.is_none());
+}
+
+#[test]
+fn augmented_subscript_rejects_an_immutable_reference_getter() {
+    let source = "@fieldwise_init\nstruct Box:\n    var marker: Int\n    def __getitem__[origin: Origin[mut=False]](\n        self, ref[origin] index: Int\n    ) -> ref[origin] Int:\n        return index\n\ndef main():\n    var box = Box(0)\n    var index = 40\n    box[index] += 2\n";
+    let error = err(source);
+    assert!(
+        matches!(
+            &error,
+            TypeError::ImmutableBinding(message)
+                if message.contains("immutable reference returned by '__getitem__'")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn multi_indexer_normalization_uses_each_argument_position() {
+    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        return self.value\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n    def __setitem__(mut self, row: Axis, column: Int, value: Int):\n        self.value = row.value + column + value\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Axis(2)])\n    grid[Axis(3), Axis(4)] = 5\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let normalizations = checked
+        .expressions()
+        .iter()
+        .flat_map(|expression| &expression.adjustments)
+        .filter(|adjustment| matches!(adjustment, SemanticAdjustment::IndexNormalization { .. }))
+        .count();
+    assert_eq!(normalizations, 2);
+
+    assert!(matches!(
+        err(
+            "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        return self.value\n\n@fieldwise_init\nstruct Plain:\n    var value: Int\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Plain(2)])\n"
+        ),
+        TypeError::BadCall { .. }
+    ));
+}
+
+#[test]
+fn checked_subscript_retains_the_selected_call_contract() {
+    let source = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __getitem__(\n        ref self, mut index: Int\n    ) raises -> ref[origin_of(self.value)] Int:\n        if index < 0:\n            raise Error(\"negative\")\n        index += 1\n        return self.value\n\ndef main():\n    var box = Box(40)\n    var index = 0\n    try:\n        print(box[index])\n    except error:\n        pass\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let contract = checked
+        .expressions()
+        .iter()
+        .find_map(|expression| {
+            matches!(expression.syntax.kind, mojito::ast::ExprKind::Index { .. }).then(|| {
+                expression
+                    .adjustments
+                    .iter()
+                    .find_map(|adjustment| match adjustment {
+                        SemanticAdjustment::SelectedCall(contract) => Some(contract),
+                        _ => None,
+                    })
+            })?
+        })
+        .expect("selected Index contract");
+    assert_eq!(contract.target, "Box.__getitem__");
+    assert_eq!(contract.raises, Some(mojito::Ty::Error));
+    assert!(contract.receiver_requires_place);
+    assert_eq!(
+        contract.receiver_convention,
+        Some(mojito::ast::ArgConvention::Ref)
+    );
+    assert_eq!(contract.arguments.len(), 1);
+    assert_eq!(
+        contract.arguments[0].source,
+        mojito::checked::CheckedCallArgumentSource::Positional(0)
+    );
+    assert!(contract.arguments[0].requires_place);
+    assert_eq!(
+        contract.arguments[0].convention,
+        Some(mojito::ast::ArgConvention::Mut)
+    );
+    assert!(contract.reference_result.is_some());
+}
+
+#[test]
+fn subscript_contract_rejects_overlapping_mutable_receiver_and_argument() {
+    assert!(matches!(
+        check_source(include_str!(
+            "../conformance/fixtures/subscript_mutable_aliasing.mojo"
+        )),
+        Err(TypeError::AliasingViolation { .. })
+    ));
 }
 
 #[test]
@@ -3033,6 +3801,76 @@ fn user_iterator_protocol_typing() {
             "@fieldwise_init\nstruct I:\n    var c: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(self) -> Int:\n        return 0\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0)\n\ndef main():\n    for x in C(1):\n        print(x)\n"
         ),
         TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
+    ok(
+        "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n",
+    );
+
+    let error = err(
+        "@fieldwise_init\nstruct OtherError:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    def __next__(mut self) raises OtherError -> Int:\n        raise OtherError(0)\n        return self.current\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n",
+    );
+    assert!(
+        matches!(error, TypeError::TypeMismatch { ref context, .. }
+            if context == "iterator '__next__' exhaustion contract"),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn iterator_protocol_respects_conditional_method_availability() {
+    let prelude = "@fieldwise_init\nstruct Token(Movable):\n    var value: Int\n\n";
+
+    // Merely finding `__iter__` by name is insufficient: its receiver
+    // specialization must satisfy the method's `where` clause.
+    let unavailable_iter = format!(
+        "{prelude}@fieldwise_init\nstruct I:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I where conforms_to(Self.T, Copyable):\n        return I(0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
+    );
+    assert!(matches!(
+        err(&unavailable_iter),
+        TypeError::TypeMismatch { ref context, .. }
+            if context == "for-loop iterator selection"
+    ));
+
+    // The same specialization rule applies after normalization, both to the
+    // advancing operation and to the legacy bounded protocol's length query.
+    let unavailable_next = format!(
+        "{prelude}@fieldwise_init\nstruct I[T: Movable]:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int where conforms_to(Self.T, Copyable):\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I[Self.T]:\n        return I[Self.T](0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
+    );
+    assert!(matches!(
+        err(&unavailable_next),
+        TypeError::NoSuchMethod { ref method, .. } if method == "__next__"
+    ));
+
+    let unavailable_len = format!(
+        "{prelude}@fieldwise_init\nstruct I[T: Movable]:\n    var index: Int\n    def __len__(self) -> Int where conforms_to(Self.T, Copyable):\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I[Self.T]:\n        return I[Self.T](0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
+    );
+    assert!(matches!(
+        err(&unavailable_len),
+        TypeError::NoSuchMethod { ref method, .. } if method == "__len__"
+    ));
+}
+
+#[test]
+fn raising_iter_normalization_obeys_the_enclosing_effect_context() {
+    let declarations = "@fieldwise_init\nstruct IterError:\n    var code: Int\n\n@fieldwise_init\nstruct I:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C:\n    var marker: Int\n    def __iter__(self) raises IterError -> I:\n        raise IterError(self.marker)\n        return I(0)\n\n";
+
+    assert!(matches!(
+        err(&format!(
+            "{declarations}def main():\n    for value in C(7):\n        print(value)\n"
+        )),
+        TypeError::UnhandledRaise(operation)
+            if operation.contains("implicit call") && operation.contains("C.__iter__")
+    ));
+
+    ok(&format!(
+        "{declarations}def run() raises IterError:\n    for value in C(7):\n        print(value)\n"
+    ));
+    ok(&format!(
+        "{declarations}def main():\n    try:\n        for value in C(7):\n            print(value)\n    except error:\n        print(error.code)\n"
     ));
 }
 
@@ -3059,6 +3897,19 @@ fn unsafe_pointer_typing() {
         ),
         TypeError::TypeMismatch { .. }
     ));
+}
+
+#[test]
+fn compiler_private_pointer_storage_methods_are_not_user_visible() {
+    for method in ["take", "destroy"] {
+        let source = format!(
+            "def main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[0] = 7\n    var result = p.{method}(0)\n"
+        );
+        assert!(
+            matches!(err(&source), TypeError::NoSuchMethod { method: ref found, .. } if found == method),
+            "ordinary source unexpectedly acquired UnsafePointer.{method}"
+        );
+    }
 }
 
 #[test]
@@ -3304,6 +4155,29 @@ fn concrete_conversions_and_abs_route_through_dunders() {
         err("@fieldwise_init\nstruct P:\n    var n: Int\n\ndef main():\n    print(Int(P(1)))\n"),
         TypeError::TypeMismatch { .. }
     ));
+}
+
+#[test]
+fn conditional_iterable_conformance_proves_its_associated_iterator_contract() {
+    ok(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n\n@fieldwise_init\nstruct Container[T: Movable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value)\n",
+    );
+}
+
+#[test]
+fn unrelated_conditional_conformance_does_not_prove_an_iterator_contract() {
+    let error = err(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n\n@fieldwise_init\nstruct BadContainer[T: Movable](IterableContract where conforms_to(T, Equatable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Equatable):\n        return Cursor[Self.T](self.value)\n",
+    );
+    assert!(
+        matches!(
+            &error,
+            TypeError::TraitComptimeMemberMismatch { .. }
+                | TypeError::TraitMethodMismatch { .. }
+                | TypeError::TraitNotSatisfied { .. }
+        ),
+        "got {error:?}"
+    );
 }
 
 #[test]

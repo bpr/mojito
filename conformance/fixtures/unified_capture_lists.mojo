@@ -2,7 +2,7 @@ def captured_total() -> Int:
     var total = 0
     var base = 40
     var offset = 2
-    def add() unified {mut total, offset^, imm}:
+    def add() unified {mut total, offset, imm}:
         total = base + offset
     add()
     return total

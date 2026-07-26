@@ -1,6 +1,6 @@
 from std.collections.dict import Dict
 
-def main():
+def main() raises:
     var d: Dict[String, String] = Dict[String, String]()
     d["name"] = "mojito"
     d["phase"] = "self-host"

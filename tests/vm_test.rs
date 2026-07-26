@@ -16,12 +16,14 @@
 //! and `vm_refuses_mut_ref_via_non_place_argument`: the VM must error cleanly, never
 //! diverge.
 
-use mojito::{BackendKind, check, elaborate, link, parse};
+use mojito::{BackendKind, Compiler, check, elaborate, link_source, parse};
+use std::path::Path;
 
 /// Run `src` through the VM backend (the sole executor) and return its captured
 /// output, or a stage error string.
 fn run(src: &str) -> Result<String, String> {
-    let program = parse(src).map_err(|e| format!("parse error: {e:?}"))?;
+    let program =
+        link_source(src, Path::new("vm_test.mojo")).map_err(|e| format!("link error: {e}"))?;
     let program = elaborate(program).map_err(|e| format!("comptime error: {e}"))?;
     let checked = mojito::check_program(&program).map_err(|e| format!("type error: {e:?}"))?;
     let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
@@ -29,6 +31,21 @@ fn run(src: &str) -> Result<String, String> {
         .run(&checked)
         .map_err(|e| format!("runtime error: {e:?}"))?;
     Ok(backend.output())
+}
+
+/// Run source through the authoritative discovery/specialization pipeline.
+/// Tests whose intrinsic results are public nominal Tuples need the generated
+/// concrete Tuple declaration; the lower-level helper above intentionally does
+/// not perform that whole-program handoff.
+fn run_compiled(src: &str) -> Result<String, String> {
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let program = compiler
+        .compile_source(src, Path::new("vm_test.mojo"))
+        .map_err(|error| format!("compile error: {error}"))?;
+    compiler
+        .execute(&program)
+        .map(|execution| execution.output)
+        .map_err(|error| format!("runtime error: {error}"))
 }
 
 /// Whether `src` is a statically valid program (parses + type-checks) — used to
@@ -79,6 +96,48 @@ fn collection_displays_and_comprehensions_execute_in_source_order() {
 }
 
 #[test]
+fn writable_formatting_retains_pointer_backed_arguments_through_the_call() {
+    assert_eq!(
+        vm("def main():\n    var values = {3}\n    print(values)\n"),
+        "{3}\n"
+    );
+    assert_eq!(
+        vm("def main():\n    var values = {3}\n    var text = String(values)\n    print(text)\n"),
+        "{3}\n"
+    );
+}
+
+#[test]
+fn nominal_collection_protocols_match_the_differential_fixtures() {
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/protocolized_collections.mojo"
+        ))
+        .expect("compile nominal collection protocols"),
+        "4 4 True\n2 9\n16\n"
+    );
+    assert_eq!(
+        run_compiled(include_str!("../conformance/fixtures/tuple_values.mojo"))
+            .expect("compile nominal Tuple values"),
+        "3 seven 3\n2 True True\nTrue\n(seven, 3)\n(3, seven, True)\n(3, seven, True)\n"
+    );
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/tuple_consume_elements.mojo"
+        ))
+        .expect("compile nominal Tuple consumption"),
+        "3\n3\n"
+    );
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/tuple_move_transforms.mojo"
+        ))
+        .expect("compile nominal Tuple move transforms"),
+        "2 1\n3 4\n"
+    );
+}
+
+#[test]
 fn comprehension_binders_do_not_overwrite_outer_or_shadowed_bindings() {
     assert_eq!(
         vm(
@@ -99,9 +158,15 @@ fn collection_displays_materialize_contextual_element_types() {
 }
 
 #[test]
+fn self_hosted_list_moves_and_destroys_raw_storage_exactly() {
+    let source = "def main():\n    var values = [1, 2, 3]\n    values.insert(1, 9)\n    var removed = values.pop(2)\n    values.reverse()\n    print(removed, values)\n    values.clear()\n    print(len(values))\n";
+    assert_eq!(vm(source), "2 [3, 9, 1]\n0\n");
+}
+
+#[test]
 fn discarded_set_elements_and_replaced_dictionary_values_are_destroyed() {
     let output = vm(
-        "struct Token:\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __del__(deinit self):\n        print(\"drop\", self.id)\n    def __hash__(self) -> UInt:\n        return UInt(self.id)\n\ndef main():\n    var dictionary = {0: Token(1), 0: Token(2)}\n    print(\"built dict\", len(dictionary))\n    var values = {Token(3), Token(3)}\n    print(\"built set\", len(values))\n",
+        "struct Token(Equatable, Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __del__(deinit self):\n        print(\"drop\", self.id)\n    def __hash__(self) -> UInt:\n        return UInt(self.id)\n    def __eq__(self, other: Self) -> Bool:\n        return self.id == other.id\n\ndef main():\n    var dictionary = {0: Token(1), 0: Token(2)}\n    print(\"built dict\", len(dictionary))\n    var values = {Token(3), Token(3)}\n    print(\"built set\", len(values))\n",
     );
     assert!(output.contains("built dict 1\n"), "{output}");
     assert!(output.contains("built set 1\n"), "{output}");
@@ -113,13 +178,7 @@ fn discarded_set_elements_and_replaced_dictionary_values_are_destroyed() {
 #[test]
 fn owned_iteration_moves_elements_and_drops_the_residual_on_break() {
     let output = vm(include_str!("../conformance/fixtures/owned_iteration.mojo"));
-    assert!(output.contains("take 1\n"));
-    assert!(output.contains("take 2\n"));
-    assert!(!output.contains("take 3\n"));
-    assert!(output.contains("drop 1\n"));
-    assert!(output.contains("drop 2\n"));
-    assert!(output.contains("drop 3\n"));
-    assert!(output.ends_with("done\n"));
+    assert_eq!(output, "take 1\ndrop 1\ntake 2\ndrop 2\ndrop 3\ndone\n");
 }
 
 #[test]
@@ -275,9 +334,11 @@ fn vm_reports_unsupported_features_cleanly() {
 
 #[test]
 fn vm_runs_every_ok_fixture() {
-    // The VM is the sole executor: every `assets/ok/*.mojo` fixture must run without
-    // error. (Exact-output correctness is asserted by the targeted tests above.)
+    // The VM is the sole executor: every `assets/ok/*.mojo` fixture must pass the
+    // authoritative whole-program discovery/specialization pipeline and run
+    // without error. (Exact-output correctness is asserted by targeted tests.)
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ok");
+    let compiler = Compiler::default();
     let mut ran = 0;
     for entry in std::fs::read_dir(dir).expect("assets/ok exists") {
         let path = entry.unwrap().path();
@@ -289,16 +350,12 @@ fn vm_runs_every_ok_fixture() {
         if path.file_name().and_then(|n| n.to_str()) == Some("input.mojo") {
             continue;
         }
-        let program = link(&path)
-            .unwrap_or_else(|e| panic!("link failed on ok fixture {}: {e}", path.display()));
-        let program = elaborate(program)
-            .unwrap_or_else(|e| panic!("comptime failed on ok fixture {}: {e}", path.display()));
-        let checked = mojito::check_program(&program)
-            .unwrap_or_else(|e| panic!("check failed on ok fixture {}: {e:?}", path.display()));
-        let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-        backend
-            .run(&checked)
-            .unwrap_or_else(|e| panic!("vm failed on ok fixture {}: {e:?}", path.display()));
+        let program = compiler.compile_path(&path).unwrap_or_else(|error| {
+            panic!("compile failed on ok fixture {}: {error}", path.display())
+        });
+        compiler
+            .execute(&program)
+            .unwrap_or_else(|error| panic!("vm failed on ok fixture {}: {error}", path.display()));
         ran += 1;
     }
     assert!(ran > 0, "expected some ok fixtures");
@@ -320,7 +377,10 @@ fn lists_tuples_and_indexing() {
         "1\n4\nTrue\n"
     );
     let tup = "def pair() -> Tuple[Int, Int]:\n    return (7, 9)\n\ndef main():\n    var t = pair()\n    print(t[0])\n    print(t[1])\n";
-    assert_eq!(parity(tup), "7\n9\n");
+    assert_eq!(
+        run_compiled(tup).expect("compile nominal Tuple return"),
+        "7\n9\n"
+    );
 }
 
 #[test]
@@ -368,10 +428,11 @@ fn vm_mut_ref_params_write_back() {
         ),
         "7\n"
     );
-    // `ref` writes back too; write-back through a struct field place persists.
+    // An explicitly mutable `ref` writes back too; write-back through a struct
+    // field place persists.
     assert_eq!(
         parity(
-            "def set_to(ref x: Int, v: Int):\n    x = v\n\ndef main():\n    var n: Int = 0\n    set_to(n, 42)\n    print(n)\n"
+            "def set_to[origin: Origin[mut=True]](ref[origin] x: Int, v: Int):\n    x = v\n\ndef main():\n    var n: Int = 0\n    set_to(n, 42)\n    print(n)\n"
         ),
         "42\n"
     );
@@ -456,9 +517,176 @@ fn nested_def_closures_parity() {
 }
 
 #[test]
+fn owned_closure_captures_materialize_at_the_declaration() {
+    let copy = "def main():\n    var x = 40\n    def snapshot() {var x} -> Int:\n        return x\n    x = 42\n    print(snapshot(), x)\n";
+    assert_eq!(parity(copy), "40 42\n");
+
+    // A move capture transfers the source at the declaration, then owns one
+    // persistent environment slot. Calls borrow that slot instead of cloning it.
+    let moved = "def main():\n    var box = [40]\n    def get() {var box^} -> Int:\n        box[0] += 1\n        return box[0]\n    print(get())\n    print(get())\n";
+    assert_eq!(parity(moved), "41\n42\n");
+
+    // Reference environments deliberately remain live views rather than
+    // snapshots: mutation between declaration and invocation is observable.
+    let reference = "def main():\n    var x = 40\n    def read_x() {imm x} -> Int:\n        return x\n    x = 42\n    print(read_x())\n";
+    assert_eq!(parity(reference), "42\n");
+}
+
+#[test]
+fn first_class_owned_closure_uses_its_stored_snapshot() {
+    // Mojito permits this non-escaping copied-closure pass as an extension.
+    // Current Mojo rejects converting a capture-bearing nested def to this
+    // plain callable parameter; moved stateful closures are therefore covered
+    // only by the direct-call parity case above.
+    let src = "def invoke(callback: def() -> Int) -> Int:\n    return callback()\n\ndef main():\n    var x = 40\n    def snapshot() {var x} -> Int:\n        return x\n    x = 42\n    print(snapshot(), invoke(snapshot), x)\n";
+    assert_eq!(parity(src), "40 40 42\n");
+
+    // A permitted non-escaping reference closure keeps its outer frame slot
+    // alive through the indirect consumer call; the handle must not observe an
+    // ASAP-dropped `None` slot.
+    let reference = "def invoke(callback: def() -> Int) -> Int:\n    return callback()\n\ndef main():\n    var x = 42\n    def get() {ref x} -> Int:\n        return x\n    print(invoke(get))\n";
+    assert_eq!(parity(reference), "42\n");
+}
+
+#[test]
 fn nested_def_calling_sibling_forwards_its_closure_environment() {
     let src = "def outer() -> Int:\n    var b: Int = 10\n    def helper(x: Int) unified {b} -> Int:\n        return x + b\n    def caller(y: Int) unified {helper} -> Int:\n        return helper(y) + 1\n    return caller(5)\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "16\n");
+}
+
+#[test]
+fn sibling_capture_loads_the_materialized_closure_snapshot() {
+    let src = "def main():\n    var x = 1\n    def helper() {var x} -> Int:\n        return x\n    x = 2\n    def caller() {helper} -> Int:\n        return helper()\n    print(caller())\n";
+    assert_eq!(vm(src), "1\n");
+}
+
+#[test]
+fn same_named_block_defs_and_shadow_captures_use_binding_identity() {
+    let src = "def main():\n    var x = 1\n    if True:\n        def choose() -> Int:\n            return 1\n        print(choose())\n    if True:\n        def choose() -> Int:\n            return 42\n        print(choose())\n    if True:\n        var x = 40\n        def read() {x} -> Int:\n            return x\n        print(read())\n    print(x)\n";
+    assert_eq!(vm(src), "1\n42\n40\n1\n");
+}
+
+#[test]
+fn shadowed_runtime_loop_capture_keeps_the_loop_owner() {
+    let src = "def main():\n    var item = 1\n    for item in [40]:\n        def read() {item} -> Int:\n            return item\n        print(read())\n    print(item)\n";
+    assert_eq!(vm(src), "40\n1\n");
+}
+
+#[test]
+fn unpack_and_exception_targets_seed_typed_capture_slots() {
+    let src = "def main():\n    if True:\n        left, label = (40, \"two\")\n        def show() {left, label}:\n            print(left, label)\n        show()\n    if True:\n        left, label = (42, True)\n        def show() {left, label}:\n            print(left, label)\n        show()\n    var error = 40\n    try:\n        raise \"caught\"\n    except error:\n        def show_error() {error}:\n            print(error)\n        show_error()\n    print(error)\n";
+    assert_eq!(
+        run_compiled(src).expect("compile nominal Tuple unpacking"),
+        "40 two\n42 True\nError(\"caught\")\n40\n"
+    );
+}
+
+#[test]
+fn cloned_trait_defaults_rekey_nested_self_captures() {
+    let src = "trait Valued:\n    def answer(self) -> Int:\n        def inner() {self} -> Int:\n            return self.value\n        return inner()\n\n@fieldwise_init\nstruct First(Valued):\n    var value: Int\n\n@fieldwise_init\nstruct Second(Valued):\n    var value: Int\n\ndef main():\n    print(First(41).answer())\n    print(Second(42).answer())\n";
+    assert_eq!(vm(src), "41\n42\n");
+}
+
+#[test]
+fn nested_parameter_shadow_capture_uses_the_nearest_owner() {
+    let src = "def outer(value: Int, delta: Int) -> Int:\n    def middle(value: Int) {delta} -> Int:\n        def inner() {value, delta} -> Int:\n            return value + delta\n        return inner()\n    return middle(value)\n\ndef main():\n    print(outer(40, 2))\n";
+    assert_eq!(vm(src), "42\n");
+}
+
+#[test]
+fn nested_defs_lift_and_forward_captures_at_arbitrary_depth() {
+    let src = "def outer() -> Int:\n    var value = 40\n    def middle() unified {value} -> Int:\n        def inner() unified {value} -> Int:\n            return value + 2\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn deep_mutable_capture_updates_its_lexical_owner() {
+    let src = "def outer() -> Int:\n    var total = 40\n    def middle() unified {mut total}:\n        def inner() unified {mut total}:\n            total += 2\n        inner()\n    middle()\n    return total\n\ndef main():\n    print(outer())\n";
+    assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn intermediate_default_capture_policy_forwards_descendant_environment() {
+    let src = "def outer() -> Int:\n    var value = 40\n    def middle() {imm} -> Int:\n        def inner() unified {value} -> Int:\n            return value + 2\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn deep_nested_callable_preserves_effects_and_argument_markers() {
+    let src = "def outer() raises -> Int:\n    var base = 40\n    def middle() raises {base} -> Int:\n        def inner(head: Int, /, tail: Int = 0, *, bump: Int = 0) raises {base} -> Int:\n            if bump < 0:\n                raise Error(\"negative\")\n            return base + head + tail + bump\n        return inner(1, tail=0, bump=1)\n    return middle()\n\ndef main():\n    try:\n        print(outer())\n    except error:\n        print(error)\n";
+    assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn deep_nested_callable_preserves_reference_and_named_result_abis() {
+    let references = "def main():\n    var value = 40\n    def middle(mut middle_item: Int):\n        def inner(ref inner_item: Int) -> ref[inner_item] Int:\n            return inner_item\n        ref alias = inner(middle_item)\n        alias += 2\n    middle(value)\n    print(value)\n";
+    assert_eq!(parity(references), "42\n");
+
+    let named_result = "def outer() -> Int:\n    var base = 40\n    def middle() unified {base} -> Int:\n        def inner(value: Int, out result: Int) unified {base}:\n            result = base + value\n        return inner(2)\n    return middle()\n\ndef main():\n    print(outer())\n";
+    assert_eq!(parity(named_result), "42\n");
+}
+
+#[test]
+fn deep_lexical_callable_registry_prefers_the_nearest_shadow() {
+    let src = "def outer() -> Int:\n    var base = 40\n    def helper() unified {base} -> Int:\n        return base + 1\n    def middle() unified {base} -> Int:\n        def helper() unified {base} -> Int:\n            return base + 2\n        def inner() unified {helper} -> Int:\n            return helper()\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn deep_lexical_callable_registry_forwards_an_ancestor_sibling() {
+    let src = "def outer() -> Int:\n    var base = 40\n    def helper() unified {base} -> Int:\n        return base + 2\n    def middle() unified {helper} -> Int:\n        def inner() unified {helper} -> Int:\n            return helper()\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn method_rooted_closure_tree_forwards_self_at_arbitrary_depth() {
+    let src = "@fieldwise_init\nstruct Box:\n    var base: Int\n\n    def answer(self) -> Int:\n        def middle() unified {self} -> Int:\n            def inner() unified {self} -> Int:\n                return self.base + 2\n            return inner()\n        return middle()\n\ndef main():\n    print(Box(40).answer())\n";
+    assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn empty_intermediate_capture_policy_does_not_forward_descendant_environment() {
+    let src = "def outer() -> Int:\n    var value = 42\n    def middle() unified {} -> Int:\n        def inner() unified {value} -> Int:\n            return value\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    assert!(!checks_ok(src));
+}
+
+#[test]
+fn nested_reference_returns_preserve_the_caller_handle() {
+    let src = "def main():\n    var value = 40\n    def borrow(ref item: Int) -> ref[item] Int:\n        return item\n    ref first = borrow(value)\n    first += 1\n    try:\n        ref second = borrow(value)\n        second += 1\n    except error:\n        print(error)\n    print(value)\n";
+    assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn ref_returning_subscript_preserves_receiver_storage_through_the_read() {
+    let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n\n    def __getitem__(\n        ref self, index: Int\n    ) -> ref[origin_of(self.value)] Int:\n        return self.value\n\n    def __del__(deinit self):\n        print(\"drop\")\n\ndef main():\n    var box = Box(40)\n    print(box[0])\n";
+    assert_eq!(vm(src), "40\ndrop\n");
+}
+
+#[test]
+fn ref_returning_list_subscript_copies_in_value_context_and_aliases_in_ref_context() {
+    let src = "from std.collections.list import List\n\ndef main():\n    var rows = List[List[Int]]()\n    var row = List[Int]()\n    row.append(1)\n    rows.append(row)\n\n    var copied: List[Int] = rows[0]\n    copied.append(2)\n\n    ref alias = rows[0]\n    alias.append(3)\n\n    var original: List[Int] = rows[0]\n    print(len(original), original[1])\n    print(len(copied), copied[1])\n";
+    assert_eq!(run_compiled(src).unwrap(), "2 3\n2 2\n");
+}
+
+#[test]
+fn structured_reference_calls_cross_try_boundaries() {
+    let src = include_str!("../conformance/fixtures/structured_reference_calls.mojo");
+    assert_eq!(
+        vm(src),
+        "42\n42\n42\n10 22 30\nfree caught\n21\nmethod caught\n21\n"
+    );
+}
+
+#[test]
+fn structured_reference_call_rebases_reference_bearing_aggregate_returns() {
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef wrap[origin: Origin[mut=True]](\n    ref[origin] item: Int\n) -> RefBox:\n    return RefBox(item)\n\ndef main():\n    var value = 40\n    try:\n        var box = wrap(value)\n        box.value += 2\n    except error:\n        print(error)\n    print(value)\n";
+    assert_eq!(vm(src), "42\n");
+}
+
+#[test]
+fn structured_reference_call_handwritten_constructors_use_caller_places() {
+    let src = "struct Snapshot:\n    var value: Int\n\n    def __init__(out self, ref source: Int):\n        self.value = source\n\nstruct Bump:\n    var seen: Int\n\n    def __init__(out self, mut source: Int, fail: Bool) raises:\n        source += 1\n        self.seen = source\n        if fail:\n            raise Error(\"failed\")\n\ndef main():\n    var source = 40\n    try:\n        var snapshot = Snapshot(source=source)\n        print(snapshot.value)\n    except error:\n        print(error)\n\n    var changed = 40\n    try:\n        var bump = Bump(source=changed, fail=False)\n        print(bump.seen)\n    except error:\n        print(error)\n    print(changed)\n\n    try:\n        var unused = Bump(source=changed, fail=True)\n    except error:\n        print(\"caught\")\n    print(changed)\n";
+    assert_eq!(vm(src), "40\n41\n41\ncaught\n42\n");
 }
 
 #[test]
@@ -468,9 +696,79 @@ fn generic_nested_def_is_type_erased_after_checker_inference() {
 }
 
 #[test]
+fn callable_type_bounds_execute_top_level_captured_and_nominal_values() {
+    let src = "def apply[T: Copyable & ImplicitlyDeletable, F: def(T) -> T](callback: F, value: T) -> T:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\n@fieldwise_init\nstruct Add(def(Int) -> Int):\n    var delta: Int\n    def __call__(self, value: Int) -> Int:\n        return value + self.delta\n\ndef main():\n    print(apply(increment, 41))\n    var offset = 2\n    def captured(value: Int) {imm offset} -> Int:\n        return value + offset\n    print(apply(captured, 40))\n    print(apply(Add(3), 39))\n";
+    assert_eq!(vm(src), "42\n42\n42\n");
+}
+
+#[test]
 fn nominal_callable_struct_requires_and_executes_call_contract() {
     let src = "@fieldwise_init\nstruct Scale(def(Int) -> Int):\n    var factor: Int\n    def __call__(self, value: Int) -> Int:\n        return value * self.factor\n\ndef apply(callback: def(Int) -> Int, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    var scale = Scale(3)\n    print(apply(scale, 14))\n";
     assert_eq!(parity(src), "42\n");
+}
+
+#[test]
+fn nominal_callable_same_arity_overload_uses_the_checked_target_in_both_vm_paths() {
+    let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(invoke(Choose(), 41))\n    try:\n        print(Choose()(41))\n    except error:\n        print(error)\n";
+    assert_eq!(vm(src), "42\n42\n");
+}
+
+#[test]
+fn nominal_callable_contract_preserves_mut_parameter_convention() {
+    let src = "@fieldwise_init\nstruct Mutator(def(mut Int) -> None):\n    def __call__(self, mut value: Int, /) capturing:\n        value += 1\n\ndef apply(callback: def(mut Int) -> None, mut value: Int):\n    callback(value)\n\ndef main():\n    var value = 41\n    apply(Mutator(), value)\n    print(value)\n";
+    assert_eq!(vm(src), "42\n");
+}
+
+#[test]
+fn nominal_callable_contract_preserves_reference_return_origin() {
+    let src = "@fieldwise_init\nstruct Borrower(def[origin: Origin[mut=True]](ref[origin] Int) -> ref[origin] Int):\n    def __call__[origin: Origin[mut=True]](self, ref[origin] value: Int, /) capturing -> ref[origin] Int:\n        return value\n\ndef main():\n    var value = 40\n    ref borrowed = Borrower()(value)\n    borrowed += 2\n    print(value)\n";
+    assert_eq!(vm(src), "42\n");
+}
+
+#[test]
+fn origin_specialized_function_value_executes_indirectly() {
+    let src = "def borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += 2\n    print(value)\n";
+    assert_eq!(vm(src), "42\n");
+}
+
+#[test]
+fn multiple_positional_origins_specialize_one_function_value() {
+    let src = "def choose[first: Origin[mut=True], second: Origin[mut=True]](ref[first] left: Int, ref[second] right: Int, use_right: Bool) -> ref[first, second] Int:\n    if use_right:\n        return right\n    return left\n\ndef main():\n    var left = 1\n    var right = 2\n    var function = choose[origin_of(left), origin_of(right)]\n    ref selected = function(left, right, True)\n    selected += 40\n    print(left, right)\n";
+    assert_eq!(vm(src), "1 42\n");
+}
+
+#[test]
+fn explicit_origins_select_overloads_and_compose_with_generic_parameters() {
+    let direct_overload = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = choose[origin_of(value)](value)\n    selected += 2\n    print(value)\n";
+    assert_eq!(vm(direct_overload), "42\n");
+
+    let generic_value = "def borrow[T: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[Int, origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n    print(value)\n";
+    assert_eq!(vm(generic_value), "42\n");
+
+    let named_inferred = "def borrow[T: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = borrow[origin=origin_of(value)](value)\n    selected += 2\n    print(value)\n";
+    assert_eq!(vm(named_inferred), "42\n");
+}
+
+#[test]
+fn contextual_origin_contract_selects_an_overloaded_function_value() {
+    let src = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    var function: def(ref[origin_of(value)] Int) thin -> ref[origin_of(value)] Int = choose[origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n    print(value)\n";
+    assert_eq!(vm(src), "42\n");
+}
+
+#[test]
+fn nested_origin_specialized_function_values_load_their_closure() {
+    let stateless =
+        include_str!("../conformance/fixtures/nested_origin_specialized_function_value.mojo");
+    assert_eq!(vm(stateless), "42\n");
+
+    let captured = "def main():\n    var marker = 2\n    var value = 40\n    def borrow[origin: Origin[mut=True]](ref[origin] item: Int) {imm marker} -> ref[origin] Int:\n        print(marker)\n        return item\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += marker\n    print(value)\n";
+    assert_eq!(vm(captured), "2\n42\n");
+}
+
+#[test]
+fn structured_nominal_callable_mut_self_uses_its_callee_place() {
+    let src = "@fieldwise_init\nstruct Counter(def() raises -> Int):\n    var value: Int\n\n    def __call__(mut self) raises -> Int:\n        self.value += 1\n        if self.value == 2:\n            raise Error(\"two\")\n        return self.value\n\ndef main():\n    var counter = Counter(0)\n    try:\n        print(counter())\n        print(counter())\n    except:\n        print(\"caught\")\n    print(counter.value)\n";
+    assert_eq!(vm(src), "1\ncaught\n2\n");
 }
 
 #[test]
@@ -532,11 +830,75 @@ fn user_iterator_protocol() {
 }
 
 #[test]
+fn borrowed_list_iteration_observes_element_replacement_without_copying() {
+    let source = include_str!("../conformance/fixtures/borrowed_iteration_mutation.mojo");
+    assert_eq!(
+        run_compiled(source).expect("borrowed List iteration compiles"),
+        "1\n9\n3\n"
+    );
+
+    let lifetime = "@fieldwise_init\nstruct Holder(ImplicitlyDeletable):\n    var values: List[Int]\n    def __del__(deinit self):\n        print(\"drop holder\")\n\ndef main():\n    var holder = Holder([1, 2, 3])\n    for value in holder.values:\n        print(value)\n";
+    assert_eq!(
+        run_compiled(lifetime).expect("borrowed iterator retains its owner"),
+        "1\n2\n3\ndrop holder\n"
+    );
+}
+
+#[test]
+fn reference_list_iteration_writes_through_checked_element_handles() {
+    let source = include_str!("../conformance/fixtures/reference_iteration.mojo");
+    assert_eq!(
+        run_compiled(source).expect("reference List iteration compiles"),
+        "11 12 13\n"
+    );
+}
+
+#[test]
+fn borrowed_list_iterator_rejects_use_after_structural_invalidation() {
+    let source = "def main():\n    var values = [1, 2, 3, 4]\n    for value in values:\n        print(value)\n        if value == 1:\n            values.append(5)\n";
+    let error = run_compiled(source).expect_err("append may reallocate borrowed storage");
+    assert!(
+        error.contains("invalidated interior reference '$iter")
+            && error.contains("values[\"element\"]"),
+        "{error}"
+    );
+}
+
+#[test]
+fn raising_iterator_catches_only_typed_stop_iteration() {
+    let src = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct CounterIterator:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct Counter:\n    var start: Int\n    var end: Int\n    def __iter__(self) -> CounterIterator:\n        return CounterIterator(self.start, self.end)\n\ndef main():\n    for value in Counter(3, 6):\n        print(value)\n";
+    assert_eq!(parity(src), "3\n4\n5\n");
+}
+
+#[test]
+fn raising_iter_normalization_propagates_to_the_enclosing_try() {
+    let src = "@fieldwise_init\nstruct IterError:\n    var code: Int\n\n@fieldwise_init\nstruct I:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C:\n    var marker: Int\n    def __iter__(self) raises IterError -> I:\n        raise IterError(self.marker)\n        return I(0)\n\ndef main():\n    try:\n        for value in C(7):\n            print(value)\n    except error:\n        print(error.code)\n";
+    assert_eq!(run_compiled(src).expect("compiler pipeline failed"), "7\n");
+}
+
+#[test]
+fn slice_bounds_construct_nominal_optional_values() {
+    let source = "struct Optional[T: Movable]:\n    var value: Int\n    var present: Bool\n    def __init__(out self):\n        self.value = 0\n        self.present = False\n    def __init__(out self, value: Int, present: Bool):\n        self.value = value\n        self.present = present\n    def or_else(self, default: Int) -> Int:\n        if self.present:\n            return self.value\n        return default\n\ndef main():\n    var present = Slice(1, 4).start.or_else(9)\n    var absent = Slice(None, 4).start.or_else(9)\n    print(present, absent)\n";
+    assert_eq!(parity(source), "1 9\n");
+}
+
+#[test]
 fn unsafe_pointer_alloc_load_store_alias() {
     // `UnsafePointer[T].alloc`/`ptr[i]` load+store, `ptr[i] += e`, and aliasing (a
     // copied pointer shares storage), running over the VM heap arena.
     let src = "def main():\n    var p: UnsafePointer[Int] = UnsafePointer[Int].alloc(3)\n    p[0] = 10\n    p[1] = 20\n    p[1] += 5\n    var q: UnsafePointer[Int] = p\n    q[0] = 99\n    print(p[0], p[1])\n";
     assert_eq!(parity(src), "99 25\n");
+}
+
+#[test]
+fn unsafe_pointer_rejects_reads_from_uninitialized_storage() {
+    let error =
+        run("def main():\n    var pointer = UnsafePointer[Int].alloc(1)\n    print(pointer[0])\n")
+            .expect_err("UnsafePointer.alloc reserves raw, uninitialized storage");
+    assert!(
+        error.contains("read of uninitialized UnsafePointer storage"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -552,14 +914,32 @@ fn copyinit_gives_value_semantics() {
     // A pointer-owning struct with `__copyinit__` deep-copies on `var b = a` and on
     // pass-by-value, so writes through one don't affect the other. `__moveinit__`
     // relocates on `^`.
-    let src = "struct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = UnsafePointer[Int].alloc(n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = UnsafePointer[Int].alloc(e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    var b: Buf = a\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
+    let src = "struct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = UnsafePointer[Int].alloc(n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = UnsafePointer[Int].alloc(e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = a\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
     assert_eq!(parity(src), "5 9\n9\n");
 }
 
 #[test]
+fn current_unified_move_initializer_uses_the_deinit_convention() {
+    let src = include_str!("../conformance/fixtures/unified_lifecycle.mojo");
+    assert_eq!(parity(src), "move\n7 7\n");
+}
+
+#[test]
 fn mojo_copy_constructor_gives_value_semantics() {
-    let src = "struct Buf(Copyable):\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = UnsafePointer[Int].alloc(n)\n        self.n = n\n    def __init__(out self, *, copy: Self):\n        self.n = copy.n\n        self.data = UnsafePointer[Int].alloc(copy.n)\n        var i: Int = 0\n        while i < copy.n:\n            self.data[i] = copy.data[i]\n            i = i + 1\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = a\n    c.set(0, 11)\n    print(a.get(0), c.get(0))\n";
+    let src = "struct Buf(Copyable):\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = UnsafePointer[Int].alloc(n)\n        self.n = n\n    def __init__(out self, *, copy: Self):\n        self.n = copy.n\n        self.data = UnsafePointer[Int].alloc(copy.n)\n        var i: Int = 0\n        while i < copy.n:\n            self.data[i] = copy.data[i]\n            i = i + 1\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = a\n    c.set(0, 11)\n    print(a.get(0), c.get(0))\n";
     assert_eq!(parity(src), "5 9\n5 11\n");
+}
+
+#[test]
+fn copy_constructor_deep_copies_copyable_nominal_fields() {
+    // Dict's copy constructor assigns its pointer-owning List field from the
+    // borrowed source. That projected read is an ownership-producing copy: it
+    // must invoke List.__copyinit__, not duplicate the source allocation handle.
+    let src = "from std.collections.dict import Dict\n\ndef main() raises:\n    var original = Dict[String, String]()\n    original[\"phase\"] = \"source\"\n    var copied = original.copy()\n    copied[\"phase\"] = \"copy\"\n    print(original[\"phase\"])\n    print(copied[\"phase\"])\n";
+    assert_eq!(
+        run_compiled(src).expect("compile nested lifecycle-field copy"),
+        "source\ncopy\n"
+    );
 }
 
 #[test]
@@ -573,17 +953,47 @@ fn ternary_and_chained_comparison_run() {
 
 #[test]
 fn tuple_unpacking_runs() {
-    // Unpack into names; swap through a temporary tuple (RHS built once).
+    // Unpack into names; swap through an rvalue tuple (RHS built once).
     let src = "def main():\n    var t: Tuple[Int, Int, Int] = (1, 2, 3)\n    a, b, c = t\n    print(a, b, c)\n    var x: Int = 10\n    var y: Int = 20\n    x, y = (y, x)\n    print(x, y)\n";
-    assert_eq!(parity(src), "1 2 3\n20 10\n");
+    assert_eq!(
+        run_compiled(src).expect("compile nominal Tuple unpacking"),
+        "1 2 3\n20 10\n"
+    );
 }
 
 #[test]
 fn current_tuple_core_runs() {
     let src = "def main():\n    var bare = 4, \"four\"\n    var left, right = bare\n    print(bare)\n    print(left, right)\n    print(Tuple())\n    print(Tuple(7))\n    print(Tuple[Float64, String](2, \"two\"))\n    print(Tuple[Float64](2)[0])\n    print(len(bare), 4 in bare, 9 not in bare)\n    print(Tuple(1, 2) == Tuple(1, 2))\n    print(Tuple(1, 2) != Tuple(1, 3))\n    print(Tuple(1, 2) < Tuple(1, 3), Tuple(2, 0) >= Tuple(1, 9))\n    print(bare.reverse())\n    print(bare.concat(Tuple(True)))\n";
     assert_eq!(
-        parity(src),
+        run_compiled(src).expect("compile nominal Tuple core"),
         "(4, four)\n4 four\n()\n(7,)\n(2.0, two)\n2.0\n2 True True\nTrue\nTrue\nTrue True\n(four, 4)\n(4, four, True)\n"
+    );
+}
+
+#[test]
+fn reciprocal_tuple_reverse_specializations_use_predeclared_identities() {
+    let source = "def main():\n    var numbers_first = Tuple(1, \"two\")\n    var words_first = Tuple(\"three\", 4)\n    print(numbers_first.reverse())\n    print(words_first.reverse())\n";
+    assert_eq!(
+        run_compiled(source).expect("compile reciprocal Tuple reverse specializations"),
+        "(two, 1)\n(4, three)\n"
+    );
+}
+
+#[test]
+fn implicitly_copyable_named_tuple_transforms_preserve_the_source() {
+    let source = "def main():\n    var pair = Tuple(1, 2)\n    var suffix = Tuple(3)\n    var reversed = pair.reverse()\n    var joined = pair.concat(suffix)\n    print(pair)\n    print(suffix)\n    print(reversed)\n    print(joined)\n";
+    assert_eq!(
+        run_compiled(source).expect("compile named Tuple transforms"),
+        "(1, 2)\n(3,)\n(2, 1)\n(1, 2, 3)\n"
+    );
+}
+
+#[test]
+fn tuple_comparable_conformance_survives_discovery_and_specialization() {
+    let source = "def ordered[T: Comparable](left: T, right: T) -> Bool:\n    return left < right\n\ndef main():\n    print(ordered(Tuple(1, 2), Tuple(1, 3)))\n";
+    assert_eq!(
+        run_compiled(source).expect("compile generic Tuple comparison"),
+        "True\n"
     );
 }
 
@@ -592,7 +1002,7 @@ fn slice_subscript_runs() {
     // List + String slicing with optional bounds, steps, negative indices, reversal.
     let src = "def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4, 5]\n    print(xs[1:4])\n    print(xs[::2])\n    print(xs[::-1])\n    print(xs[-2:])\n    var s: String = \"hello\"\n    print(s[1:4])\n    print(s[::-1])\n";
     assert_eq!(
-        parity(src),
+        run_compiled(src).expect("compile nominal List slice overloads"),
         "[1, 2, 3]\n[0, 2, 4]\n[5, 4, 3, 2, 1, 0]\n[4, 5]\nell\nolleh\n"
     );
 }
@@ -623,8 +1033,8 @@ fn immutable_pointer_allows_concurrent_owner_reads() {
 
 #[test]
 fn reference_valued_aggregate_preserves_and_writes_through_handle() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef main():\n    var value = 40\n    ref alias = value\n    var box = RefBox(alias)\n    box.value += 2\n    print(value)\n";
-    assert_eq!(parity(src), "42\n");
+    let src = include_str!("../conformance/fixtures/reference_valued_aggregate.mojo");
+    assert_eq!(vm(src), "42\n42\n42\n");
 }
 
 #[test]
@@ -634,14 +1044,61 @@ fn handwritten_initializer_stores_reference_field_handle() {
 }
 
 #[test]
+fn runtime_returned_interior_reference_stores_in_fieldwise_aggregate() {
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef main():\n    var values = [40]\n    ref item = element(values)\n    var box = RefBox(item)\n    box.value += 2\n    print(values[0])\n";
+    assert_eq!(vm(src), "42\n");
+}
+
+#[test]
 fn nested_reference_aggregate_preserves_handles() {
     // Mojito-only executable-ref-field proof; current Mojo uses origin-bearing
     // pointer aggregates for stored provenance.
     let tuple = "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=True]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 4\n    var right = 8\n    ref a = left\n    ref b = right\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n";
-    assert_eq!(vm(tuple), "4 8\n");
+    assert_eq!(
+        run_compiled(tuple).expect("compile reference-valued nominal Tuple"),
+        "4 8\n"
+    );
 
     let list = "@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Int]\n\ndef main():\n    var left = 4\n    var right = 8\n    ref a = left\n    ref b = right\n    var pair = RefList([a, b])\n    pair.values[1] += 2\n    print(left, right)\n";
     assert_eq!(vm(list), "4 10\n");
+}
+
+#[test]
+fn chained_method_on_reference_valued_list_element_uses_the_peeled_handle() {
+    let src = "@fieldwise_init\nstruct Item(Copyable, Movable):\n    var value: Int\n    def bump(mut self):\n        self.value += 2\n\n@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Item]\n\ndef main():\n    var item = Item(40)\n    ref alias = item\n    var refs = RefList([alias])\n    refs.values[0].bump()\n    print(item.value)\n";
+    assert_eq!(vm(src), "42\n");
+}
+
+#[test]
+fn dynamic_reference_returning_actual_is_evaluated_once_and_writes_back() {
+    let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.value)] Int:\n        return self.value\n\ndef index() -> Int:\n    print(\"index\")\n    return 0\n\ndef bump(mut value: Int):\n    value += 2\n\ndef observe(ref value: Int):\n    print(value)\n\ndef main():\n    var box = Box(40)\n    bump(box[index()])\n    observe(box[index()])\n    print(box.value)\n";
+    assert_eq!(vm(src), "index\nindex\n42\n42\n");
+}
+
+#[test]
+fn dynamic_intrinsic_index_actual_is_evaluated_once_and_writes_back() {
+    let src = "def index() -> Int:\n    print(\"index\")\n    return 0\n\ndef bump(mut value: Int):\n    value += 2\n\ndef main():\n    var lanes = SIMD[DType.int, 2](40, 0)\n    bump(lanes[index()])\n    print(lanes[0])\n";
+    assert_eq!(vm(src), "index\n42\n");
+}
+
+#[test]
+fn nominal_setter_evaluates_receiver_then_subscripts_then_rhs() {
+    let src = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\n@fieldwise_init\nstruct Outer(Copyable, Movable):\n    var box: Box\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.box)] Box:\n        return self.box\n\ndef rhs() -> Int:\n    print(\"rhs\")\n    return 40\n\ndef receiver_index() -> Int:\n    print(\"receiver\")\n    return 0\n\ndef index() -> Int:\n    print(\"index\")\n    return 2\n\ndef main():\n    var outer = Outer(Box(0))\n    outer[receiver_index()][index()] = rhs()\n    print(outer.box.value)\n";
+    assert_eq!(vm(src), "receiver\nindex\nrhs\n42\n");
+}
+
+#[test]
+fn competing_positional_and_keyword_setter_shapes_execute_selected_abis() {
+    // Mojito extension: the pinned nightly currently rejects this focused
+    // positional-only/keyword-only setter-overload pair.
+    let src = include_str!("../conformance/fixtures/setter_overload_extension.mojo");
+    assert_eq!(vm(src), "1\n7\n");
+}
+
+#[test]
+fn union_return_through_runtime_reference_arguments_keeps_the_selected_owner_alive() {
+    let src = "def element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef choose(ref left: Int, ref right: Int, flag: Bool) -> ref[left, right] Int:\n    if flag:\n        return left\n    return right\n\ndef main():\n    var left_values = [1]\n    var right_values = [2]\n    ref left = element(left_values)\n    ref right = element(right_values)\n    ref selected = choose(left, right, False)\n    print(selected)\n";
+    assert_eq!(vm(src), "2\n");
 }
 
 #[test]
@@ -658,7 +1115,7 @@ fn variant_projection_is_a_tag_checked_place() {
 #[test]
 fn user_slice_dispatches_through_checked_getitem() {
     let src = "@fieldwise_init\nstruct Window:\n    var size: Int\n\n    def __getitem__(self, part: Slice) -> Int:\n        var normalized = part.indices(self.size)\n        return normalized[0] + normalized[1] + normalized[2]\n\n@fieldwise_init\nstruct Grid:\n    def __getitem__(self, row: Int, columns: Slice) -> Int:\n        var normalized = columns.indices(10)\n        return row * 100 + normalized[0] + normalized[1] + normalized[2]\n\ndef main():\n    var window = Window(10)\n    print(window[:5])\n    print(window[::-1])\n    var grid = Grid()\n    print(grid[3, 1:8:2])\n";
-    assert_eq!(parity(src), "6\n7\n311\n");
+    assert_eq!(run_compiled(src).expect("vm backend failed"), "6\n7\n311\n");
 }
 
 #[test]
@@ -676,7 +1133,7 @@ fn multi_index_dispatch_supports_variadic_getitem() {
 #[test]
 fn mixed_slice_assignment_dispatches_to_fixed_setitem() {
     let src = "@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        var normalized = columns.indices(10)\n        self.value = row * 100 + normalized[0] + normalized[1] + normalized[2] + value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n    print(grid.value)\n";
-    assert_eq!(parity(src), "320\n");
+    assert_eq!(run_compiled(src).expect("vm backend failed"), "320\n");
 }
 
 #[test]
@@ -686,9 +1143,134 @@ fn multidimensional_assignment_supports_variadic_setitem() {
 }
 
 #[test]
+fn subscript_call_contracts_execute_uniformly() {
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/subscript_call_contracts.mojo"
+        ))
+        .expect("compile complete subscript call contracts"),
+        "42\n44\n311\n320\ncaught getter\ncaught setter\n7\n1\n41 1 41\n41 41\n42\n"
+    );
+}
+
+#[test]
+fn subscript_contract_edges_match_current_mojo() {
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/subscript_contract_edges.mojo"
+        ))
+        .expect("compile subscript contract edge cases"),
+        "receiver\nindex\nrhs\n42\nnext\n42\n7\n"
+    );
+}
+
+#[test]
+fn owned_nominal_element_copy_uses_the_checked_accessor() {
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/owned_nominal_element_copy.mojo"
+        ))
+        .expect("compile owned nominal element copy"),
+        "10\n"
+    );
+}
+
+#[test]
+fn dict_element_copies_execute_in_bindings_and_consuming_arguments() {
+    let source = "from std.collections.dict import Dict\n\ndef take(value: Int) -> Int:\n    return value\n\ndef main() raises:\n    var values = Dict[String, Int]()\n    values[\"one\"] = 10\n    var copied: Int = values[\"one\"]\n    print(copied, take(values[\"one\"]))\n";
+    assert_eq!(
+        run_compiled(source).expect("compile owned Dict element copies"),
+        "10 10\n"
+    );
+}
+
+#[test]
+fn ordinary_index_arguments_still_execute_selected_implicit_conversions() {
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/index_implicit_conversion.mojo"
+        ))
+        .expect("compile implicit index conversion"),
+        "13\n"
+    );
+}
+
+#[test]
+fn projected_nominal_references_execute_and_pass_as_call_places() {
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/projected_subscript_reference.mojo"
+        ))
+        .expect("compile projected nominal references"),
+        "10\n11\n11\n"
+    );
+}
+
+#[test]
+fn projected_pointer_actuals_evaluate_dynamic_indices_once() {
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/projected_pointer_subscript.mojo"
+        ))
+        .expect("compile projected pointer actuals"),
+        "index\nindex\n42\n42 2\n"
+    );
+}
+
+#[test]
+fn augmented_nominal_subscripts_match_current_mojo_order() {
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/augmented_subscript_contract.mojo"
+        ))
+        .expect("compile augmented nominal subscript"),
+        "index\nrhs\nget 0\nset 0 15\n15\n"
+    );
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/augmented_subscript_shapes.mojo"
+        ))
+        .expect("compile augmented multi/slice subscripts"),
+        "first\nsecond\nrhs\nmulti get 1 2\nmulti set 1 2 13\n13\n\
+         first\nsecond\nrhs\nslice get\nslice set 23\n23\n"
+    );
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/augmented_keyword_setter.mojo"
+        ))
+        .expect("compile augmented keyword-only setter conversion"),
+        "index\nrhs\nget 0\nconvert 15\nset 0 15\n15\n"
+    );
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/augmented_index_conversion.mojo"
+        ))
+        .expect("compile getter-specific augmented index conversion"),
+        "index\nrhs\nconvert 0\nget 0\nset 0 42\n42\n"
+    );
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/augmented_mutating_index.mojo"
+        ))
+        .expect("compile augmented mutating index reload"),
+        "1 1\n"
+    );
+    assert_eq!(
+        run_compiled(include_str!(
+            "../conformance/fixtures/augmented_reference_getter.mojo"
+        ))
+        .expect("compile mutable-reference augmented getter"),
+        "index\nget 0\nrhs\n42\n"
+    );
+}
+
+#[test]
 fn explicit_slice_values_expose_optional_fields_and_indices() {
     let src = "def main():\n    var span = Slice(None, None, -1)\n    print(span.start.is_some(), span.end.or_else(9), span.step.or_else(1))\n    print(span.indices(4))\n    print(slice(3).indices(10))\n";
-    assert_eq!(parity(src), "False 9 -1\n(3, -1, -1)\n(0, 3, 1)\n");
+    assert_eq!(
+        run_compiled(src).expect("vm backend failed"),
+        "False 9 -1\n(3, -1, -1)\n(0, 3, 1)\n"
+    );
 }
 
 #[test]

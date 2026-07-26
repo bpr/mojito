@@ -1,5 +1,7 @@
 # A self-hosted, generic `Optional[T]` — an ordinary mojito struct (no compiler
 # intrinsic). A present value or an absent one.
+from std.collections.list import List
+
 struct Optional[T: Copyable & Movable]:
     var values: List[Self.T]
 

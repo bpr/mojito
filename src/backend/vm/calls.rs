@@ -77,8 +77,8 @@ pub(super) fn bind_args(
         };
         regular_values.push(crate::runtime::coerce_checked(value, &sig.param_types[i]));
     }
-    // Collect overflow positional args. Ordinary homogeneous `*args: T` becomes
-    // a List[T]. A compile-time-specialized heterogeneous pack has an explicit
+    // Collect overflow positional args into internal tuple storage. Source List
+    // is nominal and is never part of the call ABI. A specialized heterogeneous
     // checked `RuntimePack[T0, ...]` ABI and must remain a Tuple: treating it as
     // a List makes `Tuple(*args^)` copy indexed elements instead of relocating
     // the pack, which can destroy a non-Copyable element twice.
@@ -100,7 +100,7 @@ pub(super) fn bind_args(
                     got: overflow.len(),
                 });
             }
-            _ => Value::List(
+            _ => Value::Tuple(
                 overflow
                     .iter()
                     .map(|&idx| crate::runtime::coerce_checked(argv[idx].clone(), elem_ty))
@@ -157,12 +157,7 @@ pub(super) fn construct(
     // pair each declared value parameter with its supplied comptime `Int` argument.
     // Explicit `Name[...](...)` supplies every parameter positionally, so the decls
     // align with `param_vals`.
-    let value_params = def
-        .param_decls
-        .iter()
-        .zip(param_vals)
-        .filter_map(|(decl, val)| reify_value_parameter(decl, val.clone().unwrap_or(Value::None)))
-        .collect();
+    let value_params = reify_value_parameters(&def.param_decls, param_vals);
     Ok(Value::Struct {
         name: name.to_string(),
         fields,

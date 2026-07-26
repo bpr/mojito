@@ -16,6 +16,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::ast::{
     ArgConvention, Dtype, Expr, ExprKind, FnParam, InfixOp, Method, PrefixOp, Stmt, StmtKind,
@@ -28,15 +29,47 @@ use crate::call::{
 use crate::ct::{CtExpr, CtValue};
 use crate::error::TypeError;
 use crate::token::SourceSpan;
-use crate::types::{ConstraintOperand, GenericConstraint, ParamDecl, SliceKind, Ty, TyArg};
+use crate::types::{
+    CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SliceKind, Ty,
+    TyArg, contains_infer, dict_elements, dict_type, list_element, list_type, range_type,
+    set_element, set_type, tuple_elements, tuple_type as nominal_tuple_type,
+};
+
+type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);
+
+/// The raw-slot operations on `UnsafePointer` are an implementation privilege,
+/// not source-language API. Linked expressions retain their exact source path;
+/// only files physically shipped in the compiler's collection library receive
+/// the checked adjustment that can lower these operations.
+fn is_bundled_collection_source(source: Option<&str>) -> bool {
+    let (Some(manifest), Some(source)) = (option_env!("CARGO_MANIFEST_DIR"), source) else {
+        return false;
+    };
+    let stdlib = Path::new(manifest).join("stdlib");
+    let source = Path::new(source);
+    source == stdlib.join("std/collections/list.mojo")
+        || source == stdlib.join("list.mojo")
+        || source == stdlib.join("std/collections/dict.mojo")
+        || source == stdlib.join("dict.mojo")
+}
 
 /// The checked signature of a struct, kept in the checker's registry.
 struct StructInfo {
     /// Compile-time parameters (type and value); empty for a non-generic struct.
     decls: Vec<ParamDecl>,
+    /// Concrete semantic arguments retained by an erased compiler-generated
+    /// specialization. Public `Tuple[*Ts]` is emitted as a parameter-free
+    /// implementation struct, but its checked identity must still carry the
+    /// element types selected for `Ts`.
+    fixed_arguments: Option<Vec<TyArg>>,
     /// Traits this struct declares conformance to (verified at definition).
     conforms: Vec<String>,
     callable_conformance: Option<Ty>,
+    /// Exact lowered `__call__` method selected by the declared callable
+    /// conformance. This is distinct from the callable contract: overloaded
+    /// methods with the same arity require the signature-qualified target to
+    /// survive into indirect-call MIR.
+    callable_target: Option<String>,
     conformance_conditions: HashMap<String, Expr>,
     /// Declared fields, in order (drives the fieldwise constructor).
     fields: Vec<(String, Ty)>,
@@ -47,6 +80,30 @@ struct StructInfo {
     fieldwise_init: bool,
     explicit_destroy_message: Option<String>,
     explicit_destructors: HashMap<String, bool>,
+}
+
+#[derive(Clone, Copy)]
+struct DependentIndexAccessorFamily {
+    place: &'static str,
+    value: &'static str,
+}
+
+/// Select the current Mojo parameter-index hook first, while retaining the
+/// earlier spelling as an intentional source-compatibility fallback.
+fn dependent_index_accessor_family(info: &StructInfo) -> Option<DependentIndexAccessorFamily> {
+    if info.methods.contains_key("__getitem_param__$0") {
+        Some(DependentIndexAccessorFamily {
+            place: "__getitem_param__",
+            value: "__getitem_param_value__",
+        })
+    } else if info.methods.contains_key("__getitem__$0") {
+        Some(DependentIndexAccessorFamily {
+            place: "__getitem__",
+            value: "__getitem_value__",
+        })
+    } else {
+        None
+    }
 }
 
 /// The source-level pieces of a struct declaration passed through checking.
@@ -77,7 +134,7 @@ struct TraitInfo {
 #[derive(Clone, PartialEq)]
 enum CtMemberReq {
     /// A compile-time value whose value type must match this type.
-    Value(Ty),
+    Value(Box<Ty>),
     /// A compile-time type value whose type must conform to these trait bounds.
     Type { bounds: Vec<String> },
 }
@@ -285,6 +342,51 @@ fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig) -> bool {
     got.error == required.error
 }
 
+/// A deliberately small implication relation for declaration availability.
+/// It proves only facts which are syntactically present in a positive
+/// conjunction (plus exact predicates).  In particular it does not turn a
+/// failed symbolic evaluation, a negation, or either arm of a disjunction into
+/// an assumption.
+fn generic_constraint_implies(
+    premise: &GenericConstraint,
+    consequence: &GenericConstraint,
+) -> bool {
+    if premise == consequence || matches!(consequence, GenericConstraint::Bool(true)) {
+        return true;
+    }
+    match (premise, consequence) {
+        (_, GenericConstraint::And(left, right)) => {
+            generic_constraint_implies(premise, left) && generic_constraint_implies(premise, right)
+        }
+        (GenericConstraint::And(left, right), _) => {
+            generic_constraint_implies(left, consequence)
+                || generic_constraint_implies(right, consequence)
+        }
+        _ => false,
+    }
+}
+
+fn guaranteed_conformance_atoms(
+    constraint: &GenericConstraint,
+    output: &mut Vec<(String, String)>,
+) {
+    match constraint {
+        GenericConstraint::Conforms { param, trait_name } => {
+            let atom = (param.clone(), trait_name.clone());
+            if !output.contains(&atom) {
+                output.push(atom);
+            }
+        }
+        GenericConstraint::And(left, right) => {
+            guaranteed_conformance_atoms(left, output);
+            guaranteed_conformance_atoms(right, output);
+        }
+        // A disjunction, negation, comparison, or symbolic pack predicate does
+        // not unconditionally refine one ordinary type parameter.
+        _ => {}
+    }
+}
+
 /// The checker's value-coercion predicate, shared with MIR verification so the
 /// verifier never re-derives conversion rules.
 pub(crate) fn value_coerces(from: &Ty, to: &Ty) -> bool {
@@ -343,6 +445,7 @@ fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
 
 fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<ParamDecl>, Vec<Ty>) {
     let mut subst = HashMap::new();
+    let mut value_names = HashMap::new();
     let canonical_decls = decls
         .iter()
         .enumerate()
@@ -350,46 +453,73 @@ fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<Param
             ParamDecl::Type {
                 name,
                 bounds,
-                default,
-                infer_only,
+                callable_bound,
+                default: _,
+                infer_only: _,
                 variadic,
                 constraints,
             } => {
                 let canonical_name = format!("${index}");
+                let canonical_callable_bound = callable_bound.as_ref().map(|bound| {
+                    Box::new(rename_dependent_parameters(
+                        &substitute(bound, &subst),
+                        &value_names,
+                    ))
+                });
                 subst.insert(
                     name.clone(),
                     Ty::Param {
                         name: canonical_name.clone(),
                         bounds: bounds.clone(),
+                        callable_bound: canonical_callable_bound.clone(),
                     },
                 );
                 ParamDecl::Type {
                     name: canonical_name,
                     bounds: bounds.clone(),
-                    default: default.clone(),
-                    infer_only: *infer_only,
+                    callable_bound: canonical_callable_bound,
+                    // Binder defaults and the `//` inference marker govern a
+                    // call through the contract; current Mojo does not make
+                    // either part of generic callable conformance identity.
+                    default: None,
+                    infer_only: false,
                     variadic: *variadic,
                     constraints: constraints.clone(),
                 }
             }
             ParamDecl::Value {
+                name,
                 ty,
-                default,
-                infer_only,
+                default: _,
+                callable_default: _,
+                infer_only: _,
                 variadic,
                 constraints,
                 ..
-            } => ParamDecl::Value {
-                name: format!("${index}"),
-                ty: Box::new(substitute(ty, &subst)),
-                default: default.clone(),
-                infer_only: *infer_only,
-                variadic: *variadic,
-                constraints: constraints.clone(),
-            },
+            } => {
+                let canonical_name = format!("${index}");
+                let canonical_ty =
+                    rename_dependent_parameters(&substitute(ty, &subst), &value_names);
+                value_names.insert(
+                    name.trim_start_matches('*').to_string(),
+                    canonical_name.clone(),
+                );
+                ParamDecl::Value {
+                    name: canonical_name,
+                    ty: Box::new(canonical_ty),
+                    default: None,
+                    callable_default: None,
+                    infer_only: false,
+                    variadic: *variadic,
+                    constraints: constraints.clone(),
+                }
+            }
         })
         .collect();
-    let canonical_params = params.iter().map(|ty| substitute(ty, &subst)).collect();
+    let canonical_params = params
+        .iter()
+        .map(|ty| rename_dependent_parameters(&substitute(ty, &subst), &value_names))
+        .collect();
     (canonical_decls, canonical_params)
 }
 
@@ -440,6 +570,255 @@ fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String
     }
 }
 
+/// A signature-qualified abstract `__call__` symbol for an indirect callable
+/// contract. The VM retargets this symbol to a nominal receiver's runtime type;
+/// ordinary function and closure values ignore it. Keeping the signature here
+/// avoids falling back to arity when a callable struct overloads `__call__` on
+/// parameter type.
+pub(crate) fn callable_contract_target(ty: &Ty) -> Option<String> {
+    let contract = callable_contract_ty(ty)?;
+    let (params, variadic, kw_variadic) = match contract {
+        Ty::Func {
+            params,
+            variadic,
+            kw_variadic,
+            ..
+        } => (params, variadic, kw_variadic),
+        _ => return None,
+    };
+    let signature_types = params
+        .iter()
+        .chain(variadic.iter().map(Box::as_ref))
+        .chain(kw_variadic.iter().map(Box::as_ref));
+    Some(crate::symbol::method_symbol(
+        "__trait_dispatch",
+        "__call__",
+        &crate::symbol::SignatureKey::from_tys(signature_types),
+    ))
+}
+
+/// Recover the monomorphic or generic callable contract carried either directly
+/// by a function type or indirectly by a callable-bounded type parameter.
+pub(crate) fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::Func { .. } | Ty::GenericFunc { .. } => Some(ty),
+        Ty::Param {
+            callable_bound: Some(bound),
+            ..
+        } => callable_contract_ty(bound),
+        _ => None,
+    }
+}
+
+fn callable_convention_accepts(
+    actual: Option<ArgConvention>,
+    contract: Option<ArgConvention>,
+) -> bool {
+    let actual = actual.unwrap_or(ArgConvention::Read);
+    let contract = contract.unwrap_or(ArgConvention::Read);
+    match (actual, contract) {
+        // A read-only callee demands less access than a mutable callable
+        // contract promises to supply, so it is a valid implementation.
+        (ArgConvention::Read, ArgConvention::Read | ArgConvention::Mut) => true,
+        (ArgConvention::Mut, ArgConvention::Mut) => true,
+        // Ownership-changing and parametric-reference conventions retain their
+        // exact ABI until their full subtyping rules are modeled.
+        (actual, contract) => actual == contract,
+    }
+}
+
+/// Whether a concrete monomorphic callable implementation fulfills an
+/// anonymous `def(...)` trait contract. This is intentionally directional:
+/// non-raising/read-only implementations may fulfill raising/mutable contracts,
+/// but not vice versa.
+pub(crate) fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
+    if matches!(actual, Ty::GenericFunc { .. }) || matches!(contract, Ty::GenericFunc { .. }) {
+        let (Some((actual_decls, actual)), Some((contract_decls, contract))) = (
+            erase_generic_callable_binders(actual),
+            erase_generic_callable_binders(contract),
+        ) else {
+            return false;
+        };
+        return actual_decls == contract_decls && callable_bound_accepts(&actual, &contract);
+    }
+
+    let (
+        Ty::Func {
+            environment: actual_environment,
+            params: actual_params,
+            ret: actual_ret,
+            required: actual_required,
+            variadic: actual_variadic,
+            kw_variadic: actual_kw_variadic,
+            positional_only: actual_positional_only,
+            keyword_only: actual_keyword_only,
+            raises: actual_raises,
+            error: actual_error,
+            conventions: actual_conventions,
+            ref_params: actual_ref_params,
+            ref_return: actual_ref_return,
+            ..
+        },
+        Ty::Func {
+            environment: contract_environment,
+            params: contract_params,
+            ret: contract_ret,
+            required: contract_required,
+            variadic: contract_variadic,
+            kw_variadic: contract_kw_variadic,
+            positional_only: contract_positional_only,
+            keyword_only: contract_keyword_only,
+            raises: contract_raises,
+            error: contract_error,
+            conventions: contract_conventions,
+            ref_params: contract_ref_params,
+            ref_return: contract_ref_return,
+            ..
+        },
+    ) = (actual, contract)
+    else {
+        return false;
+    };
+
+    callable_environment_coerces(actual_environment, contract_environment)
+        && actual_params.len() == contract_params.len()
+        && actual_params
+            .iter()
+            .zip(contract_params)
+            .all(|(actual, contract)| actual == contract)
+        && coerces(actual_ret, contract_ret)
+        && actual_required.len() == contract_required.len()
+        && actual_required
+            .iter()
+            .zip(contract_required)
+            .all(|(actual, contract)| !*actual || *contract)
+        && actual_variadic.is_none()
+        && contract_variadic.is_none()
+        && actual_kw_variadic.is_none()
+        && contract_kw_variadic.is_none()
+        && actual_positional_only == contract_positional_only
+        && actual_keyword_only == contract_keyword_only
+        && actual_conventions.len() == contract_conventions.len()
+        && actual_conventions
+            .iter()
+            .zip(contract_conventions)
+            .all(|(actual, contract)| callable_convention_accepts(*actual, *contract))
+        && actual_ref_params == contract_ref_params
+        && actual_ref_return == contract_ref_return
+        && (!*actual_raises || *contract_raises)
+        && match (actual_error.as_deref(), contract_error.as_deref()) {
+            (None, _) | (Some(Ty::Never), _) => true,
+            (Some(_), None) => false,
+            (Some(actual), Some(Ty::Error)) => actual != &Ty::Never,
+            (Some(actual), Some(contract)) => actual == contract,
+        }
+}
+
+/// Alpha-normalize a generic anonymous callable into its declaration list and
+/// a monomorphic callable shape whose parameter occurrences use canonical
+/// `$N` names.  Generic callable compatibility can then reuse the ordinary
+/// directional callable-contract rules without making source binder spelling
+/// part of the type identity.
+fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)> {
+    let Ty::GenericFunc {
+        environment,
+        decls,
+        params,
+        names,
+        ret,
+        required,
+        variadic,
+        kw_variadic,
+        positional_only,
+        keyword_only,
+        raises,
+        error,
+        conventions,
+        ref_params,
+        ref_return,
+    } = callable
+    else {
+        return None;
+    };
+
+    let mut signature = params.clone();
+    let variadic_index = variadic.as_ref().map(|parameter| {
+        let index = signature.len();
+        signature.push((**parameter).clone());
+        index
+    });
+    let kw_variadic_index = kw_variadic.as_ref().map(|parameter| {
+        let index = signature.len();
+        signature.push((**parameter).clone());
+        index
+    });
+    let return_index = signature.len();
+    signature.push((**ret).clone());
+    let error_index = error.as_ref().map(|error| {
+        let index = signature.len();
+        signature.push((**error).clone());
+        index
+    });
+    let (decls, signature) = canonical_generic_signature(decls, &signature);
+
+    Some((
+        decls,
+        Ty::Func {
+            environment: environment.clone(),
+            params: signature[..params.len()].to_vec(),
+            names: names.clone(),
+            ret: Box::new(signature[return_index].clone()),
+            required: required.clone(),
+            variadic: variadic_index.map(|index| Box::new(signature[index].clone())),
+            kw_variadic: kw_variadic_index.map(|index| Box::new(signature[index].clone())),
+            positional_only: *positional_only,
+            keyword_only: *keyword_only,
+            raises: *raises,
+            error: error_index.map(|index| Box::new(signature[index].clone())),
+            conventions: conventions.clone(),
+            ref_params: ref_params.clone(),
+            ref_return: ref_return.clone(),
+        },
+    ))
+}
+
+fn method_callable_ty(method: &MethodSig) -> Ty {
+    Ty::Func {
+        environment: crate::origin::CallableEnvironment::Default,
+        params: method.params.clone(),
+        names: method.names.clone(),
+        ret: Box::new(method.ret.clone()),
+        required: method.required.clone(),
+        variadic: method.variadic.clone(),
+        kw_variadic: method.kw_variadic.clone(),
+        positional_only: method.positional_only,
+        keyword_only: method.keyword_only,
+        raises: method.raises,
+        error: method.error.clone(),
+        conventions: method.conventions.clone(),
+        ref_params: Box::new(method.ref_params.clone()),
+        ref_return: method.ref_return.clone().map(Box::new),
+    }
+}
+
+fn with_callable_environment(
+    mut callable: Ty,
+    environment: crate::origin::CallableEnvironment,
+) -> Ty {
+    match &mut callable {
+        Ty::Func {
+            environment: current,
+            ..
+        }
+        | Ty::GenericFunc {
+            environment: current,
+            ..
+        } => *current = environment,
+        _ => {}
+    }
+    callable
+}
+
 enum OverloadSelect {
     NoMatch,
     Ambiguous,
@@ -472,9 +851,12 @@ fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
 struct MethodCallResolution {
     conversion_score: usize,
     slots: Vec<ArgSlot>,
+    positional_overflow: Vec<usize>,
     keyword_overflow: Vec<usize>,
+    variadic_element: Option<Ty>,
     keyword_element: Option<Ty>,
     conventions: Vec<Option<ArgConvention>>,
+    self_convention: Option<ArgConvention>,
     return_type: Ty,
     raises: bool,
     error: Option<Box<Ty>>,
@@ -484,12 +866,77 @@ struct MethodCallResolution {
     ref_params: Vec<Option<crate::origin::RefSig>>,
     ref_return: Option<crate::origin::RefSig>,
     param_types: Vec<Ty>,
+    param_decls: Vec<ParamDecl>,
 }
 
 struct MethodCallScore {
     rank: usize,
     slots: Vec<ArgSlot>,
+    positional_overflow: Vec<usize>,
     keyword_overflow: Vec<usize>,
+}
+
+/// Source-level arguments attached to a method invocation. Keeping the runtime
+/// and compile-time argument lists together prevents the two method-resolution
+/// paths from slowly acquiring different call-shape parameters.
+#[derive(Clone, Copy)]
+struct MethodCallArguments<'a> {
+    param_args: &'a [crate::ast::ParamArg],
+    args: &'a [Expr],
+    kwargs: &'a [crate::ast::KwArg],
+    parameterized_syntax: bool,
+    /// The caller separately records a more precise projected write, so a
+    /// `mut self` call must not also invalidate every receiver interior.
+    preserves_receiver_interiors: bool,
+}
+
+/// Interior-generation state immediately before applying one selected method
+/// contract. Candidate scoring has already inferred the argument expressions at
+/// this point, so subtracting this snapshot isolates callee effects from effects
+/// which belong to evaluation of the source expression itself.
+struct CallBoundarySnapshot {
+    invalidations: HashMap<SourceSpan, Vec<crate::checked::InteriorInvalidation>>,
+}
+
+#[derive(Clone)]
+struct ValueAdjustmentSnapshot {
+    source: SourceSpan,
+    overload_target: Option<String>,
+    implicit_conversion: Option<String>,
+    operation: Option<crate::checked::SemanticAdjustment>,
+}
+
+impl<'a> MethodCallArguments<'a> {
+    fn ordinary(args: &'a [Expr], kwargs: &'a [crate::ast::KwArg]) -> Self {
+        Self {
+            param_args: &[],
+            args,
+            kwargs,
+            parameterized_syntax: false,
+            preserves_receiver_interiors: false,
+        }
+    }
+
+    fn interior_preserving(args: &'a [Expr], kwargs: &'a [crate::ast::KwArg]) -> Self {
+        Self {
+            preserves_receiver_interiors: true,
+            ..Self::ordinary(args, kwargs)
+        }
+    }
+
+    fn parameterized(
+        param_args: &'a [crate::ast::ParamArg],
+        args: &'a [Expr],
+        kwargs: &'a [crate::ast::KwArg],
+    ) -> Self {
+        Self {
+            param_args,
+            args,
+            kwargs,
+            parameterized_syntax: true,
+            preserves_receiver_interiors: false,
+        }
+    }
 }
 
 struct SubscriptResolution {
@@ -501,7 +948,7 @@ struct SubscriptResolution {
 type ReturnRefContract = (
     crate::origin::RefSig,
     Vec<crate::origin::OwnerId>,
-    Option<crate::origin::OwnerId>,
+    Option<crate::origin::OriginPlace>,
 );
 
 fn select_callable_overload(
@@ -563,9 +1010,23 @@ pub fn check(stmts: &[Stmt]) -> Result<(), TypeError> {
 
 /// Type-check and retain the semantic facts consumed by lowering/backends.
 pub fn check_program(stmts: &[Stmt]) -> Result<crate::checked::CheckedProgram, TypeError> {
-    let expanded = expand_trait_defaults(stmts)?;
-    let mut checker = Checker::new();
+    check_program_with_materialized_callables(stmts, HashMap::new())
+}
+
+/// Check compiler-generated Tuple declarations with the exact callable types
+/// referenced by their opaque, parser-unconstructible annotation ids.
+pub(crate) fn check_program_with_materialized_callables(
+    stmts: &[Stmt],
+    materialized_callables: HashMap<String, Ty>,
+) -> Result<crate::checked::CheckedProgram, TypeError> {
+    let mut expanded = expand_trait_defaults(stmts)?;
+    // Source locations survive elaboration clones and therefore cannot identify
+    // semantic occurrences. Re-key the final checked tree after the last
+    // checker-side cloning transform, before any fact table is populated.
+    crate::ast::rekey_syntax(&mut expanded);
+    let mut checker = Checker::new_with_materialized_callables(materialized_callables);
     checker.check_program(&expanded)?;
+    checker.check_reference_result_reads()?;
     let explicit_destroy_types = checker
         .structs
         .iter()
@@ -595,12 +1056,18 @@ pub fn check_program(stmts: &[Stmt]) -> Result<crate::checked::CheckedProgram, T
             })
         })
         .collect();
-    crate::explicit_destroy::check(
-        &expanded,
-        &checker.binding_types.borrow(),
-        &checker.comprehension_bindings.borrow(),
-        &explicit_destroy_types,
-    )?;
+    {
+        let binding_types = checker.binding_types.borrow();
+        let comprehension_bindings = checker.comprehension_bindings.borrow();
+        let deletability = checker.explicit_destroy_deletability.borrow();
+        crate::explicit_destroy::check(
+            &expanded,
+            &binding_types,
+            &comprehension_bindings,
+            &deletability,
+            &explicit_destroy_types,
+        )?;
+    }
     Ok(crate::checked::CheckedProgram::new(
         expanded,
         checker.overload_targets.into_inner(),
@@ -609,16 +1076,26 @@ pub fn check_program(stmts: &[Stmt]) -> Result<crate::checked::CheckedProgram, T
         checker.generic_parameters.into_inner(),
         checker.expression_types.into_inner(),
         checker.expression_bindings.into_inner(),
+        checker.statement_bindings.into_inner(),
+        checker.declaration_captures.into_inner(),
         checker.comprehension_bindings.into_inner(),
         checker.expression_place_types.into_inner(),
         checker.binding_types.into_inner(),
         checker.expression_effects.into_inner(),
+        checker.selected_calls.into_inner(),
+        checker.subscript_descriptors.into_inner(),
         checker.iteration_protocols.into_inner(),
         checker.simd_constructions.into_inner(),
         checker.operation_adjustments.into_inner(),
+        checker.tuple_unpack_plans.into_inner(),
+        checker.interior_references.into_inner(),
+        checker.interior_invalidations.into_inner(),
         explicit_destroy_types,
         checker.explicit_destroy_calls.into_inner(),
         checker.reference_value_uses.into_inner(),
+        checker.copy_place_value_uses.into_inner(),
+        checker.call_place_uses.into_inner(),
+        checker.implicitly_copied_consuming_receivers.into_inner(),
         checker.declaration_effects.into_inner(),
     ))
 }
@@ -723,8 +1200,10 @@ impl ConformanceOracle {
                 name.clone(),
                 StructInfo {
                     decls,
+                    fixed_arguments: None,
                     conforms: conforms.clone(),
                     callable_conformance: None,
+                    callable_target: None,
                     conformance_conditions: conformance_conditions.iter().cloned().collect(),
                     fields: field_types?,
                     associated: HashMap::new(),
@@ -870,9 +1349,46 @@ struct CapturePolicy {
     /// Scope index at which the nested function's own locals begin.
     base: usize,
     function_name: String,
+    declaration: SourceSpan,
     entries: HashMap<String, crate::ast::CaptureKind>,
-    default_read: bool,
+    default: Option<crate::ast::CaptureKind>,
 }
+
+/// How one source-level `Origin` parameter is represented by the callable's
+/// slot-relative reference contracts. Origin parameters are erased from
+/// `Ty::Func`'s ordinary compile-time parameter list, so this checker-owned fact
+/// is what lets a value expression such as `borrow[origin_of(value)]` bind that
+/// parameter without reconstructing it from source later in MIR lowering.
+#[derive(Clone)]
+struct CallableOriginParam {
+    name: String,
+    slots: Vec<usize>,
+}
+
+/// One source compile-time parameter in a callable declaration. `Origin`
+/// parameters are erased from `Ty::GenericFunc::decls`, so retaining this
+/// ordered layout is necessary to split a mixed specialization such as
+/// `borrow[Int, origin_of(value)]` without shifting the ordinary type argument.
+#[derive(Clone)]
+struct CallableSourceParam {
+    name: String,
+    infer_only: bool,
+    origin: Option<usize>,
+    ordinary: bool,
+}
+
+/// Origin-specialization metadata for one declaration in an overload set.
+/// Entries are registered in the same order as `Ty::Overload` candidates.
+#[derive(Clone)]
+struct CallableOriginSignature {
+    origins: Vec<CallableOriginParam>,
+    source: Vec<CallableSourceParam>,
+}
+
+type SplitCallableSpecialization = (
+    Vec<crate::ast::ParamArg>,
+    Vec<(Vec<usize>, crate::origin::Origin)>,
+);
 
 /// A single-pass static type checker over the parsed AST.
 pub struct Checker {
@@ -889,10 +1405,21 @@ pub struct Checker {
     /// to the lexical value scopes.  Unlike `Ty::Struct`, this preserves the
     /// use-site owner identity needed for escape checking.
     aggregate_origin_scopes: Vec<HashMap<String, Vec<crate::origin::Origin>>>,
+    /// Field-specific projection of `aggregate_origin_scopes`. Keeping direct
+    /// reference fields separate prevents a write through one stored handle
+    /// from invalidating interiors reached through an unrelated field.
+    aggregate_field_origin_scopes:
+        Vec<HashMap<String, HashMap<String, Vec<crate::origin::Origin>>>>,
     /// Reference-parameter handle types. Parameter expression typing still
     /// reads through to the declared referent, while storage contexts can ask
     /// for the handle explicitly.
     reference_parameter_scopes: Vec<HashMap<String, crate::origin::RefTy>>,
+    /// Origin-parameter declarations for callable values, parallel to the
+    /// lexical value scopes. The outer vector stored per name has one entry per
+    /// overload declaration. Each entry also retains the original compile-time
+    /// parameter order so erased Origin arguments can participate in overload
+    /// and generic candidate selection.
+    callable_origin_scopes: Vec<HashMap<String, Vec<CallableOriginSignature>>>,
     next_owner: u32,
     /// Index of the local scope for each function currently being checked.
     function_bases: Vec<usize>,
@@ -903,16 +1430,42 @@ pub struct Checker {
     capture_contexts: RefCell<Vec<CapturePolicy>>,
     /// Defined structs, by name (a separate namespace from value bindings).
     structs: HashMap<String, StructInfo>,
+    /// Top-level struct symbols in the checked program, collected before body
+    /// checking. Concrete Tuple types can therefore select their generated
+    /// implementation independent of declaration order.
+    declared_structs: HashSet<String>,
+    /// Fixed semantic arguments for every compiler-generated public Tuple in
+    /// the final program. This signature-only predeclaration is populated as a
+    /// closed set before sequential member checking, so reciprocal transforms
+    /// can name each other's complete nominal type without exposing ordinary
+    /// source forward references.
+    predeclared_generated_tuple_arguments: HashMap<String, Vec<TyArg>>,
+    /// Exact semantic callable contracts named by compiler-only opaque type
+    /// ids in generated Tuple declarations. Parsed source cannot populate this
+    /// namespace.
+    materialized_callables: HashMap<String, Ty>,
+    /// Generated Tuple implementations are emitted at the stdlib template
+    /// position, which may precede user element declarations. While checking
+    /// that compiler-owned specialization only, permit nominal forward type
+    /// identities; ordinary source declarations retain sequential visibility.
+    allow_generated_tuple_forward_types: bool,
     /// Defined traits, by name (their method requirements).
     traits: HashMap<String, TraitInfo>,
-    /// Stack of a generic `def`'s type parameters (`name → bounds`), innermost
-    /// last. A bare `T` annotation resolves to `Ty::Param` when in this stack.
+    /// Stack of a generic `def`'s checked type parameters, innermost last. A
+    /// bare `T` annotation resolves to the complete `Ty::Param`, including any
+    /// anonymous callable-trait contract.
     /// (A `def`'s *value* parameters are ordinary `Int` locals, not here.)
-    tparams: Vec<HashMap<String, Vec<String>>>,
+    tparams: Vec<HashMap<String, Ty>>,
     /// The enclosing struct's parameters while checking its fields and methods,
     /// so `Self.T` resolves to `Ty::Param` and `Self.n` to a value parameter.
     /// Saved/restored around a (possibly nested) struct definition.
     self_decls: Vec<ParamDecl>,
+    /// Positive conformance facts guaranteed by the active method's `where`
+    /// clause. These are deliberately kept separate from `self_decls`: adding
+    /// a temporary bound to the declaration changes the identity of `Ty::Param`
+    /// and can make an otherwise identical return type fail to match. The
+    /// facts refine capability queries only while that method body is checked.
+    assumed_conformances: Vec<HashSet<(String, String)>>,
     enclosing_type_params: Vec<crate::ast::TypeParam>,
     /// The `Ty` denoted by a bare `Self` while checking a struct's members (the
     /// struct type) or a trait's requirements (`Ty::SelfType`). `None` elsewhere.
@@ -940,6 +1493,17 @@ pub struct Checker {
     /// expression.  These cross the typed boundary so MIR never reinterprets
     /// syntax.
     operation_adjustments: RefCell<HashMap<SourceSpan, crate::checked::SemanticAdjustment>>,
+    /// Synthetic tuple element reads introduced by unpacking have no source
+    /// expression nodes. Retain their checked types and exact generated
+    /// accessors on the RHS expression for HIR/MIR lowering.
+    tuple_unpack_plans:
+        RefCell<HashMap<SourceSpan, Vec<crate::checked::CheckedTupleUnpackElement>>>,
+    /// Place expressions that define a fresh interior-reference generation.
+    /// Kept separate from operation adjustments because a Variant projection,
+    /// for example, carries both facts at the same checked node.
+    interior_references: RefCell<HashMap<SourceSpan, crate::origin::OriginPlace>>,
+    /// Mutations which invalidate interior generations below checked bases.
+    interior_invalidations: RefCell<HashMap<SourceSpan, Vec<crate::checked::InteriorInvalidation>>>,
     declaration_types: RefCell<HashMap<crate::checked::AnnotationSite, Ty>>,
     generic_parameters: RefCell<HashMap<crate::checked::GenericSite, Vec<crate::types::ParamDecl>>>,
     /// Checked raising contract and reference-return fact per callable
@@ -948,23 +1512,58 @@ pub struct Checker {
         RefCell<HashMap<crate::checked::AnnotationSite, crate::checked::DeclarationEffect>>,
     expression_types: RefCell<HashMap<SourceSpan, Ty>>,
     expression_bindings: RefCell<HashMap<SourceSpan, crate::origin::OwnerId>>,
+    /// Stable identities assigned by declarations and other binding statements.
+    /// HIR uses these facts to map checked owners to runtime slots without
+    /// recovering a binding from its source spelling.
+    statement_bindings: RefCell<HashMap<SourceSpan, crate::origin::OwnerId>>,
+    /// Explicit capture entries resolved at the nested declaration site. Keeping
+    /// unused entries is essential: a move capture still transfers at declaration.
+    declaration_captures: RefCell<HashMap<SourceSpan, Vec<crate::checked::CheckedCapture>>>,
     /// Stable identities/types for the lexical binders introduced by each
     /// comprehension, retained for checked HIR and explicit-destroy analysis.
     comprehension_bindings:
         RefCell<HashMap<SourceSpan, Vec<crate::checked::CheckedComprehensionBinding>>>,
     expression_place_types: RefCell<HashMap<SourceSpan, Ty>>,
     binding_types: RefCell<HashMap<SourceSpan, Ty>>,
+    /// Positive site-sensitive drop facts retained for the later explicit-
+    /// destroy CFG pass. Conditional conformances are meaningful only in the
+    /// constraint environment in which a binding was checked.
+    explicit_destroy_deletability: RefCell<crate::explicit_destroy::CheckedDeletability>,
     /// Selected call effects keyed by the checked call expression. This records
     /// the contract chosen during overload/bounded dispatch so later phases do
     /// not have to rediscover it from source syntax.
     expression_effects: RefCell<HashMap<SourceSpan, crate::checked::EffectFacts>>,
+    /// Complete overload/origin/effect contract for a selected method-like
+    /// call.  Nominal subscripts and ordinary method syntax share this fact.
+    selected_calls: RefCell<HashMap<SourceSpan, crate::checked::CheckedCallContract>>,
+    /// Subscript descriptor construction is orthogonal to call selection and
+    /// may coexist with a reference-result adjustment at the same expression.
+    subscript_descriptors: RefCell<HashMap<SourceSpan, SubscriptDescriptorPlan>>,
     /// Exact iterator protocol selected for each loop/comprehension iterable.
     /// Lowering consumes this fact instead of re-selecting `__iter__` by name.
     iteration_protocols: RefCell<HashMap<SourceSpan, crate::checked::IterationProtocol>>,
     explicit_destroy_calls: RefCell<std::collections::HashSet<SourceSpan>>,
     /// Expressions whose reference handle, rather than referent value, is
-    /// required by an origin-bearing aggregate operation. The bool is writable.
+    /// required by a reference binding or origin-bearing aggregate operation.
+    /// The bool records whether the resulting capability is writable.
     reference_value_uses: RefCell<HashMap<SourceSpan, bool>>,
+    /// Reference-result reads proven copyable in their site-sensitive generic
+    /// constraint environment. Final validation runs after those method scopes
+    /// have been popped, so it must retain rather than recompute this fact.
+    copyable_reference_result_reads: RefCell<HashSet<SourceSpan>>,
+    /// Place expressions selected for an independent value copy at a consuming
+    /// boundary. This stays checker-owned because conditional Copyable
+    /// conformance can depend on the active generic constraint environment.
+    copy_place_value_uses: RefCell<HashSet<SourceSpan>>,
+    /// Actual arguments whose caller place must remain live through a selected
+    /// `mut`/`ref` call. This checker-owned fact keeps MIR lowering from
+    /// retaining ordinary copied arguments merely because they are syntactic
+    /// places.
+    call_place_uses: RefCell<HashSet<SourceSpan>>,
+    /// Consuming method calls whose place receiver is implicitly copied. Kept
+    /// separate from the single operation-adjustment slot so parameterized
+    /// method metadata can coexist at the same expression.
+    implicitly_copied_consuming_receivers: RefCell<HashSet<SourceSpan>>,
     return_ref_contracts: Vec<Option<ReturnRefContract>>,
     named_result_context: Vec<bool>,
     raising_context: Vec<Option<Ty>>,
@@ -975,20 +1574,31 @@ pub struct Checker {
 
 impl Checker {
     pub fn new() -> Self {
+        Self::new_with_materialized_callables(HashMap::new())
+    }
+
+    fn new_with_materialized_callables(materialized_callables: HashMap<String, Ty>) -> Self {
         Self {
             scopes: vec![HashMap::new()],
             mutable_scopes: vec![HashMap::new()],
             owner_scopes: vec![HashMap::new()],
             aggregate_origin_scopes: vec![HashMap::new()],
+            aggregate_field_origin_scopes: vec![HashMap::new()],
             reference_parameter_scopes: vec![HashMap::new()],
+            callable_origin_scopes: vec![HashMap::new()],
             next_owner: 0,
             function_bases: Vec::new(),
             aggregate_escape_contexts: Vec::new(),
             capture_contexts: RefCell::new(Vec::new()),
             structs: HashMap::new(),
+            declared_structs: HashSet::new(),
+            predeclared_generated_tuple_arguments: HashMap::new(),
+            materialized_callables,
+            allow_generated_tuple_forward_types: false,
             traits: HashMap::new(),
             tparams: Vec::new(),
             self_decls: Vec::new(),
+            assumed_conformances: Vec::new(),
             enclosing_type_params: Vec::new(),
             self_ty: None,
             trait_self_comptime: Vec::new(),
@@ -999,18 +1609,32 @@ impl Checker {
             implicit_conversions: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
+            tuple_unpack_plans: RefCell::new(HashMap::new()),
+            interior_references: RefCell::new(HashMap::new()),
+            interior_invalidations: RefCell::new(HashMap::new()),
             declaration_types: RefCell::new(HashMap::new()),
             generic_parameters: RefCell::new(HashMap::new()),
             declaration_effects: RefCell::new(HashMap::new()),
             expression_types: RefCell::new(HashMap::new()),
             expression_bindings: RefCell::new(HashMap::new()),
+            statement_bindings: RefCell::new(HashMap::new()),
+            declaration_captures: RefCell::new(HashMap::new()),
             comprehension_bindings: RefCell::new(HashMap::new()),
             expression_place_types: RefCell::new(HashMap::new()),
             binding_types: RefCell::new(HashMap::new()),
+            explicit_destroy_deletability: RefCell::new(
+                crate::explicit_destroy::CheckedDeletability::default(),
+            ),
             expression_effects: RefCell::new(HashMap::new()),
+            selected_calls: RefCell::new(HashMap::new()),
+            subscript_descriptors: RefCell::new(HashMap::new()),
             iteration_protocols: RefCell::new(HashMap::new()),
             explicit_destroy_calls: RefCell::new(std::collections::HashSet::new()),
             reference_value_uses: RefCell::new(HashMap::new()),
+            copyable_reference_result_reads: RefCell::new(HashSet::new()),
+            copy_place_value_uses: RefCell::new(HashSet::new()),
+            call_place_uses: RefCell::new(HashSet::new()),
+            implicitly_copied_consuming_receivers: RefCell::new(HashSet::new()),
             return_ref_contracts: Vec::new(),
             named_result_context: Vec::new(),
             raising_context: Vec::new(),
@@ -1062,6 +1686,113 @@ impl Checker {
         );
     }
 
+    fn concrete_callable_captures(&self, ty: &Ty) -> Vec<crate::origin::CaptureOrigin> {
+        use crate::origin::{CallableEnvironment, CaptureOriginSet};
+        let callable = match ty {
+            Ty::Struct(name, _) => self
+                .structs
+                .get(name)
+                .and_then(|info| info.callable_conformance.as_ref()),
+            other => Some(other),
+        };
+        match callable {
+            Some(Ty::Func {
+                environment: CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
+                ..
+            })
+            | Some(Ty::GenericFunc {
+                environment: CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
+                ..
+            }) => captures.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Retain every concrete environment access that may happen while a call is
+    /// active. Callable arguments are included because Mojito supports only
+    /// non-escaping downward funargs: their environments may be invoked by the
+    /// callee before it returns.
+    fn call_capture_effects<'a>(
+        &self,
+        types: impl IntoIterator<Item = &'a Ty>,
+    ) -> Vec<crate::origin::CaptureOrigin> {
+        use crate::origin::CaptureOriginSet;
+        let captures = types
+            .into_iter()
+            .flat_map(|ty| self.concrete_callable_captures(ty))
+            .collect::<Vec<_>>();
+        let CaptureOriginSet::Concrete(captures) = CaptureOriginSet::concrete(captures) else {
+            unreachable!("concrete capture canonicalization stays concrete")
+        };
+        captures
+    }
+
+    fn record_call_capture_effects<'a>(
+        &self,
+        span: SourceSpan,
+        types: impl IntoIterator<Item = &'a Ty>,
+    ) -> Vec<crate::origin::CaptureOrigin> {
+        let captures = self.call_capture_effects(types);
+        if captures.is_empty() {
+            return captures;
+        }
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            crate::checked::SemanticAdjustment::CallableCaptureAccesses(captures.clone()),
+        );
+        captures
+    }
+
+    fn record_call_environment_effects(
+        &self,
+        span: SourceSpan,
+        callable: &Ty,
+        param_args: &[crate::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+    ) -> Result<(), TypeError> {
+        // Call checking may have supplied essential context to an argument
+        // before capture-effect collection runs (notably an empty collection
+        // display, an exact literal, or an overloaded callable value). Reuse
+        // that checked type instead of independently re-inferring the syntax
+        // without its selected parameter contract.
+        let checked_argument_type = |expression: &Expr| {
+            let checked = {
+                self.expression_types
+                    .borrow()
+                    .get(&expression.source_span())
+                    .cloned()
+            };
+            match checked {
+                Some(ty) => Ok(ty),
+                None => self.infer(expression),
+            }
+        };
+        let mut types = Vec::with_capacity(1 + param_args.len() + args.len() + kwargs.len());
+        types.push(callable.clone());
+        for argument in param_args {
+            let expression = match argument {
+                crate::ast::ParamArg::Value(expression) => Some(expression),
+                crate::ast::ParamArg::Named { value, .. } => match &**value {
+                    crate::ast::ParamArg::Value(expression) => Some(expression),
+                    crate::ast::ParamArg::Type(_) | crate::ast::ParamArg::Named { .. } => None,
+                },
+                crate::ast::ParamArg::Type(_) => None,
+            };
+            if let Some(expression) = expression {
+                types.push(checked_argument_type(expression)?);
+            }
+        }
+        for argument in args {
+            types.push(checked_argument_type(argument)?);
+        }
+        for argument in kwargs {
+            types.push(checked_argument_type(&argument.value)?);
+        }
+        self.record_call_capture_effects(span, &types);
+        Ok(())
+    }
+
     fn declared_error(
         &self,
         raises: bool,
@@ -1074,6 +1805,150 @@ impl Checker {
             Some(error) => self.ty_from_anno(error)?,
             None => Ty::Error,
         }))
+    }
+
+    fn lower_callable_environment(
+        &self,
+        type_params: &[crate::ast::TypeParam],
+        thin: bool,
+        capturing: Option<&crate::ast::OriginSpec>,
+    ) -> Result<crate::origin::CallableEnvironment, TypeError> {
+        use crate::origin::{CallableEnvironment, CaptureOriginSet, CaptureSetParamId};
+        if thin && capturing.is_some() {
+            return Err(TypeError::Unsupported(
+                "a callable type cannot be both 'thin' and 'capturing'".to_string(),
+            ));
+        }
+        if thin {
+            return Ok(CallableEnvironment::Thin);
+        }
+        let Some(origins) = capturing else {
+            return Ok(CallableEnvironment::Default);
+        };
+        match origins.as_slice() {
+            [] => Ok(CallableEnvironment::Capturing(CaptureOriginSet::empty())),
+            [
+                Expr {
+                    kind: ExprKind::Identifier(name),
+                    ..
+                },
+            ] if name == "_" => Ok(CallableEnvironment::Capturing(CaptureOriginSet::Infer)),
+            [
+                Expr {
+                    kind: ExprKind::Identifier(name),
+                    ..
+                },
+            ] => {
+                let index = type_params
+                    .iter()
+                    .position(|parameter| {
+                        parameter.name == *name && parameter.bounds.as_slice() == ["OriginSet"]
+                    })
+                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
+                Ok(CallableEnvironment::Capturing(CaptureOriginSet::Param(
+                    CaptureSetParamId(index as u32),
+                )))
+            }
+            _ => Err(TypeError::Unsupported(
+                "capturing[...] requires exactly one OriginSet parameter or '_'".to_string(),
+            )),
+        }
+    }
+
+    /// Lower a callable annotation's origin contract. Declaration contracts
+    /// normally refer to their own parameters and use `lower_ref_sig`; a
+    /// contextual function-value type may additionally bind `origin_of(local)`
+    /// directly to the checked local owner.
+    fn lower_callable_ref_sig(
+        &self,
+        spec: &crate::ast::OriginSpec,
+        type_params: &[crate::ast::TypeParam],
+        params: &[&FnParam],
+    ) -> Result<crate::origin::RefSig, TypeError> {
+        use crate::origin::{Mutability, RefSig, SigMutability, SigOrigin};
+
+        if let Ok(signature) = lower_ref_sig(spec, type_params, params) {
+            return Ok(signature);
+        }
+        let mut members = Vec::new();
+        let mut bound_mutability = Vec::new();
+        for expression in spec {
+            match &expression.kind {
+                ExprKind::Call {
+                    name,
+                    args,
+                    kwargs,
+                    param_args,
+                } if name == "origin_of" && kwargs.is_empty() && param_args.is_empty() => {
+                    if args.is_empty() {
+                        return Err(TypeError::Unsupported(
+                            "origin_of requires at least one place".to_string(),
+                        ));
+                    }
+                    for argument in args {
+                        let (root, path) = place_path(argument).ok_or_else(|| {
+                            TypeError::Unsupported("origin_of requires places".to_string())
+                        })?;
+                        if root == "self" {
+                            members.push(project_sig_origin(SigOrigin::Self_, &path));
+                        } else if let Some(index) =
+                            params.iter().position(|parameter| parameter.name == root)
+                        {
+                            members.push(project_sig_origin(SigOrigin::Param(index), &path));
+                        } else {
+                            let actual = self.reference_actual(argument)?;
+                            bound_mutability.push(actual.mutability);
+                            members.push(SigOrigin::Bound(actual.origin));
+                        }
+                    }
+                }
+                _ => members.push(lower_sig_origin_expression(
+                    expression,
+                    type_params,
+                    params,
+                )?),
+            }
+        }
+        let origin = match members.as_slice() {
+            [] => SigOrigin::Infer,
+            [single] => single.clone(),
+            _ => SigOrigin::union(members),
+        };
+        let mutability = if bound_mutability.is_empty() {
+            SigMutability::Infer
+        } else if bound_mutability
+            .iter()
+            .all(|mutability| *mutability == Mutability::Immutable)
+        {
+            SigMutability::Immutable
+        } else {
+            SigMutability::Mutable
+        };
+        Ok(RefSig { origin, mutability })
+    }
+
+    fn lower_callable_ref_param_sigs(
+        &self,
+        type_params: &[crate::ast::TypeParam],
+        params: &[&FnParam],
+    ) -> Result<Vec<Option<crate::origin::RefSig>>, TypeError> {
+        params
+            .iter()
+            .map(|parameter| {
+                if parameter.convention != Some(ArgConvention::Ref) {
+                    return Ok(None);
+                }
+                match &parameter.origin {
+                    Some(spec) => self
+                        .lower_callable_ref_sig(spec, type_params, params)
+                        .map(Some),
+                    None => Ok(Some(crate::origin::RefSig {
+                        origin: crate::origin::SigOrigin::Infer,
+                        mutability: crate::origin::SigMutability::Infer,
+                    })),
+                }
+            })
+            .collect()
     }
 
     /// The type denoted by a source annotation; resolves type parameters and
@@ -1090,6 +1965,14 @@ impl Checker {
         if coerces(from, to) {
             return true;
         }
+        if matches!((from, to), (Ty::GenericFunc { .. }, Ty::GenericFunc { .. }))
+            && callable_bound_accepts(from, to)
+        {
+            return true;
+        }
+        if matches!((from, to), (Ty::GenericFunc { .. }, Ty::GenericFunc { .. })) {
+            return callable_bound_accepts(from, to);
+        }
         if let Ty::Struct(name, _) = from
             && let Some(callable) = self
                 .structs
@@ -1100,6 +1983,7 @@ impl Checker {
         }
         let (
             Ty::GenericFunc {
+                environment,
                 decls,
                 params,
                 ret,
@@ -1134,6 +2018,7 @@ impl Checker {
             return false;
         };
         let instantiated = Ty::Func {
+            environment: environment.clone(),
             params: params.iter().map(|ty| substitute(ty, &subst)).collect(),
             names: (0..params.len())
                 .map(|index| format!("arg{index}"))
@@ -1155,6 +2040,94 @@ impl Checker {
             ref_return: ref_return.clone(),
         };
         coerces(&instantiated, to)
+    }
+
+    /// Checker-selected nominal target when the concrete callable type is
+    /// known, otherwise the signature-qualified abstract dispatch target for a
+    /// `def(...)` value. Runtime retargeting uses the latter only when the value
+    /// is a callable struct.
+    fn indirect_callable_target(&self, callable: &Ty) -> Option<String> {
+        if let Ty::Struct(name, _) = callable {
+            return self
+                .structs
+                .get(name)
+                .and_then(|info| info.callable_target.clone());
+        }
+        callable_contract_target(callable)
+    }
+
+    /// Resolve the callable contract an actual type is *declared* to provide.
+    /// Structs participate only through nominal `struct S(def(...))`
+    /// conformance; merely defining a shape-compatible `__call__` is not enough.
+    fn declared_callable_contract(&self, actual: &Ty) -> Option<Ty> {
+        match actual {
+            Ty::Func { .. } => Some(actual.clone()),
+            Ty::Param {
+                callable_bound: Some(bound),
+                ..
+            } => Some((**bound).clone()),
+            Ty::Struct(name, arguments) => {
+                let info = self.structs.get(name)?;
+                let contract = info.callable_conformance.as_ref()?;
+                Some(substitute(contract, &struct_subst(&info.decls, arguments)))
+            }
+            // A generic function has a callable identity only for a matching
+            // generic anonymous contract. `callable_bound_accepts` rejects it
+            // when the required contract is monomorphic.
+            Ty::GenericFunc { .. } => Some(actual.clone()),
+            // An overload set has no unique callable identity.
+            Ty::Overload(_) => None,
+            _ => None,
+        }
+    }
+
+    fn validate_callable_parameter_bounds(
+        &self,
+        generic_name: &str,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Result<(), TypeError> {
+        let subst = struct_subst(decls, arguments);
+        for (decl, argument) in decls.iter().zip(arguments) {
+            let ParamDecl::Type {
+                name,
+                callable_bound: Some(bound),
+                ..
+            } = decl
+            else {
+                continue;
+            };
+            let TyArg::Ty(actual) = argument else {
+                return Err(TypeError::Unsupported(format!(
+                    "variadic callable type parameter '{}' in '{generic_name}'",
+                    name.trim_start_matches('*')
+                )));
+            };
+            let contract = substitute(bound, &subst);
+            let Some(actual_contract) = self.declared_callable_contract(actual) else {
+                return Err(TypeError::TraitNotSatisfied {
+                    param: name.clone(),
+                    ty: actual.to_string(),
+                    trait_name: contract.to_string(),
+                    reason: Some(
+                        "requires one monomorphic callable type or nominal callable conformance"
+                            .to_string(),
+                    ),
+                });
+            };
+            if !callable_bound_accepts(&actual_contract, &contract) {
+                return Err(TypeError::TraitNotSatisfied {
+                    param: name.clone(),
+                    ty: actual.to_string(),
+                    trait_name: contract.to_string(),
+                    reason: Some(format!(
+                        "declared callable contract '{}' is incompatible",
+                        actual_contract
+                    )),
+                });
+            }
+        }
+        Ok(())
     }
 
     fn implicit_conversion_target(&self, from: &Ty, to: &Ty) -> Result<Option<String>, TypeError> {
@@ -1274,6 +2247,26 @@ impl Checker {
             return Ok(());
         }
 
+        // A public Tuple literal is discovered under the canonical nominal
+        // name and checked again under its generated specialization name. The
+        // names are implementation identities; literal materialization follows
+        // the retained element types across that handoff.
+        if let (Some(actual), Some(expected)) = (tuple_elements(from), tuple_elements(to))
+            && actual.len() == expected.len()
+        {
+            let values = match &expression.kind {
+                ExprKind::TupleLit(values) => Some(values.as_slice()),
+                ExprKind::Call { name, args, .. } if name == "Tuple" => Some(args.as_slice()),
+                _ => None,
+            };
+            if let Some(values) = values {
+                for ((value, actual), expected) in values.iter().zip(actual).zip(expected) {
+                    self.record_literal_materializations(value, actual, expected)?;
+                }
+            }
+            return Ok(());
+        }
+
         match (from, to) {
             (Ty::Tuple(actual), Ty::Tuple(expected)) if actual.len() == expected.len() => {
                 let values = match &expression.kind {
@@ -1287,7 +2280,7 @@ impl Checker {
                     }
                 }
             }
-            (Ty::List(actual), Ty::List(expected)) => {
+            (Ty::ComptimeList(actual), Ty::ComptimeList(expected)) => {
                 let values = match &expression.kind {
                     ExprKind::ListLit(values) => Some(values.as_slice()),
                     ExprKind::Call { name, args, .. } if name == "List" => Some(args.as_slice()),
@@ -1333,38 +2326,97 @@ impl Checker {
             SourceType::Float64 => Ty::Float64,
             SourceType::None => Ty::None,
             SourceType::Func {
+                type_params,
                 params,
                 ret,
-                thin: _,
+                thin,
+                capturing,
                 raises,
                 raises_type,
-            } => Ty::Func {
-                params: params
+            } => {
+                let environment =
+                    self.lower_callable_environment(type_params, *thin, capturing.as_ref())?;
+                let function_params: Vec<FnParam> = params
                     .iter()
-                    .map(|param| self.resolve_ty_from_anno(param))
-                    .collect::<Result<_, _>>()?,
-                names: (0..params.len())
-                    .map(|index| format!("arg{index}"))
-                    .collect(),
-                ret: Box::new(self.resolve_ty_from_anno(ret)?),
-                required: vec![true; params.len()],
-                variadic: None,
-                kw_variadic: None,
-                positional_only: None,
-                keyword_only: None,
-                raises: *raises,
-                error: if *raises {
-                    Some(Box::new(match raises_type {
-                        Some(error) => self.resolve_ty_from_anno(error)?,
-                        None => Ty::Error,
-                    }))
-                } else {
-                    None
-                },
-                conventions: vec![None; params.len()],
-                ref_params: Box::new(vec![None; params.len()]),
-                ref_return: None,
-            },
+                    .enumerate()
+                    .map(|(index, parameter)| FnParam {
+                        name: parameter
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| format!("arg{index}")),
+                        ty: parameter.ty.clone(),
+                        default: None,
+                        kind: crate::ast::ParamKind::Regular,
+                        convention: parameter.convention,
+                        origin: parameter.origin.clone(),
+                    })
+                    .collect();
+                let regular: Vec<&FnParam> = function_params.iter().collect();
+                let parameter_types = function_params
+                    .iter()
+                    .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let (return_type, ref_return) = match &**ret {
+                    SourceType::Ref { referent, origin } => (
+                        self.resolve_ty_from_anno(referent)?,
+                        Some(Box::new(self.lower_callable_ref_sig(
+                            origin.as_ref().ok_or_else(|| {
+                                TypeError::Unsupported(
+                                    "reference return requires an origin".to_string(),
+                                )
+                            })?,
+                            type_params,
+                            &regular,
+                        )?)),
+                    ),
+                    return_type => (self.resolve_ty_from_anno(return_type)?, None),
+                };
+                Ty::Func {
+                    environment,
+                    params: parameter_types,
+                    names: function_params
+                        .iter()
+                        .map(|parameter| parameter.name.clone())
+                        .collect(),
+                    ret: Box::new(return_type),
+                    required: vec![true; params.len()],
+                    variadic: None,
+                    kw_variadic: None,
+                    positional_only: None,
+                    keyword_only: None,
+                    raises: *raises,
+                    error: if *raises {
+                        Some(Box::new(match raises_type {
+                            Some(error) => self.resolve_ty_from_anno(error)?,
+                            None => Ty::Error,
+                        }))
+                    } else {
+                        None
+                    },
+                    conventions: function_params
+                        .iter()
+                        .map(|parameter| parameter.convention)
+                        .collect(),
+                    ref_params: Box::new(
+                        self.lower_callable_ref_param_sigs(type_params, &regular)?,
+                    ),
+                    ref_return,
+                }
+            }
+            SourceType::MaterializedCallable(key) => {
+                let callable = self.materialized_callables.get(key).ok_or_else(|| {
+                    TypeError::InvariantViolation(format!(
+                        "compiler-generated callable annotation has unknown id '{key}'"
+                    ))
+                })?;
+                if !matches!(callable, Ty::Func { .. } | Ty::GenericFunc { .. }) {
+                    return Err(TypeError::InvariantViolation(
+                        "compiler-generated callable annotation contains a non-callable type"
+                            .to_string(),
+                    ));
+                }
+                callable.clone()
+            }
             SourceType::Ref { referent, origin } => {
                 let spec = origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported(
@@ -1441,10 +2493,14 @@ impl Checker {
                     return Ok(Ty::Param {
                         name: format!("Some[{trait_name}]"),
                         bounds: vec![trait_name.clone()],
+                        callable_bound: None,
                     });
                 }
                 if name == "Never" && args.is_empty() {
                     return Ok(Ty::Never);
+                }
+                if name == "NoneType" && args.is_empty() {
+                    return Ok(Ty::None);
                 }
                 if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
                     && args.is_empty()
@@ -1458,12 +2514,9 @@ impl Checker {
                     return Ok(Ty::String);
                 }
                 if args.is_empty()
-                    && let Some(bounds) = self.lookup_tparam(name)
+                    && let Some(parameter) = self.lookup_tparam(name)
                 {
-                    return Ok(Ty::Param {
-                        name: name.clone(),
-                        bounds,
-                    });
+                    return Ok(parameter);
                 }
                 // SIMD vector types and their fixed-width scalar aliases.
                 if let Some(dtype) = Dtype::from_scalar_alias(name) {
@@ -1490,10 +2543,13 @@ impl Checker {
                     return Ok(simd_ty(dtype_from_arg(&args[0])?, 1));
                 }
                 if name == "$pack" {
-                    return self.tuple_type(args).map(|ty| match ty {
-                        Ty::Tuple(elements) => Ty::RuntimePack(elements),
-                        _ => unreachable!("tuple_type always returns Ty::Tuple"),
-                    });
+                    return self.tuple_element_types(args).map(Ty::RuntimePack);
+                }
+                if name == "__RuntimeTuple" {
+                    return self.tuple_element_types(args).map(Ty::Tuple);
+                }
+                if name == "_" && args.is_empty() {
+                    return Ok(Ty::Infer);
                 }
                 if name == "Error" && args.is_empty() {
                     return Ok(Ty::Error);
@@ -1503,11 +2559,8 @@ impl Checker {
                 if is_variant_name(name) && (name != "Variant" || self.structs.contains_key(name)) {
                     return self.variant_type(args);
                 }
-                if let Some(info) = self.structs.get(name) {
-                    let decls = info.decls.clone();
-                    let (_, tyargs) = self.resolve_use_params(name, &decls, args, &[], &[])?;
-                    return Ok(Ty::Struct(name.clone(), tyargs));
-                }
+                // Literal families are lang items: direct `_` holes are solved
+                // from an initializer before ordinary generic-bound checking.
                 if name == "List" {
                     return self.list_type(args);
                 }
@@ -1520,6 +2573,15 @@ impl Checker {
                 if name == "Tuple" {
                     return self.tuple_type(args);
                 }
+                if let Some(info) = self.structs.get(name) {
+                    let decls = info.decls.clone();
+                    let (_, tyargs) = self.resolve_use_params(name, &decls, args, &[], &[])?;
+                    return Ok(self.struct_instance_type(name, tyargs));
+                }
+                if self.allow_generated_tuple_forward_types && self.declared_structs.contains(name)
+                {
+                    return self.generated_tuple_forward_type(name, args);
+                }
                 if matches!(name.as_str(), "UnsafePointer" | "Pointer") {
                     return self.pointer_type(args);
                 }
@@ -1529,9 +2591,14 @@ impl Checker {
             // parameter is not a type, so `Self.n` in type position is an error).
             SourceType::SelfParam(name) => {
                 match self.self_decls.iter().find(|d| d.name() == name) {
-                    Some(ParamDecl::Type { bounds, .. }) => Ty::Param {
+                    Some(ParamDecl::Type {
+                        bounds,
+                        callable_bound,
+                        ..
+                    }) => Ty::Param {
                         name: name.clone(),
                         bounds: bounds.clone(),
+                        callable_bound: callable_bound.clone(),
                     },
                     _ => return self.associated_type_for_self(name),
                 }
@@ -1550,7 +2617,279 @@ impl Checker {
                 let base_ty = self.ty_from_anno(base)?;
                 self.associated_type_from_base(&base_ty, name)?
             }
+            SourceType::IndexedProjection { base, index } => {
+                let elements = self.dependent_type_sequence(base)?;
+                let index = self.compile_dependent_ct_expr(index)?;
+                self.resolve_dependent_index(elements, index, &HashMap::new())?
+            }
         })
+    }
+
+    /// Resolve only the nominal identity embedded in a compiler-generated
+    /// Tuple's concrete metadata. Full parameter arity/bound validation still
+    /// occurs at the user's original type use during discovery; this path exists
+    /// solely because the generated implementation may be emitted before that
+    /// already-checked user struct declaration.
+    fn generated_tuple_forward_type(
+        &self,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        fn argument(checker: &Checker, value: &crate::ast::ParamArg) -> Result<TyArg, TypeError> {
+            match value {
+                crate::ast::ParamArg::Type(ty) => checker.ty_from_anno(ty).map(TyArg::Ty),
+                crate::ast::ParamArg::Value(value) => checker
+                    .eval_associated_ct(value, &HashMap::new())
+                    .map(TyArg::Val),
+                crate::ast::ParamArg::Named { value, .. } => argument(checker, value),
+            }
+        }
+
+        let arguments = if arguments.is_empty() {
+            self.predeclared_generated_tuple_arguments
+                .get(name)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            arguments
+                .iter()
+                .map(|value| argument(self, value))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok(Ty::Struct(name.to_string(), arguments))
+    }
+
+    /// Resolve the type-valued sequence at the base of an indexed type
+    /// projection. A source value may expose such a sequence through an
+    /// associated compile-time member; its runtime value is never inspected.
+    fn dependent_type_sequence(&self, projection: &SourceType) -> Result<Vec<Ty>, TypeError> {
+        let SourceType::Assoc { base, name } = projection else {
+            return Err(TypeError::Unsupported(
+                "dependent type indexing requires a type-valued associated member".to_string(),
+            ));
+        };
+        let base_ty = match base.as_ref() {
+            SourceType::Named(binding, arguments) if arguments.is_empty() => self
+                .lookup(binding)
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| self.ty_from_anno(base))?,
+            _ => self.ty_from_anno(base)?,
+        };
+
+        // Public Tuple exposes its concrete element pack as `element_types`.
+        // Use the checked nominal arguments, never its generated symbol text.
+        if name == "element_types"
+            && let Some(elements) = tuple_elements(&base_ty)
+        {
+            return Ok(elements.into_iter().cloned().collect());
+        }
+
+        let Ty::Struct(struct_name, arguments) = &base_ty else {
+            return Err(TypeError::NoSuchAssociatedType {
+                object_type: base_ty.to_string(),
+                member: name.clone(),
+            });
+        };
+        let info = self
+            .structs
+            .get(struct_name)
+            .ok_or_else(|| TypeError::UnknownType(struct_name.clone()))?;
+        let value = info
+            .associated
+            .get(name)
+            .ok_or_else(|| TypeError::NoSuchAssociatedType {
+                object_type: base_ty.to_string(),
+                member: name.clone(),
+            })?;
+        let values = match value {
+            CtValue::Tuple(values) | CtValue::List(values) => values,
+            _ => {
+                return Err(TypeError::NoSuchAssociatedType {
+                    object_type: base_ty.to_string(),
+                    member: name.clone(),
+                });
+            }
+        };
+        let substitution = struct_subst(&info.decls, arguments);
+        values
+            .iter()
+            .map(|value| match value {
+                CtValue::Type(ty) => Ok(self.resolve_assoc_ty(&substitute(ty, &substitution))),
+                _ => Err(TypeError::NotComptime(format!(
+                    "{}.{} contains a non-type value",
+                    base_ty, name
+                ))),
+            })
+            .collect()
+    }
+
+    /// Collapse an indexed dependent type when its compile-time environment is
+    /// concrete; otherwise retain the structural expression in generic
+    /// metadata for later specialization.
+    fn resolve_dependent_index(
+        &self,
+        elements: Vec<Ty>,
+        index: CtExpr,
+        parameters: &HashMap<String, CtValue>,
+    ) -> Result<Ty, TypeError> {
+        let Some(value) = index.evaluate(parameters) else {
+            return Ok(Ty::Dependent(DependentType::Indexed { elements, index }));
+        };
+        let index_value = match value {
+            CtValue::Int(value) => Some(value),
+            CtValue::UInt(value) => i64::try_from(value).ok(),
+            CtValue::IntLiteral(value) => value.to_i64(),
+            _ => None,
+        }
+        .ok_or_else(|| TypeError::NotComptime("dependent type index must be an Int".to_string()))?;
+        let position = usize::try_from(index_value).map_err(|_| {
+            TypeError::NotComptime(format!("dependent type index {index_value} is negative"))
+        })?;
+        elements.get(position).cloned().ok_or_else(|| {
+            TypeError::NotComptime(format!(
+                "dependent type index {index_value} is out of range for {} element(s)",
+                elements.len()
+            ))
+        })
+    }
+
+    /// Resolve dependent leaves after a generic use has supplied its value
+    /// parameters. This is a typed walk: the candidate type sequence and the
+    /// retained [`CtExpr`] remain structural until the environment is concrete.
+    fn resolve_dependent_ty(
+        &self,
+        ty: &Ty,
+        parameters: &HashMap<String, CtValue>,
+    ) -> Result<Ty, TypeError> {
+        Ok(match ty {
+            Ty::Dependent(DependentType::Indexed { elements, index }) => {
+                let elements = elements
+                    .iter()
+                    .map(|element| self.resolve_dependent_ty(element, parameters))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.resolve_dependent_index(elements, index.clone(), parameters)?
+            }
+            Ty::Struct(name, arguments) => Ty::Struct(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => self.resolve_dependent_ty(ty, parameters).map(TyArg::Ty),
+                        TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
+                    })
+                    .collect::<Result<Vec<_>, TypeError>>()?,
+            ),
+            Ty::ComptimeList(element) => {
+                Ty::ComptimeList(Box::new(self.resolve_dependent_ty(element, parameters)?))
+            }
+            Ty::Tuple(elements) => Ty::Tuple(
+                elements
+                    .iter()
+                    .map(|element| self.resolve_dependent_ty(element, parameters))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Ty::RuntimePack(elements) => Ty::RuntimePack(
+                elements
+                    .iter()
+                    .map(|element| self.resolve_dependent_ty(element, parameters))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Ty::VariadicPack(element) => {
+                Ty::VariadicPack(Box::new(self.resolve_dependent_ty(element, parameters)?))
+            }
+            Ty::Variant(alternatives) => Ty::Variant(
+                alternatives
+                    .iter()
+                    .map(|alternative| self.resolve_dependent_ty(alternative, parameters))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Ty::Pointer { element, origin } => Ty::Pointer {
+                element: Box::new(self.resolve_dependent_ty(element, parameters)?),
+                origin: origin.clone(),
+            },
+            Ty::Ref(reference) => Ty::Ref(crate::origin::RefTy {
+                referent: Box::new(self.resolve_dependent_ty(&reference.referent, parameters)?),
+                origin: reference.origin.clone(),
+                mutability: reference.mutability,
+            }),
+            // A nested generic callable owns its own value-binder scope. Leave
+            // that scope structural here; its own invocation resolves it.
+            Ty::GenericFunc { .. } => ty.clone(),
+            Ty::Func {
+                environment,
+                params,
+                names,
+                ret,
+                required,
+                variadic,
+                kw_variadic,
+                positional_only,
+                keyword_only,
+                raises,
+                error,
+                conventions,
+                ref_params,
+                ref_return,
+            } => Ty::Func {
+                environment: environment.clone(),
+                params: params
+                    .iter()
+                    .map(|parameter| self.resolve_dependent_ty(parameter, parameters))
+                    .collect::<Result<Vec<_>, _>>()?,
+                names: names.clone(),
+                ret: Box::new(self.resolve_dependent_ty(ret, parameters)?),
+                required: required.clone(),
+                variadic: variadic
+                    .as_ref()
+                    .map(|parameter| {
+                        self.resolve_dependent_ty(parameter, parameters)
+                            .map(Box::new)
+                    })
+                    .transpose()?,
+                kw_variadic: kw_variadic
+                    .as_ref()
+                    .map(|parameter| {
+                        self.resolve_dependent_ty(parameter, parameters)
+                            .map(Box::new)
+                    })
+                    .transpose()?,
+                positional_only: *positional_only,
+                keyword_only: *keyword_only,
+                raises: *raises,
+                error: error
+                    .as_ref()
+                    .map(|error| self.resolve_dependent_ty(error, parameters).map(Box::new))
+                    .transpose()?,
+                conventions: conventions.clone(),
+                ref_params: ref_params.clone(),
+                ref_return: ref_return.clone(),
+            },
+            Ty::Overload(candidates) => Ty::Overload(
+                candidates
+                    .iter()
+                    .map(|candidate| self.resolve_dependent_ty(candidate, parameters))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            _ => ty.clone(),
+        })
+    }
+
+    fn value_argument_environment(
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> HashMap<String, CtValue> {
+        decls
+            .iter()
+            .zip(arguments)
+            .filter_map(|(declaration, argument)| match argument {
+                TyArg::Val(value) => Some((
+                    declaration.name().trim_start_matches('*').to_string(),
+                    value.clone(),
+                )),
+                TyArg::Ty(_) => None,
+            })
+            .collect()
     }
 
     fn associated_type_for_self(&self, name: &str) -> Result<Ty, TypeError> {
@@ -1628,6 +2967,17 @@ impl Checker {
 
     fn resolve_assoc_ty(&self, ty: &Ty) -> Ty {
         match ty {
+            Ty::Param {
+                name,
+                bounds,
+                callable_bound,
+            } => Ty::Param {
+                name: name.clone(),
+                bounds: bounds.clone(),
+                callable_bound: callable_bound
+                    .as_ref()
+                    .map(|bound| Box::new(self.resolve_assoc_ty(bound))),
+            },
             Ty::Assoc { base, name } => {
                 let base = self.resolve_assoc_ty(base);
                 self.associated_type_from_base(&base, name)
@@ -1639,12 +2989,7 @@ impl Checker {
             Ty::Struct(name, args) => {
                 Ty::Struct(name.clone(), map_tyargs(args, |t| self.resolve_assoc_ty(t)))
             }
-            Ty::List(elem) => Ty::List(Box::new(self.resolve_assoc_ty(elem))),
-            Ty::Set(elem) => Ty::Set(Box::new(self.resolve_assoc_ty(elem))),
-            Ty::Dict(key, value) => Ty::Dict(
-                Box::new(self.resolve_assoc_ty(key)),
-                Box::new(self.resolve_assoc_ty(value)),
-            ),
+            Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(self.resolve_assoc_ty(elem))),
             Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| self.resolve_assoc_ty(t)).collect()),
             Ty::RuntimePack(elems) => {
                 Ty::RuntimePack(elems.iter().map(|t| self.resolve_assoc_ty(t)).collect())
@@ -1660,6 +3005,7 @@ impl Checker {
                 origin: origin.clone(),
             },
             Ty::Func {
+                environment,
                 params,
                 names,
                 ret,
@@ -1674,6 +3020,7 @@ impl Checker {
                 ref_params,
                 ref_return,
             } => Ty::Func {
+                environment: environment.clone(),
                 params: params.iter().map(|p| self.resolve_assoc_ty(p)).collect(),
                 names: names.clone(),
                 ret: Box::new(self.resolve_assoc_ty(ret)),
@@ -1695,6 +3042,7 @@ impl Checker {
                 ref_return: ref_return.clone(),
             },
             Ty::GenericFunc {
+                environment,
                 decls,
                 params,
                 names,
@@ -1710,6 +3058,7 @@ impl Checker {
                 ref_params,
                 ref_return,
             } => Ty::GenericFunc {
+                environment: environment.clone(),
                 decls: decls.clone(),
                 params: params.iter().map(|p| self.resolve_assoc_ty(p)).collect(),
                 names: names.clone(),
@@ -1784,6 +3133,22 @@ impl Checker {
             }
             ParamDecl::Value { name, ty, .. } => match arg {
                 ParamArg::Value(expr) => {
+                    // Function values are compile-time parameters in source, but
+                    // deliberately remain runtime values in the VM ABI: MIR
+                    // evaluates the parameter argument into a register and the
+                    // call frame reifies it under `name`. `CtValue::Param` is only
+                    // the erased generic-identity marker used by this resolver.
+                    if matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) {
+                        let actual = self.infer(expr)?;
+                        if !self.value_coerces(&actual, ty) {
+                            return Err(TypeError::TypeMismatch {
+                                expected: ty.to_string(),
+                                found: actual.to_string(),
+                                context: format!("callable-value parameter '{}'", name),
+                            });
+                        }
+                        return Ok(TyArg::Val(CtValue::Param(name.clone())));
+                    }
                     let value = self.eval_associated_ct(expr, &HashMap::new())?;
                     let actual =
                         self.ct_value_ty(&value, ty)
@@ -1822,6 +3187,9 @@ impl Checker {
 
     /// Resolve `List[T]` from its single type argument.
     fn list_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
+        if args.is_empty() {
+            return Ok(list_type(Ty::Infer));
+        }
         if args.len() != 1 {
             return Err(TypeError::WrongTypeArgCount {
                 name: "List".to_string(),
@@ -1830,14 +3198,14 @@ impl Checker {
             });
         }
         match &args[0] {
-            crate::ast::ParamArg::Type(t) => Ok(Ty::List(Box::new(self.ty_from_anno(t)?))),
+            crate::ast::ParamArg::Type(t) => Ok(list_type(self.ty_from_anno(t)?)),
             // A bare-identifier arg is reinterpreted as a type (as elsewhere).
             crate::ast::ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(id),
                 ..
-            }) => Ok(Ty::List(Box::new(
+            }) => Ok(list_type(
                 self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?,
-            ))),
+            )),
             crate::ast::ParamArg::Value(_) => Err(TypeError::TypeMismatch {
                 expected: "a type".to_string(),
                 found: "a value".to_string(),
@@ -1876,6 +3244,9 @@ impl Checker {
     }
 
     fn set_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
+        if args.is_empty() {
+            return Ok(set_type(Ty::Infer));
+        }
         if args.len() != 1 {
             return Err(TypeError::WrongTypeArgCount {
                 name: "Set".to_string(),
@@ -1883,12 +3254,13 @@ impl Checker {
                 got: args.len(),
             });
         }
-        Ok(Ty::Set(Box::new(
-            self.collection_type_argument("Set", &args[0])?,
-        )))
+        Ok(set_type(self.collection_type_argument("Set", &args[0])?))
     }
 
     fn dict_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
+        if args.is_empty() {
+            return Ok(dict_type(Ty::Infer, Ty::Infer));
+        }
         if args.len() != 2 {
             return Err(TypeError::WrongTypeArgCount {
                 name: "Dict".to_string(),
@@ -1896,9 +3268,9 @@ impl Checker {
                 got: args.len(),
             });
         }
-        Ok(Ty::Dict(
-            Box::new(self.collection_type_argument("Dict", &args[0])?),
-            Box::new(self.collection_type_argument("Dict", &args[1])?),
+        Ok(dict_type(
+            self.collection_type_argument("Dict", &args[0])?,
+            self.collection_type_argument("Dict", &args[1])?,
         ))
     }
 
@@ -1995,7 +3367,7 @@ impl Checker {
     }
 
     /// Resolve `Tuple[T1, …, Tn]` from its type arguments (each a type).
-    fn tuple_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
+    fn tuple_element_types(&self, args: &[crate::ast::ParamArg]) -> Result<Vec<Ty>, TypeError> {
         let mut elems = Vec::with_capacity(args.len());
         for arg in args {
             elems.push(match arg {
@@ -2019,7 +3391,57 @@ impl Checker {
                 }
             });
         }
-        Ok(Ty::Tuple(elems))
+        Ok(elems)
+    }
+
+    fn tuple_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
+        self.tuple_element_types(args)
+            .map(|elements| self.public_tuple_type(elements))
+    }
+
+    /// Recover the concrete public-Tuple arguments deliberately materialized by
+    /// variadic-struct specialization. A user declaration cannot forge the
+    /// compiler-generated symbol because `$` is not a source identifier, and
+    /// the canonical symbol is recomputed from the semantic element types rather
+    /// than decoded from text.
+    fn generated_tuple_arguments(
+        &self,
+        name: &str,
+        associated: &[StructComptime],
+    ) -> Result<Option<Vec<TyArg>>, TypeError> {
+        let Some(element_types) = associated
+            .iter()
+            .find(|member| member.name == "element_types")
+        else {
+            return Ok(None);
+        };
+        let ExprKind::TupleLit(elements) = &element_types.value.kind else {
+            return Ok(None);
+        };
+        let semantic = elements
+            .iter()
+            .map(|element| match &element.kind {
+                ExprKind::TypeValue(ty) => self.ty_from_anno(ty),
+                _ => Err(TypeError::NotComptime(
+                    "Tuple.element_types must contain only types".to_string(),
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if crate::comptime::tuple_specialization_symbol(&semantic) != name {
+            return Ok(None);
+        }
+        Ok(Some(semantic.into_iter().map(TyArg::Ty).collect()))
+    }
+
+    /// Construct the checked identity of an ordinary struct or of a concrete
+    /// erased specialization whose source parameters have become fixed facts.
+    fn struct_instance_type(&self, name: &str, arguments: Vec<TyArg>) -> Ty {
+        let arguments = self
+            .structs
+            .get(name)
+            .and_then(|info| info.fixed_arguments.clone())
+            .unwrap_or(arguments);
+        Ty::Struct(name.to_string(), arguments)
     }
 
     /// Resolve the alternatives of `Variant[T1, ..., Tn]`.  Alternative order
@@ -2120,9 +3542,9 @@ impl Checker {
         }
     }
 
-    /// If `name` is a generic type parameter currently in scope (in a `def`'s
-    /// `[type_params]`), return its trait bounds.
-    fn lookup_tparam(&self, name: &str) -> Option<Vec<String>> {
+    /// If `name` is a generic type parameter currently in scope, return its
+    /// complete checked type-parameter fact.
+    fn lookup_tparam(&self, name: &str) -> Option<Ty> {
         self.tparams
             .iter()
             .rev()
@@ -2220,7 +3642,7 @@ impl Checker {
                 bounds: vec![name.clone()],
             });
         }
-        Ok(CtMemberReq::Value(self.ty_from_anno(ty)?))
+        Ok(CtMemberReq::Value(Box::new(self.ty_from_anno(ty)?)))
     }
 
     fn check_struct_associated(
@@ -2251,6 +3673,7 @@ impl Checker {
             ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => Ok(CtValue::Bool(*b)),
             ExprKind::Str(s) => Ok(CtValue::Str(s.clone())),
+            ExprKind::TypeValue(ty) => self.ty_from_anno(ty).map(Box::new).map(CtValue::Type),
             ExprKind::Identifier(name) => {
                 if let Some(n) = self.comptimes.get(name) {
                     return Ok(CtValue::IntLiteral(n.clone()));
@@ -2396,10 +3819,14 @@ impl Checker {
     fn self_param_ct_value(&self, name: &str) -> Option<CtValue> {
         self.self_decls.iter().find_map(|decl| match decl {
             ParamDecl::Type {
-                name: n, bounds, ..
+                name: n,
+                bounds,
+                callable_bound,
+                ..
             } if n == name => Some(CtValue::Type(Box::new(Ty::Param {
                 name: n.clone(),
                 bounds: bounds.clone(),
+                callable_bound: callable_bound.clone(),
             }))),
             ParamDecl::Value { name: n, .. } if n == name => Some(CtValue::Param(n.clone())),
             _ => None,
@@ -2421,6 +3848,42 @@ impl Checker {
     }
 
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        self.declared_structs
+            .extend(stmts.iter().filter_map(|statement| match &statement.kind {
+                StmtKind::Struct { name, .. } => Some(name.clone()),
+                _ => None,
+            }));
+        // Phase one for generated public Tuples: recover every concrete pack
+        // identity from its materialized `element_types` member before any
+        // declaration body is checked. Reverse transforms can be requested in
+        // both directions, so no sequential declaration order can make both
+        // result types complete. The forward-type gate remains compiler-owned;
+        // user declarations are still checked in source order below.
+        let saved_forward_types =
+            std::mem::replace(&mut self.allow_generated_tuple_forward_types, true);
+        for statement in stmts {
+            let StmtKind::Struct {
+                name,
+                type_params,
+                associated,
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            if !(name.starts_with("Tuple$") || name.contains("$Tuple$")) {
+                continue;
+            }
+            let saved_type_params =
+                std::mem::replace(&mut self.enclosing_type_params, type_params.clone());
+            let arguments = self.generated_tuple_arguments(name, associated);
+            self.enclosing_type_params = saved_type_params;
+            if let Some(arguments) = arguments? {
+                self.predeclared_generated_tuple_arguments
+                    .insert(name.clone(), arguments);
+            }
+        }
+        self.allow_generated_tuple_forward_types = saved_forward_types;
         // `ret = None` marks "not inside a function", so a top-level `return`
         // is rejected; `in_loop = false` likewise rejects a top-level `break`.
         self.check_block(stmts, None, false)
@@ -2463,26 +3926,48 @@ impl Checker {
     ) -> Result<(), TypeError> {
         match &stmt.kind {
             StmtKind::RefDecl { name, value } => {
-                if let Ty::Ref(reference) = self.infer(value)? {
-                    let mutable = reference.mutability == crate::origin::Mutability::Mutable;
-                    return self.declare_with_mutability(name, Ty::Ref(reference), mutable);
+                let reference = match self.infer(value)? {
+                    Ty::Ref(reference) => reference,
+                    _ => {
+                        // Ordinary expression inference reads through a
+                        // reference-returning method to its referent.  The
+                        // method call nevertheless left an exact checked
+                        // `ReferenceResult` adjustment, which a `ref` binding
+                        // must retain instead of trying to reinterpret the call
+                        // expression as a syntactic place. `reference_actual`
+                        // consumes that checked result and remains the shared
+                        // fallback for an ordinary place binding.
+                        self.reference_actual(value)?
+                    }
+                };
+                let mutable = reference.mutability == crate::origin::Mutability::Mutable;
+                // A reference to an ordinary projection below a named owned
+                // interior (for example `dict[key].field`) carries the full
+                // projected generation, even though only the nested index
+                // expression originally introduced the interior fact. Retain
+                // that canonical origin on the binding expression so MIR can
+                // establish the projected generation rather than degrading it
+                // to an untracked ordinary place loan.
+                if let crate::origin::Origin::Place(origin) = &reference.origin
+                    && origin
+                        .path
+                        .iter()
+                        .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
+                {
+                    self.interior_references
+                        .borrow_mut()
+                        .insert(value.source_span(), origin.clone());
                 }
-                let place = self.origin_place(value)?;
-                let referent = self.infer(value)?;
-                let mutable = self.owner_is_mutable(place.root);
-                self.declare_with_mutability(
-                    name,
-                    Ty::Ref(crate::origin::RefTy {
-                        referent: Box::new(referent),
-                        origin: crate::origin::Origin::Place(place),
-                        mutability: if mutable {
-                            crate::origin::Mutability::Mutable
-                        } else {
-                            crate::origin::Mutability::Immutable
-                        },
-                    }),
-                    mutable,
-                )
+                self.reference_value_uses
+                    .borrow_mut()
+                    .insert(value.source_span(), mutable);
+                let binding_ty = Ty::Ref(reference);
+                self.binding_types
+                    .borrow_mut()
+                    .insert(stmt.source_span(), binding_ty.clone());
+                self.declare_with_mutability(name, binding_ty, mutable)?;
+                self.record_statement_binding(stmt, name);
+                Ok(())
             }
             StmtKind::VarDecl { name, ty, value } => {
                 if matches!(value.kind, ExprKind::Uninitialized) {
@@ -2493,6 +3978,7 @@ impl Checker {
                     };
                     let declared = self.ty_from_anno(annotation)?;
                     self.declare(name, declared)?;
+                    self.record_statement_binding(stmt, name);
                     if let Some(owner) = self.lookup_owner(name) {
                         self.uninitialized.borrow_mut().insert(owner);
                     }
@@ -2512,16 +3998,38 @@ impl Checker {
                     // Annotated: the value must coerce to the annotation.
                     Some(anno) => {
                         let expected = contextual.clone().unwrap_or(self.ty_from_anno(anno)?);
-                        if !self.record_implicit_conversion(value, &found, &expected)? {
-                            return Err(TypeError::TypeMismatch {
-                                expected: expected.to_string(),
-                                found: found.to_string(),
-                                context: format!("variable '{}'", name),
-                            });
+                        if contains_infer(&expected) {
+                            if contains_infer(&found) {
+                                return Err(TypeError::CannotInferTypeParam {
+                                    name: expected.to_string(),
+                                    param: "_".to_string(),
+                                });
+                            }
+                            found.clone()
+                        } else {
+                            if !self.record_implicit_conversion(value, &found, &expected)? {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: expected.to_string(),
+                                    found: found.to_string(),
+                                    context: format!("variable '{}'", name),
+                                });
+                            }
+                            expected
                         }
-                        expected
                     }
                     // Inferred `var x = e`: declare the value's materialized type.
+                    None if matches!(value.kind, ExprKind::TypeApply { .. })
+                        && self
+                            .overload_targets
+                            .borrow()
+                            .contains_key(&value.source_span()) =>
+                    {
+                        // Explicitly specializing an Origin parameter produces
+                        // a first-class, non-capturing function value whose
+                        // checked `Ty::Func` contains the bound origin. Plain
+                        // inferred function/closure values remain non-escaping.
+                        found.clone()
+                    }
                     None => self.inferred_binding_ty(&found, name)?,
                 };
                 if ty.is_none() {
@@ -2530,14 +4038,25 @@ impl Checker {
                 self.binding_types
                     .borrow_mut()
                     .insert(value.source_span(), declared.clone());
-                let aggregate_origins =
+                if self.is_implicitly_deletable(&declared) {
+                    self.explicit_destroy_deletability
+                        .borrow_mut()
+                        .bindings
+                        .insert(value.source_span());
+                }
+                let (aggregate_origins, aggregate_field_origins) =
                     if !matches!(declared, Ty::Ref(_)) && self.type_carries_loans(&declared) {
-                        self.aggregate_origins(value)
+                        (
+                            self.aggregate_origins(value),
+                            self.aggregate_field_origins(value),
+                        )
                     } else {
-                        Vec::new()
+                        (Vec::new(), HashMap::new())
                     };
                 self.declare(name, declared)?;
+                self.record_statement_binding(stmt, name);
                 self.set_aggregate_origins(name, aggregate_origins);
+                self.set_aggregate_field_origins(name, aggregate_field_origins);
                 Ok(())
             }
 
@@ -2584,11 +4103,40 @@ impl Checker {
                         if !self.is_binding_mutable(name) {
                             return Err(TypeError::ImmutableBinding(name.clone()));
                         }
-                        let aggregate_origins =
+                        match &target {
+                            // Assignment to a reference binding writes through
+                            // the handle; it does not rebind the handle.  Use
+                            // the reference's checked origin so replacing a
+                            // whole container also expires references into its
+                            // owned interior regions.  The handle itself stays
+                            // valid across that write.
+                            Ty::Ref(reference) => {
+                                if let crate::origin::Origin::Place(base) = &reference.origin {
+                                    self.record_origin_invalidation(
+                                        value.source_span(),
+                                        base.clone(),
+                                        self.lookup_owner(name),
+                                    );
+                                }
+                            }
+                            _ => {
+                                if let Some(owner) = self.lookup_owner(name) {
+                                    self.record_owner_invalidation(
+                                        value.source_span(),
+                                        owner,
+                                        Vec::new(),
+                                    );
+                                }
+                            }
+                        }
+                        let (aggregate_origins, aggregate_field_origins) =
                             if !matches!(target, Ty::Ref(_)) && self.type_carries_loans(&target) {
-                                self.aggregate_origins(value)
+                                (
+                                    self.aggregate_origins(value),
+                                    self.aggregate_field_origins(value),
+                                )
                             } else {
-                                Vec::new()
+                                (Vec::new(), HashMap::new())
                             };
                         let target = match target {
                             Ty::Ref(reference) => *reference.referent,
@@ -2612,6 +4160,7 @@ impl Checker {
                             self.uninitialized.borrow_mut().remove(&owner);
                         }
                         self.set_aggregate_origins(name, aggregate_origins);
+                        self.set_aggregate_field_origins(name, aggregate_field_origins);
                         Ok(())
                     }
                     // `x = e` on an undeclared name is a **var-less introduction**
@@ -2621,15 +4170,23 @@ impl Checker {
                     None => {
                         let declared = self.inferred_binding_ty(&found, name)?;
                         self.record_literal_materializations(value, &found, &declared)?;
-                        let aggregate_origins = if !matches!(declared, Ty::Ref(_))
-                            && self.type_carries_loans(&declared)
+                        let (aggregate_origins, aggregate_field_origins) = if !matches!(
+                            declared,
+                            Ty::Ref(_)
+                        ) && self
+                            .type_carries_loans(&declared)
                         {
-                            self.aggregate_origins(value)
+                            (
+                                self.aggregate_origins(value),
+                                self.aggregate_field_origins(value),
+                            )
                         } else {
-                            Vec::new()
+                            (Vec::new(), HashMap::new())
                         };
                         self.declare_function_implicit(name, declared)?;
+                        self.record_statement_binding(stmt, name);
                         self.set_aggregate_origins(name, aggregate_origins);
+                        self.set_aggregate_field_origins(name, aggregate_field_origins);
                         if let Some(owner) = self.lookup_owner(name) {
                             self.uninitialized.borrow_mut().remove(&owner);
                         }
@@ -2642,10 +4199,66 @@ impl Checker {
                 if let Some(root) = place_root_name(place) {
                     self.check_capture_access(root, true)?;
                 }
+                let nominal_subscript = match &place.kind {
+                    ExprKind::Index { object, .. }
+                    | ExprKind::Slice { object, .. }
+                    | ExprKind::MultiIndex { object, .. } => {
+                        matches!(self.infer(object)?, Ty::Struct(name, _) if self.structs.contains_key(&name))
+                    }
+                    _ => false,
+                };
                 // `target OP= value` means `target = target OP value`: the place
                 // must be writable, and the result of the operator must keep the
-                // place's type. Typing `place OP value` reuses `infer_infix`.
-                let target = self.check_place(place)?;
+                // place's type. A nominal subscript is two selected calls, not a
+                // raw writable projection: infer its getter first, then select
+                // the setter against the computed operator result.
+                let shared_argument_sources = if nominal_subscript {
+                    match &place.kind {
+                        ExprKind::Index { index, .. } => vec![index.source_span()],
+                        ExprKind::MultiIndex { args, .. } => args
+                            .iter()
+                            .filter_map(|argument| match argument {
+                                SubscriptArg::Index(index) => Some(index.source_span()),
+                                SubscriptArg::Slice { .. } => None,
+                            })
+                            .collect(),
+                        ExprKind::Slice { .. } => Vec::new(),
+                        _ => unreachable!("nominal subscript classification"),
+                    }
+                } else {
+                    Vec::new()
+                };
+                let shared_adjustments = self.snapshot_value_adjustments(&shared_argument_sources);
+                let target = if nominal_subscript {
+                    self.infer(place)?
+                } else {
+                    self.check_place(place)?
+                };
+                let getter = if nominal_subscript {
+                    let contract = self
+                        .selected_calls
+                        .borrow()
+                        .get(&place.source_span())
+                        .cloned()
+                        .ok_or_else(|| {
+                            TypeError::InvariantViolation(
+                                "augmented nominal subscript lost its getter contract".to_string(),
+                            )
+                        })?;
+                    if let Some(reference) = &contract.reference_result
+                        && reference.mutability != crate::origin::Mutability::Mutable
+                    {
+                        return Err(TypeError::ImmutableBinding(
+                            "immutable reference returned by '__getitem__'".to_string(),
+                        ));
+                    }
+                    Some(contract)
+                } else {
+                    None
+                };
+                if !nominal_subscript {
+                    self.record_place_write_invalidation(place.source_span(), place);
+                }
                 if let Some(Ty::Ref(reference)) = self.place_storage_ty(place)
                     && reference.mutability != crate::origin::Mutability::Mutable
                 {
@@ -2653,13 +4266,121 @@ impl Checker {
                         "immutable reference field".to_string(),
                     ));
                 }
-                let result = self.infer_infix(*op, place, value)?;
+                let result = self.infer_infix(None, *op, place, value)?;
                 if !coerces(&result, &target) {
                     return Err(TypeError::TypeMismatch {
                         expected: target.to_string(),
                         found: result.to_string(),
                         context: "augmented assignment".to_string(),
                     });
+                }
+                if nominal_subscript {
+                    let site = place.source_span();
+                    let getter = getter.expect("nominal getter was captured above");
+                    if getter.reference_result.is_some() {
+                        // A value-returning augmented subscript reaches the
+                        // setter checker below, which also records descriptor
+                        // shape. A mutable-reference getter has no setter, so a
+                        // plain index must retain that metadata here for MIR.
+                        if matches!(place.kind, ExprKind::Index { .. }) {
+                            self.subscript_descriptors
+                                .borrow_mut()
+                                .entry(site.clone())
+                                .or_insert((vec![None], false));
+                        }
+                        self.expression_types
+                            .borrow_mut()
+                            .insert(site.clone(), target.clone());
+                        self.operation_adjustments.borrow_mut().insert(
+                            site,
+                            crate::checked::SemanticAdjustment::AugmentedSubscript(Box::new(
+                                crate::checked::CheckedAugmentedSubscript {
+                                    getter,
+                                    setter: None,
+                                    operand_ty: target,
+                                    result_ty: result,
+                                    value_source: None,
+                                },
+                            )),
+                        );
+                        return Ok(());
+                    }
+                    // The getter and setter share syntax, not parameter
+                    // adaptation or call effects. Freeze the getter above, then
+                    // return those source-keyed compatibility tables to their
+                    // pre-getter state before selecting the setter.
+                    self.restore_value_adjustments(&shared_adjustments);
+                    self.remove_call_boundary_invalidations(&site, &getter.boundary);
+
+                    let mut computed = Expr::new(ExprKind::None, crate::token::DUMMY_SPAN);
+                    computed.source = place.source.clone();
+                    let value_source = computed.source_span();
+                    self.expression_types
+                        .borrow_mut()
+                        .insert(value_source.clone(), result.clone());
+                    self.check_nominal_subscript_assignment(place, &computed)?
+                        .ok_or_else(|| {
+                            TypeError::InvariantViolation(
+                                "augmented nominal subscript lost its setter selection".to_string(),
+                            )
+                        })?;
+                    let mut setter = self
+                        .selected_calls
+                        .borrow()
+                        .get(&site)
+                        .cloned()
+                        .ok_or_else(|| {
+                            TypeError::InvariantViolation(
+                                "augmented nominal subscript lost its setter contract".to_string(),
+                            )
+                        })?;
+                    self.implicit_conversions.borrow_mut().remove(&value_source);
+                    self.expression_types.borrow_mut().remove(&value_source);
+                    if matches!(
+                        self.operation_adjustments.borrow().get(&value_source),
+                        Some(crate::checked::SemanticAdjustment::MaterializeLiteral(_))
+                    ) {
+                        self.operation_adjustments
+                            .borrow_mut()
+                            .remove(&value_source);
+                    }
+                    let before_write = self
+                        .interior_invalidations
+                        .borrow()
+                        .get(&site)
+                        .cloned()
+                        .unwrap_or_default();
+                    self.record_place_write_invalidation(site.clone(), place);
+                    if let Some(after_write) = self.interior_invalidations.borrow().get(&site) {
+                        let existing = setter.boundary.invalidations.clone();
+                        let additional = after_write
+                            .iter()
+                            .filter(|fact| !before_write.contains(fact))
+                            .filter(|fact| !existing.contains(fact))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        setter.boundary.invalidations.extend(additional);
+                    }
+                    self.restore_value_adjustments(&shared_adjustments);
+                    self.remove_call_boundary_invalidations(&site, &setter.boundary);
+                    self.selected_calls
+                        .borrow_mut()
+                        .insert(site.clone(), setter.clone());
+                    self.expression_types
+                        .borrow_mut()
+                        .insert(site.clone(), target.clone());
+                    self.operation_adjustments.borrow_mut().insert(
+                        site,
+                        crate::checked::SemanticAdjustment::AugmentedSubscript(Box::new(
+                            crate::checked::CheckedAugmentedSubscript {
+                                getter,
+                                setter: Some(setter),
+                                operand_ty: target,
+                                result_ty: result,
+                                value_source: Some(value_source),
+                            },
+                        )),
+                    );
                 }
                 Ok(())
             }
@@ -2670,7 +4391,7 @@ impl Checker {
             // var-less introduction).
             StmtKind::Unpack { targets, value } => {
                 let vt = self.infer(value)?;
-                let Ty::Tuple(elems) = &vt else {
+                let Some(elems) = tuple_elements(&vt) else {
                     return Err(TypeError::TypeMismatch {
                         expected: "a tuple".to_string(),
                         found: vt.to_string(),
@@ -2684,7 +4405,87 @@ impl Checker {
                         context: "tuple unpacking".to_string(),
                     });
                 }
-                let elems = elems.clone();
+                let elems = elems.into_iter().cloned().collect::<Vec<_>>();
+                let mut unpack_plan = elems
+                    .iter()
+                    .cloned()
+                    .map(|ty| crate::checked::CheckedTupleUnpackElement {
+                        ty,
+                        accessor: None,
+                        reference: None,
+                    })
+                    .collect::<Vec<_>>();
+                if let Ty::Struct(name, _) = &vt
+                    && let Some(info) = self.structs.get(name)
+                    && let Some(family) = dependent_index_accessor_family(info)
+                {
+                    let value_receiver = !is_place_expr(value);
+                    let self_reference = if value_receiver {
+                        None
+                    } else {
+                        Some(self.reference_actual(value)?)
+                    };
+                    for (index, element) in unpack_plan.iter_mut().enumerate() {
+                        let method = if value_receiver {
+                            format!("{}${index}", family.value)
+                        } else {
+                            format!("{}${index}", family.place)
+                        };
+                        let signature = info
+                            .methods
+                            .get(&method)
+                            .and_then(|overloads| overloads.first())
+                            .ok_or_else(|| {
+                                if value_receiver {
+                                    TypeError::NonCopyable {
+                                        ty: vt.to_string(),
+                                        context: "unpacking an rvalue Tuple requires implicitly copyable elements"
+                                            .to_string(),
+                                    }
+                                } else {
+                                    TypeError::InvariantViolation(format!(
+                                        "generated Tuple '{name}' is missing accessor '{method}'"
+                                    ))
+                                }
+                            })?;
+                        element.ty = signature.ret.clone();
+                        element.accessor = Some(format!("{name}.{method}"));
+                        if let Some(reference_return) = &signature.ref_return {
+                            let self_reference = self_reference.as_ref().ok_or_else(|| {
+                                TypeError::InvariantViolation(format!(
+                                    "generated Tuple value accessor '{method}' returns a reference"
+                                ))
+                            })?;
+                            let origin = substitute_sig_origin_with_self(
+                                &reference_return.origin,
+                                &[],
+                                Some(self_reference.origin.clone()),
+                            );
+                            let mutability = match reference_return.mutability {
+                                crate::origin::SigMutability::Immutable => {
+                                    crate::origin::Mutability::Immutable
+                                }
+                                crate::origin::SigMutability::Mutable => {
+                                    crate::origin::Mutability::Mutable
+                                }
+                                _ if self_reference.mutability
+                                    == crate::origin::Mutability::Mutable =>
+                                {
+                                    crate::origin::Mutability::Mutable
+                                }
+                                _ => crate::origin::Mutability::Immutable,
+                            };
+                            element.reference = Some(crate::origin::RefTy {
+                                referent: Box::new(signature.ret.clone()),
+                                origin,
+                                mutability,
+                            });
+                        }
+                    }
+                }
+                self.tuple_unpack_plans
+                    .borrow_mut()
+                    .insert(value.source_span(), unpack_plan);
                 for (target, elem) in targets.iter().zip(&elems) {
                     match &target.kind {
                         ExprKind::Identifier(name) => match self.lookup(name).cloned() {
@@ -2700,6 +4501,18 @@ impl Checker {
                                         context: format!("unpacking into '{name}'"),
                                     });
                                 }
+                                if matches!(existing, Ty::Ref(_)) {
+                                    self.record_place_write_invalidation(
+                                        target.source_span(),
+                                        target,
+                                    );
+                                } else if let Some(owner) = self.lookup_owner(name) {
+                                    self.record_owner_invalidation(
+                                        target.source_span(),
+                                        owner,
+                                        Vec::new(),
+                                    );
+                                }
                             }
                             None => {
                                 let declared = self.inferred_binding_ty(elem, name)?;
@@ -2711,6 +4524,7 @@ impl Checker {
                                 self.check_capture_access(root, true)?;
                             }
                             let target_ty = self.check_place(target)?;
+                            self.record_place_write_invalidation(target.source_span(), target);
                             if !coerces(elem, &target_ty) {
                                 return Err(TypeError::TypeMismatch {
                                     expected: target_ty.to_string(),
@@ -2718,6 +4532,32 @@ impl Checker {
                                     context: "unpacking into a place".to_string(),
                                 });
                             }
+                        }
+                    }
+                    if let ExprKind::Identifier(name) = &target.kind
+                        && let Some(owner) = self.lookup_owner(name)
+                    {
+                        self.expression_bindings
+                            .borrow_mut()
+                            .insert(target.source_span(), owner);
+                        // Unpack targets are binder/place syntax, not ordinary
+                        // inferred expressions, so retain their complete slot
+                        // metadata explicitly for checked MIR verification and
+                        // for a nested closure that captures the introduction.
+                        if let Some(storage_ty) = self.lookup(name).cloned() {
+                            let value_ty = match &storage_ty {
+                                Ty::Ref(reference) => (*reference.referent).clone(),
+                                value => value.clone(),
+                            };
+                            self.expression_types
+                                .borrow_mut()
+                                .insert(target.source_span(), value_ty);
+                            self.expression_place_types
+                                .borrow_mut()
+                                .insert(target.source_span(), storage_ty.clone());
+                            self.binding_types
+                                .borrow_mut()
+                                .insert(target.source_span(), storage_ty);
                         }
                     }
                 }
@@ -2732,14 +4572,27 @@ impl Checker {
                 if let Some(root) = place_root_name(place) {
                     self.check_capture_access(root, true)?;
                 }
+                // Nominal subscript assignment is a method call, not a raw
+                // storage projection. Resolve it with the RHS present so
+                // overloads, conversions, ownership conventions, origins,
+                // aliases, captures, and raising behavior all use the same
+                // machinery as explicit `.__setitem__(...)` syntax.
+                if self
+                    .check_nominal_subscript_assignment(place, value)?
+                    .is_some()
+                {
+                    self.record_place_write_invalidation(place.source_span(), place);
+                    return Ok(());
+                }
                 // The place must be a writable location (a field/index chain
                 // rooted at a mutable variable or `mut self`); the value must
                 // keep the place's type. A width-1 SIMD target (a lane write, or
                 // a scalar-alias field) additionally accepts a splatting literal.
                 let target = self.check_place(place)?;
+                self.record_place_write_invalidation(place.source_span(), place);
                 let storage = self.place_storage_ty(place);
                 let found = self.infer(value)?;
-                if let Some(Ty::Ref(expected_reference)) = storage {
+                if let Some(Ty::Ref(expected_reference)) = &storage {
                     let initializes_reference =
                         self.self_initializing && place_root_name(place) == Some("self");
                     if initializes_reference {
@@ -2778,6 +4631,13 @@ impl Checker {
                         context: "assignment target".to_string(),
                     });
                 }
+                // Existing out-self initialization permits a non-Copyable
+                // generic parameter to be installed without spelling a second
+                // source-level transfer. Preserve that constructor convention;
+                // this marker is needed only for an actual Copyable place read.
+                if !matches!(storage, Some(Ty::Ref(_))) && self.is_copyable(&found) {
+                    self.check_consuming(value, &found, "assignment target")?;
+                }
                 Ok(())
             }
 
@@ -2793,7 +4653,7 @@ impl Checker {
                 body,
                 raises,
                 raises_type,
-                decorators: _,
+                decorators,
                 where_clause,
             } => {
                 if self.structs.contains_key(name) {
@@ -2851,8 +4711,16 @@ impl Checker {
                 let required = required_mask(&caller_regular, kw_only)?;
                 self.validate_origin_signature(type_params, params, None)?;
                 let mut decls = self.classify_params(type_params)?;
+                let mut function_assumptions = HashSet::new();
                 if let Some(condition) = where_clause {
                     let constraint = self.compile_generic_constraint(condition)?;
+                    let mut facts = Vec::new();
+                    guaranteed_conformance_atoms(&constraint, &mut facts);
+                    function_assumptions.extend(facts.into_iter().map(
+                        |(parameter, trait_name)| {
+                            (parameter.trim_start_matches('*').to_string(), trait_name)
+                        },
+                    ));
                     let Some(last) = decls.last_mut() else {
                         return Err(TypeError::Unsupported(
                             "a where clause requires compile-time parameters".to_string(),
@@ -2867,6 +4735,7 @@ impl Checker {
                     crate::checked::GenericSite::Function {
                         module: stmt.module.clone(),
                         declaration: stmt.span,
+                        syntax: stmt.syntax_id,
                     },
                     decls.clone(),
                 );
@@ -2911,6 +4780,7 @@ impl Checker {
                         crate::checked::AnnotationSite::FunctionParam {
                             module: stmt.module.clone(),
                             declaration: stmt.span,
+                            syntax: stmt.syntax_id,
                             param,
                         },
                         ty.clone(),
@@ -2920,6 +4790,7 @@ impl Checker {
                     crate::checked::AnnotationSite::FunctionReturn {
                         module: stmt.module.clone(),
                         declaration: stmt.span,
+                        syntax: stmt.syntax_id,
                     },
                     ret_ty.clone(),
                 );
@@ -2949,10 +4820,23 @@ impl Checker {
                 // becomes a `GenericFunc` (its call sites infer/supply parameters).
                 let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
                 let effect_raises = declared_error.as_ref().is_some_and(|ty| *ty != Ty::Never);
+                let parameter_closure = decorators
+                    .iter()
+                    .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "parameter");
+                let initial_environment = if parameter_closure {
+                    crate::origin::CallableEnvironment::Capturing(
+                        crate::origin::CaptureOriginSet::Infer,
+                    )
+                } else if self.function_bases.is_empty() {
+                    crate::origin::CallableEnvironment::Thin
+                } else {
+                    crate::origin::CallableEnvironment::Default
+                };
                 self.declaration_effects.borrow_mut().insert(
                     crate::checked::AnnotationSite::FunctionReturn {
                         module: stmt.module.clone(),
                         declaration: stmt.span,
+                        syntax: stmt.syntax_id,
                     },
                     crate::checked::DeclarationEffect {
                         raises: effect_raises,
@@ -2971,6 +4855,7 @@ impl Checker {
                         .map(|(_, ty)| ty.clone())
                         .collect();
                     Ty::Func {
+                        environment: initial_environment.clone(),
                         params: regular_tys,
                         names: caller_regular.iter().map(|p| p.name.clone()).collect(),
                         ret: Box::new(ret_ty.clone()),
@@ -2997,6 +4882,7 @@ impl Checker {
                         .map(|(_, ty)| ty.clone())
                         .collect();
                     Ty::GenericFunc {
+                        environment: initial_environment,
                         decls: decls.clone(),
                         params: regular_tys,
                         names: caller_regular.iter().map(|p| p.name.clone()).collect(),
@@ -3018,13 +4904,19 @@ impl Checker {
                     crate::checked::AnnotationSite::FunctionType {
                         module: stmt.module.clone(),
                         declaration: stmt.span,
+                        syntax: stmt.syntax_id,
                     },
                     fn_ty.clone(),
                 );
-                if let Err(e) = self.declare(name, fn_ty) {
+                if let Err(e) = self.declare(name, fn_ty.clone()) {
                     self.tparams.pop();
                     return Err(e);
                 }
+                self.record_statement_binding(stmt, name);
+                self.register_callable_origins(
+                    name,
+                    callable_origin_signature(type_params, &caller_regular),
+                );
                 let capture_policy = if self.function_bases.is_empty() {
                     if captures.is_some() {
                         self.tparams.pop();
@@ -3035,8 +4927,13 @@ impl Checker {
                     None
                 } else {
                     let mut entries = HashMap::new();
+                    let mut checked_captures = Vec::new();
                     if let Some(captures) = captures {
                         for capture in &captures.entries {
+                            if let Err(error) = self.check_capture_access(&capture.name, false) {
+                                self.tparams.pop();
+                                return Err(error);
+                            }
                             let Some(scope) = self.binding_scope(&capture.name) else {
                                 self.tparams.pop();
                                 return Err(TypeError::UndefinedVariable(capture.name.clone()));
@@ -3054,16 +4951,61 @@ impl Checker {
                                 self.tparams.pop();
                                 return Err(TypeError::ImmutableBinding(capture.name.clone()));
                             }
+                            if let Err(error) =
+                                self.check_capture_capability(&capture.name, capture.kind)
+                            {
+                                self.tparams.pop();
+                                return Err(error);
+                            }
+                            let binding = self.lookup_owner(&capture.name).ok_or_else(|| {
+                                TypeError::InvariantViolation(format!(
+                                    "capture '{}' lost its checked binding",
+                                    capture.name
+                                ))
+                            })?;
+                            let ty = self.lookup(&capture.name).cloned().ok_or_else(|| {
+                                TypeError::InvariantViolation(format!(
+                                    "capture '{}' lost its checked storage type",
+                                    capture.name
+                                ))
+                            })?;
+                            checked_captures.push(self.checked_capture(
+                                &capture.name,
+                                binding,
+                                ty,
+                                capture.kind,
+                            ));
                             entries.insert(capture.name.clone(), capture.kind);
                         }
                     }
+                    self.declaration_captures
+                        .borrow_mut()
+                        .insert(stmt.source_span(), checked_captures);
                     Some(CapturePolicy {
                         base: self.scopes.len(),
                         function_name: name.clone(),
+                        declaration: stmt.source_span(),
                         entries,
-                        default_read: captures.as_ref().is_some_and(|list| list.default_read),
+                        default: captures
+                            .as_ref()
+                            .and_then(|list| list.default)
+                            .or_else(|| parameter_closure.then_some(crate::ast::CaptureKind::Read)),
                     })
                 };
+                self.assumed_conformances.push(function_assumptions);
+                for (param, ty) in param_tys.iter().enumerate() {
+                    if self.is_implicitly_deletable(ty) {
+                        self.explicit_destroy_deletability
+                            .borrow_mut()
+                            .declarations
+                            .insert(crate::checked::AnnotationSite::FunctionParam {
+                                module: stmt.module.clone(),
+                                declaration: stmt.span,
+                                syntax: stmt.syntax_id,
+                                param,
+                            });
+                    }
+                }
                 self.push_scope();
                 self.function_bases.push(self.scopes.len() - 1);
                 if let Some(policy) = capture_policy {
@@ -3077,7 +5019,7 @@ impl Checker {
                         result = self.declare_immutable(
                             name.trim_start_matches('*'),
                             if matches!(d, ParamDecl::Value { variadic: true, .. }) {
-                                Ty::List(ty.clone())
+                                Ty::VariadicPack(ty.clone())
                             } else {
                                 (**ty).clone()
                             },
@@ -3089,12 +5031,12 @@ impl Checker {
                 }
                 if result.is_ok() {
                     for (param, ty) in params.iter().zip(&param_tys) {
-                        // A `*args` parameter is a `List[element]` inside the body;
-                        // a regular parameter keeps its declared type.
+                        // A `*args` parameter is compiler pack storage inside the
+                        // body; it must not impersonate the nominal stdlib List.
                         let bind_ty = match param.kind {
                             crate::ast::ParamKind::Variadic => match ty {
                                 Ty::RuntimePack(elements) => Ty::Tuple(elements.clone()),
-                                _ => Ty::List(Box::new(ty.clone())),
+                                _ => Ty::VariadicPack(Box::new(ty.clone())),
                             },
                             crate::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
                                 ty.clone(),
@@ -3179,12 +5121,52 @@ impl Checker {
                 {
                     result = Err(TypeError::MissingReturn(name.clone()));
                 }
+                if result.is_ok() {
+                    let captures = self
+                        .declaration_captures
+                        .borrow()
+                        .get(&stmt.source_span())
+                        .cloned()
+                        .unwrap_or_default();
+                    let concrete = crate::origin::CaptureOriginSet::concrete(
+                        captures
+                            .iter()
+                            .flat_map(|capture| capture.origins.iter().cloned()),
+                    );
+                    let environment = if parameter_closure || !captures.is_empty() {
+                        crate::origin::CallableEnvironment::Capturing(concrete)
+                    } else {
+                        crate::origin::CallableEnvironment::Thin
+                    };
+                    let finalized = with_callable_environment(fn_ty.clone(), environment);
+                    let function_scope = *self
+                        .function_bases
+                        .last()
+                        .expect("function scope remains active through finalization");
+                    if let Some(existing) = function_scope
+                        .checked_sub(1)
+                        .and_then(|scope| self.scopes.get_mut(scope))
+                        .and_then(|scope| scope.get_mut(name))
+                        && !matches!(existing, Ty::Overload(_))
+                    {
+                        *existing = finalized.clone();
+                    }
+                    self.declaration_types.borrow_mut().insert(
+                        crate::checked::AnnotationSite::FunctionType {
+                            module: stmt.module.clone(),
+                            declaration: stmt.span,
+                            syntax: stmt.syntax_id,
+                        },
+                        finalized,
+                    );
+                }
                 self.pop_scope();
                 self.function_bases.pop();
                 if !self.function_bases.is_empty() {
                     self.capture_contexts.borrow_mut().pop();
                 }
                 self.raising_context.pop();
+                self.assumed_conformances.pop();
                 self.tparams.pop();
                 result
             }
@@ -3234,14 +5216,16 @@ impl Checker {
                 match self.eval_ct(value) {
                     Ok(v) => {
                         self.comptimes.insert(name.clone(), v);
-                        self.declare_immutable(name, Ty::IntLiteral)
+                        self.declare_immutable(name, Ty::IntLiteral)?;
                     }
                     Err(_) => {
                         let ty = self.infer(value)?;
                         let declared = self.inferred_binding_ty(&ty, name)?;
-                        self.declare_immutable(name, declared)
+                        self.declare_immutable(name, declared)?;
                     }
                 }
+                self.record_statement_binding(stmt, name);
+                Ok(())
             }
 
             // `comptime if` / `comptime for` parse and are grammar-documented, but
@@ -3362,9 +5346,17 @@ impl Checker {
                         });
                     }
                     let result = match name {
-                        Some(n) => self
-                            .declare(n, error)
-                            .and_then(|()| self.check_block(ex_body, ret, in_loop)),
+                        Some(n) => self.declare(n, error.clone()).and_then(|()| {
+                            // The exception target is a real lexical binding. Its
+                            // owner is attached to the containing `try` syntax
+                            // because the AST stores the target as a name rather
+                            // than as an expression node.
+                            self.record_statement_binding(stmt, n);
+                            self.binding_types
+                                .borrow_mut()
+                                .insert(stmt.source_span(), error.clone());
+                            self.check_block(ex_body, ret, in_loop)
+                        }),
                         None => self.check_block(ex_body, ret, in_loop),
                     };
                     self.pop_scope();
@@ -3392,10 +5384,18 @@ impl Checker {
                 // `range`, the element type for a `List`, or — for a user struct —
                 // the element type of its `__iter__()` iterator (`__next__`'s return).
                 let iter_ty = self.infer(iter)?;
-                let (elem_ty, protocol) = self.iteration_protocol(&iter_ty, *owned)?;
-                self.iteration_protocols
-                    .borrow_mut()
-                    .insert(iter.source_span(), protocol);
+                let (elem_ty, mut protocol) = self.iteration_protocol(&iter_ty, *owned)?;
+                if !*owned
+                    && (list_element(&iter_ty).is_some()
+                        || set_element(&iter_ty).is_some()
+                        || dict_elements(&iter_ty).is_some())
+                    && let Ok(mut origin) = self.origin_place(iter)
+                {
+                    origin
+                        .path
+                        .push(crate::origin::OriginSeg::Interior("element".to_string()));
+                    protocol.borrowed_origin = Some(origin);
+                }
                 if *owned && !matches!(iter.kind, ExprKind::Transfer(_)) {
                     return Err(TypeError::Unsupported(
                         "owned iteration requires a transferred iterable (`for var item in collection^`)"
@@ -3429,36 +5429,49 @@ impl Checker {
                         elem_ty
                     )));
                 }
-                self.push_scope();
                 let binding_ty = if *reference {
-                    if !matches!(iter_ty, Ty::List(_)) {
-                        self.pop_scope();
+                    if list_element(&iter_ty).is_none() {
                         return Err(TypeError::Unsupported(
                             "reference iteration currently requires a List place".to_string(),
                         ));
                     }
-                    let mut place = self.origin_place(iter)?;
-                    place.path.push(crate::origin::OriginSeg::AnyIndex);
-                    Ty::Ref(crate::origin::RefTy {
-                        referent: Box::new(elem_ty),
-                        origin: crate::origin::Origin::Place(place.clone()),
-                        mutability: if self.owner_is_mutable(place.root) {
-                            crate::origin::Mutability::Mutable
-                        } else {
-                            crate::origin::Mutability::Immutable
-                        },
-                    })
+                    let reference_protocol = self.reference_iteration_protocol(iter)?;
+                    let reference = reference_protocol
+                        .getitem
+                        .reference_result
+                        .clone()
+                        .ok_or_else(|| {
+                            TypeError::InvariantViolation(
+                                "checked List reference iteration selected a value-returning __getitem__"
+                                    .to_string(),
+                            )
+                        })?;
+                    protocol.reference = Some(Box::new(reference_protocol));
+                    Ty::Ref(reference)
                 } else {
                     elem_ty
                 };
+                self.iteration_protocols
+                    .borrow_mut()
+                    .insert(iter.source_span(), protocol);
+                self.push_scope();
                 self.binding_types
                     .borrow_mut()
                     .insert(stmt.source_span(), binding_ty.clone());
+                if self.is_implicitly_deletable(&binding_ty) {
+                    self.explicit_destroy_deletability
+                        .borrow_mut()
+                        .bindings
+                        .insert(stmt.source_span());
+                }
                 let mutable = *owned
                     || !*reference
                     || matches!(&binding_ty, Ty::Ref(reference) if reference.mutability == crate::origin::Mutability::Mutable);
                 let result = match self.declare_with_mutability(var, binding_ty, mutable) {
-                    Ok(()) => self.check_block(body, ret, true),
+                    Ok(()) => {
+                        self.record_statement_binding(stmt, var);
+                        self.check_block(body, ret, true)
+                    }
                     Err(e) => Err(e),
                 };
                 self.pop_scope();
@@ -3517,13 +5530,7 @@ impl Checker {
                 if let (Some(e), Some(Some((signature, parameter_owners, self_owner)))) =
                     (expr, self.return_ref_contracts.last())
                 {
-                    let actual = match &e.kind {
-                        ExprKind::Identifier(name) => match self.lookup(name) {
-                            Some(Ty::Ref(reference)) => reference.origin.clone(),
-                            _ => crate::origin::Origin::Place(self.origin_place(e)?),
-                        },
-                        _ => crate::origin::Origin::Place(self.origin_place(e)?),
-                    };
+                    let actual = self.reference_actual(e)?.origin;
                     let parameter_origins: Vec<_> = parameter_owners
                         .iter()
                         .map(|owner| {
@@ -3536,21 +5543,47 @@ impl Checker {
                     let allowed = substitute_sig_origin_with_self(
                         &signature.origin,
                         &parameter_origins,
-                        *self_owner,
+                        self_owner.clone().map(crate::origin::Origin::Place),
                     );
-                    if !origin_is_within(&actual, &allowed) {
+                    // Bundled collections intentionally abstract their private
+                    // backing storage behind a public owned-interior region:
+                    // List bridges its raw pointer slot to `element`, while Dict
+                    // bridges its entries List to the replace-on-lookup `value`
+                    // generation. Callers inherit the public region, never the
+                    // implementation storage origin. Keep this privilege at the
+                    // return boundary alongside the private List take/destroy
+                    // gate, and restrict it to compiler-shipped source paths.
+                    let bundled_collection_interior_bridge =
+                        self.self_ty.as_ref().is_some_and(|ty| {
+                            list_element(ty).is_some() || dict_elements(ty).is_some()
+                        }) && is_bundled_collection_source(e.source.as_deref());
+                    if !origin_is_within(&actual, &allowed) && !bundled_collection_interior_bridge {
                         return Err(TypeError::ReturnsReferenceToLocal);
                     }
                 }
-                if let Some(e) = expr {
+                // `expected` is the referent type for a reference-returning
+                // declaration; the reference contract is retained separately.
+                // Returning a place through that checked contract borrows it —
+                // it does not copy/consume the referent.
+                let returning_reference = self
+                    .return_ref_contracts
+                    .last()
+                    .is_some_and(Option::is_some);
+                if let Some(e) = expr
+                    && !returning_reference
+                {
                     self.check_consuming(e, &found, "return value")?;
                 }
-                // Returning a function value is an escape regardless of the
-                // declared return type; Mojito supports downward funargs only.
-                if matches!(
-                    found,
-                    Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-                ) {
+                // Returning a callable *value* is an escape; returning a
+                // checked reference to callable storage is not. The latter is
+                // how a nominal Tuple's indexed accessor exposes a function
+                // element while the Tuple owner remains live.
+                if !returning_reference
+                    && matches!(
+                        found,
+                        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
+                    )
+                {
                     return Err(TypeError::ClosureEscape);
                 }
                 let compatible = match expr {
@@ -3581,7 +5614,21 @@ impl Checker {
 
     /// Resolve a parameter/field list to its types.
     fn param_tys(&self, params: &[crate::ast::FnParam]) -> Result<Vec<Ty>, TypeError> {
-        params.iter().map(|p| self.ty_from_anno(&p.ty)).collect()
+        params
+            .iter()
+            .map(|parameter| {
+                if matches!(
+                    &parameter.ty,
+                    SourceType::Func { type_params, .. } if !type_params.is_empty()
+                ) {
+                    return Err(TypeError::Unsupported(
+                        "a runtime parameter cannot use a parametric function type; declare it as a compile-time callable parameter"
+                            .to_string(),
+                    ));
+                }
+                self.ty_from_anno(&parameter.ty)
+            })
+            .collect()
     }
 
     fn method_sig(
@@ -3691,16 +5738,22 @@ impl Checker {
     /// all name traits (built-in or user), giving a **type** parameter. The
     /// parser guarantees each parameter carries at least one `: bound` (Mojo has
     /// no unconstrained parameters).
-    fn classify_params(&self, tps: &[crate::ast::TypeParam]) -> Result<Vec<ParamDecl>, TypeError> {
+    fn classify_params(
+        &mut self,
+        tps: &[crate::ast::TypeParam],
+    ) -> Result<Vec<ParamDecl>, TypeError> {
         let mut decls = Vec::new();
+        let mut seen = HashSet::new();
         for tp in tps {
-            if decls.iter().any(|d: &ParamDecl| d.name() == tp.name) {
+            if !seen.insert(tp.name.clone()) {
                 return Err(TypeError::Redeclaration(tp.name.clone()));
             }
-            // Origin parameters are semantic-only and erased before runtime
-            // generic argument binding. Their clauses are validated separately
-            // by `validate_origin_signature`.
-            if tp.bounds.as_slice() == ["Origin"] {
+            // Origin and OriginSet parameters are semantic-only and erased before
+            // runtime generic argument binding. `Origin` participates in ref
+            // signatures; `OriginSet` names a capturing callable's environment.
+            // Both are inferred from places/callable values rather than occupying
+            // a source-visible value-parameter slot.
+            if matches!(tp.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
                 continue;
             }
             if let Some(value_type) = &tp.value_type {
@@ -3714,6 +5767,7 @@ impl Checker {
                     name: tp.name.clone(),
                     ty: Box::new(ty),
                     default,
+                    callable_default: None,
                     infer_only: tp.infer_only,
                     variadic: tp.name.starts_with('*'),
                     constraints: tp
@@ -3745,6 +5799,7 @@ impl Checker {
                         .as_ref()
                         .map(|expr| self.compile_dependent_ct_expr(expr))
                         .transpose()?,
+                    callable_default: None,
                     infer_only: tp.infer_only,
                     variadic: tp.name.starts_with('*'),
                     constraints: tp
@@ -3755,18 +5810,32 @@ impl Checker {
                 });
                 continue;
             }
-            for bound in &tp.bounds {
+            let trait_bounds = tp
+                .bounds
+                .iter()
+                .filter(|bound| bound.as_str() != "<function type>")
+                .cloned()
+                .collect::<Vec<_>>();
+            for bound in &trait_bounds {
                 self.check_trait_name(bound)?;
             }
             decls.push(ParamDecl::Type {
                 name: tp.name.clone(),
-                bounds: tp.bounds.clone(),
-                default: tp
-                    .default
-                    .as_ref()
-                    .map(|value| self.type_default_from_expr(value))
-                    .transpose()?
-                    .map(Box::new),
+                bounds: trait_bounds,
+                callable_bound: None,
+                // A callable RHS is initially represented by this temporary
+                // type declaration, but its default is a function value rather
+                // than a type. Compile it only after the callable contract has
+                // been lowered below.
+                default: if tp.callable_bound.is_some() {
+                    None
+                } else {
+                    tp.default
+                        .as_ref()
+                        .map(|value| self.type_default_from_expr(value))
+                        .transpose()?
+                        .map(Box::new)
+                },
                 infer_only: tp.infer_only,
                 variadic: tp.name.starts_with('*'),
                 constraints: tp
@@ -3776,7 +5845,152 @@ impl Checker {
                     .collect::<Result<_, _>>()?,
             });
         }
-        Ok(decls)
+
+        // Callable constraints may depend on any type parameter in this list
+        // (`F: def(T) -> T`), so lower them only after the complete preliminary
+        // parameter scope exists. An explicit `thin`/`capturing[...]` spelling is
+        // instead a compile-time callable-value parameter in current Mojo.
+        self.tparams.push(type_scope(&decls));
+        let result = (|| {
+            for source in tps {
+                let Some(callable) = &source.callable_bound else {
+                    continue;
+                };
+                let SourceType::Func {
+                    thin, capturing, ..
+                } = callable
+                else {
+                    return Err(TypeError::InvariantViolation(
+                        "retained callable parameter bound is not a function type".to_string(),
+                    ));
+                };
+                let checked = self.lower_anonymous_callable_type(callable, tps)?;
+                let Some(index) = decls.iter().position(|decl| decl.name() == source.name) else {
+                    return Err(TypeError::InvariantViolation(format!(
+                        "callable constraint parameter '{}' was not classified",
+                        source.name
+                    )));
+                };
+                let ParamDecl::Type {
+                    constraints,
+                    infer_only,
+                    variadic,
+                    ..
+                } = &decls[index]
+                else {
+                    return Err(TypeError::InvariantViolation(
+                        "callable constraint was classified as a value parameter".to_string(),
+                    ));
+                };
+                let constraints = constraints.clone();
+                let infer_only = *infer_only;
+                let variadic = *variadic;
+                if *thin || capturing.is_some() {
+                    let callable_default = source
+                        .default
+                        .as_ref()
+                        .map(|default| {
+                            self.compile_callable_default(default, &checked, &decls[..index])
+                        })
+                        .transpose()?;
+                    decls[index] = ParamDecl::Value {
+                        name: source.name.clone(),
+                        ty: Box::new(checked),
+                        default: None,
+                        callable_default,
+                        infer_only,
+                        variadic,
+                        constraints,
+                    };
+                } else {
+                    let ParamDecl::Type { callable_bound, .. } = &mut decls[index] else {
+                        unreachable!("callable type parameter changed classification")
+                    };
+                    *callable_bound = Some(Box::new(checked));
+                }
+            }
+            Ok(decls)
+        })();
+        self.tparams.pop();
+        result
+    }
+
+    /// Lower a callable contract with its own `def[...]` binders. The
+    /// anonymous scope is nested inside the surrounding declaration's scope,
+    /// so alpha-renamed binders retain their own identity while a signature may
+    /// still depend on an outer type. Origin declarations stay in the source
+    /// context used by reference/capture lowering, but are erased from the
+    /// ordinary `GenericFunc::decls` just like named defs.
+    fn lower_anonymous_callable_type(
+        &mut self,
+        callable: &SourceType,
+        outer_type_params: &[crate::ast::TypeParam],
+    ) -> Result<Ty, TypeError> {
+        let SourceType::Func { type_params, .. } = callable else {
+            return Err(TypeError::InvariantViolation(
+                "anonymous callable lowering received a non-function type".to_string(),
+            ));
+        };
+        let decls = self.classify_params(type_params)?;
+        self.tparams.push(type_scope(&decls));
+
+        let mut contextual_callable = callable.clone();
+        let SourceType::Func {
+            type_params: callable_context,
+            ..
+        } = &mut contextual_callable
+        else {
+            unreachable!("callable source was matched above")
+        };
+        // Own declarations remain first so any own Origin/OriginSet indexes
+        // have the same source-relative positions they do on a named generic
+        // def. The appended outer declarations are only a lookup context.
+        callable_context.extend_from_slice(outer_type_params);
+        let checked = self.ty_from_anno(&contextual_callable);
+        self.tparams.pop();
+        let checked = checked?;
+
+        if decls.is_empty() {
+            return Ok(checked);
+        }
+        let Ty::Func {
+            environment,
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+        } = checked
+        else {
+            return Err(TypeError::InvariantViolation(
+                "anonymous callable signature did not lower to a function type".to_string(),
+            ));
+        };
+        Ok(Ty::GenericFunc {
+            environment,
+            decls,
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+        })
     }
 
     fn type_default_from_expr(&self, value: &Expr) -> Result<Ty, TypeError> {
@@ -3798,6 +6012,104 @@ impl Checker {
                 context: "type parameter default".to_string(),
             }),
         }
+    }
+
+    fn compile_callable_default(
+        &self,
+        expression: &Expr,
+        expected: &Ty,
+        earlier: &[ParamDecl],
+    ) -> Result<CallableDefault, TypeError> {
+        if let ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } = &expression.kind
+        {
+            let condition = self.compile_dependent_ct_expr(cond)?;
+            if let ExprKind::Identifier(name) = &cond.kind {
+                let is_bool_parameter = earlier.iter().any(|declaration| {
+                    matches!(declaration,
+                        ParamDecl::Value { name: parameter, ty, .. }
+                            if parameter == name && ty.as_ref() == &Ty::Bool)
+                });
+                if !is_bool_parameter && !self.comptimes.contains_key(name) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: Ty::Bool.to_string(),
+                        found: format!("compile-time parameter '{name}'"),
+                        context: "callable default condition".to_string(),
+                    });
+                }
+            }
+            return Ok(CallableDefault::If {
+                condition,
+                then_value: Box::new(self.compile_callable_default(
+                    then_branch,
+                    expected,
+                    earlier,
+                )?),
+                else_value: Box::new(self.compile_callable_default(
+                    else_branch,
+                    expected,
+                    earlier,
+                )?),
+            });
+        }
+
+        if let ExprKind::Identifier(name) = &expression.kind
+            && let Some(ParamDecl::Value { ty, .. }) = earlier
+                .iter()
+                .find(|declaration| declaration.name() == name)
+        {
+            if !self.value_coerces(ty, expected) {
+                return Err(TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: ty.to_string(),
+                    context: format!("default for callable parameter '{name}'"),
+                });
+            }
+            return Ok(CallableDefault::Parameter(name.clone()));
+        }
+
+        let (name, arguments) = match &expression.kind {
+            ExprKind::Identifier(name) => (name.as_str(), &[][..]),
+            ExprKind::TypeApply { name, args } => (name.as_str(), args.as_slice()),
+            _ => {
+                return Err(TypeError::Unsupported(
+                    "a callable default must be a function, an earlier callable parameter, or a conditional of those values"
+                        .to_string(),
+                ));
+            }
+        };
+        let actual = self
+            .infer_specialized_callable_value(
+                expression.source_span(),
+                name,
+                arguments,
+                Some(expected),
+                true,
+            )?
+            .ok_or_else(|| TypeError::NotCallable {
+                name: name.to_string(),
+                ty: self
+                    .lookup(name)
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "undefined".to_string()),
+            })?;
+        if !self.value_coerces(&actual, expected) {
+            return Err(TypeError::TypeMismatch {
+                expected: expected.to_string(),
+                found: actual.to_string(),
+                context: "callable parameter default".to_string(),
+            });
+        }
+        let symbol = self
+            .overload_targets
+            .borrow()
+            .get(&expression.source_span())
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+        Ok(CallableDefault::Symbol(symbol))
     }
 
     fn compile_dependent_ct_expr(&self, expr: &Expr) -> Result<CtExpr, TypeError> {
@@ -4244,18 +6556,43 @@ impl Checker {
             self.check_trait_name(tr)?;
         }
 
+        // A generated public-Tuple implementation has erased its source pack
+        // declaration, but its materialized `element_types` member retains the
+        // concrete pack. Recover that checked identity before resolving `Self`
+        // in fields and method signatures. The reserved specialization symbol
+        // verifies provenance without decoding a mangled name.
+        let generated_tuple = name.starts_with("Tuple$") || name.contains("$Tuple$");
+        let saved_forward_types = std::mem::replace(
+            &mut self.allow_generated_tuple_forward_types,
+            generated_tuple,
+        );
+        let saved_type_params =
+            std::mem::replace(&mut self.enclosing_type_params, type_params.to_vec());
+        let fixed_arguments = match self.generated_tuple_arguments(name, declaration.associated) {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                self.enclosing_type_params = saved_type_params;
+                self.allow_generated_tuple_forward_types = saved_forward_types;
+                return Err(error);
+            }
+        };
+
         // The struct's parameters are in scope as `Self.T` / `Self.n`, and bare
         // `Self` is the struct type, while checking its members. Type parameters
         // appear as `Ty::Param`, value parameters as symbolic `CtValue::Param`.
-        let self_ty = Ty::Struct(name.to_string(), decls.iter().map(param_as_arg).collect());
+        let self_ty = Ty::Struct(
+            name.to_string(),
+            fixed_arguments
+                .clone()
+                .unwrap_or_else(|| decls.iter().map(param_as_arg).collect()),
+        );
         let saved_self_decls = std::mem::replace(&mut self.self_decls, decls.clone());
-        let saved_type_params =
-            std::mem::replace(&mut self.enclosing_type_params, type_params.to_vec());
         let saved_self_ty = self.self_ty.replace(self_ty.clone());
-        let result = self.check_struct_members(declaration, decls, &self_ty);
+        let result = self.check_struct_members(declaration, decls, fixed_arguments, &self_ty);
         self.self_decls = saved_self_decls;
         self.enclosing_type_params = saved_type_params;
         self.self_ty = saved_self_ty;
+        self.allow_generated_tuple_forward_types = saved_forward_types;
         result
     }
 
@@ -4263,6 +6600,7 @@ impl Checker {
         &mut self,
         declaration: &StructDeclaration<'_>,
         decls: Vec<ParamDecl>,
+        fixed_arguments: Option<Vec<TyArg>>,
         self_ty: &Ty,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
@@ -4342,8 +6680,10 @@ impl Checker {
             name.to_string(),
             StructInfo {
                 decls,
+                fixed_arguments,
                 conforms: conforms.to_vec(),
                 callable_conformance,
+                callable_target: None,
                 conformance_conditions: declaration
                     .conformance_conditions
                     .iter()
@@ -4370,7 +6710,16 @@ impl Checker {
                 method_decls.clone(),
             );
             self.tparams.push(type_scope(&method_decls));
-            let all_types = self.param_tys(&m.params)?;
+            let saved_method_type_params = self.enclosing_type_params.clone();
+            self.enclosing_type_params.extend(m.type_params.clone());
+            let signature = (|| {
+                let all_types = self.param_tys(&m.params)?;
+                let sig = self.method_sig(m, method_decls, &all_types)?;
+                Ok::<_, TypeError>((all_types, sig))
+            })();
+            self.enclosing_type_params = saved_method_type_params;
+            self.tparams.pop();
+            let (all_types, sig) = signature?;
             for (param, ty) in all_types.iter().enumerate() {
                 self.declaration_types.borrow_mut().insert(
                     crate::checked::AnnotationSite::MethodParam {
@@ -4382,7 +6731,6 @@ impl Checker {
                     ty.clone(),
                 );
             }
-            let sig = self.method_sig(m, method_decls, &all_types)?;
             self.declaration_types.borrow_mut().insert(
                 crate::checked::AnnotationSite::MethodReturn {
                     module: declaration.module.clone(),
@@ -4403,7 +6751,6 @@ impl Checker {
                     returns_reference: sig.ref_return.is_some(),
                 },
             );
-            self.tparams.pop();
             let info = self.structs.get_mut(name).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("struct '{name}' was not registered"))
             })?;
@@ -4447,36 +6794,34 @@ impl Checker {
                     method: "__call__".to_string(),
                 });
             };
-            let matches = call_methods.iter().any(|method| {
-                let actual = Ty::Func {
-                    params: method.params.clone(),
-                    names: method.names.clone(),
-                    ret: Box::new(method.ret.clone()),
-                    required: method.required.clone(),
-                    variadic: method.variadic.clone(),
-                    kw_variadic: method.kw_variadic.clone(),
-                    positional_only: method.positional_only,
-                    keyword_only: method.keyword_only,
-                    raises: method.raises,
-                    error: method.error.clone(),
-                    conventions: method.conventions.clone(),
-                    ref_params: Box::new(method.ref_params.clone()),
-                    ref_return: method.ref_return.clone().map(Box::new),
-                };
-                coerces(&actual, &expected) && coerces(&expected, &actual)
-            });
-            if !matches {
+            let matching = call_methods
+                .iter()
+                .filter(|method| {
+                    let actual = method_callable_ty(method);
+                    coerces(&actual, &expected) && coerces(&expected, &actual)
+                })
+                .collect::<Vec<_>>();
+            let [selected] = matching.as_slice() else {
                 return Err(TypeError::TraitMethodMismatch {
                     struct_name: name.to_string(),
                     trait_name: expected.to_string(),
                     method: "__call__".to_string(),
                 });
-            }
+            };
+            let target = if call_methods.len() == 1 {
+                format!("{name}.__call__")
+            } else {
+                method_lowered_name(name, "__call__", selected)
+            };
+            self.structs
+                .get_mut(name)
+                .expect("callable struct remains registered")
+                .callable_target = Some(target);
         }
         // Method bodies, each with `self` bound to this struct at its own type
         // parameters (so `self.field : Ty::Param` inside a generic struct).
-        for m in methods {
-            self.check_method(self_ty, m)?;
+        for (method_index, m) in methods.iter().enumerate() {
+            self.check_method(self_ty, m, declaration.module.clone(), name, method_index)?;
         }
         Ok(())
     }
@@ -4498,6 +6843,11 @@ impl Checker {
                 "struct '{name}' was not registered before conformance checking"
             ))
         })?;
+        let conformance_assumption = struct_info
+            .conformance_conditions
+            .get(tr)
+            .map(|condition| self.compile_generic_constraint(condition))
+            .transpose()?;
         for (mname, req_sigs) in &trait_info.methods {
             let got_sigs =
                 struct_info
@@ -4544,10 +6894,13 @@ impl Checker {
                         ref_return: req_sig.ref_return.clone(),
                         implicit: req_sig.implicit,
                     };
-                if !got_sigs
-                    .iter()
-                    .any(|got| method_satisfies_requirement(got, &want))
-                {
+                if !got_sigs.iter().any(|got| {
+                    self.method_satisfies_requirement_under(
+                        got,
+                        &want,
+                        conformance_assumption.as_ref(),
+                    )
+                }) {
                     return Err(TypeError::TraitMethodMismatch {
                         struct_name: name.to_string(),
                         trait_name: tr.to_string(),
@@ -4564,7 +6917,7 @@ impl Checker {
                     member: member.clone(),
                 }
             })?;
-            if !self.ct_member_satisfies(got, req, self_ty) {
+            if !self.ct_member_satisfies(got, req, self_ty, conformance_assumption.as_ref()) {
                 return Err(TypeError::TraitComptimeMemberMismatch {
                     struct_name: name.to_string(),
                     trait_name: tr.to_string(),
@@ -4573,6 +6926,30 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    fn method_satisfies_requirement_under(
+        &self,
+        got: &MethodSig,
+        required: &MethodSig,
+        conformance_assumption: Option<&GenericConstraint>,
+    ) -> bool {
+        let availability_is_covered = got.availability.iter().all(|constraint| {
+            required
+                .availability
+                .iter()
+                .any(|premise| generic_constraint_implies(premise, constraint))
+                || conformance_assumption
+                    .is_some_and(|premise| generic_constraint_implies(premise, constraint))
+        });
+        if !availability_is_covered {
+            return false;
+        }
+        // Availability was proved above. Normalize it to the requirement before
+        // comparing the remainder of the callable contract.
+        let mut normalized = got.clone();
+        normalized.availability = required.availability.clone();
+        method_satisfies_requirement(&normalized, required)
     }
 
     fn verify_builtin_conformance(
@@ -4660,7 +7037,13 @@ impl Checker {
         }
     }
 
-    fn ct_member_satisfies(&self, value: &CtValue, req: &CtMemberReq, self_ty: &Ty) -> bool {
+    fn ct_member_satisfies(
+        &self,
+        value: &CtValue,
+        req: &CtMemberReq,
+        self_ty: &Ty,
+        conformance_assumption: Option<&GenericConstraint>,
+    ) -> bool {
         match req {
             CtMemberReq::Value(expected) => self
                 .ct_value_ty(value, self_ty)
@@ -4669,8 +7052,131 @@ impl Checker {
                 let CtValue::Type(ty) = value else {
                     return false;
                 };
-                bounds.iter().all(|bound| self.conforms_to(ty, bound))
+                bounds.iter().all(|bound| {
+                    self.conforms_to_under_assumption(ty, bound, conformance_assumption)
+                })
             }
+        }
+    }
+
+    fn conforms_to_under_assumption(
+        &self,
+        ty: &Ty,
+        required: &str,
+        assumption: Option<&GenericConstraint>,
+    ) -> bool {
+        self.conforms_to_under_assumption_inner(ty, required, assumption, &mut HashSet::new())
+    }
+
+    fn conforms_to_under_assumption_inner(
+        &self,
+        ty: &Ty,
+        required: &str,
+        assumption: Option<&GenericConstraint>,
+        visiting: &mut HashSet<(String, String)>,
+    ) -> bool {
+        if self.conforms_to(ty, required) {
+            return true;
+        }
+        if let Ty::Param { name, .. } = ty {
+            let needed = GenericConstraint::Conforms {
+                param: name.clone(),
+                trait_name: required.to_string(),
+            };
+            return assumption.is_some_and(|known| generic_constraint_implies(known, &needed));
+        }
+        let Ty::Struct(name, args) = ty else {
+            return false;
+        };
+        let key = (name.clone(), required.to_string());
+        if !visiting.insert(key.clone()) {
+            return false;
+        }
+        let result = self.structs.get(name).is_some_and(|info| {
+            info.conforms.iter().any(|declared| {
+                if declared != required && !self.trait_refines(declared, required) {
+                    return false;
+                }
+                let Some(condition) = info.conformance_conditions.get(declared) else {
+                    return true;
+                };
+                let Ok(condition) = self.compile_generic_constraint(condition) else {
+                    return false;
+                };
+                let environment: HashMap<&str, &TyArg> = info
+                    .decls
+                    .iter()
+                    .zip(args)
+                    .map(|(decl, argument)| (decl.name().trim_start_matches('*'), argument))
+                    .collect();
+                self.eval_constraint_under_assumption(
+                    &condition,
+                    &environment,
+                    assumption,
+                    visiting,
+                )
+            })
+        });
+        visiting.remove(&key);
+        result
+    }
+
+    fn eval_constraint_under_assumption(
+        &self,
+        constraint: &GenericConstraint,
+        environment: &HashMap<&str, &TyArg>,
+        assumption: Option<&GenericConstraint>,
+        visiting: &mut HashSet<(String, String)>,
+    ) -> bool {
+        use GenericConstraint::*;
+        match constraint {
+            Conforms { param, trait_name } => environment
+                .get(param.as_str())
+                .is_some_and(|argument| match argument {
+                    TyArg::Ty(ty) => self.conforms_to_under_assumption_inner(
+                        ty,
+                        trait_name,
+                        assumption,
+                        visiting,
+                    ),
+                    TyArg::Val(_) => false,
+                }),
+            ConformsPack { param, trait_name } => environment
+                .get(param.as_str())
+                .is_some_and(|argument| match argument {
+                    TyArg::Val(CtValue::Tuple(values)) => values.iter().all(|value| {
+                        matches!(value, CtValue::Type(ty) if self.conforms_to_under_assumption_inner(
+                            ty,
+                            trait_name,
+                            assumption,
+                            visiting,
+                        ))
+                    }),
+                    _ => false,
+                }),
+            And(left, right) => {
+                self.eval_constraint_under_assumption(left, environment, assumption, visiting)
+                    && self.eval_constraint_under_assumption(
+                        right,
+                        environment,
+                        assumption,
+                        visiting,
+                    )
+            }
+            Or(left, right) => {
+                self.eval_constraint_under_assumption(left, environment, assumption, visiting)
+                    || self.eval_constraint_under_assumption(
+                        right,
+                        environment,
+                        assumption,
+                        visiting,
+                    )
+            }
+            // Do not derive a negative proposition from an unknown symbolic
+            // fact. Exact non-conformance constraints continue through the
+            // ordinary evaluator when their arguments are concrete.
+            Not(_) => self.eval_generic_constraint(constraint, environment),
+            _ => self.eval_generic_constraint(constraint, environment),
         }
     }
 
@@ -4687,7 +7193,13 @@ impl Checker {
                 .iter()
                 .map(|v| self.ct_value_ty(v, self_ty))
                 .collect::<Option<Vec<_>>>()
-                .map(Ty::Tuple),
+                .map(|elements| {
+                    if matches!(self_ty, Ty::Tuple(_) | Ty::RuntimePack(_)) {
+                        Ty::Tuple(elements)
+                    } else {
+                        nominal_tuple_type(elements)
+                    }
+                }),
             CtValue::List(values) => {
                 let first = values.first()?;
                 let elem = self.ct_value_ty(first, self_ty)?;
@@ -4695,7 +7207,7 @@ impl Checker {
                     self.ct_value_ty(v, self_ty)
                         .is_some_and(|ty| coerces(&ty, &elem))
                 }) {
-                    Some(Ty::List(Box::new(elem)))
+                    Some(list_type(elem))
                 } else {
                     None
                 }
@@ -4707,12 +7219,68 @@ impl Checker {
         }
     }
 
-    fn check_method(&mut self, self_ty: &Ty, m: &Method) -> Result<(), TypeError> {
+    fn check_method(
+        &mut self,
+        self_ty: &Ty,
+        m: &Method,
+        module: Option<String>,
+        declaration: &str,
+        method_index: usize,
+    ) -> Result<(), TypeError> {
         let decls = self.classify_params(&m.type_params)?;
         self.tparams.push(type_scope(&decls));
         let saved = self.enclosing_type_params.clone();
         self.enclosing_type_params.extend(m.type_params.clone());
-        let result = self.check_method_inner(self_ty, m);
+        let assumptions = (|| {
+            let Some(condition) = &m.where_clause else {
+                return Ok(HashSet::new());
+            };
+            let constraint = self.compile_generic_constraint(condition)?;
+            let mut facts = Vec::new();
+            guaranteed_conformance_atoms(&constraint, &mut facts);
+            Ok(facts
+                .into_iter()
+                .map(|(parameter, trait_name)| {
+                    (parameter.trim_start_matches('*').to_string(), trait_name)
+                })
+                .collect())
+        })();
+        let result = match assumptions {
+            Ok(assumptions) => {
+                self.assumed_conformances.push(assumptions);
+                let result = (|| {
+                    for param in 0..m.params.len() {
+                        let site = crate::checked::AnnotationSite::MethodParam {
+                            module: module.clone(),
+                            declaration: declaration.to_string(),
+                            method: method_index,
+                            param,
+                        };
+                        let ty = self
+                            .declaration_types
+                            .borrow()
+                            .get(&site)
+                            .cloned()
+                            .ok_or_else(|| {
+                                TypeError::InvariantViolation(format!(
+                                    "method parameter {} for '{}.{}' has no checked type",
+                                    param, declaration, m.name
+                                ))
+                            })?;
+                        if self.is_implicitly_deletable(&ty) {
+                            self.explicit_destroy_deletability
+                                .borrow_mut()
+                                .declarations
+                                .insert(site);
+                        }
+                    }
+                    self.check_method_inner(self_ty, m)
+                })();
+                self.assumed_conformances.pop();
+                result
+            }
+            Err(error) => Err(error),
+        };
         self.enclosing_type_params = saved;
         self.tparams.pop();
         result
@@ -4861,13 +7429,31 @@ impl Checker {
         ret_ty: &Ty,
         ref_return: Option<crate::origin::RefSig>,
     ) -> Result<(), TypeError> {
-        let self_writable = matches!(
+        // Compile-time callable/scalar value parameters occupy named runtime
+        // slots in a method body, just as they do in a generic free function.
+        // Type parameters remain type-only and are available through `tparams`.
+        let method_decls = self.classify_params(&m.type_params)?;
+        for declaration in &method_decls {
+            if let ParamDecl::Value {
+                name, ty, variadic, ..
+            } = declaration
+            {
+                self.declare_immutable(
+                    name.trim_start_matches('*'),
+                    if *variadic {
+                        Ty::VariadicPack(ty.clone())
+                    } else {
+                        (**ty).clone()
+                    },
+                )?;
+            }
+        }
+        let mut reference_type_params = self.enclosing_type_params.clone();
+        reference_type_params.extend(m.type_params.iter().cloned());
+        let self_writable = ref_binding_is_writable(
             m.self_convention,
-            Some(
-                crate::ast::ArgConvention::Mut
-                    | crate::ast::ArgConvention::Ref
-                    | crate::ast::ArgConvention::Out
-            )
+            m.self_origin.as_deref(),
+            &reference_type_params,
         );
         if m.has_self {
             self.declare_with_mutability("self", self_ty.clone(), self_writable)?;
@@ -4888,10 +7474,10 @@ impl Checker {
             pty = match p.kind {
                 // A specialized heterogeneous pack (`$pack` → RuntimePack)
                 // binds as the tuple itself; an ordinary variadic collects into
-                // a list, even when its homogeneous element type is Tuple.
+                // source-inexpressible homogeneous pack storage.
                 crate::ast::ParamKind::Variadic => match pty {
                     Ty::RuntimePack(elements) => Ty::Tuple(elements),
-                    _ => Ty::List(Box::new(pty)),
+                    _ => Ty::VariadicPack(Box::new(pty)),
                 },
                 crate::ast::ParamKind::KwVariadic => {
                     self.kwargs_collector_ty(pty, &format!("keyword collector '{}'", p.name))?
@@ -4902,13 +7488,13 @@ impl Checker {
                 &p.name,
                 pty.clone(),
                 p.kind == crate::ast::ParamKind::KwVariadic
-                    || ref_parameter_is_writable(p, &self.enclosing_type_params),
+                    || ref_parameter_is_writable(p, &reference_type_params),
             )?;
             if matches!(p.convention, Some(crate::ast::ArgConvention::Ref)) {
                 self.register_reference_parameter(
                     &p.name,
                     pty.clone(),
-                    ref_parameter_is_writable(p, &self.enclosing_type_params),
+                    ref_parameter_is_writable(p, &reference_type_params),
                 );
             }
             if !matches!(pty, Ty::Ref(_))
@@ -4947,9 +7533,22 @@ impl Checker {
         allowed.extend(self_owner);
         self.aggregate_escape_contexts
             .push((self.scopes.len().saturating_sub(1), allowed));
-        self.return_ref_contracts
-            .push(ref_return.map(|signature| (signature, owners, self_owner)));
+        self.return_ref_contracts.push(ref_return.map(|signature| {
+            (
+                signature,
+                owners,
+                self_owner.map(|root| crate::origin::OriginPlace {
+                    root,
+                    path: Vec::new(),
+                }),
+            )
+        }));
+        // A method body is a function scope for nested closures just as a
+        // top-level `def` body is. In particular, an explicit capture list on a
+        // method-local function may name `self`, parameters, and method locals.
+        self.function_bases.push(self.scopes.len() - 1);
         let result = self.check_block(&m.body, Some(ret_ty), false);
+        self.function_bases.pop();
         self.return_ref_contracts.pop();
         self.aggregate_escape_contexts.pop();
         self.self_mutable = saved;
@@ -5004,7 +7603,7 @@ impl Checker {
                     context: format!("argument 'copy' to '{}.__init__'", name),
                 });
             }
-            return Ok(Ty::Struct(name.to_string(), tyargs));
+            return Ok(self.struct_instance_type(name, tyargs));
         }
         // A hand-written `def __init__(out self, …)` is the constructor: check the
         // call arguments against its parameters (the `self` receiver is implicit).
@@ -5026,10 +7625,13 @@ impl Checker {
                         matches.push(MethodCallResolution {
                             conversion_score: scored.rank,
                             slots: scored.slots,
+                            positional_overflow: scored.positional_overflow,
                             keyword_overflow: scored.keyword_overflow,
+                            variadic_element: sig.variadic.as_deref().cloned(),
                             keyword_element: sig.kw_variadic.as_deref().cloned(),
                             conventions: sig.conventions.clone(),
-                            return_type: Ty::Struct(name.to_string(), Vec::new()),
+                            self_convention: sig.self_convention,
+                            return_type: self.struct_instance_type(name, Vec::new()),
                             raises: sig.raises,
                             error: sig.error.clone(),
                             mutates_receiver: false,
@@ -5039,6 +7641,7 @@ impl Checker {
                             ref_params: sig.ref_params.clone(),
                             ref_return: None,
                             param_types: sig.params.clone(),
+                            param_decls: sig.decls.clone(),
                         });
                     }
                 }
@@ -5060,19 +7663,39 @@ impl Checker {
                         .insert(span, target.clone());
                 }
                 self.record_selected_method_conversions("__init__", &selected, args, kwargs)?;
-                for arg in args {
-                    let ty = self.infer(arg)?;
-                    self.check_consuming(arg, &ty, &format!("argument to '{name}'"))?;
-                }
-                for arg in kwargs {
-                    let ty = self.infer(&arg.value)?;
+                // Constructor calls use the same reference-parameter handles as
+                // ordinary calls. Record their retained caller places after
+                // overload selection so MIR does not have to inspect the
+                // constructor declaration (and rejected candidates cannot leak
+                // facts into the selected call).
+                self.solve_call_origins(
+                    &selected.slots,
+                    &selected.conventions,
+                    &selected.ref_params,
+                    None,
+                    args,
+                    kwargs,
+                )?;
+                for (index, slot) in selected.slots.iter().enumerate() {
+                    if !matches!(
+                        selected.conventions.get(index),
+                        Some(Some(ArgConvention::Var | ArgConvention::Deinit))
+                    ) {
+                        continue;
+                    }
+                    let argument = match slot {
+                        ArgSlot::Positional(position) => &args[*position],
+                        ArgSlot::Keyword(position) => &kwargs[*position].value,
+                        ArgSlot::Default => continue,
+                    };
+                    let ty = self.infer(argument)?;
                     self.check_consuming(
-                        &arg.value,
+                        argument,
                         &ty,
-                        &format!("argument '{}' to '{name}'", arg.name),
+                        &format!("argument {} to '{name}'", index + 1),
                     )?;
                 }
-                return Ok(Ty::Struct(name.to_string(), Vec::new()));
+                return Ok(self.struct_instance_type(name, Vec::new()));
             }
             if sigs.len() == 1 {
                 let sig = &sigs[0];
@@ -5093,14 +7716,27 @@ impl Checker {
                             context: format!("argument {} to '{}.__init__'", i + 1, name),
                         });
                     }
-                    // A constructor argument is bound into `self` by value — consuming.
-                    self.check_consuming(
-                        &args[i],
-                        aty,
-                        &format!("argument {} to '{}'", i + 1, name),
-                    )?;
+                    if matches!(
+                        sig.conventions.get(i),
+                        Some(Some(ArgConvention::Var | ArgConvention::Deinit))
+                    ) {
+                        self.check_consuming(
+                            &args[i],
+                            aty,
+                            &format!("argument {} to '{}'", i + 1, name),
+                        )?;
+                    }
                 }
-                return Ok(Ty::Struct(name.to_string(), tyargs));
+                let slots = (0..args.len()).map(ArgSlot::Positional).collect::<Vec<_>>();
+                self.solve_call_origins(
+                    &slots,
+                    &sig.conventions,
+                    &sig.ref_params,
+                    None,
+                    args,
+                    kwargs,
+                )?;
+                return Ok(self.struct_instance_type(name, tyargs));
             }
             let decls = info.decls.clone();
             let arg_tys = args
@@ -5148,19 +7784,32 @@ impl Checker {
                 }
                 let (_, sig, tyargs) = best_matches.remove(0);
                 for (i, aty) in arg_tys.iter().enumerate() {
-                    // A constructor argument is bound into `self` by value — consuming.
-                    self.check_consuming(
-                        &args[i],
-                        aty,
-                        &format!("argument {} to '{}'", i + 1, name),
-                    )?;
+                    if matches!(
+                        sig.conventions.get(i),
+                        Some(Some(ArgConvention::Var | ArgConvention::Deinit))
+                    ) {
+                        self.check_consuming(
+                            &args[i],
+                            aty,
+                            &format!("argument {} to '{}'", i + 1, name),
+                        )?;
+                    }
                 }
                 if overloaded {
                     self.overload_targets
                         .borrow_mut()
                         .insert(span, method_lowered_name(name, "__init__", &sig));
                 }
-                return Ok(Ty::Struct(name.to_string(), tyargs));
+                let slots = (0..args.len()).map(ArgSlot::Positional).collect::<Vec<_>>();
+                self.solve_call_origins(
+                    &slots,
+                    &sig.conventions,
+                    &sig.ref_params,
+                    None,
+                    args,
+                    kwargs,
+                )?;
+                return Ok(self.struct_instance_type(name, tyargs));
             }
             return Err(TypeError::BadCall {
                 func: name.to_string(),
@@ -5223,7 +7872,7 @@ impl Checker {
             // position.
             self.check_consuming(&args[i], aty, &format!("field {} of '{}'", i + 1, name))?;
         }
-        Ok(Ty::Struct(name.to_string(), tyargs))
+        Ok(self.struct_instance_type(name, tyargs))
     }
 
     /// Resolve a generic use site's parameters, returning a type-parameter
@@ -5353,6 +8002,16 @@ impl Checker {
                 let tyarg = if let Some(argument) = arguments.first() {
                     self.resolve_param_arg(decl, argument)?
                 } else if let ParamDecl::Value {
+                    callable_default: Some(_),
+                    name,
+                    ..
+                } = decl
+                {
+                    // The VM evaluates the symbolic default after reifying all
+                    // preceding scalar/callable parameters.  Generic identity
+                    // records only that this runtime value occupies the slot.
+                    TyArg::Val(CtValue::Param(name.clone()))
+                } else if let ParamDecl::Value {
                     default: Some(value),
                     ty,
                     ..
@@ -5393,12 +8052,13 @@ impl Checker {
                     );
                 }
             }
+            self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
             self.validate_generic_constraints(name, decls, &tyargs)?;
             return Ok((subst, tyargs));
         }
         // Inference: only type parameters, solved from the argument types.
         for (pat, act) in patterns.iter().zip(actuals) {
-            if let Ty::Param { name, bounds } = pat
+            if let Ty::Param { name, bounds, .. } = pat
                 && name.starts_with('*')
             {
                 for bound in bounds {
@@ -5439,6 +8099,7 @@ impl Checker {
                 ParamDecl::Value {
                     name: pname,
                     default,
+                    callable_default,
                     ty,
                     ..
                 } => {
@@ -5458,6 +8119,8 @@ impl Checker {
                         value_environment
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
+                    } else if callable_default.is_some() {
+                        tyargs.push(TyArg::Val(CtValue::Param(pname.clone())));
                     } else {
                         return Err(TypeError::CannotInferTypeParam {
                             name: name.to_string(),
@@ -5489,6 +8152,7 @@ impl Checker {
                             name: name.to_string(),
                             param: pname.clone(),
                         })?;
+                    subst.insert(pname.clone(), solved.clone());
                     for bound in bounds {
                         if !self.conforms_to(&solved, bound) {
                             return Err(TypeError::TraitNotSatisfied {
@@ -5503,6 +8167,7 @@ impl Checker {
                 }
             }
         }
+        self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
         self.validate_generic_constraints(name, decls, &tyargs)?;
         Ok((subst, tyargs))
     }
@@ -5626,6 +8291,9 @@ impl Checker {
     /// parameter must carry `tr` among its bounds (so a bounded `T` can be
     /// forwarded to another `[U: tr]` parameter).
     fn conforms_to(&self, ty: &Ty, tr: &str) -> bool {
+        if self.has_assumed_conformance(ty, tr) {
+            return true;
+        }
         if let Ty::Param { bounds, .. } = ty
             && bounds.iter().any(|bound| bound == tr)
         {
@@ -5682,6 +8350,28 @@ impl Checker {
                 .any(|bound| bound == tr || self.trait_refines(bound, tr)),
             _ => false,
         }
+    }
+
+    /// A positive `conforms_to(T, Trait)` atom from the active method's
+    /// availability clause refines only that opaque parameter while its body is
+    /// checked. No negative or disjunctive fact reaches this table (see
+    /// `guaranteed_conformance_atoms`).
+    fn has_assumed_conformance(&self, ty: &Ty, required: &str) -> bool {
+        let Ty::Param { name, .. } = ty else {
+            return false;
+        };
+        let name = name.trim_start_matches('*');
+        self.assumed_conformances.iter().rev().any(|scope| {
+            scope.iter().any(|(parameter, available)| {
+                parameter.trim_start_matches('*') == name
+                    && (available == required
+                        || self.trait_refines(available, required)
+                        || matches!(
+                            (available.as_str(), required),
+                            ("ImplicitlyCopyable", "Copyable")
+                        ))
+            })
+        })
     }
 
     fn struct_conformance_applies(&self, name: &str, args: &[TyArg], required: &str) -> bool {
@@ -5829,9 +8519,13 @@ impl Checker {
     /// ImplicitlyCopyable conformance **or defines `__copyinit__`**, and a type
     /// parameter only if bounded by Copyable/ImplicitlyCopyable.
     fn is_copyable(&self, ty: &Ty) -> bool {
+        if self.has_assumed_conformance(ty, "Copyable")
+            || self.has_assumed_conformance(ty, "ImplicitlyCopyable")
+        {
+            return true;
+        }
         match ty {
-            Ty::List(element) | Ty::Set(element) => self.is_copyable(element),
-            Ty::Dict(key, value) => self.is_copyable(key) && self.is_copyable(value),
+            Ty::ComptimeList(element) => self.is_copyable(element),
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
                 elements.iter().all(|element| self.is_copyable(element))
             }
@@ -5856,6 +8550,35 @@ impl Checker {
             // aggregates is not modeled).
             _ => true,
         }
+    }
+
+    /// An ordinary value use of a reference-returning expression owns an
+    /// independent value: MIR lowers it to `ReadRef` followed by `CopyValue`.
+    /// Reference-bearing contexts are recorded in `reference_value_uses` and
+    /// retain the handle instead. Validate the remaining reads after the whole
+    /// tree has been checked so a later enclosing context can mark a nested
+    /// result as a retained handle before this distinction is enforced.
+    fn check_reference_result_reads(&self) -> Result<(), TypeError> {
+        let operations = self.operation_adjustments.borrow();
+        let retained_handles = self.reference_value_uses.borrow();
+        let copyable_reads = self.copyable_reference_result_reads.borrow();
+        for (span, adjustment) in operations.iter() {
+            let crate::checked::SemanticAdjustment::ReferenceResult { reference } = adjustment
+            else {
+                continue;
+            };
+            if retained_handles.contains_key(span)
+                || copyable_reads.contains(span)
+                || self.is_copyable(&reference.referent)
+            {
+                continue;
+            }
+            return Err(TypeError::NonCopyable {
+                ty: reference.referent.to_string(),
+                context: "ordinary value read through a reference result".to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Compiler-generated keyword collectors use the bundled self-hosted
@@ -5890,11 +8613,11 @@ impl Checker {
     /// copy constructor. Structs opt in by declaring the marker, and fieldwise
     /// conformance requires all fields to be implicitly copyable.
     fn is_implicitly_copyable(&self, ty: &Ty) -> bool {
+        if self.has_assumed_conformance(ty, "ImplicitlyCopyable") {
+            return true;
+        }
         match ty {
-            Ty::List(element) | Ty::Set(element) => self.is_implicitly_copyable(element),
-            Ty::Dict(key, value) => {
-                self.is_implicitly_copyable(key) && self.is_implicitly_copyable(value)
-            }
+            Ty::ComptimeList(element) => self.is_implicitly_copyable(element),
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
                 .iter()
                 .all(|element| self.is_implicitly_copyable(element)),
@@ -5916,11 +8639,11 @@ impl Checker {
     }
 
     fn is_implicitly_deletable(&self, ty: &Ty) -> bool {
+        if self.has_assumed_conformance(ty, "ImplicitlyDeletable") {
+            return true;
+        }
         match ty {
-            Ty::List(element) | Ty::Set(element) => self.is_implicitly_deletable(element),
-            Ty::Dict(key, value) => {
-                self.is_implicitly_deletable(key) && self.is_implicitly_deletable(value)
-            }
+            Ty::ComptimeList(element) => self.is_implicitly_deletable(element),
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
                 .iter()
                 .all(|element| self.is_implicitly_deletable(element)),
@@ -5940,6 +8663,9 @@ impl Checker {
     }
 
     fn is_hashable(&self, ty: &Ty) -> bool {
+        if self.has_assumed_conformance(ty, "Hashable") {
+            return true;
+        }
         match ty {
             Ty::Variant(alternatives) => alternatives
                 .iter()
@@ -5953,7 +8679,21 @@ impl Checker {
     }
 
     fn is_comparable(&self, ty: &Ty) -> bool {
+        if self.has_assumed_conformance(ty, "Comparable") {
+            return true;
+        }
+        // The discovery check runs before variadic public-Tuple templates have
+        // been replaced by concrete generated declarations. Preserve the
+        // template's conditional Comparable contract structurally across that
+        // staging seam; the final specialization carries the same conformance
+        // as an ordinary nominal declaration.
+        if let Some(elements) = tuple_elements(ty) {
+            return elements
+                .into_iter()
+                .all(|element| self.is_comparable(element));
+        }
         match ty {
+            Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Comparable"),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Comparable"),
             _ => is_numeric_like(ty),
         }
@@ -5986,11 +8726,16 @@ impl Checker {
         // A `^` transfer is `Expr::Transfer`, not a place, so it is naturally
         // exempt. A fresh temporary (a call result, a literal, an operator) is not a
         // place either — moving it is free.
-        if is_place_expr(expr) && !self.is_copyable(ty) {
-            return Err(TypeError::NonCopyable {
-                ty: ty.to_string(),
-                context: context.to_string(),
-            });
+        if is_place_expr(expr) {
+            if !self.is_copyable(ty) {
+                return Err(TypeError::NonCopyable {
+                    ty: ty.to_string(),
+                    context: context.to_string(),
+                });
+            }
+            self.copy_place_value_uses
+                .borrow_mut()
+                .insert(expr.source_span());
         }
         Ok(())
     }
@@ -6077,7 +8822,9 @@ impl Checker {
         self.mutable_scopes.push(HashMap::new());
         self.owner_scopes.push(HashMap::new());
         self.aggregate_origin_scopes.push(HashMap::new());
+        self.aggregate_field_origin_scopes.push(HashMap::new());
         self.reference_parameter_scopes.push(HashMap::new());
+        self.callable_origin_scopes.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
@@ -6091,7 +8838,9 @@ impl Checker {
         self.mutable_scopes.pop();
         self.owner_scopes.pop();
         self.aggregate_origin_scopes.pop();
+        self.aggregate_field_origin_scopes.pop();
         self.reference_parameter_scopes.pop();
+        self.callable_origin_scopes.pop();
     }
 
     fn is_binding_mutable(&self, name: &str) -> bool {
@@ -6106,18 +8855,12 @@ impl Checker {
     /// annotation) or a var-less `x = e`. A numeric literal materializes to its
     /// default kind (`default_literal`); a value that cannot live in a named
     /// binding is rejected: a closure (`ClosureEscape`, matching `return`/reassign)
-    /// or the non-first-class `range` (which has no annotation and only belongs in
-    /// a `for` header).
-    fn inferred_binding_ty(&self, value_ty: &Ty, name: &str) -> Result<Ty, TypeError> {
+    /// or another value outside the source language's first-class surface.
+    fn inferred_binding_ty(&self, value_ty: &Ty, _name: &str) -> Result<Ty, TypeError> {
         match value_ty {
             Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => {
                 Err(TypeError::ClosureEscape)
             }
-            Ty::Range => Err(TypeError::TypeMismatch {
-                expected: "a storable type".to_string(),
-                found: "range".to_string(),
-                context: format!("inferred type of '{}'", name),
-            }),
             other => Ok(default_literal(other)),
         }
     }
@@ -6125,6 +8868,22 @@ impl Checker {
     /// Look up `name`, walking outward through the scope chain (lexical lookup).
     fn lookup(&self, name: &str) -> Option<&Ty> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
+    }
+
+    fn register_callable_origins(&mut self, name: &str, signature: CallableOriginSignature) {
+        self.callable_origin_scopes
+            .last_mut()
+            .expect("checker origin-callable scope stack is not empty")
+            .entry(name.to_string())
+            .or_default()
+            .push(signature);
+    }
+
+    fn lookup_callable_origins(&self, name: &str) -> Option<Vec<CallableOriginSignature>> {
+        self.callable_origin_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
     }
 
     fn binding_scope(&self, name: &str) -> Option<usize> {
@@ -6135,30 +8894,126 @@ impl Checker {
 
     fn check_capture_access(&self, name: &str, writing: bool) -> Result<(), TypeError> {
         let contexts = self.capture_contexts.borrow();
-        let Some(policy) = contexts.last() else {
+        if contexts.is_empty() {
             return Ok(());
-        };
+        }
         let Some(scope) = self.binding_scope(name) else {
             return Ok(());
         };
-        // Locals/parameters of this closure and module globals are not captures.
-        if scope >= policy.base || scope == 0 || name == policy.function_name {
+        // Module globals are not captures. For a value crossing more than one
+        // nested-function boundary, every intervening environment must forward
+        // it: an inner `{value}` cannot tunnel through a middle `{}`.
+        if scope == 0 {
             return Ok(());
         }
-        let kind = policy
-            .entries
-            .get(name)
-            .copied()
-            .or_else(|| policy.default_read.then_some(crate::ast::CaptureKind::Read));
-        match (kind, writing) {
-            (Some(crate::ast::CaptureKind::Mut), _)
-            | (Some(crate::ast::CaptureKind::Move), false)
-            | (Some(crate::ast::CaptureKind::Read), false) => Ok(()),
-            (Some(_), true) => Err(TypeError::ImmutableBinding(name.to_string())),
-            (None, _) => Err(TypeError::Unsupported(format!(
-                "nested function must explicitly capture '{name}' with unified {{...}}"
-            ))),
+        for policy in contexts
+            .iter()
+            .filter(|policy| scope < policy.base && name != policy.function_name)
+        {
+            let kind = policy.entries.get(name).copied().or(policy.default);
+            if let Some(kind) = kind {
+                self.check_capture_capability(name, kind)?;
+                let binding = self.lookup_owner(name).ok_or_else(|| {
+                    TypeError::InvariantViolation(format!(
+                        "capture '{name}' lost its checked binding"
+                    ))
+                })?;
+                let ty = self.lookup(name).cloned().ok_or_else(|| {
+                    TypeError::InvariantViolation(format!(
+                        "capture '{name}' lost its checked storage type"
+                    ))
+                })?;
+                let checked = self.checked_capture(name, binding, ty, kind);
+                let mut declarations = self.declaration_captures.borrow_mut();
+                let captures = declarations.entry(policy.declaration.clone()).or_default();
+                if !captures.iter().any(|capture| capture.binding == binding) {
+                    captures.push(checked);
+                }
+            }
+            match (kind, writing) {
+                (Some(crate::ast::CaptureKind::Mut), _) if self.is_binding_mutable(name) => {}
+                (Some(crate::ast::CaptureKind::Ref), false) => {}
+                (Some(crate::ast::CaptureKind::Ref), true) if self.is_binding_mutable(name) => {}
+                // A transferred capture is owned by the closure and retains
+                // mutable state across calls. A copied capture is an immutable
+                // snapshot in current Mojo.
+                (Some(crate::ast::CaptureKind::Move), _) => {}
+                (Some(crate::ast::CaptureKind::Copy | crate::ast::CaptureKind::Read), false) => {}
+                (Some(_), true) | (Some(crate::ast::CaptureKind::Mut), false) => {
+                    return Err(TypeError::ImmutableBinding(name.to_string()));
+                }
+                (None, _) => {
+                    return Err(TypeError::Unsupported(format!(
+                        "nested function must explicitly capture '{name}' with {{...}}"
+                    )));
+                }
+            }
         }
+        Ok(())
+    }
+
+    /// Record a name-based call as a capture when an enclosing policy permits
+    /// it, without changing the historical rule that synthesized sibling calls
+    /// may be reconstructed when no capture policy names them.
+    fn record_permitted_call_capture(&self, name: &str) {
+        let contexts = self.capture_contexts.borrow();
+        let Some(scope) = self.binding_scope(name) else {
+            return;
+        };
+        if scope == 0 {
+            return;
+        }
+        let Some(binding) = self.lookup_owner(name) else {
+            return;
+        };
+        let Some(ty) = self.lookup(name).cloned() else {
+            return;
+        };
+        for policy in contexts
+            .iter()
+            .filter(|policy| scope < policy.base && name != policy.function_name)
+        {
+            let Some(kind) = policy.entries.get(name).copied().or(policy.default) else {
+                continue;
+            };
+            let checked = self.checked_capture(name, binding, ty.clone(), kind);
+            let mut declarations = self.declaration_captures.borrow_mut();
+            let captures = declarations.entry(policy.declaration.clone()).or_default();
+            if !captures.iter().any(|capture| capture.binding == binding) {
+                captures.push(checked);
+            }
+        }
+    }
+
+    fn check_capture_capability(
+        &self,
+        name: &str,
+        kind: crate::ast::CaptureKind,
+    ) -> Result<(), TypeError> {
+        let Some(ty) = self.lookup(name) else {
+            return Ok(());
+        };
+        let missing = match kind {
+            // `{var value}` performs an implicit copy at the nested-function
+            // declaration. A merely explicitly Copyable value is therefore not
+            // enough; current Mojo requires the stronger marker here.
+            crate::ast::CaptureKind::Copy if !self.is_implicitly_copyable(ty) => {
+                Some("ImplicitlyCopyable")
+            }
+            crate::ast::CaptureKind::Move if !self.is_movable(ty) => Some("Movable"),
+            _ => None,
+        };
+        if let Some(trait_name) = missing {
+            return Err(TypeError::TraitNotSatisfied {
+                param: name.to_string(),
+                ty: ty.to_string(),
+                trait_name: trait_name.to_string(),
+                reason: Some(format!(
+                    "capture convention for '{name}' requires {trait_name}"
+                )),
+            });
+        }
+        Ok(())
     }
 
     fn lookup_owner(&self, name: &str) -> Option<crate::origin::OwnerId> {
@@ -6166,6 +9021,14 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).copied())
+    }
+
+    fn record_statement_binding(&self, statement: &Stmt, name: &str) {
+        if let Some(owner) = self.lookup_owner(name) {
+            self.statement_bindings
+                .borrow_mut()
+                .insert(statement.source_span(), owner);
+        }
     }
 
     fn owner_is_mutable(&self, owner: crate::origin::OwnerId) -> bool {
@@ -6187,8 +9050,21 @@ impl Checker {
     /// loan checker must conservatively treat arbitrary indices as overlapping.
     fn origin_place(&self, expr: &Expr) -> Result<crate::origin::OriginPlace, TypeError> {
         use crate::origin::{OriginPlace, OriginSeg};
+        if let Some(interior) = self
+            .interior_references
+            .borrow()
+            .get(&expr.source_span())
+            .cloned()
+        {
+            return Ok(interior);
+        }
         match &expr.kind {
             ExprKind::Identifier(name) => {
+                if let Some(Ty::Ref(reference)) = self.lookup(name)
+                    && let crate::origin::Origin::Place(place) = &reference.origin
+                {
+                    return Ok(place.clone());
+                }
                 let root = self
                     .lookup_owner(name)
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
@@ -6198,6 +9074,34 @@ impl Checker {
                 })
             }
             ExprKind::Member { object, field } => {
+                if matches!(self.place_storage_ty(expr), Some(Ty::Ref(_))) {
+                    fn collect_places(
+                        origin: crate::origin::Origin,
+                        places: &mut Vec<OriginPlace>,
+                    ) {
+                        match origin {
+                            crate::origin::Origin::Place(place) => places.push(place),
+                            crate::origin::Origin::Union(members) => {
+                                for member in members {
+                                    collect_places(member, places);
+                                }
+                            }
+                            crate::origin::Origin::Param(_)
+                            | crate::origin::Origin::Static
+                            | crate::origin::Origin::Untracked { .. } => {}
+                        }
+                    }
+
+                    let mut referents = Vec::new();
+                    for origin in self.aggregate_origins(expr) {
+                        collect_places(origin, &mut referents);
+                    }
+                    referents.sort();
+                    referents.dedup();
+                    if let [referent] = referents.as_slice() {
+                        return Ok(referent.clone());
+                    }
+                }
                 let mut place = self.origin_place(object)?;
                 place.path.push(OriginSeg::Field(field.clone()));
                 Ok(place)
@@ -6222,9 +9126,8 @@ impl Checker {
                 let root = self
                     .lookup_owner(name)
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
-                // The origin algebra currently has no tag projection. Borrowing
-                // a payload therefore loans the whole Variant, which is safe and
-                // prevents changing its active alternative while the ref lives.
+                // `record_interior_reference` adds the payload's named
+                // `Interior("value")` segment after this base is resolved.
                 Ok(OriginPlace {
                     root,
                     path: Vec::new(),
@@ -6233,6 +9136,587 @@ impl Checker {
             _ => Err(TypeError::Unsupported(
                 "reference binding to a non-place expression".to_string(),
             )),
+        }
+    }
+
+    /// Resolve the reference capability actually supplied by an expression.
+    /// A reference-valued identifier/field can carry a union of concrete
+    /// referents; collapsing it to the handle slot would lose both escape and
+    /// interior-generation facts when the handle is forwarded through another
+    /// call. Plain places synthesize the corresponding place reference.
+    fn reference_actual(&self, expr: &Expr) -> Result<crate::origin::RefTy, TypeError> {
+        use crate::origin::{Mutability, Origin, RefTy};
+
+        if let Some(mut reference) = self.infer_reference_value(expr) {
+            let retained = self.aggregate_origins(expr);
+            if !retained.is_empty() {
+                reference.origin = Origin::union(retained);
+            }
+            return Ok(reference);
+        }
+
+        let place = self.origin_place(expr)?;
+        let mutability = if self.owner_is_mutable(place.root) {
+            Mutability::Mutable
+        } else {
+            Mutability::Immutable
+        };
+        Ok(RefTy {
+            referent: Box::new(self.infer(expr)?),
+            origin: Origin::Place(place),
+            mutability,
+        })
+    }
+
+    /// Resolve the compile-time value accepted by an `Origin` parameter at a
+    /// function-value specialization site. `origin_of` observes checked places
+    /// (including reference-valued places) and never evaluates at runtime.
+    fn explicit_origin_argument(
+        &self,
+        argument: &crate::ast::ParamArg,
+    ) -> Result<crate::origin::Origin, TypeError> {
+        use crate::ast::ParamArg;
+        use crate::origin::Origin;
+
+        let expression = match argument {
+            ParamArg::Value(expression) => expression,
+            ParamArg::Named { value, .. } => return self.explicit_origin_argument(value),
+            ParamArg::Type(_) => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "an Origin value".to_string(),
+                    found: "a type".to_string(),
+                    context: "explicit callable origin specialization".to_string(),
+                });
+            }
+        };
+        match &expression.kind {
+            ExprKind::Call {
+                name,
+                args,
+                kwargs,
+                param_args,
+            } if name == "origin_of" && kwargs.is_empty() && param_args.is_empty() => {
+                if args.is_empty() {
+                    return Err(TypeError::Unsupported(
+                        "origin_of requires at least one place".to_string(),
+                    ));
+                }
+                args.iter()
+                    .map(|place| {
+                        self.reference_actual(place)
+                            .map(|reference| reference.origin)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Origin::union)
+            }
+            ExprKind::Identifier(name) if name == "StaticOrigin" => Ok(Origin::Static),
+            ExprKind::Identifier(name) if name == "UntrackedOrigin" => {
+                Ok(Origin::Untracked { mutable: false })
+            }
+            ExprKind::Identifier(name) if name == "UnsafeAnyOrigin" => {
+                Ok(Origin::Untracked { mutable: true })
+            }
+            _ => Err(TypeError::TypeMismatch {
+                expected: "origin_of(place) or a builtin Origin value".to_string(),
+                found: "a runtime value".to_string(),
+                context: "explicit callable origin specialization".to_string(),
+            }),
+        }
+    }
+
+    /// Split the source parameter list at an explicit specialization site.
+    /// Ordinary arguments are rewritten as named arguments before being handed
+    /// to the generic binder; this preserves their source slot even when an
+    /// erased or infer-only semantic parameter precedes them.
+    fn split_callable_specialization(
+        &self,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+        signature: &CallableOriginSignature,
+    ) -> Result<SplitCallableSpecialization, TypeError> {
+        use crate::ast::ParamArg;
+
+        if signature.origins.is_empty() {
+            return Ok((arguments.to_vec(), Vec::new()));
+        }
+        let mut supplied = vec![false; signature.source.len()];
+        let mut origins = vec![None; signature.origins.len()];
+        let mut ordinary = Vec::new();
+        let mut next_positional = 0;
+        for argument in arguments {
+            let (index, value) = match argument {
+                ParamArg::Named {
+                    name: argument_name,
+                    value,
+                } => {
+                    let index = signature
+                        .source
+                        .iter()
+                        .position(|parameter| parameter.name == *argument_name)
+                        .ok_or_else(|| TypeError::BadCall {
+                            func: name.to_string(),
+                            reason: format!("unknown compile-time parameter '{argument_name}'"),
+                        })?;
+                    (index, (**value).clone())
+                }
+                other => {
+                    while next_positional < signature.source.len()
+                        && (signature.source[next_positional].infer_only
+                            || supplied[next_positional])
+                    {
+                        next_positional += 1;
+                    }
+                    if next_positional == signature.source.len() {
+                        return Err(TypeError::WrongTypeArgCount {
+                            name: name.to_string(),
+                            expected: signature
+                                .source
+                                .iter()
+                                .filter(|parameter| !parameter.infer_only)
+                                .count(),
+                            got: arguments.len(),
+                        });
+                    }
+                    let index = next_positional;
+                    next_positional += 1;
+                    (index, other.clone())
+                }
+            };
+            let parameter = &signature.source[index];
+            if parameter.infer_only {
+                return Err(TypeError::Unsupported(format!(
+                    "infer-only parameter '{}' cannot be supplied explicitly",
+                    parameter.name
+                )));
+            }
+            if supplied[index] {
+                return Err(TypeError::BadCall {
+                    func: name.to_string(),
+                    reason: format!("parameter '{}' was supplied twice", parameter.name),
+                });
+            }
+            supplied[index] = true;
+            if let Some(origin_index) = parameter.origin {
+                if let ParamArg::Value(expression) = &value {
+                    self.operation_adjustments.borrow_mut().insert(
+                        expression.source_span(),
+                        crate::checked::SemanticAdjustment::EraseCompileTimeArgument,
+                    );
+                }
+                origins[origin_index] = Some(self.explicit_origin_argument(&value)?);
+            } else if parameter.ordinary {
+                ordinary.push(ParamArg::Named {
+                    name: parameter.name.trim_start_matches('*').to_string(),
+                    value: Box::new(value),
+                });
+            } else {
+                return Err(TypeError::Unsupported(format!(
+                    "semantic parameter '{}' is inferred and cannot be supplied explicitly",
+                    parameter.name
+                )));
+            }
+        }
+
+        let bindings = signature
+            .origins
+            .iter()
+            .zip(origins)
+            .filter_map(|(parameter, origin)| {
+                origin.map(|origin| (parameter.slots.clone(), origin))
+            })
+            .collect::<Vec<_>>();
+        Ok((ordinary, bindings))
+    }
+
+    fn bind_callable_origins(
+        &self,
+        mut callable: Ty,
+        bindings: &[(Vec<usize>, crate::origin::Origin)],
+    ) -> Ty {
+        let (ref_params, ref_return) = match &mut callable {
+            Ty::Func {
+                ref_params,
+                ref_return,
+                ..
+            }
+            | Ty::GenericFunc {
+                ref_params,
+                ref_return,
+                ..
+            } => (ref_params, ref_return),
+            _ => return callable,
+        };
+        for signature in ref_params.iter_mut().flatten() {
+            signature.origin = bind_sig_origin(&signature.origin, bindings);
+        }
+        if let Some(signature) = ref_return {
+            signature.origin = bind_sig_origin(&signature.origin, bindings);
+        }
+        callable
+    }
+
+    fn prepare_callable_specialization(
+        &self,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+        callable: Ty,
+        signature: Option<&CallableOriginSignature>,
+    ) -> Result<(Ty, Vec<crate::ast::ParamArg>), TypeError> {
+        let Some(signature) = signature else {
+            return Ok((callable, arguments.to_vec()));
+        };
+        let (ordinary, bindings) =
+            self.split_callable_specialization(name, arguments, signature)?;
+        Ok((self.bind_callable_origins(callable, &bindings), ordinary))
+    }
+
+    /// Materialize the monomorphic checked view of an explicitly specialized
+    /// generic function value. Generic execution remains type-erased; only its
+    /// callable contract is instantiated here.
+    fn instantiate_generic_callable_value(
+        &self,
+        name: &str,
+        callable: Ty,
+        arguments: &[crate::ast::ParamArg],
+    ) -> Result<(Ty, Vec<TyArg>), TypeError> {
+        let Ty::GenericFunc {
+            environment,
+            decls,
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+        } = callable
+        else {
+            return Ok((callable, Vec::new()));
+        };
+        let (subst, tyargs) = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
+        let values = Self::value_argument_environment(&decls, &tyargs);
+        let resolve = |ty: &Ty| {
+            let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
+            self.resolve_dependent_ty(&substituted, &values)
+        };
+        let contract = Ty::Func {
+            environment,
+            params: params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
+            names,
+            ret: Box::new(resolve(&ret)?),
+            required,
+            variadic: variadic
+                .as_ref()
+                .map(|parameter| resolve(parameter).map(Box::new))
+                .transpose()?,
+            kw_variadic: kw_variadic
+                .as_ref()
+                .map(|parameter| resolve(parameter).map(Box::new))
+                .transpose()?,
+            positional_only,
+            keyword_only,
+            raises,
+            error: error
+                .as_ref()
+                .map(|error| resolve(error).map(Box::new))
+                .transpose()?,
+            conventions,
+            ref_params,
+            ref_return,
+        };
+        Ok((contract, tyargs))
+    }
+
+    fn specialize_callable_value_candidate(
+        &self,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+        callable: Ty,
+        signature: Option<&CallableOriginSignature>,
+    ) -> Result<Ty, TypeError> {
+        let (callable, ordinary) =
+            self.prepare_callable_specialization(name, arguments, callable, signature)?;
+        match callable {
+            callable @ Ty::GenericFunc { .. } => self
+                .instantiate_generic_callable_value(name, callable, &ordinary)
+                .map(|(contract, _)| contract),
+            callable @ Ty::Func { .. } if ordinary.is_empty() => Ok(callable),
+            Ty::Func { .. } => Err(TypeError::WrongTypeArgCount {
+                name: name.to_string(),
+                expected: 0,
+                got: ordinary.len(),
+            }),
+            other => Err(TypeError::NotCallable {
+                name: name.to_string(),
+                ty: other.to_string(),
+            }),
+        }
+    }
+
+    fn infer_specialized_callable_value(
+        &self,
+        span: SourceSpan,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+        expected: Option<&Ty>,
+        record: bool,
+    ) -> Result<Option<Ty>, TypeError> {
+        let Some(callable) = self.lookup(name).cloned() else {
+            return Ok(None);
+        };
+        if !matches!(
+            callable,
+            Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
+        ) {
+            return Ok(None);
+        }
+        self.check_capture_access(name, false)?;
+        if record && let Some(owner) = self.lookup_owner(name) {
+            self.expression_bindings
+                .borrow_mut()
+                .insert(span.clone(), owner);
+        }
+        let signatures = self.lookup_callable_origins(name).unwrap_or_default();
+        let (selected, target) = match callable {
+            Ty::Overload(candidates) => {
+                let expected = expected.ok_or_else(|| TypeError::BadCall {
+                    func: name.to_string(),
+                    reason: "an overloaded function value requires a contextual callable type"
+                        .to_string(),
+                })?;
+                let mut matches = candidates
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, candidate)| {
+                        let specialized = self
+                            .specialize_callable_value_candidate(
+                                name,
+                                arguments,
+                                candidate.clone(),
+                                signatures.get(index),
+                            )
+                            .ok()?;
+                        self.value_coerces(&specialized, expected)
+                            .then(|| {
+                                callable_lowered_name(name, candidate)
+                                    .map(|target| (specialized, target))
+                            })
+                            .flatten()
+                    })
+                    .collect::<Vec<_>>();
+                match matches.len() {
+                    0 => {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: format!("specialization of overload({name})"),
+                            context: "overloaded callable value".to_string(),
+                        });
+                    }
+                    1 => matches.pop().expect("one callable-value candidate"),
+                    _ => {
+                        return Err(TypeError::BadCall {
+                            func: name.to_string(),
+                            reason: format!(
+                                "multiple specialized overloads fit expected type '{expected}'"
+                            ),
+                        });
+                    }
+                }
+            }
+            candidate => {
+                let specialized = self.specialize_callable_value_candidate(
+                    name,
+                    arguments,
+                    candidate,
+                    signatures.first(),
+                )?;
+                (specialized, name.to_string())
+            }
+        };
+        if record {
+            self.overload_targets
+                .borrow_mut()
+                .insert(span.clone(), target);
+            self.expression_types
+                .borrow_mut()
+                .insert(span.clone(), selected.clone());
+        }
+        Ok(Some(selected))
+    }
+
+    /// Record that evaluating `expression` as a reference produces a fresh
+    /// generation in the named interior region owned by `base`.
+    fn record_interior_reference(&self, site: SourceSpan, base: &Expr, name: &str) {
+        if self
+            .interior_references
+            .borrow()
+            .get(&site)
+            .is_some_and(|origin| {
+                matches!(origin.path.last(), Some(crate::origin::OriginSeg::Interior(tag)) if tag == name)
+            })
+        {
+            // Inference is intentionally repeatable. Do not project the fact
+            // through itself when the same checked expression is revisited.
+            return;
+        }
+        if let Ok(mut origin) = self.origin_place(base) {
+            origin
+                .path
+                .push(crate::origin::OriginSeg::Interior(name.to_string()));
+            self.interior_references.borrow_mut().insert(site, origin);
+        }
+    }
+
+    /// Record Mojo's owned-interior generation refresh for a named region.
+    /// Defining a new `base._get_owned_interior["name"]` origin invalidates an
+    /// older generation of that same region, but not sibling regions below the
+    /// owner. Dict lookup uses this for `"value"`, so a new lookup stales an
+    /// earlier value reference without invalidating the `"element"` generation
+    /// retained by key iteration.
+    fn record_replacing_interior_reference(&self, site: SourceSpan, base: &Expr, name: &str) {
+        if let Ok(mut origin) = self.origin_place(base) {
+            origin
+                .path
+                .push(crate::origin::OriginSeg::Interior(name.to_string()));
+            self.record_origin_invalidation_kind(site.clone(), origin, None, true);
+        }
+        self.record_interior_reference(site, base, name);
+    }
+
+    /// Record a mutation of `base`. Existing generations rooted below this
+    /// path become stale. If `base` is itself a local reference, mutations
+    /// through that handle preserve its own generation while still invalidating
+    /// interiors nested underneath it.
+    fn record_interior_invalidation(&self, site: SourceSpan, base: &Expr) {
+        let Ok(origin) = self.origin_place(base) else {
+            return;
+        };
+        let except = match &base.kind {
+            ExprKind::Identifier(name) if matches!(self.lookup(name), Some(Ty::Ref(_))) => {
+                self.lookup_owner(name)
+            }
+            _ => None,
+        };
+        self.record_origin_invalidation(site, origin, except);
+    }
+
+    /// Record the storage generation replaced by a checked place write. Index
+    /// and Variant-payload targets are places too: replacing one preserves a
+    /// reference to that exact generation, but invalidates references into
+    /// interiors nested below it. Two handle-bearing place forms need their
+    /// semantic referent rather than their syntactic storage path:
+    ///
+    /// * `pointer[0]` replaces the origin-bearing pointer's proven source place;
+    /// * assigning through a reference-valued aggregate field replaces the
+    ///   place(s) whose handles the aggregate retains.
+    fn record_place_write_invalidation(&self, site: SourceSpan, place: &Expr) {
+        if let ExprKind::Index { object, .. } = &place.kind
+            && let Ok(Ty::Pointer {
+                origin: crate::origin::PointerOrigin::Place { place: origin, .. },
+                ..
+            }) = self.infer(object)
+        {
+            self.record_origin_invalidation(site, origin, None);
+            return;
+        }
+
+        if matches!(self.place_storage_ty(place), Some(Ty::Ref(_))) {
+            // An `out self` initializer stores the incoming reference handle;
+            // subsequent assignments write through that established handle.
+            if self.self_initializing && place_root_name(place) == Some("self") {
+                return;
+            }
+
+            let mut origins = self.aggregate_origins(place).into_iter().peekable();
+            if origins.peek().is_some() {
+                for origin in origins {
+                    self.record_aggregate_origin_invalidation(site.clone(), origin);
+                }
+                return;
+            }
+        }
+
+        self.record_interior_invalidation(site, place);
+    }
+
+    fn record_aggregate_origin_invalidation(
+        &self,
+        site: SourceSpan,
+        origin: crate::origin::Origin,
+    ) {
+        self.record_aggregate_origin_invalidation_except(site, origin, None);
+    }
+
+    fn record_aggregate_origin_invalidation_except(
+        &self,
+        site: SourceSpan,
+        origin: crate::origin::Origin,
+        except: Option<crate::origin::OwnerId>,
+    ) {
+        match origin {
+            crate::origin::Origin::Place(place) => {
+                self.record_origin_invalidation(site, place, except);
+            }
+            crate::origin::Origin::Union(members) => {
+                for member in members {
+                    self.record_aggregate_origin_invalidation_except(site.clone(), member, except);
+                }
+            }
+            crate::origin::Origin::Param(_)
+            | crate::origin::Origin::Static
+            | crate::origin::Origin::Untracked { .. } => {}
+        }
+    }
+
+    fn record_origin_invalidation(
+        &self,
+        site: SourceSpan,
+        base: crate::origin::OriginPlace,
+        except: Option<crate::origin::OwnerId>,
+    ) {
+        self.record_origin_invalidation_kind(site, base, except, false);
+    }
+
+    fn record_origin_invalidation_kind(
+        &self,
+        site: SourceSpan,
+        base: crate::origin::OriginPlace,
+        except: Option<crate::origin::OwnerId>,
+        include_base_generation: bool,
+    ) {
+        let fact = crate::checked::InteriorInvalidation {
+            base,
+            except,
+            include_base_generation,
+        };
+        let mut invalidations = self.interior_invalidations.borrow_mut();
+        let values = invalidations.entry(site).or_default();
+        if !values.contains(&fact) {
+            values.push(fact);
+        }
+    }
+
+    fn record_owner_invalidation(
+        &self,
+        site: SourceSpan,
+        owner: crate::origin::OwnerId,
+        path: Vec<crate::origin::OriginSeg>,
+    ) {
+        let fact = crate::checked::InteriorInvalidation {
+            base: crate::origin::OriginPlace { root: owner, path },
+            except: None,
+            include_base_generation: false,
+        };
+        let mut invalidations = self.interior_invalidations.borrow_mut();
+        let values = invalidations.entry(site).or_default();
+        if !values.contains(&fact) {
+            values.push(fact);
         }
     }
 
@@ -6252,6 +9736,152 @@ impl Checker {
             self.aggregate_origin_scopes[scope].remove(name);
         } else {
             self.aggregate_origin_scopes[scope].insert(name.to_string(), origins);
+        }
+    }
+
+    fn lookup_aggregate_field_origins(
+        &self,
+        name: &str,
+    ) -> HashMap<String, Vec<crate::origin::Origin>> {
+        self.aggregate_field_origin_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+            .unwrap_or_default()
+    }
+
+    fn set_aggregate_field_origins(
+        &mut self,
+        name: &str,
+        fields: HashMap<String, Vec<crate::origin::Origin>>,
+    ) {
+        let Some(scope) = self.binding_scope(name) else {
+            return;
+        };
+        if fields.is_empty() {
+            self.aggregate_field_origin_scopes[scope].remove(name);
+        } else {
+            self.aggregate_field_origin_scopes[scope].insert(name.to_string(), fields);
+        }
+    }
+
+    /// Origins retained by each direct field of an aggregate value. The flat
+    /// aggregate origin set remains useful for lifetime extension, but it
+    /// cannot identify the referent of `pair.right` when `pair` also retains a
+    /// distinct `left` origin.
+    fn aggregate_field_origins(
+        &self,
+        expression: &Expr,
+    ) -> HashMap<String, Vec<crate::origin::Origin>> {
+        fn append_unique(
+            into: &mut Vec<crate::origin::Origin>,
+            values: impl IntoIterator<Item = crate::origin::Origin>,
+        ) {
+            for value in values {
+                if !into.contains(&value) {
+                    into.push(value);
+                }
+            }
+        }
+
+        match &expression.kind {
+            ExprKind::Identifier(name) => self.lookup_aggregate_field_origins(name),
+            ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
+                self.aggregate_field_origins(inner)
+            }
+            ExprKind::IfExpr {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let mut result = self.aggregate_field_origins(then_branch);
+                for (field, origins) in self.aggregate_field_origins(else_branch) {
+                    append_unique(result.entry(field).or_default(), origins);
+                }
+                result
+            }
+            ExprKind::Call {
+                name, args, kwargs, ..
+            } => {
+                let Some(info) = self.structs.get(name) else {
+                    return HashMap::new();
+                };
+                let fields = info.fields.clone();
+                let mut result = HashMap::new();
+                if info.fieldwise_init {
+                    for ((field_name, field_ty), argument) in fields.into_iter().zip(args) {
+                        let origins = if matches!(field_ty, Ty::Ref(_)) {
+                            self.infer_reference_value(argument)
+                                .map(|reference| vec![reference.origin])
+                                .unwrap_or_default()
+                        } else if self.type_carries_loans(&field_ty) {
+                            self.aggregate_origins(argument)
+                        } else {
+                            Vec::new()
+                        };
+                        if !origins.is_empty() {
+                            result.insert(field_name, origins);
+                        }
+                    }
+                    return result;
+                }
+
+                // A conventional handwritten initializer commonly forwards a
+                // same-named ref parameter into each reference field. Preserve
+                // that field identity at the call site too; arbitrary computed
+                // initializer data flow remains represented by the flat,
+                // conservative aggregate origin set.
+                let Some(signature) = info.methods.get("__init__").and_then(|signatures| {
+                    signatures
+                        .iter()
+                        .find(|signature| signature.params.len() >= args.len())
+                }) else {
+                    return result;
+                };
+                for (field_name, field_ty) in fields {
+                    if !matches!(field_ty, Ty::Ref(_)) {
+                        continue;
+                    }
+                    let Some(index) = signature
+                        .names
+                        .iter()
+                        .position(|parameter| parameter == &field_name)
+                    else {
+                        continue;
+                    };
+                    let argument = args.get(index).or_else(|| {
+                        kwargs
+                            .iter()
+                            .find(|argument| argument.name == field_name)
+                            .map(|argument| &argument.value)
+                    });
+                    if let Some(argument) = argument {
+                        let origins = self
+                            .reference_actual(argument)
+                            .ok()
+                            .map(|reference| vec![reference.origin])
+                            .or_else(|| {
+                                signature
+                                    .ref_params
+                                    .get(index)
+                                    .is_some_and(Option::is_some)
+                                    .then(|| {
+                                        self.origin_place(argument)
+                                            .ok()
+                                            .map(crate::origin::Origin::Place)
+                                            .into_iter()
+                                            .collect::<Vec<_>>()
+                                    })
+                            })
+                            .unwrap_or_default();
+                        if !origins.is_empty() {
+                            result.insert(field_name, origins);
+                        }
+                    }
+                }
+                result
+            }
+            _ => HashMap::new(),
         }
     }
 
@@ -6296,6 +9926,112 @@ impl Checker {
         self.type_storage_contains(ty, true)
     }
 
+    fn capture_origins_in_type(&self, ty: &Ty) -> Vec<crate::origin::CaptureOrigin> {
+        use crate::origin::{CallableEnvironment, CaptureOrigin, CaptureOriginSet};
+
+        fn collect(checker: &Checker, ty: &Ty, out: &mut Vec<CaptureOrigin>) {
+            if let Some(element) = list_element(ty).or_else(|| set_element(ty)) {
+                collect(checker, element, out);
+                return;
+            }
+            if let Some((key, value)) = dict_elements(ty) {
+                collect(checker, key, out);
+                collect(checker, value, out);
+                return;
+            }
+            if let Some(elements) = tuple_elements(ty) {
+                for element in elements {
+                    collect(checker, element, out);
+                }
+                return;
+            }
+            match ty {
+                Ty::Ref(reference) => out.push(CaptureOrigin::read(reference.origin.clone())),
+                Ty::Pointer { element, origin } => {
+                    if let Some(origin) = origin.as_origin() {
+                        out.push(CaptureOrigin::read(origin));
+                    }
+                    collect(checker, element, out);
+                }
+                Ty::ComptimeList(element) => collect(checker, element, out),
+                Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+                    for element in elements {
+                        collect(checker, element, out);
+                    }
+                }
+                Ty::Struct(name, arguments) => {
+                    let Some(info) = checker.structs.get(name) else {
+                        return;
+                    };
+                    let subst = struct_subst(&info.decls, arguments);
+                    for (_, field) in &info.fields {
+                        collect(checker, &substitute(field, &subst), out);
+                    }
+                }
+                Ty::Func {
+                    environment:
+                        CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
+                    ..
+                }
+                | Ty::GenericFunc {
+                    environment:
+                        CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
+                    ..
+                } => out.extend(captures.iter().cloned()),
+                _ => {}
+            }
+        }
+
+        let mut origins = Vec::new();
+        collect(self, ty, &mut origins);
+        let CaptureOriginSet::Concrete(origins) = CaptureOriginSet::concrete(origins) else {
+            unreachable!("concrete capture canonicalization stays concrete")
+        };
+        origins
+    }
+
+    fn checked_capture(
+        &self,
+        name: &str,
+        binding: crate::origin::OwnerId,
+        ty: Ty,
+        kind: crate::ast::CaptureKind,
+    ) -> crate::checked::CheckedCapture {
+        use crate::origin::{CaptureAccess, CaptureOrigin, Origin, OriginPlace};
+        let mut origins = self.capture_origins_in_type(&ty);
+        match kind {
+            crate::ast::CaptureKind::Read => origins.push(CaptureOrigin {
+                origin: Origin::Place(OriginPlace {
+                    root: binding,
+                    path: Vec::new(),
+                }),
+                access: CaptureAccess::Read,
+            }),
+            crate::ast::CaptureKind::Mut | crate::ast::CaptureKind::Ref => {
+                origins.push(CaptureOrigin {
+                    origin: Origin::Place(OriginPlace {
+                        root: binding,
+                        path: Vec::new(),
+                    }),
+                    access: CaptureAccess::Write,
+                })
+            }
+            crate::ast::CaptureKind::Copy | crate::ast::CaptureKind::Move => {}
+        }
+        let crate::origin::CaptureOriginSet::Concrete(origins) =
+            crate::origin::CaptureOriginSet::concrete(origins)
+        else {
+            unreachable!("concrete capture canonicalization stays concrete")
+        };
+        crate::checked::CheckedCapture {
+            name: name.to_string(),
+            binding,
+            ty,
+            kind,
+            origins,
+        }
+    }
+
     fn type_storage_contains(&self, ty: &Ty, pointer_loans: bool) -> bool {
         fn contains(
             checker: &Checker,
@@ -6303,19 +10039,25 @@ impl Checker {
             pointer_loans: bool,
             seen: &mut HashSet<String>,
         ) -> bool {
+            if let Some(element) = list_element(ty).or_else(|| set_element(ty)) {
+                return contains(checker, element, pointer_loans, seen);
+            }
+            if let Some((key, value)) = dict_elements(ty) {
+                return contains(checker, key, pointer_loans, seen)
+                    || contains(checker, value, pointer_loans, seen);
+            }
+            if let Some(elements) = tuple_elements(ty) {
+                return elements
+                    .into_iter()
+                    .any(|element| contains(checker, element, pointer_loans, seen));
+            }
             match ty {
                 Ty::Ref(_) => true,
                 Ty::Pointer { element, origin } => {
                     (pointer_loans && origin.as_origin().is_some())
                         || contains(checker, element, pointer_loans, seen)
                 }
-                Ty::List(element) | Ty::Set(element) => {
-                    contains(checker, element, pointer_loans, seen)
-                }
-                Ty::Dict(key, value) => {
-                    contains(checker, key, pointer_loans, seen)
-                        || contains(checker, value, pointer_loans, seen)
-                }
+                Ty::ComptimeList(element) => contains(checker, element, pointer_loans, seen),
                 Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
                     .iter()
                     .any(|element| contains(checker, element, pointer_loans, seen)),
@@ -6337,6 +10079,25 @@ impl Checker {
                     seen.remove(&key);
                     result
                 }
+                Ty::Func {
+                    environment:
+                        crate::origin::CallableEnvironment::Capturing(
+                            crate::origin::CaptureOriginSet::Concrete(captures),
+                        ),
+                    ..
+                }
+                | Ty::GenericFunc {
+                    environment:
+                        crate::origin::CallableEnvironment::Capturing(
+                            crate::origin::CaptureOriginSet::Concrete(captures),
+                        ),
+                    ..
+                } => captures.iter().any(|capture| {
+                    matches!(
+                        capture.origin,
+                        crate::origin::Origin::Place(_) | crate::origin::Origin::Param(_)
+                    )
+                }),
                 _ => false,
             }
         }
@@ -6344,17 +10105,25 @@ impl Checker {
     }
 
     fn type_contains_unsafe_any_pointer(ty: &Ty) -> bool {
+        if let Some(element) = list_element(ty).or_else(|| set_element(ty)) {
+            return Self::type_contains_unsafe_any_pointer(element);
+        }
+        if let Some((key, value)) = dict_elements(ty) {
+            return Self::type_contains_unsafe_any_pointer(key)
+                || Self::type_contains_unsafe_any_pointer(value);
+        }
+        if let Some(elements) = tuple_elements(ty) {
+            return elements
+                .into_iter()
+                .any(Self::type_contains_unsafe_any_pointer);
+        }
         match ty {
             Ty::Pointer {
                 origin: crate::origin::PointerOrigin::UnsafeAny { .. },
                 ..
             } => true,
-            Ty::Pointer { element, .. } | Ty::List(element) | Ty::Set(element) => {
+            Ty::Pointer { element, .. } | Ty::ComptimeList(element) => {
                 Self::type_contains_unsafe_any_pointer(element)
-            }
-            Ty::Dict(key, value) => {
-                Self::type_contains_unsafe_any_pointer(key)
-                    || Self::type_contains_unsafe_any_pointer(value)
             }
             Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
                 elements.iter().any(Self::type_contains_unsafe_any_pointer)
@@ -6388,13 +10157,21 @@ impl Checker {
                         .as_origin()
                         .map(|origin| vec![origin])
                         .unwrap_or_default(),
+                    Some(ty @ (Ty::Func { .. } | Ty::GenericFunc { .. })) => self
+                        .capture_origins_in_type(ty)
+                        .into_iter()
+                        .map(|capture| capture.origin)
+                        .collect(),
                     _ => self
                         .lookup_reference_parameter(name)
                         .map(|reference| vec![reference.origin])
                         .unwrap_or_default(),
                 }
             }
-            ExprKind::Member { object, .. } => {
+            ExprKind::Member { object, field } => {
+                if let Some(origins) = self.aggregate_field_origins(object).get(field) {
+                    return origins.clone();
+                }
                 let aggregate = self.aggregate_origins(object);
                 if !aggregate.is_empty() {
                     aggregate
@@ -6451,7 +10228,7 @@ impl Checker {
                             info.fields.iter().map(|(_, ty)| ty.clone()).collect();
                         for (field, argument) in fields.iter().zip(args) {
                             if matches!(field, Ty::Ref(_)) {
-                                if let Some(reference) = self.infer_reference_value(argument) {
+                                if let Ok(reference) = self.reference_actual(argument) {
                                     append_unique(&mut result, [reference.origin]);
                                 }
                             } else {
@@ -6466,8 +10243,8 @@ impl Checker {
                         let refs = signature.ref_params.clone();
                         for (index, argument) in args.iter().enumerate() {
                             if refs.get(index).is_some_and(Option::is_some) {
-                                if let Ok(place) = self.origin_place(argument) {
-                                    append_unique(&mut result, [Origin::Place(place)]);
+                                if let Ok(reference) = self.reference_actual(argument) {
+                                    append_unique(&mut result, [reference.origin]);
                                 }
                             } else {
                                 append_unique(&mut result, self.aggregate_origins(argument));
@@ -6561,7 +10338,18 @@ impl Checker {
                     } => {
                         self.register_named_bindings(iter)?;
                         let iter_ty = self.infer(iter)?;
-                        let (elem_ty, protocol) = self.iteration_protocol(&iter_ty, *owned)?;
+                        let (elem_ty, mut protocol) = self.iteration_protocol(&iter_ty, *owned)?;
+                        if !*owned
+                            && (list_element(&iter_ty).is_some()
+                                || set_element(&iter_ty).is_some()
+                                || dict_elements(&iter_ty).is_some())
+                            && let Ok(mut origin) = self.origin_place(iter)
+                        {
+                            origin
+                                .path
+                                .push(crate::origin::OriginSeg::Interior("element".to_string()));
+                            protocol.borrowed_origin = Some(origin);
+                        }
                         self.iteration_protocols
                             .borrow_mut()
                             .insert(iter.source_span(), protocol);
@@ -6592,6 +10380,7 @@ impl Checker {
                             });
                         }
                         let binding_ty = elem_ty;
+                        let implicitly_deletable = self.is_implicitly_deletable(&binding_ty);
                         // A generator binder scopes everything to its right, but
                         // not its own iterable. Giving every generator a lexical
                         // scope also permits a later generator to shadow the same
@@ -6612,6 +10401,7 @@ impl Checker {
                                 ))
                             })?,
                             mutable: *owned,
+                            implicitly_deletable,
                         });
                     }
                     crate::ast::ComprehensionClause::If(condition) => {
@@ -6628,7 +10418,7 @@ impl Checker {
             let value_ty = default_literal(&self.infer(value)?);
             self.check_consuming(value, &value_ty, "collection comprehension element")?;
             let result_ty = match kind {
-                crate::ast::CollectionKind::List => Ty::List(Box::new(value_ty)),
+                crate::ast::CollectionKind::List => list_type(value_ty),
                 crate::ast::CollectionKind::Set => {
                     if !self.is_hashable(&value_ty) {
                         return Err(TypeError::TraitNotSatisfied {
@@ -6638,7 +10428,7 @@ impl Checker {
                             reason: self.trait_failure_reason(&value_ty, "Hashable"),
                         });
                     }
-                    Ty::Set(Box::new(value_ty))
+                    set_type(value_ty)
                 }
                 crate::ast::CollectionKind::Dict => {
                     let key = key.as_ref().expect("dictionary comprehension has a key");
@@ -6652,9 +10442,10 @@ impl Checker {
                             reason: self.trait_failure_reason(&key_ty, "Hashable"),
                         });
                     }
-                    Ty::Dict(Box::new(key_ty), Box::new(value_ty))
+                    dict_type(key_ty, value_ty)
                 }
             };
+            self.record_collection_construction(expression.source_span(), &result_ty);
             self.expression_types
                 .borrow_mut()
                 .insert(expression.source_span(), result_ty);
@@ -6864,6 +10655,14 @@ impl Checker {
             self.expression_types
                 .borrow_mut()
                 .insert(expr.source_span(), ty.clone());
+            if let Some(crate::checked::SemanticAdjustment::ReferenceResult { reference }) =
+                self.operation_adjustments.borrow().get(&expr.source_span())
+                && self.is_copyable(&reference.referent)
+            {
+                self.copyable_reference_result_reads
+                    .borrow_mut()
+                    .insert(expr.source_span());
+            }
             if let ExprKind::Call {
                 name,
                 param_args,
@@ -6933,7 +10732,20 @@ impl Checker {
     /// Type of a reference *handle* in a context that stores or forwards one.
     /// Ordinary expression inference intentionally reads through references.
     fn infer_reference_value(&self, expr: &Expr) -> Option<crate::origin::RefTy> {
+        if let Some(crate::checked::SemanticAdjustment::ReferenceResult { reference }) =
+            self.operation_adjustments.borrow().get(&expr.source_span())
+        {
+            return Some(reference.clone());
+        }
         match &expr.kind {
+            // `^` changes ownership of the reference *value*, not what that
+            // value refers to.  Named arguments are likewise transparent to
+            // contextual reference-value inference.  Ordinary inference still
+            // reads through both forms unless the surrounding storage/call
+            // context explicitly asks to retain the handle.
+            ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
+                self.infer_reference_value(inner)
+            }
             ExprKind::Identifier(name) => match self.lookup(name) {
                 Some(Ty::Ref(reference)) => Some(reference.clone()),
                 _ => self.lookup_reference_parameter(name),
@@ -6956,8 +10768,37 @@ impl Checker {
             }
             ExprKind::Index { object, index } => match self.index_storage_ty(object, index)? {
                 Ty::Ref(reference) => Some(reference),
-                _ => None,
+                referent => self
+                    .interior_references
+                    .borrow()
+                    .get(&expr.source_span())
+                    .cloned()
+                    .map(|origin| crate::origin::RefTy {
+                        referent: Box::new(referent),
+                        mutability: if self.owner_is_mutable(origin.root) {
+                            crate::origin::Mutability::Mutable
+                        } else {
+                            crate::origin::Mutability::Immutable
+                        },
+                        origin: crate::origin::Origin::Place(origin),
+                    }),
             },
+            ExprKind::TypeApply { .. } => self
+                .interior_references
+                .borrow()
+                .get(&expr.source_span())
+                .cloned()
+                .and_then(|origin| {
+                    self.infer(expr).ok().map(|referent| crate::origin::RefTy {
+                        referent: Box::new(referent),
+                        mutability: if self.owner_is_mutable(origin.root) {
+                            crate::origin::Mutability::Mutable
+                        } else {
+                            crate::origin::Mutability::Immutable
+                        },
+                        origin: crate::origin::Origin::Place(origin),
+                    })
+                }),
             _ => None,
         }
     }
@@ -6979,7 +10820,8 @@ impl Checker {
                         .map_or_else(|_| "<error>".to_string(), |ty| ty.to_string()),
                     context: "reference-valued aggregate element".to_string(),
                 }),
-            Ty::Tuple(expected_elements) => {
+            expected if tuple_elements(expected).is_some() => {
+                let expected_elements = tuple_elements(expected).expect("tuple elements");
                 let values = match &expr.kind {
                     ExprKind::TupleLit(values) => Some(values.as_slice()),
                     ExprKind::Call { name, args, .. } if name == "Tuple" => Some(args.as_slice()),
@@ -6993,16 +10835,22 @@ impl Checker {
                             got: values.len(),
                         });
                     }
-                    return values
+                    let actual = values
                         .iter()
                         .zip(expected_elements)
                         .map(|(value, expected)| self.infer_storage_value(value, expected))
                         .collect::<Result<Vec<_>, _>>()
-                        .map(Ty::Tuple);
+                        .map(nominal_tuple_type)?;
+                    self.record_collection_construction(expr.source_span(), expected);
+                    self.expression_types
+                        .borrow_mut()
+                        .insert(expr.source_span(), expected.clone());
+                    return Ok(actual);
                 }
                 self.infer(expr)
             }
-            Ty::List(expected_element) => {
+            expected if list_element(expected).is_some() => {
+                let expected_element = list_element(expected).expect("list element");
                 let values = match &expr.kind {
                     ExprKind::ListLit(values) => Some(values.as_slice()),
                     ExprKind::Call { name, args, .. } if name == "List" => Some(args.as_slice()),
@@ -7019,7 +10867,11 @@ impl Checker {
                             });
                         }
                     }
-                    return Ok(Ty::List(expected_element.clone()));
+                    self.record_collection_construction(expr.source_span(), expected);
+                    self.expression_types
+                        .borrow_mut()
+                        .insert(expr.source_span(), expected.clone());
+                    return Ok(list_type(expected_element.clone()));
                 }
                 self.infer(expr)
             }
@@ -7068,14 +10920,25 @@ impl Checker {
                         _ => actual_origin == expected_origin,
                     }
             }
-            (Ty::Tuple(actual), Ty::Tuple(expected)) => {
+            (actual, expected)
+                if tuple_elements(actual).is_some() && tuple_elements(expected).is_some() =>
+            {
+                let actual = tuple_elements(actual).expect("tuple elements");
+                let expected = tuple_elements(expected).expect("tuple elements");
                 actual.len() == expected.len()
                     && actual
                         .iter()
                         .zip(expected)
                         .all(|(actual, expected)| Self::storage_value_coerces(actual, expected))
             }
-            (Ty::List(actual), Ty::List(expected)) => Self::storage_value_coerces(actual, expected),
+            (actual, expected)
+                if list_element(actual).is_some() && list_element(expected).is_some() =>
+            {
+                Self::storage_value_coerces(
+                    list_element(actual).expect("list element"),
+                    list_element(expected).expect("list element"),
+                )
+            }
             _ => coerces(from, to),
         }
     }
@@ -7086,12 +10949,20 @@ impl Checker {
     fn mark_reference_storage_uses(&self, expr: &Expr, expected: &Ty) {
         match expected {
             Ty::Ref(reference) => {
+                // The outer `Transfer` retains its Move adjustment.  Mark the
+                // transferred place itself so MIR loads the stored reference
+                // handle instead of reading through it to the referent.
+                let expr = match &expr.kind {
+                    ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => inner,
+                    _ => expr,
+                };
                 self.reference_value_uses.borrow_mut().insert(
                     expr.source_span(),
                     reference.mutability == crate::origin::Mutability::Mutable,
                 );
             }
-            Ty::Tuple(expected_elements) => {
+            expected if tuple_elements(expected).is_some() => {
+                let expected_elements = tuple_elements(expected).expect("tuple elements");
                 let values = match &expr.kind {
                     ExprKind::TupleLit(values) => Some(values.as_slice()),
                     ExprKind::Call { name, args, .. } if name == "Tuple" => Some(args.as_slice()),
@@ -7103,7 +10974,8 @@ impl Checker {
                     }
                 }
             }
-            Ty::List(expected_element) => {
+            expected if list_element(expected).is_some() => {
+                let expected_element = list_element(expected).expect("list element");
                 let values = match &expr.kind {
                     ExprKind::ListLit(values) => Some(values.as_slice()),
                     ExprKind::Call { name, args, .. } if name == "List" => Some(args.as_slice()),
@@ -7146,9 +11018,44 @@ impl Checker {
                 {
                     return result;
                 }
+                // Parameterized method syntax is parsed as `Invoke(Member)` so
+                // that ordinary indexing remains unambiguous. Keep it a direct
+                // method call semantically: bound methods do not become
+                // first-class/escaping values merely because their compile-time
+                // arguments are explicit.
+                if let ExprKind::Member { object, field } = &callee.kind {
+                    match self.infer_method_call(
+                        expr.source_span(),
+                        object,
+                        field,
+                        MethodCallArguments::parameterized(param_args, args, kwargs),
+                    ) {
+                        Ok(result) => return Ok(result),
+                        Err(TypeError::NoSuchMethod { .. }) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
                 let callable = self.infer(callee)?;
-                let (ret, _, error) =
-                    self.infer_callable_ty("<callable>", callable, param_args, args, kwargs)?;
+                let target = self.indirect_callable_target(&callable);
+                let (ret, _, error) = self.infer_callable_ty(
+                    "<callable>",
+                    callable.clone(),
+                    param_args,
+                    args,
+                    kwargs,
+                )?;
+                self.record_call_environment_effects(
+                    expr.source_span(),
+                    &callable,
+                    param_args,
+                    args,
+                    kwargs,
+                )?;
+                if let Some(target) = target {
+                    self.overload_targets
+                        .borrow_mut()
+                        .insert(expr.source_span(), target);
+                }
                 if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
                     self.record_call_effect(expr.source_span(), error.clone());
                     self.require_error("call through a raising callable", error)?;
@@ -7187,7 +11094,9 @@ impl Checker {
                     });
                 }
                 if !dictionary {
-                    return Ok(Ty::Set(Box::new(key_ty)));
+                    let result = set_type(key_ty);
+                    self.record_collection_construction(expr.source_span(), &result);
+                    return Ok(result);
                 }
                 let values = entries
                     .iter()
@@ -7197,7 +11106,9 @@ impl Checker {
                 for value in &values {
                     self.check_consuming(value, &value_ty, "dictionary display value")?;
                 }
-                Ok(Ty::Dict(Box::new(key_ty), Box::new(value_ty)))
+                let result = dict_type(key_ty, value_ty);
+                self.record_collection_construction(expr.source_span(), &result);
+                Ok(result)
             }
             ExprKind::Comprehension { .. } => self
                 .expression_types
@@ -7232,7 +11143,9 @@ impl Checker {
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
             }
             ExprKind::Prefix(op, operand) => self.infer_prefix(*op, operand),
-            ExprKind::Infix(op, left, right) => self.infer_infix(*op, left, right),
+            ExprKind::Infix(op, left, right) => {
+                self.infer_infix(Some(expr.source_span()), *op, left, right)
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -7245,7 +11158,12 @@ impl Checker {
                 method,
                 args,
                 kwargs,
-            } => self.infer_method_call(expr.source_span(), object, method, args, kwargs),
+            } => self.infer_method_call(
+                expr.source_span(),
+                object,
+                method,
+                MethodCallArguments::ordinary(args, kwargs),
+            ),
             ExprKind::Index { object, index } => {
                 self.infer_index(expr.source_span(), object, index)
             }
@@ -7253,9 +11171,22 @@ impl Checker {
             // movable storage. Current Mojo permits `^` there only when the
             // result is implicitly copyable (the transfer is effectively a
             // copy); accepting a linear element would duplicate its destructor.
+            // Compiler-private Tuple storage is the exception: each indexed
+            // element is a tracked owned slot, which is how whole heterogeneous
+            // packs and public Tuple's private backing field transfer linear
+            // elements exactly once.
             ExprKind::Transfer(inner) => {
                 let ty = self.infer(inner)?;
-                if place_has_index(inner) && !self.is_implicitly_copyable(&ty) {
+                let private_tuple_element = match &inner.kind {
+                    ExprKind::Index { object, .. } => {
+                        matches!(self.infer(object), Ok(Ty::Tuple(_)))
+                    }
+                    _ => false,
+                };
+                if place_has_index(inner)
+                    && !self.is_implicitly_copyable(&ty)
+                    && !private_tuple_element
+                {
                     return Err(TypeError::Unsupported(
                         "cannot transfer a non-implicitly-copyable indexed value; the expression does not designate independently movable storage"
                             .to_string(),
@@ -7269,14 +11200,20 @@ impl Checker {
                 name: "List".to_string(),
                 param: "T".to_string(),
             }),
-            ExprKind::ListLit(elems) => Ok(Ty::List(Box::new(self.infer_list_elem(elems)?))),
+            ExprKind::ListLit(elems) => {
+                let result = list_type(self.infer_list_elem(elems)?);
+                self.record_collection_construction(expr.source_span(), &result);
+                Ok(result)
+            }
             // A tuple literal keeps each element's own type (heterogeneous).
             ExprKind::TupleLit(elems) => {
                 let tys = elems
                     .iter()
                     .map(|e| self.infer(e))
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(Ty::Tuple(tys))
+                let result = self.public_tuple_type(tys);
+                self.record_collection_construction(expr.source_span(), &result);
+                Ok(result)
             }
             // Walrus `name := value` types as `value`; MIR marks execution as
             // unsupported. The name is not bound here — `infer` is read-only — so
@@ -7310,7 +11247,7 @@ impl Checker {
             ExprKind::Compare { first, rest } => {
                 let mut left: &Expr = first;
                 for (op, right) in rest {
-                    if self.infer_infix(*op, left, right)? != Ty::Bool {
+                    if self.infer_infix(None, *op, left, right)? != Ty::Bool {
                         return Err(TypeError::BadOperator {
                             op: infix_symbol(*op).to_string(),
                             operands: "a chained comparison must compare to Bool".to_string(),
@@ -7359,7 +11296,15 @@ impl Checker {
             // static-method receiver (`UnsafePointer[T].alloc(…)`), typed in
             // `infer_method_call`.
             ExprKind::TypeApply { name, args } => {
-                if let Some(Ty::Variant(alternatives)) = self.lookup(name).cloned() {
+                if let Some(specialized) = self.infer_specialized_callable_value(
+                    expr.source_span(),
+                    name,
+                    args,
+                    None,
+                    true,
+                )? {
+                    Ok(specialized)
+                } else if let Some(Ty::Variant(alternatives)) = self.lookup(name).cloned() {
                     self.check_capture_access(name, false)?;
                     let (index, result) = self.variant_alternative(&alternatives, args)?;
                     if let Some(owner) = self.lookup_owner(name) {
@@ -7374,6 +11319,7 @@ impl Checker {
                             index,
                         },
                     );
+                    self.record_interior_reference(expr.source_span(), expr, "value");
                     Ok(result)
                 } else {
                     Err(TypeError::TypeMismatch {
@@ -7491,12 +11437,13 @@ impl Checker {
                     }
                     self.check_consuming(&args[0], &actual, "argument to 'Variant.set'")?;
                     self.operation_adjustments.borrow_mut().insert(
-                        span,
+                        span.clone(),
                         crate::checked::SemanticAdjustment::VariantSet {
                             alternatives,
                             index,
                         },
                     );
+                    self.record_interior_invalidation(span, object);
                     Ok(Ty::None)
                 }
                 "take" | "unsafe_take" => {
@@ -7516,13 +11463,14 @@ impl Checker {
                         });
                     }
                     self.operation_adjustments.borrow_mut().insert(
-                        span,
+                        span.clone(),
                         crate::checked::SemanticAdjustment::VariantTake {
                             alternatives,
                             index,
                             checked: field == "take",
                         },
                     );
+                    self.record_interior_invalidation(span, object);
                     Ok(alternative)
                 }
                 "replace" | "unsafe_replace" => {
@@ -7584,7 +11532,7 @@ impl Checker {
                         &format!("argument to 'Variant.{field}'"),
                     )?;
                     self.operation_adjustments.borrow_mut().insert(
-                        span,
+                        span.clone(),
                         crate::checked::SemanticAdjustment::VariantReplace {
                             alternatives,
                             input_index,
@@ -7592,6 +11540,7 @@ impl Checker {
                             checked: field == "replace",
                         },
                     );
+                    self.record_interior_invalidation(span, object);
                     Ok(output)
                 }
                 _ => unreachable!("checked Variant operation"),
@@ -7637,68 +11586,185 @@ impl Checker {
         expected: &Ty,
         record: bool,
     ) -> Result<Ty, TypeError> {
-        let elements: Option<Vec<(&Expr, &Ty, &'static str)>> = match (&expression.kind, expected) {
-            (ExprKind::ListLit(values), Ty::List(element)) => Some(
-                values
-                    .iter()
-                    .map(|value| (value, element.as_ref(), "collection display element"))
-                    .collect(),
-            ),
-            (ExprKind::BraceLit(entries), Ty::Set(element))
-                if entries.iter().all(|(_, value)| value.is_none()) =>
-            {
-                Some(
-                    entries
-                        .iter()
-                        .map(|(value, _)| (value, element.as_ref(), "collection display element"))
-                        .collect(),
-                )
+        // Compiler-synthesized slice descriptors have no standalone source
+        // expression. Their exact protocol type is installed by
+        // `synthetic_slice_descriptor`; consume that checked fact directly.
+        if matches!(expression.kind, ExprKind::None)
+            && let Some(ty) = self
+                .expression_types
+                .borrow()
+                .get(&expression.source_span())
+                .cloned()
+        {
+            return Ok(ty);
+        }
+        if let ExprKind::TypeApply { name, args } = &expression.kind
+            && matches!(expected, Ty::Func { .. })
+            && let Some(specialized) = self.infer_specialized_callable_value(
+                expression.source_span(),
+                name,
+                args,
+                Some(expected),
+                record,
+            )?
+        {
+            return Ok(specialized);
+        }
+        // Reference-typed values normally read through to their referents in
+        // expression position.  A reference-typed parameter is a storage
+        // context, just like a reference field or aggregate element: infer and
+        // forward the handle itself.  This matters for generated Tuple
+        // `consume_elements`, whose element type may itself be `ref[...] T`.
+        if matches!(expected, Ty::Ref(_)) {
+            let actual = self.infer_storage_value(expression, expected)?;
+            if !Self::storage_value_coerces(&actual, expected) {
+                return Err(TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: actual.to_string(),
+                    context: "reference-valued argument".to_string(),
+                });
             }
-            (ExprKind::BraceLit(entries), Ty::Dict(key, value))
-                if entries.is_empty() || entries.iter().all(|(_, value)| value.is_some()) =>
+            if record {
+                self.mark_reference_storage_uses(expression, expected);
+            }
+            return Ok(actual);
+        }
+        // Current Mojo solves direct collection-annotation holes from the
+        // literal initializer (`List[_]`, bare `List`, `Dict[String, _]`). The
+        // solve is intentionally shallow: nested holes remain non-concrete.
+        let solved_expected = match (&expression.kind, expected) {
+            (ExprKind::ListLit(values), expected)
+                if list_element(expected).is_some_and(|element| *element == Ty::Infer) =>
             {
-                Some(
-                    entries
-                        .iter()
-                        .flat_map(|(actual_key, actual_value)| {
-                            [
-                                (actual_key, key.as_ref(), "dictionary display key"),
-                                (
-                                    actual_value
-                                        .as_ref()
-                                        .expect("contextual dictionary entry has a value"),
-                                    value.as_ref(),
-                                    "dictionary display value",
-                                ),
-                            ]
-                        })
-                        .collect(),
-                )
+                if values.is_empty() {
+                    return Err(TypeError::CannotInferTypeParam {
+                        name: "List".to_string(),
+                        param: "T".to_string(),
+                    });
+                }
+                Some(list_type(self.infer_list_elem(values)?))
+            }
+            (ExprKind::BraceLit(entries), expected)
+                if set_element(expected).is_some_and(|element| *element == Ty::Infer)
+                    && entries.iter().all(|(_, value)| value.is_none()) =>
+            {
+                if entries.is_empty() {
+                    return Err(TypeError::CannotInferTypeParam {
+                        name: "Set".to_string(),
+                        param: "T".to_string(),
+                    });
+                }
+                let keys = entries
+                    .iter()
+                    .map(|(key, _)| key.clone())
+                    .collect::<Vec<_>>();
+                Some(set_type(self.infer_list_elem(&keys)?))
+            }
+            (ExprKind::BraceLit(entries), expected)
+                if dict_elements(expected).is_some()
+                    && (entries.is_empty() || entries.iter().all(|(_, value)| value.is_some())) =>
+            {
+                let (expected_key, expected_value) =
+                    dict_elements(expected).expect("dictionary arguments");
+                if (expected_key == &Ty::Infer || expected_value == &Ty::Infer)
+                    && entries.is_empty()
+                {
+                    return Err(TypeError::CannotInferTypeParam {
+                        name: "Dict".to_string(),
+                        param: "K or V".to_string(),
+                    });
+                }
+                let actual_keys = entries
+                    .iter()
+                    .map(|(key, _)| key.clone())
+                    .collect::<Vec<_>>();
+                let actual_values = entries
+                    .iter()
+                    .filter_map(|(_, value)| value.clone())
+                    .collect::<Vec<_>>();
+                let key = if expected_key == &Ty::Infer {
+                    self.infer_list_elem(&actual_keys)?
+                } else {
+                    expected_key.clone()
+                };
+                let value = if expected_value == &Ty::Infer {
+                    self.infer_list_elem(&actual_values)?
+                } else {
+                    expected_value.clone()
+                };
+                (key != *expected_key || value != *expected_value).then(|| dict_type(key, value))
             }
             _ => None,
         };
+        let expected = solved_expected.as_ref().unwrap_or(expected);
+
+        let elements: Option<Vec<(&Expr, &Ty, &'static str)>> =
+            if let (ExprKind::ListLit(values), Some(element)) =
+                (&expression.kind, list_element(expected))
+            {
+                Some(
+                    values
+                        .iter()
+                        .map(|value| (value, element, "collection display element"))
+                        .collect(),
+                )
+            } else if let (ExprKind::BraceLit(entries), Some(element)) =
+                (&expression.kind, set_element(expected))
+            {
+                entries.iter().all(|(_, value)| value.is_none()).then(|| {
+                    entries
+                        .iter()
+                        .map(|(value, _)| (value, element, "collection display element"))
+                        .collect()
+                })
+            } else if let (ExprKind::BraceLit(entries), Some((key, value))) =
+                (&expression.kind, dict_elements(expected))
+            {
+                (entries.is_empty() || entries.iter().all(|(_, value)| value.is_some())).then(
+                    || {
+                        entries
+                            .iter()
+                            .flat_map(|(actual_key, actual_value)| {
+                                [
+                                    (actual_key, key, "dictionary display key"),
+                                    (
+                                        actual_value
+                                            .as_ref()
+                                            .expect("contextual dictionary entry has a value"),
+                                        value,
+                                        "dictionary display value",
+                                    ),
+                                ]
+                            })
+                            .collect()
+                    },
+                )
+            } else {
+                None
+            };
 
         let Some(elements) = elements else {
             return self.infer(expression);
         };
-        match expected {
-            Ty::Set(element) if !self.is_hashable(element) => {
-                return Err(TypeError::TraitNotSatisfied {
-                    param: "T".to_string(),
-                    ty: element.to_string(),
-                    trait_name: "Hashable".to_string(),
-                    reason: self.trait_failure_reason(element, "Hashable"),
-                });
-            }
-            Ty::Dict(key, _) if !self.is_hashable(key) => {
-                return Err(TypeError::TraitNotSatisfied {
-                    param: "K".to_string(),
-                    ty: key.to_string(),
-                    trait_name: "Hashable".to_string(),
-                    reason: self.trait_failure_reason(key, "Hashable"),
-                });
-            }
-            _ => {}
+        if let Some(element) = set_element(expected)
+            && !self.is_hashable(element)
+        {
+            return Err(TypeError::TraitNotSatisfied {
+                param: "T".to_string(),
+                ty: element.to_string(),
+                trait_name: "Hashable".to_string(),
+                reason: self.trait_failure_reason(element, "Hashable"),
+            });
+        }
+        if let Some((key, _)) = dict_elements(expected)
+            && !self.is_hashable(key)
+        {
+            return Err(TypeError::TraitNotSatisfied {
+                param: "K".to_string(),
+                ty: key.to_string(),
+                trait_name: "Hashable".to_string(),
+                reason: self.trait_failure_reason(key, "Hashable"),
+            });
         }
 
         for (value, element, context) in elements {
@@ -7719,6 +11785,7 @@ impl Checker {
             self.check_consuming(value, &actual, context)?;
         }
         if record {
+            self.record_collection_construction(expression.source_span(), expected);
             self.expression_types
                 .borrow_mut()
                 .insert(expression.source_span(), expected.clone());
@@ -7754,6 +11821,28 @@ impl Checker {
         Ok(materialized)
     }
 
+    fn record_collection_construction(&self, span: SourceSpan, target: &Ty) {
+        let Ty::Struct(name, _) = target else {
+            return;
+        };
+        let insert = if list_element(target).is_some() {
+            Some(format!("{name}.append"))
+        } else if set_element(target).is_some() {
+            Some(format!("{name}.add"))
+        } else if dict_elements(target).is_some() {
+            Some(format!("{name}.__setitem__"))
+        } else {
+            None
+        };
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            crate::checked::SemanticAdjustment::ConstructCollection {
+                target: target.clone(),
+                insert,
+            },
+        );
+    }
+
     /// Type a `List` construction: `List[T](args)` (explicit element type) or
     /// `List(args)` (element type inferred from the arguments — non-empty).
     fn infer_list_construction(
@@ -7762,11 +11851,10 @@ impl Checker {
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
         if !param_args.is_empty() {
-            let Ty::List(elem) = self.list_type(param_args)? else {
-                return Err(TypeError::InvariantViolation(
-                    "List type construction did not produce a list".to_string(),
-                ));
-            };
+            let collection = self.list_type(param_args)?;
+            let elem = list_element(&collection)
+                .expect("List type construction has one type argument")
+                .clone();
             for (i, arg) in args.iter().enumerate() {
                 let aty = if self.type_contains_reference(&elem) {
                     self.infer_storage_value(arg, &elem)?
@@ -7783,7 +11871,7 @@ impl Checker {
                 self.record_literal_materializations(arg, &aty, &elem)?;
                 self.mark_reference_storage_uses(arg, &elem);
             }
-            return Ok(Ty::List(elem));
+            return Ok(list_type(elem));
         }
         if args.is_empty() {
             return Err(TypeError::CannotInferTypeParam {
@@ -7791,7 +11879,7 @@ impl Checker {
                 param: "T".to_string(),
             });
         }
-        Ok(Ty::List(Box::new(self.infer_list_elem(args)?)))
+        Ok(list_type(self.infer_list_elem(args)?))
     }
 
     /// Type `Tuple(args...)` (element types inferred) and
@@ -7806,13 +11894,14 @@ impl Checker {
                 .iter()
                 .map(|arg| self.infer(arg))
                 .collect::<Result<Vec<_>, _>>()
-                .map(Ty::Tuple);
+                .map(|elements| self.public_tuple_type(elements));
         }
-        let Ty::Tuple(elements) = self.tuple_type(param_args)? else {
-            return Err(TypeError::InvariantViolation(
-                "Tuple type construction did not produce a tuple".to_string(),
-            ));
-        };
+        let tuple = self.tuple_type(param_args)?;
+        let elements = tuple_elements(&tuple)
+            .expect("Tuple type construction has type arguments")
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
         if elements.len() != args.len() {
             return Err(TypeError::ArityMismatch {
                 name: "Tuple".to_string(),
@@ -7835,7 +11924,85 @@ impl Checker {
             }
             self.mark_reference_storage_uses(argument, expected);
         }
-        Ok(Ty::Tuple(elements))
+        Ok(self.public_tuple_type(elements))
+    }
+
+    /// Select the concrete variadic-struct specialization after the compiler's
+    /// discovery pass has materialized it. During discovery no such declaration
+    /// exists yet, so the canonical `Tuple[T0, ...]` type remains available for
+    /// collecting the exact specialization request.
+    fn public_tuple_type(&self, elements: Vec<Ty>) -> Ty {
+        let specialized = crate::comptime::tuple_specialization_symbol(&elements);
+        let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();
+        match self.structs.get(&specialized) {
+            Some(info) if info.fixed_arguments.as_ref() == Some(&arguments) => {
+                Ty::Struct(specialized, arguments)
+            }
+            _ if self.declared_structs.contains(&specialized) => Ty::Struct(specialized, arguments),
+            _ => nominal_tuple_type(elements),
+        }
+    }
+
+    /// Replace every closed public Tuple nested in an instantiated generic
+    /// result with the concrete declaration materialized by the compiler's
+    /// discovery pass. Generic declarations themselves retain canonical
+    /// `Tuple[T, ...]`; only a substituted use can select an executable nominal
+    /// implementation.
+    fn canonicalize_public_tuple_types(&self, ty: Ty) -> Ty {
+        if let Some(elements) = tuple_elements(&ty) {
+            let elements = elements
+                .into_iter()
+                .cloned()
+                .map(|element| self.canonicalize_public_tuple_types(element))
+                .collect();
+            return self.public_tuple_type(elements);
+        }
+        match ty {
+            Ty::Struct(name, arguments) => Ty::Struct(
+                name,
+                arguments
+                    .into_iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(self.canonicalize_public_tuple_types(ty)),
+                        value => value,
+                    })
+                    .collect(),
+            ),
+            Ty::ComptimeList(element) => {
+                Ty::ComptimeList(Box::new(self.canonicalize_public_tuple_types(*element)))
+            }
+            Ty::Tuple(elements) => Ty::Tuple(
+                elements
+                    .into_iter()
+                    .map(|element| self.canonicalize_public_tuple_types(element))
+                    .collect(),
+            ),
+            Ty::RuntimePack(elements) => Ty::RuntimePack(
+                elements
+                    .into_iter()
+                    .map(|element| self.canonicalize_public_tuple_types(element))
+                    .collect(),
+            ),
+            Ty::VariadicPack(element) => {
+                Ty::VariadicPack(Box::new(self.canonicalize_public_tuple_types(*element)))
+            }
+            Ty::Variant(alternatives) => Ty::Variant(
+                alternatives
+                    .into_iter()
+                    .map(|alternative| self.canonicalize_public_tuple_types(alternative))
+                    .collect(),
+            ),
+            Ty::Pointer { element, origin } => Ty::Pointer {
+                element: Box::new(self.canonicalize_public_tuple_types(*element)),
+                origin,
+            },
+            Ty::Ref(mut reference) => {
+                reference.referent =
+                    Box::new(self.canonicalize_public_tuple_types(*reference.referent));
+                Ty::Ref(reference)
+            }
+            other => other,
+        }
     }
 
     fn infer_variant_construction(
@@ -7968,13 +12135,23 @@ impl Checker {
     /// rule for a reference element.  Tuple indices are compile-time constants,
     /// while homogeneous list/pointer storage has one element type.
     fn index_storage_ty(&self, object: &Expr, index: &Expr) -> Option<Ty> {
-        match self.infer(object).ok()? {
+        let object_ty = self.infer(object).ok()?;
+        if let Some(elements) = tuple_elements(&object_ty) {
+            let index = usize::try_from(self.eval_ct(index).ok()?.to_i64()?).ok()?;
+            return elements.get(index).map(|element| (*element).clone());
+        }
+        if let Some(element) = list_element(&object_ty) {
+            return Some(element.clone());
+        }
+        if let Some((_, value)) = dict_elements(&object_ty) {
+            return Some(value.clone());
+        }
+        match object_ty {
             Ty::Tuple(elements) => {
                 let index = usize::try_from(self.eval_ct(index).ok()?.to_i64()?).ok()?;
                 elements.get(index).cloned()
             }
-            Ty::List(element) | Ty::Pointer { element, .. } => Some(*element),
-            Ty::Dict(_, value) => Some(*value),
+            Ty::Pointer { element, .. } => Some(*element),
             Ty::Simd { dtype, .. } => Some(simd_ty(dtype, 1)),
             _ => None,
         }
@@ -8004,50 +12181,25 @@ impl Checker {
             }
             ExprKind::Index { object, index } => {
                 let obj_ty = self.check_place(object)?;
-                // A user struct with `__setitem__(mut self, i, v)` is index-assignable:
-                // `c[i] = e` → `c.__setitem__(i, e)`. The index must coerce to the
-                // first parameter; the *target* type (what `e` must be) is the second.
-                if let Ty::Struct(sname, targs) = &obj_ty {
-                    let info = self.structs.get(sname).ok_or_else(|| {
-                        TypeError::InvariantViolation(format!(
-                            "struct '{sname}' was not registered"
-                        ))
-                    })?;
-                    let sig = info
-                        .methods
-                        .get("__setitem__")
-                        .and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 2))
-                        .ok_or_else(|| TypeError::NotIndexable(obj_ty.to_string()))?;
-                    if !matches!(sig.self_convention, Some(crate::ast::ArgConvention::Mut)) {
-                        return Err(TypeError::TypeMismatch {
-                            expected: "a 'mut self' __setitem__".to_string(),
-                            found: "read-only self".to_string(),
-                            context: format!("index assignment on '{sname}'"),
+                self.prepare_index_argument(&obj_ty, index, "__setitem__", 0)?;
+                if let Ty::Struct(name, _) = &obj_ty
+                    && !self.structs.contains_key(name)
+                {
+                    if let Some(element) = list_element(&obj_ty) {
+                        let idx_ty = self.infer(index)?;
+                        if !self.is_index_type(&idx_ty) {
+                            return Err(TypeError::TypeMismatch {
+                                expected: "Indexer".to_string(),
+                                found: idx_ty.to_string(),
+                                context: "index".to_string(),
+                            });
+                        }
+                        return Ok(match element.clone() {
+                            Ty::Ref(reference) => *reference.referent,
+                            element => element,
                         });
                     }
-                    let subst = struct_subst(&info.decls, targs);
-                    let params: Vec<Ty> =
-                        sig.params.iter().map(|t| substitute(t, &subst)).collect();
-                    if params.len() != 2 {
-                        return Err(TypeError::ArityMismatch {
-                            name: "__setitem__".to_string(),
-                            expected: 2,
-                            got: params.len(),
-                        });
-                    }
-                    let idx_ty = self.infer(index)?;
-                    if !coerces(&idx_ty, &params[0]) {
-                        return Err(TypeError::TypeMismatch {
-                            expected: params[0].to_string(),
-                            found: idx_ty.to_string(),
-                            context: "argument to '__setitem__'".to_string(),
-                        });
-                    }
-                    return Ok(params[1].clone());
-                }
-                let elem = match &obj_ty {
-                    Ty::List(elem) => (**elem).clone(),
-                    Ty::Dict(key, value) => {
+                    if let Some((key, value)) = dict_elements(&obj_ty) {
                         let idx_ty = self.infer(index)?;
                         if !coerces(&idx_ty, key) {
                             return Err(TypeError::TypeMismatch {
@@ -8056,8 +12208,44 @@ impl Checker {
                                 context: "dictionary key".to_string(),
                             });
                         }
-                        return Ok((**value).clone());
+                        return Ok(match value.clone() {
+                            Ty::Ref(reference) => *reference.referent,
+                            value => value,
+                        });
                     }
+                    if tuple_elements(&obj_ty).is_some() {
+                        return Err(TypeError::InvalidAssignTarget(
+                            "Tuple elements are immutable".to_string(),
+                        ));
+                    }
+                }
+                // A user struct with `__setitem__(mut self, i, v)` is index-assignable:
+                // `c[i] = e` → `c.__setitem__(i, e)`. The index must coerce to the
+                // first parameter; the *target* type (what `e` must be) is the second.
+                if let Ty::Struct(_, _) = &obj_ty {
+                    let mut idx_ty = self.infer(index)?;
+                    if self.has_index_normalization(index, &Ty::Int) {
+                        idx_ty = Ty::Int;
+                    }
+                    let resolution = self.resolve_struct_setitem(&obj_ty, &[idx_ty], None)?;
+                    if let Some(target) = resolution.lowered_name {
+                        self.overload_targets
+                            .borrow_mut()
+                            .insert(place.source_span(), target);
+                    }
+                    self.subscript_descriptors
+                        .borrow_mut()
+                        .insert(place.source_span(), (vec![None], resolution.value_keyword));
+                    return Ok(match resolution.return_type {
+                        // Indexing a reference-valued container reads and writes
+                        // through the stored handle. The physical storage type
+                        // remains available through `place_storage_ty`; the
+                        // assignment target is the referent.
+                        Ty::Ref(reference) => *reference.referent,
+                        value => value,
+                    });
+                }
+                let elem = match &obj_ty {
                     // A pointer store `ptr[i] = e`: the target is the pointee type.
                     // An origin-bearing pointer designates one value and its
                     // provenance must carry mutable capability.
@@ -8098,18 +12286,15 @@ impl Checker {
                     SliceKind::ContiguousSlice
                 };
                 let descriptor = Ty::Struct(kind.type_name().to_string(), Vec::new());
-                let resolution = self.resolve_struct_setitem(&object_type, &[descriptor])?;
+                let resolution = self.resolve_struct_setitem(&object_type, &[descriptor], None)?;
                 if let Some(target) = resolution.lowered_name {
                     self.overload_targets
                         .borrow_mut()
                         .insert(place.source_span(), target);
                 }
-                self.operation_adjustments.borrow_mut().insert(
+                self.subscript_descriptors.borrow_mut().insert(
                     place.source_span(),
-                    crate::checked::SemanticAdjustment::SliceDescriptors {
-                        descriptors: vec![Some(kind)],
-                        set_value_keyword: resolution.value_keyword,
-                    },
+                    (vec![Some(kind)], resolution.value_keyword),
                 );
                 Ok(resolution.return_type)
             }
@@ -8117,10 +12302,20 @@ impl Checker {
                 let object_type = self.check_place(object)?;
                 let mut argument_types = Vec::with_capacity(args.len());
                 let mut descriptors = Vec::with_capacity(args.len());
-                for argument in args {
+                for (position, argument) in args.iter().enumerate() {
                     match argument {
                         SubscriptArg::Index(value) => {
-                            argument_types.push(self.infer(value)?);
+                            self.prepare_index_argument(
+                                &object_type,
+                                value,
+                                "__setitem__",
+                                position,
+                            )?;
+                            let mut argument_type = self.infer(value)?;
+                            if self.has_index_normalization(value, &Ty::Int) {
+                                argument_type = Ty::Int;
+                            }
+                            argument_types.push(argument_type);
                             descriptors.push(None);
                         }
                         SubscriptArg::Slice {
@@ -8145,19 +12340,16 @@ impl Checker {
                         }
                     }
                 }
-                let resolution = self.resolve_struct_setitem(&object_type, &argument_types)?;
+                let resolution =
+                    self.resolve_struct_setitem(&object_type, &argument_types, None)?;
                 if let Some(target) = resolution.lowered_name {
                     self.overload_targets
                         .borrow_mut()
                         .insert(place.source_span(), target);
                 }
-                self.operation_adjustments.borrow_mut().insert(
-                    place.source_span(),
-                    crate::checked::SemanticAdjustment::SliceDescriptors {
-                        descriptors,
-                        set_value_keyword: resolution.value_keyword,
-                    },
-                );
+                self.subscript_descriptors
+                    .borrow_mut()
+                    .insert(place.source_span(), (descriptors, resolution.value_keyword));
                 Ok(resolution.return_type)
             }
             ExprKind::TypeApply { name, args } => {
@@ -8210,6 +12402,322 @@ impl Checker {
         Ok(())
     }
 
+    /// A slice descriptor is a real runtime argument to `__getitem__`/
+    /// `__setitem__`, but its source syntax is spread across optional bounds.
+    /// Give overload/origin/effect checking one typed synthetic argument while
+    /// retaining descriptor construction separately for MIR.
+    fn synthetic_slice_descriptor(&self, span: &SourceSpan, kind: SliceKind) -> Expr {
+        let mut expression = Expr::new(ExprKind::None, span.span);
+        expression.source = span.source.clone();
+        self.expression_types.borrow_mut().insert(
+            expression.source_span(),
+            Ty::Struct(kind.type_name().to_string(), Vec::new()),
+        );
+        expression
+    }
+
+    /// Whether `expression` is the checker-only value standing in for source
+    /// slice syntax while selecting `__getitem__`/`__setitem__`. Current Mojo
+    /// permits descriptor-family widening (for example `ContiguousSlice` to
+    /// `Slice`), but does not feed a slice literal through an arbitrary user
+    /// `@implicit` constructor. Keeping that boundary here also prevents a
+    /// conversion for a nonexistent expression from being attached to the
+    /// enclosing subscript's source span.
+    fn is_synthetic_slice_descriptor(&self, expression: &Expr) -> bool {
+        matches!(expression.kind, ExprKind::None)
+            && matches!(
+                self.expression_types
+                    .borrow()
+                    .get(&expression.source_span()),
+                Some(Ty::Struct(name, args))
+                    if matches!(
+                        name.as_str(),
+                        "Slice" | "ContiguousSlice" | "StridedSlice"
+                    ) && args.is_empty()
+            )
+    }
+
+    /// Check one nominal `object[...] = value` as the exact selected
+    /// `__setitem__` invocation. `Ok(None)` leaves primitive pointer/SIMD and
+    /// compiler-private storage assignments on their intrinsic place path.
+    fn check_nominal_subscript_assignment(
+        &self,
+        target: &Expr,
+        value: &Expr,
+    ) -> Result<Option<Ty>, TypeError> {
+        let (object, mut arguments, descriptors) = match &target.kind {
+            ExprKind::Index { object, index } => {
+                let object_ty = self.infer(object)?;
+                if !matches!(&object_ty, Ty::Struct(name, _) if self.structs.contains_key(name)) {
+                    return Ok(None);
+                }
+                self.prepare_index_argument(&object_ty, index, "__setitem__", 0)?;
+                self.infer(index)?;
+                (object.as_ref(), vec![index.as_ref().clone()], vec![None])
+            }
+            ExprKind::Slice {
+                object,
+                lower,
+                upper,
+                step,
+                explicit_step,
+            } => {
+                let object_ty = self.infer(object)?;
+                if !matches!(&object_ty, Ty::Struct(name, _) if self.structs.contains_key(name)) {
+                    return Ok(None);
+                }
+                self.check_slice_bounds(lower.as_deref(), upper.as_deref(), step.as_deref())?;
+                let kind = if *explicit_step {
+                    SliceKind::StridedSlice
+                } else {
+                    SliceKind::ContiguousSlice
+                };
+                let descriptor = self.synthetic_slice_descriptor(&target.source_span(), kind);
+                (object.as_ref(), vec![descriptor], vec![Some(kind)])
+            }
+            ExprKind::MultiIndex {
+                object,
+                args: source,
+            } => {
+                let object_ty = self.infer(object)?;
+                if !matches!(&object_ty, Ty::Struct(name, _) if self.structs.contains_key(name)) {
+                    return Ok(None);
+                }
+                let mut arguments = Vec::with_capacity(source.len());
+                let mut descriptors = Vec::with_capacity(source.len());
+                for (position, argument) in source.iter().enumerate() {
+                    match argument {
+                        SubscriptArg::Index(index) => {
+                            self.prepare_index_argument(
+                                &object_ty,
+                                index,
+                                "__setitem__",
+                                position,
+                            )?;
+                            self.infer(index)?;
+                            arguments.push(index.clone());
+                            descriptors.push(None);
+                        }
+                        SubscriptArg::Slice {
+                            lower,
+                            upper,
+                            step,
+                            explicit_step,
+                        } => {
+                            self.check_slice_bounds(
+                                lower.as_deref(),
+                                upper.as_deref(),
+                                step.as_deref(),
+                            )?;
+                            let kind = if *explicit_step {
+                                SliceKind::StridedSlice
+                            } else {
+                                SliceKind::ContiguousSlice
+                            };
+                            arguments
+                                .push(self.synthetic_slice_descriptor(&target.source_span(), kind));
+                            descriptors.push(Some(kind));
+                        }
+                    }
+                }
+                (object.as_ref(), arguments, descriptors)
+            }
+            _ => return Ok(None),
+        };
+
+        let object_ty = self.infer(object)?;
+        let index_argument_count = arguments.len();
+        let value_keyword = self.select_subscript_set_call_shape(&object_ty, &arguments, value)?;
+        let kwargs = if value_keyword {
+            vec![crate::ast::KwArg {
+                name: "value".to_string(),
+                value: value.clone(),
+            }]
+        } else {
+            arguments.push(value.clone());
+            Vec::new()
+        };
+        // List element replacement is allocation-stable.  Its projected write
+        // is recorded after this check as `list[AnyIndex]`, preserving the
+        // List's `element` generation while still expiring interiors nested in
+        // the replaced element. Slice assignment and arbitrary user setters
+        // retain the conservative whole-receiver mutation effect.
+        let preserves_receiver_interiors =
+            matches!(&target.kind, ExprKind::Index { .. }) && list_element(&object_ty).is_some();
+        let call = if preserves_receiver_interiors {
+            MethodCallArguments::interior_preserving(&arguments, &kwargs)
+        } else {
+            MethodCallArguments::ordinary(&arguments, &kwargs)
+        };
+        self.infer_method_call(target.source_span(), object, "__setitem__", call)?;
+        let contract = self
+            .selected_calls
+            .borrow()
+            .get(&target.source_span())
+            .cloned()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "nominal subscript assignment lost its selected call contract".to_string(),
+                )
+            })?;
+        if contract.receiver_convention != Some(ArgConvention::Mut) {
+            return Err(TypeError::TypeMismatch {
+                expected: "a 'mut self' __setitem__".to_string(),
+                found: "read-only self".to_string(),
+                context: format!("index assignment on '{object_ty}'"),
+            });
+        }
+        let value_source = if value_keyword {
+            crate::checked::CheckedCallArgumentSource::Keyword(0)
+        } else {
+            crate::checked::CheckedCallArgumentSource::Positional(index_argument_count)
+        };
+        let target_ty = contract
+            .arguments
+            .iter()
+            .find(|argument| argument.source == value_source)
+            .map(|argument| argument.parameter_ty.clone())
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "selected __setitem__ contract has no assignment-value slot".to_string(),
+                )
+            })?;
+        self.subscript_descriptors
+            .borrow_mut()
+            .insert(target.source_span(), (descriptors, value_keyword));
+        let target_ty = match target_ty {
+            Ty::Ref(reference) => *reference.referent,
+            ty => ty,
+        };
+        self.expression_types
+            .borrow_mut()
+            .insert(target.source_span(), target_ty.clone());
+        self.expression_place_types
+            .borrow_mut()
+            .insert(target.source_span(), target_ty.clone());
+        Ok(Some(target_ty))
+    }
+
+    /// Select how assignment syntax supplies the implicit RHS to
+    /// `__setitem__`. Both the final-positional and `value=` shapes participate
+    /// in ordinary overload scoring, including RHS-driven generic inference.
+    /// A signature which accepts both shapes is considered only once and uses
+    /// the conventional positional ABI; distinct equally-ranked signatures are
+    /// still an ambiguous overload.
+    fn select_subscript_set_call_shape(
+        &self,
+        receiver: &Ty,
+        index_arguments: &[Expr],
+        value: &Expr,
+    ) -> Result<bool, TypeError> {
+        let Ty::Struct(name, type_arguments) = receiver else {
+            return Err(TypeError::NotIndexable(receiver.to_string()));
+        };
+        let info = self
+            .structs
+            .get(name)
+            .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
+        let signatures = info
+            .methods
+            .get("__setitem__")
+            .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
+        let receiver_substitution = struct_subst(&info.decls, type_arguments);
+        let mut positional_arguments = index_arguments.to_vec();
+        positional_arguments.push(value.clone());
+        let keyword_arguments = vec![crate::ast::KwArg {
+            name: "value".to_string(),
+            value: value.clone(),
+        }];
+        let no_keywords: &[crate::ast::KwArg] = &[];
+        let shapes = [
+            (false, positional_arguments.as_slice(), no_keywords),
+            (true, index_arguments, keyword_arguments.as_slice()),
+        ];
+
+        // Keep only the best ABI for each declaration. A normal fixed setter
+        // accepts its final parameter both positionally and by name; counting
+        // those as two overloads would make every such assignment ambiguous.
+        let mut best_by_signature: Vec<Option<(usize, bool)>> = vec![None; signatures.len()];
+        for (signature_index, signature) in signatures.iter().enumerate() {
+            if !signature.has_self {
+                continue;
+            }
+            let receiver_params = signature
+                .params
+                .iter()
+                .map(|parameter| substitute(parameter, &receiver_substitution))
+                .collect::<Vec<_>>();
+            let receiver_variadic = signature
+                .variadic
+                .as_deref()
+                .map(|parameter| substitute(parameter, &receiver_substitution));
+            let receiver_kw_variadic = signature
+                .kw_variadic
+                .as_deref()
+                .map(|parameter| substitute(parameter, &receiver_substitution));
+            for (value_keyword, arguments, keywords) in shapes {
+                let Ok((params, variadic, kw_variadic, _, mut method_arguments)) = self
+                    .instantiate_method_generics(
+                        &format!("{name}.__setitem__"),
+                        signature,
+                        &receiver_params,
+                        receiver_variadic.as_ref(),
+                        receiver_kw_variadic.as_ref(),
+                        &[],
+                        arguments,
+                        keywords,
+                    )
+                else {
+                    continue;
+                };
+                for (declaration, argument) in info.decls.iter().zip(type_arguments) {
+                    method_arguments.insert(
+                        declaration.name().trim_start_matches('*').to_string(),
+                        argument.clone(),
+                    );
+                }
+                if !self.method_constraints_apply(signature, &method_arguments) {
+                    continue;
+                }
+                let Ok(scored) = self.score_method_call(
+                    signature,
+                    &params,
+                    variadic.as_ref(),
+                    kw_variadic.as_ref(),
+                    arguments,
+                    keywords,
+                ) else {
+                    continue;
+                };
+                let candidate = (scored.rank, value_keyword);
+                let replace =
+                    best_by_signature[signature_index].is_none_or(|current| candidate < current);
+                if replace {
+                    best_by_signature[signature_index] = Some(candidate);
+                }
+            }
+        }
+
+        let candidates = best_by_signature.into_iter().flatten().collect::<Vec<_>>();
+        let Some(best_rank) = candidates.iter().map(|(rank, _)| *rank).min() else {
+            return Err(TypeError::BadCall {
+                func: format!("{name}.__setitem__"),
+                reason: "no overload matches the supplied indices and assignment value".to_string(),
+            });
+        };
+        let mut selected = candidates
+            .into_iter()
+            .filter(|(rank, _)| *rank == best_rank);
+        let (_, value_keyword) = selected.next().expect("at least one best setter shape");
+        if selected.next().is_some() {
+            return Err(TypeError::BadCall {
+                func: format!("{name}.__setitem__"),
+                reason: "ambiguous subscript-assignment overload".to_string(),
+            });
+        }
+        Ok(value_keyword)
+    }
+
     fn infer_slice_subscript(
         &self,
         span: SourceSpan,
@@ -8227,27 +12735,26 @@ impl Checker {
         };
         let object_type = self.infer(object)?;
         let result = match &object_type {
-            Ty::List(_) => object_type.clone(),
             Ty::String => Ty::String,
-            Ty::Struct(..) => {
-                let actual = Ty::Struct(kind.type_name().to_string(), Vec::new());
-                let resolution = self.resolve_struct_subscript(&object_type, &[actual])?;
-                if let Some(target) = resolution.lowered_name {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(span.clone(), target);
-                }
-                resolution.return_type
+            Ty::Struct(name, _)
+                if !self.structs.contains_key(name) && list_element(&object_type).is_some() =>
+            {
+                object_type.clone()
+            }
+            Ty::Struct(..) | Ty::Param { .. } => {
+                let descriptor = self.synthetic_slice_descriptor(&span, kind);
+                self.infer_method_call(
+                    span.clone(),
+                    object,
+                    "__getitem__",
+                    MethodCallArguments::ordinary(std::slice::from_ref(&descriptor), &[]),
+                )?
             }
             _ => return Err(TypeError::NotIndexable(object_type.to_string())),
         };
-        self.operation_adjustments.borrow_mut().insert(
-            span,
-            crate::checked::SemanticAdjustment::SliceDescriptors {
-                descriptors: vec![Some(kind)],
-                set_value_keyword: false,
-            },
-        );
+        self.subscript_descriptors
+            .borrow_mut()
+            .insert(span, (vec![Some(kind)], false));
         Ok(result)
     }
 
@@ -8257,12 +12764,18 @@ impl Checker {
         object: &Expr,
         arguments: &[SubscriptArg],
     ) -> Result<Ty, TypeError> {
-        let mut actual_types = Vec::with_capacity(arguments.len());
+        let object_type = self.infer(object)?;
+        if !matches!(object_type, Ty::Struct(..) | Ty::Param { .. }) {
+            return Err(TypeError::NotIndexable(object_type.to_string()));
+        }
+        let mut actual_arguments = Vec::with_capacity(arguments.len());
         let mut descriptors = Vec::with_capacity(arguments.len());
-        for argument in arguments {
+        for (position, argument) in arguments.iter().enumerate() {
             match argument {
                 SubscriptArg::Index(value) => {
-                    actual_types.push(self.infer(value)?);
+                    self.prepare_index_argument(&object_type, value, "__getitem__", position)?;
+                    self.infer(value)?;
+                    actual_arguments.push(value.clone());
                     descriptors.push(None);
                 }
                 SubscriptArg::Slice {
@@ -8277,121 +12790,21 @@ impl Checker {
                     } else {
                         SliceKind::ContiguousSlice
                     };
-                    actual_types.push(Ty::Struct(kind.type_name().to_string(), Vec::new()));
+                    actual_arguments.push(self.synthetic_slice_descriptor(&span, kind));
                     descriptors.push(Some(kind));
                 }
             }
         }
-        let object_type = self.infer(object)?;
-        if !matches!(object_type, Ty::Struct(..)) {
-            return Err(TypeError::NotIndexable(object_type.to_string()));
-        }
-        let resolution = self.resolve_struct_subscript(&object_type, &actual_types)?;
-        if let Some(target) = resolution.lowered_name {
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), target);
-        }
-        self.operation_adjustments.borrow_mut().insert(
-            span,
-            crate::checked::SemanticAdjustment::SliceDescriptors {
-                descriptors,
-                set_value_keyword: false,
-            },
-        );
-        Ok(resolution.return_type)
-    }
-
-    fn resolve_struct_subscript(
-        &self,
-        receiver: &Ty,
-        arguments: &[Ty],
-    ) -> Result<SubscriptResolution, TypeError> {
-        let Ty::Struct(name, type_arguments) = receiver else {
-            return Err(TypeError::NotIndexable(receiver.to_string()));
-        };
-        let info = self
-            .structs
-            .get(name)
-            .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
-        let signatures = info
-            .methods
-            .get("__getitem__")
-            .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
-        let substitution = struct_subst(&info.decls, type_arguments);
-        let mut matches = Vec::new();
-        for signature in signatures.iter().filter(|signature| signature.has_self) {
-            if !signature.decls.is_empty() {
-                continue;
-            }
-            let parameters: Vec<_> = signature
-                .params
-                .iter()
-                .map(|parameter| substitute(parameter, &substitution))
-                .collect();
-            let variadic = signature
-                .variadic
-                .as_deref()
-                .map(|parameter| substitute(parameter, &substitution));
-            let matched = match match_call_slots(
-                &signature.names,
-                &signature.required,
-                signature.positional_only,
-                signature.keyword_only,
-                arguments.len(),
-                &[],
-                CallVariadics {
-                    positional: variadic.is_some(),
-                    keyword: false,
-                },
-            ) {
-                Ok(matched) => matched,
-                Err(_) => continue,
-            };
-            let mut score = 0;
-            let mut compatible = true;
-            for (parameter, slot) in parameters.iter().zip(&matched.slots) {
-                let ArgSlot::Positional(position) = slot else {
-                    compatible = false;
-                    break;
-                };
-                let actual = &arguments[*position];
-                if !coerces(actual, parameter) {
-                    compatible = false;
-                    break;
-                }
-                score += conversion_count(actual, parameter);
-            }
-            if compatible && let Some(element) = &variadic {
-                for position in matched.positional_overflow {
-                    let actual = &arguments[position];
-                    if !coerces(actual, element) {
-                        compatible = false;
-                        break;
-                    }
-                    score += conversion_count(actual, element);
-                }
-            }
-            if compatible {
-                matches.push((score, signature, substitute(&signature.ret, &substitution)));
-            }
-        }
-        matches.sort_by_key(|(score, _, _)| *score);
-        let Some((best, signature, return_type)) = matches.first() else {
-            return Err(TypeError::NotIndexable(receiver.to_string()));
-        };
-        if matches.get(1).is_some_and(|(score, _, _)| score == best) {
-            return Err(TypeError::BadCall {
-                func: format!("{name}.__getitem__"),
-                reason: "ambiguous subscript overload".to_string(),
-            });
-        }
-        Ok(SubscriptResolution {
-            return_type: return_type.clone(),
-            lowered_name: (signatures.len() > 1)
-                .then(|| method_lowered_name(name, "__getitem__", signature)),
-            value_keyword: false,
-        })
+        let result = self.infer_method_call(
+            span.clone(),
+            object,
+            "__getitem__",
+            MethodCallArguments::ordinary(&actual_arguments, &[]),
+        )?;
+        self.subscript_descriptors
+            .borrow_mut()
+            .insert(span, (descriptors, false));
+        Ok(result)
     }
 
     /// Resolve `receiver[indices...] = value`. The assignment value is the final
@@ -8402,6 +12815,7 @@ impl Checker {
         &self,
         receiver: &Ty,
         arguments: &[Ty],
+        value: Option<&Ty>,
     ) -> Result<SubscriptResolution, TypeError> {
         let Ty::Struct(name, type_arguments) = receiver else {
             return Err(TypeError::NotIndexable(receiver.to_string()));
@@ -8417,6 +12831,7 @@ impl Checker {
         let substitution = struct_subst(&info.decls, type_arguments);
         let mut matches = Vec::new();
         let mut saw_read_only = false;
+        let mut value_mismatches = Vec::new();
 
         for signature in signatures
             .iter()
@@ -8485,6 +12900,17 @@ impl Checker {
                     score += conversion_count(actual, element);
                 }
             }
+            if compatible && let Some(actual) = value {
+                let expected = &parameters[value_index];
+                if !self.value_coerces(actual, expected)
+                    && self.implicit_conversion_target(actual, expected)?.is_none()
+                {
+                    value_mismatches.push(expected.clone());
+                    compatible = false;
+                } else {
+                    score += conversion_count(actual, expected);
+                }
+            }
             if compatible {
                 matches.push((
                     overload_rank(score, variadic.is_some(), parameters.len(), false),
@@ -8497,6 +12923,13 @@ impl Checker {
 
         matches.sort_by_key(|(score, _, _, _)| *score);
         let Some((best, signature, value_type, value_keyword)) = matches.first() else {
+            if let (Some(found), Some(expected)) = (value, value_mismatches.first()) {
+                return Err(TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: found.to_string(),
+                    context: format!("assignment value for '{name}.__setitem__'"),
+                });
+            }
             if saw_read_only {
                 return Err(TypeError::TypeMismatch {
                     expected: "a 'mut self' __setitem__".to_string(),
@@ -8524,9 +12957,198 @@ impl Checker {
     /// `__getitem__` implementation.
     fn infer_index(&self, span: SourceSpan, object: &Expr, index: &Expr) -> Result<Ty, TypeError> {
         let obj_ty = self.infer(object)?;
+        self.prepare_index_argument(&obj_ty, index, "__getitem__", 0)?;
+        // A generated Tuple declaration may occur later than the generic body
+        // currently being checked (the bundled List slice overload is one such
+        // body). Phase one has already validated and retained that Tuple's
+        // concrete element identity, so select its conventional generated
+        // accessor now instead of falling through to the metadata-only Tuple
+        // shortcut and losing executable dispatch.
+        if let Ty::Struct(name, _) = &obj_ty
+            && !self.structs.contains_key(name)
+            && self
+                .predeclared_generated_tuple_arguments
+                .contains_key(name)
+        {
+            let elements = tuple_elements(&obj_ty).ok_or_else(|| {
+                TypeError::InvariantViolation(format!(
+                    "predeclared generated Tuple '{name}' lost its element types"
+                ))
+            })?;
+            let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
+                expected: "a compile-time Int index".to_string(),
+                found: "a runtime value".to_string(),
+                context: format!("variadic struct '{name}' subscript"),
+            })?;
+            let k = exact.to_i64().ok_or_else(|| TypeError::TypeMismatch {
+                expected: format!("a pack index in 0..{}", elements.len()),
+                found: exact.to_string(),
+                context: format!("variadic struct '{name}' subscript"),
+            })?;
+            if k < 0 || k as usize >= elements.len() {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!("a pack index in 0..{}", elements.len()),
+                    found: k.to_string(),
+                    context: format!("variadic struct '{name}' subscript"),
+                });
+            }
+            let element = elements[k as usize].clone();
+            let value_receiver = !is_place_expr(object);
+            let method = if value_receiver {
+                if !self.is_implicitly_copyable(&element) {
+                    return Err(TypeError::NonCopyable {
+                        ty: obj_ty.to_string(),
+                        context: "indexing an rvalue Tuple requires an implicitly copyable element"
+                            .to_string(),
+                    });
+                }
+                format!("__getitem_param_value__${k}")
+            } else {
+                format!("__getitem_param__${k}")
+            };
+            let target = format!("{name}.{method}");
+            self.overload_targets
+                .borrow_mut()
+                .insert(span.clone(), target.clone());
+            if value_receiver {
+                let result_ty = match &element {
+                    Ty::Ref(reference) => reference.referent.as_ref().clone(),
+                    value => value.clone(),
+                };
+                self.selected_calls.borrow_mut().insert(
+                    span,
+                    crate::checked::CheckedCallContract {
+                        target,
+                        raises: None,
+                        result_ty: result_ty.clone(),
+                        receiver_requires_place: false,
+                        receiver_convention: None,
+                        arguments: Vec::new(),
+                        captures: Vec::new(),
+                        reference_result: None,
+                        parameter_arguments: Vec::new(),
+                        param_decls: Vec::new(),
+                        boundary: crate::checked::CheckedCallBoundary::default(),
+                    },
+                );
+                return Ok(result_ty);
+            }
+            let reference = match element {
+                // The generated accessor for a reference-valued element
+                // forwards that element's original handle rather than creating
+                // an outer reference to the Tuple's private storage slot.
+                Ty::Ref(reference) => reference,
+                referent => {
+                    let receiver = self.reference_actual(object)?;
+                    crate::origin::RefTy {
+                        referent: Box::new(referent),
+                        origin: receiver.origin,
+                        mutability: receiver.mutability,
+                    }
+                }
+            };
+            let result = (*reference.referent).clone();
+            self.selected_calls.borrow_mut().insert(
+                span.clone(),
+                crate::checked::CheckedCallContract {
+                    target,
+                    raises: None,
+                    result_ty: Ty::Ref(reference.clone()),
+                    receiver_requires_place: true,
+                    receiver_convention: Some(ArgConvention::Ref),
+                    arguments: Vec::new(),
+                    captures: Vec::new(),
+                    reference_result: Some(reference.clone()),
+                    parameter_arguments: Vec::new(),
+                    param_decls: Vec::new(),
+                    boundary: crate::checked::CheckedCallBoundary::default(),
+                },
+            );
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                crate::checked::SemanticAdjustment::ReferenceResult { reference },
+            );
+            return Ok(result);
+        }
+        // Current Mojo permits a general compile-time parameter subscript hook,
+        // not only the dependent accessor family synthesized for variadic
+        // structs. Pass the source index as a checked value parameter and no
+        // runtime argument; ordinary generic-method specialization then leaves
+        // an exact callable target for HIR/MIR.
+        if let Ty::Struct(name, _) = &obj_ty
+            && self
+                .structs
+                .get(name)
+                .is_some_and(|info| info.methods.contains_key("__getitem_param__"))
+        {
+            let parameter_arguments = [crate::ast::ParamArg::Value(index.clone())];
+            let result = self.infer_method_call(
+                span,
+                object,
+                "__getitem_param__",
+                MethodCallArguments::parameterized(&parameter_arguments, &[], &[]),
+            )?;
+            return Ok(match result {
+                Ty::Ref(reference) => *reference.referent,
+                value => value,
+            });
+        }
+        // A specialized variadic struct exposes one concrete dependent
+        // accessor per pack element. Resolve it before the generic Tuple
+        // element shortcut below: generated public Tuples retain nominal
+        // element metadata too, but executable indexing must dispatch through
+        // the checked ordinary method rather than a VM tuple intrinsic.
+        if let Ty::Struct(name, _) = &obj_ty
+            && let Some(info) = self.structs.get(name)
+            && let Some(family) = dependent_index_accessor_family(info)
+        {
+            let count = (0..)
+                .take_while(|k| info.methods.contains_key(&format!("{}${k}", family.place)))
+                .count();
+            let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
+                expected: "a compile-time Int index".to_string(),
+                found: "a runtime value".to_string(),
+                context: format!("variadic struct '{name}' subscript"),
+            })?;
+            let k = exact.to_i64().ok_or_else(|| TypeError::TypeMismatch {
+                expected: format!("a pack index in 0..{count}"),
+                found: exact.to_string(),
+                context: format!("variadic struct '{name}' subscript"),
+            })?;
+            if k < 0 || k as usize >= count {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!("a pack index in 0..{count}"),
+                    found: k.to_string(),
+                    context: format!("variadic struct '{name}' subscript"),
+                });
+            }
+            let value_receiver = !is_place_expr(object);
+            let value_method = format!("{}${k}", family.value);
+            let method = if value_receiver && info.methods.contains_key(&value_method) {
+                value_method
+            } else {
+                format!("{}${k}", family.place)
+            };
+            let ret = self.infer_method_call(
+                span.clone(),
+                object,
+                &method,
+                MethodCallArguments::ordinary(&[], &[]),
+            )?;
+            self.overload_targets
+                .borrow_mut()
+                .insert(span, format!("{name}.{method}"));
+            return Ok(ret);
+        }
         // A tuple is heterogeneous, so its index must be a **compile-time** `Int`
         // constant — the result type is that element's type.
-        if let Ty::Tuple(elems) = &obj_ty {
+        let tuple_elements = tuple_elements(&obj_ty).or_else(|| match &obj_ty {
+            // Compiler-private heterogeneous pack storage uses the same static
+            // per-index typing rule as public Tuple, but never method dispatch.
+            Ty::Tuple(elements) => Some(elements.iter().collect()),
+            _ => None,
+        });
+        if let Some(elems) = tuple_elements {
             let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
                 expected: "a compile-time Int index".to_string(),
                 found: "a runtime value".to_string(),
@@ -8544,80 +13166,47 @@ impl Checker {
                     context: "tuple index".to_string(),
                 });
             }
-            return Ok(match &elems[i as usize] {
+            return Ok(match elems[i as usize] {
                 Ty::Ref(reference) => (*reference.referent).clone(),
                 element => element.clone(),
             });
         }
-        // A user struct with `__getitem__` is subscriptable: `c[i]` →
-        // `c.__getitem__(i)`, typed by the method (the index need not be `Int`).
-        if matches!(obj_ty, Ty::Struct(..)) {
+        // A homogeneous runtime variadic collector is compiler-private Tuple
+        // storage with one repeated element type. Unlike a heterogeneous pack,
+        // its index may vary at runtime without changing the result type.
+        if let Ty::VariadicPack(element) = &obj_ty {
             let idx_ty = self.infer(index)?;
-            if let Some(r) = self.struct_dunder(&obj_ty, "__getitem__", &[&idx_ty]) {
-                return r;
+            if !self.is_index_type(&idx_ty) {
+                return Err(TypeError::TypeMismatch {
+                    expected: "Indexer".to_string(),
+                    found: idx_ty.to_string(),
+                    context: "variadic-pack index".to_string(),
+                });
             }
-            // A specialized variadic struct exposes its unrolled dependent
-            // accessors (`__getitem__$k`, one per pack element): the subscript
-            // requires a compile-time-constant index, is typed by that
-            // accessor's concrete return type, and records the resolved
-            // accessor for lowering (the VM never guesses the element).
-            if let Ty::Struct(name, _) = &obj_ty
-                && let Some(info) = self.structs.get(name)
-                && info.methods.contains_key("__getitem__$0")
-            {
-                let count = (0..)
-                    .take_while(|k| info.methods.contains_key(&format!("__getitem__${k}")))
-                    .count();
-                let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
-                    expected: "a compile-time Int index".to_string(),
-                    found: "a runtime value".to_string(),
-                    context: format!("variadic struct '{name}' subscript"),
-                })?;
-                let k = exact.to_i64().ok_or_else(|| TypeError::TypeMismatch {
-                    expected: format!("a pack index in 0..{count}"),
-                    found: exact.to_string(),
-                    context: format!("variadic struct '{name}' subscript"),
-                })?;
-                if k < 0 || k as usize >= count {
-                    return Err(TypeError::TypeMismatch {
-                        expected: format!("a pack index in 0..{count}"),
-                        found: k.to_string(),
-                        context: format!("variadic struct '{name}' subscript"),
-                    });
-                }
-                let method = format!("__getitem__${k}");
-                let ret = info.methods[&method][0].ret.clone();
-                self.overload_targets
-                    .borrow_mut()
-                    .insert(span, format!("{name}.{method}"));
-                return Ok(ret);
-            }
-            return Err(TypeError::NotIndexable(obj_ty.to_string()));
+            return Ok(match &**element {
+                Ty::Ref(reference) => (*reference.referent).clone(),
+                element => element.clone(),
+            });
         }
-        // An opaque type parameter is indexable when one of its trait bounds
-        // promises `__getitem__`. The requirement supplies both the index and
-        // result type; runtime dispatch remains the ordinary concrete dunder call
-        // after type erasure.
-        if let Ty::Param { bounds, .. } = &obj_ty {
-            let idx_ty = self.infer(index)?;
-            if let Some(signature) = self.lookup_trait_method(bounds, "__getitem__", 1) {
-                let expected = substitute_self(&signature.params[0], &obj_ty);
-                if !coerces(&idx_ty, &expected) {
+        if let Ty::Struct(name, _) = &obj_ty
+            && !self.structs.contains_key(name)
+        {
+            if let Some(element) = list_element(&obj_ty) {
+                let idx_ty = self.infer(index)?;
+                if !self.is_index_type(&idx_ty) {
                     return Err(TypeError::TypeMismatch {
-                        expected: expected.to_string(),
+                        expected: "Indexer".to_string(),
                         found: idx_ty.to_string(),
                         context: "index".to_string(),
                     });
                 }
-                return Ok(substitute_self(&signature.ret, &obj_ty));
+                self.record_interior_reference(span, object, "element");
+                return Ok(match element.clone() {
+                    Ty::Ref(reference) => *reference.referent,
+                    element => element,
+                });
             }
-            return Err(TypeError::NotIndexable(obj_ty.to_string()));
-        }
-        // The result of indexing: a SIMD lane, a List element, or a pointer pointee.
-        let result = match &obj_ty {
-            Ty::Simd { dtype, .. } => simd_ty(*dtype, 1),
-            Ty::List(elem) => (**elem).clone(),
-            Ty::Dict(key, value) => {
+            if let Some((key, value)) = dict_elements(&obj_ty) {
                 let idx_ty = self.infer(index)?;
                 if !coerces(&idx_ty, key) {
                     return Err(TypeError::TypeMismatch {
@@ -8626,8 +13215,60 @@ impl Checker {
                         context: "dictionary key".to_string(),
                     });
                 }
-                return Ok((**value).clone());
+                self.record_replacing_interior_reference(span, object, "value");
+                return Ok(match value.clone() {
+                    Ty::Ref(reference) => *reference.referent,
+                    value => value,
+                });
             }
+        }
+        // A user struct with `__getitem__` is subscriptable: `c[i]` →
+        // `c.__getitem__(i)`, typed by the method (the index need not be `Int`).
+        if matches!(obj_ty, Ty::Struct(..)) {
+            if let Ty::Struct(name, _) = &obj_ty
+                && self
+                    .structs
+                    .get(name)
+                    .is_some_and(|info| info.methods.contains_key("__getitem__"))
+            {
+                let result = self.infer_method_call(
+                    span.clone(),
+                    object,
+                    "__getitem__",
+                    MethodCallArguments::ordinary(std::slice::from_ref(index), &[]),
+                )?;
+                if list_element(&obj_ty).is_some() {
+                    self.record_interior_reference(span, object, "element");
+                } else if dict_elements(&obj_ty).is_some() {
+                    self.record_replacing_interior_reference(span, object, "value");
+                }
+                // A source `ref[...] T` subscript result is a reference handle
+                // only in a reference-valued context. Ordinary expression
+                // inference reads through it to `T`; `RefDecl` and aggregate
+                // storage recover the checked handle from the interior-origin
+                // and place-type facts recorded above.
+                return Ok(match result {
+                    Ty::Ref(reference) => *reference.referent,
+                    value => value,
+                });
+            }
+            return Err(TypeError::NotIndexable(obj_ty.to_string()));
+        }
+        // Bounded type parameters use the same method-selection path as
+        // concrete nominal receivers. This retains the requirement's error,
+        // convention, capture, and reference-origin contract instead of
+        // projecting only its parameter/result types.
+        if matches!(obj_ty, Ty::Param { .. }) {
+            return self.infer_method_call(
+                span,
+                object,
+                "__getitem__",
+                MethodCallArguments::ordinary(std::slice::from_ref(index), &[]),
+            );
+        }
+        // The result of indexing: a SIMD lane, a List element, or a pointer pointee.
+        let result = match &obj_ty {
+            Ty::Simd { dtype, .. } => simd_ty(*dtype, 1),
             Ty::Pointer { element, origin } => {
                 self.check_pointer_offset(origin, index)?;
                 (**element).clone()
@@ -8700,6 +13341,114 @@ impl Checker {
                 && self.struct_dunder(ty, "__mlir_index__", &[]) == Some(Ok(Ty::Int))
     }
 
+    /// Resolve the exact normalization method for a non-Int `Indexer`. The
+    /// abstract trait symbol is retained for a bounded generic and retargeted by
+    /// ordinary checked method dispatch once its runtime receiver is known.
+    fn index_normalization_target(&self, ty: &Ty) -> Option<String> {
+        match ty {
+            Ty::Struct(name, arguments) => {
+                let info = self.structs.get(name)?;
+                let substitution = struct_subst(&info.decls, arguments);
+                let methods = info.methods.get("__mlir_index__")?;
+                let selected = methods.iter().find(|method| {
+                    method.has_self
+                        && method.params.is_empty()
+                        && substitute(&method.ret, &substitution) == Ty::Int
+                })?;
+                Some(if methods.len() == 1 {
+                    format!("{name}.__mlir_index__")
+                } else {
+                    method_lowered_name(name, "__mlir_index__", selected)
+                })
+            }
+            Ty::Param { bounds, .. } => {
+                let methods = self.lookup_trait_methods(bounds, "__mlir_index__", 0);
+                let selected = methods
+                    .iter()
+                    .find(|method| method.params.is_empty() && method.ret == Ty::Int)?;
+                Some(method_lowered_name(
+                    "__trait_dispatch",
+                    "__mlir_index__",
+                    selected,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn has_index_normalization(&self, expression: &Expr, expected: &Ty) -> bool {
+        *expected == Ty::Int
+            && self
+                .implicit_conversions
+                .borrow()
+                .get(&expression.source_span())
+                .is_some_and(|target| crate::symbol::is_index_normalization_symbol(target))
+    }
+
+    /// Prepare a subscript argument for checked lowering. A nominal receiver
+    /// normalizes an Indexer only when no `__getitem__` or `__setitem__`
+    /// candidate accepts its source type at this argument position and an Int
+    /// candidate exists there, preserving direct user overloads. Positions in a
+    /// `*indices` tail use the variadic element contract. Primitive pointer/SIMD
+    /// and homogeneous private-pack indexing has a fixed Int contract and
+    /// therefore always records the checked normalization fallback.
+    fn prepare_index_argument(
+        &self,
+        receiver: &Ty,
+        expression: &Expr,
+        method: &str,
+        position: usize,
+    ) -> Result<(), TypeError> {
+        let actual = self.infer(expression)?;
+        if coerces(&actual, &Ty::Int) {
+            return Ok(());
+        }
+        let Some(target) = self.index_normalization_target(&actual) else {
+            return Ok(());
+        };
+        let Ty::Struct(name, arguments) = receiver else {
+            if matches!(
+                receiver,
+                Ty::Pointer { .. } | Ty::Simd { .. } | Ty::VariadicPack(_)
+            ) {
+                self.implicit_conversions
+                    .borrow_mut()
+                    .insert(expression.source_span(), target);
+            }
+            return Ok(());
+        };
+        let Some(info) = self.structs.get(name) else {
+            return Ok(());
+        };
+        let Some(signatures) = info.methods.get(method) else {
+            return Ok(());
+        };
+        let substitution = struct_subst(&info.decls, arguments);
+        let mut accepts_source = false;
+        let mut accepts_int = false;
+        for signature in signatures.iter().filter(|signature| signature.has_self) {
+            let parameter = match signature.variadic_index {
+                Some(variadic_index) if position >= variadic_index => signature.variadic.as_deref(),
+                _ => signature.params.get(position),
+            };
+            let Some(parameter) = parameter else {
+                continue;
+            };
+            let expected = substitute(parameter, &substitution);
+            accepts_source |= self.value_coerces(&actual, &expected)
+                || self
+                    .implicit_conversion_target(&actual, &expected)?
+                    .is_some();
+            accepts_int |= expected == Ty::Int;
+        }
+        if !accepts_source && accepts_int {
+            self.implicit_conversions
+                .borrow_mut()
+                .insert(expression.source_span(), target);
+        }
+        Ok(())
+    }
+
     /// Type a field access `object.field`. On a generic struct value the field
     /// type has the struct's type arguments substituted in (`Pair[Int].left :
     /// Int`).
@@ -8723,19 +13472,26 @@ impl Checker {
         // compile-time value. Type-valued associated members remain type-position
         // only (`T.Element` in annotations).
         if let ExprKind::Identifier(name) = &object.kind
-            && let Some(bounds) = self.lookup_tparam(name)
-            && let Some(ty) = self.lookup_trait_assoc_value_ty(&bounds, field)
+            && let Some(parameter) = self.lookup_tparam(name)
+            && let Ty::Param { bounds, .. } = &parameter
+            && let Some(ty) = self.lookup_trait_assoc_value_ty(bounds, field)
         {
-            self.expression_types.borrow_mut().insert(
-                object.source_span(),
-                Ty::Param {
-                    name: name.clone(),
-                    bounds,
-                },
-            );
+            self.expression_types
+                .borrow_mut()
+                .insert(object.source_span(), parameter);
             return Ok(ty);
         }
         let obj_ty = self.infer(object)?;
+        // Projecting a field through a reference-returning expression borrows
+        // that referent for the projection; it does not first create an owned
+        // copy of the whole value. Retain the handle exactly as method and
+        // chained-subscript receivers do, including for linear referents.
+        if let Some(reference) = self.infer_reference_value(object) {
+            self.reference_value_uses.borrow_mut().insert(
+                object.source_span(),
+                reference.mutability == crate::origin::Mutability::Mutable,
+            );
+        }
         if matches!(&obj_ty, Ty::Struct(name, args) if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty())
             && matches!(field, "start" | "end" | "step")
         {
@@ -8769,9 +13525,15 @@ impl Checker {
         span: SourceSpan,
         object: &Expr,
         method: &str,
-        args: &[Expr],
-        kwargs: &[crate::ast::KwArg],
+        call: MethodCallArguments<'_>,
     ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            parameterized_syntax,
+            preserves_receiver_interiors,
+        } = call;
         // A **static** method on a parameterized built-in type — the receiver is a
         // type, not a value (`UnsafePointer[T].alloc(n)`). Handled before inferring
         // the object (which would reject a bare `TypeApply`).
@@ -8792,6 +13554,7 @@ impl Checker {
                         &sig.params,
                         sig.variadic.as_deref(),
                         sig.kw_variadic.as_deref(),
+                        param_args,
                         args,
                         kwargs,
                     ) {
@@ -8812,9 +13575,12 @@ impl Checker {
                     matches.push(MethodCallResolution {
                         conversion_score: scored.rank,
                         slots: scored.slots,
+                        positional_overflow: scored.positional_overflow,
                         keyword_overflow: scored.keyword_overflow,
+                        variadic_element: variadic.clone(),
                         keyword_element: kw_variadic.clone(),
                         conventions: sig.conventions.clone(),
+                        self_convention: sig.self_convention,
                         return_type: substitute(&sig.ret, &method_subst),
                         raises: sig.raises,
                         error: sig
@@ -8823,11 +13589,17 @@ impl Checker {
                             .map(|error| Box::new(substitute(error, &method_subst))),
                         mutates_receiver: false,
                         consumes_receiver: false,
-                        lowered_name: (signatures.len() > 1)
-                            .then(|| method_lowered_name(sname, method, sig)),
+                        lowered_name: if signatures.len() > 1 {
+                            Some(method_lowered_name(sname, method, sig))
+                        } else if parameterized_syntax {
+                            Some(format!("{sname}.{method}"))
+                        } else {
+                            None
+                        },
                         ref_params: sig.ref_params.clone(),
                         ref_return: sig.ref_return.clone(),
                         param_types: params,
+                        param_decls: sig.decls.clone(),
                     });
                 }
             }
@@ -8859,6 +13631,48 @@ impl Checker {
             }
         }
         let obj_ty = self.infer(object)?;
+        if let Ty::Struct(name, _) = &obj_ty
+            && !self.structs.contains_key(name)
+        {
+            if let Some(element) = list_element(&obj_ty) {
+                reject_kwargs(kwargs)?;
+                let result = self.infer_list_method(object, method, element, args)?;
+                if matches!(
+                    method,
+                    "append" | "insert" | "remove" | "pop" | "clear" | "reverse" | "extend"
+                ) {
+                    self.record_interior_invalidation(span.clone(), object);
+                }
+                return Ok(result);
+            }
+            if let Some(element) = set_element(&obj_ty) {
+                reject_kwargs(kwargs)?;
+                return match method {
+                    "add" => {
+                        self.check_place(object)?;
+                        let values = self.builtin_args("Set.add", 1, args)?;
+                        if !coerces(&values[0], element) {
+                            return Err(TypeError::TypeMismatch {
+                                expected: element.to_string(),
+                                found: values[0].to_string(),
+                                context: "Set.add value".to_string(),
+                            });
+                        }
+                        self.check_consuming(&args[0], &values[0], "Set.add value")?;
+                        Ok(Ty::None)
+                    }
+                    _ => Err(TypeError::NoSuchMethod {
+                        object_type: obj_ty.to_string(),
+                        method: method.to_string(),
+                    }),
+                };
+            }
+            if let Some(elements) = tuple_elements(&obj_ty) {
+                reject_kwargs(kwargs)?;
+                let elements = elements.into_iter().cloned().collect::<Vec<_>>();
+                return self.infer_tuple_method(&span, object, method, &elements, call);
+            }
+        }
         if matches!(&obj_ty, Ty::Struct(name, args) if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty())
         {
             reject_kwargs(kwargs)?;
@@ -8876,7 +13690,7 @@ impl Checker {
                     context: "Slice.indices length".to_string(),
                 });
             }
-            return Ok(Ty::Tuple(vec![Ty::Int, Ty::Int, Ty::Int]));
+            return Ok(self.public_tuple_type(vec![Ty::Int, Ty::Int, Ty::Int]));
         }
         if matches!(&obj_ty, Ty::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(Ty::Int)]))
         {
@@ -8928,45 +13742,20 @@ impl Checker {
             self.infer_print(args)?;
             return Ok(Ty::String);
         }
-        // Built-in `List` methods (mutating; require a plain variable receiver).
-        if let Ty::List(elem) = &obj_ty {
-            reject_kwargs(kwargs)?;
-            return self.infer_list_method(object, method, elem, args);
-        }
-        if let Ty::Set(elem) = &obj_ty {
-            reject_kwargs(kwargs)?;
-            return match method {
-                "add" => {
-                    self.check_place(object)?;
-                    let values = self.builtin_args("Set.add", 1, args)?;
-                    if !coerces(&values[0], elem) {
-                        return Err(TypeError::TypeMismatch {
-                            expected: elem.to_string(),
-                            found: values[0].to_string(),
-                            context: "Set.add value".to_string(),
-                        });
-                    }
-                    self.check_consuming(&args[0], &values[0], "Set.add value")?;
-                    Ok(Ty::None)
-                }
-                _ => Err(TypeError::NoSuchMethod {
-                    object_type: obj_ty.to_string(),
-                    method: method.to_string(),
-                }),
-            };
-        }
         if let Ty::Tuple(elements) = &obj_ty {
             reject_kwargs(kwargs)?;
-            return self.infer_tuple_method(method, elements, args);
+            return self.infer_tuple_method(&span, object, method, elements, call);
         }
-        // Built-in `UnsafePointer` methods (`free`).
+        // Built-in `UnsafePointer` methods. Raw storage take/destroy are
+        // checker-gated compiler-private operations; ordinary user code only
+        // sees the public pointer surface.
         if let Ty::Pointer {
             element: elem,
             origin,
         } = &obj_ty
         {
             reject_kwargs(kwargs)?;
-            return self.infer_pointer_method(method, elem, origin, args);
+            return self.infer_pointer_method(&span, object, method, elem, origin, args);
         }
         // Resolve the method to a concrete signature (params + return + whether
         // it mutates `self`) for this receiver, substituting the receiver's type
@@ -9000,6 +13789,7 @@ impl Checker {
                                 &receiver_params,
                                 receiver_variadic.as_ref(),
                                 receiver_kw_variadic.as_ref(),
+                                param_args,
                                 args,
                                 kwargs,
                             )
@@ -9026,9 +13816,12 @@ impl Checker {
                                 matches.push(MethodCallResolution {
                                     conversion_score: scored.rank,
                                     slots: scored.slots,
+                                    positional_overflow: scored.positional_overflow,
                                     keyword_overflow: scored.keyword_overflow,
+                                    variadic_element: variadic.clone(),
                                     keyword_element: kw_variadic.clone(),
                                     conventions: sig.conventions.clone(),
+                                    self_convention: sig.self_convention,
                                     return_type: substitute(
                                         &substitute(&sig.ret, &subst),
                                         &method_subst,
@@ -9042,10 +13835,7 @@ impl Checker {
                                     }),
                                     mutates_receiver: matches!(
                                         sig.self_convention,
-                                        Some(
-                                            crate::ast::ArgConvention::Mut
-                                                | crate::ast::ArgConvention::Ref
-                                        )
+                                        Some(crate::ast::ArgConvention::Mut)
                                     ),
                                     consumes_receiver: matches!(
                                         sig.self_convention,
@@ -9054,11 +13844,17 @@ impl Checker {
                                                 | crate::ast::ArgConvention::Deinit
                                         )
                                     ),
-                                    lowered_name: overloaded
-                                        .then(|| method_lowered_name(sname, method, sig)),
+                                    lowered_name: if overloaded {
+                                        Some(method_lowered_name(sname, method, sig))
+                                    } else if parameterized_syntax {
+                                        Some(format!("{sname}.{method}"))
+                                    } else {
+                                        None
+                                    },
                                     ref_params: sig.ref_params.clone(),
                                     ref_return: sig.ref_return.clone(),
                                     param_types: params,
+                                    param_decls: sig.decls.clone(),
                                 });
                             }
                         }
@@ -9097,6 +13893,7 @@ impl Checker {
                             &receiver_params,
                             receiver_variadic.as_ref(),
                             receiver_kw_variadic.as_ref(),
+                            param_args,
                             args,
                             kwargs,
                         )
@@ -9119,9 +13916,12 @@ impl Checker {
                     matches.push(MethodCallResolution {
                         conversion_score: scored.rank,
                         slots: scored.slots,
+                        positional_overflow: scored.positional_overflow,
                         keyword_overflow: scored.keyword_overflow,
+                        variadic_element: variadic.clone(),
                         keyword_element: kw_variadic.clone(),
                         conventions: sig.conventions.clone(),
+                        self_convention: sig.self_convention,
                         return_type: self.resolve_assoc_ty(&substitute(
                             &substitute_self(&sig.ret, &obj_ty),
                             &method_subst,
@@ -9135,7 +13935,7 @@ impl Checker {
                         }),
                         mutates_receiver: matches!(
                             sig.self_convention,
-                            Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
+                            Some(crate::ast::ArgConvention::Mut)
                         ),
                         consumes_receiver: matches!(
                             sig.self_convention,
@@ -9147,6 +13947,7 @@ impl Checker {
                         ref_params: sig.ref_params.clone(),
                         ref_return: sig.ref_return.clone(),
                         param_types: params,
+                        param_decls: sig.decls.clone(),
                     });
                 }
                 select_method_overload(method, matches).map(Some)
@@ -9162,9 +13963,12 @@ impl Checker {
                 Ok(Some(MethodCallResolution {
                     conversion_score: 0,
                     slots: vec![],
+                    positional_overflow: vec![],
                     keyword_overflow: vec![],
+                    variadic_element: None,
                     keyword_element: None,
                     conventions: vec![],
+                    self_convention: None,
                     return_type: Ty::UInt,
                     raises: false,
                     error: None,
@@ -9174,6 +13978,7 @@ impl Checker {
                     ref_params: vec![],
                     ref_return: None,
                     param_types: vec![],
+                    param_decls: vec![],
                 }))
             }
             _ => Ok(None),
@@ -9199,30 +14004,83 @@ impl Checker {
                 });
             }
         };
-        self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
-        if resolved.raises {
-            let error = resolved.error.as_deref().cloned().unwrap_or(Ty::Error);
-            self.record_call_effect(span.clone(), error.clone());
-            self.require_error(format!("call to raising method '{method}'"), error)?;
+        if parameterized_syntax {
+            self.operation_adjustments.borrow_mut().insert(
+                span.clone(),
+                crate::checked::SemanticAdjustment::ParameterizedMethodCall {
+                    param_decls: resolved.param_decls.clone(),
+                },
+            );
         }
-        if let Some(target) = resolved.lowered_name {
+        let boundary_before = self.call_boundary_snapshot(&span, args, kwargs);
+        self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
+        let call_error = resolved
+            .raises
+            .then(|| resolved.error.as_deref().cloned().unwrap_or(Ty::Error));
+        if let Some(error) = &call_error {
+            self.record_call_effect(span.clone(), error.clone());
+            self.require_error(format!("call to raising method '{method}'"), error.clone())?;
+        }
+        let selected_target = resolved.lowered_name.clone().or_else(|| match &obj_ty {
+            Ty::Struct(name, _) if self.structs.contains_key(name) => {
+                Some(format!("{name}.{method}"))
+            }
+            _ => None,
+        });
+        if let Some(target) = &selected_target {
             self.overload_targets
                 .borrow_mut()
-                .insert(span.clone(), target);
+                .insert(span.clone(), target.clone());
         }
         // A `mut self` method mutates its receiver, so the receiver must be a
         // writable place (the mutation is written back to it): a variable, a
         // field/index chain, or `self` in a `mut self` method.
         if resolved.mutates_receiver {
-            self.check_place(object)?;
+            let returned_reference = self
+                .operation_adjustments
+                .borrow()
+                .get(&object.source_span())
+                .and_then(|adjustment| match adjustment {
+                    crate::checked::SemanticAdjustment::ReferenceResult { reference } => {
+                        Some(reference.clone())
+                    }
+                    _ => None,
+                });
+            if let Some(reference) = returned_reference {
+                if reference.mutability != crate::origin::Mutability::Mutable {
+                    return Err(TypeError::ImmutableBinding(
+                        "reference-returning method receiver".to_string(),
+                    ));
+                }
+            } else {
+                self.check_place(object)?;
+            }
+            if !preserves_receiver_interiors {
+                self.record_interior_invalidation(span.clone(), object);
+            }
         }
-        if resolved.consumes_receiver && !matches!(object.kind, ExprKind::Transfer(_)) {
-            return Err(TypeError::NonCopyable {
-                ty: obj_ty.to_string(),
-                context: format!(
-                    "consuming receiver of method '{method}' must be transferred with '^'"
-                ),
-            });
+        let effective_receiver_convention = if resolved.self_convention == Some(ArgConvention::Ref)
+            && self.reference_actual(object)?.mutability == crate::origin::Mutability::Immutable
+        {
+            Some(ArgConvention::Read)
+        } else {
+            resolved.self_convention
+        };
+        // A `deinit self` call always consumes its receiver. Mojo may satisfy
+        // that consumption by implicitly copying an `ImplicitlyCopyable` place;
+        // a merely movable (or explicitly-copy-only) place still requires `^`.
+        if resolved.consumes_receiver && is_place_expr(object) {
+            if !self.is_implicitly_copyable(&obj_ty) {
+                return Err(TypeError::NonCopyable {
+                    ty: obj_ty.to_string(),
+                    context: format!(
+                        "consuming receiver of method '{method}' must be transferred with '^'"
+                    ),
+                });
+            }
+            self.implicitly_copied_consuming_receivers
+                .borrow_mut()
+                .insert(span.clone());
         }
         if resolved.consumes_receiver
             && let Ty::Struct(name, _) = &obj_ty
@@ -9231,7 +14089,9 @@ impl Checker {
                 .get(name)
                 .is_some_and(|info| info.explicit_destructors.contains_key(method))
         {
-            self.explicit_destroy_calls.borrow_mut().insert(span);
+            self.explicit_destroy_calls
+                .borrow_mut()
+                .insert(span.clone());
         }
         for (index, slot) in resolved.slots.iter().enumerate() {
             let expression = match slot {
@@ -9247,18 +14107,30 @@ impl Checker {
                     .expect("selected method slot has a parameter type"),
                 true,
             )?;
-            if matches!(
-                resolved.conventions.get(index),
-                Some(Some(ArgConvention::Var | ArgConvention::Deinit))
-            ) {
-                self.check_consuming(
-                    expression,
-                    &ty,
-                    &format!("argument {} to method '{}'", index + 1, method),
-                )?;
+            match resolved.conventions.get(index).copied().flatten() {
+                Some(ArgConvention::Deinit)
+                    if is_place_expr(expression) && !self.is_implicitly_copyable(&ty) =>
+                {
+                    return Err(TypeError::NonCopyable {
+                        ty: ty.to_string(),
+                        context: format!(
+                            "deinit argument {} to method '{}' must be transferred with '^'",
+                            index + 1,
+                            method
+                        ),
+                    });
+                }
+                Some(ArgConvention::Var | ArgConvention::Deinit) => {
+                    self.check_consuming(
+                        expression,
+                        &ty,
+                        &format!("argument {} to method '{}'", index + 1, method),
+                    )?;
+                }
+                _ => {}
             }
         }
-        let (effective_conventions, _) = self.solve_call_origins(
+        let (effective_conventions, solved_return) = self.solve_call_origins(
             &resolved.slots,
             &resolved.conventions,
             &resolved.ref_params,
@@ -9299,33 +14171,196 @@ impl Checker {
             args,
             kwargs,
         )?;
-        if let Some(signature) = &resolved.ref_return {
+        check_receiver_aliasing(
+            object,
+            resolved.self_convention,
+            &resolved.slots,
+            &copied_reads,
+            args,
+            kwargs,
+        )?;
+        let reference_result = if let Some(signature) = &resolved.ref_return {
             let actual: Vec<_> = resolved
                 .slots
                 .iter()
                 .map(|slot| match slot {
-                    ArgSlot::Positional(position) => self.origin_place(&args[*position]).ok(),
-                    ArgSlot::Keyword(position) => self.origin_place(&kwargs[*position].value).ok(),
+                    ArgSlot::Positional(position) => self
+                        .reference_actual(&args[*position])
+                        .ok()
+                        .map(|reference| reference.origin),
+                    ArgSlot::Keyword(position) => self
+                        .reference_actual(&kwargs[*position].value)
+                        .ok()
+                        .map(|reference| reference.origin),
                     ArgSlot::Default => None,
                 })
-                .map(|place| place.map(crate::origin::Origin::Place))
                 .collect();
-            let self_place = self.origin_place(object)?;
-            let self_owner = Some(self_place.root);
-            let origin = substitute_sig_origin_with_self(&signature.origin, &actual, self_owner);
+            let self_reference = self.reference_actual(object)?;
+            let origin = substitute_sig_origin_with_self(
+                &signature.origin,
+                &actual,
+                Some(self_reference.origin),
+            );
             let mutable = match signature.mutability {
                 crate::origin::SigMutability::Immutable => crate::origin::Mutability::Immutable,
                 crate::origin::SigMutability::Mutable => crate::origin::Mutability::Mutable,
-                _ if self.owner_is_mutable(self_place.root) => crate::origin::Mutability::Mutable,
+                _ if self_reference.mutability == crate::origin::Mutability::Mutable
+                    || solved_return.is_some_and(|reference| {
+                        reference.mutability == crate::origin::Mutability::Mutable
+                    }) =>
+                {
+                    crate::origin::Mutability::Mutable
+                }
                 _ => crate::origin::Mutability::Immutable,
             };
-            return Ok(Ty::Ref(crate::origin::RefTy {
-                referent: Box::new(resolved.return_type),
+            let reference = crate::origin::RefTy {
+                referent: Box::new(resolved.return_type.clone()),
                 origin,
                 mutability: mutable,
-            }));
+            };
+            self.operation_adjustments.borrow_mut().insert(
+                span.clone(),
+                crate::checked::SemanticAdjustment::ReferenceResult {
+                    reference: reference.clone(),
+                },
+            );
+            Some(reference)
+        } else {
+            None
+        };
+
+        let boundary = self.checked_call_boundary(&span, args, kwargs, &boundary_before);
+
+        // Retain the complete selected-call payload independently of the
+        // compatibility adjustment slot.  This is the authoritative handoff
+        // for nominal subscripts, and lets reference results coexist with
+        // descriptor and capture metadata at one source expression.
+        if let Some(target) = selected_target {
+            use crate::checked::{CheckedCallArgument, CheckedCallArgumentSource};
+            let mut arguments = resolved
+                .slots
+                .iter()
+                .enumerate()
+                .map(|(index, slot)| CheckedCallArgument {
+                    source: match slot {
+                        ArgSlot::Positional(position) => {
+                            CheckedCallArgumentSource::Positional(*position)
+                        }
+                        ArgSlot::Keyword(position) => CheckedCallArgumentSource::Keyword(*position),
+                        ArgSlot::Default => CheckedCallArgumentSource::Default,
+                    },
+                    parameter_ty: resolved
+                        .param_types
+                        .get(index)
+                        .cloned()
+                        .unwrap_or(Ty::Error),
+                    requires_place: matches!(
+                        resolved.conventions.get(index).copied().flatten(),
+                        Some(ArgConvention::Mut | ArgConvention::Ref)
+                    ),
+                    convention: effective_conventions.get(index).copied().flatten(),
+                })
+                .collect::<Vec<_>>();
+            if let Some(element) = &resolved.variadic_element {
+                arguments.extend(resolved.positional_overflow.iter().enumerate().map(
+                    |(pack_index, position)| CheckedCallArgument {
+                        source: CheckedCallArgumentSource::Positional(*position),
+                        parameter_ty: match element {
+                            Ty::RuntimePack(elements) => {
+                                elements.get(pack_index).cloned().unwrap_or(Ty::Error)
+                            }
+                            _ => element.clone(),
+                        },
+                        requires_place: false,
+                        convention: None,
+                    },
+                ));
+            }
+            if let Some(element) = &resolved.keyword_element {
+                arguments.extend(resolved.keyword_overflow.iter().map(|position| {
+                    CheckedCallArgument {
+                        source: CheckedCallArgumentSource::Keyword(*position),
+                        parameter_ty: element.clone(),
+                        requires_place: false,
+                        convention: None,
+                    }
+                }));
+            }
+            let argument_types = args
+                .iter()
+                .chain(kwargs.iter().map(|argument| &argument.value))
+                .filter_map(|expression| {
+                    self.expression_types
+                        .borrow()
+                        .get(&expression.source_span())
+                        .cloned()
+                })
+                .collect::<Vec<_>>();
+            let captures = self.call_capture_effects(&argument_types);
+            let parameter_arguments = param_args
+                .iter()
+                .filter_map(|argument| {
+                    let (name, argument) = match argument {
+                        crate::ast::ParamArg::Named { name, value } => {
+                            (Some(name.clone()), value.as_ref())
+                        }
+                        argument => (None, argument),
+                    };
+                    let value_source = match argument {
+                        crate::ast::ParamArg::Type(_) => None,
+                        crate::ast::ParamArg::Value(expression) => {
+                            let erased = self
+                                .operation_adjustments
+                                .borrow()
+                                .get(&expression.source_span())
+                                .is_some_and(|adjustment| {
+                                    matches!(
+                                        adjustment,
+                                        crate::checked::SemanticAdjustment::EraseCompileTimeArgument
+                                    )
+                                });
+                            if erased {
+                                return None;
+                            }
+                            Some(expression.source_span())
+                        }
+                        crate::ast::ParamArg::Named { .. } => unreachable!(),
+                    };
+                    Some(crate::checked::CheckedCallParameterArgument { name, value_source })
+                })
+                .collect();
+            if reference_result.is_none() && !captures.is_empty() {
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    crate::checked::SemanticAdjustment::CallableCaptureAccesses(captures.clone()),
+                );
+            }
+            self.selected_calls.borrow_mut().insert(
+                span,
+                crate::checked::CheckedCallContract {
+                    target,
+                    raises: call_error,
+                    result_ty: reference_result
+                        .clone()
+                        .map(Ty::Ref)
+                        .unwrap_or_else(|| resolved.return_type.clone()),
+                    receiver_requires_place: matches!(
+                        resolved.self_convention,
+                        Some(ArgConvention::Mut | ArgConvention::Ref)
+                    ),
+                    receiver_convention: effective_receiver_convention,
+                    arguments,
+                    captures,
+                    reference_result: reference_result.clone(),
+                    parameter_arguments,
+                    param_decls: resolved.param_decls.clone(),
+                    boundary,
+                },
+            );
         }
-        Ok(resolved.return_type)
+        Ok(reference_result
+            .map(|reference| *reference.referent)
+            .unwrap_or(resolved.return_type))
     }
 
     /// Apply the implicit conversions selected while scoring one concrete method
@@ -9347,7 +14382,9 @@ impl Checker {
             };
             if let Some(expected) = resolved.param_types.get(index) {
                 let actual = self.infer_with_expected(expression, expected, true)?;
-                if !self.record_implicit_conversion(expression, &actual, expected)? {
+                if !self.has_index_normalization(expression, expected)
+                    && !self.record_implicit_conversion(expression, &actual, expected)?
+                {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: actual.to_string(),
@@ -9373,6 +14410,209 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    fn call_boundary_snapshot(
+        &self,
+        span: &SourceSpan,
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+    ) -> CallBoundarySnapshot {
+        let invalidations = self.interior_invalidations.borrow();
+        let mut before = HashMap::new();
+        for source in std::iter::once(span.clone())
+            .chain(args.iter().map(Expr::source_span))
+            .chain(kwargs.iter().map(|argument| argument.value.source_span()))
+        {
+            before
+                .entry(source.clone())
+                .or_insert_with(|| invalidations.get(&source).cloned().unwrap_or_default());
+        }
+        CallBoundarySnapshot {
+            invalidations: before,
+        }
+    }
+
+    /// Freeze the value adaptations and generation changes belonging to one
+    /// selected call. A later call may reuse the same source occurrence (the
+    /// getter/setter pair of augmented subscript assignment), so these facts must
+    /// travel with the call contract rather than remain only in source-keyed maps.
+    fn checked_call_boundary(
+        &self,
+        span: &SourceSpan,
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+        before: &CallBoundarySnapshot,
+    ) -> crate::checked::CheckedCallBoundary {
+        use crate::checked::{
+            CheckedCallArgumentBoundary, CheckedCallArgumentSource, CheckedCallBoundary,
+            CheckedCallValueAdjustment,
+        };
+
+        let overloads = self.overload_targets.borrow();
+        let implicit = self.implicit_conversions.borrow();
+        let operations = self.operation_adjustments.borrow();
+        let expression_types = self.expression_types.borrow();
+        let invalidations = self.interior_invalidations.borrow();
+        let argument =
+            |source: CheckedCallArgumentSource, expression: &Expr| -> CheckedCallArgumentBoundary {
+                let value_source = expression.source_span();
+                let adjustments =
+                    if matches!(expression_types.get(&value_source), Some(Ty::Overload(_)))
+                        && let Some(target) = overloads.get(&value_source)
+                    {
+                        vec![CheckedCallValueAdjustment::ResolveCallable {
+                            target: target.clone(),
+                        }]
+                    } else if let Some(target) = implicit.get(&value_source) {
+                        if crate::symbol::is_index_normalization_symbol(target) {
+                            vec![CheckedCallValueAdjustment::IndexNormalization {
+                                target: target.clone(),
+                            }]
+                        } else {
+                            vec![CheckedCallValueAdjustment::ImplicitConversion {
+                                target: target.clone(),
+                            }]
+                        }
+                    } else {
+                        operations
+                            .get(&value_source)
+                            .and_then(|adjustment| match adjustment {
+                                crate::checked::SemanticAdjustment::MaterializeLiteral(target) => {
+                                    Some(vec![CheckedCallValueAdjustment::MaterializeLiteral {
+                                        target: Box::new(target.clone()),
+                                    }])
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_default()
+                    };
+                let prior = before
+                    .invalidations
+                    .get(&value_source)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let call_invalidations = invalidations
+                    .get(&value_source)
+                    .into_iter()
+                    .flatten()
+                    .filter(|fact| !prior.contains(fact))
+                    .cloned()
+                    .collect();
+                CheckedCallArgumentBoundary {
+                    source,
+                    value_source,
+                    adjustments,
+                    invalidations: call_invalidations,
+                }
+            };
+
+        let arguments = args
+            .iter()
+            .enumerate()
+            .map(|(index, expression)| {
+                argument(CheckedCallArgumentSource::Positional(index), expression)
+            })
+            .chain(kwargs.iter().enumerate().map(|(index, argument_value)| {
+                argument(
+                    CheckedCallArgumentSource::Keyword(index),
+                    &argument_value.value,
+                )
+            }))
+            .collect();
+        let prior = before
+            .invalidations
+            .get(span)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let call_invalidations = invalidations
+            .get(span)
+            .into_iter()
+            .flatten()
+            .filter(|fact| !prior.contains(fact))
+            .cloned()
+            .collect();
+        CheckedCallBoundary {
+            arguments,
+            invalidations: call_invalidations,
+        }
+    }
+
+    fn snapshot_value_adjustments(&self, sources: &[SourceSpan]) -> Vec<ValueAdjustmentSnapshot> {
+        let overloads = self.overload_targets.borrow();
+        let implicit = self.implicit_conversions.borrow();
+        let operations = self.operation_adjustments.borrow();
+        sources
+            .iter()
+            .map(|source| ValueAdjustmentSnapshot {
+                source: source.clone(),
+                overload_target: overloads.get(source).cloned(),
+                implicit_conversion: implicit.get(source).cloned(),
+                operation: operations.get(source).cloned(),
+            })
+            .collect()
+    }
+
+    /// Put shared source operands back into their pre-call state after freezing a
+    /// call boundary. Augmented subscripts then select the setter independently;
+    /// neither call can overwrite the other's conversion or normalization.
+    fn restore_value_adjustments(&self, snapshots: &[ValueAdjustmentSnapshot]) {
+        let mut overloads = self.overload_targets.borrow_mut();
+        let mut implicit = self.implicit_conversions.borrow_mut();
+        let mut operations = self.operation_adjustments.borrow_mut();
+        for snapshot in snapshots {
+            match &snapshot.overload_target {
+                Some(target) => {
+                    overloads.insert(snapshot.source.clone(), target.clone());
+                }
+                None => {
+                    overloads.remove(&snapshot.source);
+                }
+            }
+            match &snapshot.implicit_conversion {
+                Some(target) => {
+                    implicit.insert(snapshot.source.clone(), target.clone());
+                }
+                None => {
+                    implicit.remove(&snapshot.source);
+                }
+            }
+            match &snapshot.operation {
+                Some(adjustment) => {
+                    operations.insert(snapshot.source.clone(), adjustment.clone());
+                }
+                None => {
+                    operations.remove(&snapshot.source);
+                }
+            }
+        }
+    }
+
+    /// Remove call-local invalidations from the compatibility source tables once
+    /// they have been frozen on a selected contract. Effects belonging to
+    /// evaluation of the argument expression were present in the pre-call
+    /// snapshot and therefore are not listed in `boundary` and remain untouched.
+    fn remove_call_boundary_invalidations(
+        &self,
+        site: &SourceSpan,
+        boundary: &crate::checked::CheckedCallBoundary,
+    ) {
+        let mut invalidations = self.interior_invalidations.borrow_mut();
+        let mut remove = |source: &SourceSpan, facts: &[crate::checked::InteriorInvalidation]| {
+            let empty = if let Some(current) = invalidations.get_mut(source) {
+                current.retain(|fact| !facts.contains(fact));
+                current.is_empty()
+            } else {
+                false
+            };
+            if empty {
+                invalidations.remove(source);
+            }
+        };
+        for argument in &boundary.arguments {
+            remove(&argument.value_source, &argument.invalidations);
+        }
+        remove(site, &boundary.invalidations);
     }
 
     fn score_method_call(
@@ -9418,10 +14658,12 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             let actual = self.infer_with_expected(expression, &params[index], false)?;
-            if !self.value_coerces(&actual, &params[index])
-                && self
-                    .implicit_conversion_target(&actual, &params[index])?
-                    .is_none()
+            if !self.has_index_normalization(expression, &params[index])
+                && !self.value_coerces(&actual, &params[index])
+                && (self.is_synthetic_slice_descriptor(expression)
+                    || self
+                        .implicit_conversion_target(&actual, &params[index])?
+                        .is_none())
             {
                 return Err(TypeError::TypeMismatch {
                     expected: params[index].to_string(),
@@ -9502,6 +14744,7 @@ impl Checker {
         Ok(MethodCallScore {
             rank: overload_rank(score, variadic.is_some() || kw_variadic.is_some(), 0, false),
             slots,
+            positional_overflow: overflow,
             keyword_overflow,
         })
     }
@@ -9514,10 +14757,18 @@ impl Checker {
         params: &[Ty],
         variadic: Option<&Ty>,
         kw_variadic: Option<&Ty>,
+        param_args: &[crate::ast::ParamArg],
         args: &[Expr],
         kwargs: &[crate::ast::KwArg],
     ) -> Result<MethodInstantiation, TypeError> {
         if signature.decls.is_empty() {
+            if !param_args.is_empty() {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: name.to_string(),
+                    expected: 0,
+                    got: param_args.len(),
+                });
+            }
             return Ok((
                 params.to_vec(),
                 variadic.cloned(),
@@ -9579,17 +14830,22 @@ impl Checker {
             }
         }
         let (subst, tyargs) =
-            self.resolve_use_params(name, &signature.decls, &[], &patterns, &actuals)?;
+            self.resolve_use_params(name, &signature.decls, param_args, &patterns, &actuals)?;
+        let values = Self::value_argument_environment(&signature.decls, &tyargs);
+        let resolve = |ty: &Ty| {
+            let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
+            self.resolve_dependent_ty(&substituted, &values)
+        };
         let arguments = signature
             .decls
             .iter()
-            .zip(tyargs)
+            .zip(tyargs.iter().cloned())
             .map(|(decl, argument)| (decl.name().trim_start_matches('*').to_string(), argument))
             .collect();
         Ok((
-            params.iter().map(|ty| substitute(ty, &subst)).collect(),
-            variadic.map(|ty| substitute(ty, &subst)),
-            kw_variadic.map(|ty| substitute(ty, &subst)),
+            params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
+            variadic.map(resolve).transpose()?,
+            kw_variadic.map(resolve).transpose()?,
             subst,
             arguments,
         ))
@@ -9665,10 +14921,13 @@ impl Checker {
         }
     }
 
-    /// Type an `UnsafePointer[T]` instance method. Currently only `free()` → `None`
-    /// (indexed load/store go through `infer_index` / `check_place`).
+    /// Type an `UnsafePointer[T]` instance method. `take` and `destroy` are raw
+    /// initialized-slot operations reserved for the bundled self-hosted
+    /// collections; indexed load/store remain ordinary public pointer syntax.
     fn infer_pointer_method(
         &self,
+        span: &SourceSpan,
+        object: &Expr,
         method: &str,
         elem: &Ty,
         origin: &crate::origin::PointerOrigin,
@@ -9692,10 +14951,68 @@ impl Checker {
                 }
                 Ok(Ty::None)
             }
+            "take" | "destroy" => {
+                if !is_bundled_collection_source(object.source.as_deref()) {
+                    return Err(TypeError::NoSuchMethod {
+                        object_type: Ty::Pointer {
+                            element: Box::new(elem.clone()),
+                            origin: origin.clone(),
+                        }
+                        .to_string(),
+                        method: method.to_string(),
+                    });
+                }
+                if !matches!(origin, crate::origin::PointerOrigin::Legacy) {
+                    return Err(TypeError::Unsupported(format!(
+                        "{method}() is supported only on an allocation-owning \
+                         UnsafePointer without an explicit origin"
+                    )));
+                }
+                if args.len() != 1 {
+                    return Err(TypeError::ArityMismatch {
+                        name: method.to_string(),
+                        expected: 1,
+                        got: args.len(),
+                    });
+                }
+                let index = self.infer(&args[0])?;
+                if !coerces(&index, &Ty::Int) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "Int".to_string(),
+                        found: index.to_string(),
+                        context: format!("argument to compiler-private UnsafePointer.{method}"),
+                    });
+                }
+                if method == "destroy" && !self.is_implicitly_deletable(elem) {
+                    return Err(TypeError::TraitNotSatisfied {
+                        param: "T".to_string(),
+                        ty: elem.to_string(),
+                        trait_name: "ImplicitlyDeletable".to_string(),
+                        reason: self.trait_failure_reason(elem, "ImplicitlyDeletable"),
+                    });
+                }
+                let adjustment = if method == "take" {
+                    crate::checked::SemanticAdjustment::PointerStorageTake {
+                        element: elem.clone(),
+                    }
+                } else {
+                    crate::checked::SemanticAdjustment::PointerStorageDestroy {
+                        element: elem.clone(),
+                    }
+                };
+                self.operation_adjustments
+                    .borrow_mut()
+                    .insert(span.clone(), adjustment);
+                Ok(if method == "take" {
+                    elem.clone()
+                } else {
+                    Ty::None
+                })
+            }
             _ => Err(TypeError::NoSuchMethod {
                 object_type: Ty::Pointer {
                     element: Box::new(elem.clone()),
-                    origin: crate::origin::PointerOrigin::Legacy,
+                    origin: origin.clone(),
                 }
                 .to_string(),
                 method: method.to_string(),
@@ -9740,6 +15057,61 @@ impl Checker {
         Some(Ok(substitute(&sig.ret, &subst)))
     }
 
+    /// Resolve the exact methods used by the bundled List `for ref` bridge.
+    /// These synthetic calls are checked here and retained on the iteration
+    /// protocol; their syntax is never added to the source-expression arena.
+    fn reference_iteration_protocol(
+        &self,
+        object: &Expr,
+    ) -> Result<crate::checked::ReferenceIterationProtocol, TypeError> {
+        let call_site = || {
+            let mut expression = Expr::new(ExprKind::None, crate::token::DUMMY_SPAN);
+            expression.source = object.source.clone();
+            expression.source_span()
+        };
+        let len_site = call_site();
+        self.infer_method_call(
+            len_site.clone(),
+            object,
+            "__len__",
+            MethodCallArguments::ordinary(&[], &[]),
+        )?;
+        let len = self
+            .selected_calls
+            .borrow_mut()
+            .remove(&len_site)
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "List reference iteration lost its selected __len__ contract".to_string(),
+                )
+            })?;
+
+        let mut index = Expr::new(ExprKind::Int(0i64.into()), crate::token::DUMMY_SPAN);
+        index.source = object.source.clone();
+        let getitem_site = call_site();
+        self.infer_method_call(
+            getitem_site.clone(),
+            object,
+            "__getitem__",
+            MethodCallArguments::ordinary(std::slice::from_ref(&index), &[]),
+        )?;
+        let getitem = self
+            .selected_calls
+            .borrow_mut()
+            .remove(&getitem_site)
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "List reference iteration lost its selected __getitem__ contract".to_string(),
+                )
+            })?;
+        if getitem.reference_result.is_none() {
+            return Err(TypeError::InvariantViolation(
+                "List reference iteration requires a reference-returning __getitem__".to_string(),
+            ));
+        }
+        Ok(crate::checked::ReferenceIterationProtocol { len, getitem })
+    }
+
     /// Resolve a loop's complete iterator protocol.  In particular, owned
     /// iteration selects `__iter__(var self)` and never silently falls back to a
     /// borrowed `__iter__`.  The selected symbols cross the checked boundary so
@@ -9760,16 +15132,34 @@ impl Checker {
                 element,
                 IterationProtocol {
                     mode,
+                    borrowed_origin: None,
+                    reference: None,
                     prepare: Vec::new(),
                     has_next: None,
                     next: None,
+                    exhaustion: None,
                 },
             )
         };
+        // Focused checker users may deliberately omit the implicit prelude.
+        // Preserve the old intrinsic proof only in that compatibility mode;
+        // linked production programs have registered nominal declarations and
+        // must resolve their ordinary `__iter__`/`__next__` contracts below.
+        if let Ty::Struct(name, _) = ty
+            && !self.structs.contains_key(name)
+        {
+            if crate::types::is_range_type(ty) {
+                return Ok(builtin(Ty::Int));
+            }
+            if let Some(element) = list_element(ty).or_else(|| set_element(ty)) {
+                return Ok(builtin(element.clone()));
+            }
+            if let Some((key, _)) = dict_elements(ty) {
+                return Ok(builtin(key.clone()));
+            }
+        }
         match ty {
-            Ty::Range => Ok(builtin(Ty::Int)),
-            Ty::List(elem) | Ty::Set(elem) => Ok(builtin((**elem).clone())),
-            Ty::Dict(key, _) => Ok(builtin((**key).clone())),
+            Ty::VariadicPack(element) => Ok(builtin((**element).clone())),
             Ty::Struct(..) => self.struct_iteration_protocol(ty, mode, 0),
             Ty::Param { bounds, .. } => {
                 let required = if owned { "IterableOwned" } else { "Iterable" };
@@ -9799,17 +15189,23 @@ impl Checker {
                     },
                     IterationProtocol {
                         mode,
-                        prepare: vec!["__trait_dispatch.__iter__".to_string()],
+                        borrowed_origin: None,
+                        reference: None,
+                        prepare: vec![crate::symbol::iterator_dispatch_symbol(match mode {
+                            IterationMode::Borrowed => crate::ast::ArgConvention::Read,
+                            IterationMode::Owned => crate::ast::ArgConvention::Var,
+                        })],
                         has_next: Some("__iterator_dispatch.__len__".to_string()),
                         next: Some("__iterator_dispatch.__next__".to_string()),
+                        exhaustion: None,
                     },
                 ))
             }
             other => Err(TypeError::TypeMismatch {
                 expected: if owned {
-                    "range, a builtin collection, or a type with __iter__(var self)"
+                    "a nominal collection or a type with __iter__(var self)"
                 } else {
-                    "range, a builtin collection, or a type with borrowed __iter__"
+                    "a nominal collection or a type with borrowed __iter__"
                 }
                 .to_string(),
                 found: other.to_string(),
@@ -9844,106 +15240,81 @@ impl Checker {
             .methods
             .get("__iter__")
             .ok_or_else(|| no_method(c_ty, "__iter__"))?;
-        let mut matching = candidates.iter().filter(|sig| {
-            sig.params.is_empty()
-                && match mode {
-                    IterationMode::Owned => {
-                        sig.self_convention == Some(crate::ast::ArgConvention::Var)
-                    }
-                    IterationMode::Borrowed => matches!(
-                        sig.self_convention,
-                        None | Some(
-                            crate::ast::ArgConvention::Read | crate::ast::ArgConvention::Ref
-                        )
-                    ),
-                }
-        });
-        let iter_sig = matching.next().ok_or_else(|| TypeError::TypeMismatch {
-            expected: match mode {
-                IterationMode::Owned => "an '__iter__(var self)' method",
-                IterationMode::Borrowed => "a borrowed '__iter__' method",
+        let matching = candidates
+            .iter()
+            .filter(|sig| match mode {
+                IterationMode::Owned => sig.self_convention == Some(crate::ast::ArgConvention::Var),
+                IterationMode::Borrowed => matches!(
+                    sig.self_convention,
+                    None | Some(crate::ast::ArgConvention::Read | crate::ast::ArgConvention::Ref)
+                ),
+            })
+            .filter_map(|sig| {
+                self.instantiate_iteration_method(cname, cinfo, ctargs, sig)
+                    .map(|(ret, error)| (sig, ret, error))
+            })
+            .collect::<Vec<_>>();
+        let [(iter_sig, it_ty, iter_error)] = matching.as_slice() else {
+            if matching.len() > 1 {
+                return Err(TypeError::BadCall {
+                    func: format!("{cname}.__iter__"),
+                    reason: "ambiguous iterator receiver convention".to_string(),
+                });
             }
-            .to_string(),
-            found: format!("{}.__iter__", c_ty),
-            context: "for-loop iterator selection".to_string(),
-        })?;
-        if matching.next().is_some() {
-            return Err(TypeError::BadCall {
-                func: format!("{cname}.__iter__"),
-                reason: "ambiguous iterator receiver convention".to_string(),
+            return Err(TypeError::TypeMismatch {
+                expected: match mode {
+                    IterationMode::Owned => "an '__iter__(var self)' method",
+                    IterationMode::Borrowed => "a borrowed '__iter__' method",
+                }
+                .to_string(),
+                found: format!("{}.__iter__", c_ty),
+                context: "for-loop iterator selection".to_string(),
             });
+        };
+        if let Some(error) = iter_error {
+            self.require_error(
+                format!("implicit call to raising method '{cname}.__iter__'"),
+                error.clone(),
+            )?;
         }
         let prepare_symbol = if candidates.len() > 1 {
             method_lowered_name(cname, "__iter__", iter_sig)
         } else {
             format!("{cname}.__iter__")
         };
-        let it_ty = substitute(&iter_sig.ret, &struct_subst(&cinfo.decls, ctargs));
-        if let Ty::List(elem) | Ty::Set(elem) = &it_ty {
-            return Ok((
-                (**elem).clone(),
-                crate::checked::IterationProtocol {
-                    mode,
-                    prepare: vec![prepare_symbol],
-                    has_next: None,
-                    next: None,
-                },
-            ));
-        }
-        if let Ty::Dict(key, _) = &it_ty {
-            return Ok((
-                (**key).clone(),
-                crate::checked::IterationProtocol {
-                    mode,
-                    prepare: vec![prepare_symbol],
-                    has_next: None,
-                    next: None,
-                },
-            ));
-        }
-        // The iterator must itself be a struct with `__next__` and `__len__`.
+        // The iterator must itself be a struct with `__next__`. Current Mojo
+        // terminates iteration when that method raises the typed
+        // `StopIteration`; the legacy bounded protocol additionally exposes
+        // `__len__` and keeps the old nonraising `__next__` path available.
         let bad_iter = || TypeError::TypeMismatch {
-            expected: "List or an iterator struct (with __next__ and __len__)".to_string(),
+            expected: "List or an iterator struct with __next__".to_string(),
             found: it_ty.to_string(),
             context: "__iter__ return type".to_string(),
         };
-        let Ty::Struct(iname, itargs) = &it_ty else {
+        let Ty::Struct(iname, itargs) = it_ty else {
             return Err(bad_iter());
         };
         let iinfo = self.structs.get(iname).ok_or_else(bad_iter)?;
         if !iinfo.methods.contains_key("__next__") && iinfo.methods.contains_key("__iter__") {
-            let (element, mut nested) = self.struct_iteration_protocol(&it_ty, mode, depth + 1)?;
+            let (element, mut nested) = self.struct_iteration_protocol(it_ty, mode, depth + 1)?;
             nested.prepare.insert(0, prepare_symbol);
             return Ok((element, nested));
         }
-        let isubst = struct_subst(&iinfo.decls, itargs);
-        // `__len__(self) -> Int` — bounded iteration (loop while `len(it) > 0`).
-        let len_sig = iinfo
-            .methods
-            .get("__len__")
-            .and_then(|sigs| sigs.iter().find(|sig| sig.params.is_empty()))
-            .ok_or_else(|| no_method(&it_ty, "__len__"))?;
-        let len_ret = substitute(&len_sig.ret, &isubst);
-        if len_ret != Ty::Int {
-            return Err(TypeError::TypeMismatch {
-                expected: "Int".to_string(),
-                found: len_ret.to_string(),
-                context: "return type of iterator '__len__'".to_string(),
-            });
-        }
-        // `__next__(mut self) -> Element` — advances, so it must mutate `self`.
-        let next_sig = iinfo
+        // `__next__(mut self)` advances, so it must mutate `self`.
+        let next_candidates = iinfo
             .methods
             .get("__next__")
-            .and_then(|sigs| sigs.iter().find(|sig| sig.params.is_empty()))
-            .ok_or_else(|| no_method(&it_ty, "__next__"))?;
-        if !next_sig.params.is_empty() {
-            return Err(TypeError::ArityMismatch {
-                name: "__next__".to_string(),
-                expected: 0,
-                got: next_sig.params.len(),
-            });
-        }
+            .ok_or_else(|| no_method(it_ty, "__next__"))?;
+        let applicable_next = next_candidates
+            .iter()
+            .filter_map(|sig| {
+                self.instantiate_iteration_method(iname, iinfo, itargs, sig)
+                    .map(|(ret, error)| (sig, ret, error))
+            })
+            .collect::<Vec<_>>();
+        let [(next_sig, element, next_error)] = applicable_next.as_slice() else {
+            return Err(no_method(it_ty, "__next__"));
+        };
         if !matches!(
             next_sig.self_convention,
             Some(crate::ast::ArgConvention::Mut)
@@ -9954,10 +15325,73 @@ impl Checker {
                 context: "iterator '__next__'".to_string(),
             });
         }
+        let next_symbol = if iinfo
+            .methods
+            .get("__next__")
+            .is_some_and(|methods| methods.len() > 1)
+        {
+            method_lowered_name(iname, "__next__", next_sig)
+        } else {
+            format!("{iname}.__next__")
+        };
+        if next_sig.raises {
+            let exhaustion = next_error.clone().unwrap_or(Ty::Error);
+            let is_stop_iteration = matches!(
+                &exhaustion,
+                Ty::Struct(name, arguments)
+                    if arguments.is_empty()
+                        && (name == "StopIteration" || name.ends_with("$StopIteration"))
+            );
+            if !is_stop_iteration {
+                return Err(TypeError::TypeMismatch {
+                    expected: "an '__next__' that raises StopIteration".to_string(),
+                    found: format!("raises {exhaustion}"),
+                    context: "iterator '__next__' exhaustion contract".to_string(),
+                });
+            }
+            return Ok((
+                element.clone(),
+                crate::checked::IterationProtocol {
+                    mode,
+                    borrowed_origin: None,
+                    reference: None,
+                    prepare: vec![prepare_symbol],
+                    has_next: None,
+                    next: Some(next_symbol),
+                    exhaustion: Some(exhaustion),
+                },
+            ));
+        }
+
+        // Backward-compatible bounded iteration: `__len__(self) -> Int`
+        // determines whether the nonraising `__next__` may be called.
+        let len_candidates = iinfo
+            .methods
+            .get("__len__")
+            .ok_or_else(|| no_method(it_ty, "__len__"))?;
+        let applicable_len = len_candidates
+            .iter()
+            .filter_map(|sig| {
+                self.instantiate_iteration_method(iname, iinfo, itargs, sig)
+                    .map(|(ret, _)| (sig, ret))
+            })
+            .collect::<Vec<_>>();
+        let [(len_sig, len_ret)] = applicable_len.as_slice() else {
+            return Err(no_method(it_ty, "__len__"));
+        };
+        if *len_ret != Ty::Int {
+            return Err(TypeError::TypeMismatch {
+                expected: "Int".to_string(),
+                found: len_ret.to_string(),
+                context: "return type of iterator '__len__'".to_string(),
+            });
+        }
         Ok((
-            substitute(&next_sig.ret, &isubst),
+            element.clone(),
             crate::checked::IterationProtocol {
                 mode,
+                borrowed_origin: None,
+                reference: None,
                 prepare: vec![prepare_symbol],
                 has_next: Some(
                     if iinfo
@@ -9970,18 +15404,79 @@ impl Checker {
                         format!("{iname}.__len__")
                     },
                 ),
-                next: Some(
-                    if iinfo
-                        .methods
-                        .get("__next__")
-                        .is_some_and(|methods| methods.len() > 1)
-                    {
-                        method_lowered_name(iname, "__next__", next_sig)
-                    } else {
-                        format!("{iname}.__next__")
-                    },
-                ),
+                next: Some(next_symbol),
+                exhaustion: None,
             },
+        ))
+    }
+
+    /// Instantiate one nullary iterator-protocol method exactly as an ordinary
+    /// method call would. In particular, a method-level `where` clause may name
+    /// either its own compile-time parameters or the receiver struct's
+    /// parameters (`Self.T` is canonicalized to `T`). A declaration which is
+    /// present by name but unavailable for this specialization is not a protocol
+    /// implementation.
+    fn instantiate_iteration_method(
+        &self,
+        owner: &str,
+        info: &StructInfo,
+        receiver_arguments: &[TyArg],
+        signature: &MethodSig,
+    ) -> Option<(Ty, Option<Ty>)> {
+        if !signature.has_self || !signature.params.is_empty() {
+            return None;
+        }
+        let receiver_subst = struct_subst(&info.decls, receiver_arguments);
+        let params = signature
+            .params
+            .iter()
+            .map(|ty| substitute(ty, &receiver_subst))
+            .collect::<Vec<_>>();
+        let receiver_variadic = signature
+            .variadic
+            .as_deref()
+            .map(|ty| substitute(ty, &receiver_subst));
+        let receiver_kw_variadic = signature
+            .kw_variadic
+            .as_deref()
+            .map(|ty| substitute(ty, &receiver_subst));
+        let (_, variadic, kw_variadic, method_subst, mut arguments) = self
+            .instantiate_method_generics(
+                &format!("{owner} iterator protocol"),
+                signature,
+                &params,
+                receiver_variadic.as_ref(),
+                receiver_kw_variadic.as_ref(),
+                &[],
+                &[],
+                &[],
+            )
+            .ok()?;
+        // Iterator dunders have no explicit runtime arguments. A variadic or
+        // keyword-variadic declaration is not the exact protocol shape even
+        // though an empty ordinary call could technically invoke it.
+        if variadic.is_some() || kw_variadic.is_some() {
+            return None;
+        }
+        for (decl, argument) in info.decls.iter().zip(receiver_arguments) {
+            arguments.insert(
+                decl.name().trim_start_matches('*').to_string(),
+                argument.clone(),
+            );
+        }
+        if !self.method_constraints_apply(signature, &arguments) {
+            return None;
+        }
+        let instantiate = |ty: &Ty| substitute(&substitute(ty, &receiver_subst), &method_subst);
+        Some((
+            instantiate(&signature.ret),
+            signature.raises.then(|| {
+                signature
+                    .error
+                    .as_deref()
+                    .map(instantiate)
+                    .unwrap_or(Ty::Error)
+            }),
         ))
     }
 
@@ -9998,7 +15493,7 @@ impl Checker {
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
         let no_such = || TypeError::NoSuchMethod {
-            object_type: Ty::List(Box::new(elem.clone())).to_string(),
+            object_type: list_type(elem.clone()).to_string(),
             method: method.to_string(),
         };
         let mutating = matches!(
@@ -10081,9 +15576,10 @@ impl Checker {
             }
             "extend" => {
                 let tys = self.builtin_args("extend", 1, args)?;
-                if tys[0] != Ty::List(Box::new(elem.clone())) {
+                let expected = list_type(elem.clone());
+                if tys[0] != expected {
                     return Err(TypeError::TypeMismatch {
-                        expected: Ty::List(Box::new(elem.clone())).to_string(),
+                        expected: expected.to_string(),
                         found: tys[0].to_string(),
                         context: "argument to 'extend'".to_string(),
                     });
@@ -10102,30 +15598,155 @@ impl Checker {
     /// Type the value-producing Tuple helpers in the current builtin surface.
     fn infer_tuple_method(
         &self,
+        span: &SourceSpan,
+        object: &Expr,
         method: &str,
         elements: &[Ty],
-        args: &[Expr],
+        call: MethodCallArguments<'_>,
     ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            parameterized_syntax,
+            ..
+        } = call;
+        let receiver_implicitly_copyable = elements
+            .iter()
+            .all(|element| self.is_implicitly_copyable(element));
         match method {
             "reverse" => {
+                if !param_args.is_empty() {
+                    return Err(TypeError::WrongTypeArgCount {
+                        name: "Tuple.reverse".to_string(),
+                        expected: 0,
+                        got: param_args.len(),
+                    });
+                }
                 self.builtin_args("reverse", 0, args)?;
-                Ok(Ty::Tuple(elements.iter().rev().cloned().collect()))
+                if is_place_expr(object) && !receiver_implicitly_copyable {
+                    return Err(TypeError::NonCopyable {
+                        ty: nominal_tuple_type(elements.to_vec()).to_string(),
+                        context:
+                            "consuming receiver of method 'reverse' must be transferred with '^'"
+                                .to_string(),
+                    });
+                }
+                Ok(nominal_tuple_type(elements.iter().rev().cloned().collect()))
             }
             "concat" => {
+                if !param_args.is_empty() {
+                    return Err(TypeError::WrongTypeArgCount {
+                        name: "Tuple.concat".to_string(),
+                        expected: 0,
+                        got: param_args.len(),
+                    });
+                }
                 let tys = self.builtin_args("concat", 1, args)?;
-                let Ty::Tuple(other) = &tys[0] else {
+                let Some(other) = tuple_elements(&tys[0]) else {
                     return Err(TypeError::TypeMismatch {
                         expected: "a Tuple".to_string(),
                         found: tys[0].to_string(),
                         context: "argument to 'concat'".to_string(),
                     });
                 };
+                if is_place_expr(object) && !receiver_implicitly_copyable {
+                    return Err(TypeError::NonCopyable {
+                        ty: nominal_tuple_type(elements.to_vec()).to_string(),
+                        context:
+                            "consuming receiver of method 'concat' must be transferred with '^'"
+                                .to_string(),
+                    });
+                }
+                if is_place_expr(&args[0])
+                    && !other
+                        .iter()
+                        .all(|element| self.is_implicitly_copyable(element))
+                {
+                    return Err(TypeError::NonCopyable {
+                        ty: tys[0].to_string(),
+                        context:
+                            "deinit argument 1 to method 'concat' must be transferred with '^'"
+                                .to_string(),
+                    });
+                }
                 let mut result = elements.to_vec();
-                result.extend(other.iter().cloned());
-                Ok(Ty::Tuple(result))
+                result.extend(other.into_iter().cloned());
+                Ok(nominal_tuple_type(result))
+            }
+            "consume_elements" => {
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: "Tuple.consume_elements".to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                if is_place_expr(object) && !receiver_implicitly_copyable {
+                    return Err(TypeError::NonCopyable {
+                        ty: nominal_tuple_type(elements.to_vec()).to_string(),
+                        context: "consuming receiver of method 'consume_elements' must be transferred with '^'"
+                            .to_string(),
+                    });
+                }
+                let index_decl = ParamDecl::Value {
+                    name: "index".to_string(),
+                    ty: Box::new(Ty::Int),
+                    default: None,
+                    callable_default: None,
+                    infer_only: false,
+                    variadic: false,
+                    constraints: Vec::new(),
+                };
+                let handler = Ty::GenericFunc {
+                    environment: crate::origin::CallableEnvironment::Capturing(
+                        crate::origin::CaptureOriginSet::empty(),
+                    ),
+                    decls: vec![index_decl],
+                    params: vec![Ty::Dependent(DependentType::Indexed {
+                        elements: elements.to_vec(),
+                        index: CtExpr::Param("index".to_string()),
+                    })],
+                    names: vec!["element".to_string()],
+                    ret: Box::new(Ty::None),
+                    required: vec![true],
+                    variadic: None,
+                    kw_variadic: None,
+                    positional_only: None,
+                    keyword_only: None,
+                    raises: false,
+                    error: None,
+                    conventions: vec![Some(ArgConvention::Var)],
+                    ref_params: Box::new(vec![None]),
+                    ref_return: None,
+                };
+                let method_decls = vec![ParamDecl::Value {
+                    name: "elt_handler".to_string(),
+                    ty: Box::new(handler),
+                    default: None,
+                    callable_default: None,
+                    infer_only: false,
+                    variadic: false,
+                    constraints: Vec::new(),
+                }];
+                self.resolve_use_params(
+                    "Tuple.consume_elements",
+                    &method_decls,
+                    param_args,
+                    &[],
+                    &[],
+                )?;
+                if parameterized_syntax {
+                    self.operation_adjustments.borrow_mut().insert(
+                        span.clone(),
+                        crate::checked::SemanticAdjustment::ParameterizedMethodCall {
+                            param_decls: method_decls,
+                        },
+                    );
+                }
+                Ok(Ty::None)
             }
             _ => Err(TypeError::NoSuchMethod {
-                object_type: Ty::Tuple(elements.to_vec()).to_string(),
+                object_type: nominal_tuple_type(elements.to_vec()).to_string(),
                 method: method.to_string(),
             }),
         }
@@ -10173,19 +15794,6 @@ impl Checker {
         methods
     }
 
-    /// Find one exact-arity trait method for expression forms that have not yet
-    /// been generalized to full call syntax (currently subscripting).
-    fn lookup_trait_method(
-        &self,
-        bounds: &[String],
-        method: &str,
-        argc: usize,
-    ) -> Option<MethodSig> {
-        self.lookup_trait_methods(bounds, method, argc)
-            .into_iter()
-            .find(|signature| signature.params.len() == argc)
-    }
-
     /// Find a type-valued associated comptime member required by any of the
     /// given trait bounds. Built-in bounds contribute none.
     fn lookup_trait_assoc_type(&self, bounds: &[String], member: &str) -> Option<Vec<String>> {
@@ -10204,7 +15812,7 @@ impl Checker {
             .iter()
             .filter_map(|b| self.traits.get(b))
             .find_map(|info| match info.comptime_members.get(member) {
-                Some(CtMemberReq::Value(ty)) => Some(ty.clone()),
+                Some(CtMemberReq::Value(ty)) => Some((**ty).clone()),
                 _ => None,
             })
     }
@@ -10243,14 +15851,20 @@ impl Checker {
         })
     }
 
-    fn infer_infix(&self, op: InfixOp, left: &Expr, right: &Expr) -> Result<Ty, TypeError> {
+    fn infer_infix(
+        &self,
+        span: Option<SourceSpan>,
+        op: InfixOp,
+        left: &Expr,
+        right: &Expr,
+    ) -> Result<Ty, TypeError> {
         let lt = self.infer(left)?;
         let rt = self.infer(right)?;
         use InfixOp::*;
 
         // Membership `in` / `not in` — the right operand is a container.
         if matches!(op, In | NotIn) {
-            return self.infer_membership(op, &lt, &rt);
+            return self.infer_membership(span, op, left, right, &lt, &rt);
         }
         // SIMD operators are elementwise (handled before the scalar-numeric path).
         if matches!(lt, Ty::Simd { .. }) || matches!(rt, Ty::Simd { .. }) {
@@ -10298,6 +15912,24 @@ impl Checker {
                     same_self && tuple_elements_equatable(left) && tuple_elements_equatable(right)
                 }
                 Lt | Gt | Le | Ge => same_self && tuple_order_compatible(left, right),
+                _ => false,
+            };
+            if supported {
+                return Ok(Ty::Bool);
+            }
+        }
+        if matches!((&lt, &rt), (Ty::Struct(left, _), Ty::Struct(right, _))
+            if !self.structs.contains_key(left) && !self.structs.contains_key(right))
+            && let (Some(left), Some(right)) = (tuple_elements(&lt), tuple_elements(&rt))
+        {
+            let left = left.into_iter().cloned().collect::<Vec<_>>();
+            let right = right.into_iter().cloned().collect::<Vec<_>>();
+            let same_self = coerces(&lt, &rt) || coerces(&rt, &lt);
+            let supported = match op {
+                Eq | Ne => {
+                    same_self && tuple_elements_equatable(&left) && tuple_elements_equatable(&right)
+                }
+                Lt | Gt | Le | Ge => same_self && tuple_order_compatible(&left, &right),
                 _ => false,
             };
             if supported {
@@ -10391,7 +16023,12 @@ impl Checker {
             ),
             // Ordering between numbers, or between equal opaque type parameters
             // whose bound promises an ordering (`T: Comparable`).
-            Lt | Gt | Le | Ge if common.is_some() || (lt == rt && has_order_bound(&lt)) => {
+            Lt | Gt | Le | Ge
+                if common.is_some()
+                    || (lt == rt
+                        && (has_order_bound(&lt)
+                            || self.has_assumed_conformance(&lt, "Comparable"))) =>
+            {
                 Some(Ty::Bool)
             }
             // Equality: between numbers (any common type), or equal non-numeric
@@ -10401,8 +16038,8 @@ impl Checker {
                     || (lt == rt
                         && (is_scalar(&lt)
                             || has_equality_bound(&lt)
-                            || matches!(&lt, Ty::Set(element) if is_list_equatable(element))
-                            || matches!(&lt, Ty::Dict(key, value) if is_list_equatable(key) && is_list_equatable(value)))) =>
+                            || self.has_assumed_conformance(&lt, "Equatable")
+                            || self.has_assumed_conformance(&lt, "Comparable"))) =>
             {
                 Some(Ty::Bool)
             }
@@ -10426,23 +16063,56 @@ impl Checker {
 
     /// Type a membership test `x in c` / `x not in c` → `Bool`. The container is
     /// a `List[T]`, heterogeneous `Tuple`, or `String` (substring test).
-    fn infer_membership(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
-        let ok = match rt {
-            Ty::List(elem) => coerces(lt, elem) && is_list_equatable(elem),
-            Ty::Set(elem) => coerces(lt, elem) && is_list_equatable(elem),
-            Ty::Dict(key, _) => coerces(lt, key) && is_list_equatable(key),
-            Ty::Tuple(_) => match lt {
-                Ty::Tuple(elements) => tuple_elements_equatable(elements),
-                other => is_list_equatable(other),
-            },
-            Ty::String => *lt == Ty::String,
+    fn infer_membership(
+        &self,
+        span: Option<SourceSpan>,
+        op: InfixOp,
+        left: &Expr,
+        right: &Expr,
+        lt: &Ty,
+        rt: &Ty,
+    ) -> Result<Ty, TypeError> {
+        let nominal_ok = match rt {
+            Ty::Struct(name, _) if !self.structs.contains_key(name) => {
+                if let Some(element) = list_element(rt).or_else(|| set_element(rt)) {
+                    coerces(lt, element) && is_list_equatable(element)
+                } else if let Some((key, _)) = dict_elements(rt) {
+                    coerces(lt, key) && is_list_equatable(key)
+                } else if let Some(elements) = tuple_elements(rt) {
+                    elements
+                        .into_iter()
+                        .any(|element| coerces(lt, element) && is_list_equatable(element))
+                } else {
+                    false
+                }
+            }
             _ => false,
         };
+        let ok = nominal_ok
+            || match rt {
+                Ty::Tuple(_) => match lt {
+                    Ty::Tuple(elements) => tuple_elements_equatable(elements),
+                    other => is_list_equatable(other),
+                },
+                Ty::String => *lt == Ty::String,
+                _ => false,
+            };
         if ok {
             return Ok(Ty::Bool);
         }
         // `x in c` on a user struct dispatches to the container's `__contains__`
         // (`c.__contains__(x)`), which must return `Bool`.
+        if let Some(span) = span
+            && matches!(rt, Ty::Struct(name, _) if self.structs.contains_key(name))
+        {
+            let ret = self.infer_method_call(
+                span,
+                right,
+                "__contains__",
+                MethodCallArguments::ordinary(std::slice::from_ref(left), &[]),
+            )?;
+            return require_dunder_ret(ret, &Ty::Bool, "__contains__");
+        }
         if let Some(r) = self.struct_dunder(rt, "__contains__", &[lt]) {
             return r.and_then(|ret| require_dunder_ret(ret, &Ty::Bool, "__contains__"));
         }
@@ -10681,6 +16351,40 @@ impl Checker {
                 _ if self.structs.contains_key(name) => {
                     return self.infer_construction(span, name, param_args, args, kwargs);
                 }
+                // Tuple specializations are predeclared as one closed set before
+                // their members are checked.  A generated transform may therefore
+                // construct its reverse result before that result's full StructInfo
+                // has been populated (the reciprocal reverse direction makes any
+                // sequential declaration order impossible).  Its concrete element
+                // arguments are enough to validate the compiler-owned constructor;
+                // `public_tuple_type` also proves that they select this exact
+                // predeclared symbol.  Ordinary source constructors retain
+                // sequential visibility because this gate is enabled only while a
+                // compiler-generated Tuple implementation is being checked.
+                _ if self.allow_generated_tuple_forward_types
+                    && self.declared_structs.contains(name)
+                    && (name.starts_with("Tuple$") || name.contains("$Tuple$"))
+                    && param_args.is_empty()
+                    && kwargs.is_empty() =>
+                {
+                    let tuple = self.infer_tuple_construction(&[], args)?;
+                    if matches!(&tuple, Ty::Struct(target, _) if target == name) {
+                        // Preserve the predeclared implementation as an exact
+                        // checked callee.  This is intentionally redundant with
+                        // the synthetic source spelling: MIR consumes checked
+                        // call identity and never has to infer that a nominal
+                        // Tuple construction is not the unspecialized template.
+                        self.overload_targets
+                            .borrow_mut()
+                            .insert(span, name.to_string());
+                        return Ok(tuple);
+                    }
+                    return Err(TypeError::BadCall {
+                        func: name.to_string(),
+                        reason: "generated Tuple constructor arguments select a different specialization"
+                            .to_string(),
+                    });
+                }
                 "UnsafePointer" if !kwargs.is_empty() => {
                     return self.infer_pointer_to(span, param_args, args, kwargs);
                 }
@@ -10695,6 +16399,9 @@ impl Checker {
                 "repr" => {
                     let tys = self.builtin_args("repr", 1, args)?;
                     if self.conforms_to(&tys[0], "Writable") {
+                        self.call_place_uses
+                            .borrow_mut()
+                            .insert(args[0].source_span());
                         return Ok(Ty::String);
                     }
                     return Err(TypeError::TypeMismatch {
@@ -10742,9 +16449,10 @@ impl Checker {
                 }
                 "List" => return self.infer_list_construction(param_args, args),
                 "Set" => {
-                    let Ty::Set(element) = self.set_type(param_args)? else {
-                        unreachable!("Set type helper returns Set")
-                    };
+                    let collection = self.set_type(param_args)?;
+                    let element = set_element(&collection)
+                        .expect("Set type helper returns a nominal Set")
+                        .clone();
                     for argument in args {
                         let actual = self.infer(argument)?;
                         if !coerces(&actual, &element) {
@@ -10757,7 +16465,7 @@ impl Checker {
                         self.record_literal_materializations(argument, &actual, &element)?;
                         self.check_consuming(argument, &actual, "Set construction element")?;
                     }
-                    return Ok(Ty::Set(element));
+                    return Ok(set_type(element));
                 }
                 "Dict" => {
                     if !args.is_empty() {
@@ -10769,7 +16477,17 @@ impl Checker {
                     }
                     return self.dict_type(param_args);
                 }
-                "Tuple" => return self.infer_tuple_construction(param_args, args),
+                "Tuple" => {
+                    let tuple = self.infer_tuple_construction(param_args, args)?;
+                    if let Ty::Struct(target, _) = &tuple
+                        && target != crate::types::TUPLE_TYPE_NAME
+                    {
+                        self.overload_targets
+                            .borrow_mut()
+                            .insert(span, target.clone());
+                    }
+                    return Ok(tuple);
+                }
                 "Error" => return self.infer_error_construction(args),
                 _ if Dtype::from_scalar_alias(name).is_some() => {
                     let dtype = Dtype::from_scalar_alias(name)
@@ -10779,27 +16497,66 @@ impl Checker {
                 _ => return Err(TypeError::UndefinedVariable(name.to_string())),
             },
         };
+        self.record_permitted_call_capture(name);
+        if let Some(owner) = self.lookup_owner(name) {
+            self.expression_bindings
+                .borrow_mut()
+                .insert(span.clone(), owner);
+        }
+        let origin_signatures = self.lookup_callable_origins(name).unwrap_or_default();
         if let Ty::Overload(candidates) = ty {
             let mut matches = Vec::new();
-            for candidate in &candidates {
+            for (index, candidate) in candidates.iter().enumerate() {
                 let saved_conversions = self.implicit_conversions.borrow().clone();
-                if let Ok((ret, score, error)) =
-                    self.infer_callable_ty(name, candidate.clone(), param_args, args, kwargs)
+                let saved_invalidations = self.interior_invalidations.borrow().clone();
+                let saved_call_place_uses = self.call_place_uses.borrow().clone();
+                if let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
+                    name,
+                    param_args,
+                    candidate.clone(),
+                    origin_signatures.get(index),
+                ) && let Ok((ret, score, error)) =
+                    self.infer_callable_ty(name, prepared, &ordinary_param_args, args, kwargs)
                     && let Some(target) = callable_lowered_name(name, candidate)
                 {
                     matches.push((ret, score, target, error));
                 }
                 *self.implicit_conversions.borrow_mut() = saved_conversions;
+                *self.interior_invalidations.borrow_mut() = saved_invalidations;
+                *self.call_place_uses.borrow_mut() = saved_call_place_uses;
             }
             return match select_callable_overload(matches) {
                 Ok((ret, target, error)) => {
                     self.overload_targets
                         .borrow_mut()
                         .insert(span.clone(), target.clone());
-                    if let Some(selected) = candidates.iter().find(|candidate| {
-                        callable_lowered_name(name, candidate).as_deref() == Some(target.as_str())
-                    }) {
-                        self.infer_callable_ty(name, selected.clone(), param_args, args, kwargs)?;
+                    if let Some((index, selected)) =
+                        candidates.iter().enumerate().find(|(_, candidate)| {
+                            callable_lowered_name(name, candidate).as_deref()
+                                == Some(target.as_str())
+                        })
+                    {
+                        let (prepared, ordinary_param_args) = self
+                            .prepare_callable_specialization(
+                                name,
+                                param_args,
+                                selected.clone(),
+                                origin_signatures.get(index),
+                            )?;
+                        self.infer_callable_ty(
+                            name,
+                            prepared.clone(),
+                            &ordinary_param_args,
+                            args,
+                            kwargs,
+                        )?;
+                        self.record_call_environment_effects(
+                            span.clone(),
+                            &prepared,
+                            &ordinary_param_args,
+                            args,
+                            kwargs,
+                        )?;
                     }
                     if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
                         self.record_call_effect(span.clone(), error.clone());
@@ -10817,7 +16574,42 @@ impl Checker {
                 }),
             };
         }
-        let (ret, _, error) = self.infer_callable_ty(name, ty, param_args, args, kwargs)?;
+        let (ty, ordinary_param_args) =
+            self.prepare_callable_specialization(name, param_args, ty, origin_signatures.first())?;
+        let indirect_target = match &ty {
+            Ty::Struct(..) => self.indirect_callable_target(&ty),
+            _ if callable_contract_ty(&ty).is_some()
+                && self.binding_scope(name).is_some_and(|scope| scope > 0) =>
+            {
+                self.indirect_callable_target(&ty)
+            }
+            _ => None,
+        };
+        if indirect_target.is_some() && matches!(ty, Ty::GenericFunc { .. }) {
+            let (contract, arguments) =
+                self.instantiate_generic_callable_value(name, ty.clone(), &ordinary_param_args)?;
+            self.operation_adjustments.borrow_mut().insert(
+                span.clone(),
+                crate::checked::SemanticAdjustment::InstantiatedCallableContract {
+                    contract,
+                    arguments,
+                },
+            );
+        }
+        let (ret, _, error) =
+            self.infer_callable_ty(name, ty.clone(), &ordinary_param_args, args, kwargs)?;
+        self.record_call_environment_effects(
+            span.clone(),
+            &ty,
+            &ordinary_param_args,
+            args,
+            kwargs,
+        )?;
+        if let Some(target) = indirect_target {
+            self.overload_targets
+                .borrow_mut()
+                .insert(span.clone(), target);
+        }
         if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
             self.record_call_effect(span, error.clone());
             self.require_error(format!("call to raising function '{name}'"), error)?;
@@ -10848,15 +16640,20 @@ impl Checker {
             ref_params,
             ref_return,
         ) = match ty {
-            Ty::Struct(struct_name, _) => {
-                let callable = self
-                    .structs
-                    .get(&struct_name)
-                    .and_then(|info| info.callable_conformance.clone())
-                    .ok_or_else(|| TypeError::NotCallable {
+            Ty::Param {
+                callable_bound: Some(bound),
+                ..
+            } => {
+                return self.infer_callable_ty(name, *bound, param_args, args, kwargs);
+            }
+            Ty::Struct(struct_name, arguments) => {
+                let actual = Ty::Struct(struct_name.clone(), arguments);
+                let callable = self.declared_callable_contract(&actual).ok_or_else(|| {
+                    TypeError::NotCallable {
                         name: name.to_string(),
                         ty: struct_name.clone(),
-                    })?;
+                    }
+                })?;
                 return self.infer_callable_ty(name, callable, param_args, args, kwargs);
             }
             // A non-generic function takes no compile-time parameters.
@@ -10874,6 +16671,7 @@ impl Checker {
                 conventions,
                 ref_params,
                 ref_return,
+                ..
             } => {
                 if !param_args.is_empty() {
                     return Err(TypeError::WrongTypeArgCount {
@@ -11116,6 +16914,7 @@ impl Checker {
             conventions,
             ref_params,
             ref_return,
+            ..
         } = generic
         else {
             return Err(TypeError::InvariantViolation(format!(
@@ -11185,8 +16984,13 @@ impl Checker {
                 arg_tys.push(actual.clone());
             }
         }
-        let (subst, _tyargs) =
+        let (subst, tyargs) =
             self.resolve_use_params(name, decls, param_args, &use_params, &arg_tys)?;
+        let values = Self::value_argument_environment(decls, &tyargs);
+        let resolve = |ty: &Ty| {
+            let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
+            self.resolve_dependent_ty(&substituted, &values)
+        };
         let mut conversions = 0;
         for ((aty, pty), expression) in arg_tys.iter().zip(&use_params).zip(arg_exprs) {
             if matches!(pty, Ty::Param { name, .. } if name.starts_with('*')) {
@@ -11195,18 +16999,30 @@ impl Checker {
                 // substituted element type to coerce every argument into.
                 continue;
             }
-            let expected = self.resolve_assoc_ty(&substitute(pty, &subst));
-            if !self.record_implicit_conversion(expression, aty, &expected)? {
+            let expected = resolve(pty)?;
+            // A dependent generic parameter can resolve to a reference-valued
+            // type only after explicit value arguments have been substituted
+            // (for example `Ts[index]` in Tuple.consume_elements). Re-infer in
+            // that resolved context so the actual is the stored handle rather
+            // than the ordinary read-through referent.
+            let contextual;
+            let actual = if self.type_contains_reference(&expected) {
+                contextual = self.infer_with_expected(expression, &expected, true)?;
+                &contextual
+            } else {
+                aty
+            };
+            if !self.record_implicit_conversion(expression, actual, &expected)? {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
-                    found: aty.to_string(),
+                    found: actual.to_string(),
                     context: format!("argument to '{}'", name),
                 });
             }
-            conversions += conversion_count(aty, &expected);
+            conversions += conversion_count(actual, &expected);
         }
         if let Some(element) = kw_variadic.as_deref() {
-            let expected = self.resolve_assoc_ty(&substitute(element, &subst));
+            let expected = resolve(element)?;
             for (index, actual) in keyword_actuals {
                 let expression = &kwargs[index].value;
                 if !self.record_implicit_conversion(expression, &actual, &expected)? {
@@ -11246,7 +17062,8 @@ impl Checker {
                     ArgSlot::Keyword(k) => &kwargs[*k].value,
                     ArgSlot::Default => continue,
                 };
-                let ty = self.infer(arg)?;
+                let expected = resolve(&params[i])?;
+                let ty = self.infer_with_expected(arg, &expected, true)?;
                 self.check_consuming(arg, &ty, &format!("argument '{}' to '{}'", names[i], name))?;
             }
         }
@@ -11275,16 +17092,14 @@ impl Checker {
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
         check_call_aliasing(&slots, &effective_conventions, &copied_reads, args, kwargs)?;
-        let referent = self.resolve_assoc_ty(&substitute(ret, &subst));
+        let referent = self.canonicalize_public_tuple_types(resolve(ret)?);
         let result = return_ref
             .map(|mut reference| {
                 reference.referent = Box::new(referent.clone());
                 Ty::Ref(reference)
             })
             .unwrap_or(referent);
-        let error = error
-            .as_ref()
-            .map(|error| self.resolve_assoc_ty(&substitute(error, &subst)));
+        let error = error.as_ref().map(|error| resolve(error)).transpose()?;
         Ok((
             result,
             overload_rank(
@@ -11347,6 +17162,26 @@ impl Checker {
         let mut effective = conventions.to_vec();
         let mut origins = vec![None; slots.len()];
         let mut mutable = vec![false; slots.len()];
+        // The declaration convention, not the effective alias-checking
+        // convention below, determines whether execution needs the caller's
+        // place. An immutable `ref` becomes a shared read for conflict
+        // checking, but the VM still needs its handle through the call.
+        for (index, convention) in conventions.iter().enumerate() {
+            if !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref)) {
+                continue;
+            }
+            let Some(slot) = slots.get(index) else {
+                continue;
+            };
+            let expression = match slot {
+                ArgSlot::Positional(position) => &args[*position],
+                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Default => continue,
+            };
+            self.call_place_uses
+                .borrow_mut()
+                .insert(expression.source_span());
+        }
         for (index, signature) in signatures.iter().enumerate() {
             let Some(signature) = signature else { continue };
             let Some(slot) = slots.get(index) else {
@@ -11357,15 +17192,15 @@ impl Checker {
                 ArgSlot::Keyword(position) => &kwargs[*position].value,
                 ArgSlot::Default => continue,
             };
-            let place = self.origin_place(expression)?;
-            let is_mutable = self.owner_is_mutable(place.root);
+            let actual = self.reference_actual(expression)?;
+            let is_mutable = actual.mutability == Mutability::Mutable;
             let requires_mutable = matches!(signature.mutability, SigMutability::Mutable);
             if requires_mutable && !is_mutable {
                 return Err(TypeError::ImmutableBinding(
                     "reference argument".to_string(),
                 ));
             }
-            origins[index] = Some(Origin::Place(place));
+            origins[index] = Some(actual.origin);
             mutable[index] = match signature.mutability {
                 SigMutability::Immutable => false,
                 SigMutability::Mutable => true,
@@ -11375,14 +17210,61 @@ impl Checker {
                 effective[index] = Some(ArgConvention::Read);
             }
         }
+        // A mutable or parametrically-mutable argument may redefine every
+        // interior origin below the passed place. This is an explicit checked
+        // call effect; lowering must not infer it from a generic `Call` place.
+        for (index, convention) in effective.iter().enumerate() {
+            if !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref)) {
+                continue;
+            }
+            let Some(slot) = slots.get(index) else {
+                continue;
+            };
+            let expression = match slot {
+                ArgSlot::Positional(position) => &args[*position],
+                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Default => continue,
+            };
+            if let Some(origin) = origins.get(index).and_then(Clone::clone) {
+                let except = match &expression.kind {
+                    ExprKind::Identifier(name) if matches!(self.lookup(name), Some(Ty::Ref(_))) => {
+                        self.lookup_owner(name)
+                    }
+                    _ => None,
+                };
+                self.record_aggregate_origin_invalidation_except(
+                    expression.source_span(),
+                    origin,
+                    except,
+                );
+            } else {
+                self.record_interior_invalidation(expression.source_span(), expression);
+            }
+        }
         for (index, signature) in signatures.iter().enumerate() {
             if signature.as_ref().is_some_and(|signature| {
                 matches!(signature.origin, crate::origin::SigOrigin::Static)
-            }) && origins.get(index).is_some_and(Option::is_some)
+            }) && origins
+                .get(index)
+                .and_then(Option::as_ref)
+                .is_some_and(|origin| !matches!(origin, Origin::Static))
             {
                 return Err(TypeError::Unsupported(
                     "a local place cannot satisfy StaticOrigin".to_string(),
                 ));
+            }
+            if let Some(signature) = signature
+                && sig_origin_has_bound(&signature.origin)
+                && let Some(actual) = origins.get(index).and_then(Option::as_ref)
+            {
+                let allowed = substitute_sig_origin(&signature.origin, &origins);
+                if !origin_is_within(actual, &allowed) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("the specialized origin {allowed:?}"),
+                        found: format!("the argument origin {actual:?}"),
+                        context: "call through an origin-specialized function value".to_string(),
+                    });
+                }
             }
         }
         let returned = return_signature.map(|signature| {
@@ -11390,12 +17272,14 @@ impl Checker {
             let is_mutable = match &signature.mutability {
                 SigMutability::Immutable => false,
                 SigMutability::Mutable => true,
-                SigMutability::BoolParam(name) => signatures.iter().enumerate().any(|(i, sig)| {
+                SigMutability::BoolParam(parameter) => {
+                    signatures.iter().enumerate().any(|(i, sig)| {
                     sig.as_ref().is_some_and(|sig| {
-                        matches!(&sig.mutability, SigMutability::BoolParam(other) if other == name)
+                            matches!(sig.mutability, SigMutability::BoolParam(other) if other == *parameter)
                             && mutable[i]
                     })
-                }),
+                    })
+                }
                 SigMutability::Infer => origins
                     .iter()
                     .enumerate()
@@ -11414,15 +17298,27 @@ impl Checker {
         Ok((effective, returned))
     }
 
-    /// Type `print(...)`. Intrinsic scalar/container values have builtin writing;
-    /// user values must opt into current `Writable`. Concrete implementations
-    /// may override `write_to`; otherwise the runtime uses field reflection.
+    /// Type `print(...)`. Intrinsic scalars have builtin writing; nominal values,
+    /// including public collections, opt into current `Writable`. During tuple
+    /// specialization discovery an as-yet-unmaterialized nominal shape is checked
+    /// element-wise; executable values always cross the concrete struct boundary.
     fn infer_print(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         for (i, arg) in args.iter().enumerate() {
             let ty = self.infer(arg)?;
             let runtime_ty = default_literal(&ty);
             if runtime_ty != ty {
                 self.record_literal_materializations(arg, &ty, &runtime_ty)?;
+            }
+            if let Ty::Struct(name, _) = &ty
+                && !self.structs.contains_key(name)
+                && (list_element(&ty).is_some_and(is_printable)
+                    || set_element(&ty).is_some_and(is_printable)
+                    || dict_elements(&ty)
+                        .is_some_and(|(key, value)| is_printable(key) && is_printable(value))
+                    || tuple_elements(&ty)
+                        .is_some_and(|elements| elements.into_iter().all(is_printable)))
+            {
+                continue;
             }
             if matches!(ty, Ty::Struct(..) | Ty::Variant(_)) {
                 if self.conforms_to(&ty, "Writable") {
@@ -11434,8 +17330,7 @@ impl Checker {
                     context: format!("argument {} to 'print'", i + 1),
                 });
             }
-            if matches!(&ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Writable"))
-            {
+            if matches!(ty, Ty::Param { .. }) && self.conforms_to(&ty, "Writable") {
                 continue;
             }
             if !is_printable(&ty) {
@@ -11488,6 +17383,12 @@ impl Checker {
             return Ok(Ty::String);
         }
         if self.conforms_to(&tys[0], "Writable") {
+            // Like `print`, nominal String conversion formats through a
+            // borrowed `Writable` receiver and must retain its caller storage
+            // until that synchronous formatter returns.
+            self.call_place_uses
+                .borrow_mut()
+                .insert(args[0].source_span());
             return Ok(Ty::String);
         }
         Err(TypeError::TypeMismatch {
@@ -11547,25 +17448,58 @@ impl Checker {
         }
     }
 
-    /// Type `len(x)`: a `String`, `List`, or `Tuple` argument, returning `Int`.
-    fn infer_len(&self, args: &[Expr]) -> Result<Ty, TypeError> {
-        let tys = self.builtin_args("len", 1, args)?;
+    fn len_result_for_type(&self, ty: &Ty) -> Result<Option<Ty>, TypeError> {
+        if let Ty::Dependent(DependentType::Indexed { elements, .. }) = ty {
+            for element in elements {
+                match self.len_result_for_type(element)? {
+                    Some(Ty::Int) => {}
+                    _ => return Ok(None),
+                }
+            }
+            return Ok(Some(Ty::Int));
+        }
         if matches!(
-            tys[0],
-            Ty::String | Ty::List(_) | Ty::Set(_) | Ty::Dict(_, _) | Ty::Tuple(_)
+            ty,
+            Ty::String
+                | Ty::ComptimeList(_)
+                | Ty::Tuple(_)
+                | Ty::RuntimePack(_)
+                | Ty::VariadicPack(_)
         ) {
-            return Ok(Ty::Int);
+            return Ok(Some(Ty::Int));
+        }
+        if let Ty::Struct(name, _) = ty
+            && !self.structs.contains_key(name)
+            && (list_element(ty).is_some()
+                || set_element(ty).is_some()
+                || dict_elements(ty).is_some()
+                || tuple_elements(ty).is_some()
+                || crate::types::is_range_type(ty))
+        {
+            return Ok(Some(Ty::Int));
         }
         // `len(c)` on a user struct dispatches to `c.__len__()` (`Sized`), which
         // must return `Int`.
-        if let Some(r) = self.struct_dunder(&tys[0], "__len__", &[]) {
-            return r.and_then(|ret| require_dunder_ret(ret, &Ty::Int, "__len__"));
+        if let Some(result) = self.struct_dunder(ty, "__len__", &[]) {
+            return result
+                .and_then(|ret| require_dunder_ret(ret, &Ty::Int, "__len__"))
+                .map(Some);
         }
         // `len(x)` on an opaque type parameter is permitted when its bound
         // promises a length (`T: Sized`) — the concrete type's `__len__` runs at
         // runtime after type erasure.
-        if has_len_bound(&tys[0]) {
-            return Ok(Ty::Int);
+        if has_len_bound(ty) {
+            return Ok(Some(Ty::Int));
+        }
+        Ok(None)
+    }
+
+    /// Type `len(x)`: every possible type of a dependent input must fulfill the
+    /// same `Sized`/`__len__ -> Int` contract.
+    fn infer_len(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args("len", 1, args)?;
+        if let Some(result) = self.len_result_for_type(&tys[0])? {
+            return Ok(result);
         }
         Err(TypeError::TypeMismatch {
             expected: "String, List, or Tuple".to_string(),
@@ -11603,7 +17537,7 @@ impl Checker {
             }
             self.record_literal_materializations(arg, &arg_ty, &Ty::Int)?;
         }
-        Ok(Ty::Range)
+        Ok(range_type())
     }
 
     /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:
@@ -11658,10 +17592,10 @@ impl Checker {
     fn infer_divmod(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("divmod", 2, args)?;
         if let Some(common) = common_numeric(&tys[0], &tys[1]) {
-            return Ok(Ty::Tuple(vec![common.clone(), common]));
+            return Ok(self.public_tuple_type(vec![common.clone(), common]));
         }
         if tys[0] == tys[1] && param_has_bound(&tys[0], "DivModable") {
-            return Ok(Ty::Tuple(vec![tys[0].clone(), tys[0].clone()]));
+            return Ok(self.public_tuple_type(vec![tys[0].clone(), tys[0].clone()]));
         }
         Err(TypeError::BadOperator {
             op: "divmod".to_string(),
@@ -11736,6 +17670,7 @@ use annotations::*;
 mod calls;
 use calls::*;
 mod builtins;
+pub(crate) use builtins::callable_environment_coerces;
 use builtins::*;
 
 impl Default for Checker {
@@ -11744,11 +17679,34 @@ impl Default for Checker {
     }
 }
 
+/// Recognize the current-nightly origin-attribute spelling
+/// `base._get_owned_interior["tag"]`. It is accepted only in origin clauses;
+/// ordinary expression typing still has no runtime member by this name.
+fn interior_origin_syntax(expr: &Expr) -> Option<(&Expr, &str)> {
+    let ExprKind::Index { object, index } = &expr.kind else {
+        return None;
+    };
+    let ExprKind::Member {
+        object: base,
+        field,
+    } = &object.kind
+    else {
+        return None;
+    };
+    let ExprKind::Str(name) = &index.kind else {
+        return None;
+    };
+    (field == "_get_owned_interior").then_some((base, name.as_str()))
+}
+
 fn validate_origin_expr(
     expr: &Expr,
     origin_params: &HashSet<&str>,
     value_params: &HashSet<&str>,
 ) -> Result<(), TypeError> {
+    if let Some((base, _)) = interior_origin_syntax(expr) {
+        return validate_origin_expr(base, origin_params, value_params);
+    }
     match &expr.kind {
         ExprKind::Identifier(name)
             if name == "_"
@@ -11822,6 +17780,52 @@ fn lower_ref_param_sigs(
         .collect()
 }
 
+fn callable_origin_signature(
+    type_params: &[crate::ast::TypeParam],
+    params: &[&FnParam],
+) -> CallableOriginSignature {
+    let origins = type_params
+        .iter()
+        .filter(|parameter| parameter.bounds.as_slice() == ["Origin"])
+        .map(|parameter| CallableOriginParam {
+            name: parameter.name.clone(),
+            slots: params
+                .iter()
+                .enumerate()
+                .filter_map(|(index, value_parameter)| {
+                    value_parameter
+                        .origin
+                        .as_ref()
+                        .is_some_and(|origin| {
+                            origin.iter().any(|expression| {
+                                matches!(
+                                    &expression.kind,
+                                    ExprKind::Identifier(name) if name == &parameter.name
+                                )
+                            })
+                        })
+                        .then_some(index)
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let source = type_params
+        .iter()
+        .map(|parameter| CallableSourceParam {
+            name: parameter.name.clone(),
+            infer_only: parameter.infer_only,
+            origin: origins
+                .iter()
+                .position(|origin| origin.name == parameter.name),
+            ordinary: !matches!(
+                parameter.bounds.as_slice(),
+                [only] if only == "Origin" || only == "OriginSet"
+            ),
+        })
+        .collect();
+    CallableOriginSignature { origins, source }
+}
+
 fn lower_ref_sig(
     spec: &crate::ast::OriginSpec,
     type_params: &[crate::ast::TypeParam],
@@ -11831,6 +17835,14 @@ fn lower_ref_sig(
     let mut members = Vec::new();
     let mut mutability = SigMutability::Infer;
     for expression in spec {
+        if let Some((base, name)) = interior_origin_syntax(expression) {
+            let base = lower_sig_origin_expression(base, type_params, params)?;
+            members.push(SigOrigin::Projected(
+                Box::new(base),
+                vec![crate::origin::OriginSeg::Interior(name.to_string())],
+            ));
+            continue;
+        }
         match &expression.kind {
             ExprKind::Identifier(name) if name == "_" => members.push(SigOrigin::Infer),
             ExprKind::Identifier(name) if name == "self" => members.push(SigOrigin::Self_),
@@ -11851,22 +17863,40 @@ fn lower_ref_sig(
                     members.push(SigOrigin::Param(index));
                     continue;
                 }
-                let origin_param = type_params
+                let (origin_param_index, origin_param) = type_params
                     .iter()
-                    .find(|param| param.name == *name && param.bounds.as_slice() == ["Origin"])
+                    .enumerate()
+                    .find(|(_, param)| param.name == *name && param.bounds.as_slice() == ["Origin"])
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
                 mutability = match origin_param.origin_mutability.as_ref().map(|e| &e.kind) {
                     Some(ExprKind::Bool(true)) => SigMutability::Mutable,
                     Some(ExprKind::Bool(false)) => SigMutability::Immutable,
-                    Some(ExprKind::Identifier(value)) => SigMutability::BoolParam(value.clone()),
+                    Some(ExprKind::Identifier(value)) => SigMutability::BoolParam(
+                        type_params
+                            .iter()
+                            .position(|parameter| {
+                                parameter.name == *value && parameter.bounds.as_slice() == ["Bool"]
+                            })
+                            .expect("validated Origin mutability names a Bool parameter"),
+                    ),
                     _ => SigMutability::Infer,
                 };
+                let first_member = members.len();
                 for (index, param) in params.iter().enumerate() {
                     if param.origin.as_ref().is_some_and(|origin| {
                         matches!(origin.as_slice(), [Expr { kind: ExprKind::Identifier(bound), .. }] if bound == name)
                     }) {
                         members.push(SigOrigin::Param(index));
                     }
+                }
+                // An enclosing struct Origin can be carried by reference-valued
+                // fields even when no ordinary method parameter binds it. Keep
+                // that checked semantic binder directly in the method contract
+                // instead of collapsing it to an empty inferred union.
+                if members.len() == first_member {
+                    members.push(SigOrigin::Bound(crate::origin::Origin::Param(
+                        crate::origin::OriginParamId(origin_param_index as u32),
+                    )));
                 }
             }
             ExprKind::Call { name, args, .. } if name == "origin_of" => {
@@ -11916,9 +17946,98 @@ fn lower_ref_sig(
     let origin = match members.as_slice() {
         [] => SigOrigin::Infer,
         [single] => single.clone(),
-        _ => SigOrigin::Union(members),
+        _ => SigOrigin::union(members),
     };
     Ok(RefSig { origin, mutability })
+}
+
+fn lower_sig_origin_expression(
+    expression: &Expr,
+    type_params: &[crate::ast::TypeParam],
+    params: &[&FnParam],
+) -> Result<crate::origin::SigOrigin, TypeError> {
+    use crate::origin::SigOrigin;
+    if let Some((base, name)) = interior_origin_syntax(expression) {
+        return Ok(SigOrigin::Projected(
+            Box::new(lower_sig_origin_expression(base, type_params, params)?),
+            vec![crate::origin::OriginSeg::Interior(name.to_string())],
+        ));
+    }
+    match &expression.kind {
+        ExprKind::Identifier(name) if name == "self" => Ok(SigOrigin::Self_),
+        ExprKind::Identifier(name) => {
+            if let Some(index) = params.iter().position(|parameter| parameter.name == *name) {
+                return Ok(SigOrigin::Param(index));
+            }
+            if type_params.iter().any(|parameter| {
+                parameter.name == *name && parameter.bounds.as_slice() == ["Origin"]
+            }) {
+                // A named origin parameter is represented by the value
+                // parameter(s) carrying it in this callable contract.
+                let members = params
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, parameter)| {
+                        parameter.origin.as_ref().is_some_and(|origin| {
+                            matches!(origin.as_slice(), [Expr { kind: ExprKind::Identifier(bound), .. }] if bound == name)
+                        }).then_some(SigOrigin::Param(index))
+                    })
+                    .collect::<Vec<_>>();
+                return Ok(match members.as_slice() {
+                    [] => SigOrigin::Infer,
+                    [single] => single.clone(),
+                    _ => SigOrigin::union(members),
+                });
+            }
+            Err(TypeError::UndefinedVariable(name.clone()))
+        }
+        ExprKind::Call {
+            name,
+            args,
+            kwargs,
+            param_args,
+        } if name == "origin_of" && kwargs.is_empty() && param_args.is_empty() => {
+            let members = args
+                .iter()
+                .map(|argument| {
+                    let (root, path) = place_path(argument).ok_or_else(|| {
+                        TypeError::Unsupported("origin_of requires parameter places".to_string())
+                    })?;
+                    let base = if root == "self" {
+                        SigOrigin::Self_
+                    } else {
+                        let index = params
+                            .iter()
+                            .position(|parameter| parameter.name == root)
+                            .ok_or_else(|| TypeError::UndefinedVariable(root.to_string()))?;
+                        SigOrigin::Param(index)
+                    };
+                    Ok(project_sig_origin(base, &path))
+                })
+                .collect::<Result<Vec<_>, TypeError>>()?;
+            Ok(match members.as_slice() {
+                [single] => single.clone(),
+                _ => SigOrigin::union(members),
+            })
+        }
+        ExprKind::Member { .. } | ExprKind::Index { .. } => {
+            let (root, path) = place_path(expression)
+                .ok_or_else(|| TypeError::Unsupported("invalid origin place".to_string()))?;
+            let base = if root == "self" {
+                SigOrigin::Self_
+            } else {
+                let index = params
+                    .iter()
+                    .position(|parameter| parameter.name == root)
+                    .ok_or_else(|| TypeError::UndefinedVariable(root.to_string()))?;
+                SigOrigin::Param(index)
+            };
+            Ok(project_sig_origin(base, &path))
+        }
+        _ => Err(TypeError::Unsupported(
+            "unsupported origin contract".to_string(),
+        )),
+    }
 }
 
 fn project_sig_origin(
@@ -11955,6 +18074,41 @@ fn project_origin(
     }
 }
 
+/// Replace the slot-relative parts belonging to source `Origin` parameters
+/// with the concrete caller origins captured by a specialized function value.
+fn bind_sig_origin(
+    signature: &crate::origin::SigOrigin,
+    bindings: &[(Vec<usize>, crate::origin::Origin)],
+) -> crate::origin::SigOrigin {
+    use crate::origin::SigOrigin;
+    match signature {
+        SigOrigin::Param(index) => bindings
+            .iter()
+            .find(|(slots, _)| slots.contains(index))
+            .map(|(_, origin)| SigOrigin::Bound(origin.clone()))
+            .unwrap_or_else(|| signature.clone()),
+        SigOrigin::Projected(base, path) => {
+            SigOrigin::Projected(Box::new(bind_sig_origin(base, bindings)), path.clone())
+        }
+        SigOrigin::Union(members) => SigOrigin::union(
+            members
+                .iter()
+                .map(|member| bind_sig_origin(member, bindings)),
+        ),
+        _ => signature.clone(),
+    }
+}
+
+fn sig_origin_has_bound(signature: &crate::origin::SigOrigin) -> bool {
+    use crate::origin::SigOrigin;
+    match signature {
+        SigOrigin::Bound(_) => true,
+        SigOrigin::Projected(base, _) => sig_origin_has_bound(base),
+        SigOrigin::Union(members) => members.iter().any(sig_origin_has_bound),
+        _ => false,
+    }
+}
+
 fn substitute_sig_origin(
     signature: &crate::origin::SigOrigin,
     actual: &[Option<crate::origin::Origin>],
@@ -11962,6 +18116,7 @@ fn substitute_sig_origin(
     use crate::origin::{Origin, SigOrigin};
     match signature {
         SigOrigin::Self_ => Origin::Union(vec![]),
+        SigOrigin::Bound(origin) => origin.clone(),
         SigOrigin::Param(index) => actual
             .get(*index)
             .and_then(Clone::clone)
@@ -11983,20 +18138,18 @@ fn substitute_sig_origin(
 fn substitute_sig_origin_with_self(
     signature: &crate::origin::SigOrigin,
     actual: &[Option<crate::origin::Origin>],
-    self_owner: Option<crate::origin::OwnerId>,
+    self_origin: Option<crate::origin::Origin>,
 ) -> crate::origin::Origin {
-    use crate::origin::{Origin, OriginPlace, SigOrigin};
+    use crate::origin::{Origin, SigOrigin};
     match signature {
-        SigOrigin::Self_ => self_owner
-            .map(|root| Origin::Place(OriginPlace { root, path: vec![] }))
-            .unwrap_or_else(|| Origin::Union(vec![])),
+        SigOrigin::Self_ => self_origin.clone().unwrap_or_else(|| Origin::Union(vec![])),
         SigOrigin::Union(members) => Origin::union(
             members
                 .iter()
-                .map(|member| substitute_sig_origin_with_self(member, actual, self_owner)),
+                .map(|member| substitute_sig_origin_with_self(member, actual, self_origin.clone())),
         ),
         SigOrigin::Projected(base, path) => project_origin(
-            substitute_sig_origin_with_self(base, actual, self_owner),
+            substitute_sig_origin_with_self(base, actual, self_origin),
             path,
         ),
         _ => substitute_sig_origin(signature, actual),
@@ -12019,8 +18172,25 @@ fn origin_is_within(actual: &crate::origin::Origin, allowed: &crate::origin::Ori
 }
 
 fn ref_parameter_is_writable(parameter: &FnParam, type_params: &[crate::ast::TypeParam]) -> bool {
-    if parameter.convention != Some(ArgConvention::Ref) {
-        return parameter_is_writable(parameter.convention);
+    ref_binding_is_writable(
+        parameter.convention,
+        parameter.origin.as_deref(),
+        type_params,
+    )
+}
+
+/// Whether a parameter/receiver may be mutated while its generic body is
+/// checked. A bare `ref` has parametric mutability: it propagates the caller's
+/// capability to returned references, but its body cannot assume that the
+/// caller supplied mutable storage. Only an explicitly mutable origin grants
+/// unconditional write access.
+fn ref_binding_is_writable(
+    convention: Option<ArgConvention>,
+    origin: Option<&[Expr]>,
+    type_params: &[crate::ast::TypeParam],
+) -> bool {
+    if convention != Some(ArgConvention::Ref) {
+        return parameter_is_writable(convention);
     }
     let Some(
         [
@@ -12029,14 +18199,17 @@ fn ref_parameter_is_writable(parameter: &FnParam, type_params: &[crate::ast::Typ
                 ..
             },
         ],
-    ) = parameter.origin.as_deref()
+    ) = origin
     else {
-        return true;
+        return false;
     };
+    if origin_name == "UnsafeAnyOrigin" {
+        return true;
+    }
     let Some(origin) = type_params.iter().find(|candidate| {
         candidate.name == *origin_name && candidate.bounds.as_slice() == ["Origin"]
     }) else {
-        return true;
+        return false;
     };
     matches!(
         origin.origin_mutability.as_ref().map(|expr| &expr.kind),
@@ -12133,5 +18306,61 @@ fn prefix_symbol(op: PrefixOp) -> &'static str {
     match op {
         PrefixOp::Neg => "-",
         PrefixOp::Not => "not",
+    }
+}
+
+#[cfg(test)]
+mod dependent_callable_signature_tests {
+    use super::*;
+
+    fn indexed_callable(binder: &str, offset: i64) -> Ty {
+        let index = if offset == 0 {
+            CtExpr::Param(binder.to_string())
+        } else {
+            CtExpr::Add(
+                Box::new(CtExpr::Param(binder.to_string())),
+                Box::new(CtExpr::Value(CtValue::Int(offset))),
+            )
+        };
+        Ty::GenericFunc {
+            environment: crate::origin::CallableEnvironment::Thin,
+            decls: vec![ParamDecl::Value {
+                name: binder.to_string(),
+                ty: Box::new(Ty::Int),
+                default: None,
+                callable_default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            }],
+            params: vec![Ty::Dependent(DependentType::Indexed {
+                elements: vec![Ty::Int, Ty::String],
+                index,
+            })],
+            names: vec!["element".to_string()],
+            ret: Box::new(Ty::None),
+            required: vec![true],
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: vec![Some(ArgConvention::Var)],
+            ref_params: Box::new(vec![None]),
+            ref_return: None,
+        }
+    }
+
+    #[test]
+    fn dependent_callable_binders_are_alpha_equivalent() {
+        assert!(same_callable_signature(
+            &indexed_callable("index", 0),
+            &indexed_callable("i", 0),
+        ));
+        assert!(!same_callable_signature(
+            &indexed_callable("index", 0),
+            &indexed_callable("i", 1),
+        ));
     }
 }

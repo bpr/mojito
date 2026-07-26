@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mojito::mir::lower_program;
-use mojito::{BackendKind, TypeError, check, check_program, elaborate, link, parse};
+use mojito::{BackendKind, Compiler, TypeError, check, check_program, elaborate, link, parse};
 
 /// Parse + elaborate + type-check, returning the checker's verdict.
 fn check_source(source: &str) -> Result<(), TypeError> {
@@ -103,6 +103,7 @@ impl Drop for TempDir {
 
 fn check_linked(entry: &Path) -> Result<(), TypeError> {
     let program = link(entry).expect("link error");
+    let program = elaborate(program).expect("comptime error");
     check(&program)
 }
 
@@ -596,9 +597,8 @@ fn importing_a_name_extends_the_local_overload_set() {
         "main.mojo",
         "from lib import f\n\ndef f(x: String) -> Int:\n    return 20\n\ndef main():\n    var i: Int = 1\n    print(f(i), f(\"abc\"))\n",
     );
-    let program = link(&entry).expect("link error");
-    let checked = check_program(&program).expect("type error");
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).expect("runtime error");
-    assert_eq!(backend.output(), "10 20\n");
+    let compiler = Compiler::default();
+    let program = compiler.compile_path(&entry).expect("compile error");
+    let execution = compiler.execute(&program).expect("runtime error");
+    assert_eq!(execution.output, "10 20\n");
 }
