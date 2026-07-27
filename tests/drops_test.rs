@@ -369,3 +369,17 @@ fn break_crossing_try_drops_body_local_and_outer_loop_local() {
     // No iteration 2 (broke at i=1); its values never constructed.
     assert_eq!(out.matches("drop 12").count(), 0);
 }
+
+#[test]
+fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
+    // A `deinit` move-source parameter (the `move` in `__moveinit__`) is
+    // *consumed*, not destroyed: its whole-value `__del__` is skipped (its
+    // resources moved into the receiver, so running it would double-free), but
+    // a residual field left live still receives its own destruction. Here the
+    // Copyable `Handle` is *copied* by the move constructor rather than
+    // transferred, so both the source's and the destination's handles are live
+    // and each must be released — two "handle del 7", never a leak and never a
+    // double `box del`.
+    let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __copyinit__(out self, existing: Self):\n        self.id = existing.id\n    def __del__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h\n    def __del__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
+    assert_eq!(vm(src), "handle del 7\nbox del\nhandle del 7\nmid 7\n");
+}

@@ -231,6 +231,7 @@ pub(super) struct FunctionLowering<'a> {
     /// function's ordinary runtime parameter count.
     pub(super) value_parameter_locals: Vec<(String, Ty)>,
     pub(super) owned_parameters: Vec<bool>,
+    pub(super) deinit_parameters: Vec<bool>,
     pub(super) reference_parameters: Vec<bool>,
     pub(super) returns_reference: bool,
     /// Checked return type and raising contract of the declaration.
@@ -254,6 +255,7 @@ pub(super) fn lower_fn_nested(
         parameter_types: param_types,
         value_parameter_locals,
         owned_parameters: owned_params,
+        deinit_parameters: deinit_params,
         reference_parameters: ref_params,
         returns_reference,
         ret_ty,
@@ -303,6 +305,7 @@ pub(super) fn lower_fn_nested(
     }
     f.param_types = param_types;
     f.owned_params = owned_params;
+    f.deinit_params = deinit_params;
     f.ref_params = ref_params;
     f.returns_reference = returns_reference;
     f.ret_ty = Some(ret_ty);
@@ -400,6 +403,13 @@ fn lower_nested_node(
             caller_params
                 .iter()
                 .map(|(_, parameter)| is_owned(&parameter.convention)),
+        );
+        // Captures are borrowed, never `deinit` sources.
+        let mut deinit2: Vec<bool> = vec![false; captures.len()];
+        deinit2.extend(
+            caller_params
+                .iter()
+                .map(|(_, parameter)| is_deinit(&parameter.convention)),
         );
         // Captures are `mut` (their final value is written back to the enclosing
         // variable — reference-capture semantics).
@@ -574,6 +584,7 @@ fn lower_nested_node(
         }
         nf.param_types = ptys;
         nf.owned_params = owned2;
+        nf.deinit_params = deinit2;
         nf.ref_params = refp2;
         nf.returns_reference = effect.returns_reference;
         // The nested `def` was checked as an ordinary declaration, so its

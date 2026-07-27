@@ -16,6 +16,16 @@ pub(super) fn is_owned(c: &Option<ArgConvention>) -> bool {
     matches!(c, Some(ArgConvention::Var))
 }
 
+/// Whether an argument convention is `deinit` — the destructor/move-source
+/// convention (`__del__(deinit self)`, `__moveinit__(out self, deinit other)`).
+/// The callee is responsible for tearing the value down, but as a *consume*:
+/// its residual fields are destroyed while its whole-value `__del__` is skipped
+/// (its resources moved into the receiver), so drop elaboration emits
+/// `ConsumeVar` rather than `DropVar` for such a parameter.
+pub(super) fn is_deinit(c: &Option<ArgConvention>) -> bool {
+    matches!(c, Some(ArgConvention::Deinit))
+}
+
 /// Whether a `try` region's statements contain a `break`/`continue` that **leaves**
 /// the region — targeting a loop *outside* it. Such an escape would need to name the
 /// outer loop's target block, which the self-contained mini-CFG region can't express
@@ -781,6 +791,12 @@ pub struct MirFunction {
     /// the value — unlike a borrowed `read`/`mut` parameter). Same order as the
     /// params; the caller transfers with `^`, so its own drop is skipped.
     pub owned_params: Vec<bool>,
+    /// Whether each parameter is a `deinit` (destructor/move-source) parameter.
+    /// Same order/length as the params. Such a parameter is *consumed* at its
+    /// drop point — its residual fields are destroyed but its whole-value
+    /// `__del__` is skipped (its resources moved into the receiver), so drop
+    /// elaboration lowers its teardown to `ConsumeVar` instead of `DropVar`.
+    pub deinit_params: Vec<bool>,
     /// Whether each parameter is a `mut`/`ref` **reference** (its final value is
     /// written back to the caller). `self` (handled via a method's `recv_place`) is
     /// always `false` here. Same order as the params.

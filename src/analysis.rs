@@ -357,7 +357,10 @@ fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
         return false;
     }
     if vi < f.n_params {
+        // A consuming `var` parameter is destroyed here; a `deinit` parameter is
+        // *consumed* here (its teardown is rewritten to `ConsumeVar` below).
         f.owned_params.get(vi).copied().unwrap_or(false)
+            || f.deinit_params.get(vi).copied().unwrap_or(false)
     } else {
         true
     }
@@ -593,6 +596,28 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
     // when the body is left), recursing into nested regions.
     set_try_cleanups(&mut blocks);
 
+    // A `deinit` parameter is *consumed*, not destroyed: the spliced teardown
+    // for it must skip the value's whole-value `__del__` (its resources already
+    // moved into the receiver) while still destroying any residual fields. Drop
+    // elaboration emits an ordinary `DropVar`; rewrite those to `ConsumeVar` for
+    // deinit parameters. Their `^`-transferred fields are `Value::Moved` and a
+    // no-op to drop, so this cannot double-free.
+    if f.deinit_params.iter().any(|&d| d) {
+        let is_deinit_param = |var: VarId| {
+            (var as usize) < f.n_params
+                && f.deinit_params.get(var as usize).copied().unwrap_or(false)
+        };
+        for block in &mut blocks {
+            for instr in &mut block.instrs {
+                if let MirInstr::DropVar { var } = instr
+                    && is_deinit_param(*var)
+                {
+                    *instr = MirInstr::ConsumeVar { var: *var };
+                }
+            }
+        }
+    }
+
     MirFunction {
         blocks,
         n_regs: f.n_regs,
@@ -601,6 +626,7 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
         n_params: f.n_params,
         param_types: f.param_types.clone(),
         owned_params: f.owned_params.clone(),
+        deinit_params: f.deinit_params.clone(),
         ref_params: f.ref_params.clone(),
         returns_reference: f.returns_reference,
         var_tys: f.var_tys.clone(),
@@ -3095,6 +3121,7 @@ mod constant_tuple_place_tests {
             n_params: 1,
             param_types: Vec::new(),
             owned_params: vec![false],
+            deinit_params: vec![false],
             ref_params: vec![false],
             returns_reference: false,
             var_tys: HashMap::new(),
@@ -3180,6 +3207,7 @@ mod interior_origin_tests {
             n_params: 0,
             param_types: Vec::new(),
             owned_params: Vec::new(),
+            deinit_params: Vec::new(),
             ref_params: Vec::new(),
             returns_reference: false,
             var_tys: HashMap::new(),

@@ -5165,6 +5165,7 @@ impl Flatten<'_> {
             n_params: 0,
             param_types: Vec::new(),
             owned_params: Vec::new(),
+            deinit_params: Vec::new(),
             ref_params: Vec::new(),
             returns_reference: self.returns_reference,
             var_tys: HashMap::new(),
@@ -6147,6 +6148,7 @@ fn lower_cfg_nested(
         n_params: cfg.n_params,
         param_types: Vec::new(),
         owned_params: Vec::new(),
+        deinit_params: Vec::new(),
         ref_params: Vec::new(),
         returns_reference,
         var_tys: HashMap::new(),
@@ -6908,6 +6910,10 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     .iter()
                     .map(|p| is_owned(&p.convention))
                     .collect();
+                let deinit = caller_params
+                    .iter()
+                    .map(|p| is_deinit(&p.convention))
+                    .collect();
                 let refp = caller_params
                     .iter()
                     .map(|p| is_ref(&p.convention))
@@ -7021,6 +7027,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         parameter_types: ptys,
                         value_parameter_locals,
                         owned_parameters: owned,
+                        deinit_parameters: deinit,
                         reference_parameters: refp,
                         returns_reference: effect.returns_reference,
                         ret_ty,
@@ -7256,11 +7263,13 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     let mut names: Vec<String> = Vec::new();
                     let mut ptys: Vec<Ty> = Vec::new();
                     let mut owned: Vec<bool> = Vec::new();
+                    let mut deinit: Vec<bool> = Vec::new();
                     let mut refp: Vec<bool> = Vec::new();
                     if m.has_self {
                         names.push("self".to_string());
                         ptys.push(Ty::Struct(name.clone(), Vec::new()));
                         owned.push(is_owned(&m.self_convention));
+                        deinit.push(is_deinit(&m.self_convention));
                         refp.push(is_ref(&m.self_convention));
                     }
                     names.extend(m.params.iter().map(|p| p.name.clone()));
@@ -7282,6 +7291,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         )
                     }));
                     owned.extend(m.params.iter().map(|p| is_owned(&p.convention)));
+                    deinit.extend(m.params.iter().map(|p| is_deinit(&p.convention)));
                     refp.extend(m.params.iter().map(|p| is_ref(&p.convention)));
                     lower_fn_nested(
                         FunctionLowering {
@@ -7291,6 +7301,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             parameter_types: ptys,
                             value_parameter_locals,
                             owned_parameters: owned,
+                            deinit_parameters: deinit,
                             reference_parameters: refp,
                             returns_reference: effect.returns_reference,
                             ret_ty,

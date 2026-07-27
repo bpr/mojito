@@ -67,6 +67,7 @@ fn function(blocks: Vec<MirBlock>, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirF
         n_params: 0,
         param_types: Vec::new(),
         owned_params: Vec::new(),
+        deinit_params: Vec::new(),
         ref_params: Vec::new(),
         returns_reference: false,
         var_tys: HashMap::new(),
