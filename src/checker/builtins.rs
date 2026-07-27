@@ -503,3 +503,317 @@ pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
         None
     }
 }
+
+/// Type inference for compiler-known builtin free functions
+/// (`print`, `len`, `range`, conversions, `divmod`, …). Moved from `checker.rs`.
+impl Checker {
+    /// Type `print(...)`. Intrinsic scalars have builtin writing; nominal values,
+    /// including public collections, opt into current `Writable`. During tuple
+    /// specialization discovery an as-yet-unmaterialized nominal shape is checked
+    /// element-wise; executable values always cross the concrete struct boundary.
+    pub(super) fn infer_print(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        for (i, arg) in args.iter().enumerate() {
+            let ty = self.infer(arg)?;
+            let runtime_ty = default_literal(&ty);
+            if runtime_ty != ty {
+                self.record_literal_materializations(arg, &ty, &runtime_ty)?;
+            }
+            if let Ty::Struct(name, _) = &ty
+                && !self.structs.contains_key(name)
+                && (list_element(&ty).is_some_and(is_printable)
+                    || set_element(&ty).is_some_and(is_printable)
+                    || dict_elements(&ty)
+                        .is_some_and(|(key, value)| is_printable(key) && is_printable(value))
+                    || tuple_elements(&ty)
+                        .is_some_and(|elements| elements.into_iter().all(is_printable)))
+            {
+                continue;
+            }
+            if matches!(ty, Ty::Struct(..) | Ty::Variant(_)) {
+                if self.conforms_to(&ty, "Writable") {
+                    continue;
+                }
+                return Err(TypeError::TypeMismatch {
+                    expected: "Writable".to_string(),
+                    found: ty.to_string(),
+                    context: format!("argument {} to 'print'", i + 1),
+                });
+            }
+            if matches!(ty, Ty::Param { .. }) && self.conforms_to(&ty, "Writable") {
+                continue;
+            }
+            if !is_printable(&ty) {
+                return Err(TypeError::TypeMismatch {
+                    expected: "a printable value".to_string(),
+                    found: ty.to_string(),
+                    context: format!("argument {} to 'print'", i + 1),
+                });
+            }
+        }
+        Ok(Ty::None)
+    }
+
+    /// Type the built-in `input(prompt)`: prompt must be a `String`, result is the
+    /// line read from standard input as a `String`.
+    pub(super) fn infer_input(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args("input", 1, args)?;
+        if tys[0] == Ty::String {
+            Ok(Ty::String)
+        } else {
+            Err(TypeError::TypeMismatch {
+                expected: "String".to_string(),
+                found: tys[0].to_string(),
+                context: "argument to 'input'".to_string(),
+            })
+        }
+    }
+
+    /// Require a built-in call to have exactly `n` arguments, and return the
+    /// inferred type of each.
+    pub(super) fn builtin_args(
+        &self,
+        name: &str,
+        n: usize,
+        args: &[Expr],
+    ) -> Result<Vec<Ty>, TypeError> {
+        if args.len() != n {
+            return Err(TypeError::ArityMismatch {
+                name: name.to_string(),
+                expected: n,
+                got: args.len(),
+            });
+        }
+        args.iter().map(|a| self.infer(a)).collect()
+    }
+
+    /// Type `String(x)`: stringify a numeric, `Bool`, or `String` value.
+    pub(super) fn infer_stringify(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args("String", 1, args)?;
+        if is_numeric(&tys[0]) || tys[0] == Ty::Bool || tys[0] == Ty::String {
+            let runtime_ty = default_literal(&tys[0]);
+            if runtime_ty != tys[0] {
+                self.record_literal_materializations(&args[0], &tys[0], &runtime_ty)?;
+            }
+            return Ok(Ty::String);
+        }
+        if self.conforms_to(&tys[0], "Writable") {
+            // Like `print`, nominal String conversion formats through a
+            // borrowed `Writable` receiver and must retain its caller storage
+            // until that synchronous formatter returns.
+            self.call_place_uses
+                .borrow_mut()
+                .insert(args[0].source_span());
+            return Ok(Ty::String);
+        }
+        Err(TypeError::TypeMismatch {
+            expected: "Writable".to_string(),
+            found: tys[0].to_string(),
+            context: "argument to 'String'".to_string(),
+        })
+    }
+
+    /// Type `abs(x)`: a numeric argument, returning the same numeric type.
+    pub(super) fn infer_abs(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args("abs", 1, args)?;
+        // A numeric value, or an opaque `T: Absable` — `abs` returns the same type
+        // (`__abs__(self) -> Self`); the concrete impl runs after type erasure.
+        if is_numeric(&tys[0]) || param_has_bound(&tys[0], "Absable") {
+            Ok(tys[0].clone())
+        } else if let Some(result) = self.struct_dunder(&tys[0], "__abs__", &[]) {
+            // A concrete struct routes through `__abs__(self) -> Self`.
+            result
+        } else {
+            Err(TypeError::TypeMismatch {
+                expected: "a numeric value".to_string(),
+                found: tys[0].to_string(),
+                context: "argument to 'abs'".to_string(),
+            })
+        }
+    }
+
+    /// Type `min(a, b)` / `max(a, b)`: two numeric arguments unified like an
+    /// operator (no concrete-type mixing), returning their common type.
+    pub(super) fn infer_min_max(&self, name: &str, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args(name, 2, args)?;
+        common_numeric(&tys[0], &tys[1]).ok_or_else(|| TypeError::BadOperator {
+            op: name.to_string(),
+            operands: format!("{} and {}", tys[0], tys[1]),
+        })
+    }
+
+    /// Type `round(x)`: a `Float64` argument returning `Float64`, or an opaque
+    /// `T: Roundable` returning the same type (`__round__(self) -> Self`; the
+    /// concrete impl runs after type erasure).
+    pub(super) fn infer_round(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args("round", 1, args)?;
+        if matches!(tys[0], Ty::Float64 | Ty::FloatLiteral) {
+            Ok(Ty::Float64)
+        } else if param_has_bound(&tys[0], "Roundable") {
+            Ok(tys[0].clone())
+        } else if let Some(result) = self.struct_dunder(&tys[0], "__round__", &[]) {
+            // A concrete struct routes through `__round__(self) -> Self`.
+            result
+        } else {
+            Err(TypeError::TypeMismatch {
+                expected: "Float64".to_string(),
+                found: tys[0].to_string(),
+                context: "argument to 'round'".to_string(),
+            })
+        }
+    }
+
+    pub(super) fn len_result_for_type(&self, ty: &Ty) -> Result<Option<Ty>, TypeError> {
+        if let Ty::Dependent(DependentType::Indexed { elements, .. }) = ty {
+            for element in elements {
+                match self.len_result_for_type(element)? {
+                    Some(Ty::Int) => {}
+                    _ => return Ok(None),
+                }
+            }
+            return Ok(Some(Ty::Int));
+        }
+        if matches!(
+            ty,
+            Ty::String
+                | Ty::ComptimeList(_)
+                | Ty::Tuple(_)
+                | Ty::RuntimePack(_)
+                | Ty::VariadicPack(_)
+        ) {
+            return Ok(Some(Ty::Int));
+        }
+        if let Ty::Struct(name, _) = ty
+            && !self.structs.contains_key(name)
+            && (list_element(ty).is_some()
+                || set_element(ty).is_some()
+                || dict_elements(ty).is_some()
+                || tuple_elements(ty).is_some()
+                || crate::types::is_range_type(ty))
+        {
+            return Ok(Some(Ty::Int));
+        }
+        // `len(c)` on a user struct dispatches to `c.__len__()` (`Sized`), which
+        // must return `Int`.
+        if let Some(result) = self.struct_dunder(ty, "__len__", &[]) {
+            return result
+                .and_then(|ret| require_dunder_ret(ret, &Ty::Int, "__len__"))
+                .map(Some);
+        }
+        // `len(x)` on an opaque type parameter is permitted when its bound
+        // promises a length (`T: Sized`) — the concrete type's `__len__` runs at
+        // runtime after type erasure.
+        if has_len_bound(ty) {
+            return Ok(Some(Ty::Int));
+        }
+        Ok(None)
+    }
+
+    /// Type `len(x)`: every possible type of a dependent input must fulfill the
+    /// same `Sized`/`__len__ -> Int` contract.
+    pub(super) fn infer_len(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args("len", 1, args)?;
+        if let Some(result) = self.len_result_for_type(&tys[0])? {
+            return Ok(result);
+        }
+        Err(TypeError::TypeMismatch {
+            expected: "String, List, or Tuple".to_string(),
+            found: tys[0].to_string(),
+            context: "argument to 'len'".to_string(),
+        })
+    }
+
+    /// Type the built-in `range(stop)` / `range(start, stop)` /
+    /// `range(start, stop, step)`. All arguments must be `Int`; the result is a
+    /// `range`. A zero `step` is a *runtime* value error, not a type error.
+    pub(super) fn infer_range(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        if args.is_empty() {
+            return Err(TypeError::ArityMismatch {
+                name: "range".to_string(),
+                expected: 1,
+                got: 0,
+            });
+        }
+        if args.len() > 3 {
+            return Err(TypeError::ArityMismatch {
+                name: "range".to_string(),
+                expected: 3,
+                got: args.len(),
+            });
+        }
+        for (i, arg) in args.iter().enumerate() {
+            let arg_ty = self.infer(arg)?;
+            if !coerces(&arg_ty, &Ty::Int) {
+                return Err(TypeError::TypeMismatch {
+                    expected: "Int".to_string(),
+                    found: arg_ty.to_string(),
+                    context: format!("argument {} to 'range'", i + 1),
+                });
+            }
+            self.record_literal_materializations(arg, &arg_ty, &Ty::Int)?;
+        }
+        Ok(range_type())
+    }
+
+    /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:
+    /// exactly one argument of a numeric or `Bool` type, producing `target`. An
+    /// opaque type parameter is also accepted when its bound promises the
+    /// conversion — `Int(x)` on `T: Intable`, `Float64(x)` on `T: Floatable`,
+    /// `Bool(x)` on `T: Boolable` (`__int__`/`__float__`/`__bool__` run after
+    /// type erasure).
+    pub(super) fn infer_conversion(&self, target: Ty, args: &[Expr]) -> Result<Ty, TypeError> {
+        if args.len() != 1 {
+            return Err(TypeError::ArityMismatch {
+                name: target.to_string(),
+                expected: 1,
+                got: args.len(),
+            });
+        }
+        let arg_ty = self.infer(&args[0])?;
+        // A concrete value routes through its conversion dunder
+        // (`Int(x)` → `x.__int__() -> Int`, `Float64`/`Bool` likewise); the
+        // same protocol an opaque `T: Intable/Floatable/Boolable` uses.
+        let conversion = match target {
+            Ty::Int => Some(("__int__", Ty::Int)),
+            Ty::Float64 => Some(("__float__", Ty::Float64)),
+            Ty::Bool => Some(("__bool__", Ty::Bool)),
+            _ => None,
+        };
+        if let Some((dunder, expected)) = &conversion
+            && let Some(result) = self.struct_dunder(&arg_ty, dunder, &[])
+        {
+            require_dunder_ret(result?, expected, dunder)?;
+            return Ok(target);
+        }
+        let bounded = match target {
+            Ty::Int => param_has_bound(&arg_ty, "Intable"),
+            Ty::Float64 => param_has_bound(&arg_ty, "Floatable"),
+            Ty::Bool => param_has_bound(&arg_ty, "Boolable"),
+            _ => false,
+        };
+        if !(is_numeric(&arg_ty) || arg_ty == Ty::Bool || bounded) {
+            return Err(TypeError::TypeMismatch {
+                expected: "a numeric or Bool value".to_string(),
+                found: arg_ty.to_string(),
+                context: format!("argument to '{}'", target),
+            });
+        }
+        Ok(target)
+    }
+
+    /// Type the prelude built-in `divmod(a, b)` (`DivModable`) → `Tuple[T, T]`:
+    /// two numeric arguments of a common type (like an operator), or two equal
+    /// opaque type parameters bounded by `DivModable`.
+    pub(super) fn infer_divmod(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        let tys = self.builtin_args("divmod", 2, args)?;
+        if let Some(common) = common_numeric(&tys[0], &tys[1]) {
+            return Ok(self.public_tuple_type(vec![common.clone(), common]));
+        }
+        if tys[0] == tys[1] && param_has_bound(&tys[0], "DivModable") {
+            return Ok(self.public_tuple_type(vec![tys[0].clone(), tys[0].clone()]));
+        }
+        Err(TypeError::BadOperator {
+            op: "divmod".to_string(),
+            operands: format!("{} and {}", tys[0], tys[1]),
+        })
+    }
+}

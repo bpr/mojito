@@ -112,10 +112,14 @@ policy or data-model responsibilities to focused children:
   marker indexes and matches positional, keyword, default, `*args`, and
   `**kwargs` inputs to parameter slots. The checker and VM separately adapt its
   structural errors and matched slots to types and runtime values.
-- `checker.rs` coordinates checking; `checker/annotations.rs`, `builtins.rs`,
-  `calls.rs`, `declarations.rs`, `generics.rs`, and `places.rs` own annotation
-  conversion, built-in rules, argument matching, declaration flow checks,
-  substitution, and place/alias rules.
+- `checker.rs` holds the `Checker` state, constructors, and shared prelude
+  types, and coordinates checking; the single `Checker` type's methods are split
+  by responsibility across `impl Checker` blocks in the `checker/` submodules —
+  `statements`, `inference`, `indexing`, `method_calls`, `call_inference`,
+  `type_resolution`, `traits`, `origins`, `scopes`, `constraints`, `operators`,
+  `iteration`, plus the earlier `annotations`, `builtins`, `calls`,
+  `declarations`, `generics`, and `places`. See `docs/symbol-map.md` for the
+  per-file responsibility map.
 - `mir/mod.rs` lowers ordinary code; `mir/ir.rs` defines the MIR data model and
   `mir/nested.rs` owns capture analysis and nested-function lifting.
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument

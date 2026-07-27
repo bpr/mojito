@@ -600,3 +600,449 @@ pub(super) fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<Ty
         })
         .collect()
 }
+
+/// Callable specialization and method-generic instantiation moved from `checker.rs`.
+impl Checker {
+    /// Split the source parameter list at an explicit specialization site.
+    /// Ordinary arguments are rewritten as named arguments before being handed
+    /// to the generic binder; this preserves their source slot even when an
+    /// erased or infer-only semantic parameter precedes them.
+    pub(super) fn split_callable_specialization(
+        &self,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+        signature: &CallableOriginSignature,
+    ) -> Result<SplitCallableSpecialization, TypeError> {
+        use crate::ast::ParamArg;
+
+        if signature.origins.is_empty() {
+            return Ok((arguments.to_vec(), Vec::new()));
+        }
+        let mut supplied = vec![false; signature.source.len()];
+        let mut origins = vec![None; signature.origins.len()];
+        let mut ordinary = Vec::new();
+        let mut next_positional = 0;
+        for argument in arguments {
+            let (index, value) = match argument {
+                ParamArg::Named {
+                    name: argument_name,
+                    value,
+                } => {
+                    let index = signature
+                        .source
+                        .iter()
+                        .position(|parameter| parameter.name == *argument_name)
+                        .ok_or_else(|| TypeError::BadCall {
+                            func: name.to_string(),
+                            reason: format!("unknown compile-time parameter '{argument_name}'"),
+                        })?;
+                    (index, (**value).clone())
+                }
+                other => {
+                    while next_positional < signature.source.len()
+                        && (signature.source[next_positional].infer_only
+                            || supplied[next_positional])
+                    {
+                        next_positional += 1;
+                    }
+                    if next_positional == signature.source.len() {
+                        return Err(TypeError::WrongTypeArgCount {
+                            name: name.to_string(),
+                            expected: signature
+                                .source
+                                .iter()
+                                .filter(|parameter| !parameter.infer_only)
+                                .count(),
+                            got: arguments.len(),
+                        });
+                    }
+                    let index = next_positional;
+                    next_positional += 1;
+                    (index, other.clone())
+                }
+            };
+            let parameter = &signature.source[index];
+            if parameter.infer_only {
+                return Err(TypeError::Unsupported(format!(
+                    "infer-only parameter '{}' cannot be supplied explicitly",
+                    parameter.name
+                )));
+            }
+            if supplied[index] {
+                return Err(TypeError::BadCall {
+                    func: name.to_string(),
+                    reason: format!("parameter '{}' was supplied twice", parameter.name),
+                });
+            }
+            supplied[index] = true;
+            if let Some(origin_index) = parameter.origin {
+                if let ParamArg::Value(expression) = &value {
+                    self.operation_adjustments.borrow_mut().insert(
+                        expression.source_span(),
+                        crate::checked::SemanticAdjustment::EraseCompileTimeArgument,
+                    );
+                }
+                origins[origin_index] = Some(self.explicit_origin_argument(&value)?);
+            } else if parameter.ordinary {
+                ordinary.push(ParamArg::Named {
+                    name: parameter.name.trim_start_matches('*').to_string(),
+                    value: Box::new(value),
+                });
+            } else {
+                return Err(TypeError::Unsupported(format!(
+                    "semantic parameter '{}' is inferred and cannot be supplied explicitly",
+                    parameter.name
+                )));
+            }
+        }
+
+        let bindings = signature
+            .origins
+            .iter()
+            .zip(origins)
+            .filter_map(|(parameter, origin)| {
+                origin.map(|origin| (parameter.slots.clone(), origin))
+            })
+            .collect::<Vec<_>>();
+        Ok((ordinary, bindings))
+    }
+
+    pub(super) fn bind_callable_origins(
+        &self,
+        mut callable: Ty,
+        bindings: &[(Vec<usize>, crate::origin::Origin)],
+    ) -> Ty {
+        let (ref_params, ref_return) = match &mut callable {
+            Ty::Func {
+                ref_params,
+                ref_return,
+                ..
+            }
+            | Ty::GenericFunc {
+                ref_params,
+                ref_return,
+                ..
+            } => (ref_params, ref_return),
+            _ => return callable,
+        };
+        for signature in ref_params.iter_mut().flatten() {
+            signature.origin = bind_sig_origin(&signature.origin, bindings);
+        }
+        if let Some(signature) = ref_return {
+            signature.origin = bind_sig_origin(&signature.origin, bindings);
+        }
+        callable
+    }
+
+    pub(super) fn prepare_callable_specialization(
+        &self,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+        callable: Ty,
+        signature: Option<&CallableOriginSignature>,
+    ) -> Result<(Ty, Vec<crate::ast::ParamArg>), TypeError> {
+        let Some(signature) = signature else {
+            return Ok((callable, arguments.to_vec()));
+        };
+        let (ordinary, bindings) =
+            self.split_callable_specialization(name, arguments, signature)?;
+        Ok((self.bind_callable_origins(callable, &bindings), ordinary))
+    }
+
+    /// Materialize the monomorphic checked view of an explicitly specialized
+    /// generic function value. Generic execution remains type-erased; only its
+    /// callable contract is instantiated here.
+    pub(super) fn instantiate_generic_callable_value(
+        &self,
+        name: &str,
+        callable: Ty,
+        arguments: &[crate::ast::ParamArg],
+    ) -> Result<(Ty, Vec<TyArg>), TypeError> {
+        let Ty::GenericFunc {
+            environment,
+            decls,
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+        } = callable
+        else {
+            return Ok((callable, Vec::new()));
+        };
+        let (subst, tyargs) = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
+        let values = Self::value_argument_environment(&decls, &tyargs);
+        let resolve = |ty: &Ty| {
+            let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
+            self.resolve_dependent_ty(&substituted, &values)
+        };
+        let contract = Ty::Func {
+            environment,
+            params: params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
+            names,
+            ret: Box::new(resolve(&ret)?),
+            required,
+            variadic: variadic
+                .as_ref()
+                .map(|parameter| resolve(parameter).map(Box::new))
+                .transpose()?,
+            kw_variadic: kw_variadic
+                .as_ref()
+                .map(|parameter| resolve(parameter).map(Box::new))
+                .transpose()?,
+            positional_only,
+            keyword_only,
+            raises,
+            error: error
+                .as_ref()
+                .map(|error| resolve(error).map(Box::new))
+                .transpose()?,
+            conventions,
+            ref_params,
+            ref_return,
+        };
+        Ok((contract, tyargs))
+    }
+
+    pub(super) fn specialize_callable_value_candidate(
+        &self,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+        callable: Ty,
+        signature: Option<&CallableOriginSignature>,
+    ) -> Result<Ty, TypeError> {
+        let (callable, ordinary) =
+            self.prepare_callable_specialization(name, arguments, callable, signature)?;
+        match callable {
+            callable @ Ty::GenericFunc { .. } => self
+                .instantiate_generic_callable_value(name, callable, &ordinary)
+                .map(|(contract, _)| contract),
+            callable @ Ty::Func { .. } if ordinary.is_empty() => Ok(callable),
+            Ty::Func { .. } => Err(TypeError::WrongTypeArgCount {
+                name: name.to_string(),
+                expected: 0,
+                got: ordinary.len(),
+            }),
+            other => Err(TypeError::NotCallable {
+                name: name.to_string(),
+                ty: other.to_string(),
+            }),
+        }
+    }
+
+    pub(super) fn infer_specialized_callable_value(
+        &self,
+        span: SourceSpan,
+        name: &str,
+        arguments: &[crate::ast::ParamArg],
+        expected: Option<&Ty>,
+        record: bool,
+    ) -> Result<Option<Ty>, TypeError> {
+        let Some(callable) = self.lookup(name).cloned() else {
+            return Ok(None);
+        };
+        if !matches!(
+            callable,
+            Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
+        ) {
+            return Ok(None);
+        }
+        self.check_capture_access(name, false)?;
+        if record && let Some(owner) = self.lookup_owner(name) {
+            self.expression_bindings
+                .borrow_mut()
+                .insert(span.clone(), owner);
+        }
+        let signatures = self.lookup_callable_origins(name).unwrap_or_default();
+        let (selected, target) = match callable {
+            Ty::Overload(candidates) => {
+                let expected = expected.ok_or_else(|| TypeError::BadCall {
+                    func: name.to_string(),
+                    reason: "an overloaded function value requires a contextual callable type"
+                        .to_string(),
+                })?;
+                let mut matches = candidates
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, candidate)| {
+                        let specialized = self
+                            .specialize_callable_value_candidate(
+                                name,
+                                arguments,
+                                candidate.clone(),
+                                signatures.get(index),
+                            )
+                            .ok()?;
+                        self.value_coerces(&specialized, expected)
+                            .then(|| {
+                                callable_lowered_name(name, candidate)
+                                    .map(|target| (specialized, target))
+                            })
+                            .flatten()
+                    })
+                    .collect::<Vec<_>>();
+                match matches.len() {
+                    0 => {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: format!("specialization of overload({name})"),
+                            context: "overloaded callable value".to_string(),
+                        });
+                    }
+                    1 => matches.pop().expect("one callable-value candidate"),
+                    _ => {
+                        return Err(TypeError::BadCall {
+                            func: name.to_string(),
+                            reason: format!(
+                                "multiple specialized overloads fit expected type '{expected}'"
+                            ),
+                        });
+                    }
+                }
+            }
+            candidate => {
+                let specialized = self.specialize_callable_value_candidate(
+                    name,
+                    arguments,
+                    candidate,
+                    signatures.first(),
+                )?;
+                (specialized, name.to_string())
+            }
+        };
+        if record {
+            self.overload_targets
+                .borrow_mut()
+                .insert(span.clone(), target);
+            self.expression_types
+                .borrow_mut()
+                .insert(span.clone(), selected.clone());
+        }
+        Ok(Some(selected))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn instantiate_method_generics(
+        &self,
+        name: &str,
+        signature: &MethodSig,
+        params: &[Ty],
+        variadic: Option<&Ty>,
+        kw_variadic: Option<&Ty>,
+        param_args: &[crate::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+    ) -> Result<MethodInstantiation, TypeError> {
+        if signature.decls.is_empty() {
+            if !param_args.is_empty() {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: name.to_string(),
+                    expected: 0,
+                    got: param_args.len(),
+                });
+            }
+            return Ok((
+                params.to_vec(),
+                variadic.cloned(),
+                kw_variadic.cloned(),
+                HashMap::new(),
+                HashMap::new(),
+            ));
+        }
+        let forwarded_element = self.forwarded_kwargs_element(name, kwargs)?;
+        if forwarded_element.is_some() && kw_variadic.is_none() {
+            return Err(TypeError::BadCall {
+                func: name.to_string(),
+                reason: "`**kwargs^` requires a callee with a `**kwargs` collector".to_string(),
+            });
+        }
+        let keyword_names: Vec<_> = kwargs
+            .iter()
+            .filter(|argument| !argument.is_forwarded())
+            .map(|arg| arg.name.as_str())
+            .collect();
+        let matched = match_call_slots(
+            &signature.names,
+            &signature.required,
+            signature.positional_only,
+            signature.keyword_only,
+            args.len(),
+            &keyword_names,
+            CallVariadics {
+                positional: variadic.is_some(),
+                keyword: kw_variadic.is_some(),
+            },
+        )
+        .map_err(|error| error.into_type_error(name))?;
+        let mut patterns = Vec::new();
+        let mut actuals = Vec::new();
+        for (index, slot) in matched.slots.iter().enumerate() {
+            let expression = match slot {
+                ArgSlot::Positional(position) => &args[*position],
+                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Default => continue,
+            };
+            patterns.push(params[index].clone());
+            actuals.push(self.infer(expression)?);
+        }
+        if let Some(element) = variadic {
+            for position in matched.positional_overflow {
+                patterns.push(element.clone());
+                actuals.push(self.infer(&args[position])?);
+            }
+        }
+        if let Some(element) = kw_variadic {
+            for position in matched.keyword_overflow {
+                patterns.push(element.clone());
+                actuals.push(self.infer(&kwargs[position].value)?);
+            }
+            if let Some(actual) = forwarded_element {
+                patterns.push(element.clone());
+                actuals.push(actual);
+            }
+        }
+        let (subst, tyargs) =
+            self.resolve_use_params(name, &signature.decls, param_args, &patterns, &actuals)?;
+        let values = Self::value_argument_environment(&signature.decls, &tyargs);
+        let resolve = |ty: &Ty| {
+            let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
+            self.resolve_dependent_ty(&substituted, &values)
+        };
+        let arguments = signature
+            .decls
+            .iter()
+            .zip(tyargs.iter().cloned())
+            .map(|(decl, argument)| (decl.name().trim_start_matches('*').to_string(), argument))
+            .collect();
+        Ok((
+            params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
+            variadic.map(resolve).transpose()?,
+            kw_variadic.map(resolve).transpose()?,
+            subst,
+            arguments,
+        ))
+    }
+
+    pub(super) fn method_constraints_apply(
+        &self,
+        signature: &MethodSig,
+        arguments: &HashMap<String, TyArg>,
+    ) -> bool {
+        let borrowed: HashMap<&str, &TyArg> = arguments
+            .iter()
+            .map(|(name, argument)| (name.as_str(), argument))
+            .collect();
+        signature
+            .availability
+            .iter()
+            .all(|constraint| self.eval_generic_constraint(constraint, &borrowed))
+    }
+}

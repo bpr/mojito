@@ -55,30 +55,87 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 ### Checker
 
-- `checker::Checker` coordinates scopes, declarations, expression inference,
-  trait conformance, and overload selection.
+- `checker::Checker` is one type whose ~250 methods are split across
+  `impl Checker` blocks in the `checker/` submodules below; `checker.rs` retains
+  the struct, constructors, `check_program` glue, the shared prelude types
+  (`StructInfo`, `MethodSig`, overload helpers, `ConformanceOracle`), and the
+  call-effect/coercion helpers. Submodules extract by responsibility, not by
+  line count; a moved method is `pub(super)` so siblings and the parent can call
+  it.
+- `checker/statements.rs` owns `check_program`, block scoping, and the
+  `check_stmt` statement dispatcher.
+- `checker/inference.rs` owns expression inference (`infer`/`infer_impl`) and
+  list/tuple/variant construction.
+- `checker/indexing.rs` owns place validation, subscript/index inference and
+  assignment, pointer offset/write checks, and member access.
+- `checker/method_calls.rs` owns method-call inference, overload scoring, and
+  static/pointer/List/Tuple method inference.
+- `checker/call_inference.rs` owns free-function and callable-value call
+  inference (`infer_call`, generic-call instantiation).
+- `checker/type_resolution.rs` resolves source annotations into checked `Ty`
+  (builtin type-argument forms, dependent/associated projection).
+- `checker/traits.rs` owns trait/struct declaration checking, conformance
+  (nominal and built-in), and type-capability queries.
+- `checker/origins.rs` owns origin/reference-handle derivation, interior and
+  aggregate-origin tracking, capture-origin collection, and origin-signature
+  lowering.
+- `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
+  nested-def capture-access checks.
+- `checker/constraints.rs` owns compile-time evaluation and generic-constraint
+  compilation/evaluation.
+- `checker/operators.rs` and `checker/iteration.rs` own operator/SIMD inference
+  and iterator-protocol selection respectively.
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates
   checker-only signature rules.
 - `checker/places.rs` owns call-site place classification and alias rejection.
-- `checker/generics.rs` owns unification and substitution.
+- `checker/generics.rs` owns unification, substitution, and callable/method
+  specialization.
+- `checker/declarations.rs` owns parameter classification and method/function
+  signature and body checking.
 - `checker/annotations.rs` converts AST annotations into checked `Ty` values.
-- `checker/builtins.rs` owns built-in typing/coercion rules.
+- `checker/builtins.rs` owns built-in typing/coercion rules and builtin
+  free-function inference (`print`/`len`/`range`/…).
 
 ### MIR
 
 - `mir/ir.rs` defines `MirInstr`, `MirTerm`, `MirPlace`, `MirFunction`, and
   `MirProgram`.
-- `mir/mod.rs` owns ordinary AST/HIR-to-MIR lowering.
+- `mir.rs` owns the `Flatten` ANF-lowering driver, core emission primitives, and
+  the `lower_cfg`/`lower_program` entry points. `Flatten`'s methods are split by
+  responsibility across `impl Flatten<'_>` blocks in the submodules below.
+- `mir/facts.rs` reads `CheckedProgram` facts during lowering (checked types,
+  call contracts, adjustments, capture accesses).
+- `mir/calls.rs` owns call-site lowering (arguments, keywords, receiver,
+  reference results, checked-call boundaries, interior-origin invalidations).
+- `mir/lower_expr.rs` owns expression lowering (the `expr_unconverted`
+  dispatcher, collections/comprehensions, nested closures).
+- `mir/lower_stmt.rs` owns statement, place, subscript-assignment, `try`-region,
+  and terminator lowering.
 - `mir/nested.rs` owns capture analysis and nested-function lifting.
 
 ### VM and Comptime
 
-- `backend/vm.rs` owns frame execution and instruction dispatch.
+- `backend/vm.rs` owns the `VmBackend` core: heap, value operations, method-call
+  and named-call execution, drops, and formatting. Its remaining methods are
+  split across `impl VmBackend` blocks in the submodules below.
+- `backend/vm/frames.rs` owns call-frame construction and the `drive_frames`
+  dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`).
+- `backend/vm/references.rs` owns runtime reference handle read/write/projection.
+- `backend/vm/exec.rs` owns the `exec_instr` instruction dispatcher and
+  `try`-region execution.
 - `backend/vm/calls.rs` turns `CallSlots` into runtime values and frame slots.
 - `backend/vm/places.rs` navigates projected runtime storage.
-- `comptime.rs` owns evaluation, elaboration, and specialization orchestration —
-  including variadic-struct templates (`generate_struct_spec`, the `mono_type`
-  annotation rewrite, and per-specialization source stamping).
+- `comptime.rs` owns the `Elab` elaboration driver (`block`/`stmt`), type
+  resolution, and the free-function/`Mono` support code; `Elab`'s remaining
+  methods are split across `impl<'a> Elab<'a>` blocks in the submodules below.
+- `comptime/eval.rs` owns compile-time expression evaluation (the `eval`
+  dispatcher, reflection methods, infix/iteration folding).
+- `comptime/ctfe.rs` owns VM-driven compile-time function evaluation and the
+  VM-CTFE program rewrite and safety analysis.
+- `comptime/specialize.rs` owns monomorphization and `def`/`struct`
+  specialization synthesis (`generate_struct_spec`, tuple-spec ordering).
+- `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
+  friends) and struct-specialization argument resolution.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
 
 ## Change Routing
