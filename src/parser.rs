@@ -326,7 +326,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             )?;
             let value = self.parse_tuple_display()?;
             self.expect_stmt_end()?;
-            return Ok(StmtKind::Unpack { targets, value });
+            return Ok(StmtKind::Unpack {
+                targets,
+                value,
+                declares: false,
+            });
         }
 
         if matches!(self.peek_token()?, Some(Token::Assign)) {
@@ -402,7 +406,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             )?;
             let value = self.parse_tuple_display()?;
             self.expect_stmt_end()?;
-            return Ok(StmtKind::Unpack { targets, value });
+            return Ok(StmtKind::Unpack {
+                targets,
+                value,
+                declares: true,
+            });
         }
         // An optional `: Type`; omitting it infers the type from `value`.
         let ty = if matches!(self.peek_token()?, Some(Token::Colon)) {

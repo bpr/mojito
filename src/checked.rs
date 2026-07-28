@@ -1120,7 +1120,7 @@ fn build_checked_expressions(
                         self.expr(place);
                         self.expr(value);
                     }
-                    Unpack { targets, value } => {
+                    Unpack { targets, value, .. } => {
                         for target in targets {
                             self.expr(target);
                         }
@@ -1302,14 +1302,6 @@ fn build_checked_declarations(
                     except: Some((Some(name), _)),
                     ..
                 } => (CheckedDeclKind::Binding, name.clone()),
-                // A bare assignment can introduce a binding in Mojo. The
-                // checker records a statement identity only for that case;
-                // ordinary reassignments remain operations, not declarations.
-                StmtKind::Assign { name, .. }
-                    if statement_bindings.contains_key(&statement.source_span()) =>
-                {
-                    (CheckedDeclKind::Binding, name.clone())
-                }
                 StmtKind::Comptime { name, .. } => (CheckedDeclKind::CompileTime, name.clone()),
                 _ => {
                     // Control-flow declarations are discovered recursively below;

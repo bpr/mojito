@@ -134,22 +134,22 @@ checker requires the place's root to be a mutable location: any variable, or
 error). A place write mutates the root variable's binding **in place** (value
 semantics: only that binding changes).
 
-`x = e` on an **undeclared** name is a Mojo **`var`-less variable introduction**
-(implicit declaration). Mojito binds its inferred type and lowers it like an
-explicit inferred `var` declaration. The binding belongs to the containing
-function even when the first assignment is nested in a branch or loop. Reads
-still require every reachable path to have initialized it; explicit `var`
-declarations retain lexical block scope.
+`x = e` on an **undeclared** name is a **checker error** (`AssignToUndeclared`):
+Mojito requires `var` to introduce a new binding, matching Mojo's move to a single
+declaration pathway. A `var` is **block-scoped** — one declared inside an
+`if`/`while`/`for` body is not visible after that block, so a value used after a
+branch must be `var`-declared before it. A `var x: T` without an initializer is
+in scope immediately, but reads still require every reachable path to have
+initialized it first.
 
-**Tuple unpacking** `a, b, … = e` binds each target to the corresponding element of
-the tuple `e` (Mojo's `x, y = example_tuple`; a top-level comma in the target list is
-what marks the statement as an unpack). Declaration unpacking (`var a, b = e`) is
-also accepted. Each target obeys the same rule as an
-assignment target — a `NAME` or a place — and a trailing comma is allowed
-(`a, = t`).
-The value tuple is evaluated **once**; each element is then bound to its target (a
-`NAME` follows the assignment rules — re-assign if in scope, else a var-less
-introduction).
+**Tuple unpacking** binds each target to the corresponding element of the tuple
+`e` (a top-level comma in the target list is what marks the statement as an
+unpack). The **declaration** form `var a, b = e` introduces each target as a fresh
+`var`; the **bare** form `a, b, … = e` requires every target already in scope — a
+`NAME` re-assigns it (keeping its type) or a place (`p.x`, `xs[i]`) is written, and
+an undeclared target is the same `AssignToUndeclared` error. A trailing comma is
+allowed (`a, = t`). The value tuple is evaluated **once**, then each element is
+bound to its target.
 
 **Augmented assignment** `target OP= e` means `target = target OP e` for the seven
 arithmetic and integer bitwise/shift operators. The target obeys the same place

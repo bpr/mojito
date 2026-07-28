@@ -1809,7 +1809,7 @@ impl Flatten<'_> {
 
             // Tuple unpacking `a, b = t`: evaluate the tuple once, then bind each
             // target from its element (a NAME → `DefVar`; a place → `Store`).
-            StmtKind::Unpack { targets, value } => {
+            StmtKind::Unpack { targets, value, .. } => {
                 let plan = self
                     .tuple_unpack_plan(value)
                     .expect("checked tuple unpack carries an extraction plan");

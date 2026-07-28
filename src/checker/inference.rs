@@ -305,37 +305,6 @@ impl Checker {
         Ok(())
     }
 
-    pub(super) fn predeclare_implicit_assignments(
-        &mut self,
-        statements: &[Stmt],
-    ) -> Result<(), TypeError> {
-        for statement in statements {
-            match &statement.kind {
-                StmtKind::Assign { name, value } if self.lookup(name).is_none() => {
-                    let found = self.infer(value)?;
-                    let declared = self.inferred_binding_ty(&found, name)?;
-                    self.declare_function_implicit(name, declared)?;
-                    if let Some(owner) = self.lookup_owner(name) {
-                        self.uninitialized.borrow_mut().insert(owner);
-                    }
-                }
-                StmtKind::If { branches, orelse } => {
-                    for (_, body) in branches {
-                        self.predeclare_implicit_assignments(body)?;
-                    }
-                    if let Some(body) = orelse {
-                        self.predeclare_implicit_assignments(body)?;
-                    }
-                }
-                StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
-                    self.predeclare_implicit_assignments(body)?;
-                }
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-
     pub(super) fn infer(&self, expr: &Expr) -> Result<Ty, TypeError> {
         let result = self.infer_impl(expr);
         if let Ok(ty) = &result {

@@ -220,6 +220,13 @@ impl Checker {
 
             StmtKind::Assign { name, value } => {
                 self.register_named_bindings(value)?;
+                // `_ = e` discards the value: evaluate it so any move/effect still
+                // registers, but introduce no binding and require none.
+                if name == "_" {
+                    let found = self.infer(value)?;
+                    self.check_consuming(value, &found, "discard assignment")?;
+                    return Ok(());
+                }
                 self.check_capture_access(name, true)?;
                 let found = self.infer(value)?;
                 self.check_consuming(value, &found, &format!("assignment to '{name}'"))?;
@@ -321,35 +328,9 @@ impl Checker {
                         self.set_aggregate_field_origins(name, aggregate_field_origins);
                         Ok(())
                     }
-                    // `x = e` on an undeclared name is a **var-less introduction**
-                    // (implicit declaration). Mojo allows it; mojito parses and
-                    // type-checks it by binding the materialized type. Later
-                    // lowering retains the explicit unsupported boundary.
-                    None => {
-                        let declared = self.inferred_binding_ty(&found, name)?;
-                        self.record_literal_materializations(value, &found, &declared)?;
-                        let (aggregate_origins, aggregate_field_origins) = if !matches!(
-                            declared,
-                            Ty::Ref(_)
-                        ) && self
-                            .type_carries_loans(&declared)
-                        {
-                            (
-                                self.aggregate_origins(value),
-                                self.aggregate_field_origins(value),
-                            )
-                        } else {
-                            (Vec::new(), HashMap::new())
-                        };
-                        self.declare_function_implicit(name, declared)?;
-                        self.record_statement_binding(stmt, name);
-                        self.set_aggregate_origins(name, aggregate_origins);
-                        self.set_aggregate_field_origins(name, aggregate_field_origins);
-                        if let Some(owner) = self.lookup_owner(name) {
-                            self.uninitialized.borrow_mut().remove(&owner);
-                        }
-                        Ok(())
-                    }
+                    // Mojito requires `var` to introduce a new binding; a bare
+                    // assignment to a name not in scope is an error.
+                    None => Err(TypeError::AssignToUndeclared(name.clone())),
                 }
             }
 
@@ -547,7 +528,11 @@ impl Checker {
             // target (a NAME or a place) receives the corresponding element type. A
             // NAME follows the assignment rules (re-assign if in scope, else a
             // var-less introduction).
-            StmtKind::Unpack { targets, value } => {
+            StmtKind::Unpack {
+                targets,
+                value,
+                declares,
+            } => {
                 let vt = self.infer(value)?;
                 let Some(elems) = tuple_elements(&vt) else {
                     return Err(TypeError::TypeMismatch {
@@ -646,6 +631,14 @@ impl Checker {
                     .insert(value.source_span(), unpack_plan);
                 for (target, elem) in targets.iter().zip(&elems) {
                     match &target.kind {
+                        // `_` discards its element (no binding, no declaration).
+                        ExprKind::Identifier(name) if name == "_" => {}
+                        // `var a, b = e` declares each target; a bare `a, b = e`
+                        // requires every target already in scope.
+                        ExprKind::Identifier(name) if *declares => {
+                            let declared = self.inferred_binding_ty(elem, name)?;
+                            self.declare(name, declared)?;
+                        }
                         ExprKind::Identifier(name) => match self.lookup(name).cloned() {
                             Some(existing) => {
                                 self.check_capture_access(name, true)?;
@@ -672,10 +665,7 @@ impl Checker {
                                     );
                                 }
                             }
-                            None => {
-                                let declared = self.inferred_binding_ty(elem, name)?;
-                                self.declare(name, declared)?;
-                            }
+                            None => return Err(TypeError::AssignToUndeclared(name.clone())),
                         },
                         _ => {
                             if let Some(root) = place_root_name(target) {
@@ -1393,12 +1383,6 @@ impl Checker {
             StmtKind::ComptimeFor { .. } => Err(TypeError::Unsupported("comptime for".to_string())),
 
             StmtKind::If { branches, orelse } => {
-                for (_, body) in branches {
-                    self.predeclare_implicit_assignments(body)?;
-                }
-                if let Some(body) = orelse {
-                    self.predeclare_implicit_assignments(body)?;
-                }
                 let before = self.uninitialized.borrow().clone();
                 let mut exits = Vec::new();
                 // Definite initialization follows only reachable exits when a
@@ -1439,7 +1423,6 @@ impl Checker {
             }
 
             StmtKind::While { cond, body, orelse } => {
-                self.predeclare_implicit_assignments(body)?;
                 let before = self.uninitialized.borrow().clone();
                 self.register_named_bindings(cond)?;
                 self.expect_bool(cond, "while condition")?;

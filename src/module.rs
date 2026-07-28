@@ -1320,7 +1320,7 @@ fn rewrite_stmt(
             rewrite_expr(place, names, namespaces);
             rewrite_expr(value, names, namespaces);
         }
-        StmtKind::Unpack { targets, value } => {
+        StmtKind::Unpack { targets, value, .. } => {
             for t in targets {
                 rewrite_expr(t, names, namespaces);
             }

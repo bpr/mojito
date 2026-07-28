@@ -272,7 +272,7 @@ impl NestedMono {
                 self.qualify_expression(place);
                 self.qualify_expression(value);
             }
-            StmtKind::Unpack { targets, value } => {
+            StmtKind::Unpack { targets, value, .. } => {
                 for target in targets {
                     self.qualify_expression(target);
                 }
@@ -779,7 +779,7 @@ impl NestedMono {
                 self.scan_expression(elab, place, runtime_packs)?;
                 self.scan_expression(elab, value, runtime_packs)
             }
-            StmtKind::Unpack { targets, value } => {
+            StmtKind::Unpack { targets, value, .. } => {
                 self.scan_expression(elab, value, runtime_packs)?;
                 for target in targets {
                     self.scan_expression(elab, target, runtime_packs)?;

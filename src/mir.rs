@@ -2183,7 +2183,7 @@ fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {
         StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
             vec![place, value]
         }
-        StmtKind::Unpack { targets, value } => {
+        StmtKind::Unpack { targets, value, .. } => {
             let mut roots: Vec<&Expr> = targets.iter().collect();
             roots.push(value);
             roots

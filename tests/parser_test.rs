@@ -1588,6 +1588,7 @@ fn parses_tuple_unpacking() {
                 Expr::from(ExprKind::Identifier("y".into()))
             ],
             value: Expr::from(ExprKind::Identifier("point".into())),
+            declares: false,
         })
     );
 }
@@ -1596,8 +1597,9 @@ fn parses_tuple_unpacking() {
 fn parses_var_tuple_destructuring() {
     assert!(matches!(
         &parse("var left, right = pair\n")[0].kind,
-        StmtKind::Unpack { targets, value }
-            if targets.len() == 2
+        StmtKind::Unpack { targets, value, declares }
+            if *declares
+                && targets.len() == 2
                 && matches!(&value.kind, ExprKind::Identifier(name) if name == "pair")
     ));
 }
@@ -1621,6 +1623,7 @@ fn tuple_unpacking_allows_a_trailing_comma() {
         Stmt::from(StmtKind::Unpack {
             targets: vec![Expr::from(ExprKind::Identifier("a".into()))],
             value: Expr::from(ExprKind::Identifier("t".into())),
+            declares: false,
         })
     );
 }

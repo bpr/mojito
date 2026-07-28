@@ -544,12 +544,17 @@ pub enum StmtKind {
         op: InfixOp,
         value: Expr,
     },
-    /// `a, b, … = value` — **tuple-unpacking assignment** (bare form, no `var`;
-    /// the `var a, b = …` form is an open Mojo feature request, not valid yet).
-    /// `targets` is the comma-separated target list (each a `NAME` or place); the
-    /// value evaluates to a tuple of matching arity and lowers to independent
-    /// place writes.
-    Unpack { targets: Vec<Expr>, value: Expr },
+    /// `a, b, … = value` — **tuple unpacking**. `declares` is true for the
+    /// declaration form `var a, b = value` (each target is a fresh `var`) and
+    /// false for the bare assignment form `a, b = value` (each target must
+    /// already be in scope — a `NAME` or place). `targets` is the comma-separated
+    /// target list; the value evaluates to a tuple of matching arity and lowers
+    /// to independent place writes.
+    Unpack {
+        targets: Vec<Expr>,
+        value: Expr,
+        declares: bool,
+    },
     /// `place = value` — assign through a **place expression** rooted at a
     /// mutable variable (or `mut self`): a field write `p.x = e`, a list-element
     /// write `xs[i] = e`, or any nesting (`p.items[i].x = e`). The place is a
@@ -1338,7 +1343,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     self.expr(place);
                     self.expr(value);
                 }
-                StmtKind::Unpack { targets, value } => {
+                StmtKind::Unpack { targets, value, .. } => {
                     for target in targets {
                         self.expr(target);
                     }
@@ -1800,7 +1805,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             stamp_expr(place, source);
             stamp_expr(value, source);
         }
-        StmtKind::Unpack { targets, value } => {
+        StmtKind::Unpack { targets, value, .. } => {
             for target in targets {
                 stamp_expr(target, source);
             }

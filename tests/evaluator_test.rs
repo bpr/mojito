@@ -59,9 +59,13 @@ fn bounded_trait_dispatch_preserves_raising_effects_at_runtime() {
 }
 
 #[test]
-fn executes_function_scoped_implicit_binding_from_a_nested_block() {
+fn nested_block_reassigns_an_outer_var() {
+    // `var` is block-scoped, so a value used after a branch is declared before it
+    // and reassigned inside; a bare assignment to the outer `var` needs no `var`.
     assert_eq!(
-        output("def main():\n    if True:\n        value = 7\n    print(value)\n"),
+        output(
+            "def main():\n    var value = 0\n    if True:\n        value = 7\n    print(value)\n"
+        ),
         "7\n"
     );
 }
@@ -592,10 +596,9 @@ fn assignment_in_a_branch_updates_the_enclosing_variable() {
 }
 
 #[test]
-fn var_less_introduction_binds_the_variable() {
-    // `x = 1` on an undeclared name (implicit declaration) works on the VM: it
-    // lowers to the same binding as `var x = 1`.
-    let e = run("x = 1\nx = x + 4\n");
+fn var_declaration_and_reassignment_bind_the_variable() {
+    // `var x = 1` declares the variable; a bare `x = x + 4` reassigns it.
+    let e = run("var x = 1\nx = x + 4\n");
     assert_eq!(binding(&e, "x"), Value::Int(5));
 }
 

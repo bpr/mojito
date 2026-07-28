@@ -104,7 +104,7 @@ impl<'a> Elab<'a> {
                 self.mono_expr(place, consts, mono)?;
                 self.mono_expr(value, consts, mono)
             }
-            StmtKind::Unpack { targets, value } => {
+            StmtKind::Unpack { targets, value, .. } => {
                 for t in targets.iter_mut() {
                     self.mono_expr(t, consts, mono)?;
                 }

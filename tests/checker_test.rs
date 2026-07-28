@@ -530,27 +530,32 @@ fn accepts_assignment_to_an_outer_variable_from_a_loop() {
 }
 
 #[test]
-fn var_less_introduction_type_checks_as_implicit_declaration() {
-    // `x = 1` on an undeclared name is a var-less introduction: parsed and
-    // type-checked (binding the implicit var), then flagged unsupported at eval.
-    ok("x = 1\nvar y: Int = x + 1\n");
+fn var_less_introduction_is_rejected() {
+    // Mojito requires `var` to declare a new variable; a bare assignment to an
+    // undeclared name is a hard error (matching Mojo's single declaration path).
+    assert!(matches!(
+        err("x = 1\n"),
+        TypeError::AssignToUndeclared(name) if name == "x"
+    ));
 }
 
 #[test]
-fn nested_implicit_bindings_use_function_scope_with_definite_initialization() {
-    ok("def initialized() -> Int:\n    if True:\n        value = 7\n    return value\n");
-    ok(
-        "def joined(condition: Bool) -> Int:\n    if condition:\n        value = 1\n    else:\n        value = 2\n    return value\n",
-    );
+fn var_is_block_scoped_and_bare_assignment_needs_prior_declaration() {
+    // Reassigning a declared `var` from inside a branch is fine.
+    ok("def f() -> Int:\n    var value = 0\n    if True:\n        value = 7\n    return value\n");
 
-    for source in [
-        "def maybe(condition: Bool) -> Int:\n    if condition:\n        value = 1\n    return value\n",
-        "def unreachable_assignment() -> Int:\n    if False:\n        value = 1\n    return value\n",
-    ] {
-        assert!(
-            matches!(err(source), TypeError::Unsupported(message) if message.contains("may be uninitialized"))
-        );
-    }
+    // A `var` declared inside a block does not leak past it — reading it after the
+    // block is an undefined-variable error, not a function-scoped binding.
+    assert!(matches!(
+        err("def f() -> Int:\n    if True:\n        var value = 7\n    return value\n"),
+        TypeError::UndefinedVariable(name) if name == "value"
+    ));
+
+    // A bare assignment nested in a block still requires `var` to declare.
+    assert!(matches!(
+        err("def f() -> Int:\n    if True:\n        value = 7\n    return value\n"),
+        TypeError::AssignToUndeclared(name) if name == "value"
+    ));
 }
 
 #[test]

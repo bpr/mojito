@@ -2031,7 +2031,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
             collect_vm_ctfe_expr_calls(place, calls);
             collect_vm_ctfe_expr_calls(value, calls);
         }
-        StmtKind::Unpack { targets, value } => {
+        StmtKind::Unpack { targets, value, .. } => {
             for target in targets {
                 collect_vm_ctfe_expr_calls(target, calls);
             }

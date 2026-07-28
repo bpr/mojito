@@ -574,7 +574,7 @@ fn shadowed_runtime_loop_capture_keeps_the_loop_owner() {
 
 #[test]
 fn unpack_and_exception_targets_seed_typed_capture_slots() {
-    let src = "def main():\n    if True:\n        left, label = (40, \"two\")\n        def show() {left, label}:\n            print(left, label)\n        show()\n    if True:\n        left, label = (42, True)\n        def show() {left, label}:\n            print(left, label)\n        show()\n    var error = 40\n    try:\n        raise \"caught\"\n    except error:\n        def show_error() {error}:\n            print(error)\n        show_error()\n    print(error)\n";
+    let src = "def main():\n    if True:\n        var left, label = (40, \"two\")\n        def show() {left, label}:\n            print(left, label)\n        show()\n    if True:\n        var left, label = (42, True)\n        def show() {left, label}:\n            print(left, label)\n        show()\n    var error = 40\n    try:\n        raise \"caught\"\n    except error:\n        def show_error() {error}:\n            print(error)\n        show_error()\n    print(error)\n";
     assert_eq!(
         run_compiled(src).expect("compile nominal Tuple unpacking"),
         "40 two\n42 True\nError(\"caught\")\n40\n"
@@ -954,7 +954,7 @@ fn ternary_and_chained_comparison_run() {
 #[test]
 fn tuple_unpacking_runs() {
     // Unpack into names; swap through an rvalue tuple (RHS built once).
-    let src = "def main():\n    var t: Tuple[Int, Int, Int] = (1, 2, 3)\n    a, b, c = t\n    print(a, b, c)\n    var x: Int = 10\n    var y: Int = 20\n    x, y = (y, x)\n    print(x, y)\n";
+    let src = "def main():\n    var t: Tuple[Int, Int, Int] = (1, 2, 3)\n    var a, b, c = t\n    print(a, b, c)\n    var x: Int = 10\n    var y: Int = 20\n    x, y = (y, x)\n    print(x, y)\n";
     assert_eq!(
         run_compiled(src).expect("compile nominal Tuple unpacking"),
         "1 2 3\n20 10\n"

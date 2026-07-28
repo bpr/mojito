@@ -117,6 +117,9 @@ pub enum TypeError {
     },
     /// Re-declaring a name already bound in the same scope.
     Redeclaration(String),
+    /// A bare assignment (`x = e` or `a, b = e`) targets a name that is not in
+    /// scope. Mojito requires `var` to declare a new variable.
+    AssignToUndeclared(String),
     /// Assignment attempted through an immutable binding, such as an ordinary
     /// function parameter. Mojo function arguments are immutable unless their
     /// convention makes them writable (`mut`, `ref`, `out`).
@@ -409,6 +412,12 @@ impl fmt::Display for TypeError {
             }
             TypeError::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")
+            }
+            TypeError::AssignToUndeclared(name) => {
+                write!(
+                    f,
+                    "cannot assign to undeclared variable '{name}'; declare it with `var {name} = …`"
+                )
             }
             TypeError::ReturnsReferenceToLocal => {
                 write!(

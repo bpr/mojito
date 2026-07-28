@@ -769,7 +769,7 @@ fn check_stmt(
             check_expr(place, &mut env, comprehension_bindings, types)?;
             check_expr(value, &mut env, comprehension_bindings, types)?;
         }
-        StmtKind::Unpack { targets, value } => {
+        StmtKind::Unpack { targets, value, .. } => {
             check_expr(value, &mut env, comprehension_bindings, types)?;
             for target in targets {
                 check_expr(target, &mut env, comprehension_bindings, types)?;

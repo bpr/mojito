@@ -534,7 +534,7 @@ impl PackRewriter {
                 self.expand_expression(place);
                 self.expand_expression(value);
             }
-            StmtKind::Unpack { targets, value } => {
+            StmtKind::Unpack { targets, value, .. } => {
                 self.expand_expression(value);
                 for target in targets {
                     if let ExprKind::Identifier(name) = &target.kind {
@@ -1035,7 +1035,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             rewrite_expr(place, subs);
             rewrite_expr(value, subs);
         }
-        StmtKind::Unpack { targets, value } => {
+        StmtKind::Unpack { targets, value, .. } => {
             rewrite_exprs(targets, subs);
             rewrite_expr(value, subs);
         }
