@@ -229,29 +229,6 @@ pub(super) fn tuple_elements_equatable(elements: &[Ty]) -> bool {
     })
 }
 
-fn tuple_element_comparable(ty: &Ty) -> bool {
-    match ty {
-        Ty::Tuple(nested) => tuple_elements_comparable(nested),
-        Ty::String => true,
-        other => is_numeric(other) || has_order_bound(other),
-    }
-}
-
-fn tuple_elements_comparable(elements: &[Ty]) -> bool {
-    elements.iter().all(tuple_element_comparable)
-}
-
-fn tuple_order_pair_compatible(left: &Ty, right: &Ty) -> bool {
-    if common_numeric(left, right).is_some() {
-        return true;
-    }
-    match (left, right) {
-        (Ty::String, Ty::String) => true,
-        (Ty::Tuple(left), Ty::Tuple(right)) => tuple_order_compatible(left, right),
-        _ => left == right && has_order_bound(left),
-    }
-}
-
 /// Tuple ordering is lexicographic. Every element must be comparable, and each
 /// pair in the common prefix must have a compatible comparison operation.
 pub(super) fn tuple_order_compatible(left: &[Ty], right: &[Ty]) -> bool {
@@ -815,5 +792,28 @@ impl Checker {
             op: "divmod".to_string(),
             operands: format!("{} and {}", tys[0], tys[1]),
         })
+    }
+}
+
+fn tuple_elements_comparable(elements: &[Ty]) -> bool {
+    elements.iter().all(tuple_element_comparable)
+}
+
+fn tuple_element_comparable(ty: &Ty) -> bool {
+    match ty {
+        Ty::Tuple(nested) => tuple_elements_comparable(nested),
+        Ty::String => true,
+        other => is_numeric(other) || has_order_bound(other),
+    }
+}
+
+fn tuple_order_pair_compatible(left: &Ty, right: &Ty) -> bool {
+    if common_numeric(left, right).is_some() {
+        return true;
+    }
+    match (left, right) {
+        (Ty::String, Ty::String) => true,
+        (Ty::Tuple(left), Ty::Tuple(right)) => tuple_order_compatible(left, right),
+        _ => left == right && has_order_bound(left),
     }
 }

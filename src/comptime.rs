@@ -45,11 +45,6 @@ use crate::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// The maximum number of compile-time "steps" (loop iterations, statements
-/// executed, function calls) across a whole program — a hard bound so compile-time
-/// execution can't hang the compiler (cf. Zig's quota).
-const FUEL: usize = 100_000;
-
 /// One checker-discovered instantiation of the public variadic `Tuple` struct.
 ///
 /// Compile-time elaboration cannot soundly infer the types of arbitrary runtime
@@ -171,17 +166,6 @@ pub(crate) fn tuple_materialized_callables(
         .collect()
 }
 
-fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
-    vec![CtValue::Tuple(
-        elements
-            .iter()
-            .cloned()
-            .map(Box::new)
-            .map(CtValue::Type)
-            .collect(),
-    )]
-}
-
 /// Canonical concrete symbol selected for public `Tuple[*Ts]` element types.
 pub(crate) fn tuple_specialization_symbol(elements: &[Ty]) -> String {
     mangle("Tuple", &tuple_specialization_values(elements))
@@ -287,52 +271,6 @@ impl std::fmt::Display for ComptimeError {
     }
 }
 
-/// A CTFE-callable function: a pure top-level `def`, optionally with compile-time
-/// parameters specialized at the call site.
-struct CtFn<'a> {
-    ct_params: Vec<ParamDecl>,
-    params: Vec<String>,
-    body: &'a [Stmt],
-}
-
-/// Compile-time metadata for a top-level struct, enough for generic CTFE to read
-/// associated facts such as `T.size`.
-struct CtStruct<'a> {
-    decls: Vec<ParamDecl>,
-    associated: &'a [StructComptime],
-    fields: &'a [crate::ast::Param],
-}
-
-/// The compile-time elaboration engine: the CTFE-callable functions and a shared
-/// fuel budget. `top_consts` captures module-level constants for materialization;
-/// `specializable` holds the comptime-dependent generic `def` templates
-/// (roadmap milestone 6).
-struct Elab<'a> {
-    program: &'a [Stmt],
-    fns: HashMap<String, CtFn<'a>>,
-    structs: HashMap<String, CtStruct<'a>>,
-    /// Top-level generic `def`s whose value parameters feed a `comptime if`/`for`
-    /// (so they must be monomorphized per call), by name → the template `Stmt`.
-    specializable: HashMap<String, &'a Stmt>,
-    /// Checker-owned declaration facts used to validate inferred pack bounds
-    /// before specialization consumes the source generic call.
-    conformance: crate::checker::ConformanceOracle,
-    /// Closed-world public Tuple element sets discovered by the first checker
-    /// pass. Concrete Tuple specializations use this universe to emit ordinary
-    /// reverse/concat overloads whose result implementation also exists.
-    tuple_universe: Vec<Vec<Ty>>,
-    /// Receiver element sets paired with exactly the Tuple transforms observed
-    /// by checked discovery. This is deliberately separate from the universe:
-    /// mere materialization of a result type must not create an uncalled method.
-    tuple_transforms: Vec<(Vec<Ty>, Vec<TupleTransformRequest>)>,
-    /// Reverse lookup for the opaque callable ids emitted into generated Tuple
-    /// annotations. The compiler independently passes the forward map to the
-    /// second checker pass.
-    materialized_callables: Vec<(Ty, String)>,
-    fuel: Cell<usize>,
-    top_consts: RefCell<HashMap<String, CtValue>>,
-}
-
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     elaborate_with_tuple_requests(program, &[])
@@ -407,76 +345,6 @@ pub(crate) fn elaborate_with_tuple_requests(
     // overwritten by the uniform module stamp above.
     elab.monomorphize_nested_program(&mut result)?;
     Ok(result)
-}
-
-fn collect_fns(program: &[Stmt]) -> HashMap<String, CtFn<'_>> {
-    let mut fns = HashMap::new();
-    for s in program {
-        if let StmtKind::Def {
-            name,
-            params,
-            body,
-            type_params,
-            ..
-        } = &s.kind
-        {
-            fns.insert(
-                name.clone(),
-                CtFn {
-                    ct_params: classify_ct_params(type_params),
-                    params: params.iter().map(|p| p.name.clone()).collect(),
-                    body,
-                },
-            );
-        }
-    }
-    fns
-}
-
-fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
-    let mut structs = HashMap::new();
-    for s in program {
-        if let StmtKind::Struct {
-            name,
-            type_params,
-            associated,
-            fields,
-            ..
-        } = &s.kind
-        {
-            structs.insert(
-                name.clone(),
-                CtStruct {
-                    decls: classify_ct_params(type_params),
-                    associated,
-                    fields,
-                },
-            );
-        }
-    }
-    structs
-}
-
-/// Whether a declaration must remain a template until a concrete call selects
-/// its compile-time arguments. This predicate is intentionally independent of
-/// the top-level registry: nested generic pack functions need the same delayed
-/// elaboration even though their lexical specialization happens later.
-fn is_specializable_declaration(statement: &Stmt) -> bool {
-    match &statement.kind {
-        StmtKind::Def {
-            type_params, body, ..
-        } => {
-            !type_params.is_empty()
-                && (block_has_comptime(body)
-                    || type_params
-                        .iter()
-                        .any(|parameter| parameter.name.starts_with('*')))
-        }
-        StmtKind::Struct { type_params, .. } => type_params
-            .iter()
-            .any(|parameter| parameter.name.starts_with('*')),
-        _ => false,
-    }
 }
 
 /// Collect bare free-function callees from an expression. This is a declaration
@@ -658,172 +526,13 @@ fn collect_vm_ctfe_block_calls(statements: &[Stmt], calls: &mut HashSet<String>)
     }
 }
 
-fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
-    let decorators = |decorators: &[crate::ast::Decorator], calls: &mut HashSet<String>| {
-        for decorator in decorators {
-            for argument in &decorator.args {
-                collect_vm_ctfe_expr_calls(argument, calls);
-            }
-            for argument in &decorator.kwargs {
-                collect_vm_ctfe_expr_calls(&argument.value, calls);
-            }
-        }
-    };
-    let parameters = |parameters: &[FnParam], calls: &mut HashSet<String>| {
-        for parameter in parameters {
-            if let Some(default) = &parameter.default {
-                collect_vm_ctfe_expr_calls(default, calls);
-            }
-        }
-    };
-
-    match &statement.kind {
-        StmtKind::VarDecl { value, .. }
-        | StmtKind::RefDecl { value, .. }
-        | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
-        | StmtKind::Raise(value)
-        | StmtKind::Return(Some(value))
-        | StmtKind::Expr(value) => collect_vm_ctfe_expr_calls(value, calls),
-        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
-            collect_vm_ctfe_expr_calls(place, calls);
-            collect_vm_ctfe_expr_calls(value, calls);
-        }
-        StmtKind::Unpack { targets, value } => {
-            for target in targets {
-                collect_vm_ctfe_expr_calls(target, calls);
-            }
-            collect_vm_ctfe_expr_calls(value, calls);
-        }
-        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-            for (condition, body) in branches {
-                collect_vm_ctfe_expr_calls(condition, calls);
-                collect_vm_ctfe_block_calls(body, calls);
-            }
-            if let Some(body) = orelse {
-                collect_vm_ctfe_block_calls(body, calls);
-            }
-        }
-        StmtKind::While { cond, body, orelse } => {
-            collect_vm_ctfe_expr_calls(cond, calls);
-            collect_vm_ctfe_block_calls(body, calls);
-            if let Some(body) = orelse {
-                collect_vm_ctfe_block_calls(body, calls);
-            }
-        }
-        StmtKind::For {
-            iter, body, orelse, ..
-        } => {
-            collect_vm_ctfe_expr_calls(iter, calls);
-            collect_vm_ctfe_block_calls(body, calls);
-            if let Some(body) = orelse {
-                collect_vm_ctfe_block_calls(body, calls);
-            }
-        }
-        StmtKind::ComptimeFor { iter, body, .. } => {
-            collect_vm_ctfe_expr_calls(iter, calls);
-            collect_vm_ctfe_block_calls(body, calls);
-        }
-        StmtKind::With { items, body } => {
-            for item in items {
-                collect_vm_ctfe_expr_calls(&item.context, calls);
-            }
-            collect_vm_ctfe_block_calls(body, calls);
-        }
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            collect_vm_ctfe_block_calls(body, calls);
-            if let Some((_, body)) = except {
-                collect_vm_ctfe_block_calls(body, calls);
-            }
-            if let Some(body) = orelse {
-                collect_vm_ctfe_block_calls(body, calls);
-            }
-            if let Some(body) = finalbody {
-                collect_vm_ctfe_block_calls(body, calls);
-            }
-        }
-        StmtKind::Def {
-            decorators: declaration_decorators,
-            params,
-            where_clause,
-            body,
-            ..
-        } => {
-            decorators(declaration_decorators, calls);
-            parameters(params, calls);
-            if let Some(condition) = where_clause {
-                collect_vm_ctfe_expr_calls(condition, calls);
-            }
-            collect_vm_ctfe_block_calls(body, calls);
-        }
-        StmtKind::Struct {
-            decorators: declaration_decorators,
-            conformance_conditions,
-            associated,
-            methods,
-            ..
-        } => {
-            decorators(declaration_decorators, calls);
-            for (_, condition) in conformance_conditions {
-                collect_vm_ctfe_expr_calls(condition, calls);
-            }
-            for member in associated {
-                collect_vm_ctfe_expr_calls(&member.value, calls);
-            }
-            for method in methods {
-                decorators(&method.decorators, calls);
-                parameters(&method.params, calls);
-                if let Some(condition) = &method.where_clause {
-                    collect_vm_ctfe_expr_calls(condition, calls);
-                }
-                collect_vm_ctfe_block_calls(&method.body, calls);
-            }
-        }
-        StmtKind::Trait { methods, .. } => {
-            for method in methods {
-                parameters(&method.params, calls);
-                if let Some(condition) = &method.where_clause {
-                    collect_vm_ctfe_expr_calls(condition, calls);
-                }
-                if let Some(body) = &method.default_body {
-                    collect_vm_ctfe_block_calls(body, calls);
-                }
-            }
-        }
-        StmtKind::Return(None)
-        | StmtKind::Import { .. }
-        | StmtKind::FromImport { .. }
-        | StmtKind::Pass
-        | StmtKind::Break
-        | StmtKind::Continue => {}
+fn mk(kind: StmtKind, span: Span) -> Stmt {
+    Stmt {
+        kind,
+        span,
+        module: None,
+        syntax_id: crate::token::SyntaxId::fresh(),
     }
-}
-
-/// Collect the top-level generic `def`s that must be monomorphized (roadmap
-/// milestones 6/7): a generic `def` (type and/or value parameters) whose body
-/// contains a `comptime if`/`comptime for`, plus every heterogeneous type-pack
-/// function.
-/// Such a construct may depend on the parameters
-/// (e.g. `comptime if is_same_type[T, Int]()`), so it can only be resolved per call
-/// site — each specialization binds the concrete arguments and resolves the
-/// comptime construct, so only the *selected* branch is type-checked. Because the
-/// elaborator does not infer types, such a `def` must be called with explicit
-/// `[...]` arguments.
-fn collect_specializable(program: &[Stmt]) -> HashMap<String, &Stmt> {
-    let mut m = HashMap::new();
-    for s in program {
-        if is_specializable_declaration(s)
-            && let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-        {
-            m.insert(name.clone(), s);
-        }
-    }
-    m
 }
 
 /// Whether a block directly contains a `comptime if`/`comptime for` (not descending
@@ -832,138 +541,204 @@ fn block_has_comptime(stmts: &[Stmt]) -> bool {
     stmts.iter().any(stmt_has_comptime)
 }
 
-fn stmt_has_comptime(s: &Stmt) -> bool {
-    match &s.kind {
-        StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. } => true,
-        StmtKind::If { branches, orelse } => {
-            branches.iter().any(|(_, b)| block_has_comptime(b))
-                || orelse.as_ref().is_some_and(|b| block_has_comptime(b))
+fn collect_reference_origin_parameters(
+    ty: &Ty,
+    origins: &mut HashMap<crate::origin::OriginParamId, crate::origin::Mutability>,
+) -> Option<()> {
+    match ty {
+        Ty::Ref(reference) => {
+            let crate::origin::Origin::Param(id) = &reference.origin else {
+                if matches!(&reference.origin, crate::origin::Origin::Untracked { .. }) {
+                    return collect_reference_origin_parameters(&reference.referent, origins);
+                }
+                return None;
+            };
+            match origins.entry(*id) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(reference.mutability);
+                }
+                std::collections::hash_map::Entry::Occupied(entry)
+                    if *entry.get() != reference.mutability =>
+                {
+                    return None;
+                }
+                std::collections::hash_map::Entry::Occupied(_) => {}
+            }
+            collect_reference_origin_parameters(&reference.referent, origins)
         }
-        StmtKind::While { body, .. } | StmtKind::For { body, .. } => block_has_comptime(body),
-        StmtKind::With { body, .. } => block_has_comptime(body),
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            block_has_comptime(body)
-                || except.as_ref().is_some_and(|(_, b)| block_has_comptime(b))
-                || orelse.as_ref().is_some_and(|b| block_has_comptime(b))
-                || finalbody.as_ref().is_some_and(|b| block_has_comptime(b))
-        }
-        _ => false,
-    }
-}
-
-/// Whether a source parameter is semantic metadata/runtime callable input rather
-/// than a value the compile-time evaluator may inspect.  These parameters stay
-/// on every generated specialization, and their call arguments stay at the
-/// rewritten call site.
-///
-/// An unqualified `F: def(...)` is a callable *type constraint* and therefore is
-/// still an ordinary type parameter.  Mojo's explicit `thin`/`capturing[...]`
-/// forms declare a compile-time callable value; evaluating that value as a
-/// [`CtValue`] would incorrectly require the compile-time universe to own VM
-/// closures and captured storage.
-fn retained_specialization_param(tp: &TypeParam) -> bool {
-    if matches!(tp.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
-        return true;
-    }
-    matches!(
-        tp.callable_bound.as_ref(),
-        Some(Type::Func { thin: true, .. })
-            | Some(Type::Func {
-                capturing: Some(_),
-                ..
-            })
-    )
-}
-
-/// Classify one source parameter that participates in compile-time evaluation.
-/// `None` means the parameter is retained symbolically by specialization.
-fn classify_ct_param(tp: &TypeParam) -> Option<ParamDecl> {
-    if retained_specialization_param(tp) {
-        return None;
-    }
-    if let Some(source_type) = &tp.value_type
-        && let Some(ty) = ct_param_source_type(source_type)
-    {
-        return Some(ParamDecl::Value {
-            name: tp.name.clone(),
-            ty: Box::new(ty),
-            default: tp.default.as_ref().and_then(ct_expr_from_ast),
-            callable_default: None,
-            infer_only: tp.infer_only,
-            variadic: tp.name.starts_with('*'),
-            constraints: Vec::new(),
-        });
-    }
-    if let [only] = tp.bounds.as_slice()
-        && let Some(ty) = ct_value_param_type(only)
-    {
-        return Some(ParamDecl::Value {
-            name: tp.name.clone(),
-            ty: Box::new(ty),
-            default: tp.default.as_ref().and_then(ct_expr_from_ast),
-            callable_default: None,
-            infer_only: tp.infer_only,
-            variadic: tp.name.starts_with('*'),
-            constraints: Vec::new(),
-        });
-    }
-    Some(ParamDecl::Type {
-        name: tp.name.clone(),
-        bounds: tp.bounds.clone(),
-        callable_bound: None,
-        default: tp.default.as_ref().and_then(|value| match &value.kind {
-            ExprKind::Identifier(name) => scalar_type_name(name).map(Box::new),
-            ExprKind::TypeValue(ty) => ct_param_source_type(ty).map(Box::new),
-            _ => None,
+        Ty::Struct(_, arguments) => arguments.iter().try_for_each(|argument| match argument {
+            TyArg::Ty(ty) => collect_reference_origin_parameters(ty, origins),
+            TyArg::Val(_) => Some(()),
         }),
-        infer_only: tp.infer_only,
-        variadic: tp.name.starts_with('*'),
-        constraints: Vec::new(),
-    })
+        Ty::Tuple(elements)
+        | Ty::RuntimePack(elements)
+        | Ty::Variant(elements)
+        | Ty::Overload(elements) => elements
+            .iter()
+            .try_for_each(|element| collect_reference_origin_parameters(element, origins)),
+        Ty::ComptimeList(element)
+        | Ty::VariadicPack(element)
+        | Ty::Pointer { element, origin: _ }
+        | Ty::Assoc { base: element, .. } => collect_reference_origin_parameters(element, origins),
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        } => {
+            params.iter().try_for_each(|parameter| {
+                collect_reference_origin_parameters(parameter, origins)
+            })?;
+            collect_reference_origin_parameters(ret, origins)?;
+            for optional in [variadic, kw_variadic, error].into_iter().flatten() {
+                collect_reference_origin_parameters(optional, origins)?;
+            }
+            Some(())
+        }
+        Ty::Dependent(crate::types::DependentType::Indexed { elements, .. }) => elements
+            .iter()
+            .try_for_each(|element| collect_reference_origin_parameters(element, origins)),
+        _ => Some(()),
+    }
 }
 
-fn classify_ct_params(tps: &[TypeParam]) -> Vec<ParamDecl> {
-    tps.iter().filter_map(classify_ct_param).collect()
+/// Substitute one now-concrete method type binder in source annotations. This
+/// is used when variadic Tuple specialization turns its type-filtered generic
+/// membership implementation into ordinary overloads.
+fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Type) {
+    match ty {
+        Type::Named(name, arguments) if name == binding && arguments.is_empty() => {
+            *ty = replacement.clone();
+        }
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                substitute_source_param_arg_binding(argument, binding, replacement);
+            }
+        }
+        Type::Assoc { base, .. } => {
+            substitute_source_type_binding(base, binding, replacement);
+        }
+        Type::IndexedProjection { base, .. } => {
+            substitute_source_type_binding(base, binding, replacement);
+        }
+        Type::Func {
+            type_params,
+            params,
+            ret,
+            raises_type,
+            ..
+        } => {
+            for parameter in type_params {
+                if let Some(value_type) = &mut parameter.value_type {
+                    substitute_source_type_binding(value_type, binding, replacement);
+                }
+                if let Some(callable) = &mut parameter.callable_bound {
+                    substitute_source_type_binding(callable, binding, replacement);
+                }
+            }
+            for parameter in params {
+                substitute_source_type_binding(&mut parameter.ty, binding, replacement);
+            }
+            substitute_source_type_binding(ret, binding, replacement);
+            if let Some(error) = raises_type {
+                substitute_source_type_binding(error, binding, replacement);
+            }
+        }
+        Type::Ref { referent, .. } => {
+            substitute_source_type_binding(referent, binding, replacement);
+        }
+        Type::Int
+        | Type::UInt
+        | Type::Bool
+        | Type::String
+        | Type::Float64
+        | Type::None
+        | Type::SelfParam(_)
+        | Type::SelfType
+        | Type::MaterializedCallable(_) => {}
+    }
 }
 
-/// CTFE does not evaluate an Origin as a runtime value, but nested type
-/// annotations still need its stable declaration-order identity while the
-/// monomorphizer resolves a variadic Tuple element pack. Encode that semantic
-/// fact in the existing non-materializable `Param` carrier for the duration of
-/// the enclosing struct walk.
-fn ct_origin_marker(index: usize, mutability: crate::origin::Mutability) -> CtValue {
-    let permission = match mutability {
-        crate::origin::Mutability::Immutable => "imm",
-        crate::origin::Mutability::Mutable => "mut",
-        crate::origin::Mutability::Param(_) => "param",
-    };
-    CtValue::Param(format!("$tuple-origin:{index}:{permission}"))
-}
-
-fn decode_ct_origin_marker(value: &CtValue) -> Option<crate::origin::RefTy> {
-    let CtValue::Param(marker) = value else {
-        return None;
-    };
-    let marker = marker.strip_prefix("$tuple-origin:")?;
-    let (index, permission) = marker.split_once(':')?;
-    let id = crate::origin::OriginParamId(index.parse().ok()?);
-    let mutability = match permission {
-        "imm" => crate::origin::Mutability::Immutable,
-        "mut" => crate::origin::Mutability::Mutable,
-        "param" => crate::origin::Mutability::Param(id),
-        _ => return None,
-    };
-    Some(crate::origin::RefTy {
-        // Filled by `type_from_anno` after the marker establishes provenance.
-        referent: Box::new(Ty::None),
-        origin: crate::origin::Origin::Param(id),
-        mutability,
-    })
+fn infer_pack_argument_type(expr: &Expr) -> Result<Ty, ComptimeError> {
+    match &expr.kind {
+        ExprKind::Int(_) => Ok(Ty::Int),
+        ExprKind::Float(_) => Ok(Ty::Float64),
+        ExprKind::Bool(_) => Ok(Ty::Bool),
+        ExprKind::Str(_) => Ok(Ty::String),
+        ExprKind::None => Ok(Ty::None),
+        ExprKind::Call { name, .. } => Ok(match name.as_str() {
+            "Int" => Ty::Int,
+            "UInt" => Ty::UInt,
+            "Float64" => Ty::Float64,
+            "Bool" => Ty::Bool,
+            "String" => Ty::String,
+            other => Ty::Struct(other.to_string(), Vec::new()),
+        }),
+        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => infer_pack_argument_type(value),
+        ExprKind::Infix(op, left, right) => {
+            let left = infer_pack_argument_type(left)?;
+            let right = infer_pack_argument_type(right)?;
+            if matches!(op, InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge | InfixOp::And | InfixOp::Or) {
+                return Ok(Ty::Bool);
+            }
+            if left == right {
+                Ok(left)
+            } else if matches!((&left, &right), (Ty::Int, Ty::Float64) | (Ty::Float64, Ty::Int)) {
+                Ok(Ty::Float64)
+            } else {
+                Err(ComptimeError::NotComptime(format!(
+                    "cannot infer a pack element type for operands {left} and {right}"
+                )))
+            }
+        }
+        ExprKind::ListLit(values) => {
+            let mut types = values.iter().map(infer_pack_argument_type);
+            let first = types.next().transpose()?.ok_or_else(|| {
+                ComptimeError::NotComptime("cannot infer an empty list pack argument".to_string())
+            })?;
+            if types.all(|ty| matches!(ty, Ok(ty) if ty == first)) {
+            Ok(list_type(first))
+            } else {
+                Err(ComptimeError::NotComptime(
+                    "a list pack argument must have one element type".to_string(),
+                ))
+            }
+        }
+        ExprKind::TupleLit(values) => values
+            .iter()
+            .map(infer_pack_argument_type)
+            .collect::<Result<Vec<_>, _>>()
+            .map(tuple_type),
+        ExprKind::IfExpr {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let then_ty = infer_pack_argument_type(then_branch)?;
+            let else_ty = infer_pack_argument_type(else_branch)?;
+            if then_ty == else_ty {
+                Ok(then_ty)
+            } else {
+                Err(ComptimeError::NotComptime(
+                    "conditional pack argument branches have different types".to_string(),
+                ))
+            }
+        }
+        _ => Err(ComptimeError::NotComptime(
+            "a heterogeneous pack specialization needs an expression whose type is statically evident before checking"
+                .to_string(),
+        )),
+    }
 }
 
 fn literal_ct_value(expr: &Expr) -> Option<CtValue> {
@@ -1012,17 +787,6 @@ fn ct_expr_from_ast(expr: &Expr) -> Option<CtExpr> {
     })
 }
 
-fn ct_value_param_type(name: &str) -> Option<Ty> {
-    Some(match name {
-        "Int" => Ty::Int,
-        "Bool" => Ty::Bool,
-        "String" => Ty::String,
-        "UInt" => Ty::UInt,
-        "Float64" => Ty::Float64,
-        _ => return None,
-    })
-}
-
 fn ct_param_source_type(source: &Type) -> Option<Ty> {
     match source {
         Type::Int => Some(Ty::Int),
@@ -1047,6 +811,282 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
             .map(tuple_type),
         _ => None,
     }
+}
+
+fn source_type_from_ty_with_origins(
+    ty: &Ty,
+    origin_names: &HashMap<crate::origin::OriginParamId, String>,
+    materialized_callables: &[(Ty, String)],
+) -> Option<Type> {
+    Some(match ty {
+        Ty::Int | Ty::IntLiteral => Type::Int,
+        Ty::UInt => Type::UInt,
+        Ty::Bool => Type::Bool,
+        Ty::String => Type::String,
+        Ty::Float64 | Ty::FloatLiteral => Type::Float64,
+        Ty::None => Type::None,
+        callable @ (Ty::Func { .. } | Ty::GenericFunc { .. }) => {
+            let (_, key) = materialized_callables
+                .iter()
+                .find(|(candidate, _)| candidate == callable)?;
+            Type::MaterializedCallable(key.clone())
+        }
+        Ty::ComptimeList(element) => Type::Named(
+            "List".to_string(),
+            vec![ParamArg::Type(source_type_from_ty_with_origins(
+                element,
+                origin_names,
+                materialized_callables,
+            )?)],
+        ),
+        Ty::Tuple(elements) => Type::Named(
+            "__RuntimeTuple".to_string(),
+            elements
+                .iter()
+                .map(|element| {
+                    source_type_from_ty_with_origins(element, origin_names, materialized_callables)
+                })
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .map(ParamArg::Type)
+                .collect(),
+        ),
+        Ty::Struct(name, arguments) => Type::Named(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => {
+                        source_type_from_ty_with_origins(ty, origin_names, materialized_callables)
+                            .map(ParamArg::Type)
+                    }
+                    TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
+                })
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        Ty::Ref(reference) => {
+            let origin_name = match &reference.origin {
+                crate::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
+                crate::origin::Origin::Untracked { mutable: false } => {
+                    "UntrackedOrigin".to_string()
+                }
+                _ => return None,
+            };
+            Type::Ref {
+                referent: Box::new(source_type_from_ty_with_origins(
+                    &reference.referent,
+                    origin_names,
+                    materialized_callables,
+                )?),
+                origin: Some(vec![Expr::new(ExprKind::Identifier(origin_name), (0, 0))]),
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
+    match value {
+        CtValue::Int(n) => Ok(Value::Int(*n)),
+        CtValue::UInt(n) => Ok(Value::UInt(*n)),
+        CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(*bits))),
+        CtValue::IntLiteral(value) => Ok(Value::IntLiteral(value.clone())),
+        CtValue::FloatLiteral(value) => Ok(Value::FloatLiteral(value.clone())),
+        CtValue::Bool(b) => Ok(Value::Bool(*b)),
+        CtValue::Str(s) => Ok(Value::Str(s.clone())),
+        CtValue::Tuple(items) => Ok(Value::Tuple(
+            items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
+        )),
+        CtValue::List(items) => Ok(Value::ComptimeList(
+            items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
+        )),
+        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => {
+            Err(ComptimeError::NotComptime(
+                "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
+            ))
+        }
+    }
+}
+
+fn vm_to_ct(value: Value) -> Result<CtValue, ComptimeError> {
+    match value {
+        Value::Int(n) => Ok(CtValue::Int(n)),
+        Value::UInt(n) => Ok(CtValue::UInt(n)),
+        Value::Float64(value) => Ok(CtValue::Float(value.to_bits())),
+        Value::IntLiteral(value) => Ok(CtValue::IntLiteral(value)),
+        Value::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value)),
+        Value::Bool(b) => Ok(CtValue::Bool(b)),
+        Value::Str(s) => Ok(CtValue::Str(s)),
+        Value::Tuple(items) => Ok(CtValue::Tuple(
+            items
+                .into_iter()
+                .map(vm_to_ct)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Value::ComptimeList(items) => Ok(CtValue::List(
+            items
+                .into_iter()
+                .map(vm_to_ct)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Value::None => Err(ComptimeError::NotComptime(
+            "VM CTFE function returned None; a compile-time value is required".to_string(),
+        )),
+        other => Err(ComptimeError::NotComptime(format!(
+            "VM CTFE returned unsupported runtime value {other}"
+        ))),
+    }
+}
+
+/// A CTFE-callable function: a pure top-level `def`, optionally with compile-time
+/// parameters specialized at the call site.
+struct CtFn<'a> {
+    ct_params: Vec<ParamDecl>,
+    params: Vec<String>,
+    body: &'a [Stmt],
+}
+
+/// Compile-time metadata for a top-level struct, enough for generic CTFE to read
+/// associated facts such as `T.size`.
+struct CtStruct<'a> {
+    decls: Vec<ParamDecl>,
+    associated: &'a [StructComptime],
+    fields: &'a [crate::ast::Param],
+}
+
+/// Whether a declaration must remain a template until a concrete call selects
+/// its compile-time arguments. This predicate is intentionally independent of
+/// the top-level registry: nested generic pack functions need the same delayed
+/// elaboration even though their lexical specialization happens later.
+fn is_specializable_declaration(statement: &Stmt) -> bool {
+    match &statement.kind {
+        StmtKind::Def {
+            type_params, body, ..
+        } => {
+            !type_params.is_empty()
+                && (block_has_comptime(body)
+                    || type_params
+                        .iter()
+                        .any(|parameter| parameter.name.starts_with('*')))
+        }
+        StmtKind::Struct { type_params, .. } => type_params
+            .iter()
+            .any(|parameter| parameter.name.starts_with('*')),
+        _ => false,
+    }
+}
+
+fn runtime_pack_spread_source(expression: &Expr) -> Option<&str> {
+    let ExprKind::Spread(value) = &expression.kind else {
+        return None;
+    };
+    match &value.kind {
+        ExprKind::Identifier(name) => Some(name),
+        ExprKind::Transfer(value) => match &value.kind {
+            ExprKind::Identifier(name) => Some(name),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn forwarded_runtime_pack_type(source: &Type) -> Option<Ty> {
+    ct_param_source_type(source).or_else(|| match source {
+        Type::Named(name, arguments) => arguments
+            .iter()
+            .map(|argument| match argument {
+                ParamArg::Type(ty) => forwarded_runtime_pack_type(ty).map(TyArg::Ty),
+                ParamArg::Value(value) => literal_ct_value(value).map(TyArg::Val),
+                ParamArg::Named { value, .. } => match &**value {
+                    ParamArg::Type(ty) => forwarded_runtime_pack_type(ty).map(TyArg::Ty),
+                    ParamArg::Value(value) => literal_ct_value(value).map(TyArg::Val),
+                    ParamArg::Named { .. } => None,
+                },
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(|arguments| Ty::Struct(name.clone(), arguments)),
+        _ => None,
+    })
+}
+
+fn encode_specialization_value(value: &CtValue, out: &mut String) {
+    match value {
+        CtValue::Int(value) => out.push_str(&format!("i{value};")),
+        CtValue::UInt(value) => out.push_str(&format!("u{value};")),
+        CtValue::Float(bits) => out.push_str(&format!("f{bits:016x};")),
+        CtValue::IntLiteral(value) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("I{}:{rendered}", rendered.len()));
+        }
+        CtValue::FloatLiteral(value) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("F{}:{rendered}", rendered.len()));
+        }
+        CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
+        CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
+        CtValue::Tuple(values) => {
+            out.push_str(&format!("t{}[", values.len()));
+            for value in values {
+                encode_specialization_value(value, out);
+            }
+            out.push(']');
+        }
+        CtValue::List(values) => {
+            out.push_str(&format!("l{}[", values.len()));
+            for value in values {
+                encode_specialization_value(value, out);
+            }
+            out.push(']');
+        }
+        CtValue::Type(ty) => {
+            let rendered = ty.to_string();
+            out.push_str(&format!("y{}:{rendered}", rendered.len()));
+        }
+        CtValue::Reflected(ty) => {
+            let rendered = ty.to_string();
+            out.push_str(&format!("r{}:{rendered}", rendered.len()));
+        }
+        CtValue::Param(name) => out.push_str(&format!("p{}:{name}", name.len())),
+    }
+}
+
+/// The maximum number of compile-time "steps" (loop iterations, statements
+/// executed, function calls) across a whole program — a hard bound so compile-time
+/// execution can't hang the compiler (cf. Zig's quota).
+const FUEL: usize = 100_000;
+
+/// The compile-time elaboration engine: the CTFE-callable functions and a shared
+/// fuel budget. `top_consts` captures module-level constants for materialization;
+/// `specializable` holds the comptime-dependent generic `def` templates
+/// (roadmap milestone 6).
+struct Elab<'a> {
+    program: &'a [Stmt],
+    fns: HashMap<String, CtFn<'a>>,
+    structs: HashMap<String, CtStruct<'a>>,
+    /// Top-level generic `def`s whose value parameters feed a `comptime if`/`for`
+    /// (so they must be monomorphized per call), by name → the template `Stmt`.
+    specializable: HashMap<String, &'a Stmt>,
+    /// Checker-owned declaration facts used to validate inferred pack bounds
+    /// before specialization consumes the source generic call.
+    conformance: crate::checker::ConformanceOracle,
+    /// Closed-world public Tuple element sets discovered by the first checker
+    /// pass. Concrete Tuple specializations use this universe to emit ordinary
+    /// reverse/concat overloads whose result implementation also exists.
+    tuple_universe: Vec<Vec<Ty>>,
+    /// Receiver element sets paired with exactly the Tuple transforms observed
+    /// by checked discovery. This is deliberately separate from the universe:
+    /// mere materialization of a result type must not create an uncalled method.
+    tuple_transforms: Vec<(Vec<Ty>, Vec<TupleTransformRequest>)>,
+    /// Reverse lookup for the opaque callable ids emitted into generated Tuple
+    /// annotations. The compiler independently passes the forward map to the
+    /// second checker pass.
+    materialized_callables: Vec<(Ty, String)>,
+    fuel: Cell<usize>,
+    top_consts: RefCell<HashMap<String, CtValue>>,
+}
+
+fn classify_ct_params(tps: &[TypeParam]) -> Vec<ParamDecl> {
+    tps.iter().filter_map(classify_ct_param).collect()
 }
 
 impl<'a> Elab<'a> {
@@ -1677,491 +1717,6 @@ fn materialize_ct_value(value: CtValue, ty: &Ty) -> Option<CtValue> {
     value.materialize_as(ty)
 }
 
-fn ct_value_has_type(value: &CtValue, ty: &Ty) -> bool {
-    materialize_ct_value(value.clone(), ty).is_some()
-}
-
-fn infer_pack_argument_type(expr: &Expr) -> Result<Ty, ComptimeError> {
-    match &expr.kind {
-        ExprKind::Int(_) => Ok(Ty::Int),
-        ExprKind::Float(_) => Ok(Ty::Float64),
-        ExprKind::Bool(_) => Ok(Ty::Bool),
-        ExprKind::Str(_) => Ok(Ty::String),
-        ExprKind::None => Ok(Ty::None),
-        ExprKind::Call { name, .. } => Ok(match name.as_str() {
-            "Int" => Ty::Int,
-            "UInt" => Ty::UInt,
-            "Float64" => Ty::Float64,
-            "Bool" => Ty::Bool,
-            "String" => Ty::String,
-            other => Ty::Struct(other.to_string(), Vec::new()),
-        }),
-        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => infer_pack_argument_type(value),
-        ExprKind::Infix(op, left, right) => {
-            let left = infer_pack_argument_type(left)?;
-            let right = infer_pack_argument_type(right)?;
-            if matches!(op, InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge | InfixOp::And | InfixOp::Or) {
-                return Ok(Ty::Bool);
-            }
-            if left == right {
-                Ok(left)
-            } else if matches!((&left, &right), (Ty::Int, Ty::Float64) | (Ty::Float64, Ty::Int)) {
-                Ok(Ty::Float64)
-            } else {
-                Err(ComptimeError::NotComptime(format!(
-                    "cannot infer a pack element type for operands {left} and {right}"
-                )))
-            }
-        }
-        ExprKind::ListLit(values) => {
-            let mut types = values.iter().map(infer_pack_argument_type);
-            let first = types.next().transpose()?.ok_or_else(|| {
-                ComptimeError::NotComptime("cannot infer an empty list pack argument".to_string())
-            })?;
-            if types.all(|ty| matches!(ty, Ok(ty) if ty == first)) {
-            Ok(list_type(first))
-            } else {
-                Err(ComptimeError::NotComptime(
-                    "a list pack argument must have one element type".to_string(),
-                ))
-            }
-        }
-        ExprKind::TupleLit(values) => values
-            .iter()
-            .map(infer_pack_argument_type)
-            .collect::<Result<Vec<_>, _>>()
-            .map(tuple_type),
-        ExprKind::IfExpr {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            let then_ty = infer_pack_argument_type(then_branch)?;
-            let else_ty = infer_pack_argument_type(else_branch)?;
-            if then_ty == else_ty {
-                Ok(then_ty)
-            } else {
-                Err(ComptimeError::NotComptime(
-                    "conditional pack argument branches have different types".to_string(),
-                ))
-            }
-        }
-        _ => Err(ComptimeError::NotComptime(
-            "a heterogeneous pack specialization needs an expression whose type is statically evident before checking"
-                .to_string(),
-        )),
-    }
-}
-
-fn runtime_pack_spread_source(expression: &Expr) -> Option<&str> {
-    let ExprKind::Spread(value) = &expression.kind else {
-        return None;
-    };
-    match &value.kind {
-        ExprKind::Identifier(name) => Some(name),
-        ExprKind::Transfer(value) => match &value.kind {
-            ExprKind::Identifier(name) => Some(name),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn top_level_whole_pack_forwarding_call(
-    template: &Stmt,
-    arguments: &[Expr],
-) -> Result<bool, ComptimeError> {
-    let spreads = arguments
-        .iter()
-        .enumerate()
-        .filter_map(|(index, argument)| runtime_pack_spread_source(argument).map(|_| index))
-        .collect::<Vec<_>>();
-    if spreads.is_empty() {
-        return Ok(false);
-    }
-    if spreads.len() != 1 {
-        return Err(ComptimeError::NotComptime(
-            "concatenating unpacked positional arguments is not supported; a call may contain at most one runtime-pack spread"
-                .to_string(),
-        ));
-    }
-    let StmtKind::Def { params, .. } = &template.kind else {
-        return Err(ComptimeError::NotComptime(
-            "runtime-pack forwarding requires a function target".to_string(),
-        ));
-    };
-    let Some(pack_index) = params
-        .iter()
-        .position(|parameter| parameter.kind == ParamKind::Variadic)
-    else {
-        return Err(ComptimeError::NotComptime(
-            "a runtime-pack spread requires a variadic target".to_string(),
-        ));
-    };
-    let parameter = &params[pack_index];
-    if !matches!(&parameter.ty, Type::Named(name, arguments)
-        if name.starts_with('*') && arguments.is_empty())
-    {
-        return Err(ComptimeError::NotComptime(
-            "a heterogeneous runtime-pack spread requires a type-pack variadic target".to_string(),
-        ));
-    }
-    let positional_prefix = params[..pack_index]
-        .iter()
-        .filter(|parameter| {
-            parameter.kind == ParamKind::Regular
-                && !matches!(parameter.convention, Some(crate::ast::ArgConvention::Out))
-        })
-        .count();
-    if spreads[0] != positional_prefix || arguments.len() != positional_prefix + 1 {
-        return Err(ComptimeError::NotComptime(
-            "a runtime-pack spread must follow the fully supplied fixed positional prefix and cannot be mixed with explicit overflow arguments"
-                .to_string(),
-        ));
-    }
-    Ok(true)
-}
-
-fn top_level_forwarded_pack_types(
-    template: &Stmt,
-    display_name: &str,
-    arguments: &[Expr],
-    kwargs: &[crate::ast::KwArg],
-    mono: &Mono,
-) -> Result<Option<Vec<Ty>>, ComptimeError> {
-    if !arguments
-        .iter()
-        .any(|argument| runtime_pack_spread_source(argument).is_some())
-    {
-        return Ok(None);
-    }
-    let mut logical_types = Vec::new();
-    for argument in arguments {
-        if let Some(name) = runtime_pack_spread_source(argument) {
-            let pack = mono.resolve_runtime_pack(name).ok_or_else(|| {
-                ComptimeError::NotComptime(format!(
-                    "cannot forward '{name}' because it is not a specialized runtime pack"
-                ))
-            })?;
-            for ty in pack {
-                logical_types.push(forwarded_runtime_pack_type(ty).ok_or_else(|| {
-                    ComptimeError::NotComptime(format!(
-                        "cannot recover the checked type of forwarded pack element '{ty:?}'"
-                    ))
-                })?);
-            }
-        } else {
-            logical_types.push(infer_pack_argument_type(argument)?);
-        }
-    }
-    let indices =
-        runtime_pack_call_argument_indices(template, display_name, logical_types.len(), kwargs)?;
-    Ok(Some(
-        indices
-            .into_iter()
-            .map(|index| logical_types[index].clone())
-            .collect(),
-    ))
-}
-
-fn forwarded_runtime_pack_type(source: &Type) -> Option<Ty> {
-    ct_param_source_type(source).or_else(|| match source {
-        Type::Named(name, arguments) => arguments
-            .iter()
-            .map(|argument| match argument {
-                ParamArg::Type(ty) => forwarded_runtime_pack_type(ty).map(TyArg::Ty),
-                ParamArg::Value(value) => literal_ct_value(value).map(TyArg::Val),
-                ParamArg::Named { value, .. } => match &**value {
-                    ParamArg::Type(ty) => forwarded_runtime_pack_type(ty).map(TyArg::Ty),
-                    ParamArg::Value(value) => literal_ct_value(value).map(TyArg::Val),
-                    ParamArg::Named { .. } => None,
-                },
-            })
-            .collect::<Option<Vec<_>>>()
-            .map(|arguments| Ty::Struct(name.clone(), arguments)),
-        _ => None,
-    })
-}
-
-fn unwrap_runtime_pack_arguments(arguments: Vec<Expr>) -> Vec<Expr> {
-    arguments
-        .into_iter()
-        .map(|argument| match argument.kind {
-            ExprKind::Spread(value) => *value,
-            _ => argument,
-        })
-        .collect()
-}
-
-/// Select one concrete element from a specialized Tuple's private runtime
-/// storage. Tuple transforms are synthesized only after the element pack is
-/// concrete, so this ordinary index expression reaches checking/MIR with a
-/// statically known index and element type.
-fn tuple_storage_element(owner: &str, index: usize, transfer: bool, span: Span) -> Expr {
-    let owner = Expr::new(ExprKind::Identifier(owner.to_string()), span);
-    let storage = Expr::new(
-        ExprKind::Member {
-            object: Box::new(owner),
-            field: "storage".to_string(),
-        },
-        span,
-    );
-    let element = Expr::new(
-        ExprKind::Index {
-            object: Box::new(storage),
-            index: Box::new(Expr::new(ExprKind::Int((index as i64).into()), span)),
-        },
-        span,
-    );
-    if transfer {
-        Expr::new(ExprKind::Transfer(Box::new(element)), span)
-    } else {
-        element
-    }
-}
-
-/// Build an ordinary concrete Tuple transform. Keeping these as normal source
-/// AST methods means the checker, HIR, MIR, and VM use their existing method and
-/// constructor paths; Tuple does not acquire an execution-only VM intrinsic.
-fn tuple_transform_method(
-    name: &str,
-    self_convention: Option<ArgConvention>,
-    params: Vec<FnParam>,
-    target: String,
-    args: Vec<Expr>,
-    span: Span,
-) -> crate::ast::Method {
-    let result = Expr::new(
-        ExprKind::Call {
-            name: target.clone(),
-            param_args: Vec::new(),
-            args,
-            kwargs: Vec::new(),
-        },
-        span,
-    );
-    crate::ast::Method {
-        name: name.to_string(),
-        type_params: Vec::new(),
-        has_self: true,
-        self_convention,
-        self_origin: None,
-        decorators: Vec::new(),
-        params,
-        positional_only: None,
-        keyword_only: None,
-        raises: false,
-        raises_type: None,
-        ret: Some(Type::Named(target, Vec::new())),
-        where_clause: None,
-        body: vec![mk(StmtKind::Return(Some(result)), span)],
-    }
-}
-
-fn collect_reference_origin_parameters(
-    ty: &Ty,
-    origins: &mut HashMap<crate::origin::OriginParamId, crate::origin::Mutability>,
-) -> Option<()> {
-    match ty {
-        Ty::Ref(reference) => {
-            let crate::origin::Origin::Param(id) = &reference.origin else {
-                if matches!(&reference.origin, crate::origin::Origin::Untracked { .. }) {
-                    return collect_reference_origin_parameters(&reference.referent, origins);
-                }
-                return None;
-            };
-            match origins.entry(*id) {
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(reference.mutability);
-                }
-                std::collections::hash_map::Entry::Occupied(entry)
-                    if *entry.get() != reference.mutability =>
-                {
-                    return None;
-                }
-                std::collections::hash_map::Entry::Occupied(_) => {}
-            }
-            collect_reference_origin_parameters(&reference.referent, origins)
-        }
-        Ty::Struct(_, arguments) => arguments.iter().try_for_each(|argument| match argument {
-            TyArg::Ty(ty) => collect_reference_origin_parameters(ty, origins),
-            TyArg::Val(_) => Some(()),
-        }),
-        Ty::Tuple(elements)
-        | Ty::RuntimePack(elements)
-        | Ty::Variant(elements)
-        | Ty::Overload(elements) => elements
-            .iter()
-            .try_for_each(|element| collect_reference_origin_parameters(element, origins)),
-        Ty::ComptimeList(element)
-        | Ty::VariadicPack(element)
-        | Ty::Pointer { element, origin: _ }
-        | Ty::Assoc { base: element, .. } => collect_reference_origin_parameters(element, origins),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().try_for_each(|parameter| {
-                collect_reference_origin_parameters(parameter, origins)
-            })?;
-            collect_reference_origin_parameters(ret, origins)?;
-            for optional in [variadic, kw_variadic, error].into_iter().flatten() {
-                collect_reference_origin_parameters(optional, origins)?;
-            }
-            Some(())
-        }
-        Ty::Dependent(crate::types::DependentType::Indexed { elements, .. }) => elements
-            .iter()
-            .try_for_each(|element| collect_reference_origin_parameters(element, origins)),
-        _ => Some(()),
-    }
-}
-
-fn source_type_from_ty_with_origins(
-    ty: &Ty,
-    origin_names: &HashMap<crate::origin::OriginParamId, String>,
-    materialized_callables: &[(Ty, String)],
-) -> Option<Type> {
-    Some(match ty {
-        Ty::Int | Ty::IntLiteral => Type::Int,
-        Ty::UInt => Type::UInt,
-        Ty::Bool => Type::Bool,
-        Ty::String => Type::String,
-        Ty::Float64 | Ty::FloatLiteral => Type::Float64,
-        Ty::None => Type::None,
-        callable @ (Ty::Func { .. } | Ty::GenericFunc { .. }) => {
-            let (_, key) = materialized_callables
-                .iter()
-                .find(|(candidate, _)| candidate == callable)?;
-            Type::MaterializedCallable(key.clone())
-        }
-        Ty::ComptimeList(element) => Type::Named(
-            "List".to_string(),
-            vec![ParamArg::Type(source_type_from_ty_with_origins(
-                element,
-                origin_names,
-                materialized_callables,
-            )?)],
-        ),
-        Ty::Tuple(elements) => Type::Named(
-            "__RuntimeTuple".to_string(),
-            elements
-                .iter()
-                .map(|element| {
-                    source_type_from_ty_with_origins(element, origin_names, materialized_callables)
-                })
-                .collect::<Option<Vec<_>>>()?
-                .into_iter()
-                .map(ParamArg::Type)
-                .collect(),
-        ),
-        Ty::Struct(name, arguments) => Type::Named(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => {
-                        source_type_from_ty_with_origins(ty, origin_names, materialized_callables)
-                            .map(ParamArg::Type)
-                    }
-                    TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
-                })
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        Ty::Ref(reference) => {
-            let origin_name = match &reference.origin {
-                crate::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
-                crate::origin::Origin::Untracked { mutable: false } => {
-                    "UntrackedOrigin".to_string()
-                }
-                _ => return None,
-            };
-            Type::Ref {
-                referent: Box::new(source_type_from_ty_with_origins(
-                    &reference.referent,
-                    origin_names,
-                    materialized_callables,
-                )?),
-                origin: Some(vec![Expr::new(ExprKind::Identifier(origin_name), (0, 0))]),
-            }
-        }
-        _ => return None,
-    })
-}
-
-fn source_type_from_ty(ty: &Ty) -> Option<Type> {
-    source_type_from_ty_with_origins(ty, &HashMap::new(), &[])
-}
-
-/// Substitute one now-concrete method type binder in source annotations. This
-/// is used when variadic Tuple specialization turns its type-filtered generic
-/// membership implementation into ordinary overloads.
-fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Type) {
-    match ty {
-        Type::Named(name, arguments) if name == binding && arguments.is_empty() => {
-            *ty = replacement.clone();
-        }
-        Type::Named(_, arguments) => {
-            for argument in arguments {
-                substitute_source_param_arg_binding(argument, binding, replacement);
-            }
-        }
-        Type::Assoc { base, .. } => {
-            substitute_source_type_binding(base, binding, replacement);
-        }
-        Type::IndexedProjection { base, .. } => {
-            substitute_source_type_binding(base, binding, replacement);
-        }
-        Type::Func {
-            type_params,
-            params,
-            ret,
-            raises_type,
-            ..
-        } => {
-            for parameter in type_params {
-                if let Some(value_type) = &mut parameter.value_type {
-                    substitute_source_type_binding(value_type, binding, replacement);
-                }
-                if let Some(callable) = &mut parameter.callable_bound {
-                    substitute_source_type_binding(callable, binding, replacement);
-                }
-            }
-            for parameter in params {
-                substitute_source_type_binding(&mut parameter.ty, binding, replacement);
-            }
-            substitute_source_type_binding(ret, binding, replacement);
-            if let Some(error) = raises_type {
-                substitute_source_type_binding(error, binding, replacement);
-            }
-        }
-        Type::Ref { referent, .. } => {
-            substitute_source_type_binding(referent, binding, replacement);
-        }
-        Type::Int
-        | Type::UInt
-        | Type::Bool
-        | Type::String
-        | Type::Float64
-        | Type::None
-        | Type::SelfParam(_)
-        | Type::SelfType
-        | Type::MaterializedCallable(_) => {}
-    }
-}
-
 fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, replacement: &Type) {
     match argument {
         ParamArg::Type(ty) => substitute_source_type_binding(ty, binding, replacement),
@@ -2170,28 +1725,6 @@ fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, r
         }
         ParamArg::Value(_) => {}
     }
-}
-
-/// The concrete call-site information used to select one function-template
-/// specialization. Nested pack forwarding supplies its already-known element
-/// types; ordinary calls leave that field empty and infer from expressions.
-struct SpecRequest<'a> {
-    param_args: &'a [ParamArg],
-    call_args: &'a [Expr],
-    kwargs: &'a [crate::ast::KwArg],
-    consts: &'a HashMap<String, CtValue>,
-    request_site: &'a str,
-    forwarded_pack_types: Option<&'a [Ty]>,
-}
-
-fn runtime_pack_call_arguments<'a>(
-    template: &Stmt,
-    display_name: &str,
-    args: &'a [Expr],
-    kwargs: &[crate::ast::KwArg],
-) -> Result<Vec<&'a Expr>, ComptimeError> {
-    let indices = runtime_pack_call_argument_indices(template, display_name, args.len(), kwargs)?;
-    Ok(indices.into_iter().map(|index| &args[index]).collect())
 }
 
 fn runtime_pack_call_argument_indices(
@@ -2268,45 +1801,6 @@ fn runtime_pack_call_argument_indices(
         ))
     })?;
     Ok(matched.positional_overflow)
-}
-
-/// Give a top-level forwarded specialization the same ownership-safe ABI used
-/// by nested whole-pack forwarding: the caller passes its concrete private
-/// runtime-pack collector as one regular value and the body binds it directly.
-fn select_top_level_whole_pack_abi(specialization: &mut Stmt) -> Result<(), ComptimeError> {
-    let StmtKind::Def { params, .. } = &mut specialization.kind else {
-        unreachable!("whole-pack specializations are functions")
-    };
-    let Some(parameter) = params
-        .iter_mut()
-        .find(|parameter| parameter.kind == ParamKind::Variadic)
-    else {
-        return Err(ComptimeError::NotComptime(
-            "whole-pack forwarding requires a variadic target".to_string(),
-        ));
-    };
-    let Type::Named(name, _) = &mut parameter.ty else {
-        return Err(ComptimeError::NotComptime(
-            "whole-pack forwarding lost its concrete collector type".to_string(),
-        ));
-    };
-    if name != "$pack" {
-        return Err(ComptimeError::NotComptime(
-            "whole-pack forwarding requires a specialized runtime pack".to_string(),
-        ));
-    }
-    parameter.kind = ParamKind::Regular;
-    *name = "__RuntimeTuple".to_string();
-    Ok(())
-}
-
-/// A pending specialization request: template `orig`, specialized for `vals`.
-struct Job {
-    orig: String,
-    vals: Vec<CtValue>,
-    site: String,
-    output_name: String,
-    whole_pack_abi: bool,
 }
 
 /// The monomorphization worklist and its results.
@@ -2435,6 +1929,381 @@ impl Mono {
     }
 }
 
+fn scalar_type_name(name: &str) -> Option<Ty> {
+    match name {
+        "Int" => Some(Ty::Int),
+        "UInt" => Some(Ty::UInt),
+        "Bool" => Some(Ty::Bool),
+        "String" => Some(Ty::String),
+        "Float64" => Some(Ty::Float64),
+        "None" => Some(Ty::None),
+        _ => None,
+    }
+}
+
+fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
+    vec![CtValue::Tuple(
+        elements
+            .iter()
+            .cloned()
+            .map(Box::new)
+            .map(CtValue::Type)
+            .collect(),
+    )]
+}
+
+fn collect_fns(program: &[Stmt]) -> HashMap<String, CtFn<'_>> {
+    let mut fns = HashMap::new();
+    for s in program {
+        if let StmtKind::Def {
+            name,
+            params,
+            body,
+            type_params,
+            ..
+        } = &s.kind
+        {
+            fns.insert(
+                name.clone(),
+                CtFn {
+                    ct_params: classify_ct_params(type_params),
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    body,
+                },
+            );
+        }
+    }
+    fns
+}
+
+fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
+    let mut structs = HashMap::new();
+    for s in program {
+        if let StmtKind::Struct {
+            name,
+            type_params,
+            associated,
+            fields,
+            ..
+        } = &s.kind
+        {
+            structs.insert(
+                name.clone(),
+                CtStruct {
+                    decls: classify_ct_params(type_params),
+                    associated,
+                    fields,
+                },
+            );
+        }
+    }
+    structs
+}
+
+fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
+    let decorators = |decorators: &[crate::ast::Decorator], calls: &mut HashSet<String>| {
+        for decorator in decorators {
+            for argument in &decorator.args {
+                collect_vm_ctfe_expr_calls(argument, calls);
+            }
+            for argument in &decorator.kwargs {
+                collect_vm_ctfe_expr_calls(&argument.value, calls);
+            }
+        }
+    };
+    let parameters = |parameters: &[FnParam], calls: &mut HashSet<String>| {
+        for parameter in parameters {
+            if let Some(default) = &parameter.default {
+                collect_vm_ctfe_expr_calls(default, calls);
+            }
+        }
+    };
+
+    match &statement.kind {
+        StmtKind::VarDecl { value, .. }
+        | StmtKind::RefDecl { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::Comptime { value, .. }
+        | StmtKind::Raise(value)
+        | StmtKind::Return(Some(value))
+        | StmtKind::Expr(value) => collect_vm_ctfe_expr_calls(value, calls),
+        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+            collect_vm_ctfe_expr_calls(place, calls);
+            collect_vm_ctfe_expr_calls(value, calls);
+        }
+        StmtKind::Unpack { targets, value } => {
+            for target in targets {
+                collect_vm_ctfe_expr_calls(target, calls);
+            }
+            collect_vm_ctfe_expr_calls(value, calls);
+        }
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            for (condition, body) in branches {
+                collect_vm_ctfe_expr_calls(condition, calls);
+                collect_vm_ctfe_block_calls(body, calls);
+            }
+            if let Some(body) = orelse {
+                collect_vm_ctfe_block_calls(body, calls);
+            }
+        }
+        StmtKind::While { cond, body, orelse } => {
+            collect_vm_ctfe_expr_calls(cond, calls);
+            collect_vm_ctfe_block_calls(body, calls);
+            if let Some(body) = orelse {
+                collect_vm_ctfe_block_calls(body, calls);
+            }
+        }
+        StmtKind::For {
+            iter, body, orelse, ..
+        } => {
+            collect_vm_ctfe_expr_calls(iter, calls);
+            collect_vm_ctfe_block_calls(body, calls);
+            if let Some(body) = orelse {
+                collect_vm_ctfe_block_calls(body, calls);
+            }
+        }
+        StmtKind::ComptimeFor { iter, body, .. } => {
+            collect_vm_ctfe_expr_calls(iter, calls);
+            collect_vm_ctfe_block_calls(body, calls);
+        }
+        StmtKind::With { items, body } => {
+            for item in items {
+                collect_vm_ctfe_expr_calls(&item.context, calls);
+            }
+            collect_vm_ctfe_block_calls(body, calls);
+        }
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            collect_vm_ctfe_block_calls(body, calls);
+            if let Some((_, body)) = except {
+                collect_vm_ctfe_block_calls(body, calls);
+            }
+            if let Some(body) = orelse {
+                collect_vm_ctfe_block_calls(body, calls);
+            }
+            if let Some(body) = finalbody {
+                collect_vm_ctfe_block_calls(body, calls);
+            }
+        }
+        StmtKind::Def {
+            decorators: declaration_decorators,
+            params,
+            where_clause,
+            body,
+            ..
+        } => {
+            decorators(declaration_decorators, calls);
+            parameters(params, calls);
+            if let Some(condition) = where_clause {
+                collect_vm_ctfe_expr_calls(condition, calls);
+            }
+            collect_vm_ctfe_block_calls(body, calls);
+        }
+        StmtKind::Struct {
+            decorators: declaration_decorators,
+            conformance_conditions,
+            associated,
+            methods,
+            ..
+        } => {
+            decorators(declaration_decorators, calls);
+            for (_, condition) in conformance_conditions {
+                collect_vm_ctfe_expr_calls(condition, calls);
+            }
+            for member in associated {
+                collect_vm_ctfe_expr_calls(&member.value, calls);
+            }
+            for method in methods {
+                decorators(&method.decorators, calls);
+                parameters(&method.params, calls);
+                if let Some(condition) = &method.where_clause {
+                    collect_vm_ctfe_expr_calls(condition, calls);
+                }
+                collect_vm_ctfe_block_calls(&method.body, calls);
+            }
+        }
+        StmtKind::Trait { methods, .. } => {
+            for method in methods {
+                parameters(&method.params, calls);
+                if let Some(condition) = &method.where_clause {
+                    collect_vm_ctfe_expr_calls(condition, calls);
+                }
+                if let Some(body) = &method.default_body {
+                    collect_vm_ctfe_block_calls(body, calls);
+                }
+            }
+        }
+        StmtKind::Return(None)
+        | StmtKind::Import { .. }
+        | StmtKind::FromImport { .. }
+        | StmtKind::Pass
+        | StmtKind::Break
+        | StmtKind::Continue => {}
+    }
+}
+
+/// Collect the top-level generic `def`s that must be monomorphized (roadmap
+/// milestones 6/7): a generic `def` (type and/or value parameters) whose body
+/// contains a `comptime if`/`comptime for`, plus every heterogeneous type-pack
+/// function.
+/// Such a construct may depend on the parameters
+/// (e.g. `comptime if is_same_type[T, Int]()`), so it can only be resolved per call
+/// site — each specialization binds the concrete arguments and resolves the
+/// comptime construct, so only the *selected* branch is type-checked. Because the
+/// elaborator does not infer types, such a `def` must be called with explicit
+/// `[...]` arguments.
+fn collect_specializable(program: &[Stmt]) -> HashMap<String, &Stmt> {
+    let mut m = HashMap::new();
+    for s in program {
+        if is_specializable_declaration(s)
+            && let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
+        {
+            m.insert(name.clone(), s);
+        }
+    }
+    m
+}
+
+fn stmt_has_comptime(s: &Stmt) -> bool {
+    match &s.kind {
+        StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. } => true,
+        StmtKind::If { branches, orelse } => {
+            branches.iter().any(|(_, b)| block_has_comptime(b))
+                || orelse.as_ref().is_some_and(|b| block_has_comptime(b))
+        }
+        StmtKind::While { body, .. } | StmtKind::For { body, .. } => block_has_comptime(body),
+        StmtKind::With { body, .. } => block_has_comptime(body),
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            block_has_comptime(body)
+                || except.as_ref().is_some_and(|(_, b)| block_has_comptime(b))
+                || orelse.as_ref().is_some_and(|b| block_has_comptime(b))
+                || finalbody.as_ref().is_some_and(|b| block_has_comptime(b))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a source parameter is semantic metadata/runtime callable input rather
+/// than a value the compile-time evaluator may inspect.  These parameters stay
+/// on every generated specialization, and their call arguments stay at the
+/// rewritten call site.
+///
+/// An unqualified `F: def(...)` is a callable *type constraint* and therefore is
+/// still an ordinary type parameter.  Mojo's explicit `thin`/`capturing[...]`
+/// forms declare a compile-time callable value; evaluating that value as a
+/// [`CtValue`] would incorrectly require the compile-time universe to own VM
+/// closures and captured storage.
+fn retained_specialization_param(tp: &TypeParam) -> bool {
+    if matches!(tp.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
+        return true;
+    }
+    matches!(
+        tp.callable_bound.as_ref(),
+        Some(Type::Func { thin: true, .. })
+            | Some(Type::Func {
+                capturing: Some(_),
+                ..
+            })
+    )
+}
+
+/// Classify one source parameter that participates in compile-time evaluation.
+/// `None` means the parameter is retained symbolically by specialization.
+fn classify_ct_param(tp: &TypeParam) -> Option<ParamDecl> {
+    if retained_specialization_param(tp) {
+        return None;
+    }
+    if let Some(source_type) = &tp.value_type
+        && let Some(ty) = ct_param_source_type(source_type)
+    {
+        return Some(ParamDecl::Value {
+            name: tp.name.clone(),
+            ty: Box::new(ty),
+            default: tp.default.as_ref().and_then(ct_expr_from_ast),
+            callable_default: None,
+            infer_only: tp.infer_only,
+            variadic: tp.name.starts_with('*'),
+            constraints: Vec::new(),
+        });
+    }
+    if let [only] = tp.bounds.as_slice()
+        && let Some(ty) = ct_value_param_type(only)
+    {
+        return Some(ParamDecl::Value {
+            name: tp.name.clone(),
+            ty: Box::new(ty),
+            default: tp.default.as_ref().and_then(ct_expr_from_ast),
+            callable_default: None,
+            infer_only: tp.infer_only,
+            variadic: tp.name.starts_with('*'),
+            constraints: Vec::new(),
+        });
+    }
+    Some(ParamDecl::Type {
+        name: tp.name.clone(),
+        bounds: tp.bounds.clone(),
+        callable_bound: None,
+        default: tp.default.as_ref().and_then(|value| match &value.kind {
+            ExprKind::Identifier(name) => scalar_type_name(name).map(Box::new),
+            ExprKind::TypeValue(ty) => ct_param_source_type(ty).map(Box::new),
+            _ => None,
+        }),
+        infer_only: tp.infer_only,
+        variadic: tp.name.starts_with('*'),
+        constraints: Vec::new(),
+    })
+}
+
+fn decode_ct_origin_marker(value: &CtValue) -> Option<crate::origin::RefTy> {
+    let CtValue::Param(marker) = value else {
+        return None;
+    };
+    let marker = marker.strip_prefix("$tuple-origin:")?;
+    let (index, permission) = marker.split_once(':')?;
+    let id = crate::origin::OriginParamId(index.parse().ok()?);
+    let mutability = match permission {
+        "imm" => crate::origin::Mutability::Immutable,
+        "mut" => crate::origin::Mutability::Mutable,
+        "param" => crate::origin::Mutability::Param(id),
+        _ => return None,
+    };
+    Some(crate::origin::RefTy {
+        // Filled by `type_from_anno` after the marker establishes provenance.
+        referent: Box::new(Ty::None),
+        origin: crate::origin::Origin::Param(id),
+        mutability,
+    })
+}
+
+fn ct_value_param_type(name: &str) -> Option<Ty> {
+    Some(match name {
+        "Int" => Ty::Int,
+        "Bool" => Ty::Bool,
+        "String" => Ty::String,
+        "UInt" => Ty::UInt,
+        "Float64" => Ty::Float64,
+        _ => return None,
+    })
+}
+
+/// A pending specialization request: template `orig`, specialized for `vals`.
+struct Job {
+    orig: String,
+    vals: Vec<CtValue>,
+    site: String,
+    output_name: String,
+    whole_pack_abi: bool,
+}
+
 /// The specialized name for `orig` at value arguments `vals` — e.g. `f$0`, `f$1`.
 /// `$` cannot appear in a source identifier, so a specialization never collides
 /// with a user-written name.
@@ -2447,45 +2316,250 @@ fn mangle(orig: &str, vals: &[CtValue]) -> String {
     s
 }
 
-fn encode_specialization_value(value: &CtValue, out: &mut String) {
-    match value {
-        CtValue::Int(value) => out.push_str(&format!("i{value};")),
-        CtValue::UInt(value) => out.push_str(&format!("u{value};")),
-        CtValue::Float(bits) => out.push_str(&format!("f{bits:016x};")),
-        CtValue::IntLiteral(value) => {
-            let rendered = value.to_string();
-            out.push_str(&format!("I{}:{rendered}", rendered.len()));
-        }
-        CtValue::FloatLiteral(value) => {
-            let rendered = value.to_string();
-            out.push_str(&format!("F{}:{rendered}", rendered.len()));
-        }
-        CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
-        CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
-        CtValue::Tuple(values) => {
-            out.push_str(&format!("t{}[", values.len()));
-            for value in values {
-                encode_specialization_value(value, out);
-            }
-            out.push(']');
-        }
-        CtValue::List(values) => {
-            out.push_str(&format!("l{}[", values.len()));
-            for value in values {
-                encode_specialization_value(value, out);
-            }
-            out.push(']');
-        }
-        CtValue::Type(ty) => {
-            let rendered = ty.to_string();
-            out.push_str(&format!("y{}:{rendered}", rendered.len()));
-        }
-        CtValue::Reflected(ty) => {
-            let rendered = ty.to_string();
-            out.push_str(&format!("r{}:{rendered}", rendered.len()));
-        }
-        CtValue::Param(name) => out.push_str(&format!("p{}:{name}", name.len())),
+/// CTFE does not evaluate an Origin as a runtime value, but nested type
+/// annotations still need its stable declaration-order identity while the
+/// monomorphizer resolves a variadic Tuple element pack. Encode that semantic
+/// fact in the existing non-materializable `Param` carrier for the duration of
+/// the enclosing struct walk.
+fn ct_origin_marker(index: usize, mutability: crate::origin::Mutability) -> CtValue {
+    let permission = match mutability {
+        crate::origin::Mutability::Immutable => "imm",
+        crate::origin::Mutability::Mutable => "mut",
+        crate::origin::Mutability::Param(_) => "param",
+    };
+    CtValue::Param(format!("$tuple-origin:{index}:{permission}"))
+}
+
+fn ct_value_has_type(value: &CtValue, ty: &Ty) -> bool {
+    materialize_ct_value(value.clone(), ty).is_some()
+}
+
+fn top_level_whole_pack_forwarding_call(
+    template: &Stmt,
+    arguments: &[Expr],
+) -> Result<bool, ComptimeError> {
+    let spreads = arguments
+        .iter()
+        .enumerate()
+        .filter_map(|(index, argument)| runtime_pack_spread_source(argument).map(|_| index))
+        .collect::<Vec<_>>();
+    if spreads.is_empty() {
+        return Ok(false);
     }
+    if spreads.len() != 1 {
+        return Err(ComptimeError::NotComptime(
+            "concatenating unpacked positional arguments is not supported; a call may contain at most one runtime-pack spread"
+                .to_string(),
+        ));
+    }
+    let StmtKind::Def { params, .. } = &template.kind else {
+        return Err(ComptimeError::NotComptime(
+            "runtime-pack forwarding requires a function target".to_string(),
+        ));
+    };
+    let Some(pack_index) = params
+        .iter()
+        .position(|parameter| parameter.kind == ParamKind::Variadic)
+    else {
+        return Err(ComptimeError::NotComptime(
+            "a runtime-pack spread requires a variadic target".to_string(),
+        ));
+    };
+    let parameter = &params[pack_index];
+    if !matches!(&parameter.ty, Type::Named(name, arguments)
+        if name.starts_with('*') && arguments.is_empty())
+    {
+        return Err(ComptimeError::NotComptime(
+            "a heterogeneous runtime-pack spread requires a type-pack variadic target".to_string(),
+        ));
+    }
+    let positional_prefix = params[..pack_index]
+        .iter()
+        .filter(|parameter| {
+            parameter.kind == ParamKind::Regular
+                && !matches!(parameter.convention, Some(crate::ast::ArgConvention::Out))
+        })
+        .count();
+    if spreads[0] != positional_prefix || arguments.len() != positional_prefix + 1 {
+        return Err(ComptimeError::NotComptime(
+            "a runtime-pack spread must follow the fully supplied fixed positional prefix and cannot be mixed with explicit overflow arguments"
+                .to_string(),
+        ));
+    }
+    Ok(true)
+}
+
+fn top_level_forwarded_pack_types(
+    template: &Stmt,
+    display_name: &str,
+    arguments: &[Expr],
+    kwargs: &[crate::ast::KwArg],
+    mono: &Mono,
+) -> Result<Option<Vec<Ty>>, ComptimeError> {
+    if !arguments
+        .iter()
+        .any(|argument| runtime_pack_spread_source(argument).is_some())
+    {
+        return Ok(None);
+    }
+    let mut logical_types = Vec::new();
+    for argument in arguments {
+        if let Some(name) = runtime_pack_spread_source(argument) {
+            let pack = mono.resolve_runtime_pack(name).ok_or_else(|| {
+                ComptimeError::NotComptime(format!(
+                    "cannot forward '{name}' because it is not a specialized runtime pack"
+                ))
+            })?;
+            for ty in pack {
+                logical_types.push(forwarded_runtime_pack_type(ty).ok_or_else(|| {
+                    ComptimeError::NotComptime(format!(
+                        "cannot recover the checked type of forwarded pack element '{ty:?}'"
+                    ))
+                })?);
+            }
+        } else {
+            logical_types.push(infer_pack_argument_type(argument)?);
+        }
+    }
+    let indices =
+        runtime_pack_call_argument_indices(template, display_name, logical_types.len(), kwargs)?;
+    Ok(Some(
+        indices
+            .into_iter()
+            .map(|index| logical_types[index].clone())
+            .collect(),
+    ))
+}
+
+fn unwrap_runtime_pack_arguments(arguments: Vec<Expr>) -> Vec<Expr> {
+    arguments
+        .into_iter()
+        .map(|argument| match argument.kind {
+            ExprKind::Spread(value) => *value,
+            _ => argument,
+        })
+        .collect()
+}
+
+/// Select one concrete element from a specialized Tuple's private runtime
+/// storage. Tuple transforms are synthesized only after the element pack is
+/// concrete, so this ordinary index expression reaches checking/MIR with a
+/// statically known index and element type.
+fn tuple_storage_element(owner: &str, index: usize, transfer: bool, span: Span) -> Expr {
+    let owner = Expr::new(ExprKind::Identifier(owner.to_string()), span);
+    let storage = Expr::new(
+        ExprKind::Member {
+            object: Box::new(owner),
+            field: "storage".to_string(),
+        },
+        span,
+    );
+    let element = Expr::new(
+        ExprKind::Index {
+            object: Box::new(storage),
+            index: Box::new(Expr::new(ExprKind::Int((index as i64).into()), span)),
+        },
+        span,
+    );
+    if transfer {
+        Expr::new(ExprKind::Transfer(Box::new(element)), span)
+    } else {
+        element
+    }
+}
+
+/// Build an ordinary concrete Tuple transform. Keeping these as normal source
+/// AST methods means the checker, HIR, MIR, and VM use their existing method and
+/// constructor paths; Tuple does not acquire an execution-only VM intrinsic.
+fn tuple_transform_method(
+    name: &str,
+    self_convention: Option<ArgConvention>,
+    params: Vec<FnParam>,
+    target: String,
+    args: Vec<Expr>,
+    span: Span,
+) -> crate::ast::Method {
+    let result = Expr::new(
+        ExprKind::Call {
+            name: target.clone(),
+            param_args: Vec::new(),
+            args,
+            kwargs: Vec::new(),
+        },
+        span,
+    );
+    crate::ast::Method {
+        name: name.to_string(),
+        type_params: Vec::new(),
+        has_self: true,
+        self_convention,
+        self_origin: None,
+        decorators: Vec::new(),
+        params,
+        positional_only: None,
+        keyword_only: None,
+        raises: false,
+        raises_type: None,
+        ret: Some(Type::Named(target, Vec::new())),
+        where_clause: None,
+        body: vec![mk(StmtKind::Return(Some(result)), span)],
+    }
+}
+
+fn source_type_from_ty(ty: &Ty) -> Option<Type> {
+    source_type_from_ty_with_origins(ty, &HashMap::new(), &[])
+}
+
+/// The concrete call-site information used to select one function-template
+/// specialization. Nested pack forwarding supplies its already-known element
+/// types; ordinary calls leave that field empty and infer from expressions.
+struct SpecRequest<'a> {
+    param_args: &'a [ParamArg],
+    call_args: &'a [Expr],
+    kwargs: &'a [crate::ast::KwArg],
+    consts: &'a HashMap<String, CtValue>,
+    request_site: &'a str,
+    forwarded_pack_types: Option<&'a [Ty]>,
+}
+
+fn runtime_pack_call_arguments<'a>(
+    template: &Stmt,
+    display_name: &str,
+    args: &'a [Expr],
+    kwargs: &[crate::ast::KwArg],
+) -> Result<Vec<&'a Expr>, ComptimeError> {
+    let indices = runtime_pack_call_argument_indices(template, display_name, args.len(), kwargs)?;
+    Ok(indices.into_iter().map(|index| &args[index]).collect())
+}
+
+/// Give a top-level forwarded specialization the same ownership-safe ABI used
+/// by nested whole-pack forwarding: the caller passes its concrete private
+/// runtime-pack collector as one regular value and the body binds it directly.
+fn select_top_level_whole_pack_abi(specialization: &mut Stmt) -> Result<(), ComptimeError> {
+    let StmtKind::Def { params, .. } = &mut specialization.kind else {
+        unreachable!("whole-pack specializations are functions")
+    };
+    let Some(parameter) = params
+        .iter_mut()
+        .find(|parameter| parameter.kind == ParamKind::Variadic)
+    else {
+        return Err(ComptimeError::NotComptime(
+            "whole-pack forwarding requires a variadic target".to_string(),
+        ));
+    };
+    let Type::Named(name, _) = &mut parameter.ty else {
+        return Err(ComptimeError::NotComptime(
+            "whole-pack forwarding lost its concrete collector type".to_string(),
+        ));
+    };
+    if name != "$pack" {
+        return Err(ComptimeError::NotComptime(
+            "whole-pack forwarding requires a specialized runtime pack".to_string(),
+        ));
+    }
+    parameter.kind = ParamKind::Regular;
+    *name = "__RuntimeTuple".to_string();
+    Ok(())
 }
 
 fn compare_numeric_values(
@@ -2527,74 +2601,12 @@ fn compare_numeric_values(
     })
 }
 
-fn mk(kind: StmtKind, span: Span) -> Stmt {
-    Stmt {
-        kind,
-        span,
-        module: None,
-        syntax_id: crate::token::SyntaxId::fresh(),
-    }
-}
-
 fn lit_result(val: &CtValue, span: Span) -> Result<Expr, ComptimeError> {
     val.materialize(span).ok_or_else(|| {
         ComptimeError::NotComptime(
             "type-valued or symbolic comptime values cannot materialize at runtime".to_string(),
         )
     })
-}
-
-fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
-    match value {
-        CtValue::Int(n) => Ok(Value::Int(*n)),
-        CtValue::UInt(n) => Ok(Value::UInt(*n)),
-        CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(*bits))),
-        CtValue::IntLiteral(value) => Ok(Value::IntLiteral(value.clone())),
-        CtValue::FloatLiteral(value) => Ok(Value::FloatLiteral(value.clone())),
-        CtValue::Bool(b) => Ok(Value::Bool(*b)),
-        CtValue::Str(s) => Ok(Value::Str(s.clone())),
-        CtValue::Tuple(items) => Ok(Value::Tuple(
-            items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
-        )),
-        CtValue::List(items) => Ok(Value::ComptimeList(
-            items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
-        )),
-        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => {
-            Err(ComptimeError::NotComptime(
-                "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
-            ))
-        }
-    }
-}
-
-fn vm_to_ct(value: Value) -> Result<CtValue, ComptimeError> {
-    match value {
-        Value::Int(n) => Ok(CtValue::Int(n)),
-        Value::UInt(n) => Ok(CtValue::UInt(n)),
-        Value::Float64(value) => Ok(CtValue::Float(value.to_bits())),
-        Value::IntLiteral(value) => Ok(CtValue::IntLiteral(value)),
-        Value::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value)),
-        Value::Bool(b) => Ok(CtValue::Bool(b)),
-        Value::Str(s) => Ok(CtValue::Str(s)),
-        Value::Tuple(items) => Ok(CtValue::Tuple(
-            items
-                .into_iter()
-                .map(vm_to_ct)
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        Value::ComptimeList(items) => Ok(CtValue::List(
-            items
-                .into_iter()
-                .map(vm_to_ct)
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        Value::None => Err(ComptimeError::NotComptime(
-            "VM CTFE function returned None; a compile-time value is required".to_string(),
-        )),
-        other => Err(ComptimeError::NotComptime(format!(
-            "VM CTFE returned unsupported runtime value {other}"
-        ))),
-    }
 }
 
 fn vm_ctfe_safe_builtin(name: &str) -> bool {
@@ -2604,24 +2616,18 @@ fn vm_ctfe_safe_builtin(name: &str) -> bool {
     )
 }
 
-fn scalar_type_name(name: &str) -> Option<Ty> {
-    match name {
-        "Int" => Some(Ty::Int),
-        "UInt" => Some(Ty::UInt),
-        "Bool" => Some(Ty::Bool),
-        "String" => Some(Ty::String),
-        "Float64" => Some(Ty::Float64),
-        "None" => Some(Ty::None),
-        _ => None,
-    }
-}
-
 mod ctfe;
+
 mod eval;
+
 mod mono;
+
 mod nested;
+
 mod rewrite;
+
 mod specialize;
+
 use rewrite::*;
 
 #[cfg(test)]

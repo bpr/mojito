@@ -10,29 +10,6 @@ use crate::parse;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-const PRELUDE_MODULE: &str = "std.prelude";
-const PRELUDE_PATH: &str = "stdlib/std/prelude.mojo";
-const PRELUDE_EXPORTS: &[&str] = &["List", "Set", "Dict", "Tuple", "Range", "range"];
-
-/// Compiler-bundled declarations whose public identity is intentionally stable
-/// and unqualified. Their implementation helpers remain module-qualified.
-fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static str> {
-    match (module, declaration) {
-        ("std.collections.list", "List") => Some("List"),
-        ("std.collections.set", "Set") => Some("Set"),
-        ("std.collections.dict", "Dict") => Some("Dict"),
-        ("std.collections.tuple", "Tuple") => Some("Tuple"),
-        ("std.range", "Range") => Some("Range"),
-        ("std.range", "range") => Some("range"),
-        ("std.collections.string_dict", "StringDict") => Some("StringDict"),
-        _ => None,
-    }
-}
-
-fn bundled_path(relative: &str) -> Option<PathBuf> {
-    option_env!("CARGO_MANIFEST_DIR").map(|root| Path::new(root).join(relative))
-}
-
 /// An error from resolving/loading modules.
 #[derive(Debug)]
 pub enum ModuleError {
@@ -158,6 +135,379 @@ pub fn inject_prelude_with_options(
     let mut result = linker.decls;
     result.extend(body);
     Ok(result)
+}
+
+fn rewrite_expr(
+    expr: &mut Expr,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    match &mut expr.kind {
+        ExprKind::Identifier(name) => rename(name, names),
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            rename(name, names);
+            rewrite_args(param_args, names, namespaces);
+            for arg in args {
+                rewrite_expr(arg, names, namespaces);
+            }
+            for arg in kwargs {
+                rewrite_expr(&mut arg.value, names, namespaces);
+            }
+        }
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } => {
+            if let Some(target) = namespace_member(object, method, namespaces) {
+                for arg in args.iter_mut() {
+                    rewrite_expr(arg, names, namespaces);
+                }
+                for arg in kwargs.iter_mut() {
+                    rewrite_expr(&mut arg.value, names, namespaces);
+                }
+                expr.kind = ExprKind::Call {
+                    name: target,
+                    param_args: Vec::new(),
+                    args: std::mem::take(args),
+                    kwargs: std::mem::take(kwargs),
+                };
+            } else {
+                rewrite_expr(object, names, namespaces);
+                for arg in args {
+                    rewrite_expr(arg, names, namespaces);
+                }
+                for arg in kwargs {
+                    rewrite_expr(&mut arg.value, names, namespaces);
+                }
+            }
+        }
+        ExprKind::Member { object, field } => {
+            if let Some(target) = namespace_member(object, field, namespaces) {
+                expr.kind = ExprKind::Identifier(target);
+            } else {
+                rewrite_expr(object, names, namespaces);
+            }
+        }
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            rewrite_expr(callee, names, namespaces);
+            rewrite_args(param_args, names, namespaces);
+            for arg in args {
+                rewrite_expr(arg, names, namespaces);
+            }
+            for arg in kwargs {
+                rewrite_expr(&mut arg.value, names, namespaces);
+            }
+        }
+        ExprKind::TypeApply { name, args } => {
+            rename(name, names);
+            rewrite_args(args, names, namespaces);
+        }
+        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => {
+            rewrite_expr(value, names, namespaces)
+        }
+        ExprKind::Infix(_, left, right)
+        | ExprKind::Index {
+            object: left,
+            index: right,
+        } => {
+            rewrite_expr(left, names, namespaces);
+            rewrite_expr(right, names, namespaces);
+        }
+        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
+            for value in values {
+                rewrite_expr(value, names, namespaces);
+            }
+        }
+        ExprKind::BraceLit(entries) => {
+            for (key, value) in entries {
+                rewrite_expr(key, names, namespaces);
+                if let Some(value) = value {
+                    rewrite_expr(value, names, namespaces);
+                }
+            }
+        }
+        ExprKind::Named { value, .. } => rewrite_expr(value, names, namespaces),
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_expr(cond, names, namespaces);
+            rewrite_expr(then_branch, names, namespaces);
+            rewrite_expr(else_branch, names, namespaces);
+        }
+        ExprKind::Compare { first, rest } => {
+            rewrite_expr(first, names, namespaces);
+            for (_, value) in rest {
+                rewrite_expr(value, names, namespaces);
+            }
+        }
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => {
+            rewrite_expr(object, names, namespaces);
+            for value in [lower, upper, step].into_iter().flatten() {
+                rewrite_expr(value, names, namespaces);
+            }
+        }
+        ExprKind::MultiIndex { object, args } => {
+            rewrite_expr(object, names, namespaces);
+            for argument in args {
+                match argument {
+                    crate::ast::SubscriptArg::Index(value) => {
+                        rewrite_expr(value, names, namespaces)
+                    }
+                    crate::ast::SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    } => {
+                        for value in [lower, upper, step].into_iter().flatten() {
+                            rewrite_expr(value, names, namespaces);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::TString { parts, .. } => {
+            for part in parts {
+                if let TStringPart::Expr(value) = part {
+                    rewrite_expr(value, names, namespaces);
+                }
+            }
+        }
+        ExprKind::TypeValue(ty) => rewrite_type(ty, names, namespaces),
+        _ => {}
+    }
+}
+
+fn rewrite_type(
+    ty: &mut Type,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    match ty {
+        Type::Named(name, args) => {
+            rename(name, names);
+            rewrite_args(args, names, namespaces);
+        }
+        Type::Assoc { base, name } => {
+            if let Some(namespace) = type_path(base)
+                && let Some(target) = namespaces
+                    .get(&namespace)
+                    .and_then(|exports| exports.get(name))
+            {
+                *ty = Type::Named(target.clone(), Vec::new());
+            } else {
+                rewrite_type(base, names, namespaces);
+            }
+        }
+        Type::Func {
+            type_params,
+            params,
+            ret,
+            capturing,
+            raises_type,
+            ..
+        } => {
+            for parameter in type_params {
+                rewrite_type_param(parameter, names, namespaces);
+            }
+            for param in params {
+                rewrite_type(&mut param.ty, names, namespaces);
+                if let Some(origin) = &mut param.origin {
+                    for expr in origin {
+                        rewrite_expr(expr, names, namespaces);
+                    }
+                }
+            }
+            rewrite_type(ret, names, namespaces);
+            if let Some(origins) = capturing {
+                for origin in origins {
+                    rewrite_expr(origin, names, namespaces);
+                }
+            }
+            if let Some(error) = raises_type {
+                rewrite_type(error, names, namespaces);
+            }
+        }
+        Type::Ref { referent, origin } => {
+            rewrite_type(referent, names, namespaces);
+            if let Some(origin) = origin {
+                for expr in origin {
+                    rewrite_expr(expr, names, namespaces);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_program(
+    body: &mut [Stmt],
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    for stmt in body {
+        rewrite_stmt(stmt, names, namespaces);
+    }
+}
+
+fn rename(name: &mut String, names: &HashMap<String, String>) {
+    if let Some(replacement) = names.get(name) {
+        *name = replacement.clone();
+    }
+}
+
+fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashMap<&'a str, ()>) {
+    for statement in body {
+        match &statement.kind {
+            StmtKind::VarDecl { name, .. }
+            | StmtKind::RefDecl { name, .. }
+            | StmtKind::Def { name, .. }
+            | StmtKind::Struct { name, .. }
+            | StmtKind::Trait { name, .. }
+            | StmtKind::Comptime { name, .. } => {
+                names.insert(name, ());
+            }
+            StmtKind::For { var, body, .. } | StmtKind::ComptimeFor { var, body, .. } => {
+                names.insert(var, ());
+                collect_bound_names(body, names);
+            }
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                for (_, block) in branches {
+                    collect_bound_names(block, names);
+                }
+                if let Some(block) = orelse {
+                    collect_bound_names(block, names);
+                }
+            }
+            StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
+                collect_bound_names(body, names)
+            }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                collect_bound_names(body, names);
+                if let Some((binding, block)) = except {
+                    if let Some(binding) = binding {
+                        names.insert(binding, ());
+                    }
+                    collect_bound_names(block, names);
+                }
+                if let Some(block) = orelse {
+                    collect_bound_names(block, names);
+                }
+                if let Some(block) = finalbody {
+                    collect_bound_names(block, names);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
+    for statement in body {
+        match &statement.kind {
+            StmtKind::VarDecl { name, .. }
+            | StmtKind::RefDecl { name, .. }
+            | StmtKind::Def { name, .. }
+            | StmtKind::Struct { name, .. }
+            | StmtKind::Trait { name, .. } => {
+                names.remove(name);
+            }
+            StmtKind::For { var, body, .. } | StmtKind::ComptimeFor { var, body, .. } => {
+                names.remove(var);
+                remove_bound_names(body, names);
+            }
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                for (_, block) in branches {
+                    remove_bound_names(block, names);
+                }
+                if let Some(block) = orelse {
+                    remove_bound_names(block, names);
+                }
+            }
+            StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
+                remove_bound_names(body, names)
+            }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                remove_bound_names(body, names);
+                if let Some((binding, block)) = except {
+                    if let Some(binding) = binding {
+                        names.remove(binding);
+                    }
+                    remove_bound_names(block, names);
+                }
+                if let Some(block) = orelse {
+                    remove_bound_names(block, names);
+                }
+                if let Some(block) = finalbody {
+                    remove_bound_names(block, names);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn program_uses_kwargs(program: &[Stmt]) -> bool {
+    program.iter().any(|stmt| match &stmt.kind {
+        StmtKind::Def { params, body, .. } => {
+            params
+                .iter()
+                .any(|p| p.kind == crate::ast::ParamKind::KwVariadic)
+                || program_uses_kwargs(body)
+        }
+        StmtKind::Struct { methods, .. } => methods.iter().any(|method| {
+            method
+                .params
+                .iter()
+                .any(|p| p.kind == crate::ast::ParamKind::KwVariadic)
+                || program_uses_kwargs(&method.body)
+        }),
+        StmtKind::If { branches, orelse } => {
+            branches.iter().any(|(_, body)| program_uses_kwargs(body))
+                || orelse
+                    .as_ref()
+                    .is_some_and(|body| program_uses_kwargs(body))
+        }
+        StmtKind::While { body, .. }
+        | StmtKind::For { body, .. }
+        | StmtKind::ComptimeFor { body, .. } => program_uses_kwargs(body),
+        _ => false,
+    })
+}
+
+fn display(path: &Path) -> String {
+    path.display().to_string()
 }
 
 struct Linker {
@@ -658,113 +1008,45 @@ impl Linker {
     }
 }
 
-fn remove_namespace_binding(
-    namespaces: &mut HashMap<String, HashMap<String, String>>,
-    local: &str,
+fn rewrite_type_param(
+    parameter: &mut crate::ast::TypeParam,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
 ) {
-    namespaces.retain(|name, _| name != local && !name.starts_with(&format!("{local}.")));
-}
-
-fn lexical_binding_name(statement: &Stmt) -> Option<&str> {
-    match &statement.kind {
-        StmtKind::VarDecl { name, .. }
-        | StmtKind::RefDecl { name, .. }
-        | StmtKind::Def { name, .. }
-        | StmtKind::Struct { name, .. }
-        | StmtKind::Trait { name, .. }
-        | StmtKind::Comptime { name, .. } => Some(name),
-        _ => None,
+    for bound in &mut parameter.bounds {
+        rename(bound, names);
+    }
+    if let Some(ty) = &mut parameter.value_type {
+        rewrite_type(ty, names, namespaces);
+    }
+    if let Some(ty) = &mut parameter.callable_bound {
+        rewrite_type(ty, names, namespaces);
+    }
+    if let Some(value) = &mut parameter.origin_mutability {
+        rewrite_expr(value, names, namespaces);
+    }
+    if let Some(value) = &mut parameter.default {
+        rewrite_expr(value, names, namespaces);
+    }
+    for condition in &mut parameter.constraints {
+        rewrite_expr(condition, names, namespaces);
     }
 }
 
-fn program_uses_kwargs(program: &[Stmt]) -> bool {
-    program.iter().any(|stmt| match &stmt.kind {
-        StmtKind::Def { params, body, .. } => {
-            params
-                .iter()
-                .any(|p| p.kind == crate::ast::ParamKind::KwVariadic)
-                || program_uses_kwargs(body)
-        }
-        StmtKind::Struct { methods, .. } => methods.iter().any(|method| {
-            method
-                .params
-                .iter()
-                .any(|p| p.kind == crate::ast::ParamKind::KwVariadic)
-                || program_uses_kwargs(&method.body)
-        }),
-        StmtKind::If { branches, orelse } => {
-            branches.iter().any(|(_, body)| program_uses_kwargs(body))
-                || orelse
-                    .as_ref()
-                    .is_some_and(|body| program_uses_kwargs(body))
-        }
-        StmtKind::While { body, .. }
-        | StmtKind::For { body, .. }
-        | StmtKind::ComptimeFor { body, .. } => program_uses_kwargs(body),
-        _ => false,
-    })
-}
-
-/// The declared name of a top-level declaration statement (`def`/`struct`/`trait`/
-/// `comptime`), or `None` for anything else.
-fn declared_name(stmt: &Stmt) -> Option<&str> {
-    match &stmt.kind {
-        StmtKind::Def { name, .. }
-        | StmtKind::Struct { name, .. }
-        | StmtKind::Trait { name, .. }
-        | StmtKind::Comptime { name, .. } => Some(name),
-        _ => None,
-    }
-}
-
-/// Resolve an import's module to a file path, returning `(path, display_name)`.
-/// `level` is the leading-dot count (0 = relative to `from_dir`; 1 = same package,
-/// i.e. also `from_dir`; each extra level climbs one directory).
-fn module_file(
-    from_dir: &Path,
-    level: usize,
-    path: &[String],
-    search_roots: &[PathBuf],
-) -> Result<(PathBuf, String), ModuleError> {
-    if path.is_empty() {
-        return Err(ModuleError::EmptyModulePath);
-    }
-    let display_name = path.join(".");
-    if level > 0 {
-        let mut base = from_dir.to_path_buf();
-        for _ in 1..level {
-            base.pop();
-        }
-        return Ok((module_path_under(base, path), display_name));
-    }
-
-    let local = module_path_under(from_dir.to_path_buf(), path);
-    if local.exists() {
-        return Ok((local, display_name));
-    }
-    for root in search_roots {
-        let candidate = module_path_under(root.clone(), path);
-        if candidate.exists() {
-            return Ok((candidate, display_name));
+fn rewrite_args(
+    args: &mut [ParamArg],
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    for arg in args {
+        match arg {
+            ParamArg::Type(ty) => rewrite_type(ty, names, namespaces),
+            ParamArg::Value(expr) => rewrite_expr(expr, names, namespaces),
+            ParamArg::Named { value, .. } => {
+                rewrite_args(std::slice::from_mut(value), names, namespaces)
+            }
         }
     }
-    Ok((local, display_name))
-}
-
-fn module_path_under(mut base: PathBuf, path: &[String]) -> PathBuf {
-    for part in path {
-        base.push(part);
-    }
-    let package = base.join("__init__.mojo");
-    if package.exists() {
-        package
-    } else {
-        base.with_extension("mojo")
-    }
-}
-
-fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn qualified(module: &str, name: &str) -> String {
@@ -772,43 +1054,6 @@ fn qualified(module: &str, name: &str) -> String {
         "__module${}${name}",
         module.replace(|c: char| !c.is_ascii_alphanumeric(), "$")
     )
-}
-
-fn rewrite_program(
-    body: &mut [Stmt],
-    names: &HashMap<String, String>,
-    namespaces: &HashMap<String, HashMap<String, String>>,
-) {
-    for stmt in body {
-        rewrite_stmt(stmt, names, namespaces);
-    }
-}
-
-fn rename(name: &mut String, names: &HashMap<String, String>) {
-    if let Some(replacement) = names.get(name) {
-        *name = replacement.clone();
-    }
-}
-
-fn expression_path(expr: &Expr) -> Option<String> {
-    match &expr.kind {
-        ExprKind::Identifier(name) => Some(name.clone()),
-        ExprKind::Member { object, field } => {
-            Some(format!("{}.{}", expression_path(object)?, field))
-        }
-        _ => None,
-    }
-}
-
-fn namespace_member(
-    object: &Expr,
-    member: &str,
-    namespaces: &HashMap<String, HashMap<String, String>>,
-) -> Option<String> {
-    namespaces
-        .get(&expression_path(object)?)
-        .and_then(|exports| exports.get(member))
-        .cloned()
 }
 
 fn without_local_bindings(
@@ -841,192 +1086,64 @@ fn without_local_namespaces(
     visible
 }
 
-fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashMap<&'a str, ()>) {
-    for statement in body {
-        match &statement.kind {
-            StmtKind::VarDecl { name, .. }
-            | StmtKind::RefDecl { name, .. }
-            | StmtKind::Def { name, .. }
-            | StmtKind::Struct { name, .. }
-            | StmtKind::Trait { name, .. }
-            | StmtKind::Comptime { name, .. } => {
-                names.insert(name, ());
-            }
-            StmtKind::For { var, body, .. } | StmtKind::ComptimeFor { var, body, .. } => {
-                names.insert(var, ());
-                collect_bound_names(body, names);
-            }
-            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                for (_, block) in branches {
-                    collect_bound_names(block, names);
-                }
-                if let Some(block) = orelse {
-                    collect_bound_names(block, names);
-                }
-            }
-            StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
-                collect_bound_names(body, names)
-            }
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                collect_bound_names(body, names);
-                if let Some((binding, block)) = except {
-                    if let Some(binding) = binding {
-                        names.insert(binding, ());
-                    }
-                    collect_bound_names(block, names);
-                }
-                if let Some(block) = orelse {
-                    collect_bound_names(block, names);
-                }
-                if let Some(block) = finalbody {
-                    collect_bound_names(block, names);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
-    for statement in body {
-        match &statement.kind {
-            StmtKind::VarDecl { name, .. }
-            | StmtKind::RefDecl { name, .. }
-            | StmtKind::Def { name, .. }
-            | StmtKind::Struct { name, .. }
-            | StmtKind::Trait { name, .. } => {
-                names.remove(name);
-            }
-            StmtKind::For { var, body, .. } | StmtKind::ComptimeFor { var, body, .. } => {
-                names.remove(var);
-                remove_bound_names(body, names);
-            }
-            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                for (_, block) in branches {
-                    remove_bound_names(block, names);
-                }
-                if let Some(block) = orelse {
-                    remove_bound_names(block, names);
-                }
-            }
-            StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
-                remove_bound_names(body, names)
-            }
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                remove_bound_names(body, names);
-                if let Some((binding, block)) = except {
-                    if let Some(binding) = binding {
-                        names.remove(binding);
-                    }
-                    remove_bound_names(block, names);
-                }
-                if let Some(block) = orelse {
-                    remove_bound_names(block, names);
-                }
-                if let Some(block) = finalbody {
-                    remove_bound_names(block, names);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn rewrite_type_param(
-    parameter: &mut crate::ast::TypeParam,
-    names: &HashMap<String, String>,
-    namespaces: &HashMap<String, HashMap<String, String>>,
+fn remove_namespace_binding(
+    namespaces: &mut HashMap<String, HashMap<String, String>>,
+    local: &str,
 ) {
-    for bound in &mut parameter.bounds {
-        rename(bound, names);
+    namespaces.retain(|name, _| name != local && !name.starts_with(&format!("{local}.")));
+}
+
+fn module_path_under(mut base: PathBuf, path: &[String]) -> PathBuf {
+    for part in path {
+        base.push(part);
     }
-    if let Some(ty) = &mut parameter.value_type {
-        rewrite_type(ty, names, namespaces);
-    }
-    if let Some(ty) = &mut parameter.callable_bound {
-        rewrite_type(ty, names, namespaces);
-    }
-    if let Some(value) = &mut parameter.origin_mutability {
-        rewrite_expr(value, names, namespaces);
-    }
-    if let Some(value) = &mut parameter.default {
-        rewrite_expr(value, names, namespaces);
-    }
-    for condition in &mut parameter.constraints {
-        rewrite_expr(condition, names, namespaces);
+    let package = base.join("__init__.mojo");
+    if package.exists() {
+        package
+    } else {
+        base.with_extension("mojo")
     }
 }
 
-fn rewrite_type(
-    ty: &mut Type,
-    names: &HashMap<String, String>,
-    namespaces: &HashMap<String, HashMap<String, String>>,
-) {
-    match ty {
-        Type::Named(name, args) => {
-            rename(name, names);
-            rewrite_args(args, names, namespaces);
-        }
-        Type::Assoc { base, name } => {
-            if let Some(namespace) = type_path(base)
-                && let Some(target) = namespaces
-                    .get(&namespace)
-                    .and_then(|exports| exports.get(name))
-            {
-                *ty = Type::Named(target.clone(), Vec::new());
-            } else {
-                rewrite_type(base, names, namespaces);
-            }
-        }
-        Type::Func {
-            type_params,
-            params,
-            ret,
-            capturing,
-            raises_type,
-            ..
-        } => {
-            for parameter in type_params {
-                rewrite_type_param(parameter, names, namespaces);
-            }
-            for param in params {
-                rewrite_type(&mut param.ty, names, namespaces);
-                if let Some(origin) = &mut param.origin {
-                    for expr in origin {
-                        rewrite_expr(expr, names, namespaces);
-                    }
-                }
-            }
-            rewrite_type(ret, names, namespaces);
-            if let Some(origins) = capturing {
-                for origin in origins {
-                    rewrite_expr(origin, names, namespaces);
-                }
-            }
-            if let Some(error) = raises_type {
-                rewrite_type(error, names, namespaces);
-            }
-        }
-        Type::Ref { referent, origin } => {
-            rewrite_type(referent, names, namespaces);
-            if let Some(origin) = origin {
-                for expr in origin {
-                    rewrite_expr(expr, names, namespaces);
-                }
-            }
-        }
-        _ => {}
+const PRELUDE_MODULE: &str = "std.prelude";
+
+const PRELUDE_EXPORTS: &[&str] = &["List", "Set", "Dict", "Tuple", "Range", "range"];
+
+fn bundled_path(relative: &str) -> Option<PathBuf> {
+    option_env!("CARGO_MANIFEST_DIR").map(|root| Path::new(root).join(relative))
+}
+
+/// The declared name of a top-level declaration statement (`def`/`struct`/`trait`/
+/// `comptime`), or `None` for anything else.
+fn declared_name(stmt: &Stmt) -> Option<&str> {
+    match &stmt.kind {
+        StmtKind::Def { name, .. }
+        | StmtKind::Struct { name, .. }
+        | StmtKind::Trait { name, .. }
+        | StmtKind::Comptime { name, .. } => Some(name),
+        _ => None,
     }
+}
+
+fn expression_path(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Identifier(name) => Some(name.clone()),
+        ExprKind::Member { object, field } => {
+            Some(format!("{}.{}", expression_path(object)?, field))
+        }
+        _ => None,
+    }
+}
+
+fn namespace_member(
+    object: &Expr,
+    member: &str,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) -> Option<String> {
+    namespaces
+        .get(&expression_path(object)?)
+        .and_then(|exports| exports.get(member))
+        .cloned()
 }
 
 fn type_path(ty: &Type) -> Option<String> {
@@ -1034,180 +1151,6 @@ fn type_path(ty: &Type) -> Option<String> {
         Type::Named(name, args) if args.is_empty() => Some(name.clone()),
         Type::Assoc { base, name } => Some(format!("{}.{}", type_path(base)?, name)),
         _ => None,
-    }
-}
-
-fn rewrite_args(
-    args: &mut [ParamArg],
-    names: &HashMap<String, String>,
-    namespaces: &HashMap<String, HashMap<String, String>>,
-) {
-    for arg in args {
-        match arg {
-            ParamArg::Type(ty) => rewrite_type(ty, names, namespaces),
-            ParamArg::Value(expr) => rewrite_expr(expr, names, namespaces),
-            ParamArg::Named { value, .. } => {
-                rewrite_args(std::slice::from_mut(value), names, namespaces)
-            }
-        }
-    }
-}
-
-fn rewrite_expr(
-    expr: &mut Expr,
-    names: &HashMap<String, String>,
-    namespaces: &HashMap<String, HashMap<String, String>>,
-) {
-    match &mut expr.kind {
-        ExprKind::Identifier(name) => rename(name, names),
-        ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } => {
-            rename(name, names);
-            rewrite_args(param_args, names, namespaces);
-            for arg in args {
-                rewrite_expr(arg, names, namespaces);
-            }
-            for arg in kwargs {
-                rewrite_expr(&mut arg.value, names, namespaces);
-            }
-        }
-        ExprKind::MethodCall {
-            object,
-            method,
-            args,
-            kwargs,
-        } => {
-            if let Some(target) = namespace_member(object, method, namespaces) {
-                for arg in args.iter_mut() {
-                    rewrite_expr(arg, names, namespaces);
-                }
-                for arg in kwargs.iter_mut() {
-                    rewrite_expr(&mut arg.value, names, namespaces);
-                }
-                expr.kind = ExprKind::Call {
-                    name: target,
-                    param_args: Vec::new(),
-                    args: std::mem::take(args),
-                    kwargs: std::mem::take(kwargs),
-                };
-            } else {
-                rewrite_expr(object, names, namespaces);
-                for arg in args {
-                    rewrite_expr(arg, names, namespaces);
-                }
-                for arg in kwargs {
-                    rewrite_expr(&mut arg.value, names, namespaces);
-                }
-            }
-        }
-        ExprKind::Member { object, field } => {
-            if let Some(target) = namespace_member(object, field, namespaces) {
-                expr.kind = ExprKind::Identifier(target);
-            } else {
-                rewrite_expr(object, names, namespaces);
-            }
-        }
-        ExprKind::Invoke {
-            callee,
-            param_args,
-            args,
-            kwargs,
-        } => {
-            rewrite_expr(callee, names, namespaces);
-            rewrite_args(param_args, names, namespaces);
-            for arg in args {
-                rewrite_expr(arg, names, namespaces);
-            }
-            for arg in kwargs {
-                rewrite_expr(&mut arg.value, names, namespaces);
-            }
-        }
-        ExprKind::TypeApply { name, args } => {
-            rename(name, names);
-            rewrite_args(args, names, namespaces);
-        }
-        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => {
-            rewrite_expr(value, names, namespaces)
-        }
-        ExprKind::Infix(_, left, right)
-        | ExprKind::Index {
-            object: left,
-            index: right,
-        } => {
-            rewrite_expr(left, names, namespaces);
-            rewrite_expr(right, names, namespaces);
-        }
-        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
-            for value in values {
-                rewrite_expr(value, names, namespaces);
-            }
-        }
-        ExprKind::BraceLit(entries) => {
-            for (key, value) in entries {
-                rewrite_expr(key, names, namespaces);
-                if let Some(value) = value {
-                    rewrite_expr(value, names, namespaces);
-                }
-            }
-        }
-        ExprKind::Named { value, .. } => rewrite_expr(value, names, namespaces),
-        ExprKind::IfExpr {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            rewrite_expr(cond, names, namespaces);
-            rewrite_expr(then_branch, names, namespaces);
-            rewrite_expr(else_branch, names, namespaces);
-        }
-        ExprKind::Compare { first, rest } => {
-            rewrite_expr(first, names, namespaces);
-            for (_, value) in rest {
-                rewrite_expr(value, names, namespaces);
-            }
-        }
-        ExprKind::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            ..
-        } => {
-            rewrite_expr(object, names, namespaces);
-            for value in [lower, upper, step].into_iter().flatten() {
-                rewrite_expr(value, names, namespaces);
-            }
-        }
-        ExprKind::MultiIndex { object, args } => {
-            rewrite_expr(object, names, namespaces);
-            for argument in args {
-                match argument {
-                    crate::ast::SubscriptArg::Index(value) => {
-                        rewrite_expr(value, names, namespaces)
-                    }
-                    crate::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    } => {
-                        for value in [lower, upper, step].into_iter().flatten() {
-                            rewrite_expr(value, names, namespaces);
-                        }
-                    }
-                }
-            }
-        }
-        ExprKind::TString { parts, .. } => {
-            for part in parts {
-                if let TStringPart::Expr(value) = part {
-                    rewrite_expr(value, names, namespaces);
-                }
-            }
-        }
-        ExprKind::TypeValue(ty) => rewrite_type(ty, names, namespaces),
-        _ => {}
     }
 }
 
@@ -1427,10 +1370,6 @@ fn rewrite_stmt(
     }
 }
 
-fn read_and_parse(path: &Path) -> Result<Vec<Stmt>, ModuleError> {
-    read_and_parse_named(path, &display(path))
-}
-
 fn read_and_parse_named(path: &Path, module_name: &str) -> Result<Vec<Stmt>, ModuleError> {
     let src = std::fs::read_to_string(path).map_err(|err| ModuleError::Io {
         module: module_name.to_string(),
@@ -1442,6 +1381,69 @@ fn read_and_parse_named(path: &Path, module_name: &str) -> Result<Vec<Stmt>, Mod
     })
 }
 
-fn display(path: &Path) -> String {
-    path.display().to_string()
+const PRELUDE_PATH: &str = "stdlib/std/prelude.mojo";
+
+/// Compiler-bundled declarations whose public identity is intentionally stable
+/// and unqualified. Their implementation helpers remain module-qualified.
+fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static str> {
+    match (module, declaration) {
+        ("std.collections.list", "List") => Some("List"),
+        ("std.collections.set", "Set") => Some("Set"),
+        ("std.collections.dict", "Dict") => Some("Dict"),
+        ("std.collections.tuple", "Tuple") => Some("Tuple"),
+        ("std.range", "Range") => Some("Range"),
+        ("std.range", "range") => Some("range"),
+        ("std.collections.string_dict", "StringDict") => Some("StringDict"),
+        _ => None,
+    }
+}
+
+fn lexical_binding_name(statement: &Stmt) -> Option<&str> {
+    match &statement.kind {
+        StmtKind::VarDecl { name, .. }
+        | StmtKind::RefDecl { name, .. }
+        | StmtKind::Def { name, .. }
+        | StmtKind::Struct { name, .. }
+        | StmtKind::Trait { name, .. }
+        | StmtKind::Comptime { name, .. } => Some(name),
+        _ => None,
+    }
+}
+
+/// Resolve an import's module to a file path, returning `(path, display_name)`.
+/// `level` is the leading-dot count (0 = relative to `from_dir`; 1 = same package,
+/// i.e. also `from_dir`; each extra level climbs one directory).
+fn module_file(
+    from_dir: &Path,
+    level: usize,
+    path: &[String],
+    search_roots: &[PathBuf],
+) -> Result<(PathBuf, String), ModuleError> {
+    if path.is_empty() {
+        return Err(ModuleError::EmptyModulePath);
+    }
+    let display_name = path.join(".");
+    if level > 0 {
+        let mut base = from_dir.to_path_buf();
+        for _ in 1..level {
+            base.pop();
+        }
+        return Ok((module_path_under(base, path), display_name));
+    }
+
+    let local = module_path_under(from_dir.to_path_buf(), path);
+    if local.exists() {
+        return Ok((local, display_name));
+    }
+    for root in search_roots {
+        let candidate = module_path_under(root.clone(), path);
+        if candidate.exists() {
+            return Ok((candidate, display_name));
+        }
+    }
+    Ok((local, display_name))
+}
+
+fn read_and_parse(path: &Path) -> Result<Vec<Stmt>, ModuleError> {
+    read_and_parse_named(path, &display(path))
 }

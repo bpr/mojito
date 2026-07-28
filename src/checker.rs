@@ -35,539 +35,10 @@ use crate::types::{
     set_element, set_type, tuple_elements, tuple_type as nominal_tuple_type,
 };
 
-type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);
-
-/// The raw-slot operations on `UnsafePointer` are an implementation privilege,
-/// not source-language API. Linked expressions retain their exact source path;
-/// only files physically shipped in the compiler's collection library receive
-/// the checked adjustment that can lower these operations.
-fn is_bundled_collection_source(source: Option<&str>) -> bool {
-    let (Some(manifest), Some(source)) = (option_env!("CARGO_MANIFEST_DIR"), source) else {
-        return false;
-    };
-    let stdlib = Path::new(manifest).join("stdlib");
-    let source = Path::new(source);
-    source == stdlib.join("std/collections/list.mojo")
-        || source == stdlib.join("list.mojo")
-        || source == stdlib.join("std/collections/dict.mojo")
-        || source == stdlib.join("dict.mojo")
-}
-
-/// The checked signature of a struct, kept in the checker's registry.
-struct StructInfo {
-    /// Compile-time parameters (type and value); empty for a non-generic struct.
-    decls: Vec<ParamDecl>,
-    /// Concrete semantic arguments retained by an erased compiler-generated
-    /// specialization. Public `Tuple[*Ts]` is emitted as a parameter-free
-    /// implementation struct, but its checked identity must still carry the
-    /// element types selected for `Ts`.
-    fixed_arguments: Option<Vec<TyArg>>,
-    /// Traits this struct declares conformance to (verified at definition).
-    conforms: Vec<String>,
-    callable_conformance: Option<Ty>,
-    /// Exact lowered `__call__` method selected by the declared callable
-    /// conformance. This is distinct from the callable contract: overloaded
-    /// methods with the same arity require the signature-qualified target to
-    /// survive into indirect-call MIR.
-    callable_target: Option<String>,
-    conformance_conditions: HashMap<String, Expr>,
-    /// Declared fields, in order (drives the fieldwise constructor).
-    fields: Vec<(String, Ty)>,
-    /// Associated compile-time facts declared by `comptime NAME = ...` in the
-    /// struct body. These live on the type, not on runtime instances.
-    associated: HashMap<String, CtValue>,
-    methods: HashMap<String, Vec<MethodSig>>,
-    fieldwise_init: bool,
-    explicit_destroy_message: Option<String>,
-    explicit_destructors: HashMap<String, bool>,
-}
-
-#[derive(Clone, Copy)]
-struct DependentIndexAccessorFamily {
-    place: &'static str,
-    value: &'static str,
-}
-
-/// Select the current Mojo parameter-index hook first, while retaining the
-/// earlier spelling as an intentional source-compatibility fallback.
-fn dependent_index_accessor_family(info: &StructInfo) -> Option<DependentIndexAccessorFamily> {
-    if info.methods.contains_key("__getitem_param__$0") {
-        Some(DependentIndexAccessorFamily {
-            place: "__getitem_param__",
-            value: "__getitem_param_value__",
-        })
-    } else if info.methods.contains_key("__getitem__$0") {
-        Some(DependentIndexAccessorFamily {
-            place: "__getitem__",
-            value: "__getitem_value__",
-        })
-    } else {
-        None
-    }
-}
-
-/// The source-level pieces of a struct declaration passed through checking.
-struct StructDeclaration<'a> {
-    module: &'a Option<String>,
-    name: &'a str,
-    type_params: &'a [crate::ast::TypeParam],
-    conforms: &'a [String],
-    callable_conformance: &'a Option<SourceType>,
-    conformance_conditions: &'a [(String, Expr)],
-    fields: &'a [crate::ast::Param],
-    associated: &'a [StructComptime],
-    methods: &'a [Method],
-    fieldwise_init: bool,
-    decorators: &'a [crate::ast::Decorator],
-}
-
-/// The checked signature of a trait: required methods plus associated
-/// compile-time facts. A method requirement's signature may mention
-/// `Ty::SelfType` (the conforming type).
-struct TraitInfo {
-    refines: Vec<String>,
-    methods: HashMap<String, Vec<MethodSig>>,
-    comptime_members: HashMap<String, CtMemberReq>,
-}
-
-/// The required kind/type of a trait `comptime NAME: Annotation` member.
-#[derive(Clone, PartialEq)]
-enum CtMemberReq {
-    /// A compile-time value whose value type must match this type.
-    Value(Box<Ty>),
-    /// A compile-time type value whose type must conform to these trait bounds.
-    Type { bounds: Vec<String> },
-}
-
-/// Compose inherited associated-member requirements. Type-valued members with
-/// the same name denote one associated type, so refinement accumulates their
-/// bounds instead of treating stronger composition as an ambiguity. Value
-/// members must retain one exact type; mixing value and type requirements is a
-/// real conflict.
-fn merge_associated_requirement(
-    existing: &mut CtMemberReq,
-    incoming: &CtMemberReq,
-    member: &str,
-) -> Result<(), TypeError> {
-    match (existing, incoming) {
-        (CtMemberReq::Type { bounds }, CtMemberReq::Type { bounds: more }) => {
-            for bound in more {
-                if !bounds.contains(bound) {
-                    bounds.push(bound.clone());
-                }
-            }
-            Ok(())
-        }
-        (CtMemberReq::Value(left), CtMemberReq::Value(right)) if left == right => Ok(()),
-        _ => Err(TypeError::Unsupported(format!(
-            "conflicting inherited associated member '{member}'"
-        ))),
-    }
-}
-
-fn conformance_operand(expression: &Expr, arguments: &HashMap<&str, &TyArg>) -> Option<CtValue> {
-    match &expression.kind {
-        ExprKind::Int(value) => Some(CtValue::IntLiteral(value.clone())),
-        ExprKind::Bool(value) => Some(CtValue::Bool(*value)),
-        ExprKind::Str(value) => Some(CtValue::Str(value.clone())),
-        ExprKind::Identifier(name) => match arguments.get(name.as_str())? {
-            TyArg::Val(value) => Some((*value).clone()),
-            TyArg::Ty(_) => None,
-        },
-        _ => None,
-    }
-}
-
-fn ct_integer(value: &CtValue) -> Option<crate::literal::IntLiteral> {
-    match value {
-        CtValue::Int(value) => Some((*value).into()),
-        CtValue::UInt(value) => Some((*value).into()),
-        CtValue::IntLiteral(value) => Some(value.clone()),
-        _ => None,
-    }
-}
-
-fn ct_values_equal(left: &CtValue, right: &CtValue) -> bool {
-    match (ct_integer(left), ct_integer(right)) {
-        (Some(left), Some(right)) => left == right,
-        _ => left == right,
-    }
-}
-
-fn compare_ct_integers(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<bool> {
-    let (left, right) = (ct_integer(left)?, ct_integer(right)?);
-    Some(match op {
-        InfixOp::Eq => left == right,
-        InfixOp::Ne => left != right,
-        InfixOp::Lt => left < right,
-        InfixOp::Le => left <= right,
-        InfixOp::Gt => left > right,
-        InfixOp::Ge => left >= right,
-        _ => return None,
-    })
-}
-
-fn ty_args_equal(left: &TyArg, right: &TyArg) -> bool {
-    match (left, right) {
-        (TyArg::Val(left), TyArg::Val(right)) => ct_values_equal(left, right),
-        _ => left == right,
-    }
-}
-
-#[derive(Clone, PartialEq)]
-struct MethodSig {
-    decls: Vec<ParamDecl>,
-    availability: Vec<GenericConstraint>,
-    has_self: bool,
-    /// Regular parameters only; variadic element type is stored separately.
-    params: Vec<Ty>,
-    names: Vec<String>,
-    required: Vec<bool>,
-    variadic: Option<Box<Ty>>,
-    variadic_index: Option<usize>,
-    kw_variadic: Option<Box<Ty>>,
-    kw_variadic_index: Option<usize>,
-    positional_only: Option<usize>,
-    keyword_only: Option<usize>,
-    conventions: Vec<Option<ArgConvention>>,
-    ret: Ty,
-    raises: bool,
-    error: Option<Box<Ty>>,
-    /// Receiver convention. `None` means plain read-only `self`; explicit
-    /// conventions (`mut`, `var`, `ref`, ...) are preserved so trait
-    /// requirements can compare them exactly. Today only `mut self` changes call
-    /// checking behavior.
-    self_convention: Option<crate::ast::ArgConvention>,
-    ref_params: Vec<Option<crate::origin::RefSig>>,
-    ref_return: Option<crate::origin::RefSig>,
-    implicit: bool,
-}
-
-type MethodInstantiation = (
-    Vec<Ty>,
-    Option<Ty>,
-    Option<Ty>,
-    HashMap<String, Ty>,
-    HashMap<String, TyArg>,
-);
-
-impl MethodSig {
-    fn intrinsic(params: Vec<Ty>, ret: Ty) -> MethodSig {
-        let len = params.len();
-        MethodSig {
-            decls: Vec::new(),
-            availability: Vec::new(),
-            has_self: true,
-            params,
-            names: (0..len).map(|i| format!("arg{i}")).collect(),
-            required: vec![true; len],
-            variadic: None,
-            variadic_index: None,
-            kw_variadic: None,
-            kw_variadic_index: None,
-            positional_only: None,
-            keyword_only: None,
-            conventions: vec![None; len],
-            ret,
-            raises: false,
-            error: None,
-            self_convention: None,
-            ref_params: vec![None; len],
-            ref_return: None,
-            implicit: false,
-        }
-    }
-}
-
-fn callable_parameter_count(ty: &Ty) -> Option<usize> {
-    match ty {
-        Ty::Func { params, .. } => Some(params.len()),
-        Ty::GenericFunc { params, .. } => Some(params.len()),
-        _ => None,
-    }
-}
-
-fn place_root_name(expr: &Expr) -> Option<&str> {
-    match &expr.kind {
-        ExprKind::Identifier(name) => Some(name),
-        ExprKind::Member { object, .. }
-        | ExprKind::Index { object, .. }
-        | ExprKind::Slice { object, .. }
-        | ExprKind::MultiIndex { object, .. } => place_root_name(object),
-        ExprKind::TypeApply { name, .. } => Some(name),
-        _ => None,
-    }
-}
-
-fn place_has_index(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::Index { .. } | ExprKind::Slice { .. } | ExprKind::MultiIndex { .. } => true,
-        ExprKind::Member { object, .. } => place_has_index(object),
-        _ => false,
-    }
-}
-
-fn method_arity_range(sig: &MethodSig) -> (usize, usize) {
-    (sig.params.len(), sig.params.len())
-}
-
-fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
-    method_arity_range(a) == method_arity_range(b)
-        && a.params == b.params
-        && a.variadic == b.variadic
-        && a.kw_variadic == b.kw_variadic
-}
-
-/// A conforming method may promise no error where its trait requirement raises,
-/// but a raising implementation must preserve the exact declared error family.
-/// Bare `raises` denotes `Error`; it is not a wildcard for a distinct typed
-/// error. `raises Never` is already normalized to a non-raising signature when
-/// `MethodSig` is built.
-fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig) -> bool {
-    let mut got_shape = got.clone();
-    got_shape.raises = false;
-    got_shape.error = None;
-    let mut required_shape = required.clone();
-    required_shape.raises = false;
-    required_shape.error = None;
-    if got_shape != required_shape {
-        return false;
-    }
-    if !got.raises {
-        return true;
-    }
-    if !required.raises {
-        return false;
-    }
-    got.error == required.error
-}
-
-/// A deliberately small implication relation for declaration availability.
-/// It proves only facts which are syntactically present in a positive
-/// conjunction (plus exact predicates).  In particular it does not turn a
-/// failed symbolic evaluation, a negation, or either arm of a disjunction into
-/// an assumption.
-fn generic_constraint_implies(
-    premise: &GenericConstraint,
-    consequence: &GenericConstraint,
-) -> bool {
-    if premise == consequence || matches!(consequence, GenericConstraint::Bool(true)) {
-        return true;
-    }
-    match (premise, consequence) {
-        (_, GenericConstraint::And(left, right)) => {
-            generic_constraint_implies(premise, left) && generic_constraint_implies(premise, right)
-        }
-        (GenericConstraint::And(left, right), _) => {
-            generic_constraint_implies(left, consequence)
-                || generic_constraint_implies(right, consequence)
-        }
-        _ => false,
-    }
-}
-
-fn guaranteed_conformance_atoms(
-    constraint: &GenericConstraint,
-    output: &mut Vec<(String, String)>,
-) {
-    match constraint {
-        GenericConstraint::Conforms { param, trait_name } => {
-            let atom = (param.clone(), trait_name.clone());
-            if !output.contains(&atom) {
-                output.push(atom);
-            }
-        }
-        GenericConstraint::And(left, right) => {
-            guaranteed_conformance_atoms(left, output);
-            guaranteed_conformance_atoms(right, output);
-        }
-        // A disjunction, negation, comparison, or symbolic pack predicate does
-        // not unconditionally refine one ordinary type parameter.
-        _ => {}
-    }
-}
-
 /// The checker's value-coercion predicate, shared with MIR verification so the
 /// verifier never re-derives conversion rules.
 pub(crate) fn value_coerces(from: &Ty, to: &Ty) -> bool {
     coerces(from, to)
-}
-
-fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
-    match (a, b) {
-        (
-            Ty::Func {
-                params: ap,
-                variadic: av,
-                kw_variadic: akw,
-                ..
-            },
-            Ty::Func {
-                params: bp,
-                variadic: bv,
-                kw_variadic: bkw,
-                ..
-            },
-        ) => ap == bp && av == bv && akw == bkw,
-        (
-            Ty::GenericFunc {
-                decls: ad,
-                params: ap,
-                variadic: av,
-                kw_variadic: akw,
-                ..
-            },
-            Ty::GenericFunc {
-                decls: bd,
-                params: bp,
-                variadic: bv,
-                kw_variadic: bkw,
-                ..
-            },
-        ) => {
-            let aparams: Vec<_> = ap
-                .iter()
-                .chain(av.iter().map(Box::as_ref))
-                .chain(akw.iter().map(Box::as_ref))
-                .cloned()
-                .collect();
-            let bparams: Vec<_> = bp
-                .iter()
-                .chain(bv.iter().map(Box::as_ref))
-                .chain(bkw.iter().map(Box::as_ref))
-                .cloned()
-                .collect();
-            canonical_generic_signature(ad, &aparams) == canonical_generic_signature(bd, &bparams)
-        }
-        _ => false,
-    }
-}
-
-fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<ParamDecl>, Vec<Ty>) {
-    let mut subst = HashMap::new();
-    let mut value_names = HashMap::new();
-    let canonical_decls = decls
-        .iter()
-        .enumerate()
-        .map(|(index, decl)| match decl {
-            ParamDecl::Type {
-                name,
-                bounds,
-                callable_bound,
-                default: _,
-                infer_only: _,
-                variadic,
-                constraints,
-            } => {
-                let canonical_name = format!("${index}");
-                let canonical_callable_bound = callable_bound.as_ref().map(|bound| {
-                    Box::new(rename_dependent_parameters(
-                        &substitute(bound, &subst),
-                        &value_names,
-                    ))
-                });
-                subst.insert(
-                    name.clone(),
-                    Ty::Param {
-                        name: canonical_name.clone(),
-                        bounds: bounds.clone(),
-                        callable_bound: canonical_callable_bound.clone(),
-                    },
-                );
-                ParamDecl::Type {
-                    name: canonical_name,
-                    bounds: bounds.clone(),
-                    callable_bound: canonical_callable_bound,
-                    // Binder defaults and the `//` inference marker govern a
-                    // call through the contract; current Mojo does not make
-                    // either part of generic callable conformance identity.
-                    default: None,
-                    infer_only: false,
-                    variadic: *variadic,
-                    constraints: constraints.clone(),
-                }
-            }
-            ParamDecl::Value {
-                name,
-                ty,
-                default: _,
-                callable_default: _,
-                infer_only: _,
-                variadic,
-                constraints,
-                ..
-            } => {
-                let canonical_name = format!("${index}");
-                let canonical_ty =
-                    rename_dependent_parameters(&substitute(ty, &subst), &value_names);
-                value_names.insert(
-                    name.trim_start_matches('*').to_string(),
-                    canonical_name.clone(),
-                );
-                ParamDecl::Value {
-                    name: canonical_name,
-                    ty: Box::new(canonical_ty),
-                    default: None,
-                    callable_default: None,
-                    infer_only: false,
-                    variadic: *variadic,
-                    constraints: constraints.clone(),
-                }
-            }
-        })
-        .collect();
-    let canonical_params = params
-        .iter()
-        .map(|ty| rename_dependent_parameters(&substitute(ty, &subst), &value_names))
-        .collect();
-    (canonical_decls, canonical_params)
-}
-
-/// The lowered symbol the checker records as the resolved callee of an
-/// overloaded free-function call — formatted by the canonical symbol module so
-/// it names exactly the `MirFunction` the MIR emits for that definition.
-fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
-    let (params, variadic, kw_variadic) = match ty {
-        Ty::Func {
-            params,
-            variadic,
-            kw_variadic,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            variadic,
-            kw_variadic,
-            ..
-        } => (params, variadic, kw_variadic),
-        _ => return None,
-    };
-    let signature_types: Vec<_> = params
-        .iter()
-        .chain(variadic.iter().map(Box::as_ref))
-        .chain(kw_variadic.iter().map(Box::as_ref))
-        .collect();
-    Some(crate::symbol::function_symbol(
-        name,
-        &crate::symbol::SignatureKey::from_tys(signature_types),
-    ))
-}
-
-/// The lowered symbol of an overloaded method/constructor resolution, likewise
-/// canonical (`sig.params` are the declared parameter types, unsubstituted —
-/// matching the MIR definition side, which mangles the declared annotations).
-fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String {
-    let signature_types = sig
-        .params
-        .iter()
-        .chain(sig.variadic.iter().map(Box::as_ref))
-        .chain(sig.kw_variadic.iter().map(Box::as_ref));
-    let signature = crate::symbol::SignatureKey::from_tys(signature_types);
-    if method == "__iter__" {
-        crate::symbol::iterator_method_symbol(type_name, sig.self_convention, &signature)
-    } else {
-        crate::symbol::method_symbol(type_name, method, &signature)
-    }
 }
 
 /// A signature-qualified abstract `__call__` symbol for an indirect callable
@@ -607,23 +78,6 @@ pub(crate) fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
             ..
         } => callable_contract_ty(bound),
         _ => None,
-    }
-}
-
-fn callable_convention_accepts(
-    actual: Option<ArgConvention>,
-    contract: Option<ArgConvention>,
-) -> bool {
-    let actual = actual.unwrap_or(ArgConvention::Read);
-    let contract = contract.unwrap_or(ArgConvention::Read);
-    match (actual, contract) {
-        // A read-only callee demands less access than a mutable callable
-        // contract promises to supply, so it is a valid implementation.
-        (ArgConvention::Read, ArgConvention::Read | ArgConvention::Mut) => true,
-        (ArgConvention::Mut, ArgConvention::Mut) => true,
-        // Ownership-changing and parametric-reference conventions retain their
-        // exact ABI until their full subtyping rules are modeled.
-        (actual, contract) => actual == contract,
     }
 }
 
@@ -712,295 +166,6 @@ pub(crate) fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
             (Some(actual), Some(Ty::Error)) => actual != &Ty::Never,
             (Some(actual), Some(contract)) => actual == contract,
         }
-}
-
-/// Alpha-normalize a generic anonymous callable into its declaration list and
-/// a monomorphic callable shape whose parameter occurrences use canonical
-/// `$N` names.  Generic callable compatibility can then reuse the ordinary
-/// directional callable-contract rules without making source binder spelling
-/// part of the type identity.
-fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)> {
-    let Ty::GenericFunc {
-        environment,
-        decls,
-        params,
-        names,
-        ret,
-        required,
-        variadic,
-        kw_variadic,
-        positional_only,
-        keyword_only,
-        raises,
-        error,
-        conventions,
-        ref_params,
-        ref_return,
-    } = callable
-    else {
-        return None;
-    };
-
-    let mut signature = params.clone();
-    let variadic_index = variadic.as_ref().map(|parameter| {
-        let index = signature.len();
-        signature.push((**parameter).clone());
-        index
-    });
-    let kw_variadic_index = kw_variadic.as_ref().map(|parameter| {
-        let index = signature.len();
-        signature.push((**parameter).clone());
-        index
-    });
-    let return_index = signature.len();
-    signature.push((**ret).clone());
-    let error_index = error.as_ref().map(|error| {
-        let index = signature.len();
-        signature.push((**error).clone());
-        index
-    });
-    let (decls, signature) = canonical_generic_signature(decls, &signature);
-
-    Some((
-        decls,
-        Ty::Func {
-            environment: environment.clone(),
-            params: signature[..params.len()].to_vec(),
-            names: names.clone(),
-            ret: Box::new(signature[return_index].clone()),
-            required: required.clone(),
-            variadic: variadic_index.map(|index| Box::new(signature[index].clone())),
-            kw_variadic: kw_variadic_index.map(|index| Box::new(signature[index].clone())),
-            positional_only: *positional_only,
-            keyword_only: *keyword_only,
-            raises: *raises,
-            error: error_index.map(|index| Box::new(signature[index].clone())),
-            conventions: conventions.clone(),
-            ref_params: ref_params.clone(),
-            ref_return: ref_return.clone(),
-        },
-    ))
-}
-
-fn method_callable_ty(method: &MethodSig) -> Ty {
-    Ty::Func {
-        environment: crate::origin::CallableEnvironment::Default,
-        params: method.params.clone(),
-        names: method.names.clone(),
-        ret: Box::new(method.ret.clone()),
-        required: method.required.clone(),
-        variadic: method.variadic.clone(),
-        kw_variadic: method.kw_variadic.clone(),
-        positional_only: method.positional_only,
-        keyword_only: method.keyword_only,
-        raises: method.raises,
-        error: method.error.clone(),
-        conventions: method.conventions.clone(),
-        ref_params: Box::new(method.ref_params.clone()),
-        ref_return: method.ref_return.clone().map(Box::new),
-    }
-}
-
-fn with_callable_environment(
-    mut callable: Ty,
-    environment: crate::origin::CallableEnvironment,
-) -> Ty {
-    match &mut callable {
-        Ty::Func {
-            environment: current,
-            ..
-        }
-        | Ty::GenericFunc {
-            environment: current,
-            ..
-        } => *current = environment,
-        _ => {}
-    }
-    callable
-}
-
-enum OverloadSelect {
-    NoMatch,
-    Ambiguous,
-}
-
-const CONVERSION_RANK: usize = 1 << 24;
-const VARIADIC_RANK: usize = 1 << 16;
-const SIGNATURE_LENGTH_RANK: usize = 1 << 8;
-
-fn overload_rank(conversions: usize, variadic: bool, signature_len: usize, generic: bool) -> usize {
-    conversions * CONVERSION_RANK
-        + usize::from(variadic) * VARIADIC_RANK
-        + signature_len * SIGNATURE_LENGTH_RANK
-        + usize::from(generic)
-}
-
-fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
-    if actual == expected
-        || matches!(actual, Ty::IntLiteral) && matches!(expected, Ty::Int)
-        || matches!(actual, Ty::FloatLiteral) && matches!(expected, Ty::Float64)
-    {
-        0
-    } else {
-        1
-    }
-}
-
-/// A concrete method candidate after receiver-type substitution and argument
-/// scoring. Named fields keep overload resolution readable as it evolves.
-struct MethodCallResolution {
-    conversion_score: usize,
-    slots: Vec<ArgSlot>,
-    positional_overflow: Vec<usize>,
-    keyword_overflow: Vec<usize>,
-    variadic_element: Option<Ty>,
-    keyword_element: Option<Ty>,
-    conventions: Vec<Option<ArgConvention>>,
-    self_convention: Option<ArgConvention>,
-    return_type: Ty,
-    raises: bool,
-    error: Option<Box<Ty>>,
-    mutates_receiver: bool,
-    consumes_receiver: bool,
-    lowered_name: Option<String>,
-    ref_params: Vec<Option<crate::origin::RefSig>>,
-    ref_return: Option<crate::origin::RefSig>,
-    param_types: Vec<Ty>,
-    param_decls: Vec<ParamDecl>,
-}
-
-struct MethodCallScore {
-    rank: usize,
-    slots: Vec<ArgSlot>,
-    positional_overflow: Vec<usize>,
-    keyword_overflow: Vec<usize>,
-}
-
-/// Source-level arguments attached to a method invocation. Keeping the runtime
-/// and compile-time argument lists together prevents the two method-resolution
-/// paths from slowly acquiring different call-shape parameters.
-#[derive(Clone, Copy)]
-struct MethodCallArguments<'a> {
-    param_args: &'a [crate::ast::ParamArg],
-    args: &'a [Expr],
-    kwargs: &'a [crate::ast::KwArg],
-    parameterized_syntax: bool,
-    /// The caller separately records a more precise projected write, so a
-    /// `mut self` call must not also invalidate every receiver interior.
-    preserves_receiver_interiors: bool,
-}
-
-/// Interior-generation state immediately before applying one selected method
-/// contract. Candidate scoring has already inferred the argument expressions at
-/// this point, so subtracting this snapshot isolates callee effects from effects
-/// which belong to evaluation of the source expression itself.
-struct CallBoundarySnapshot {
-    invalidations: HashMap<SourceSpan, Vec<crate::checked::InteriorInvalidation>>,
-}
-
-#[derive(Clone)]
-struct ValueAdjustmentSnapshot {
-    source: SourceSpan,
-    overload_target: Option<String>,
-    implicit_conversion: Option<String>,
-    operation: Option<crate::checked::SemanticAdjustment>,
-}
-
-impl<'a> MethodCallArguments<'a> {
-    fn ordinary(args: &'a [Expr], kwargs: &'a [crate::ast::KwArg]) -> Self {
-        Self {
-            param_args: &[],
-            args,
-            kwargs,
-            parameterized_syntax: false,
-            preserves_receiver_interiors: false,
-        }
-    }
-
-    fn interior_preserving(args: &'a [Expr], kwargs: &'a [crate::ast::KwArg]) -> Self {
-        Self {
-            preserves_receiver_interiors: true,
-            ..Self::ordinary(args, kwargs)
-        }
-    }
-
-    fn parameterized(
-        param_args: &'a [crate::ast::ParamArg],
-        args: &'a [Expr],
-        kwargs: &'a [crate::ast::KwArg],
-    ) -> Self {
-        Self {
-            param_args,
-            args,
-            kwargs,
-            parameterized_syntax: true,
-            preserves_receiver_interiors: false,
-        }
-    }
-}
-
-struct SubscriptResolution {
-    return_type: Ty,
-    lowered_name: Option<String>,
-    value_keyword: bool,
-}
-
-type ReturnRefContract = (
-    crate::origin::RefSig,
-    Vec<crate::origin::OwnerId>,
-    Option<crate::origin::OriginPlace>,
-);
-
-fn select_callable_overload(
-    matches: Vec<(Ty, usize, String, Option<Ty>)>,
-) -> Result<(Ty, String, Option<Ty>), OverloadSelect> {
-    let best = matches
-        .iter()
-        .map(|(_, score, _, _)| *score)
-        .min()
-        .ok_or(OverloadSelect::NoMatch)?;
-    let mut best_matches = matches
-        .into_iter()
-        .filter(|(_, score, _, _)| *score == best)
-        .collect::<Vec<_>>();
-    if best_matches.len() != 1 {
-        return Err(OverloadSelect::Ambiguous);
-    }
-    let (ret, _, target, error) = best_matches.remove(0);
-    Ok((ret, target, error))
-}
-
-fn select_method_overload(
-    _method: &str,
-    matches: Vec<MethodCallResolution>,
-) -> Result<MethodCallResolution, OverloadSelect> {
-    let best = matches
-        .iter()
-        .map(|candidate| candidate.conversion_score)
-        .min()
-        .ok_or(OverloadSelect::NoMatch)?;
-    let mut best_matches = matches
-        .into_iter()
-        .filter(|candidate| candidate.conversion_score == best)
-        .collect::<Vec<_>>();
-    if best_matches.len() == 1 {
-        Ok(best_matches.remove(0))
-    } else {
-        Err(OverloadSelect::Ambiguous)
-    }
-}
-
-fn overload_candidates(existing: &Ty, new_ty: &Ty) -> Option<Vec<Ty>> {
-    callable_parameter_count(new_ty)?;
-    match existing {
-        Ty::Func { .. } | Ty::GenericFunc { .. }
-            if callable_parameter_count(existing).is_some() =>
-        {
-            Some(vec![existing.clone()])
-        }
-        Ty::Overload(candidates) => Some(candidates.clone()),
-        _ => None,
-    }
 }
 
 /// Type-check a whole program. Convenience wrapper over [`Checker`].
@@ -1229,113 +394,6 @@ impl ConformanceOracle {
     }
 }
 
-/// Materialize trait default methods into each conforming struct before semantic
-/// checking. This keeps default dispatch static: downstream MIR sees an ordinary
-/// struct method and needs no trait-object runtime machinery.
-fn expand_trait_defaults(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeError> {
-    #[derive(Clone)]
-    struct TraitDefaults {
-        refines: Vec<String>,
-        methods: Vec<crate::ast::TraitMethod>,
-    }
-
-    fn defaults_for(
-        name: &str,
-        traits: &HashMap<String, TraitDefaults>,
-        visiting: &mut HashSet<String>,
-    ) -> Result<HashMap<String, Method>, TypeError> {
-        if !visiting.insert(name.to_string()) {
-            return Err(TypeError::Unsupported(format!(
-                "cyclic trait refinement involving '{name}'"
-            )));
-        }
-        let Some(info) = traits.get(name) else {
-            visiting.remove(name);
-            return Ok(HashMap::new());
-        };
-        let mut defaults = HashMap::new();
-        for parent in &info.refines {
-            for (method, implementation) in defaults_for(parent, traits, visiting)? {
-                if defaults.insert(method.clone(), implementation).is_some() {
-                    return Err(TypeError::Unsupported(format!(
-                        "ambiguous inherited default method '{method}'"
-                    )));
-                }
-            }
-        }
-        for method in &info.methods {
-            let Some(body) = &method.default_body else {
-                continue;
-            };
-            defaults.insert(
-                method.name.clone(),
-                Method {
-                    name: method.name.clone(),
-                    type_params: method.type_params.clone(),
-                    has_self: true,
-                    self_convention: method.self_convention,
-                    self_origin: method.self_origin.clone(),
-                    decorators: Vec::new(),
-                    params: method.params.clone(),
-                    positional_only: method.positional_only,
-                    keyword_only: method.keyword_only,
-                    raises: method.raises,
-                    raises_type: method.raises_type.clone(),
-                    ret: method.ret.clone(),
-                    body: body.clone(),
-                    where_clause: method.where_clause.clone(),
-                },
-            );
-        }
-        visiting.remove(name);
-        Ok(defaults)
-    }
-
-    let traits: HashMap<_, _> = stmts
-        .iter()
-        .filter_map(|stmt| match &stmt.kind {
-            StmtKind::Trait {
-                name,
-                refines,
-                methods,
-                ..
-            } => Some((
-                name.clone(),
-                TraitDefaults {
-                    refines: refines.clone(),
-                    methods: methods.clone(),
-                },
-            )),
-            _ => None,
-        })
-        .collect();
-    let mut expanded = stmts.to_vec();
-    for stmt in &mut expanded {
-        let StmtKind::Struct {
-            conforms, methods, ..
-        } = &mut stmt.kind
-        else {
-            continue;
-        };
-        let explicit: HashSet<_> = methods.iter().map(|method| method.name.clone()).collect();
-        let mut inherited = HashMap::<String, Method>::new();
-        for trait_name in conforms.iter() {
-            for (name, implementation) in defaults_for(trait_name, &traits, &mut HashSet::new())? {
-                if explicit.contains(&name) {
-                    continue;
-                }
-                if inherited.insert(name.clone(), implementation).is_some() {
-                    return Err(TypeError::Unsupported(format!(
-                        "ambiguous default method '{name}'; provide an explicit override"
-                    )));
-                }
-            }
-        }
-        methods.extend(inherited.into_values());
-    }
-    Ok(expanded)
-}
-
 /// Type-check a program and return the concrete lowered callee chosen for every
 /// overloaded call site. MIR lowering uses this side table so source calls like
 /// `f(x)` can lower to a signature-specific function even when overloads share
@@ -1343,52 +401,6 @@ fn expand_trait_defaults(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeError> {
 pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<SourceSpan, String>, TypeError> {
     Ok(check_program(stmts)?.overload_targets().clone())
 }
-
-#[derive(Clone)]
-struct CapturePolicy {
-    /// Scope index at which the nested function's own locals begin.
-    base: usize,
-    function_name: String,
-    declaration: SourceSpan,
-    entries: HashMap<String, crate::ast::CaptureKind>,
-    default: Option<crate::ast::CaptureKind>,
-}
-
-/// How one source-level `Origin` parameter is represented by the callable's
-/// slot-relative reference contracts. Origin parameters are erased from
-/// `Ty::Func`'s ordinary compile-time parameter list, so this checker-owned fact
-/// is what lets a value expression such as `borrow[origin_of(value)]` bind that
-/// parameter without reconstructing it from source later in MIR lowering.
-#[derive(Clone)]
-struct CallableOriginParam {
-    name: String,
-    slots: Vec<usize>,
-}
-
-/// One source compile-time parameter in a callable declaration. `Origin`
-/// parameters are erased from `Ty::GenericFunc::decls`, so retaining this
-/// ordered layout is necessary to split a mixed specialization such as
-/// `borrow[Int, origin_of(value)]` without shifting the ordinary type argument.
-#[derive(Clone)]
-struct CallableSourceParam {
-    name: String,
-    infer_only: bool,
-    origin: Option<usize>,
-    ordinary: bool,
-}
-
-/// Origin-specialization metadata for one declaration in an overload set.
-/// Entries are registered in the same order as `Ty::Overload` candidates.
-#[derive(Clone)]
-struct CallableOriginSignature {
-    origins: Vec<CallableOriginParam>,
-    source: Vec<CallableSourceParam>,
-}
-
-type SplitCallableSpecialization = (
-    Vec<crate::ast::ParamArg>,
-    Vec<(Vec<usize>, crate::origin::Origin)>,
-);
 
 /// A single-pass static type checker over the parsed AST.
 pub struct Checker {
@@ -2382,6 +1394,1047 @@ impl Checker {
     }
 }
 
+impl Default for Checker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, PartialEq)]
+struct MethodSig {
+    decls: Vec<ParamDecl>,
+    availability: Vec<GenericConstraint>,
+    has_self: bool,
+    /// Regular parameters only; variadic element type is stored separately.
+    params: Vec<Ty>,
+    names: Vec<String>,
+    required: Vec<bool>,
+    variadic: Option<Box<Ty>>,
+    variadic_index: Option<usize>,
+    kw_variadic: Option<Box<Ty>>,
+    kw_variadic_index: Option<usize>,
+    positional_only: Option<usize>,
+    keyword_only: Option<usize>,
+    conventions: Vec<Option<ArgConvention>>,
+    ret: Ty,
+    raises: bool,
+    error: Option<Box<Ty>>,
+    /// Receiver convention. `None` means plain read-only `self`; explicit
+    /// conventions (`mut`, `var`, `ref`, ...) are preserved so trait
+    /// requirements can compare them exactly. Today only `mut self` changes call
+    /// checking behavior.
+    self_convention: Option<crate::ast::ArgConvention>,
+    ref_params: Vec<Option<crate::origin::RefSig>>,
+    ref_return: Option<crate::origin::RefSig>,
+    implicit: bool,
+}
+
+impl MethodSig {
+    fn intrinsic(params: Vec<Ty>, ret: Ty) -> MethodSig {
+        let len = params.len();
+        MethodSig {
+            decls: Vec::new(),
+            availability: Vec::new(),
+            has_self: true,
+            params,
+            names: (0..len).map(|i| format!("arg{i}")).collect(),
+            required: vec![true; len],
+            variadic: None,
+            variadic_index: None,
+            kw_variadic: None,
+            kw_variadic_index: None,
+            positional_only: None,
+            keyword_only: None,
+            conventions: vec![None; len],
+            ret,
+            raises: false,
+            error: None,
+            self_convention: None,
+            ref_params: vec![None; len],
+            ref_return: None,
+            implicit: false,
+        }
+    }
+}
+
+/// Whether control can leave the owned iterator before exhaustion. A `break`
+/// belongs to the nearest loop, while return/raise escape through every nested
+/// loop. This is used only when residual elements cannot be deleted implicitly.
+fn block_can_escape_owned_iteration(statements: &[Stmt], nested_loops: usize) -> bool {
+    statements.iter().any(|statement| match &statement.kind {
+        StmtKind::Break => nested_loops == 0,
+        StmtKind::Return(_) | StmtKind::Raise(_) => true,
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            branches
+                .iter()
+                .any(|(_, body)| block_can_escape_owned_iteration(body, nested_loops))
+                || orelse
+                    .as_ref()
+                    .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
+        }
+        StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
+            block_can_escape_owned_iteration(body, nested_loops + 1)
+                || orelse
+                    .as_ref()
+                    .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
+        }
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            block_can_escape_owned_iteration(body, nested_loops)
+                || except
+                    .as_ref()
+                    .is_some_and(|(_, body)| block_can_escape_owned_iteration(body, nested_loops))
+                || orelse
+                    .as_ref()
+                    .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
+                || finalbody
+                    .as_ref()
+                    .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
+        }
+        StmtKind::With { body, .. } => block_can_escape_owned_iteration(body, nested_loops),
+        // Nested declarations do not execute as part of the loop body.
+        StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => false,
+        _ => false,
+    })
+}
+
+/// The required kind/type of a trait `comptime NAME: Annotation` member.
+#[derive(Clone, PartialEq)]
+enum CtMemberReq {
+    /// A compile-time value whose value type must match this type.
+    Value(Box<Ty>),
+    /// A compile-time type value whose type must conform to these trait bounds.
+    Type { bounds: Vec<String> },
+}
+
+enum OverloadSelect {
+    NoMatch,
+    Ambiguous,
+}
+
+fn ct_integer(value: &CtValue) -> Option<crate::literal::IntLiteral> {
+    match value {
+        CtValue::Int(value) => Some((*value).into()),
+        CtValue::UInt(value) => Some((*value).into()),
+        CtValue::IntLiteral(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// A deliberately small implication relation for declaration availability.
+/// It proves only facts which are syntactically present in a positive
+/// conjunction (plus exact predicates).  In particular it does not turn a
+/// failed symbolic evaluation, a negation, or either arm of a disjunction into
+/// an assumption.
+fn generic_constraint_implies(
+    premise: &GenericConstraint,
+    consequence: &GenericConstraint,
+) -> bool {
+    if premise == consequence || matches!(consequence, GenericConstraint::Bool(true)) {
+        return true;
+    }
+    match (premise, consequence) {
+        (_, GenericConstraint::And(left, right)) => {
+            generic_constraint_implies(premise, left) && generic_constraint_implies(premise, right)
+        }
+        (GenericConstraint::And(left, right), _) => {
+            generic_constraint_implies(left, consequence)
+                || generic_constraint_implies(right, consequence)
+        }
+        _ => false,
+    }
+}
+
+/// The checked signature of a struct, kept in the checker's registry.
+struct StructInfo {
+    /// Compile-time parameters (type and value); empty for a non-generic struct.
+    decls: Vec<ParamDecl>,
+    /// Concrete semantic arguments retained by an erased compiler-generated
+    /// specialization. Public `Tuple[*Ts]` is emitted as a parameter-free
+    /// implementation struct, but its checked identity must still carry the
+    /// element types selected for `Ts`.
+    fixed_arguments: Option<Vec<TyArg>>,
+    /// Traits this struct declares conformance to (verified at definition).
+    conforms: Vec<String>,
+    callable_conformance: Option<Ty>,
+    /// Exact lowered `__call__` method selected by the declared callable
+    /// conformance. This is distinct from the callable contract: overloaded
+    /// methods with the same arity require the signature-qualified target to
+    /// survive into indirect-call MIR.
+    callable_target: Option<String>,
+    conformance_conditions: HashMap<String, Expr>,
+    /// Declared fields, in order (drives the fieldwise constructor).
+    fields: Vec<(String, Ty)>,
+    /// Associated compile-time facts declared by `comptime NAME = ...` in the
+    /// struct body. These live on the type, not on runtime instances.
+    associated: HashMap<String, CtValue>,
+    methods: HashMap<String, Vec<MethodSig>>,
+    fieldwise_init: bool,
+    explicit_destroy_message: Option<String>,
+    explicit_destructors: HashMap<String, bool>,
+}
+
+#[derive(Clone, Copy)]
+struct DependentIndexAccessorFamily {
+    place: &'static str,
+    value: &'static str,
+}
+
+fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<ParamDecl>, Vec<Ty>) {
+    let mut subst = HashMap::new();
+    let mut value_names = HashMap::new();
+    let canonical_decls = decls
+        .iter()
+        .enumerate()
+        .map(|(index, decl)| match decl {
+            ParamDecl::Type {
+                name,
+                bounds,
+                callable_bound,
+                default: _,
+                infer_only: _,
+                variadic,
+                constraints,
+            } => {
+                let canonical_name = format!("${index}");
+                let canonical_callable_bound = callable_bound.as_ref().map(|bound| {
+                    Box::new(rename_dependent_parameters(
+                        &substitute(bound, &subst),
+                        &value_names,
+                    ))
+                });
+                subst.insert(
+                    name.clone(),
+                    Ty::Param {
+                        name: canonical_name.clone(),
+                        bounds: bounds.clone(),
+                        callable_bound: canonical_callable_bound.clone(),
+                    },
+                );
+                ParamDecl::Type {
+                    name: canonical_name,
+                    bounds: bounds.clone(),
+                    callable_bound: canonical_callable_bound,
+                    // Binder defaults and the `//` inference marker govern a
+                    // call through the contract; current Mojo does not make
+                    // either part of generic callable conformance identity.
+                    default: None,
+                    infer_only: false,
+                    variadic: *variadic,
+                    constraints: constraints.clone(),
+                }
+            }
+            ParamDecl::Value {
+                name,
+                ty,
+                default: _,
+                callable_default: _,
+                infer_only: _,
+                variadic,
+                constraints,
+                ..
+            } => {
+                let canonical_name = format!("${index}");
+                let canonical_ty =
+                    rename_dependent_parameters(&substitute(ty, &subst), &value_names);
+                value_names.insert(
+                    name.trim_start_matches('*').to_string(),
+                    canonical_name.clone(),
+                );
+                ParamDecl::Value {
+                    name: canonical_name,
+                    ty: Box::new(canonical_ty),
+                    default: None,
+                    callable_default: None,
+                    infer_only: false,
+                    variadic: *variadic,
+                    constraints: constraints.clone(),
+                }
+            }
+        })
+        .collect();
+    let canonical_params = params
+        .iter()
+        .map(|ty| rename_dependent_parameters(&substitute(ty, &subst), &value_names))
+        .collect();
+    (canonical_decls, canonical_params)
+}
+
+/// The checked signature of a trait: required methods plus associated
+/// compile-time facts. A method requirement's signature may mention
+/// `Ty::SelfType` (the conforming type).
+struct TraitInfo {
+    refines: Vec<String>,
+    methods: HashMap<String, Vec<MethodSig>>,
+    comptime_members: HashMap<String, CtMemberReq>,
+}
+
+fn callable_parameter_count(ty: &Ty) -> Option<usize> {
+    match ty {
+        Ty::Func { params, .. } => Some(params.len()),
+        Ty::GenericFunc { params, .. } => Some(params.len()),
+        _ => None,
+    }
+}
+
+fn method_arity_range(sig: &MethodSig) -> (usize, usize) {
+    (sig.params.len(), sig.params.len())
+}
+
+fn guaranteed_conformance_atoms(
+    constraint: &GenericConstraint,
+    output: &mut Vec<(String, String)>,
+) {
+    match constraint {
+        GenericConstraint::Conforms { param, trait_name } => {
+            let atom = (param.clone(), trait_name.clone());
+            if !output.contains(&atom) {
+                output.push(atom);
+            }
+        }
+        GenericConstraint::And(left, right) => {
+            guaranteed_conformance_atoms(left, output);
+            guaranteed_conformance_atoms(right, output);
+        }
+        // A disjunction, negation, comparison, or symbolic pack predicate does
+        // not unconditionally refine one ordinary type parameter.
+        _ => {}
+    }
+}
+
+fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
+    match (a, b) {
+        (
+            Ty::Func {
+                params: ap,
+                variadic: av,
+                kw_variadic: akw,
+                ..
+            },
+            Ty::Func {
+                params: bp,
+                variadic: bv,
+                kw_variadic: bkw,
+                ..
+            },
+        ) => ap == bp && av == bv && akw == bkw,
+        (
+            Ty::GenericFunc {
+                decls: ad,
+                params: ap,
+                variadic: av,
+                kw_variadic: akw,
+                ..
+            },
+            Ty::GenericFunc {
+                decls: bd,
+                params: bp,
+                variadic: bv,
+                kw_variadic: bkw,
+                ..
+            },
+        ) => {
+            let aparams: Vec<_> = ap
+                .iter()
+                .chain(av.iter().map(Box::as_ref))
+                .chain(akw.iter().map(Box::as_ref))
+                .cloned()
+                .collect();
+            let bparams: Vec<_> = bp
+                .iter()
+                .chain(bv.iter().map(Box::as_ref))
+                .chain(bkw.iter().map(Box::as_ref))
+                .cloned()
+                .collect();
+            canonical_generic_signature(ad, &aparams) == canonical_generic_signature(bd, &bparams)
+        }
+        _ => false,
+    }
+}
+
+/// Alpha-normalize a generic anonymous callable into its declaration list and
+/// a monomorphic callable shape whose parameter occurrences use canonical
+/// `$N` names.  Generic callable compatibility can then reuse the ordinary
+/// directional callable-contract rules without making source binder spelling
+/// part of the type identity.
+fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)> {
+    let Ty::GenericFunc {
+        environment,
+        decls,
+        params,
+        names,
+        ret,
+        required,
+        variadic,
+        kw_variadic,
+        positional_only,
+        keyword_only,
+        raises,
+        error,
+        conventions,
+        ref_params,
+        ref_return,
+    } = callable
+    else {
+        return None;
+    };
+
+    let mut signature = params.clone();
+    let variadic_index = variadic.as_ref().map(|parameter| {
+        let index = signature.len();
+        signature.push((**parameter).clone());
+        index
+    });
+    let kw_variadic_index = kw_variadic.as_ref().map(|parameter| {
+        let index = signature.len();
+        signature.push((**parameter).clone());
+        index
+    });
+    let return_index = signature.len();
+    signature.push((**ret).clone());
+    let error_index = error.as_ref().map(|error| {
+        let index = signature.len();
+        signature.push((**error).clone());
+        index
+    });
+    let (decls, signature) = canonical_generic_signature(decls, &signature);
+
+    Some((
+        decls,
+        Ty::Func {
+            environment: environment.clone(),
+            params: signature[..params.len()].to_vec(),
+            names: names.clone(),
+            ret: Box::new(signature[return_index].clone()),
+            required: required.clone(),
+            variadic: variadic_index.map(|index| Box::new(signature[index].clone())),
+            kw_variadic: kw_variadic_index.map(|index| Box::new(signature[index].clone())),
+            positional_only: *positional_only,
+            keyword_only: *keyword_only,
+            raises: *raises,
+            error: error_index.map(|index| Box::new(signature[index].clone())),
+            conventions: conventions.clone(),
+            ref_params: ref_params.clone(),
+            ref_return: ref_return.clone(),
+        },
+    ))
+}
+
+/// A concrete method candidate after receiver-type substitution and argument
+/// scoring. Named fields keep overload resolution readable as it evolves.
+struct MethodCallResolution {
+    conversion_score: usize,
+    slots: Vec<ArgSlot>,
+    positional_overflow: Vec<usize>,
+    keyword_overflow: Vec<usize>,
+    variadic_element: Option<Ty>,
+    keyword_element: Option<Ty>,
+    conventions: Vec<Option<ArgConvention>>,
+    self_convention: Option<ArgConvention>,
+    return_type: Ty,
+    raises: bool,
+    error: Option<Box<Ty>>,
+    mutates_receiver: bool,
+    consumes_receiver: bool,
+    lowered_name: Option<String>,
+    ref_params: Vec<Option<crate::origin::RefSig>>,
+    ref_return: Option<crate::origin::RefSig>,
+    param_types: Vec<Ty>,
+    param_decls: Vec<ParamDecl>,
+}
+
+type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);
+
+fn ct_values_equal(left: &CtValue, right: &CtValue) -> bool {
+    match (ct_integer(left), ct_integer(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn place_root_name(expr: &Expr) -> Option<&str> {
+    match &expr.kind {
+        ExprKind::Identifier(name) => Some(name),
+        ExprKind::Member { object, .. }
+        | ExprKind::Index { object, .. }
+        | ExprKind::Slice { object, .. }
+        | ExprKind::MultiIndex { object, .. } => place_root_name(object),
+        ExprKind::TypeApply { name, .. } => Some(name),
+        _ => None,
+    }
+}
+
+fn place_has_index(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Index { .. } | ExprKind::Slice { .. } | ExprKind::MultiIndex { .. } => true,
+        ExprKind::Member { object, .. } => place_has_index(object),
+        _ => false,
+    }
+}
+
+/// The lowered symbol the checker records as the resolved callee of an
+/// overloaded free-function call — formatted by the canonical symbol module so
+/// it names exactly the `MirFunction` the MIR emits for that definition.
+fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
+    let (params, variadic, kw_variadic) = match ty {
+        Ty::Func {
+            params,
+            variadic,
+            kw_variadic,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            variadic,
+            kw_variadic,
+            ..
+        } => (params, variadic, kw_variadic),
+        _ => return None,
+    };
+    let signature_types: Vec<_> = params
+        .iter()
+        .chain(variadic.iter().map(Box::as_ref))
+        .chain(kw_variadic.iter().map(Box::as_ref))
+        .collect();
+    Some(crate::symbol::function_symbol(
+        name,
+        &crate::symbol::SignatureKey::from_tys(signature_types),
+    ))
+}
+
+/// The lowered symbol of an overloaded method/constructor resolution, likewise
+/// canonical (`sig.params` are the declared parameter types, unsubstituted —
+/// matching the MIR definition side, which mangles the declared annotations).
+fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String {
+    let signature_types = sig
+        .params
+        .iter()
+        .chain(sig.variadic.iter().map(Box::as_ref))
+        .chain(sig.kw_variadic.iter().map(Box::as_ref));
+    let signature = crate::symbol::SignatureKey::from_tys(signature_types);
+    if method == "__iter__" {
+        crate::symbol::iterator_method_symbol(type_name, sig.self_convention, &signature)
+    } else {
+        crate::symbol::method_symbol(type_name, method, &signature)
+    }
+}
+
+fn callable_convention_accepts(
+    actual: Option<ArgConvention>,
+    contract: Option<ArgConvention>,
+) -> bool {
+    let actual = actual.unwrap_or(ArgConvention::Read);
+    let contract = contract.unwrap_or(ArgConvention::Read);
+    match (actual, contract) {
+        // A read-only callee demands less access than a mutable callable
+        // contract promises to supply, so it is a valid implementation.
+        (ArgConvention::Read, ArgConvention::Read | ArgConvention::Mut) => true,
+        (ArgConvention::Mut, ArgConvention::Mut) => true,
+        // Ownership-changing and parametric-reference conventions retain their
+        // exact ABI until their full subtyping rules are modeled.
+        (actual, contract) => actual == contract,
+    }
+}
+
+const CONVERSION_RANK: usize = 1 << 24;
+
+const VARIADIC_RANK: usize = 1 << 16;
+
+const SIGNATURE_LENGTH_RANK: usize = 1 << 8;
+
+/// Source-level arguments attached to a method invocation. Keeping the runtime
+/// and compile-time argument lists together prevents the two method-resolution
+/// paths from slowly acquiring different call-shape parameters.
+#[derive(Clone, Copy)]
+struct MethodCallArguments<'a> {
+    param_args: &'a [crate::ast::ParamArg],
+    args: &'a [Expr],
+    kwargs: &'a [crate::ast::KwArg],
+    parameterized_syntax: bool,
+    /// The caller separately records a more precise projected write, so a
+    /// `mut self` call must not also invalidate every receiver interior.
+    preserves_receiver_interiors: bool,
+}
+
+impl<'a> MethodCallArguments<'a> {
+    fn ordinary(args: &'a [Expr], kwargs: &'a [crate::ast::KwArg]) -> Self {
+        Self {
+            param_args: &[],
+            args,
+            kwargs,
+            parameterized_syntax: false,
+            preserves_receiver_interiors: false,
+        }
+    }
+
+    fn interior_preserving(args: &'a [Expr], kwargs: &'a [crate::ast::KwArg]) -> Self {
+        Self {
+            preserves_receiver_interiors: true,
+            ..Self::ordinary(args, kwargs)
+        }
+    }
+
+    fn parameterized(
+        param_args: &'a [crate::ast::ParamArg],
+        args: &'a [Expr],
+        kwargs: &'a [crate::ast::KwArg],
+    ) -> Self {
+        Self {
+            param_args,
+            args,
+            kwargs,
+            parameterized_syntax: true,
+            preserves_receiver_interiors: false,
+        }
+    }
+}
+
+type ReturnRefContract = (
+    crate::origin::RefSig,
+    Vec<crate::origin::OwnerId>,
+    Option<crate::origin::OriginPlace>,
+);
+
+/// Materialize trait default methods into each conforming struct before semantic
+/// checking. This keeps default dispatch static: downstream MIR sees an ordinary
+/// struct method and needs no trait-object runtime machinery.
+fn expand_trait_defaults(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeError> {
+    #[derive(Clone)]
+    struct TraitDefaults {
+        refines: Vec<String>,
+        methods: Vec<crate::ast::TraitMethod>,
+    }
+
+    fn defaults_for(
+        name: &str,
+        traits: &HashMap<String, TraitDefaults>,
+        visiting: &mut HashSet<String>,
+    ) -> Result<HashMap<String, Method>, TypeError> {
+        if !visiting.insert(name.to_string()) {
+            return Err(TypeError::Unsupported(format!(
+                "cyclic trait refinement involving '{name}'"
+            )));
+        }
+        let Some(info) = traits.get(name) else {
+            visiting.remove(name);
+            return Ok(HashMap::new());
+        };
+        let mut defaults = HashMap::new();
+        for parent in &info.refines {
+            for (method, implementation) in defaults_for(parent, traits, visiting)? {
+                if defaults.insert(method.clone(), implementation).is_some() {
+                    return Err(TypeError::Unsupported(format!(
+                        "ambiguous inherited default method '{method}'"
+                    )));
+                }
+            }
+        }
+        for method in &info.methods {
+            let Some(body) = &method.default_body else {
+                continue;
+            };
+            defaults.insert(
+                method.name.clone(),
+                Method {
+                    name: method.name.clone(),
+                    type_params: method.type_params.clone(),
+                    has_self: true,
+                    self_convention: method.self_convention,
+                    self_origin: method.self_origin.clone(),
+                    decorators: Vec::new(),
+                    params: method.params.clone(),
+                    positional_only: method.positional_only,
+                    keyword_only: method.keyword_only,
+                    raises: method.raises,
+                    raises_type: method.raises_type.clone(),
+                    ret: method.ret.clone(),
+                    body: body.clone(),
+                    where_clause: method.where_clause.clone(),
+                },
+            );
+        }
+        visiting.remove(name);
+        Ok(defaults)
+    }
+
+    let traits: HashMap<_, _> = stmts
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            StmtKind::Trait {
+                name,
+                refines,
+                methods,
+                ..
+            } => Some((
+                name.clone(),
+                TraitDefaults {
+                    refines: refines.clone(),
+                    methods: methods.clone(),
+                },
+            )),
+            _ => None,
+        })
+        .collect();
+    let mut expanded = stmts.to_vec();
+    for stmt in &mut expanded {
+        let StmtKind::Struct {
+            conforms, methods, ..
+        } = &mut stmt.kind
+        else {
+            continue;
+        };
+        let explicit: HashSet<_> = methods.iter().map(|method| method.name.clone()).collect();
+        let mut inherited = HashMap::<String, Method>::new();
+        for trait_name in conforms.iter() {
+            for (name, implementation) in defaults_for(trait_name, &traits, &mut HashSet::new())? {
+                if explicit.contains(&name) {
+                    continue;
+                }
+                if inherited.insert(name.clone(), implementation).is_some() {
+                    return Err(TypeError::Unsupported(format!(
+                        "ambiguous default method '{name}'; provide an explicit override"
+                    )));
+                }
+            }
+        }
+        methods.extend(inherited.into_values());
+    }
+    Ok(expanded)
+}
+
+#[derive(Clone)]
+struct CapturePolicy {
+    /// Scope index at which the nested function's own locals begin.
+    base: usize,
+    function_name: String,
+    declaration: SourceSpan,
+    entries: HashMap<String, crate::ast::CaptureKind>,
+    default: Option<crate::ast::CaptureKind>,
+}
+
+/// How one source-level `Origin` parameter is represented by the callable's
+/// slot-relative reference contracts. Origin parameters are erased from
+/// `Ty::Func`'s ordinary compile-time parameter list, so this checker-owned fact
+/// is what lets a value expression such as `borrow[origin_of(value)]` bind that
+/// parameter without reconstructing it from source later in MIR lowering.
+#[derive(Clone)]
+struct CallableOriginParam {
+    name: String,
+    slots: Vec<usize>,
+}
+
+/// One source compile-time parameter in a callable declaration. `Origin`
+/// parameters are erased from `Ty::GenericFunc::decls`, so retaining this
+/// ordered layout is necessary to split a mixed specialization such as
+/// `borrow[Int, origin_of(value)]` without shifting the ordinary type argument.
+#[derive(Clone)]
+struct CallableSourceParam {
+    name: String,
+    infer_only: bool,
+    origin: Option<usize>,
+    ordinary: bool,
+}
+
+/// Origin-specialization metadata for one declaration in an overload set.
+/// Entries are registered in the same order as `Ty::Overload` candidates.
+#[derive(Clone)]
+struct CallableOriginSignature {
+    origins: Vec<CallableOriginParam>,
+    source: Vec<CallableSourceParam>,
+}
+
+/// The raw-slot operations on `UnsafePointer` are an implementation privilege,
+/// not source-language API. Linked expressions retain their exact source path;
+/// only files physically shipped in the compiler's collection library receive
+/// the checked adjustment that can lower these operations.
+fn is_bundled_collection_source(source: Option<&str>) -> bool {
+    let (Some(manifest), Some(source)) = (option_env!("CARGO_MANIFEST_DIR"), source) else {
+        return false;
+    };
+    let stdlib = Path::new(manifest).join("stdlib");
+    let source = Path::new(source);
+    source == stdlib.join("std/collections/list.mojo")
+        || source == stdlib.join("list.mojo")
+        || source == stdlib.join("std/collections/dict.mojo")
+        || source == stdlib.join("dict.mojo")
+}
+
+/// Select the current Mojo parameter-index hook first, while retaining the
+/// earlier spelling as an intentional source-compatibility fallback.
+fn dependent_index_accessor_family(info: &StructInfo) -> Option<DependentIndexAccessorFamily> {
+    if info.methods.contains_key("__getitem_param__$0") {
+        Some(DependentIndexAccessorFamily {
+            place: "__getitem_param__",
+            value: "__getitem_param_value__",
+        })
+    } else if info.methods.contains_key("__getitem__$0") {
+        Some(DependentIndexAccessorFamily {
+            place: "__getitem__",
+            value: "__getitem_value__",
+        })
+    } else {
+        None
+    }
+}
+
+/// The source-level pieces of a struct declaration passed through checking.
+struct StructDeclaration<'a> {
+    module: &'a Option<String>,
+    name: &'a str,
+    type_params: &'a [crate::ast::TypeParam],
+    conforms: &'a [String],
+    callable_conformance: &'a Option<SourceType>,
+    conformance_conditions: &'a [(String, Expr)],
+    fields: &'a [crate::ast::Param],
+    associated: &'a [StructComptime],
+    methods: &'a [Method],
+    fieldwise_init: bool,
+    decorators: &'a [crate::ast::Decorator],
+}
+
+/// Compose inherited associated-member requirements. Type-valued members with
+/// the same name denote one associated type, so refinement accumulates their
+/// bounds instead of treating stronger composition as an ambiguity. Value
+/// members must retain one exact type; mixing value and type requirements is a
+/// real conflict.
+fn merge_associated_requirement(
+    existing: &mut CtMemberReq,
+    incoming: &CtMemberReq,
+    member: &str,
+) -> Result<(), TypeError> {
+    match (existing, incoming) {
+        (CtMemberReq::Type { bounds }, CtMemberReq::Type { bounds: more }) => {
+            for bound in more {
+                if !bounds.contains(bound) {
+                    bounds.push(bound.clone());
+                }
+            }
+            Ok(())
+        }
+        (CtMemberReq::Value(left), CtMemberReq::Value(right)) if left == right => Ok(()),
+        _ => Err(TypeError::Unsupported(format!(
+            "conflicting inherited associated member '{member}'"
+        ))),
+    }
+}
+
+fn conformance_operand(expression: &Expr, arguments: &HashMap<&str, &TyArg>) -> Option<CtValue> {
+    match &expression.kind {
+        ExprKind::Int(value) => Some(CtValue::IntLiteral(value.clone())),
+        ExprKind::Bool(value) => Some(CtValue::Bool(*value)),
+        ExprKind::Str(value) => Some(CtValue::Str(value.clone())),
+        ExprKind::Identifier(name) => match arguments.get(name.as_str())? {
+            TyArg::Val(value) => Some((*value).clone()),
+            TyArg::Ty(_) => None,
+        },
+        _ => None,
+    }
+}
+
+fn compare_ct_integers(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<bool> {
+    let (left, right) = (ct_integer(left)?, ct_integer(right)?);
+    Some(match op {
+        InfixOp::Eq => left == right,
+        InfixOp::Ne => left != right,
+        InfixOp::Lt => left < right,
+        InfixOp::Le => left <= right,
+        InfixOp::Gt => left > right,
+        InfixOp::Ge => left >= right,
+        _ => return None,
+    })
+}
+
+fn ty_args_equal(left: &TyArg, right: &TyArg) -> bool {
+    match (left, right) {
+        (TyArg::Val(left), TyArg::Val(right)) => ct_values_equal(left, right),
+        _ => left == right,
+    }
+}
+
+type MethodInstantiation = (
+    Vec<Ty>,
+    Option<Ty>,
+    Option<Ty>,
+    HashMap<String, Ty>,
+    HashMap<String, TyArg>,
+);
+
+fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
+    method_arity_range(a) == method_arity_range(b)
+        && a.params == b.params
+        && a.variadic == b.variadic
+        && a.kw_variadic == b.kw_variadic
+}
+
+/// A conforming method may promise no error where its trait requirement raises,
+/// but a raising implementation must preserve the exact declared error family.
+/// Bare `raises` denotes `Error`; it is not a wildcard for a distinct typed
+/// error. `raises Never` is already normalized to a non-raising signature when
+/// `MethodSig` is built.
+fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig) -> bool {
+    let mut got_shape = got.clone();
+    got_shape.raises = false;
+    got_shape.error = None;
+    let mut required_shape = required.clone();
+    required_shape.raises = false;
+    required_shape.error = None;
+    if got_shape != required_shape {
+        return false;
+    }
+    if !got.raises {
+        return true;
+    }
+    if !required.raises {
+        return false;
+    }
+    got.error == required.error
+}
+
+fn method_callable_ty(method: &MethodSig) -> Ty {
+    Ty::Func {
+        environment: crate::origin::CallableEnvironment::Default,
+        params: method.params.clone(),
+        names: method.names.clone(),
+        ret: Box::new(method.ret.clone()),
+        required: method.required.clone(),
+        variadic: method.variadic.clone(),
+        kw_variadic: method.kw_variadic.clone(),
+        positional_only: method.positional_only,
+        keyword_only: method.keyword_only,
+        raises: method.raises,
+        error: method.error.clone(),
+        conventions: method.conventions.clone(),
+        ref_params: Box::new(method.ref_params.clone()),
+        ref_return: method.ref_return.clone().map(Box::new),
+    }
+}
+
+fn with_callable_environment(
+    mut callable: Ty,
+    environment: crate::origin::CallableEnvironment,
+) -> Ty {
+    match &mut callable {
+        Ty::Func {
+            environment: current,
+            ..
+        }
+        | Ty::GenericFunc {
+            environment: current,
+            ..
+        } => *current = environment,
+        _ => {}
+    }
+    callable
+}
+
+fn overload_rank(conversions: usize, variadic: bool, signature_len: usize, generic: bool) -> usize {
+    conversions * CONVERSION_RANK
+        + usize::from(variadic) * VARIADIC_RANK
+        + signature_len * SIGNATURE_LENGTH_RANK
+        + usize::from(generic)
+}
+
+fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
+    if actual == expected
+        || matches!(actual, Ty::IntLiteral) && matches!(expected, Ty::Int)
+        || matches!(actual, Ty::FloatLiteral) && matches!(expected, Ty::Float64)
+    {
+        0
+    } else {
+        1
+    }
+}
+
+struct MethodCallScore {
+    rank: usize,
+    slots: Vec<ArgSlot>,
+    positional_overflow: Vec<usize>,
+    keyword_overflow: Vec<usize>,
+}
+
+/// Interior-generation state immediately before applying one selected method
+/// contract. Candidate scoring has already inferred the argument expressions at
+/// this point, so subtracting this snapshot isolates callee effects from effects
+/// which belong to evaluation of the source expression itself.
+struct CallBoundarySnapshot {
+    invalidations: HashMap<SourceSpan, Vec<crate::checked::InteriorInvalidation>>,
+}
+
+#[derive(Clone)]
+struct ValueAdjustmentSnapshot {
+    source: SourceSpan,
+    overload_target: Option<String>,
+    implicit_conversion: Option<String>,
+    operation: Option<crate::checked::SemanticAdjustment>,
+}
+
+struct SubscriptResolution {
+    return_type: Ty,
+    lowered_name: Option<String>,
+    value_keyword: bool,
+}
+
+fn select_callable_overload(
+    matches: Vec<(Ty, usize, String, Option<Ty>)>,
+) -> Result<(Ty, String, Option<Ty>), OverloadSelect> {
+    let best = matches
+        .iter()
+        .map(|(_, score, _, _)| *score)
+        .min()
+        .ok_or(OverloadSelect::NoMatch)?;
+    let mut best_matches = matches
+        .into_iter()
+        .filter(|(_, score, _, _)| *score == best)
+        .collect::<Vec<_>>();
+    if best_matches.len() != 1 {
+        return Err(OverloadSelect::Ambiguous);
+    }
+    let (ret, _, target, error) = best_matches.remove(0);
+    Ok((ret, target, error))
+}
+
+fn select_method_overload(
+    _method: &str,
+    matches: Vec<MethodCallResolution>,
+) -> Result<MethodCallResolution, OverloadSelect> {
+    let best = matches
+        .iter()
+        .map(|candidate| candidate.conversion_score)
+        .min()
+        .ok_or(OverloadSelect::NoMatch)?;
+    let mut best_matches = matches
+        .into_iter()
+        .filter(|candidate| candidate.conversion_score == best)
+        .collect::<Vec<_>>();
+    if best_matches.len() == 1 {
+        Ok(best_matches.remove(0))
+    } else {
+        Err(OverloadSelect::Ambiguous)
+    }
+}
+
+fn overload_candidates(existing: &Ty, new_ty: &Ty) -> Option<Vec<Ty>> {
+    callable_parameter_count(new_ty)?;
+    match existing {
+        Ty::Func { .. } | Ty::GenericFunc { .. }
+            if callable_parameter_count(existing).is_some() =>
+        {
+            Some(vec![existing.clone()])
+        }
+        Ty::Overload(candidates) => Some(candidates.clone()),
+        _ => None,
+    }
+}
+
+type SplitCallableSpecialization = (
+    Vec<crate::ast::ParamArg>,
+    Vec<(Vec<usize>, crate::origin::Origin)>,
+);
+
 /// Mojo's built-in traits that mojito recognizes in a type-parameter bound.
 /// User-defined traits (and conformance checking) are a later phase, so a bound
 /// must name one of these. `AnyType` is the least restrictive.
@@ -2434,24 +2487,44 @@ const BUILTIN_TRAITS: &[&str] = &[
     "Negatable",
 ];
 
+/// The linker qualifies `from std.utils import Variant` declarations.  Keep the
+/// intrinsic recognition narrow so an unrelated user type ending in `Variant`
+/// does not silently acquire built-in semantics.
+fn is_variant_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Variant" | "__module$std$utilsVariant" | "__module$std$utils$Variant"
+    )
+}
+
 mod places;
+
 use places::*;
 
 mod generics;
+
 use generics::*;
+
 mod declarations;
+
 use declarations::*;
 
 mod annotations;
+
 use annotations::*;
 
 mod calls;
+
 use calls::*;
+
 mod builtins;
+
 pub(crate) use builtins::callable_environment_coerces;
+
 use builtins::*;
 
 mod operators;
+
 use operators::*;
 
 mod iteration;
@@ -2463,6 +2536,7 @@ mod constraints;
 mod scopes;
 
 mod origins;
+
 use origins::*;
 
 mod traits;
@@ -2476,67 +2550,6 @@ mod method_calls;
 mod call_inference;
 
 mod statements;
-
-impl Default for Checker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// The linker qualifies `from std.utils import Variant` declarations.  Keep the
-/// intrinsic recognition narrow so an unrelated user type ending in `Variant`
-/// does not silently acquire built-in semantics.
-fn is_variant_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Variant" | "__module$std$utilsVariant" | "__module$std$utils$Variant"
-    )
-}
-
-/// Whether control can leave the owned iterator before exhaustion. A `break`
-/// belongs to the nearest loop, while return/raise escape through every nested
-/// loop. This is used only when residual elements cannot be deleted implicitly.
-fn block_can_escape_owned_iteration(statements: &[Stmt], nested_loops: usize) -> bool {
-    statements.iter().any(|statement| match &statement.kind {
-        StmtKind::Break => nested_loops == 0,
-        StmtKind::Return(_) | StmtKind::Raise(_) => true,
-        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-            branches
-                .iter()
-                .any(|(_, body)| block_can_escape_owned_iteration(body, nested_loops))
-                || orelse
-                    .as_ref()
-                    .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
-        }
-        StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-            block_can_escape_owned_iteration(body, nested_loops + 1)
-                || orelse
-                    .as_ref()
-                    .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
-        }
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            block_can_escape_owned_iteration(body, nested_loops)
-                || except
-                    .as_ref()
-                    .is_some_and(|(_, body)| block_can_escape_owned_iteration(body, nested_loops))
-                || orelse
-                    .as_ref()
-                    .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
-                || finalbody
-                    .as_ref()
-                    .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
-        }
-        StmtKind::With { body, .. } => block_can_escape_owned_iteration(body, nested_loops),
-        // Nested declarations do not execute as part of the loop body.
-        StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => false,
-        _ => false,
-    })
-}
 
 #[cfg(test)]
 mod dependent_callable_signature_tests {

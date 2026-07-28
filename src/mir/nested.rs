@@ -4,217 +4,6 @@ use super::*;
 
 // --- Nested `def` (closure) lifting -----------------------------------------
 
-/// Collect the declarations belonging to one lexical function scope (those in
-/// the body or its control-flow blocks), without descending into another
-/// declaration's body. Recursive lifting calls this once per lexical scope.
-fn find_nested_defs<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
-    for s in body {
-        match &s.kind {
-            StmtKind::Def { .. } => out.push(s),
-            StmtKind::If { branches, orelse } => {
-                for (_, b) in branches {
-                    find_nested_defs(b, out);
-                }
-                if let Some(e) = orelse {
-                    find_nested_defs(e, out);
-                }
-            }
-            StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-                find_nested_defs(body, out);
-                if let Some(orelse) = orelse {
-                    find_nested_defs(orelse, out);
-                }
-            }
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                find_nested_defs(body, out);
-                if let Some((_, b)) = except {
-                    find_nested_defs(b, out);
-                }
-                if let Some(e) = orelse {
-                    find_nested_defs(e, out);
-                }
-                if let Some(f) = finalbody {
-                    find_nested_defs(f, out);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Copy the checker-resolved capture environment. This includes unused explicit
-/// entries and any ancestor forwarding selected by enclosing capture policies.
-fn analyze_captures(declaration: &crate::CheckedDeclaration) -> Vec<NestedCapture> {
-    declaration
-        .captures
-        .iter()
-        .map(|capture| NestedCapture {
-            name: capture.name.clone(),
-            binding: capture.binding,
-            ty: capture.ty.clone(),
-            kind: capture.kind,
-        })
-        .collect()
-}
-
-/// One declaration in the lexical closure tree. Checked capture facts already
-/// include any ancestor forwarding required across intermediate functions.
-struct NestedNode<'a> {
-    statement: &'a Stmt,
-    binding: crate::origin::OwnerId,
-    source_name: String,
-    mangled: String,
-    captures: Vec<NestedCapture>,
-    callable_ty: Option<Ty>,
-    children: Vec<NestedNode<'a>>,
-}
-
-fn checked_nested_declaration<'a>(
-    checked: &'a crate::CheckedProgram,
-    statement: &Stmt,
-) -> &'a crate::CheckedDeclaration {
-    let StmtKind::Def { name, .. } = &statement.kind else {
-        unreachable!("nested declaration lookup requires a def")
-    };
-    checked
-        .declarations()
-        .iter()
-        .find(|declaration| {
-            declaration.kind == crate::checked::CheckedDeclKind::Function
-                && declaration.name == *name
-                && declaration.location == statement.source_span()
-        })
-        .expect("checked nested function declaration is missing")
-}
-
-fn analyze_node<'a>(
-    checked: &crate::CheckedProgram,
-    statement: &'a Stmt,
-    parent_mangled: &str,
-    duplicate_name: bool,
-) -> NestedNode<'a> {
-    let StmtKind::Def { name, body, .. } = &statement.kind else {
-        unreachable!("nested tree contains only def statements")
-    };
-
-    let declaration = checked_nested_declaration(checked, statement);
-    let binding = declaration
-        .binding
-        .expect("checked nested function has no value binding");
-
-    let mangled = if duplicate_name {
-        crate::symbol::nested_lifted_declaration_name(parent_mangled, name, declaration.id)
-    } else {
-        crate::symbol::nested_lifted_name(parent_mangled, name)
-    };
-    let captures = analyze_captures(declaration);
-
-    let mut direct = Vec::new();
-    find_nested_defs(body, &mut direct);
-    let mut totals = HashMap::<String, usize>::new();
-    for declaration in &direct {
-        if let StmtKind::Def { name, .. } = &declaration.kind {
-            *totals.entry(name.clone()).or_default() += 1;
-        }
-    }
-    let children = direct
-        .into_iter()
-        .filter_map(|nested| {
-            let StmtKind::Def { name, .. } = &nested.kind else {
-                return None;
-            };
-            Some(analyze_node(
-                checked,
-                nested,
-                &mangled,
-                totals.get(name).copied().unwrap_or_default() > 1,
-            ))
-        })
-        .collect();
-
-    NestedNode {
-        statement,
-        binding,
-        source_name: name.clone(),
-        mangled,
-        captures,
-        callable_ty: checked
-            .checked_type_at(&AnnotationSite::FunctionType {
-                module: statement.module.clone(),
-                declaration: statement.span,
-                syntax: statement.syntax_id,
-            })
-            .cloned()
-            .map(mir_nested_callable_ty),
-        children,
-    }
-}
-
-fn analyze_root_children<'a>(
-    checked: &crate::CheckedProgram,
-    parent_mangled: &str,
-    _parameter_names: &[String],
-    body: &'a [Stmt],
-) -> Vec<NestedNode<'a>> {
-    let mut direct = Vec::new();
-    find_nested_defs(body, &mut direct);
-    let mut totals = HashMap::<String, usize>::new();
-    for declaration in &direct {
-        if let StmtKind::Def { name, .. } = &declaration.kind {
-            *totals.entry(name.clone()).or_default() += 1;
-        }
-    }
-    direct
-        .into_iter()
-        .filter_map(|declaration| {
-            let StmtKind::Def { name, .. } = &declaration.kind else {
-                return None;
-            };
-            let child = analyze_node(
-                checked,
-                declaration,
-                parent_mangled,
-                totals.get(name).copied().unwrap_or_default() > 1,
-            );
-            Some(child)
-        })
-        .collect()
-}
-
-/// Build the callable registry visible in one lexical function. Direct
-/// declarations and inherited callables are keyed by checked identity, so
-/// same-spelled bindings coexist without shadow-removal heuristics.
-fn scope_registry(
-    _body: &[Stmt],
-    children: &mut [NestedNode<'_>],
-    inherited: &HashMap<crate::origin::OwnerId, NestedInfo>,
-) -> HashMap<crate::origin::OwnerId, NestedInfo> {
-    let mut registry = inherited.clone();
-    for info in registry.values_mut() {
-        info.materialized_here = false;
-    }
-    for child in children.iter() {
-        registry.insert(
-            child.binding,
-            NestedInfo {
-                binding: child.binding,
-                source_name: child.source_name.clone(),
-                mangled: child.mangled.clone(),
-                materialized_here: true,
-                captures: child.captures.clone(),
-                callable_ty: child.callable_ty.clone(),
-            },
-        );
-    }
-
-    registry
-}
-
 /// Lower a function body (`name` its registered/mangled name) plus every nested
 /// `def` it defines, pushing the function and each lifted nested function into
 /// `out`. A liftable nested `def` becomes `name$inner` with its captured enclosing
@@ -319,6 +108,153 @@ pub(super) fn lower_fn_nested(
     for child in children {
         lower_nested_node(checked, child, &registry, overloads, out, declarations);
     }
+}
+
+/// Collect the declarations belonging to one lexical function scope (those in
+/// the body or its control-flow blocks), without descending into another
+/// declaration's body. Recursive lifting calls this once per lexical scope.
+fn find_nested_defs<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
+    for s in body {
+        match &s.kind {
+            StmtKind::Def { .. } => out.push(s),
+            StmtKind::If { branches, orelse } => {
+                for (_, b) in branches {
+                    find_nested_defs(b, out);
+                }
+                if let Some(e) = orelse {
+                    find_nested_defs(e, out);
+                }
+            }
+            StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
+                find_nested_defs(body, out);
+                if let Some(orelse) = orelse {
+                    find_nested_defs(orelse, out);
+                }
+            }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                find_nested_defs(body, out);
+                if let Some((_, b)) = except {
+                    find_nested_defs(b, out);
+                }
+                if let Some(e) = orelse {
+                    find_nested_defs(e, out);
+                }
+                if let Some(f) = finalbody {
+                    find_nested_defs(f, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// One declaration in the lexical closure tree. Checked capture facts already
+/// include any ancestor forwarding required across intermediate functions.
+struct NestedNode<'a> {
+    statement: &'a Stmt,
+    binding: crate::origin::OwnerId,
+    source_name: String,
+    mangled: String,
+    captures: Vec<NestedCapture>,
+    callable_ty: Option<Ty>,
+    children: Vec<NestedNode<'a>>,
+}
+
+fn analyze_node<'a>(
+    checked: &crate::CheckedProgram,
+    statement: &'a Stmt,
+    parent_mangled: &str,
+    duplicate_name: bool,
+) -> NestedNode<'a> {
+    let StmtKind::Def { name, body, .. } = &statement.kind else {
+        unreachable!("nested tree contains only def statements")
+    };
+
+    let declaration = checked_nested_declaration(checked, statement);
+    let binding = declaration
+        .binding
+        .expect("checked nested function has no value binding");
+
+    let mangled = if duplicate_name {
+        crate::symbol::nested_lifted_declaration_name(parent_mangled, name, declaration.id)
+    } else {
+        crate::symbol::nested_lifted_name(parent_mangled, name)
+    };
+    let captures = analyze_captures(declaration);
+
+    let mut direct = Vec::new();
+    find_nested_defs(body, &mut direct);
+    let mut totals = HashMap::<String, usize>::new();
+    for declaration in &direct {
+        if let StmtKind::Def { name, .. } = &declaration.kind {
+            *totals.entry(name.clone()).or_default() += 1;
+        }
+    }
+    let children = direct
+        .into_iter()
+        .filter_map(|nested| {
+            let StmtKind::Def { name, .. } = &nested.kind else {
+                return None;
+            };
+            Some(analyze_node(
+                checked,
+                nested,
+                &mangled,
+                totals.get(name).copied().unwrap_or_default() > 1,
+            ))
+        })
+        .collect();
+
+    NestedNode {
+        statement,
+        binding,
+        source_name: name.clone(),
+        mangled,
+        captures,
+        callable_ty: checked
+            .checked_type_at(&AnnotationSite::FunctionType {
+                module: statement.module.clone(),
+                declaration: statement.span,
+                syntax: statement.syntax_id,
+            })
+            .cloned()
+            .map(mir_nested_callable_ty),
+        children,
+    }
+}
+
+/// Build the callable registry visible in one lexical function. Direct
+/// declarations and inherited callables are keyed by checked identity, so
+/// same-spelled bindings coexist without shadow-removal heuristics.
+fn scope_registry(
+    _body: &[Stmt],
+    children: &mut [NestedNode<'_>],
+    inherited: &HashMap<crate::origin::OwnerId, NestedInfo>,
+) -> HashMap<crate::origin::OwnerId, NestedInfo> {
+    let mut registry = inherited.clone();
+    for info in registry.values_mut() {
+        info.materialized_here = false;
+    }
+    for child in children.iter() {
+        registry.insert(
+            child.binding,
+            NestedInfo {
+                binding: child.binding,
+                source_name: child.source_name.clone(),
+                mangled: child.mangled.clone(),
+                materialized_here: true,
+                captures: child.captures.clone(),
+                callable_ty: child.callable_ty.clone(),
+            },
+        );
+    }
+
+    registry
 }
 
 fn lower_nested_node(
@@ -648,4 +584,68 @@ fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
         _ => {}
     }
     ty
+}
+
+/// Copy the checker-resolved capture environment. This includes unused explicit
+/// entries and any ancestor forwarding selected by enclosing capture policies.
+fn analyze_captures(declaration: &crate::CheckedDeclaration) -> Vec<NestedCapture> {
+    declaration
+        .captures
+        .iter()
+        .map(|capture| NestedCapture {
+            name: capture.name.clone(),
+            binding: capture.binding,
+            ty: capture.ty.clone(),
+            kind: capture.kind,
+        })
+        .collect()
+}
+
+fn checked_nested_declaration<'a>(
+    checked: &'a crate::CheckedProgram,
+    statement: &Stmt,
+) -> &'a crate::CheckedDeclaration {
+    let StmtKind::Def { name, .. } = &statement.kind else {
+        unreachable!("nested declaration lookup requires a def")
+    };
+    checked
+        .declarations()
+        .iter()
+        .find(|declaration| {
+            declaration.kind == crate::checked::CheckedDeclKind::Function
+                && declaration.name == *name
+                && declaration.location == statement.source_span()
+        })
+        .expect("checked nested function declaration is missing")
+}
+
+fn analyze_root_children<'a>(
+    checked: &crate::CheckedProgram,
+    parent_mangled: &str,
+    _parameter_names: &[String],
+    body: &'a [Stmt],
+) -> Vec<NestedNode<'a>> {
+    let mut direct = Vec::new();
+    find_nested_defs(body, &mut direct);
+    let mut totals = HashMap::<String, usize>::new();
+    for declaration in &direct {
+        if let StmtKind::Def { name, .. } = &declaration.kind {
+            *totals.entry(name.clone()).or_default() += 1;
+        }
+    }
+    direct
+        .into_iter()
+        .filter_map(|declaration| {
+            let StmtKind::Def { name, .. } = &declaration.kind else {
+                return None;
+            };
+            let child = analyze_node(
+                checked,
+                declaration,
+                parent_mangled,
+                totals.get(name).copied().unwrap_or_default() > 1,
+            );
+            Some(child)
+        })
+        .collect()
 }

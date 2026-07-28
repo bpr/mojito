@@ -137,412 +137,9 @@ pub struct HirStmt {
     pub expressions: Vec<HirExpr>,
 }
 
-fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
-    let mut names = HashSet::new();
-    fn walk(body: &[Stmt], names: &mut HashSet<String>) {
-        for statement in body {
-            match &statement.kind {
-                StmtKind::VarDecl { name, .. } | StmtKind::RefDecl { name, .. } => {
-                    names.insert(name.clone());
-                }
-                StmtKind::If { branches, orelse } => {
-                    for (_, body) in branches {
-                        walk(body, names);
-                    }
-                    if let Some(body) = orelse {
-                        walk(body, names);
-                    }
-                }
-                StmtKind::While { body, .. }
-                | StmtKind::For { body, .. }
-                | StmtKind::With { body, .. } => walk(body, names),
-                StmtKind::Try {
-                    body,
-                    except,
-                    orelse,
-                    finalbody,
-                } => {
-                    walk(body, names);
-                    if let Some((_, body)) = except {
-                        walk(body, names);
-                    }
-                    if let Some(body) = orelse {
-                        walk(body, names);
-                    }
-                    if let Some(body) = finalbody {
-                        walk(body, names);
-                    }
-                }
-                StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {}
-                _ => {}
-            }
-        }
-    }
-    walk(body, &mut names);
-    names
-}
-
-fn collect_named_expr(expression: &Expr, names: &mut HashSet<String>) {
-    match &expression.kind {
-        ExprKind::Named { name, value } => {
-            names.insert(name.clone());
-            collect_named_expr(value, names);
-        }
-        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => collect_named_expr(value, names),
-        ExprKind::Infix(_, left, right)
-        | ExprKind::Index {
-            object: left,
-            index: right,
-        } => {
-            collect_named_expr(left, names);
-            collect_named_expr(right, names);
-        }
-        ExprKind::Call { args, kwargs, .. } => {
-            for argument in args {
-                collect_named_expr(argument, names);
-            }
-            for argument in kwargs {
-                collect_named_expr(&argument.value, names);
-            }
-        }
-        ExprKind::Invoke {
-            callee,
-            args,
-            kwargs,
-            ..
-        } => {
-            collect_named_expr(callee, names);
-            for argument in args {
-                collect_named_expr(argument, names);
-            }
-            for argument in kwargs {
-                collect_named_expr(&argument.value, names);
-            }
-        }
-        ExprKind::Member { object, .. } => collect_named_expr(object, names),
-        ExprKind::MethodCall {
-            object,
-            args,
-            kwargs,
-            ..
-        } => {
-            collect_named_expr(object, names);
-            for argument in args {
-                collect_named_expr(argument, names);
-            }
-            for argument in kwargs {
-                collect_named_expr(&argument.value, names);
-            }
-        }
-        ExprKind::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            ..
-        } => {
-            collect_named_expr(object, names);
-            for bound in [lower, upper, step].into_iter().flatten() {
-                collect_named_expr(bound, names);
-            }
-        }
-        ExprKind::MultiIndex { object, args } => {
-            collect_named_expr(object, names);
-            for argument in args {
-                match argument {
-                    crate::ast::SubscriptArg::Index(value) => collect_named_expr(value, names),
-                    crate::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    } => {
-                        for value in [lower, upper, step].into_iter().flatten() {
-                            collect_named_expr(value, names);
-                        }
-                    }
-                }
-            }
-        }
-        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
-            for value in values {
-                collect_named_expr(value, names);
-            }
-        }
-        ExprKind::IfExpr {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            collect_named_expr(cond, names);
-            collect_named_expr(then_branch, names);
-            collect_named_expr(else_branch, names);
-        }
-        ExprKind::Compare { first, rest } => {
-            collect_named_expr(first, names);
-            for (_, value) in rest {
-                collect_named_expr(value, names);
-            }
-        }
-        ExprKind::TString { parts, .. } => {
-            for part in parts {
-                if let crate::ast::TStringPart::Expr(value) = part {
-                    collect_named_expr(value, names);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_function_implicit_names(
-    body: &[Stmt],
-    explicit: &HashSet<String>,
-    names: &mut HashSet<String>,
-) {
-    for statement in body {
-        match &statement.kind {
-            StmtKind::Assign { name, value } => {
-                if !explicit.contains(name) {
-                    names.insert(name.clone());
-                }
-                collect_named_expr(value, names);
-            }
-            StmtKind::VarDecl { value, .. }
-            | StmtKind::RefDecl { value, .. }
-            | StmtKind::Comptime { value, .. }
-            | StmtKind::Raise(value)
-            | StmtKind::Expr(value) => collect_named_expr(value, names),
-            StmtKind::Return(Some(value)) => collect_named_expr(value, names),
-            StmtKind::If { branches, orelse } => {
-                for (condition, body) in branches {
-                    collect_named_expr(condition, names);
-                    collect_function_implicit_names(body, explicit, names);
-                }
-                if let Some(body) = orelse {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-            }
-            StmtKind::While { cond, body, orelse } => {
-                collect_named_expr(cond, names);
-                collect_function_implicit_names(body, explicit, names);
-                if let Some(body) = orelse {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-            }
-            StmtKind::For {
-                iter, body, orelse, ..
-            } => {
-                collect_named_expr(iter, names);
-                collect_function_implicit_names(body, explicit, names);
-                if let Some(body) = orelse {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-            }
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                collect_function_implicit_names(body, explicit, names);
-                if let Some((_, body)) = except {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-                if let Some(body) = orelse {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-                if let Some(body) = finalbody {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-            }
-            StmtKind::Unpack { targets, value } => {
-                for target in targets {
-                    collect_named_expr(target, names);
-                }
-                collect_named_expr(value, names);
-            }
-            StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
-                collect_named_expr(place, names);
-                collect_named_expr(value, names);
-            }
-            StmtKind::With { items, body } => {
-                for item in items {
-                    collect_named_expr(&item.context, names);
-                }
-                collect_function_implicit_names(body, explicit, names);
-            }
-            StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {}
-            _ => {}
-        }
-    }
-}
-
 pub type BlockId = NodeIndex;
+
 pub type VarId = u32;
-
-fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {
-    match &statement.kind {
-        StmtKind::VarDecl { value, .. }
-        | StmtKind::RefDecl { value, .. }
-        | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
-        | StmtKind::Raise(value)
-        | StmtKind::Expr(value) => vec![value],
-        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
-            vec![place, value]
-        }
-        StmtKind::Unpack { targets, value } => {
-            let mut roots: Vec<&Expr> = targets.iter().collect();
-            roots.push(value);
-            roots
-        }
-        StmtKind::Return(Some(value)) => vec![value],
-        StmtKind::With { items, .. } => items.iter().map(|item| &item.context).collect(),
-        // Structured statements and declarations are either decomposed by HIR or
-        // rebuilt as independently checked nested CFGs; their nested expressions
-        // are not roots of this opaque instruction.
-        _ => Vec::new(),
-    }
-}
-
-fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
-    match &mut e.kind {
-        ExprKind::Identifier(n) => *n = resolve(n),
-        ExprKind::Prefix(_, x) | ExprKind::Transfer(x) | ExprKind::Spread(x) => {
-            rename_expr(x, resolve)
-        }
-        ExprKind::Infix(_, l, r) => {
-            rename_expr(l, resolve);
-            rename_expr(r, resolve);
-        }
-        ExprKind::Compare { first, rest } => {
-            rename_expr(first, resolve);
-            for (_, x) in rest {
-                rename_expr(x, resolve);
-            }
-        }
-        ExprKind::Call { args, kwargs, .. } => {
-            for x in args {
-                rename_expr(x, resolve);
-            }
-            for x in kwargs {
-                rename_expr(&mut x.value, resolve);
-            }
-        }
-        ExprKind::Member { object, .. } => rename_expr(object, resolve),
-        ExprKind::MethodCall {
-            object,
-            args,
-            kwargs,
-            ..
-        } => {
-            rename_expr(object, resolve);
-            for x in args {
-                rename_expr(x, resolve);
-            }
-            for x in kwargs {
-                rename_expr(&mut x.value, resolve);
-            }
-        }
-        ExprKind::Index { object, index } => {
-            rename_expr(object, resolve);
-            rename_expr(index, resolve);
-        }
-        ExprKind::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            ..
-        } => {
-            rename_expr(object, resolve);
-            for x in [lower, upper, step].into_iter().flatten() {
-                rename_expr(x, resolve);
-            }
-        }
-        ExprKind::MultiIndex { object, args } => {
-            rename_expr(object, resolve);
-            for argument in args {
-                match argument {
-                    crate::ast::SubscriptArg::Index(value) => rename_expr(value, resolve),
-                    crate::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    } => {
-                        for value in [lower, upper, step].into_iter().flatten() {
-                            rename_expr(value, resolve);
-                        }
-                    }
-                }
-            }
-        }
-        ExprKind::ListLit(xs) | ExprKind::TupleLit(xs) => {
-            for x in xs {
-                rename_expr(x, resolve);
-            }
-        }
-        ExprKind::BraceLit(entries) => {
-            for (key, value) in entries {
-                rename_expr(key, resolve);
-                if let Some(value) = value {
-                    rename_expr(value, resolve);
-                }
-            }
-        }
-        ExprKind::Comprehension {
-            key,
-            value,
-            clauses,
-            ..
-        } => {
-            if let Some(key) = key {
-                rename_expr(key, resolve);
-            }
-            rename_expr(value, resolve);
-            for clause in clauses {
-                match clause {
-                    crate::ast::ComprehensionClause::For { iter, .. } => rename_expr(iter, resolve),
-                    crate::ast::ComprehensionClause::If(condition) => {
-                        rename_expr(condition, resolve)
-                    }
-                }
-            }
-        }
-        ExprKind::Invoke {
-            callee,
-            args,
-            kwargs,
-            ..
-        } => {
-            rename_expr(callee, resolve);
-            for arg in args {
-                rename_expr(arg, resolve);
-            }
-            for arg in kwargs {
-                rename_expr(&mut arg.value, resolve);
-            }
-        }
-        ExprKind::Named { name, value } => {
-            *name = resolve(name);
-            rename_expr(value, resolve);
-        }
-        ExprKind::IfExpr {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            rename_expr(cond, resolve);
-            rename_expr(then_branch, resolve);
-            rename_expr(else_branch, resolve);
-        }
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Str(_)
-        | ExprKind::None
-        | ExprKind::Uninitialized
-        | ExprKind::TypeValue(_)
-        | ExprKind::TString { .. }
-        | ExprKind::TypeApply { .. } => {}
-    }
-}
 
 /// One straight-line instruction inside a basic block. Control flow lives in the
 /// block's [`Terminator`], never here.
@@ -904,18 +501,338 @@ impl Cfg {
     }
 }
 
-/// One enclosing loop's `break`/`continue` targets. `escape = false` for a loop
-/// in *this* CFG (a `break`/`continue` is a `Jump`); `escape = true` for a loop in
-/// the enclosing **function** CFG (seeded into a `try` region — a `break`/
-/// `continue` becomes an `EscapeJump` the VM propagates out).
-#[derive(Clone)]
-struct LoopFrame {
-    header: BlockId,
-    exit: BlockId,
-    escape: bool,
-    /// Values to destroy when a return bypasses this loop's common exit. For a
-    /// `for`, this is the current element followed by the normalized iterator.
-    cleanup: Vec<VarId>,
+fn collect_named_expr(expression: &Expr, names: &mut HashSet<String>) {
+    match &expression.kind {
+        ExprKind::Named { name, value } => {
+            names.insert(name.clone());
+            collect_named_expr(value, names);
+        }
+        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => collect_named_expr(value, names),
+        ExprKind::Infix(_, left, right)
+        | ExprKind::Index {
+            object: left,
+            index: right,
+        } => {
+            collect_named_expr(left, names);
+            collect_named_expr(right, names);
+        }
+        ExprKind::Call { args, kwargs, .. } => {
+            for argument in args {
+                collect_named_expr(argument, names);
+            }
+            for argument in kwargs {
+                collect_named_expr(&argument.value, names);
+            }
+        }
+        ExprKind::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } => {
+            collect_named_expr(callee, names);
+            for argument in args {
+                collect_named_expr(argument, names);
+            }
+            for argument in kwargs {
+                collect_named_expr(&argument.value, names);
+            }
+        }
+        ExprKind::Member { object, .. } => collect_named_expr(object, names),
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } => {
+            collect_named_expr(object, names);
+            for argument in args {
+                collect_named_expr(argument, names);
+            }
+            for argument in kwargs {
+                collect_named_expr(&argument.value, names);
+            }
+        }
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => {
+            collect_named_expr(object, names);
+            for bound in [lower, upper, step].into_iter().flatten() {
+                collect_named_expr(bound, names);
+            }
+        }
+        ExprKind::MultiIndex { object, args } => {
+            collect_named_expr(object, names);
+            for argument in args {
+                match argument {
+                    crate::ast::SubscriptArg::Index(value) => collect_named_expr(value, names),
+                    crate::ast::SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    } => {
+                        for value in [lower, upper, step].into_iter().flatten() {
+                            collect_named_expr(value, names);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
+            for value in values {
+                collect_named_expr(value, names);
+            }
+        }
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_named_expr(cond, names);
+            collect_named_expr(then_branch, names);
+            collect_named_expr(else_branch, names);
+        }
+        ExprKind::Compare { first, rest } => {
+            collect_named_expr(first, names);
+            for (_, value) in rest {
+                collect_named_expr(value, names);
+            }
+        }
+        ExprKind::TString { parts, .. } => {
+            for part in parts {
+                if let crate::ast::TStringPart::Expr(value) = part {
+                    collect_named_expr(value, names);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
+    match &mut e.kind {
+        ExprKind::Identifier(n) => *n = resolve(n),
+        ExprKind::Prefix(_, x) | ExprKind::Transfer(x) | ExprKind::Spread(x) => {
+            rename_expr(x, resolve)
+        }
+        ExprKind::Infix(_, l, r) => {
+            rename_expr(l, resolve);
+            rename_expr(r, resolve);
+        }
+        ExprKind::Compare { first, rest } => {
+            rename_expr(first, resolve);
+            for (_, x) in rest {
+                rename_expr(x, resolve);
+            }
+        }
+        ExprKind::Call { args, kwargs, .. } => {
+            for x in args {
+                rename_expr(x, resolve);
+            }
+            for x in kwargs {
+                rename_expr(&mut x.value, resolve);
+            }
+        }
+        ExprKind::Member { object, .. } => rename_expr(object, resolve),
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } => {
+            rename_expr(object, resolve);
+            for x in args {
+                rename_expr(x, resolve);
+            }
+            for x in kwargs {
+                rename_expr(&mut x.value, resolve);
+            }
+        }
+        ExprKind::Index { object, index } => {
+            rename_expr(object, resolve);
+            rename_expr(index, resolve);
+        }
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => {
+            rename_expr(object, resolve);
+            for x in [lower, upper, step].into_iter().flatten() {
+                rename_expr(x, resolve);
+            }
+        }
+        ExprKind::MultiIndex { object, args } => {
+            rename_expr(object, resolve);
+            for argument in args {
+                match argument {
+                    crate::ast::SubscriptArg::Index(value) => rename_expr(value, resolve),
+                    crate::ast::SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    } => {
+                        for value in [lower, upper, step].into_iter().flatten() {
+                            rename_expr(value, resolve);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::ListLit(xs) | ExprKind::TupleLit(xs) => {
+            for x in xs {
+                rename_expr(x, resolve);
+            }
+        }
+        ExprKind::BraceLit(entries) => {
+            for (key, value) in entries {
+                rename_expr(key, resolve);
+                if let Some(value) = value {
+                    rename_expr(value, resolve);
+                }
+            }
+        }
+        ExprKind::Comprehension {
+            key,
+            value,
+            clauses,
+            ..
+        } => {
+            if let Some(key) = key {
+                rename_expr(key, resolve);
+            }
+            rename_expr(value, resolve);
+            for clause in clauses {
+                match clause {
+                    crate::ast::ComprehensionClause::For { iter, .. } => rename_expr(iter, resolve),
+                    crate::ast::ComprehensionClause::If(condition) => {
+                        rename_expr(condition, resolve)
+                    }
+                }
+            }
+        }
+        ExprKind::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } => {
+            rename_expr(callee, resolve);
+            for arg in args {
+                rename_expr(arg, resolve);
+            }
+            for arg in kwargs {
+                rename_expr(&mut arg.value, resolve);
+            }
+        }
+        ExprKind::Named { name, value } => {
+            *name = resolve(name);
+            rename_expr(value, resolve);
+        }
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            rename_expr(cond, resolve);
+            rename_expr(then_branch, resolve);
+            rename_expr(else_branch, resolve);
+        }
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::None
+        | ExprKind::Uninitialized
+        | ExprKind::TypeValue(_)
+        | ExprKind::TString { .. }
+        | ExprKind::TypeApply { .. } => {}
+    }
+}
+
+fn collect_function_implicit_names(
+    body: &[Stmt],
+    explicit: &HashSet<String>,
+    names: &mut HashSet<String>,
+) {
+    for statement in body {
+        match &statement.kind {
+            StmtKind::Assign { name, value } => {
+                if !explicit.contains(name) {
+                    names.insert(name.clone());
+                }
+                collect_named_expr(value, names);
+            }
+            StmtKind::VarDecl { value, .. }
+            | StmtKind::RefDecl { value, .. }
+            | StmtKind::Comptime { value, .. }
+            | StmtKind::Raise(value)
+            | StmtKind::Expr(value) => collect_named_expr(value, names),
+            StmtKind::Return(Some(value)) => collect_named_expr(value, names),
+            StmtKind::If { branches, orelse } => {
+                for (condition, body) in branches {
+                    collect_named_expr(condition, names);
+                    collect_function_implicit_names(body, explicit, names);
+                }
+                if let Some(body) = orelse {
+                    collect_function_implicit_names(body, explicit, names);
+                }
+            }
+            StmtKind::While { cond, body, orelse } => {
+                collect_named_expr(cond, names);
+                collect_function_implicit_names(body, explicit, names);
+                if let Some(body) = orelse {
+                    collect_function_implicit_names(body, explicit, names);
+                }
+            }
+            StmtKind::For {
+                iter, body, orelse, ..
+            } => {
+                collect_named_expr(iter, names);
+                collect_function_implicit_names(body, explicit, names);
+                if let Some(body) = orelse {
+                    collect_function_implicit_names(body, explicit, names);
+                }
+            }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                collect_function_implicit_names(body, explicit, names);
+                if let Some((_, body)) = except {
+                    collect_function_implicit_names(body, explicit, names);
+                }
+                if let Some(body) = orelse {
+                    collect_function_implicit_names(body, explicit, names);
+                }
+                if let Some(body) = finalbody {
+                    collect_function_implicit_names(body, explicit, names);
+                }
+            }
+            StmtKind::Unpack { targets, value } => {
+                for target in targets {
+                    collect_named_expr(target, names);
+                }
+                collect_named_expr(value, names);
+            }
+            StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+                collect_named_expr(place, names);
+                collect_named_expr(value, names);
+            }
+            StmtKind::With { items, body } => {
+                for item in items {
+                    collect_named_expr(&item.context, names);
+                }
+                collect_function_implicit_names(body, explicit, names);
+            }
+            StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {}
+            _ => {}
+        }
+    }
 }
 
 /// Lowering cursor: appends to the "current" block, splitting on control flow.
@@ -937,36 +854,6 @@ struct Lower {
     checked_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     checked_expressions: HashMap<CheckedNodeId, CheckedExpr>,
     checked_declarations: HashMap<SourceSpan, CheckedDeclaration>,
-}
-
-fn checked_index(nodes: &[CheckedExpr]) -> HashMap<SourceSpan, Vec<CheckedNodeId>> {
-    let mut result: HashMap<SourceSpan, Vec<CheckedNodeId>> = HashMap::new();
-    for node in nodes {
-        result
-            .entry(node.syntax.source_span())
-            .or_default()
-            .push(node.id);
-    }
-    result
-}
-
-fn checked_var_types(
-    vars: &[String],
-    nodes: &HashMap<CheckedNodeId, CheckedExpr>,
-) -> HashMap<VarId, Ty> {
-    vars.iter()
-        .enumerate()
-        .filter_map(|(slot, runtime_name)| {
-            let source_name = runtime_name.split("$shadow").next().unwrap_or(runtime_name);
-            let ty = nodes.values().find_map(|node| match &node.syntax.kind {
-                ExprKind::Identifier(name) if name == source_name => {
-                    node.place_ty.clone().or_else(|| node.ty.clone())
-                }
-                _ => None,
-            })?;
-            Some((slot as VarId, ty))
-        })
-        .collect()
 }
 
 impl Lower {
@@ -1688,5 +1575,119 @@ impl Lower {
             // is kept whole for Stage 4; Stage 5 refines it.
             _ => self.push(HirInstr::Stmt(self.statement(s.clone()))),
         }
+    }
+}
+
+/// One enclosing loop's `break`/`continue` targets. `escape = false` for a loop
+/// in *this* CFG (a `break`/`continue` is a `Jump`); `escape = true` for a loop in
+/// the enclosing **function** CFG (seeded into a `try` region — a `break`/
+/// `continue` becomes an `EscapeJump` the VM propagates out).
+#[derive(Clone)]
+struct LoopFrame {
+    header: BlockId,
+    exit: BlockId,
+    escape: bool,
+    /// Values to destroy when a return bypasses this loop's common exit. For a
+    /// `for`, this is the current element followed by the normalized iterator.
+    cleanup: Vec<VarId>,
+}
+
+fn checked_index(nodes: &[CheckedExpr]) -> HashMap<SourceSpan, Vec<CheckedNodeId>> {
+    let mut result: HashMap<SourceSpan, Vec<CheckedNodeId>> = HashMap::new();
+    for node in nodes {
+        result
+            .entry(node.syntax.source_span())
+            .or_default()
+            .push(node.id);
+    }
+    result
+}
+
+fn checked_var_types(
+    vars: &[String],
+    nodes: &HashMap<CheckedNodeId, CheckedExpr>,
+) -> HashMap<VarId, Ty> {
+    vars.iter()
+        .enumerate()
+        .filter_map(|(slot, runtime_name)| {
+            let source_name = runtime_name.split("$shadow").next().unwrap_or(runtime_name);
+            let ty = nodes.values().find_map(|node| match &node.syntax.kind {
+                ExprKind::Identifier(name) if name == source_name => {
+                    node.place_ty.clone().or_else(|| node.ty.clone())
+                }
+                _ => None,
+            })?;
+            Some((slot as VarId, ty))
+        })
+        .collect()
+}
+
+fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    fn walk(body: &[Stmt], names: &mut HashSet<String>) {
+        for statement in body {
+            match &statement.kind {
+                StmtKind::VarDecl { name, .. } | StmtKind::RefDecl { name, .. } => {
+                    names.insert(name.clone());
+                }
+                StmtKind::If { branches, orelse } => {
+                    for (_, body) in branches {
+                        walk(body, names);
+                    }
+                    if let Some(body) = orelse {
+                        walk(body, names);
+                    }
+                }
+                StmtKind::While { body, .. }
+                | StmtKind::For { body, .. }
+                | StmtKind::With { body, .. } => walk(body, names),
+                StmtKind::Try {
+                    body,
+                    except,
+                    orelse,
+                    finalbody,
+                } => {
+                    walk(body, names);
+                    if let Some((_, body)) = except {
+                        walk(body, names);
+                    }
+                    if let Some(body) = orelse {
+                        walk(body, names);
+                    }
+                    if let Some(body) = finalbody {
+                        walk(body, names);
+                    }
+                }
+                StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {}
+                _ => {}
+            }
+        }
+    }
+    walk(body, &mut names);
+    names
+}
+
+fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {
+    match &statement.kind {
+        StmtKind::VarDecl { value, .. }
+        | StmtKind::RefDecl { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::Comptime { value, .. }
+        | StmtKind::Raise(value)
+        | StmtKind::Expr(value) => vec![value],
+        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+            vec![place, value]
+        }
+        StmtKind::Unpack { targets, value } => {
+            let mut roots: Vec<&Expr> = targets.iter().collect();
+            roots.push(value);
+            roots
+        }
+        StmtKind::Return(Some(value)) => vec![value],
+        StmtKind::With { items, .. } => items.iter().map(|item| &item.context).collect(),
+        // Structured statements and declarations are either decomposed by HIR or
+        // rebuilt as independently checked nested CFGs; their nested expressions
+        // are not roots of this opaque instruction.
+        _ => Vec::new(),
     }
 }

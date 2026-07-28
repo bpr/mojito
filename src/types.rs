@@ -175,33 +175,18 @@ pub enum Ty {
 }
 
 pub const LIST_TYPE_NAME: &str = "List";
+
 pub const SET_TYPE_NAME: &str = "Set";
+
 pub const DICT_TYPE_NAME: &str = "Dict";
+
 pub const TUPLE_TYPE_NAME: &str = "Tuple";
+
 pub const RANGE_TYPE_NAME: &str = "Range";
 
 /// Construct a nominal standard-library type from ordinary type arguments.
 pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
     Ty::Struct(name.into(), arguments.into_iter().map(TyArg::Ty).collect())
-}
-
-fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>> {
-    let Ty::Struct(name, arguments) = ty else {
-        return None;
-    };
-    // Linked stdlib declarations used module-qualified symbols historically.
-    // Accept that spelling during the representation migration; the implicit
-    // prelude canonicalizes new programs to the unqualified public identity.
-    if name != expected && !name.ends_with(&format!("${expected}")) {
-        return None;
-    }
-    arguments
-        .iter()
-        .map(|argument| match argument {
-            TyArg::Ty(ty) => Some(ty),
-            TyArg::Val(_) => None,
-        })
-        .collect()
 }
 
 pub fn list_type(element: Ty) -> Ty {
@@ -274,29 +259,6 @@ pub fn range_type() -> Ty {
 
 pub fn is_range_type(ty: &Ty) -> bool {
     nominal_type_arguments(ty, RANGE_TYPE_NAME).is_some_and(|arguments| arguments.is_empty())
-}
-
-#[cfg(test)]
-mod collection_representation_tests {
-    use super::*;
-
-    #[test]
-    fn public_collection_helpers_construct_only_nominal_types() {
-        let runtime_list = list_type(Ty::Int);
-        for ty in [
-            runtime_list.clone(),
-            set_type(Ty::Int),
-            dict_type(Ty::String, Ty::Int),
-            range_type(),
-        ] {
-            assert!(matches!(ty, Ty::Struct(..)), "got {ty:?}");
-        }
-        assert_ne!(runtime_list, Ty::ComptimeList(Box::new(Ty::Int)));
-        assert_eq!(
-            Ty::ComptimeList(Box::new(Ty::Int)).to_string(),
-            "<comptime-list[Int]>"
-        );
-    }
 }
 
 pub fn contains_infer(ty: &Ty) -> bool {
@@ -622,5 +584,47 @@ impl fmt::Display for Ty {
                 Ok(())
             }
         }
+    }
+}
+
+fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    // Linked stdlib declarations used module-qualified symbols historically.
+    // Accept that spelling during the representation migration; the implicit
+    // prelude canonicalizes new programs to the unqualified public identity.
+    if name != expected && !name.ends_with(&format!("${expected}")) {
+        return None;
+    }
+    arguments
+        .iter()
+        .map(|argument| match argument {
+            TyArg::Ty(ty) => Some(ty),
+            TyArg::Val(_) => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod collection_representation_tests {
+    use super::*;
+
+    #[test]
+    fn public_collection_helpers_construct_only_nominal_types() {
+        let runtime_list = list_type(Ty::Int);
+        for ty in [
+            runtime_list.clone(),
+            set_type(Ty::Int),
+            dict_type(Ty::String, Ty::Int),
+            range_type(),
+        ] {
+            assert!(matches!(ty, Ty::Struct(..)), "got {ty:?}");
+        }
+        assert_ne!(runtime_list, Ty::ComptimeList(Box::new(Ty::Int)));
+        assert_eq!(
+            Ty::ComptimeList(Box::new(Ty::Int)).to_string(),
+            "<comptime-list[Int]>"
+        );
     }
 }

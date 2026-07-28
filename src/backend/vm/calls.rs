@@ -2,29 +2,6 @@
 
 use super::*;
 
-fn runtime_match_error(error: crate::call::MatchError, function: &str) -> RuntimeError {
-    use crate::call::MatchError;
-    match error {
-        MatchError::TooManyPositional { expected, got } => RuntimeError::ArityMismatch {
-            name: function.to_string(),
-            expected,
-            got,
-        },
-        MatchError::UnknownKeyword(keyword) => RuntimeError::TypeError(format!(
-            "'{function}' got an unexpected keyword argument '{keyword}'"
-        )),
-        MatchError::PositionalOnly(keyword) => RuntimeError::TypeError(format!(
-            "'{function}' got positional-only argument '{keyword}' passed as keyword"
-        )),
-        MatchError::Duplicate(keyword) => RuntimeError::TypeError(format!(
-            "'{function}' got argument '{keyword}' more than once"
-        )),
-        MatchError::Missing(parameter) => RuntimeError::TypeError(format!(
-            "'{function}' missing required argument '{parameter}'"
-        )),
-    }
-}
-
 /// Const-fold a default-argument expression to a value. Handles the literal forms
 /// (and a unary minus over one) that defaults use in practice; a non-constant
 /// default folds to `None` and errors only if that slot is actually taken.
@@ -163,4 +140,27 @@ pub(super) fn construct(
         fields,
         value_params,
     })
+}
+
+fn runtime_match_error(error: crate::call::MatchError, function: &str) -> RuntimeError {
+    use crate::call::MatchError;
+    match error {
+        MatchError::TooManyPositional { expected, got } => RuntimeError::ArityMismatch {
+            name: function.to_string(),
+            expected,
+            got,
+        },
+        MatchError::UnknownKeyword(keyword) => RuntimeError::TypeError(format!(
+            "'{function}' got an unexpected keyword argument '{keyword}'"
+        )),
+        MatchError::PositionalOnly(keyword) => RuntimeError::TypeError(format!(
+            "'{function}' got positional-only argument '{keyword}' passed as keyword"
+        )),
+        MatchError::Duplicate(keyword) => RuntimeError::TypeError(format!(
+            "'{function}' got argument '{keyword}' more than once"
+        )),
+        MatchError::Missing(parameter) => RuntimeError::TypeError(format!(
+            "'{function}' missing required argument '{parameter}'"
+        )),
+    }
 }

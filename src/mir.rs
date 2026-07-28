@@ -38,21 +38,649 @@ mod facts;
 mod lower_expr;
 mod lower_stmt;
 
+/// Lower a whole HIR control-flow graph (one function body) into a `MirFunction`.
+/// Each HIR block becomes a MIR block (same order); a single [`Flatten`] threads
+/// the register counter, the variable interner (seeded from `cfg.vars` so IDs
+/// agree with the HIR), and the span table across the whole function.
+pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
+    lower_cfg_nested(
+        cfg,
+        &HashMap::new(),
+        &crate::symbol::OverloadSets::default(),
+        false,
+        &[],
+        &[],
+    )
+}
+
+/// A whole program's worth of lowered functions, keyed by name. The synthetic
+/// `__toplevel__` holds module initialization and explicit legacy test snippets.
+/// Production compilation rejects executable file-scope source statements.
+#[derive(Debug)]
+pub struct MirProgram {
+    pub functions: Vec<(String, MirFunction)>,
+    /// Declaration facts needed by execution, normalized once while lowering.
+    /// Backends consume this instead of rescanning the source AST.
+    pub declarations: MirDeclarations,
+    /// Violations of the checked-program contract discovered while lowering.
+    /// Backends must reject a program with any entry rather than executing a
+    /// guessed fallback representation.
+    pub invariant_errors: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct MirDeclarations {
+    pub structs: Vec<MirStructDeclaration>,
+    pub functions: Vec<MirFunctionDeclaration>,
+}
+
+#[derive(Debug)]
+pub struct MirStructDeclaration {
+    pub name: String,
+    pub fields: Vec<(String, Ty)>,
+    pub mut_self_methods: HashSet<String>,
+    pub fieldwise_init: bool,
+    pub param_decls: Vec<ParamDecl>,
+    pub explicit_destroy_message: Option<String>,
+    pub explicit_destructors: HashMap<String, bool>,
+}
+
+#[derive(Debug)]
+pub struct MirFunctionDeclaration {
+    pub lowered_name: String,
+    pub param_names: Vec<String>,
+    pub param_types: Vec<Ty>,
+    pub defaults: Vec<Option<CheckedConst>>,
+    pub required: Vec<bool>,
+    pub variadic: Option<Ty>,
+    pub variadic_index: Option<usize>,
+    pub kw_variadic: Option<Ty>,
+    pub kw_variadic_index: Option<usize>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+    pub param_decls: Vec<ParamDecl>,
+    /// Whether this declaration has an implicit method receiver. This keeps a
+    /// plain `self` (whose convention is `None`) distinct from a static/free
+    /// callable with no receiver.
+    pub has_receiver: bool,
+    /// Declared convention of that implicit method receiver.
+    pub receiver_convention: Option<ArgConvention>,
+    /// Declared conventions of the explicit runtime parameters, aligned with
+    /// `param_types`. Effective per-call `ref` access may narrow to `Read`.
+    pub param_conventions: Vec<Option<ArgConvention>>,
+    /// Checked return type of the callable.
+    pub ret_ty: Ty,
+    /// Whether the callable returns a reference handle to `ret_ty` rather than
+    /// an owned value. The selected call carries the instantiated origin and
+    /// mutability; this declaration fact verifies the ABI family.
+    pub returns_reference: bool,
+    /// Checked raising contract and its declared error type.
+    pub raises: bool,
+    pub error_ty: Option<Ty>,
+    /// Whether each runtime parameter is a `mut`/`ref` reference whose final
+    /// value writes back through a caller place. Same order as `param_types`.
+    pub ref_params: Vec<bool>,
+}
+
+/// Lower a whole program (a top-level statement list) into per-function MIR.
+///
+/// Decision — **declarations are handled here, not inside a function body**: each
+/// top-level `def` becomes its own `MirFunction`; each `struct` method becomes
+/// `Struct.method`; a `trait`'s bodiless requirements produce nothing (default
+/// methods are deferred). Remaining statements form `__toplevel__`; production
+/// compilation has already rejected executable file-scope source statements.
+/// (Nested `def`s inside a body are still deferred — see `lower_stmt`.)
+pub fn lower_program(program: &[Stmt]) -> Result<MirProgram, crate::error::TypeError> {
+    let checked = crate::checker::check_program(program)?;
+    Ok(lower_checked_program(&checked))
+}
+
+pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
+    let program = checked.statements();
+    let mut functions = Vec::new();
+    let mut declarations = MirDeclarations::default();
+    let mut invariant_errors = Vec::new();
+    let mut toplevel: Vec<Stmt> = Vec::new();
+    let overloads = crate::symbol::OverloadSets::scan(program);
+
+    for s in program {
+        match &s.kind {
+            StmtKind::Def {
+                name,
+                type_params,
+                params,
+                positional_only,
+                keyword_only,
+                body,
+                ..
+            } => {
+                let named_result = params
+                    .iter()
+                    .find(|p| matches!(p.convention, Some(ArgConvention::Out)));
+                // ABI parameters lead the variable table; the named result is a
+                // callee-local uninitialized slot and is never passed by callers.
+                let caller_params: Vec<_> = params
+                    .iter()
+                    .filter(|p| !matches!(p.convention, Some(ArgConvention::Out)))
+                    .collect();
+                let mut names: Vec<String> = caller_params.iter().map(|p| p.name.clone()).collect();
+                if let Some(result) = named_result {
+                    names.push(result.name.clone());
+                }
+                let generic_site = GenericSite::Function {
+                    module: s.module.clone(),
+                    declaration: s.span,
+                    syntax: s.syntax_id,
+                };
+                let param_decls = checked
+                    .generic_parameters_at(&generic_site)
+                    .unwrap_or(&[])
+                    .to_vec();
+                let value_parameter_locals = value_parameter_locals(&param_decls);
+                names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
+                let ptys = caller_params
+                    .iter()
+                    .map(|p| {
+                        let param = params
+                            .iter()
+                            .position(|candidate| std::ptr::eq(candidate, *p))
+                            .expect("caller parameter belongs to declaration");
+                        body_parameter_ty(
+                            p,
+                            checked_type_or_record(
+                                checked,
+                                AnnotationSite::FunctionParam {
+                                    module: s.module.clone(),
+                                    declaration: s.span,
+                                    syntax: s.syntax_id,
+                                    param,
+                                },
+                                &format!("parameter '{}' of function '{name}'", p.name),
+                                &mut invariant_errors,
+                            ),
+                        )
+                    })
+                    .collect();
+                let owned = caller_params
+                    .iter()
+                    .map(|p| is_owned(&p.convention))
+                    .collect();
+                let deinit = caller_params
+                    .iter()
+                    .map(|p| is_deinit(&p.convention))
+                    .collect();
+                let refp = caller_params
+                    .iter()
+                    .map(|p| is_ref(&p.convention))
+                    .collect();
+                let lowered_name =
+                    crate::symbol::lowered_def_name(name, type_params, params, &overloads);
+                let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
+                let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
+                let regular: Vec<_> = params
+                    .iter()
+                    .filter(|p| {
+                        p.kind == ParamKind::Regular
+                            && !matches!(p.convention, Some(ArgConvention::Out))
+                    })
+                    .collect();
+                let return_site = AnnotationSite::FunctionReturn {
+                    module: s.module.clone(),
+                    declaration: s.span,
+                    syntax: s.syntax_id,
+                };
+                let ret_ty = checked_type_or_record(
+                    checked,
+                    return_site.clone(),
+                    &format!("return type of function '{name}'"),
+                    &mut invariant_errors,
+                );
+                let effect = checked
+                    .declaration_effect_at(&return_site)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        invariant_errors
+                            .push(format!("missing checked effect for function '{name}'"));
+                        crate::checked::DeclarationEffect {
+                            raises: false,
+                            error: None,
+                            returns_reference: false,
+                        }
+                    });
+                declarations.functions.push(MirFunctionDeclaration {
+                    lowered_name: lowered_name.clone(),
+                    param_names: regular.iter().map(|p| p.name.clone()).collect(),
+                    param_types: regular
+                        .iter()
+                        .map(|p| {
+                            checked_type_or_record(
+                                checked,
+                                AnnotationSite::FunctionParam {
+                                    module: s.module.clone(),
+                                    declaration: s.span,
+                                    syntax: s.syntax_id,
+                                    param: params
+                                        .iter()
+                                        .position(|candidate| std::ptr::eq(candidate, *p))
+                                        .unwrap_or(params.len()),
+                                },
+                                &format!("parameter '{}' of function '{name}'", p.name),
+                                &mut invariant_errors,
+                            )
+                        })
+                        .collect(),
+                    defaults: regular
+                        .iter()
+                        .map(|p| p.default.as_ref().and_then(CheckedConst::from_expr))
+                        .collect(),
+                    required: regular.iter().map(|p| p.default.is_none()).collect(),
+                    variadic: variadic_idx.map(|i| {
+                        checked_type_or_record(
+                            checked,
+                            AnnotationSite::FunctionParam {
+                                module: s.module.clone(),
+                                declaration: s.span,
+                                syntax: s.syntax_id,
+                                param: i,
+                            },
+                            &format!("variadic parameter of function '{name}'"),
+                            &mut invariant_errors,
+                        )
+                    }),
+                    variadic_index: runtime_variadic_index(params, variadic_idx),
+                    kw_variadic: kw_variadic_idx.map(|i| {
+                        checked_type_or_record(
+                            checked,
+                            AnnotationSite::FunctionParam {
+                                module: s.module.clone(),
+                                declaration: s.span,
+                                syntax: s.syntax_id,
+                                param: i,
+                            },
+                            &format!("keyword variadic parameter of function '{name}'"),
+                            &mut invariant_errors,
+                        )
+                    }),
+                    kw_variadic_index: runtime_parameter_index(params, kw_variadic_idx),
+                    positional_only: regular_marker_index(params, *positional_only),
+                    keyword_only: effective_keyword_only_index(params, *keyword_only, variadic_idx),
+                    param_decls,
+                    has_receiver: false,
+                    receiver_convention: None,
+                    param_conventions: regular.iter().map(|p| p.convention).collect(),
+                    ret_ty: ret_ty.clone(),
+                    returns_reference: effect.returns_reference,
+                    raises: effect.raises,
+                    error_ty: effect.error.clone(),
+                    ref_params: regular.iter().map(|p| is_ref(&p.convention)).collect(),
+                });
+                lower_fn_nested(
+                    FunctionLowering {
+                        checked,
+                        name: &lowered_name,
+                        parameter_names: &names,
+                        parameter_types: ptys,
+                        value_parameter_locals,
+                        owned_parameters: owned,
+                        deinit_parameters: deinit,
+                        reference_parameters: refp,
+                        returns_reference: effect.returns_reference,
+                        ret_ty,
+                        raises: effect.raises,
+                        error_ty: effect.error,
+                        named_result: named_result.map(|p| p.name.as_str()),
+                        body,
+                        overloads: &overloads,
+                    },
+                    &mut functions,
+                    &mut declarations,
+                );
+            }
+            StmtKind::Struct {
+                name,
+                type_params,
+                fields,
+                methods,
+                fieldwise_init,
+                ..
+            } => {
+                let mut_self_methods = methods
+                    .iter()
+                    .filter(|m| {
+                        matches!(
+                            m.self_convention,
+                            Some(ArgConvention::Mut | ArgConvention::Ref)
+                        )
+                    })
+                    .map(|m| {
+                        let method_name = crate::symbol::lifecycle_method_name(m);
+                        let source = format!("{name}.{method_name}");
+                        let lowered = crate::symbol::lowered_method_name(
+                            &source,
+                            type_params,
+                            &m.params,
+                            m.self_convention,
+                            &overloads,
+                        );
+                        if lowered == source {
+                            method_name.to_string()
+                        } else {
+                            lowered
+                        }
+                    })
+                    .collect();
+                declarations.structs.push(MirStructDeclaration {
+                    name: name.clone(),
+                    fields: fields
+                        .iter()
+                        .enumerate()
+                        .map(|(field_index, field)| {
+                            (
+                                field.name.clone(),
+                                checked_type_or_record(
+                                    checked,
+                                    AnnotationSite::StructField {
+                                        module: s.module.clone(),
+                                        declaration: name.clone(),
+                                        field: field_index,
+                                    },
+                                    &format!("field '{}' of struct '{name}'", field.name),
+                                    &mut invariant_errors,
+                                ),
+                            )
+                        })
+                        .collect(),
+                    mut_self_methods,
+                    fieldwise_init: *fieldwise_init,
+                    param_decls: checked
+                        .generic_parameters_at(&GenericSite::Struct {
+                            module: s.module.clone(),
+                            declaration: name.clone(),
+                        })
+                        .unwrap_or(&[])
+                        .to_vec(),
+                    explicit_destroy_message: checked
+                        .explicit_destroy_types()
+                        .get(name)
+                        .map(|info| info.message.clone()),
+                    explicit_destructors: checked
+                        .explicit_destroy_types()
+                        .get(name)
+                        .map(|info| info.destructors.clone())
+                        .unwrap_or_default(),
+                });
+                for (method_index, m) in methods.iter().enumerate() {
+                    let method_name = crate::symbol::lifecycle_method_name(m);
+                    let source_mangled = format!("{name}.{method_name}");
+                    let mangled = crate::symbol::lowered_method_name(
+                        &source_mangled,
+                        type_params,
+                        &m.params,
+                        m.self_convention,
+                        &overloads,
+                    );
+                    let variadic_idx = m
+                        .params
+                        .iter()
+                        .position(|param| param.kind == ParamKind::Variadic);
+                    let kw_variadic_idx = m
+                        .params
+                        .iter()
+                        .position(|param| param.kind == ParamKind::KwVariadic);
+                    let regular: Vec<_> = m
+                        .params
+                        .iter()
+                        .filter(|param| {
+                            param.kind == ParamKind::Regular
+                                && !matches!(param.convention, Some(ArgConvention::Out))
+                        })
+                        .collect();
+                    let return_site = AnnotationSite::MethodReturn {
+                        module: s.module.clone(),
+                        declaration: name.clone(),
+                        method: method_index,
+                    };
+                    let ret_ty = checked_type_or_record(
+                        checked,
+                        return_site.clone(),
+                        &format!("return type of method '{source_mangled}'"),
+                        &mut invariant_errors,
+                    );
+                    let effect = checked
+                        .declaration_effect_at(&return_site)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            invariant_errors.push(format!(
+                                "missing checked effect for method '{source_mangled}'"
+                            ));
+                            crate::checked::DeclarationEffect {
+                                raises: false,
+                                error: None,
+                                returns_reference: false,
+                            }
+                        });
+                    let generic_site = GenericSite::Method {
+                        module: s.module.clone(),
+                        declaration: name.clone(),
+                        method: method_index,
+                    };
+                    let param_decls = checked
+                        .generic_parameters_at(&generic_site)
+                        .unwrap_or(&[])
+                        .to_vec();
+                    let value_parameter_locals = value_parameter_locals(&param_decls);
+                    declarations.functions.push(MirFunctionDeclaration {
+                        lowered_name: mangled.clone(),
+                        param_names: regular.iter().map(|param| param.name.clone()).collect(),
+                        param_types: regular
+                            .iter()
+                            .map(|param| {
+                                checked_type_or_record(
+                                    checked,
+                                    AnnotationSite::MethodParam {
+                                        module: s.module.clone(),
+                                        declaration: name.clone(),
+                                        method: method_index,
+                                        param: m
+                                            .params
+                                            .iter()
+                                            .position(|candidate| std::ptr::eq(candidate, *param))
+                                            .unwrap_or(m.params.len()),
+                                    },
+                                    &format!(
+                                        "parameter '{}' of method '{source_mangled}'",
+                                        param.name
+                                    ),
+                                    &mut invariant_errors,
+                                )
+                            })
+                            .collect(),
+                        defaults: regular
+                            .iter()
+                            .map(|param| param.default.as_ref().and_then(CheckedConst::from_expr))
+                            .collect(),
+                        required: regular
+                            .iter()
+                            .map(|param| param.default.is_none())
+                            .collect(),
+                        variadic: variadic_idx.map(|index| {
+                            checked_type_or_record(
+                                checked,
+                                AnnotationSite::MethodParam {
+                                    module: s.module.clone(),
+                                    declaration: name.clone(),
+                                    method: method_index,
+                                    param: index,
+                                },
+                                &format!("variadic parameter of method '{source_mangled}'"),
+                                &mut invariant_errors,
+                            )
+                        }),
+                        variadic_index: runtime_variadic_index(&m.params, variadic_idx),
+                        kw_variadic: kw_variadic_idx.map(|index| {
+                            checked_type_or_record(
+                                checked,
+                                AnnotationSite::MethodParam {
+                                    module: s.module.clone(),
+                                    declaration: name.clone(),
+                                    method: method_index,
+                                    param: index,
+                                },
+                                &format!("keyword variadic parameter of method '{source_mangled}'"),
+                                &mut invariant_errors,
+                            )
+                        }),
+                        kw_variadic_index: runtime_parameter_index(&m.params, kw_variadic_idx),
+                        positional_only: regular_marker_index(&m.params, m.positional_only),
+                        keyword_only: effective_keyword_only_index(
+                            &m.params,
+                            m.keyword_only,
+                            variadic_idx,
+                        ),
+                        param_decls,
+                        has_receiver: m.has_self,
+                        receiver_convention: m.self_convention,
+                        param_conventions: regular
+                            .iter()
+                            .map(|parameter| parameter.convention)
+                            .collect(),
+                        ret_ty: ret_ty.clone(),
+                        returns_reference: effect.returns_reference,
+                        raises: effect.raises,
+                        error_ty: effect.error.clone(),
+                        ref_params: regular
+                            .iter()
+                            .map(|param| is_ref(&param.convention))
+                            .collect(),
+                    });
+                    // A method's receiver `self` is the implicit first parameter,
+                    // followed by the declared params.
+                    let mut names: Vec<String> = Vec::new();
+                    let mut ptys: Vec<Ty> = Vec::new();
+                    let mut owned: Vec<bool> = Vec::new();
+                    let mut deinit: Vec<bool> = Vec::new();
+                    let mut refp: Vec<bool> = Vec::new();
+                    if m.has_self {
+                        names.push("self".to_string());
+                        ptys.push(Ty::Struct(name.clone(), Vec::new()));
+                        owned.push(is_owned(&m.self_convention));
+                        deinit.push(is_deinit(&m.self_convention));
+                        refp.push(is_ref(&m.self_convention));
+                    }
+                    names.extend(m.params.iter().map(|p| p.name.clone()));
+                    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
+                    ptys.extend(m.params.iter().enumerate().map(|(param, p)| {
+                        body_parameter_ty(
+                            p,
+                            checked_type_or_record(
+                                checked,
+                                AnnotationSite::MethodParam {
+                                    module: s.module.clone(),
+                                    declaration: name.clone(),
+                                    method: method_index,
+                                    param,
+                                },
+                                &format!("parameter '{}' of method '{source_mangled}'", p.name),
+                                &mut invariant_errors,
+                            ),
+                        )
+                    }));
+                    owned.extend(m.params.iter().map(|p| is_owned(&p.convention)));
+                    deinit.extend(m.params.iter().map(|p| is_deinit(&p.convention)));
+                    refp.extend(m.params.iter().map(|p| is_ref(&p.convention)));
+                    lower_fn_nested(
+                        FunctionLowering {
+                            checked,
+                            name: &mangled,
+                            parameter_names: &names,
+                            parameter_types: ptys,
+                            value_parameter_locals,
+                            owned_parameters: owned,
+                            deinit_parameters: deinit,
+                            reference_parameters: refp,
+                            returns_reference: effect.returns_reference,
+                            ret_ty,
+                            raises: effect.raises,
+                            error_ty: effect.error,
+                            named_result: None,
+                            body: &m.body,
+                            overloads: &overloads,
+                        },
+                        &mut functions,
+                        &mut declarations,
+                    );
+                }
+            }
+            // A `trait`'s requirements have no body (`...`); nothing to lower yet.
+            StmtKind::Trait { .. } => {}
+            _ => toplevel.push(s.clone()),
+        }
+    }
+
+    let mut toplevel_fn = lower_cfg_nested(
+        &Cfg::build_checked_fn(checked, &[], &toplevel),
+        &HashMap::new(),
+        &overloads,
+        false,
+        &[],
+        &[],
+    );
+    // The synthetic module initializer returns nothing and never raises.
+    toplevel_fn.ret_ty = Some(Ty::None);
+    functions.push(("__toplevel__".to_string(), toplevel_fn));
+    for (name, function) in &mut functions {
+        close_register_types(name, function, &declarations, &mut invariant_errors);
+    }
+    let mut result = MirProgram {
+        functions,
+        declarations,
+        invariant_errors,
+    };
+    result.invariant_errors.extend(verify::verify(&result));
+    result
+}
+
 /// An expression's source span, stamped by the parser (`ast::Expr.span`). Fed
 /// into the [`SpanTable`] so each temporary can be traced back to its origin.
 fn span(e: &Expr) -> SourceSpan {
     e.source_span()
 }
 
-/// Return a source integer literal as a host index without materializing it as
-/// a runtime scalar. This intentionally recognizes only exact literal syntax:
-/// arbitrary index expressions still lower through a register and retain their
-/// ordinary evaluation semantics.
-fn exact_nonnegative_index(expression: &Expr) -> Option<usize> {
-    let ExprKind::Int(value) = &expression.kind else {
-        return None;
-    };
-    value.to_u64().and_then(|value| usize::try_from(value).ok())
+fn checked_type_or_record(
+    checked: &CheckedProgram,
+    site: AnnotationSite,
+    description: &str,
+    invariant_errors: &mut Vec<String>,
+) -> Ty {
+    match checked.checked_type_at(&site) {
+        Some(ty) => ty.clone(),
+        None => {
+            invariant_errors.push(format!("missing checked type for {description}"));
+            Ty::None
+        }
+    }
+}
+
+/// Compile-time value parameters have runtime storage in the callee frame even
+/// though they are not part of the ordinary argument ABI. The VM reifies each
+/// supplied parameter-argument register into these named slots before execution.
+fn value_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
+    decls
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Value {
+                name, ty, variadic, ..
+            } if matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => Some((
+                name.trim_start_matches('*').to_string(),
+                if *variadic {
+                    Ty::VariadicPack(ty.clone())
+                } else {
+                    (**ty).clone()
+                },
+            )),
+            ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
+        })
+        .collect()
 }
 
 /// Derive the executable capability produced by `MakeRef` from the complete
@@ -96,229 +724,6 @@ fn mir_place_handle_ty(
     }))
 }
 
-fn generic_callable_param_decls(callable: &Ty) -> Vec<ParamDecl> {
-    match callable {
-        Ty::GenericFunc { decls, .. } => decls.clone(),
-        Ty::Param {
-            callable_bound: Some(bound),
-            ..
-        } => generic_callable_param_decls(bound),
-        _ => Vec::new(),
-    }
-}
-
-/// A nested `def` lifted to a top-level function: the mangled name it becomes and
-/// the enclosing locals it captures. Captures are passed as leading **`mut`**
-/// parameters (so a read *or* a write of a captured variable works — reference
-/// semantics via the existing write-back), prepended to a call by name.
-#[derive(Clone)]
-struct NestedInfo {
-    binding: crate::origin::OwnerId,
-    source_name: String,
-    mangled: String,
-    /// True when this declaration belongs to the function currently being
-    /// lowered, so its statement creates a closure slot that later uses load.
-    /// Inherited entries (including self-recursion) rebuild from forwarded
-    /// environment parameters because their declaration slot lives in an outer
-    /// frame.
-    materialized_here: bool,
-    /// Captured enclosing-local names, in a deterministic (sorted) order shared by
-    /// the lifted function's parameter list and every rewritten call site.
-    captures: Vec<NestedCapture>,
-    /// The checker's exact callable type for the nested `def`, used to type
-    /// synthetic closure-value registers. `None` only on unchecked paths.
-    callable_ty: Option<Ty>,
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct NestedCapture {
-    name: String,
-    binding: crate::origin::OwnerId,
-    ty: Ty,
-    kind: crate::ast::CaptureKind,
-}
-
-#[derive(Clone)]
-struct ExprFacts {
-    ty: Option<Ty>,
-    place_ty: Option<Ty>,
-    owner: Option<crate::origin::OwnerId>,
-    raises: Option<Ty>,
-    adjustments: Vec<crate::SemanticAdjustment>,
-    comprehension_bindings: Vec<crate::checked::CheckedComprehensionBinding>,
-}
-
-fn expression_children(expression: &Expr) -> Vec<&Expr> {
-    fn param_value(argument: &ParamArg) -> Option<&Expr> {
-        match argument {
-            ParamArg::Value(value) => Some(value),
-            ParamArg::Named { value, .. } => match &**value {
-                ParamArg::Value(value) => Some(value),
-                ParamArg::Type(_) | ParamArg::Named { .. } => None,
-            },
-            ParamArg::Type(_) => None,
-        }
-    }
-
-    match &expression.kind {
-        ExprKind::Prefix(_, value)
-        | ExprKind::Transfer(value)
-        | ExprKind::Spread(value)
-        | ExprKind::Named { value, .. } => {
-            vec![value]
-        }
-        ExprKind::Infix(_, left, right)
-        | ExprKind::Index {
-            object: left,
-            index: right,
-        } => {
-            vec![left, right]
-        }
-        ExprKind::Call {
-            param_args,
-            args,
-            kwargs,
-            ..
-        } => param_args
-            .iter()
-            .filter_map(param_value)
-            .chain(args.iter())
-            .chain(kwargs.iter().map(|argument| &argument.value))
-            .collect(),
-        ExprKind::Invoke {
-            callee,
-            param_args,
-            args,
-            kwargs,
-        } => std::iter::once(callee.as_ref())
-            .chain(param_args.iter().filter_map(param_value))
-            .chain(args.iter())
-            .chain(kwargs.iter().map(|argument| &argument.value))
-            .collect(),
-        ExprKind::Member { object, .. } => vec![object],
-        ExprKind::MethodCall {
-            object,
-            args,
-            kwargs,
-            ..
-        } => std::iter::once(object.as_ref())
-            .chain(args.iter())
-            .chain(kwargs.iter().map(|argument| &argument.value))
-            .collect(),
-        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => values.iter().collect(),
-        ExprKind::BraceLit(values) => values
-            .iter()
-            .flat_map(|(key, value)| std::iter::once(key).chain(value.iter()))
-            .collect(),
-        ExprKind::Comprehension {
-            key,
-            value,
-            clauses,
-            ..
-        } => clauses
-            .iter()
-            .map(|clause| match clause {
-                crate::ast::ComprehensionClause::For { iter, .. } => iter.as_ref(),
-                crate::ast::ComprehensionClause::If(condition) => condition.as_ref(),
-            })
-            .chain(key.iter().map(Box::as_ref))
-            .chain(std::iter::once(value.as_ref()))
-            .collect(),
-        ExprKind::IfExpr {
-            cond,
-            then_branch,
-            else_branch,
-        } => vec![cond, then_branch, else_branch],
-        ExprKind::Compare { first, rest } => std::iter::once(first.as_ref())
-            .chain(rest.iter().map(|(_, value)| value))
-            .collect(),
-        ExprKind::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            ..
-        } => std::iter::once(object.as_ref())
-            .chain(
-                [lower, upper, step]
-                    .into_iter()
-                    .filter_map(|value| value.as_deref()),
-            )
-            .collect(),
-        ExprKind::MultiIndex { object, args } => {
-            let mut children = vec![object.as_ref()];
-            for argument in args {
-                match argument {
-                    crate::ast::SubscriptArg::Index(value) => children.push(value),
-                    crate::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    } => {
-                        children.extend([lower, upper, step].into_iter().flatten().map(Box::as_ref))
-                    }
-                }
-            }
-            children
-        }
-        ExprKind::TString { parts, .. } => parts
-            .iter()
-            .filter_map(|part| match part {
-                TStringPart::Expr(value) => Some(value.as_ref()),
-                TStringPart::Literal(_) => None,
-            })
-            .collect(),
-        ExprKind::TypeApply { args, .. } => args.iter().filter_map(param_value).collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {
-    match &statement.kind {
-        StmtKind::VarDecl { value, .. }
-        | StmtKind::RefDecl { value, .. }
-        | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
-        | StmtKind::Raise(value)
-        | StmtKind::Expr(value) => vec![value],
-        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
-            vec![place, value]
-        }
-        StmtKind::Unpack { targets, value } => {
-            let mut roots: Vec<&Expr> = targets.iter().collect();
-            roots.push(value);
-            roots
-        }
-        StmtKind::Return(Some(value)) => vec![value],
-        StmtKind::With { items, .. } => items.iter().map(|item| &item.context).collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn index_hir_expression(
-    syntax: &Expr,
-    expression: &crate::hir::HirExpr,
-    index: &mut HashMap<usize, ExprFacts>,
-) {
-    index.insert(
-        syntax as *const Expr as usize,
-        ExprFacts {
-            ty: expression.ty.clone(),
-            place_ty: expression.place.as_ref().map(|place| place.ty.clone()),
-            owner: expression
-                .binding
-                .or_else(|| expression.place.as_ref().map(|place| place.owner)),
-            raises: expression.effects.raises.clone(),
-            adjustments: expression.adjustments.clone(),
-            comprehension_bindings: expression.comprehension_bindings.clone(),
-        },
-    );
-    for (child_syntax, child) in expression_children(syntax)
-        .into_iter()
-        .zip(&expression.children)
-    {
-        index_hir_expression(child_syntax, child, index);
-    }
-}
-
 /// Flattens nested `Expr`s into a block's instruction list. `cur` is the block
 /// currently being appended to.
 struct Flatten<'a> {
@@ -358,28 +763,6 @@ struct Flatten<'a> {
     /// whole live range, so deref sites may substitute the owner place.
     reassigned_names: std::collections::HashSet<String>,
     returns_reference: bool,
-}
-
-/// Borrowed syntax and checked binder data for one structured `try`.
-/// Keeping these parts together makes the primary HIR and fallback lowering
-/// paths share one region-lowering contract.
-struct TryRegions<'a> {
-    body: &'a [Stmt],
-    except: &'a Option<(Option<String>, Vec<Stmt>)>,
-    orelse: &'a Option<Vec<Stmt>>,
-    finalbody: &'a Option<Vec<Stmt>>,
-    handler_binding: Option<crate::origin::OwnerId>,
-}
-
-/// The invariant construction state shared by every recursive level of a
-/// collection comprehension. Only the clause cursor and checked bindings vary
-/// as the nested control-flow tree is emitted.
-struct ComprehensionPlan<'a> {
-    collection: VarId,
-    target: &'a Ty,
-    insert: &'a str,
-    key: Option<&'a Expr>,
-    value: &'a Expr,
 }
 
 /// Names whose binding may change after the first assignment (or that a nested
@@ -988,19 +1371,37 @@ impl Flatten<'_> {
     }
 }
 
-/// Lower a whole HIR control-flow graph (one function body) into a `MirFunction`.
-/// Each HIR block becomes a MIR block (same order); a single [`Flatten`] threads
-/// the register counter, the variable interner (seeded from `cfg.vars` so IDs
-/// agree with the HIR), and the span table across the whole function.
-pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
-    lower_cfg_nested(
-        cfg,
-        &HashMap::new(),
-        &crate::symbol::OverloadSets::default(),
-        false,
-        &[],
-        &[],
-    )
+/// A nested `def` lifted to a top-level function: the mangled name it becomes and
+/// the enclosing locals it captures. Captures are passed as leading **`mut`**
+/// parameters (so a read *or* a write of a captured variable works — reference
+/// semantics via the existing write-back), prepended to a call by name.
+#[derive(Clone)]
+struct NestedInfo {
+    binding: crate::origin::OwnerId,
+    source_name: String,
+    mangled: String,
+    /// True when this declaration belongs to the function currently being
+    /// lowered, so its statement creates a closure slot that later uses load.
+    /// Inherited entries (including self-recursion) rebuild from forwarded
+    /// environment parameters because their declaration slot lives in an outer
+    /// frame.
+    materialized_here: bool,
+    /// Captured enclosing-local names, in a deterministic (sorted) order shared by
+    /// the lifted function's parameter list and every rewritten call site.
+    captures: Vec<NestedCapture>,
+    /// The checker's exact callable type for the nested `def`, used to type
+    /// synthetic closure-value registers. `None` only on unchecked paths.
+    callable_ty: Option<Ty>,
+}
+
+#[derive(Clone)]
+struct ExprFacts {
+    ty: Option<Ty>,
+    place_ty: Option<Ty>,
+    owner: Option<crate::origin::OwnerId>,
+    raises: Option<Ty>,
+    adjustments: Vec<crate::SemanticAdjustment>,
+    comprehension_bindings: Vec<crate::checked::CheckedComprehensionBinding>,
 }
 
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call to a registered
@@ -1096,19 +1497,222 @@ fn lower_cfg_nested(
     mir
 }
 
-/// A whole program's worth of lowered functions, keyed by name. The synthetic
-/// `__toplevel__` holds module initialization and explicit legacy test snippets.
-/// Production compilation rejects executable file-scope source statements.
-#[derive(Debug)]
-pub struct MirProgram {
-    pub functions: Vec<(String, MirFunction)>,
-    /// Declaration facts needed by execution, normalized once while lowering.
-    /// Backends consume this instead of rescanning the source AST.
-    pub declarations: MirDeclarations,
-    /// Violations of the checked-program contract discovered while lowering.
-    /// Backends must reject a program with any entry rather than executing a
-    /// guessed fallback representation.
-    pub invariant_errors: Vec<String>,
+/// Translate a source parameter marker into the runtime frame layout. Named
+/// `out` results are callee-local slots, so they do not consume an incoming
+/// argument position; variadic collectors do consume one frame position.
+fn runtime_parameter_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
+    marker.map(|index| {
+        params[..index]
+            .iter()
+            .filter(|parameter| {
+                !matches!(parameter.convention, Some(ArgConvention::Out))
+                    && parameter.kind != ParamKind::KwVariadic
+            })
+            .count()
+    })
+}
+
+/// `*args` is inserted among regular incoming arguments before the collector is
+/// materialized, so only preceding non-`out` regular parameters determine its
+/// insertion point.
+fn runtime_variadic_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
+    marker.map(|index| {
+        params[..index]
+            .iter()
+            .filter(|parameter| {
+                parameter.kind == ParamKind::Regular
+                    && !matches!(parameter.convention, Some(ArgConvention::Out))
+            })
+            .count()
+    })
+}
+
+/// Translate a declaration-side parameter type into the type of the single
+/// runtime slot visible in the function body. Variadic element types are ABI
+/// descriptors: the call matcher uses them per supplied argument, then binds a
+/// single aggregate in the callee. Positional packs use private pack storage;
+/// keyword packs use the public owning `StringDict`. Keeping the positional
+/// discriminator out of `MirFunction` prevents ordinary tuple operations,
+/// ownership, and place typing from having to understand an artificial
+/// source-inexpressible aggregate kind.
+fn body_parameter_ty(parameter: &FnParam, ty: Ty) -> Ty {
+    match (parameter.kind, ty) {
+        (ParamKind::Variadic, Ty::RuntimePack(elements)) => Ty::Tuple(elements),
+        (ParamKind::Variadic, element) => Ty::VariadicPack(Box::new(element)),
+        (ParamKind::KwVariadic, element) => Ty::Struct(
+            "StringDict".to_string(),
+            vec![crate::types::TyArg::Ty(element)],
+        ),
+        (_, ty) => ty,
+    }
+}
+
+fn generic_callable_param_decls(callable: &Ty) -> Vec<ParamDecl> {
+    match callable {
+        Ty::GenericFunc { decls, .. } => decls.clone(),
+        Ty::Param {
+            callable_bound: Some(bound),
+            ..
+        } => generic_callable_param_decls(bound),
+        _ => Vec::new(),
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct NestedCapture {
+    name: String,
+    binding: crate::origin::OwnerId,
+    ty: Ty,
+    kind: crate::ast::CaptureKind,
+}
+
+fn expression_children(expression: &Expr) -> Vec<&Expr> {
+    fn param_value(argument: &ParamArg) -> Option<&Expr> {
+        match argument {
+            ParamArg::Value(value) => Some(value),
+            ParamArg::Named { value, .. } => match &**value {
+                ParamArg::Value(value) => Some(value),
+                ParamArg::Type(_) | ParamArg::Named { .. } => None,
+            },
+            ParamArg::Type(_) => None,
+        }
+    }
+
+    match &expression.kind {
+        ExprKind::Prefix(_, value)
+        | ExprKind::Transfer(value)
+        | ExprKind::Spread(value)
+        | ExprKind::Named { value, .. } => {
+            vec![value]
+        }
+        ExprKind::Infix(_, left, right)
+        | ExprKind::Index {
+            object: left,
+            index: right,
+        } => {
+            vec![left, right]
+        }
+        ExprKind::Call {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } => param_args
+            .iter()
+            .filter_map(param_value)
+            .chain(args.iter())
+            .chain(kwargs.iter().map(|argument| &argument.value))
+            .collect(),
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } => std::iter::once(callee.as_ref())
+            .chain(param_args.iter().filter_map(param_value))
+            .chain(args.iter())
+            .chain(kwargs.iter().map(|argument| &argument.value))
+            .collect(),
+        ExprKind::Member { object, .. } => vec![object],
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } => std::iter::once(object.as_ref())
+            .chain(args.iter())
+            .chain(kwargs.iter().map(|argument| &argument.value))
+            .collect(),
+        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => values.iter().collect(),
+        ExprKind::BraceLit(values) => values
+            .iter()
+            .flat_map(|(key, value)| std::iter::once(key).chain(value.iter()))
+            .collect(),
+        ExprKind::Comprehension {
+            key,
+            value,
+            clauses,
+            ..
+        } => clauses
+            .iter()
+            .map(|clause| match clause {
+                crate::ast::ComprehensionClause::For { iter, .. } => iter.as_ref(),
+                crate::ast::ComprehensionClause::If(condition) => condition.as_ref(),
+            })
+            .chain(key.iter().map(Box::as_ref))
+            .chain(std::iter::once(value.as_ref()))
+            .collect(),
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => vec![cond, then_branch, else_branch],
+        ExprKind::Compare { first, rest } => std::iter::once(first.as_ref())
+            .chain(rest.iter().map(|(_, value)| value))
+            .collect(),
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => std::iter::once(object.as_ref())
+            .chain(
+                [lower, upper, step]
+                    .into_iter()
+                    .filter_map(|value| value.as_deref()),
+            )
+            .collect(),
+        ExprKind::MultiIndex { object, args } => {
+            let mut children = vec![object.as_ref()];
+            for argument in args {
+                match argument {
+                    crate::ast::SubscriptArg::Index(value) => children.push(value),
+                    crate::ast::SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    } => {
+                        children.extend([lower, upper, step].into_iter().flatten().map(Box::as_ref))
+                    }
+                }
+            }
+            children
+        }
+        ExprKind::TString { parts, .. } => parts
+            .iter()
+            .filter_map(|part| match part {
+                TStringPart::Expr(value) => Some(value.as_ref()),
+                TStringPart::Literal(_) => None,
+            })
+            .collect(),
+        ExprKind::TypeApply { args, .. } => args.iter().filter_map(param_value).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn index_hir_expression(
+    syntax: &Expr,
+    expression: &crate::hir::HirExpr,
+    index: &mut HashMap<usize, ExprFacts>,
+) {
+    index.insert(
+        syntax as *const Expr as usize,
+        ExprFacts {
+            ty: expression.ty.clone(),
+            place_ty: expression.place.as_ref().map(|place| place.ty.clone()),
+            owner: expression
+                .binding
+                .or_else(|| expression.place.as_ref().map(|place| place.owner)),
+            raises: expression.effects.raises.clone(),
+            adjustments: expression.adjustments.clone(),
+            comprehension_bindings: expression.comprehension_bindings.clone(),
+        },
+    );
+    for (child_syntax, child) in expression_children(syntax)
+        .into_iter()
+        .zip(&expression.children)
+    {
+        index_hir_expression(child_syntax, child, index);
+    }
 }
 
 /// The error type that can propagate out of a lowered `try`-body region: the
@@ -1557,664 +2161,61 @@ fn close_register_types(
     f.var_tys = var_tys;
 }
 
-fn checked_type_or_record(
-    checked: &CheckedProgram,
-    site: AnnotationSite,
-    description: &str,
-    invariant_errors: &mut Vec<String>,
-) -> Ty {
-    match checked.checked_type_at(&site) {
-        Some(ty) => ty.clone(),
-        None => {
-            invariant_errors.push(format!("missing checked type for {description}"));
-            Ty::None
+/// Return a source integer literal as a host index without materializing it as
+/// a runtime scalar. This intentionally recognizes only exact literal syntax:
+/// arbitrary index expressions still lower through a register and retain their
+/// ordinary evaluation semantics.
+fn exact_nonnegative_index(expression: &Expr) -> Option<usize> {
+    let ExprKind::Int(value) = &expression.kind else {
+        return None;
+    };
+    value.to_u64().and_then(|value| usize::try_from(value).ok())
+}
+
+fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {
+    match &statement.kind {
+        StmtKind::VarDecl { value, .. }
+        | StmtKind::RefDecl { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::Comptime { value, .. }
+        | StmtKind::Raise(value)
+        | StmtKind::Expr(value) => vec![value],
+        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+            vec![place, value]
         }
+        StmtKind::Unpack { targets, value } => {
+            let mut roots: Vec<&Expr> = targets.iter().collect();
+            roots.push(value);
+            roots
+        }
+        StmtKind::Return(Some(value)) => vec![value],
+        StmtKind::With { items, .. } => items.iter().map(|item| &item.context).collect(),
+        _ => Vec::new(),
     }
 }
 
-#[derive(Debug, Default)]
-pub struct MirDeclarations {
-    pub structs: Vec<MirStructDeclaration>,
-    pub functions: Vec<MirFunctionDeclaration>,
+/// Borrowed syntax and checked binder data for one structured `try`.
+/// Keeping these parts together makes the primary HIR and fallback lowering
+/// paths share one region-lowering contract.
+struct TryRegions<'a> {
+    body: &'a [Stmt],
+    except: &'a Option<(Option<String>, Vec<Stmt>)>,
+    orelse: &'a Option<Vec<Stmt>>,
+    finalbody: &'a Option<Vec<Stmt>>,
+    handler_binding: Option<crate::origin::OwnerId>,
 }
 
-#[derive(Debug)]
-pub struct MirStructDeclaration {
-    pub name: String,
-    pub fields: Vec<(String, Ty)>,
-    pub mut_self_methods: HashSet<String>,
-    pub fieldwise_init: bool,
-    pub param_decls: Vec<ParamDecl>,
-    pub explicit_destroy_message: Option<String>,
-    pub explicit_destructors: HashMap<String, bool>,
-}
-
-#[derive(Debug)]
-pub struct MirFunctionDeclaration {
-    pub lowered_name: String,
-    pub param_names: Vec<String>,
-    pub param_types: Vec<Ty>,
-    pub defaults: Vec<Option<CheckedConst>>,
-    pub required: Vec<bool>,
-    pub variadic: Option<Ty>,
-    pub variadic_index: Option<usize>,
-    pub kw_variadic: Option<Ty>,
-    pub kw_variadic_index: Option<usize>,
-    pub positional_only: Option<usize>,
-    pub keyword_only: Option<usize>,
-    pub param_decls: Vec<ParamDecl>,
-    /// Whether this declaration has an implicit method receiver. This keeps a
-    /// plain `self` (whose convention is `None`) distinct from a static/free
-    /// callable with no receiver.
-    pub has_receiver: bool,
-    /// Declared convention of that implicit method receiver.
-    pub receiver_convention: Option<ArgConvention>,
-    /// Declared conventions of the explicit runtime parameters, aligned with
-    /// `param_types`. Effective per-call `ref` access may narrow to `Read`.
-    pub param_conventions: Vec<Option<ArgConvention>>,
-    /// Checked return type of the callable.
-    pub ret_ty: Ty,
-    /// Whether the callable returns a reference handle to `ret_ty` rather than
-    /// an owned value. The selected call carries the instantiated origin and
-    /// mutability; this declaration fact verifies the ABI family.
-    pub returns_reference: bool,
-    /// Checked raising contract and its declared error type.
-    pub raises: bool,
-    pub error_ty: Option<Ty>,
-    /// Whether each runtime parameter is a `mut`/`ref` reference whose final
-    /// value writes back through a caller place. Same order as `param_types`.
-    pub ref_params: Vec<bool>,
-}
-
-/// Translate a source parameter marker into the runtime frame layout. Named
-/// `out` results are callee-local slots, so they do not consume an incoming
-/// argument position; variadic collectors do consume one frame position.
-fn runtime_parameter_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
-    marker.map(|index| {
-        params[..index]
-            .iter()
-            .filter(|parameter| {
-                !matches!(parameter.convention, Some(ArgConvention::Out))
-                    && parameter.kind != ParamKind::KwVariadic
-            })
-            .count()
-    })
-}
-
-/// `*args` is inserted among regular incoming arguments before the collector is
-/// materialized, so only preceding non-`out` regular parameters determine its
-/// insertion point.
-fn runtime_variadic_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
-    marker.map(|index| {
-        params[..index]
-            .iter()
-            .filter(|parameter| {
-                parameter.kind == ParamKind::Regular
-                    && !matches!(parameter.convention, Some(ArgConvention::Out))
-            })
-            .count()
-    })
-}
-
-/// Translate a declaration-side parameter type into the type of the single
-/// runtime slot visible in the function body. Variadic element types are ABI
-/// descriptors: the call matcher uses them per supplied argument, then binds a
-/// single aggregate in the callee. Positional packs use private pack storage;
-/// keyword packs use the public owning `StringDict`. Keeping the positional
-/// discriminator out of `MirFunction` prevents ordinary tuple operations,
-/// ownership, and place typing from having to understand an artificial
-/// source-inexpressible aggregate kind.
-fn body_parameter_ty(parameter: &FnParam, ty: Ty) -> Ty {
-    match (parameter.kind, ty) {
-        (ParamKind::Variadic, Ty::RuntimePack(elements)) => Ty::Tuple(elements),
-        (ParamKind::Variadic, element) => Ty::VariadicPack(Box::new(element)),
-        (ParamKind::KwVariadic, element) => Ty::Struct(
-            "StringDict".to_string(),
-            vec![crate::types::TyArg::Ty(element)],
-        ),
-        (_, ty) => ty,
-    }
-}
-
-/// Compile-time value parameters have runtime storage in the callee frame even
-/// though they are not part of the ordinary argument ABI. The VM reifies each
-/// supplied parameter-argument register into these named slots before execution.
-fn value_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
-    decls
-        .iter()
-        .filter_map(|decl| match decl {
-            ParamDecl::Value {
-                name, ty, variadic, ..
-            } if matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => Some((
-                name.trim_start_matches('*').to_string(),
-                if *variadic {
-                    Ty::VariadicPack(ty.clone())
-                } else {
-                    (**ty).clone()
-                },
-            )),
-            ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
-        })
-        .collect()
+/// The invariant construction state shared by every recursive level of a
+/// collection comprehension. Only the clause cursor and checked bindings vary
+/// as the nested control-flow tree is emitted.
+struct ComprehensionPlan<'a> {
+    collection: VarId,
+    target: &'a Ty,
+    insert: &'a str,
+    key: Option<&'a Expr>,
+    value: &'a Expr,
 }
 
 mod nested;
+
 use nested::*;
-
-/// Lower a whole program (a top-level statement list) into per-function MIR.
-///
-/// Decision — **declarations are handled here, not inside a function body**: each
-/// top-level `def` becomes its own `MirFunction`; each `struct` method becomes
-/// `Struct.method`; a `trait`'s bodiless requirements produce nothing (default
-/// methods are deferred). Remaining statements form `__toplevel__`; production
-/// compilation has already rejected executable file-scope source statements.
-/// (Nested `def`s inside a body are still deferred — see `lower_stmt`.)
-pub fn lower_program(program: &[Stmt]) -> Result<MirProgram, crate::error::TypeError> {
-    let checked = crate::checker::check_program(program)?;
-    Ok(lower_checked_program(&checked))
-}
-
-pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
-    let program = checked.statements();
-    let mut functions = Vec::new();
-    let mut declarations = MirDeclarations::default();
-    let mut invariant_errors = Vec::new();
-    let mut toplevel: Vec<Stmt> = Vec::new();
-    let overloads = crate::symbol::OverloadSets::scan(program);
-
-    for s in program {
-        match &s.kind {
-            StmtKind::Def {
-                name,
-                type_params,
-                params,
-                positional_only,
-                keyword_only,
-                body,
-                ..
-            } => {
-                let named_result = params
-                    .iter()
-                    .find(|p| matches!(p.convention, Some(ArgConvention::Out)));
-                // ABI parameters lead the variable table; the named result is a
-                // callee-local uninitialized slot and is never passed by callers.
-                let caller_params: Vec<_> = params
-                    .iter()
-                    .filter(|p| !matches!(p.convention, Some(ArgConvention::Out)))
-                    .collect();
-                let mut names: Vec<String> = caller_params.iter().map(|p| p.name.clone()).collect();
-                if let Some(result) = named_result {
-                    names.push(result.name.clone());
-                }
-                let generic_site = GenericSite::Function {
-                    module: s.module.clone(),
-                    declaration: s.span,
-                    syntax: s.syntax_id,
-                };
-                let param_decls = checked
-                    .generic_parameters_at(&generic_site)
-                    .unwrap_or(&[])
-                    .to_vec();
-                let value_parameter_locals = value_parameter_locals(&param_decls);
-                names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
-                let ptys = caller_params
-                    .iter()
-                    .map(|p| {
-                        let param = params
-                            .iter()
-                            .position(|candidate| std::ptr::eq(candidate, *p))
-                            .expect("caller parameter belongs to declaration");
-                        body_parameter_ty(
-                            p,
-                            checked_type_or_record(
-                                checked,
-                                AnnotationSite::FunctionParam {
-                                    module: s.module.clone(),
-                                    declaration: s.span,
-                                    syntax: s.syntax_id,
-                                    param,
-                                },
-                                &format!("parameter '{}' of function '{name}'", p.name),
-                                &mut invariant_errors,
-                            ),
-                        )
-                    })
-                    .collect();
-                let owned = caller_params
-                    .iter()
-                    .map(|p| is_owned(&p.convention))
-                    .collect();
-                let deinit = caller_params
-                    .iter()
-                    .map(|p| is_deinit(&p.convention))
-                    .collect();
-                let refp = caller_params
-                    .iter()
-                    .map(|p| is_ref(&p.convention))
-                    .collect();
-                let lowered_name =
-                    crate::symbol::lowered_def_name(name, type_params, params, &overloads);
-                let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
-                let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
-                let regular: Vec<_> = params
-                    .iter()
-                    .filter(|p| {
-                        p.kind == ParamKind::Regular
-                            && !matches!(p.convention, Some(ArgConvention::Out))
-                    })
-                    .collect();
-                let return_site = AnnotationSite::FunctionReturn {
-                    module: s.module.clone(),
-                    declaration: s.span,
-                    syntax: s.syntax_id,
-                };
-                let ret_ty = checked_type_or_record(
-                    checked,
-                    return_site.clone(),
-                    &format!("return type of function '{name}'"),
-                    &mut invariant_errors,
-                );
-                let effect = checked
-                    .declaration_effect_at(&return_site)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        invariant_errors
-                            .push(format!("missing checked effect for function '{name}'"));
-                        crate::checked::DeclarationEffect {
-                            raises: false,
-                            error: None,
-                            returns_reference: false,
-                        }
-                    });
-                declarations.functions.push(MirFunctionDeclaration {
-                    lowered_name: lowered_name.clone(),
-                    param_names: regular.iter().map(|p| p.name.clone()).collect(),
-                    param_types: regular
-                        .iter()
-                        .map(|p| {
-                            checked_type_or_record(
-                                checked,
-                                AnnotationSite::FunctionParam {
-                                    module: s.module.clone(),
-                                    declaration: s.span,
-                                    syntax: s.syntax_id,
-                                    param: params
-                                        .iter()
-                                        .position(|candidate| std::ptr::eq(candidate, *p))
-                                        .unwrap_or(params.len()),
-                                },
-                                &format!("parameter '{}' of function '{name}'", p.name),
-                                &mut invariant_errors,
-                            )
-                        })
-                        .collect(),
-                    defaults: regular
-                        .iter()
-                        .map(|p| p.default.as_ref().and_then(CheckedConst::from_expr))
-                        .collect(),
-                    required: regular.iter().map(|p| p.default.is_none()).collect(),
-                    variadic: variadic_idx.map(|i| {
-                        checked_type_or_record(
-                            checked,
-                            AnnotationSite::FunctionParam {
-                                module: s.module.clone(),
-                                declaration: s.span,
-                                syntax: s.syntax_id,
-                                param: i,
-                            },
-                            &format!("variadic parameter of function '{name}'"),
-                            &mut invariant_errors,
-                        )
-                    }),
-                    variadic_index: runtime_variadic_index(params, variadic_idx),
-                    kw_variadic: kw_variadic_idx.map(|i| {
-                        checked_type_or_record(
-                            checked,
-                            AnnotationSite::FunctionParam {
-                                module: s.module.clone(),
-                                declaration: s.span,
-                                syntax: s.syntax_id,
-                                param: i,
-                            },
-                            &format!("keyword variadic parameter of function '{name}'"),
-                            &mut invariant_errors,
-                        )
-                    }),
-                    kw_variadic_index: runtime_parameter_index(params, kw_variadic_idx),
-                    positional_only: regular_marker_index(params, *positional_only),
-                    keyword_only: effective_keyword_only_index(params, *keyword_only, variadic_idx),
-                    param_decls,
-                    has_receiver: false,
-                    receiver_convention: None,
-                    param_conventions: regular.iter().map(|p| p.convention).collect(),
-                    ret_ty: ret_ty.clone(),
-                    returns_reference: effect.returns_reference,
-                    raises: effect.raises,
-                    error_ty: effect.error.clone(),
-                    ref_params: regular.iter().map(|p| is_ref(&p.convention)).collect(),
-                });
-                lower_fn_nested(
-                    FunctionLowering {
-                        checked,
-                        name: &lowered_name,
-                        parameter_names: &names,
-                        parameter_types: ptys,
-                        value_parameter_locals,
-                        owned_parameters: owned,
-                        deinit_parameters: deinit,
-                        reference_parameters: refp,
-                        returns_reference: effect.returns_reference,
-                        ret_ty,
-                        raises: effect.raises,
-                        error_ty: effect.error,
-                        named_result: named_result.map(|p| p.name.as_str()),
-                        body,
-                        overloads: &overloads,
-                    },
-                    &mut functions,
-                    &mut declarations,
-                );
-            }
-            StmtKind::Struct {
-                name,
-                type_params,
-                fields,
-                methods,
-                fieldwise_init,
-                ..
-            } => {
-                let mut_self_methods = methods
-                    .iter()
-                    .filter(|m| {
-                        matches!(
-                            m.self_convention,
-                            Some(ArgConvention::Mut | ArgConvention::Ref)
-                        )
-                    })
-                    .map(|m| {
-                        let method_name = crate::symbol::lifecycle_method_name(m);
-                        let source = format!("{name}.{method_name}");
-                        let lowered = crate::symbol::lowered_method_name(
-                            &source,
-                            type_params,
-                            &m.params,
-                            m.self_convention,
-                            &overloads,
-                        );
-                        if lowered == source {
-                            method_name.to_string()
-                        } else {
-                            lowered
-                        }
-                    })
-                    .collect();
-                declarations.structs.push(MirStructDeclaration {
-                    name: name.clone(),
-                    fields: fields
-                        .iter()
-                        .enumerate()
-                        .map(|(field_index, field)| {
-                            (
-                                field.name.clone(),
-                                checked_type_or_record(
-                                    checked,
-                                    AnnotationSite::StructField {
-                                        module: s.module.clone(),
-                                        declaration: name.clone(),
-                                        field: field_index,
-                                    },
-                                    &format!("field '{}' of struct '{name}'", field.name),
-                                    &mut invariant_errors,
-                                ),
-                            )
-                        })
-                        .collect(),
-                    mut_self_methods,
-                    fieldwise_init: *fieldwise_init,
-                    param_decls: checked
-                        .generic_parameters_at(&GenericSite::Struct {
-                            module: s.module.clone(),
-                            declaration: name.clone(),
-                        })
-                        .unwrap_or(&[])
-                        .to_vec(),
-                    explicit_destroy_message: checked
-                        .explicit_destroy_types()
-                        .get(name)
-                        .map(|info| info.message.clone()),
-                    explicit_destructors: checked
-                        .explicit_destroy_types()
-                        .get(name)
-                        .map(|info| info.destructors.clone())
-                        .unwrap_or_default(),
-                });
-                for (method_index, m) in methods.iter().enumerate() {
-                    let method_name = crate::symbol::lifecycle_method_name(m);
-                    let source_mangled = format!("{name}.{method_name}");
-                    let mangled = crate::symbol::lowered_method_name(
-                        &source_mangled,
-                        type_params,
-                        &m.params,
-                        m.self_convention,
-                        &overloads,
-                    );
-                    let variadic_idx = m
-                        .params
-                        .iter()
-                        .position(|param| param.kind == ParamKind::Variadic);
-                    let kw_variadic_idx = m
-                        .params
-                        .iter()
-                        .position(|param| param.kind == ParamKind::KwVariadic);
-                    let regular: Vec<_> = m
-                        .params
-                        .iter()
-                        .filter(|param| {
-                            param.kind == ParamKind::Regular
-                                && !matches!(param.convention, Some(ArgConvention::Out))
-                        })
-                        .collect();
-                    let return_site = AnnotationSite::MethodReturn {
-                        module: s.module.clone(),
-                        declaration: name.clone(),
-                        method: method_index,
-                    };
-                    let ret_ty = checked_type_or_record(
-                        checked,
-                        return_site.clone(),
-                        &format!("return type of method '{source_mangled}'"),
-                        &mut invariant_errors,
-                    );
-                    let effect = checked
-                        .declaration_effect_at(&return_site)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            invariant_errors.push(format!(
-                                "missing checked effect for method '{source_mangled}'"
-                            ));
-                            crate::checked::DeclarationEffect {
-                                raises: false,
-                                error: None,
-                                returns_reference: false,
-                            }
-                        });
-                    let generic_site = GenericSite::Method {
-                        module: s.module.clone(),
-                        declaration: name.clone(),
-                        method: method_index,
-                    };
-                    let param_decls = checked
-                        .generic_parameters_at(&generic_site)
-                        .unwrap_or(&[])
-                        .to_vec();
-                    let value_parameter_locals = value_parameter_locals(&param_decls);
-                    declarations.functions.push(MirFunctionDeclaration {
-                        lowered_name: mangled.clone(),
-                        param_names: regular.iter().map(|param| param.name.clone()).collect(),
-                        param_types: regular
-                            .iter()
-                            .map(|param| {
-                                checked_type_or_record(
-                                    checked,
-                                    AnnotationSite::MethodParam {
-                                        module: s.module.clone(),
-                                        declaration: name.clone(),
-                                        method: method_index,
-                                        param: m
-                                            .params
-                                            .iter()
-                                            .position(|candidate| std::ptr::eq(candidate, *param))
-                                            .unwrap_or(m.params.len()),
-                                    },
-                                    &format!(
-                                        "parameter '{}' of method '{source_mangled}'",
-                                        param.name
-                                    ),
-                                    &mut invariant_errors,
-                                )
-                            })
-                            .collect(),
-                        defaults: regular
-                            .iter()
-                            .map(|param| param.default.as_ref().and_then(CheckedConst::from_expr))
-                            .collect(),
-                        required: regular
-                            .iter()
-                            .map(|param| param.default.is_none())
-                            .collect(),
-                        variadic: variadic_idx.map(|index| {
-                            checked_type_or_record(
-                                checked,
-                                AnnotationSite::MethodParam {
-                                    module: s.module.clone(),
-                                    declaration: name.clone(),
-                                    method: method_index,
-                                    param: index,
-                                },
-                                &format!("variadic parameter of method '{source_mangled}'"),
-                                &mut invariant_errors,
-                            )
-                        }),
-                        variadic_index: runtime_variadic_index(&m.params, variadic_idx),
-                        kw_variadic: kw_variadic_idx.map(|index| {
-                            checked_type_or_record(
-                                checked,
-                                AnnotationSite::MethodParam {
-                                    module: s.module.clone(),
-                                    declaration: name.clone(),
-                                    method: method_index,
-                                    param: index,
-                                },
-                                &format!("keyword variadic parameter of method '{source_mangled}'"),
-                                &mut invariant_errors,
-                            )
-                        }),
-                        kw_variadic_index: runtime_parameter_index(&m.params, kw_variadic_idx),
-                        positional_only: regular_marker_index(&m.params, m.positional_only),
-                        keyword_only: effective_keyword_only_index(
-                            &m.params,
-                            m.keyword_only,
-                            variadic_idx,
-                        ),
-                        param_decls,
-                        has_receiver: m.has_self,
-                        receiver_convention: m.self_convention,
-                        param_conventions: regular
-                            .iter()
-                            .map(|parameter| parameter.convention)
-                            .collect(),
-                        ret_ty: ret_ty.clone(),
-                        returns_reference: effect.returns_reference,
-                        raises: effect.raises,
-                        error_ty: effect.error.clone(),
-                        ref_params: regular
-                            .iter()
-                            .map(|param| is_ref(&param.convention))
-                            .collect(),
-                    });
-                    // A method's receiver `self` is the implicit first parameter,
-                    // followed by the declared params.
-                    let mut names: Vec<String> = Vec::new();
-                    let mut ptys: Vec<Ty> = Vec::new();
-                    let mut owned: Vec<bool> = Vec::new();
-                    let mut deinit: Vec<bool> = Vec::new();
-                    let mut refp: Vec<bool> = Vec::new();
-                    if m.has_self {
-                        names.push("self".to_string());
-                        ptys.push(Ty::Struct(name.clone(), Vec::new()));
-                        owned.push(is_owned(&m.self_convention));
-                        deinit.push(is_deinit(&m.self_convention));
-                        refp.push(is_ref(&m.self_convention));
-                    }
-                    names.extend(m.params.iter().map(|p| p.name.clone()));
-                    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
-                    ptys.extend(m.params.iter().enumerate().map(|(param, p)| {
-                        body_parameter_ty(
-                            p,
-                            checked_type_or_record(
-                                checked,
-                                AnnotationSite::MethodParam {
-                                    module: s.module.clone(),
-                                    declaration: name.clone(),
-                                    method: method_index,
-                                    param,
-                                },
-                                &format!("parameter '{}' of method '{source_mangled}'", p.name),
-                                &mut invariant_errors,
-                            ),
-                        )
-                    }));
-                    owned.extend(m.params.iter().map(|p| is_owned(&p.convention)));
-                    deinit.extend(m.params.iter().map(|p| is_deinit(&p.convention)));
-                    refp.extend(m.params.iter().map(|p| is_ref(&p.convention)));
-                    lower_fn_nested(
-                        FunctionLowering {
-                            checked,
-                            name: &mangled,
-                            parameter_names: &names,
-                            parameter_types: ptys,
-                            value_parameter_locals,
-                            owned_parameters: owned,
-                            deinit_parameters: deinit,
-                            reference_parameters: refp,
-                            returns_reference: effect.returns_reference,
-                            ret_ty,
-                            raises: effect.raises,
-                            error_ty: effect.error,
-                            named_result: None,
-                            body: &m.body,
-                            overloads: &overloads,
-                        },
-                        &mut functions,
-                        &mut declarations,
-                    );
-                }
-            }
-            // A `trait`'s requirements have no body (`...`); nothing to lower yet.
-            StmtKind::Trait { .. } => {}
-            _ => toplevel.push(s.clone()),
-        }
-    }
-
-    let mut toplevel_fn = lower_cfg_nested(
-        &Cfg::build_checked_fn(checked, &[], &toplevel),
-        &HashMap::new(),
-        &overloads,
-        false,
-        &[],
-        &[],
-    );
-    // The synthetic module initializer returns nothing and never raises.
-    toplevel_fn.ret_ty = Some(Ty::None);
-    functions.push(("__toplevel__".to_string(), toplevel_fn));
-    for (name, function) in &mut functions {
-        close_register_types(name, function, &declarations, &mut invariant_errors);
-    }
-    let mut result = MirProgram {
-        functions,
-        declarations,
-        invariant_errors,
-    };
-    result.invariant_errors.extend(verify::verify(&result));
-    result
-}

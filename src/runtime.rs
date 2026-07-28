@@ -442,64 +442,6 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-/// Compare two tuple elements for lexicographic tuple ordering. Numeric values
-/// use the same promotion ranks as arithmetic; strings and nested tuples compare
-/// structurally.
-fn compare_tuple_values(left: &Value, right: &Value) -> Result<Ordering, RuntimeError> {
-    if (as_exact_num(left).is_some() || as_exact_num(right).is_some())
-        && (as_exact_num(left).is_some() || as_num(left).is_some())
-        && (as_exact_num(right).is_some() || as_num(right).is_some())
-    {
-        let compare = |op| match apply_infix(op, left.clone(), right.clone())? {
-            Value::Bool(value) => Ok(value),
-            _ => Err(RuntimeError::TypeError(
-                "numeric tuple comparison did not produce Bool".into(),
-            )),
-        };
-        if compare(InfixOp::Eq)? {
-            return Ok(Ordering::Equal);
-        }
-        if compare(InfixOp::Lt)? {
-            return Ok(Ordering::Less);
-        }
-        if compare(InfixOp::Gt)? {
-            return Ok(Ordering::Greater);
-        }
-        return Err(RuntimeError::TypeError(
-            "cannot order NaN tuple elements".into(),
-        ));
-    }
-    if let (Some(left), Some(right)) = (as_num(left), as_num(right)) {
-        return match left.rank().max(right.rank()) {
-            2 => left
-                .as_f64()
-                .partial_cmp(&right.as_f64())
-                .ok_or_else(|| RuntimeError::TypeError("cannot order NaN tuple elements".into())),
-            1 => Ok(left.as_u64().cmp(&right.as_u64())),
-            _ => Ok(left.as_i64().cmp(&right.as_i64())),
-        };
-    }
-    match (left, right) {
-        (Value::Str(left), Value::Str(right)) => Ok(left.cmp(right)),
-        (Value::Tuple(left), Value::Tuple(right)) => compare_tuples(left, right),
-        _ => Err(RuntimeError::TypeError(format!(
-            "cannot order {} and {} tuple elements",
-            type_name(left),
-            type_name(right)
-        ))),
-    }
-}
-
-fn compare_tuples(left: &[Value], right: &[Value]) -> Result<Ordering, RuntimeError> {
-    for (left, right) in left.iter().zip(right) {
-        let ordering = compare_tuple_values(left, right)?;
-        if ordering != Ordering::Equal {
-            return Ok(ordering);
-        }
-    }
-    Ok(left.len().cmp(&right.len()))
-}
-
 /// Intrinsic `__hash__` for a built-in hashable value (roadmap milestone 6) — a
 /// **deterministic**, no-seed FNV-1a over the value's bytes, returning `UInt`
 /// (mojito's native u64). Determinism across runs is a deliberate design
@@ -552,103 +494,6 @@ pub(crate) fn builtin_hash(value: &Value) -> Result<u64, RuntimeError> {
         }
     };
     Ok(h)
-}
-
-/// A numeric value lifted out of `Value` for arithmetic. Operands are promoted to
-/// a common kind before an operator is applied (`Int < UInt < Float64`).
-#[derive(Clone, Copy)]
-enum Num {
-    I(i64),
-    U(u64),
-    F(f64),
-}
-
-impl Num {
-    fn rank(self) -> u8 {
-        match self {
-            Num::I(_) => 0,
-            Num::U(_) => 1,
-            Num::F(_) => 2,
-        }
-    }
-    fn as_i64(self) -> i64 {
-        match self {
-            Num::I(n) => n,
-            Num::U(n) => n as i64,
-            Num::F(x) => x as i64,
-        }
-    }
-    fn as_u64(self) -> u64 {
-        match self {
-            Num::I(n) => n as u64,
-            Num::U(n) => n,
-            Num::F(x) => x as u64,
-        }
-    }
-    fn as_f64(self) -> f64 {
-        match self {
-            Num::I(n) => n as f64,
-            Num::U(n) => n as f64,
-            Num::F(x) => x,
-        }
-    }
-}
-
-/// View a value as a number, if it is one.
-fn as_num(v: &Value) -> Option<Num> {
-    match &v {
-        Value::Int(n) => Some(Num::I(*n)),
-        Value::UInt(n) => Some(Num::U(*n)),
-        Value::Float64(x) => Some(Num::F(*x)),
-        _ => None,
-    }
-}
-
-#[derive(Clone)]
-enum ExactNum {
-    Int(crate::literal::IntLiteral),
-    Float(crate::literal::FloatLiteral),
-}
-
-impl ExactNum {
-    fn into_float(self) -> crate::literal::FloatLiteral {
-        match self {
-            ExactNum::Int(value) => crate::literal::FloatLiteral::from_int(&value),
-            ExactNum::Float(value) => value,
-        }
-    }
-
-    fn compare(&self, rhs: &Self) -> Ordering {
-        match (self, rhs) {
-            (ExactNum::Int(left), ExactNum::Int(right)) => left.cmp(right),
-            (left, right) => left
-                .clone()
-                .into_float()
-                .numeric_cmp(&right.clone().into_float()),
-        }
-    }
-}
-
-fn as_exact_num(value: &Value) -> Option<ExactNum> {
-    match value {
-        Value::IntLiteral(value) => Some(ExactNum::Int(value.clone())),
-        Value::FloatLiteral(value) => Some(ExactNum::Float(value.clone())),
-        _ => None,
-    }
-}
-
-/// Lift any finite runtime numeric value into the same exact comparison domain
-/// as a literal. This keeps erased/generic equality and hashing coherent even
-/// if an exact literal survives past a boundary that normally materializes it.
-fn as_finite_numeric(value: &Value) -> Option<ExactNum> {
-    match value {
-        Value::Int(value) => Some(ExactNum::Int((*value).into())),
-        Value::UInt(value) => Some(ExactNum::Int((*value).into())),
-        Value::Float64(value) => {
-            crate::literal::FloatLiteral::from_f64(*value).map(ExactNum::Float)
-        }
-        value => as_exact_num(value),
-    }
 }
 
 /// Apply a unary operator to an already-evaluated operand for VM execution and
@@ -725,291 +570,6 @@ pub(crate) fn apply_infix(op: InfixOp, l: Value, r: Value) -> Result<Value, Runt
             type_name(&r)
         ))),
     }
-}
-
-fn materialize_like_numeric(literal: Value, concrete: &Value) -> Result<Value, RuntimeError> {
-    match (literal, concrete) {
-        (Value::IntLiteral(value), Value::Int(_)) => value
-            .wrapping_signed(64)
-            .map(Value::Int)
-            .ok_or_else(|| literal_materialization_error(&value, "Int")),
-        (Value::IntLiteral(value), Value::UInt(_)) => value
-            .wrapping_unsigned(64)
-            .map(Value::UInt)
-            .ok_or_else(|| literal_materialization_error(&value, "UInt")),
-        (Value::IntLiteral(value), Value::Float64(_)) => value
-            .to_f64()
-            .map(Value::Float64)
-            .ok_or_else(|| literal_materialization_error(&value, "Float64")),
-        (Value::FloatLiteral(value), Value::Float64(_)) => value
-            .to_f64()
-            .map(Value::Float64)
-            .ok_or_else(|| literal_materialization_error(&value, "Float64")),
-        (value, _) => Err(RuntimeError::TypeError(format!(
-            "cannot materialize {} for {}",
-            type_name(&value),
-            type_name(concrete)
-        ))),
-    }
-}
-
-fn literal_materialization_error(value: &impl fmt::Display, destination: &str) -> RuntimeError {
-    RuntimeError::TypeError(format!(
-        "literal value {value} cannot be represented as {destination}"
-    ))
-}
-
-fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
-    if let (ExactNum::Int(left), ExactNum::Int(right)) = (&left, &right) {
-        let value =
-            match op {
-                Add => Value::IntLiteral(left.add(right)),
-                Sub => Value::IntLiteral(left.sub(right)),
-                Mul => Value::IntLiteral(left.mul(right)),
-                Div => Value::FloatLiteral(
-                    crate::literal::FloatLiteral::from_int(left)
-                        .div(&crate::literal::FloatLiteral::from_int(right))
-                        .ok_or_else(|| {
-                            RuntimeError::TypeError("integer division by zero".to_string())
-                        })?,
-                ),
-                FloorDiv => Value::IntLiteral(left.floor_div(right).ok_or_else(|| {
-                    RuntimeError::TypeError("integer division by zero".to_string())
-                })?),
-                Mod => Value::IntLiteral(left.floor_mod(right).ok_or_else(|| {
-                    RuntimeError::TypeError("integer modulo by zero".to_string())
-                })?),
-                Pow => Value::IntLiteral(left.pow(right).ok_or_else(|| {
-                    RuntimeError::TypeError(
-                        "integer literal exponent must be a non-negative u32".to_string(),
-                    )
-                })?),
-                Shl => Value::IntLiteral(left.shl(right).ok_or_else(|| {
-                    RuntimeError::TypeError("invalid integer literal shift".to_string())
-                })?),
-                Shr => Value::IntLiteral(left.shr(right).ok_or_else(|| {
-                    RuntimeError::TypeError("invalid integer literal shift".to_string())
-                })?),
-                BitAnd => Value::IntLiteral(left.bitand(right)),
-                BitOr => Value::IntLiteral(left.bitor(right)),
-                BitXor => Value::IntLiteral(left.bitxor(right)),
-                Lt | Le | Gt | Ge | Eq | Ne => {
-                    return Ok(Value::Bool(match op {
-                        Lt => left < right,
-                        Le => left <= right,
-                        Gt => left > right,
-                        Ge => left >= right,
-                        Eq => left == right,
-                        Ne => left != right,
-                        _ => unreachable!(),
-                    }));
-                }
-                MatMul | And | Or | In | NotIn => {
-                    return Err(RuntimeError::TypeError(format!(
-                        "operator '{op:?}' is invalid for IntLiteral"
-                    )));
-                }
-            };
-        return Ok(value);
-    }
-
-    let (left, right) = (left.into_float(), right.into_float());
-    Ok(match op {
-        Add => Value::FloatLiteral(left.add(&right)),
-        Sub => Value::FloatLiteral(left.sub(&right)),
-        Mul => Value::FloatLiteral(left.mul(&right)),
-        Div => Value::FloatLiteral(left.div(&right).ok_or_else(|| {
-            RuntimeError::TypeError("floating literal division by zero".to_string())
-        })?),
-        FloorDiv => Value::FloatLiteral(left.floor_div(&right).ok_or_else(|| {
-            RuntimeError::TypeError("floating literal division by zero".to_string())
-        })?),
-        Mod => Value::FloatLiteral(left.floor_mod(&right).ok_or_else(|| {
-            RuntimeError::TypeError("floating literal modulo by zero".to_string())
-        })?),
-        Pow => {
-            if let Some(exponent) = right.to_int_if_whole() {
-                Value::FloatLiteral(left.pow_int(&exponent).ok_or_else(|| {
-                    RuntimeError::TypeError("invalid FloatLiteral exponent".to_string())
-                })?)
-            } else {
-                Value::Float64(
-                    left.to_f64()
-                        .ok_or_else(|| literal_materialization_error(&left, "Float64"))?
-                        .powf(
-                            right
-                                .to_f64()
-                                .ok_or_else(|| literal_materialization_error(&right, "Float64"))?,
-                        ),
-                )
-            }
-        }
-        Lt | Le | Gt | Ge | Eq | Ne => Value::Bool(match op {
-            Lt => left.numeric_cmp(&right).is_lt(),
-            Le => !left.numeric_cmp(&right).is_gt(),
-            Gt => left.numeric_cmp(&right).is_gt(),
-            Ge => !left.numeric_cmp(&right).is_lt(),
-            Eq => left.numeric_cmp(&right).is_eq(),
-            Ne => !left.numeric_cmp(&right).is_eq(),
-            _ => unreachable!(),
-        }),
-        Shl | Shr | BitAnd | BitOr | BitXor | MatMul | And | Or | In | NotIn => {
-            return Err(RuntimeError::TypeError(format!(
-                "operator '{op:?}' is invalid for FloatLiteral"
-            )));
-        }
-    })
-}
-
-/// Apply a numeric binary operator, promoting operands to a common kind. The
-/// checker rejects mixing two *concrete* numeric types, so any kind difference
-/// here comes from a materialized literal — promotion resolves it soundly.
-fn numeric_op(op: InfixOp, a: Num, b: Num) -> Result<Value, RuntimeError> {
-    // True division always computes in f64 and yields Float64.
-    if op == InfixOp::Div {
-        return Ok(Value::Float64(a.as_f64() / b.as_f64()));
-    }
-    match a.rank().max(b.rank()) {
-        2 => float_op(op, a.as_f64(), b.as_f64()),
-        1 => uint_op(op, a.as_u64(), b.as_u64()),
-        _ => int_op(op, a.as_i64(), b.as_i64()),
-    }
-}
-
-fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
-    Ok(match op {
-        Add => Value::Int(x + y),
-        Sub => Value::Int(x - y),
-        Mul => Value::Int(x * y),
-        FloorDiv => Value::Int(floor_div(x, nonzero(y)?)),
-        Mod => Value::Int(floor_mod(x, nonzero(y)?)),
-        Pow => Value::Int(x.pow(pow_exp(y)?)),
-        Shl => Value::Int(x.wrapping_shl(y as u32)),
-        Shr => Value::Int(x.wrapping_shr(y as u32)),
-        BitAnd => Value::Int(x & y),
-        BitOr => Value::Int(x | y),
-        BitXor => Value::Int(x ^ y),
-        Lt => Value::Bool(x < y),
-        Gt => Value::Bool(x > y),
-        Le => Value::Bool(x <= y),
-        Ge => Value::Bool(x >= y),
-        Eq => Value::Bool(x == y),
-        Ne => Value::Bool(x != y),
-        Div | MatMul | And | Or | In | NotIn => {
-            return Err(RuntimeError::TypeError(format!(
-                "operator '{op:?}' is invalid for integer dispatch"
-            )));
-        }
-    })
-}
-
-fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
-    Ok(match op {
-        Add => Value::UInt(x + y),
-        Sub => Value::UInt(x - y),
-        Mul => Value::UInt(x * y),
-        // Unsigned: floor division/modulo are plain `/` and `%`.
-        FloorDiv => Value::UInt(x / nonzero_u(y)?),
-        Mod => Value::UInt(x % nonzero_u(y)?),
-        Pow => Value::UInt(x.pow(pow_exp(y as i64)?)),
-        Shl => Value::UInt(x.wrapping_shl(y as u32)),
-        Shr => Value::UInt(x.wrapping_shr(y as u32)),
-        BitAnd => Value::UInt(x & y),
-        BitOr => Value::UInt(x | y),
-        BitXor => Value::UInt(x ^ y),
-        Lt => Value::Bool(x < y),
-        Gt => Value::Bool(x > y),
-        Le => Value::Bool(x <= y),
-        Ge => Value::Bool(x >= y),
-        Eq => Value::Bool(x == y),
-        Ne => Value::Bool(x != y),
-        Div | MatMul | And | Or | In | NotIn => {
-            return Err(RuntimeError::TypeError(format!(
-                "operator '{op:?}' is invalid for unsigned dispatch"
-            )));
-        }
-    })
-}
-
-fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
-    Ok(match op {
-        Add => Value::Float64(x + y),
-        Sub => Value::Float64(x - y),
-        Mul => Value::Float64(x * y),
-        FloorDiv => Value::Float64((x / y).floor()),
-        Mod => Value::Float64(x - y * (x / y).floor()),
-        Pow => Value::Float64(x.powf(y)),
-        Lt => Value::Bool(x < y),
-        Gt => Value::Bool(x > y),
-        Le => Value::Bool(x <= y),
-        Ge => Value::Bool(x >= y),
-        Eq => Value::Bool(x == y),
-        Ne => Value::Bool(x != y),
-        Div | MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn => {
-            return Err(RuntimeError::TypeError(format!(
-                "operator '{op:?}' is invalid for float dispatch"
-            )));
-        }
-    })
-}
-
-fn nonzero(y: i64) -> Result<i64, RuntimeError> {
-    (y != 0)
-        .then_some(y)
-        .ok_or_else(|| RuntimeError::TypeError("integer division or modulo by zero".to_string()))
-}
-
-fn nonzero_u(y: u64) -> Result<u64, RuntimeError> {
-    (y != 0)
-        .then_some(y)
-        .ok_or_else(|| RuntimeError::TypeError("integer division or modulo by zero".to_string()))
-}
-
-/// Validate an integer exponent for `**` (non-negative and `u32`-sized).
-fn pow_exp(y: i64) -> Result<u32, RuntimeError> {
-    u32::try_from(y).map_err(|_| {
-        RuntimeError::TypeError(
-            "'**' exponent must be a non-negative Int that fits in 32 bits".to_string(),
-        )
-    })
-}
-
-/// Python/Mojo floor division: round toward negative infinity.
-fn floor_div(x: i64, y: i64) -> i64 {
-    let q = x / y;
-    let r = x % y;
-    if r != 0 && ((r < 0) != (y < 0)) {
-        q - 1
-    } else {
-        q
-    }
-}
-
-/// Python/Mojo modulo: the result takes the sign of the divisor.
-fn floor_mod(x: i64, y: i64) -> i64 {
-    let r = x % y;
-    if r != 0 && ((r < 0) != (y < 0)) {
-        r + y
-    } else {
-        r
-    }
-}
-
-// --- Collections / indexing ---
-
-/// Convert a signed index into a bounds-checked `usize`, or a runtime error.
-pub(crate) fn bounds_check(idx: i64, len: usize, what: &str) -> Result<usize, RuntimeError> {
-    if idx < 0 || idx as usize >= len {
-        return Err(RuntimeError::TypeError(format!(
-            "{} index {} out of range 0..{}",
-            what, idx, len
-        )));
-    }
-    Ok(idx as usize)
 }
 
 /// A `Value` used as an index, requiring it to be an `Int`.
@@ -1148,180 +708,6 @@ pub(crate) fn eval_membership(op: InfixOp, l: &Value, r: &Value) -> Result<Value
     };
     let result = if op == InfixOp::NotIn { !found } else { found };
     Ok(Value::Bool(result))
-}
-
-// --- SIMD ---
-
-/// Wrap an integer to a dtype's bit width (bit-accurate overflow), storing the
-/// post-wrap mathematical value (non-negative for unsigned dtypes).
-fn wrap(dtype: Dtype, v: i128) -> i128 {
-    match dtype {
-        Dtype::Int => v,
-        Dtype::Int8 => v as i8 as i128,
-        Dtype::Int16 => v as i16 as i128,
-        Dtype::Int32 => v as i32 as i128,
-        Dtype::Int64 => v as i64 as i128,
-        Dtype::UInt8 => v as u8 as i128,
-        Dtype::UInt16 => v as u16 as i128,
-        Dtype::UInt32 => v as u32 as i128,
-        Dtype::UInt64 => v as u64 as i128,
-        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => v,
-    }
-}
-
-/// Round an `f64` to single precision (for `float32` lanes).
-fn round_f32(x: f64) -> f64 {
-    x as f32 as f64
-}
-
-/// Round a float result to its lane precision: `float32` truncates to single
-/// precision, `float64` keeps full `f64`. (Called only for float dtypes.)
-fn round_lane(dtype: Dtype, x: f64) -> f64 {
-    match dtype {
-        Dtype::Float32 => round_f32(x),
-        _ => x,
-    }
-}
-
-/// Build a SIMD `Value` from `dtype`+`lanes`, canonicalizing a **width-1
-/// `float64`** to the native `Value::Float64` — the runtime side of unifying
-/// `Float64` with `SIMD[DType.float64, 1]`.
-fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
-    if dtype == Dtype::Float64
-        && let SimdLanes::Float(v) = &lanes
-        && v.len() == 1
-    {
-        return Value::Float64(v[0]);
-    }
-    Value::Simd { dtype, lanes }
-}
-
-/// A scalar value's integer content, for building an integer SIMD lane.
-fn value_to_int(v: &Value) -> Result<i128, RuntimeError> {
-    match v {
-        Value::Int(n) => Ok(*n as i128),
-        Value::IntLiteral(value) => value
-            .to_i128()
-            .ok_or_else(|| literal_materialization_error(value, "integer SIMD lane")),
-        Value::UInt(n) => Ok(*n as i128),
-        Value::Bool(b) => Ok(*b as i128),
-        Value::Simd {
-            lanes: SimdLanes::Int(l),
-            ..
-        } if l.len() == 1 => Ok(l[0]),
-        other => Err(RuntimeError::TypeError(format!(
-            "cannot use {} as an integer SIMD element",
-            type_name(other)
-        ))),
-    }
-}
-
-fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
-    Some(match dtype {
-        Dtype::Int => (64, true),
-        Dtype::Int8 => (8, true),
-        Dtype::Int16 => (16, true),
-        Dtype::Int32 => (32, true),
-        Dtype::Int64 => (64, true),
-        Dtype::UInt8 => (8, false),
-        Dtype::UInt16 => (16, false),
-        Dtype::UInt32 => (32, false),
-        Dtype::UInt64 => (64, false),
-        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => return None,
-    })
-}
-
-fn materialize_literal_int_lane(value: &crate::literal::IntLiteral, dtype: Dtype) -> Option<i128> {
-    let (bits, signed) = integer_dtype_bits(dtype)?;
-    if signed {
-        value.wrapping_signed(bits).map(i128::from)
-    } else {
-        value.wrapping_unsigned(bits).map(i128::from)
-    }
-}
-
-fn value_to_int_lane(v: &Value, dtype: Dtype) -> Result<i128, RuntimeError> {
-    if let Value::IntLiteral(value) = v {
-        let (bits, signed) = integer_dtype_bits(dtype).ok_or_else(|| {
-            RuntimeError::TypeError(format!("{dtype:?} is not an integer SIMD dtype"))
-        })?;
-        return if signed {
-            value
-                .wrapping_signed(bits)
-                .map(i128::from)
-                .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
-        } else {
-            value
-                .wrapping_unsigned(bits)
-                .map(i128::from)
-                .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
-        };
-    }
-    Ok(wrap(dtype, value_to_int(v)?))
-}
-
-/// A scalar value's floating content, for building a float SIMD lane.
-fn value_to_float(v: &Value) -> Result<f64, RuntimeError> {
-    match v {
-        Value::Int(n) => Ok(*n as f64),
-        Value::Float64(x) => Ok(*x),
-        Value::IntLiteral(value) => value
-            .to_f64()
-            .ok_or_else(|| literal_materialization_error(value, "floating SIMD lane")),
-        Value::FloatLiteral(value) => value
-            .to_f64()
-            .ok_or_else(|| literal_materialization_error(value, "floating SIMD lane")),
-        Value::Simd {
-            lanes: SimdLanes::Float(l),
-            ..
-        } if l.len() == 1 => Ok(l[0]),
-        other => Err(RuntimeError::TypeError(format!(
-            "cannot use {} as a float SIMD element",
-            type_name(other)
-        ))),
-    }
-}
-
-fn value_to_float_lane(v: &Value, dtype: Dtype) -> Result<f64, RuntimeError> {
-    if dtype == Dtype::Float32 {
-        return match v {
-            Value::IntLiteral(value) => crate::literal::FloatLiteral::from_int(value)
-                .to_f32()
-                .map(|value| value as f64)
-                .ok_or_else(|| literal_materialization_error(value, "Float32")),
-            Value::FloatLiteral(value) => value
-                .to_f32()
-                .map(|value| value as f64)
-                .ok_or_else(|| literal_materialization_error(value, "Float32")),
-            other => Ok(round_f32(value_to_float(other)?)),
-        };
-    }
-    value_to_float(v)
-}
-
-// --- Shared numeric/utility built-ins (value level) -------------------------
-//
-// These operate on already-evaluated `Value`s so ordinary VM execution and
-// VM-backed CTFE apply identical semantics. The checker guarantees arity and
-// typing; these functions are the runtime realization only.
-
-/// `abs(x)`: absolute value of a numeric (`UInt` is already non-negative).
-pub(crate) fn builtin_abs(v: Value) -> Result<Value, RuntimeError> {
-    match v {
-        Value::Int(n) => Ok(Value::Int(n.wrapping_abs())),
-        Value::Float64(x) => Ok(Value::Float64(x.abs())),
-        Value::IntLiteral(value) => Ok(Value::IntLiteral(if value.is_negative() {
-            value.neg()
-        } else {
-            value
-        })),
-        Value::FloatLiteral(value) => Ok(Value::FloatLiteral(value.abs())),
-        Value::UInt(n) => Ok(Value::UInt(n)),
-        other => Err(RuntimeError::TypeError(format!(
-            "abs() expects a numeric value, got {}",
-            type_name(&other)
-        ))),
-    }
 }
 
 /// `min(a, b)` / `max(a, b)`: promote the operands to a common numeric kind (as
@@ -1529,21 +915,6 @@ pub(crate) fn builtin_error(v: Value) -> Result<Value, RuntimeError> {
     }
 }
 
-/// A scalar value's boolean content, for building a `bool` SIMD lane.
-fn value_to_bool_lane(v: &Value) -> Result<bool, RuntimeError> {
-    match v {
-        Value::Bool(b) => Ok(*b),
-        Value::Simd {
-            lanes: SimdLanes::Bool(l),
-            ..
-        } if l.len() == 1 => Ok(l[0]),
-        other => Err(RuntimeError::TypeError(format!(
-            "cannot use {} as a bool SIMD element",
-            type_name(other)
-        ))),
-    }
-}
-
 /// Read lane `i` of a SIMD as a width-1 SIMD (scalar) of the same dtype — the
 /// shared core of `v[i]` reads and SIMD-lane read-modify-write.
 /// Build a SIMD value of `dtype`/`width` from element `values`: exactly `width`
@@ -1606,14 +977,6 @@ pub(crate) fn set_simd_lane(
         SimdLanes::Bool(v) => v[idx] = value_to_bool_lane(&value)?,
     }
     Ok(())
-}
-
-/// The `(dtype, width)` of a value if it is a SIMD.
-fn simd_shape(v: &Value) -> Option<(Dtype, usize)> {
-    match v {
-        Value::Simd { dtype, lanes } => Some((*dtype, lanes.width())),
-        _ => None,
-    }
 }
 
 /// Apply an elementwise SIMD operator. One operand may be a scalar that splats
@@ -1694,81 +1057,6 @@ pub(crate) fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, Run
                 })
             }
         }
-    }
-}
-
-fn int_arith(op: InfixOp, a: i128, b: i128) -> i128 {
-    match op {
-        InfixOp::Add => a + b,
-        InfixOp::Sub => a - b,
-        InfixOp::Mul => a * b,
-        _ => 0, // checker rejects other arithmetic on SIMD ints
-    }
-}
-
-fn int_cmp(op: InfixOp, a: i128, b: i128) -> bool {
-    match op {
-        InfixOp::Eq => a == b,
-        InfixOp::Ne => a != b,
-        InfixOp::Lt => a < b,
-        InfixOp::Gt => a > b,
-        InfixOp::Le => a <= b,
-        InfixOp::Ge => a >= b,
-        _ => false,
-    }
-}
-
-fn float_arith(op: InfixOp, a: f64, b: f64) -> f64 {
-    match op {
-        InfixOp::Add => a + b,
-        InfixOp::Sub => a - b,
-        InfixOp::Mul => a * b,
-        InfixOp::Div => a / b,
-        _ => 0.0,
-    }
-}
-
-fn float_cmp(op: InfixOp, a: f64, b: f64) -> bool {
-    match op {
-        InfixOp::Eq => a == b,
-        InfixOp::Ne => a != b,
-        InfixOp::Lt => a < b,
-        InfixOp::Gt => a > b,
-        InfixOp::Le => a <= b,
-        InfixOp::Ge => a >= b,
-        _ => false,
-    }
-}
-
-/// Materialize an operand as `width` integer lanes of `dtype` — its own lanes if
-/// it is a SIMD, else the scalar splatted across all lanes.
-fn to_int_lanes(v: &Value, dtype: Dtype, width: usize) -> Result<Vec<i128>, RuntimeError> {
-    match v {
-        Value::Simd {
-            lanes: SimdLanes::Int(l),
-            ..
-        } => Ok(l.clone()),
-        scalar => Ok(vec![value_to_int_lane(scalar, dtype)?; width]),
-    }
-}
-
-fn to_float_lanes(v: &Value, dtype: Dtype, width: usize) -> Result<Vec<f64>, RuntimeError> {
-    match v {
-        Value::Simd {
-            lanes: SimdLanes::Float(l),
-            ..
-        } => Ok(l.clone()),
-        scalar => Ok(vec![value_to_float_lane(scalar, dtype)?; width]),
-    }
-}
-
-fn to_bool_lanes(v: &Value, width: usize) -> Result<Vec<bool>, RuntimeError> {
-    match v {
-        Value::Simd {
-            lanes: SimdLanes::Bool(l),
-            ..
-        } => Ok(l.clone()),
-        scalar => Ok(vec![value_to_bool_lane(scalar)?; width]),
     }
 }
 
@@ -1930,6 +1218,718 @@ pub(crate) fn coerce_like(new: Value, existing: &Value) -> Value {
         Value::UInt(_) => coerce(new, &Type::UInt),
         Value::Float64(_) => coerce(new, &Type::Float64),
         _ => new,
+    }
+}
+
+fn literal_materialization_error(value: &impl fmt::Display, destination: &str) -> RuntimeError {
+    RuntimeError::TypeError(format!(
+        "literal value {value} cannot be represented as {destination}"
+    ))
+}
+
+/// A numeric value lifted out of `Value` for arithmetic. Operands are promoted to
+/// a common kind before an operator is applied (`Int < UInt < Float64`).
+#[derive(Clone, Copy)]
+enum Num {
+    I(i64),
+    U(u64),
+    F(f64),
+}
+
+impl Num {
+    fn rank(self) -> u8 {
+        match self {
+            Num::I(_) => 0,
+            Num::U(_) => 1,
+            Num::F(_) => 2,
+        }
+    }
+    fn as_i64(self) -> i64 {
+        match self {
+            Num::I(n) => n,
+            Num::U(n) => n as i64,
+            Num::F(x) => x as i64,
+        }
+    }
+    fn as_u64(self) -> u64 {
+        match self {
+            Num::I(n) => n as u64,
+            Num::U(n) => n,
+            Num::F(x) => x as u64,
+        }
+    }
+    fn as_f64(self) -> f64 {
+        match self {
+            Num::I(n) => n as f64,
+            Num::U(n) => n as f64,
+            Num::F(x) => x,
+        }
+    }
+}
+
+/// View a value as a number, if it is one.
+fn as_num(v: &Value) -> Option<Num> {
+    match &v {
+        Value::Int(n) => Some(Num::I(*n)),
+        Value::UInt(n) => Some(Num::U(*n)),
+        Value::Float64(x) => Some(Num::F(*x)),
+        _ => None,
+    }
+}
+
+#[derive(Clone)]
+enum ExactNum {
+    Int(crate::literal::IntLiteral),
+    Float(crate::literal::FloatLiteral),
+}
+
+impl ExactNum {
+    fn into_float(self) -> crate::literal::FloatLiteral {
+        match self {
+            ExactNum::Int(value) => crate::literal::FloatLiteral::from_int(&value),
+            ExactNum::Float(value) => value,
+        }
+    }
+
+    fn compare(&self, rhs: &Self) -> Ordering {
+        match (self, rhs) {
+            (ExactNum::Int(left), ExactNum::Int(right)) => left.cmp(right),
+            (left, right) => left
+                .clone()
+                .into_float()
+                .numeric_cmp(&right.clone().into_float()),
+        }
+    }
+}
+
+fn as_exact_num(value: &Value) -> Option<ExactNum> {
+    match value {
+        Value::IntLiteral(value) => Some(ExactNum::Int(value.clone())),
+        Value::FloatLiteral(value) => Some(ExactNum::Float(value.clone())),
+        _ => None,
+    }
+}
+
+fn compare_tuples(left: &[Value], right: &[Value]) -> Result<Ordering, RuntimeError> {
+    for (left, right) in left.iter().zip(right) {
+        let ordering = compare_tuple_values(left, right)?;
+        if ordering != Ordering::Equal {
+            return Ok(ordering);
+        }
+    }
+    Ok(left.len().cmp(&right.len()))
+}
+
+fn materialize_like_numeric(literal: Value, concrete: &Value) -> Result<Value, RuntimeError> {
+    match (literal, concrete) {
+        (Value::IntLiteral(value), Value::Int(_)) => value
+            .wrapping_signed(64)
+            .map(Value::Int)
+            .ok_or_else(|| literal_materialization_error(&value, "Int")),
+        (Value::IntLiteral(value), Value::UInt(_)) => value
+            .wrapping_unsigned(64)
+            .map(Value::UInt)
+            .ok_or_else(|| literal_materialization_error(&value, "UInt")),
+        (Value::IntLiteral(value), Value::Float64(_)) => value
+            .to_f64()
+            .map(Value::Float64)
+            .ok_or_else(|| literal_materialization_error(&value, "Float64")),
+        (Value::FloatLiteral(value), Value::Float64(_)) => value
+            .to_f64()
+            .map(Value::Float64)
+            .ok_or_else(|| literal_materialization_error(&value, "Float64")),
+        (value, _) => Err(RuntimeError::TypeError(format!(
+            "cannot materialize {} for {}",
+            type_name(&value),
+            type_name(concrete)
+        ))),
+    }
+}
+
+/// Build a SIMD `Value` from `dtype`+`lanes`, canonicalizing a **width-1
+/// `float64`** to the native `Value::Float64` — the runtime side of unifying
+/// `Float64` with `SIMD[DType.float64, 1]`.
+fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
+    if dtype == Dtype::Float64
+        && let SimdLanes::Float(v) = &lanes
+        && v.len() == 1
+    {
+        return Value::Float64(v[0]);
+    }
+    Value::Simd { dtype, lanes }
+}
+
+/// Lift any finite runtime numeric value into the same exact comparison domain
+/// as a literal. This keeps erased/generic equality and hashing coherent even
+/// if an exact literal survives past a boundary that normally materializes it.
+fn as_finite_numeric(value: &Value) -> Option<ExactNum> {
+    match value {
+        Value::Int(value) => Some(ExactNum::Int((*value).into())),
+        Value::UInt(value) => Some(ExactNum::Int((*value).into())),
+        Value::Float64(value) => {
+            crate::literal::FloatLiteral::from_f64(*value).map(ExactNum::Float)
+        }
+        value => as_exact_num(value),
+    }
+}
+
+fn nonzero(y: i64) -> Result<i64, RuntimeError> {
+    (y != 0)
+        .then_some(y)
+        .ok_or_else(|| RuntimeError::TypeError("integer division or modulo by zero".to_string()))
+}
+
+/// Python/Mojo floor division: round toward negative infinity.
+fn floor_div(x: i64, y: i64) -> i64 {
+    let q = x / y;
+    let r = x % y;
+    if r != 0 && ((r < 0) != (y < 0)) {
+        q - 1
+    } else {
+        q
+    }
+}
+
+fn nonzero_u(y: u64) -> Result<u64, RuntimeError> {
+    (y != 0)
+        .then_some(y)
+        .ok_or_else(|| RuntimeError::TypeError("integer division or modulo by zero".to_string()))
+}
+
+/// Python/Mojo modulo: the result takes the sign of the divisor.
+fn floor_mod(x: i64, y: i64) -> i64 {
+    let r = x % y;
+    if r != 0 && ((r < 0) != (y < 0)) {
+        r + y
+    } else {
+        r
+    }
+}
+
+/// Round an `f64` to single precision (for `float32` lanes).
+fn round_f32(x: f64) -> f64 {
+    x as f32 as f64
+}
+
+fn value_to_int_lane(v: &Value, dtype: Dtype) -> Result<i128, RuntimeError> {
+    if let Value::IntLiteral(value) = v {
+        let (bits, signed) = integer_dtype_bits(dtype).ok_or_else(|| {
+            RuntimeError::TypeError(format!("{dtype:?} is not an integer SIMD dtype"))
+        })?;
+        return if signed {
+            value
+                .wrapping_signed(bits)
+                .map(i128::from)
+                .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
+        } else {
+            value
+                .wrapping_unsigned(bits)
+                .map(i128::from)
+                .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
+        };
+    }
+    Ok(wrap(dtype, value_to_int(v)?))
+}
+
+/// A scalar value's floating content, for building a float SIMD lane.
+fn value_to_float(v: &Value) -> Result<f64, RuntimeError> {
+    match v {
+        Value::Int(n) => Ok(*n as f64),
+        Value::Float64(x) => Ok(*x),
+        Value::IntLiteral(value) => value
+            .to_f64()
+            .ok_or_else(|| literal_materialization_error(value, "floating SIMD lane")),
+        Value::FloatLiteral(value) => value
+            .to_f64()
+            .ok_or_else(|| literal_materialization_error(value, "floating SIMD lane")),
+        Value::Simd {
+            lanes: SimdLanes::Float(l),
+            ..
+        } if l.len() == 1 => Ok(l[0]),
+        other => Err(RuntimeError::TypeError(format!(
+            "cannot use {} as a float SIMD element",
+            type_name(other)
+        ))),
+    }
+}
+
+fn value_to_float_lane(v: &Value, dtype: Dtype) -> Result<f64, RuntimeError> {
+    if dtype == Dtype::Float32 {
+        return match v {
+            Value::IntLiteral(value) => crate::literal::FloatLiteral::from_int(value)
+                .to_f32()
+                .map(|value| value as f64)
+                .ok_or_else(|| literal_materialization_error(value, "Float32")),
+            Value::FloatLiteral(value) => value
+                .to_f32()
+                .map(|value| value as f64)
+                .ok_or_else(|| literal_materialization_error(value, "Float32")),
+            other => Ok(round_f32(value_to_float(other)?)),
+        };
+    }
+    value_to_float(v)
+}
+
+/// A scalar value's boolean content, for building a `bool` SIMD lane.
+fn value_to_bool_lane(v: &Value) -> Result<bool, RuntimeError> {
+    match v {
+        Value::Bool(b) => Ok(*b),
+        Value::Simd {
+            lanes: SimdLanes::Bool(l),
+            ..
+        } if l.len() == 1 => Ok(l[0]),
+        other => Err(RuntimeError::TypeError(format!(
+            "cannot use {} as a bool SIMD element",
+            type_name(other)
+        ))),
+    }
+}
+
+/// Validate an integer exponent for `**` (non-negative and `u32`-sized).
+fn pow_exp(y: i64) -> Result<u32, RuntimeError> {
+    u32::try_from(y).map_err(|_| {
+        RuntimeError::TypeError(
+            "'**' exponent must be a non-negative Int that fits in 32 bits".to_string(),
+        )
+    })
+}
+
+fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
+    Some(match dtype {
+        Dtype::Int => (64, true),
+        Dtype::Int8 => (8, true),
+        Dtype::Int16 => (16, true),
+        Dtype::Int32 => (32, true),
+        Dtype::Int64 => (64, true),
+        Dtype::UInt8 => (8, false),
+        Dtype::UInt16 => (16, false),
+        Dtype::UInt32 => (32, false),
+        Dtype::UInt64 => (64, false),
+        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => return None,
+    })
+}
+
+/// The `(dtype, width)` of a value if it is a SIMD.
+fn simd_shape(v: &Value) -> Option<(Dtype, usize)> {
+    match v {
+        Value::Simd { dtype, lanes } => Some((*dtype, lanes.width())),
+        _ => None,
+    }
+}
+
+/// Materialize an operand as `width` integer lanes of `dtype` — its own lanes if
+/// it is a SIMD, else the scalar splatted across all lanes.
+fn to_int_lanes(v: &Value, dtype: Dtype, width: usize) -> Result<Vec<i128>, RuntimeError> {
+    match v {
+        Value::Simd {
+            lanes: SimdLanes::Int(l),
+            ..
+        } => Ok(l.clone()),
+        scalar => Ok(vec![value_to_int_lane(scalar, dtype)?; width]),
+    }
+}
+
+fn to_float_lanes(v: &Value, dtype: Dtype, width: usize) -> Result<Vec<f64>, RuntimeError> {
+    match v {
+        Value::Simd {
+            lanes: SimdLanes::Float(l),
+            ..
+        } => Ok(l.clone()),
+        scalar => Ok(vec![value_to_float_lane(scalar, dtype)?; width]),
+    }
+}
+
+fn to_bool_lanes(v: &Value, width: usize) -> Result<Vec<bool>, RuntimeError> {
+    match v {
+        Value::Simd {
+            lanes: SimdLanes::Bool(l),
+            ..
+        } => Ok(l.clone()),
+        scalar => Ok(vec![value_to_bool_lane(scalar)?; width]),
+    }
+}
+
+/// Compare two tuple elements for lexicographic tuple ordering. Numeric values
+/// use the same promotion ranks as arithmetic; strings and nested tuples compare
+/// structurally.
+fn compare_tuple_values(left: &Value, right: &Value) -> Result<Ordering, RuntimeError> {
+    if (as_exact_num(left).is_some() || as_exact_num(right).is_some())
+        && (as_exact_num(left).is_some() || as_num(left).is_some())
+        && (as_exact_num(right).is_some() || as_num(right).is_some())
+    {
+        let compare = |op| match apply_infix(op, left.clone(), right.clone())? {
+            Value::Bool(value) => Ok(value),
+            _ => Err(RuntimeError::TypeError(
+                "numeric tuple comparison did not produce Bool".into(),
+            )),
+        };
+        if compare(InfixOp::Eq)? {
+            return Ok(Ordering::Equal);
+        }
+        if compare(InfixOp::Lt)? {
+            return Ok(Ordering::Less);
+        }
+        if compare(InfixOp::Gt)? {
+            return Ok(Ordering::Greater);
+        }
+        return Err(RuntimeError::TypeError(
+            "cannot order NaN tuple elements".into(),
+        ));
+    }
+    if let (Some(left), Some(right)) = (as_num(left), as_num(right)) {
+        return match left.rank().max(right.rank()) {
+            2 => left
+                .as_f64()
+                .partial_cmp(&right.as_f64())
+                .ok_or_else(|| RuntimeError::TypeError("cannot order NaN tuple elements".into())),
+            1 => Ok(left.as_u64().cmp(&right.as_u64())),
+            _ => Ok(left.as_i64().cmp(&right.as_i64())),
+        };
+    }
+    match (left, right) {
+        (Value::Str(left), Value::Str(right)) => Ok(left.cmp(right)),
+        (Value::Tuple(left), Value::Tuple(right)) => compare_tuples(left, right),
+        _ => Err(RuntimeError::TypeError(format!(
+            "cannot order {} and {} tuple elements",
+            type_name(left),
+            type_name(right)
+        ))),
+    }
+}
+
+fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Value, RuntimeError> {
+    use InfixOp::*;
+    if let (ExactNum::Int(left), ExactNum::Int(right)) = (&left, &right) {
+        let value =
+            match op {
+                Add => Value::IntLiteral(left.add(right)),
+                Sub => Value::IntLiteral(left.sub(right)),
+                Mul => Value::IntLiteral(left.mul(right)),
+                Div => Value::FloatLiteral(
+                    crate::literal::FloatLiteral::from_int(left)
+                        .div(&crate::literal::FloatLiteral::from_int(right))
+                        .ok_or_else(|| {
+                            RuntimeError::TypeError("integer division by zero".to_string())
+                        })?,
+                ),
+                FloorDiv => Value::IntLiteral(left.floor_div(right).ok_or_else(|| {
+                    RuntimeError::TypeError("integer division by zero".to_string())
+                })?),
+                Mod => Value::IntLiteral(left.floor_mod(right).ok_or_else(|| {
+                    RuntimeError::TypeError("integer modulo by zero".to_string())
+                })?),
+                Pow => Value::IntLiteral(left.pow(right).ok_or_else(|| {
+                    RuntimeError::TypeError(
+                        "integer literal exponent must be a non-negative u32".to_string(),
+                    )
+                })?),
+                Shl => Value::IntLiteral(left.shl(right).ok_or_else(|| {
+                    RuntimeError::TypeError("invalid integer literal shift".to_string())
+                })?),
+                Shr => Value::IntLiteral(left.shr(right).ok_or_else(|| {
+                    RuntimeError::TypeError("invalid integer literal shift".to_string())
+                })?),
+                BitAnd => Value::IntLiteral(left.bitand(right)),
+                BitOr => Value::IntLiteral(left.bitor(right)),
+                BitXor => Value::IntLiteral(left.bitxor(right)),
+                Lt | Le | Gt | Ge | Eq | Ne => {
+                    return Ok(Value::Bool(match op {
+                        Lt => left < right,
+                        Le => left <= right,
+                        Gt => left > right,
+                        Ge => left >= right,
+                        Eq => left == right,
+                        Ne => left != right,
+                        _ => unreachable!(),
+                    }));
+                }
+                MatMul | And | Or | In | NotIn => {
+                    return Err(RuntimeError::TypeError(format!(
+                        "operator '{op:?}' is invalid for IntLiteral"
+                    )));
+                }
+            };
+        return Ok(value);
+    }
+
+    let (left, right) = (left.into_float(), right.into_float());
+    Ok(match op {
+        Add => Value::FloatLiteral(left.add(&right)),
+        Sub => Value::FloatLiteral(left.sub(&right)),
+        Mul => Value::FloatLiteral(left.mul(&right)),
+        Div => Value::FloatLiteral(left.div(&right).ok_or_else(|| {
+            RuntimeError::TypeError("floating literal division by zero".to_string())
+        })?),
+        FloorDiv => Value::FloatLiteral(left.floor_div(&right).ok_or_else(|| {
+            RuntimeError::TypeError("floating literal division by zero".to_string())
+        })?),
+        Mod => Value::FloatLiteral(left.floor_mod(&right).ok_or_else(|| {
+            RuntimeError::TypeError("floating literal modulo by zero".to_string())
+        })?),
+        Pow => {
+            if let Some(exponent) = right.to_int_if_whole() {
+                Value::FloatLiteral(left.pow_int(&exponent).ok_or_else(|| {
+                    RuntimeError::TypeError("invalid FloatLiteral exponent".to_string())
+                })?)
+            } else {
+                Value::Float64(
+                    left.to_f64()
+                        .ok_or_else(|| literal_materialization_error(&left, "Float64"))?
+                        .powf(
+                            right
+                                .to_f64()
+                                .ok_or_else(|| literal_materialization_error(&right, "Float64"))?,
+                        ),
+                )
+            }
+        }
+        Lt | Le | Gt | Ge | Eq | Ne => Value::Bool(match op {
+            Lt => left.numeric_cmp(&right).is_lt(),
+            Le => !left.numeric_cmp(&right).is_gt(),
+            Gt => left.numeric_cmp(&right).is_gt(),
+            Ge => !left.numeric_cmp(&right).is_lt(),
+            Eq => left.numeric_cmp(&right).is_eq(),
+            Ne => !left.numeric_cmp(&right).is_eq(),
+            _ => unreachable!(),
+        }),
+        Shl | Shr | BitAnd | BitOr | BitXor | MatMul | And | Or | In | NotIn => {
+            return Err(RuntimeError::TypeError(format!(
+                "operator '{op:?}' is invalid for FloatLiteral"
+            )));
+        }
+    })
+}
+
+/// Apply a numeric binary operator, promoting operands to a common kind. The
+/// checker rejects mixing two *concrete* numeric types, so any kind difference
+/// here comes from a materialized literal — promotion resolves it soundly.
+fn numeric_op(op: InfixOp, a: Num, b: Num) -> Result<Value, RuntimeError> {
+    // True division always computes in f64 and yields Float64.
+    if op == InfixOp::Div {
+        return Ok(Value::Float64(a.as_f64() / b.as_f64()));
+    }
+    match a.rank().max(b.rank()) {
+        2 => float_op(op, a.as_f64(), b.as_f64()),
+        1 => uint_op(op, a.as_u64(), b.as_u64()),
+        _ => int_op(op, a.as_i64(), b.as_i64()),
+    }
+}
+
+fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
+    use InfixOp::*;
+    Ok(match op {
+        Add => Value::Int(x + y),
+        Sub => Value::Int(x - y),
+        Mul => Value::Int(x * y),
+        FloorDiv => Value::Int(floor_div(x, nonzero(y)?)),
+        Mod => Value::Int(floor_mod(x, nonzero(y)?)),
+        Pow => Value::Int(x.pow(pow_exp(y)?)),
+        Shl => Value::Int(x.wrapping_shl(y as u32)),
+        Shr => Value::Int(x.wrapping_shr(y as u32)),
+        BitAnd => Value::Int(x & y),
+        BitOr => Value::Int(x | y),
+        BitXor => Value::Int(x ^ y),
+        Lt => Value::Bool(x < y),
+        Gt => Value::Bool(x > y),
+        Le => Value::Bool(x <= y),
+        Ge => Value::Bool(x >= y),
+        Eq => Value::Bool(x == y),
+        Ne => Value::Bool(x != y),
+        Div | MatMul | And | Or | In | NotIn => {
+            return Err(RuntimeError::TypeError(format!(
+                "operator '{op:?}' is invalid for integer dispatch"
+            )));
+        }
+    })
+}
+
+fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
+    use InfixOp::*;
+    Ok(match op {
+        Add => Value::UInt(x + y),
+        Sub => Value::UInt(x - y),
+        Mul => Value::UInt(x * y),
+        // Unsigned: floor division/modulo are plain `/` and `%`.
+        FloorDiv => Value::UInt(x / nonzero_u(y)?),
+        Mod => Value::UInt(x % nonzero_u(y)?),
+        Pow => Value::UInt(x.pow(pow_exp(y as i64)?)),
+        Shl => Value::UInt(x.wrapping_shl(y as u32)),
+        Shr => Value::UInt(x.wrapping_shr(y as u32)),
+        BitAnd => Value::UInt(x & y),
+        BitOr => Value::UInt(x | y),
+        BitXor => Value::UInt(x ^ y),
+        Lt => Value::Bool(x < y),
+        Gt => Value::Bool(x > y),
+        Le => Value::Bool(x <= y),
+        Ge => Value::Bool(x >= y),
+        Eq => Value::Bool(x == y),
+        Ne => Value::Bool(x != y),
+        Div | MatMul | And | Or | In | NotIn => {
+            return Err(RuntimeError::TypeError(format!(
+                "operator '{op:?}' is invalid for unsigned dispatch"
+            )));
+        }
+    })
+}
+
+fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
+    use InfixOp::*;
+    Ok(match op {
+        Add => Value::Float64(x + y),
+        Sub => Value::Float64(x - y),
+        Mul => Value::Float64(x * y),
+        FloorDiv => Value::Float64((x / y).floor()),
+        Mod => Value::Float64(x - y * (x / y).floor()),
+        Pow => Value::Float64(x.powf(y)),
+        Lt => Value::Bool(x < y),
+        Gt => Value::Bool(x > y),
+        Le => Value::Bool(x <= y),
+        Ge => Value::Bool(x >= y),
+        Eq => Value::Bool(x == y),
+        Ne => Value::Bool(x != y),
+        Div | MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn => {
+            return Err(RuntimeError::TypeError(format!(
+                "operator '{op:?}' is invalid for float dispatch"
+            )));
+        }
+    })
+}
+
+/// Round a float result to its lane precision: `float32` truncates to single
+/// precision, `float64` keeps full `f64`. (Called only for float dtypes.)
+fn round_lane(dtype: Dtype, x: f64) -> f64 {
+    match dtype {
+        Dtype::Float32 => round_f32(x),
+        _ => x,
+    }
+}
+
+/// A scalar value's integer content, for building an integer SIMD lane.
+fn value_to_int(v: &Value) -> Result<i128, RuntimeError> {
+    match v {
+        Value::Int(n) => Ok(*n as i128),
+        Value::IntLiteral(value) => value
+            .to_i128()
+            .ok_or_else(|| literal_materialization_error(value, "integer SIMD lane")),
+        Value::UInt(n) => Ok(*n as i128),
+        Value::Bool(b) => Ok(*b as i128),
+        Value::Simd {
+            lanes: SimdLanes::Int(l),
+            ..
+        } if l.len() == 1 => Ok(l[0]),
+        other => Err(RuntimeError::TypeError(format!(
+            "cannot use {} as an integer SIMD element",
+            type_name(other)
+        ))),
+    }
+}
+
+fn materialize_literal_int_lane(value: &crate::literal::IntLiteral, dtype: Dtype) -> Option<i128> {
+    let (bits, signed) = integer_dtype_bits(dtype)?;
+    if signed {
+        value.wrapping_signed(bits).map(i128::from)
+    } else {
+        value.wrapping_unsigned(bits).map(i128::from)
+    }
+}
+
+fn int_arith(op: InfixOp, a: i128, b: i128) -> i128 {
+    match op {
+        InfixOp::Add => a + b,
+        InfixOp::Sub => a - b,
+        InfixOp::Mul => a * b,
+        _ => 0, // checker rejects other arithmetic on SIMD ints
+    }
+}
+
+fn int_cmp(op: InfixOp, a: i128, b: i128) -> bool {
+    match op {
+        InfixOp::Eq => a == b,
+        InfixOp::Ne => a != b,
+        InfixOp::Lt => a < b,
+        InfixOp::Gt => a > b,
+        InfixOp::Le => a <= b,
+        InfixOp::Ge => a >= b,
+        _ => false,
+    }
+}
+
+fn float_arith(op: InfixOp, a: f64, b: f64) -> f64 {
+    match op {
+        InfixOp::Add => a + b,
+        InfixOp::Sub => a - b,
+        InfixOp::Mul => a * b,
+        InfixOp::Div => a / b,
+        _ => 0.0,
+    }
+}
+
+fn float_cmp(op: InfixOp, a: f64, b: f64) -> bool {
+    match op {
+        InfixOp::Eq => a == b,
+        InfixOp::Ne => a != b,
+        InfixOp::Lt => a < b,
+        InfixOp::Gt => a > b,
+        InfixOp::Le => a <= b,
+        InfixOp::Ge => a >= b,
+        _ => false,
+    }
+}
+
+// --- Collections / indexing ---
+
+/// Convert a signed index into a bounds-checked `usize`, or a runtime error.
+pub(crate) fn bounds_check(idx: i64, len: usize, what: &str) -> Result<usize, RuntimeError> {
+    if idx < 0 || idx as usize >= len {
+        return Err(RuntimeError::TypeError(format!(
+            "{} index {} out of range 0..{}",
+            what, idx, len
+        )));
+    }
+    Ok(idx as usize)
+}
+
+// --- SIMD ---
+
+/// Wrap an integer to a dtype's bit width (bit-accurate overflow), storing the
+/// post-wrap mathematical value (non-negative for unsigned dtypes).
+fn wrap(dtype: Dtype, v: i128) -> i128 {
+    match dtype {
+        Dtype::Int => v,
+        Dtype::Int8 => v as i8 as i128,
+        Dtype::Int16 => v as i16 as i128,
+        Dtype::Int32 => v as i32 as i128,
+        Dtype::Int64 => v as i64 as i128,
+        Dtype::UInt8 => v as u8 as i128,
+        Dtype::UInt16 => v as u16 as i128,
+        Dtype::UInt32 => v as u32 as i128,
+        Dtype::UInt64 => v as u64 as i128,
+        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => v,
+    }
+}
+
+// --- Shared numeric/utility built-ins (value level) -------------------------
+//
+// These operate on already-evaluated `Value`s so ordinary VM execution and
+// VM-backed CTFE apply identical semantics. The checker guarantees arity and
+// typing; these functions are the runtime realization only.
+
+/// `abs(x)`: absolute value of a numeric (`UInt` is already non-negative).
+pub(crate) fn builtin_abs(v: Value) -> Result<Value, RuntimeError> {
+    match v {
+        Value::Int(n) => Ok(Value::Int(n.wrapping_abs())),
+        Value::Float64(x) => Ok(Value::Float64(x.abs())),
+        Value::IntLiteral(value) => Ok(Value::IntLiteral(if value.is_negative() {
+            value.neg()
+        } else {
+            value
+        })),
+        Value::FloatLiteral(value) => Ok(Value::FloatLiteral(value.abs())),
+        Value::UInt(n) => Ok(Value::UInt(n)),
+        other => Err(RuntimeError::TypeError(format!(
+            "abs() expects a numeric value, got {}",
+            type_name(&other)
+        ))),
     }
 }
 

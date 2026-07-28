@@ -24,515 +24,6 @@ use crate::runtime::{
 use crate::types::{CallableDefault, ParamDecl, Ty};
 use std::collections::HashMap;
 
-/// The control-flow outcome of executing an instruction or a `try` sub-region.
-/// Most execution is `Normal`; a `return` that crosses a `try` boundary surfaces
-/// as `Return`, so `finally` can run before control leaves the function. (A
-/// `raise` propagates separately as `RuntimeError::Raised`; `break`/`continue`
-/// crossing a `try` are refused at lowering — the mini-CFG region can't name the
-/// outer loop's target block.)
-enum Flow {
-    Normal,
-    Return {
-        value: Value,
-        cleanup: Vec<VarId>,
-    },
-    /// A `break`/`continue` that crossed a `try` boundary, already resolved to the
-    /// target loop block in the enclosing **function** CFG. Propagates out of the
-    /// `try` (running each `finally`) until the function driver jumps there.
-    Jump(usize),
-}
-
-/// A struct type's runtime shape, gathered from the program AST (the MIR doesn't
-/// keep field layout): field names + types (for constructor coercion), and which
-/// methods take `mut self` (so their receiver is written back).
-struct StructDef {
-    fields: Vec<(String, Ty)>,
-    mut_self_methods: std::collections::HashSet<String>,
-    fieldwise_init: bool,
-    /// Checker-resolved compile-time parameters. Type parameters are erased;
-    /// value parameters are materialized to their declared type on reification.
-    param_decls: Vec<ParamDecl>,
-}
-
-/// A free function's calling signature (the MIR doesn't keep it), for matching
-/// positional + keyword arguments to parameter slots — filling defaults and
-/// collecting a trailing `*args`. Covers only the *regular* parameters;
-/// `variadic` is either the homogeneous element type or an explicit
-/// `Ty::RuntimePack` sequence for a specialized heterogeneous collector.
-struct FnSig {
-    param_names: Vec<String>,
-    param_types: Vec<Ty>,
-    /// Const-evaluated default per regular parameter (`None` = no default, or a
-    /// non-constant default the VM can't fold — using such a slot errors).
-    defaults: Vec<Option<Value>>,
-    required: Vec<bool>,
-    variadic: Option<Ty>,
-    /// Where the collected `*args` list belongs among source parameters. For a
-    /// signature like `def f(a, *xs, b)`, this is `Some(1)`.
-    variadic_index: Option<usize>,
-    kw_variadic: Option<Ty>,
-    kw_variadic_index: Option<usize>,
-    /// Indexes into the regular-parameter list.
-    positional_only: Option<usize>,
-    keyword_only: Option<usize>,
-    /// Checker-resolved compile-time parameters. Value parameters become typed
-    /// frame locals; type parameters remain erased.
-    param_decls: Vec<ParamDecl>,
-}
-
-fn runtime_value_as_ct(value: &Value) -> Option<CtValue> {
-    Some(match value {
-        Value::Int(value) => CtValue::Int(*value),
-        Value::UInt(value) => CtValue::UInt(*value),
-        Value::Float64(value) => CtValue::Float(value.to_bits()),
-        Value::IntLiteral(value) => CtValue::IntLiteral(value.clone()),
-        Value::FloatLiteral(value) => CtValue::FloatLiteral(value.clone()),
-        Value::Bool(value) => CtValue::Bool(*value),
-        Value::Str(value) => CtValue::Str(value.clone()),
-        Value::Tuple(values) => CtValue::Tuple(
-            values
-                .iter()
-                .map(runtime_value_as_ct)
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        Value::ComptimeList(values) => CtValue::List(
-            values
-                .iter()
-                .map(runtime_value_as_ct)
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        _ => return None,
-    })
-}
-
-fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
-    Some(match value {
-        CtValue::Int(value) => Value::Int(value),
-        CtValue::UInt(value) => Value::UInt(value),
-        CtValue::Float(bits) => Value::Float64(f64::from_bits(bits)),
-        CtValue::IntLiteral(value) => Value::IntLiteral(value),
-        CtValue::FloatLiteral(value) => Value::FloatLiteral(value),
-        CtValue::Bool(value) => Value::Bool(value),
-        CtValue::Str(value) => Value::Str(value),
-        CtValue::Tuple(values) => Value::Tuple(
-            values
-                .into_iter()
-                .map(ct_value_as_runtime)
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        CtValue::List(values) => Value::ComptimeList(
-            values
-                .into_iter()
-                .map(ct_value_as_runtime)
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => return None,
-    })
-}
-
-fn resolve_callable_default(
-    default: &CallableDefault,
-    runtime: &HashMap<String, Value>,
-    comptime: &HashMap<String, CtValue>,
-) -> Option<Value> {
-    match default {
-        CallableDefault::Symbol(symbol) => Some(Value::Function(symbol.clone())),
-        CallableDefault::Parameter(name) => runtime.get(name).cloned(),
-        CallableDefault::If {
-            condition,
-            then_value,
-            else_value,
-        } => match condition.evaluate(comptime)? {
-            CtValue::Bool(true) => resolve_callable_default(then_value, runtime, comptime),
-            CtValue::Bool(false) => resolve_callable_default(else_value, runtime, comptime),
-            _ => None,
-        },
-    }
-}
-
-/// Reify generic value parameters in declaration order. Missing source
-/// arguments are filled from checked scalar/callable defaults; callable aliases
-/// can therefore reuse an earlier runtime closure without ever converting its
-/// capture payload into `CtValue`.
-fn reify_value_parameters(
-    declarations: &[ParamDecl],
-    supplied: &[Option<Value>],
-) -> Vec<(String, Value)> {
-    let resolved = resolve_value_parameter_slots(declarations, supplied);
-    declarations
-        .iter()
-        .enumerate()
-        .filter_map(|(index, declaration)| {
-            let ParamDecl::Value { name, ty, .. } = declaration else {
-                return None;
-            };
-            let value = resolved
-                .get(index)
-                .cloned()
-                .flatten()
-                .unwrap_or(Value::None);
-            Some((
-                name.clone(),
-                crate::runtime::coerce_checked(value, ty.as_ref()),
-            ))
-        })
-        .collect()
-}
-
-/// Resolve every supplied or defaulted value in declaration order. This is
-/// separate from frame-local naming so an indirect call can resolve the
-/// anonymous contract's defaults, then reify those concrete values under the
-/// implementation's (alpha-equivalent) declaration names.
-fn resolve_value_parameter_slots(
-    declarations: &[ParamDecl],
-    supplied: &[Option<Value>],
-) -> Vec<Option<Value>> {
-    let mut resolved = vec![None; declarations.len()];
-    let mut runtime = HashMap::new();
-    let mut comptime = HashMap::new();
-    for (index, declaration) in declarations.iter().enumerate() {
-        let ParamDecl::Value {
-            name,
-            ty,
-            default,
-            callable_default,
-            ..
-        } = declaration
-        else {
-            continue;
-        };
-        let value = supplied
-            .get(index)
-            .cloned()
-            .flatten()
-            .or_else(|| {
-                callable_default
-                    .as_ref()
-                    .and_then(|default| resolve_callable_default(default, &runtime, &comptime))
-            })
-            .or_else(|| {
-                default.as_ref().and_then(|default| {
-                    default
-                        .evaluate(&comptime)
-                        .and_then(|value| value.materialize_as(ty))
-                        .and_then(ct_value_as_runtime)
-                })
-            })
-            .map(|value| crate::runtime::coerce_checked(value, ty.as_ref()));
-        let Some(value) = value else {
-            continue;
-        };
-        runtime.insert(name.clone(), value.clone());
-        if let Some(value) = runtime_value_as_ct(&value) {
-            comptime.insert(name.clone(), value);
-        }
-        resolved[index] = Some(value);
-    }
-    resolved
-}
-
-/// Bind source-ordered compile-time arguments to their checked declarations.
-/// Keyword arguments may skip defaults or appear out of declaration order, and
-/// an erased type argument still occupies its selected declaration slot.
-fn align_parameter_arguments<T>(
-    declarations: &[ParamDecl],
-    arguments: Vec<(Option<String>, Option<T>)>,
-) -> Vec<Option<T>> {
-    let mut aligned: Vec<Option<T>> = (0..declarations.len()).map(|_| None).collect();
-    let mut next_positional = 0;
-    for (name, value) in arguments {
-        let index = match name {
-            Some(name) => declarations
-                .iter()
-                .position(|declaration| declaration.name().trim_start_matches('*') == name),
-            None => {
-                while declarations
-                    .get(next_positional)
-                    .is_some_and(|declaration| match declaration {
-                        ParamDecl::Type { infer_only, .. }
-                        | ParamDecl::Value { infer_only, .. } => *infer_only,
-                    })
-                {
-                    next_positional += 1;
-                }
-                let index = (next_positional < declarations.len()).then_some(next_positional);
-                next_positional += usize::from(index.is_some());
-                index
-            }
-        };
-        if let Some(index) = index {
-            aligned[index] = value;
-        }
-    }
-    aligned
-}
-
-fn runtime_parameter_arguments(
-    declarations: &[ParamDecl],
-    arguments: &[crate::mir::MirParamArg],
-    registers: &[Value],
-) -> Vec<Option<Value>> {
-    align_parameter_arguments(
-        declarations,
-        arguments
-            .iter()
-            .map(|argument| {
-                (
-                    argument.name.clone(),
-                    argument
-                        .value
-                        .map(|register| registers[register.0 as usize].clone()),
-                )
-            })
-            .collect(),
-    )
-}
-
-fn vm_type_is_symbolic(ty: &Ty) -> bool {
-    match ty {
-        Ty::Infer | Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-            crate::types::TyArg::Ty(ty) => vm_type_is_symbolic(ty),
-            crate::types::TyArg::Val(value) => vm_ct_value_is_symbolic(value),
-        }),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().any(vm_type_is_symbolic)
-                || vm_type_is_symbolic(ret)
-                || variadic.as_deref().is_some_and(vm_type_is_symbolic)
-                || kw_variadic.as_deref().is_some_and(vm_type_is_symbolic)
-                || error.as_deref().is_some_and(vm_type_is_symbolic)
-        }
-        Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
-            types.iter().any(vm_type_is_symbolic)
-        }
-        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-            vm_type_is_symbolic(element)
-        }
-        Ty::Ref(reference) => vm_type_is_symbolic(&reference.referent),
-        Ty::Int
-        | Ty::UInt
-        | Ty::Bool
-        | Ty::String
-        | Ty::Float64
-        | Ty::None
-        | Ty::Never
-        | Ty::IntLiteral
-        | Ty::FloatLiteral
-        | Ty::Simd { .. }
-        | Ty::Error => false,
-    }
-}
-
-fn vm_ct_value_is_symbolic(value: &CtValue) -> bool {
-    match value {
-        CtValue::Param(_) => true,
-        CtValue::Tuple(values) | CtValue::List(values) => {
-            values.iter().any(vm_ct_value_is_symbolic)
-        }
-        CtValue::Type(ty) | CtValue::Reflected(ty) => vm_type_is_symbolic(ty),
-        CtValue::Int(_)
-        | CtValue::UInt(_)
-        | CtValue::Float(_)
-        | CtValue::IntLiteral(_)
-        | CtValue::FloatLiteral(_)
-        | CtValue::Bool(_)
-        | CtValue::Str(_) => false,
-    }
-}
-
-/// The whole program the VM executes: the lowered MIR plus the struct and
-/// function-signature registries. Immutable during execution, so it threads as
-/// `&Prog` beside the mutable output.
-struct Prog {
-    mir: MirProgram,
-    structs: HashMap<String, StructDef>,
-    sigs: HashMap<String, FnSig>,
-}
-
-struct CallerFrame<'a> {
-    id: FrameId,
-    registers: &'a mut [Value],
-    variables: &'a mut [Value],
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct FrameId(u64);
-
-struct ReturnContinuation {
-    dest: Reg,
-    writebacks: Vec<(usize, MirPlace)>,
-}
-
-struct Frame {
-    id: FrameId,
-    function: usize,
-    registers: Vec<Value>,
-    variables: Vec<Value>,
-    block: usize,
-    instruction: usize,
-    continuation: Option<ReturnContinuation>,
-}
-
-struct WritebackCall<'a> {
-    function_name: &'a str,
-    function_index: usize,
-    positional_args: Vec<Value>,
-    keyword_args: Vec<(String, Value)>,
-    argument_places: &'a [Option<MirPlace>],
-    keyword_argument_places: &'a [Option<MirPlace>],
-    value_params: Vec<(String, Value)>,
-}
-
-struct TryRegions<'a> {
-    body: &'a [MirBlock],
-    handler: &'a Option<(Option<VarId>, Vec<MirBlock>)>,
-    orelse: &'a Option<Vec<MirBlock>>,
-    finalbody: &'a Option<Vec<MirBlock>>,
-    cleanup: &'a [VarId],
-}
-
-struct MethodInvocation<'a> {
-    receiver: Value,
-    method: &'a str,
-    resolved_name: Option<&'a str>,
-    arguments: Vec<Value>,
-    keyword_arguments: Vec<(String, Value)>,
-    receiver_place: &'a Option<MirPlace>,
-    argument_places: &'a [Option<MirPlace>],
-    keyword_argument_places: &'a [Option<MirPlace>],
-    parameter_arguments: &'a [crate::mir::MirParamArg],
-    parameter_declarations: &'a [crate::types::ParamDecl],
-}
-
-struct SynchronousCall<'a> {
-    function_index: usize,
-    arguments: Vec<Value>,
-    value_params: &'a [(String, Value)],
-    reference_inputs: &'a [(usize, Value)],
-}
-
-struct ReferencePointerBoundary<'a> {
-    allocation: u64,
-    offset: i64,
-    index: usize,
-    suffix: &'a [RefProjection],
-}
-
-/// Recover the retained caller place selected for one bound parameter. Keyword
-/// slots are deliberately matched by parameter name: `bind_for_call` expands
-/// `**kwargs^`, so its internal keyword index is not necessarily an index into
-/// the original MIR keyword vectors. A forwarded entry has no retained source
-/// place and therefore correctly returns `None` here.
-fn bound_argument_place<'a>(
-    slot: Option<&ArgSlot>,
-    parameter_name: Option<&str>,
-    positional_offset: usize,
-    argument_places: &'a [Option<MirPlace>],
-    keyword_names: &[String],
-    keyword_argument_places: &'a [Option<MirPlace>],
-) -> Option<&'a MirPlace> {
-    match slot? {
-        ArgSlot::Positional(argument) => argument
-            .checked_sub(positional_offset)
-            .and_then(|argument| argument_places.get(argument))
-            .and_then(Option::as_ref),
-        ArgSlot::Keyword(_) => parameter_name
-            .and_then(|name| keyword_names.iter().position(|candidate| candidate == name))
-            .and_then(|argument| keyword_argument_places.get(argument))
-            .and_then(Option::as_ref),
-        ArgSlot::Default => None,
-    }
-}
-
-impl Prog {
-    fn index_of(&self, name: &str) -> Option<usize> {
-        self.mir.functions.iter().position(|(n, _)| n == name)
-    }
-
-    /// Whether any function name ends with `suffix` (e.g. `.__copyinit__`) — used to
-    /// decide whether copy/move needs the lifecycle-method path at all.
-    fn defines(&self, suffix: &str) -> bool {
-        self.mir.functions.iter().any(|(n, _)| n.ends_with(suffix))
-    }
-
-    /// Arity-based overload fallback: resolve a *source* name to the lowered
-    /// function it must mean, for the calls the checker records no per-span
-    /// target for. Its callers are the VM-synthesized dispatches — operator/
-    /// `__str__`/`__hash__` dunders (`call_dunder`), `__setitem__`,
-    /// the `for`-loop `__next__` protocol, `__init__` construction reached
-    /// without a recorded target, and `runtime_method_name` when `resolved` is
-    /// absent or its abstract callable-contract suffix retargets to a plain,
-    /// non-overloaded nominal `__call__`. Checker-resolved concrete overloads
-    /// carry their exact lowered callee and never depend on this fallback.
-    fn overload_name(&self, name: &str, argc: usize) -> String {
-        if self.index_of(name).is_some() {
-            return name.to_string();
-        }
-        let expected_params = if name.contains('.') { argc + 1 } else { argc };
-        let mut matches = self
-            .mir
-            .functions
-            .iter()
-            .filter(|(fname, f)| {
-                crate::symbol::is_overload_of(fname, name) && f.n_params == expected_params
-            })
-            .map(|(fname, _)| fname.clone())
-            .collect::<Vec<_>>();
-        if matches.len() == 1 {
-            matches.remove(0)
-        } else {
-            name.to_string()
-        }
-    }
-
-    /// Resolve a selected method signature against the receiver's concrete
-    /// runtime type. Bounded generic calls carry an abstract checker symbol;
-    /// retargeting its suffix preserves overload selection even when every
-    /// overload has the same positional arity (for example `**kwargs` methods).
-    fn runtime_method_name(
-        &self,
-        receiver_type: &str,
-        method: &str,
-        resolved: Option<&str>,
-        argc: usize,
-    ) -> String {
-        if let Some(selected) = resolved {
-            if let Some(retargeted) = crate::symbol::retarget_method_symbol(selected, receiver_type)
-                && self.index_of(&retargeted).is_some()
-            {
-                return retargeted;
-            }
-            if self.index_of(selected).is_some() {
-                return selected.to_string();
-            }
-        }
-        self.overload_name(&format!("{receiver_type}.{method}"), argc)
-    }
-}
-
-#[derive(Default)]
-struct HeapAllocation {
-    slots: Vec<Value>,
-    #[allow(dead_code)]
-    alignment: usize,
-    live: bool,
-}
-
 #[derive(Default)]
 pub struct VmBackend {
     output: String,
@@ -2461,6 +1952,450 @@ impl VmBackend {
     }
 }
 
+/// The whole program the VM executes: the lowered MIR plus the struct and
+/// function-signature registries. Immutable during execution, so it threads as
+/// `&Prog` beside the mutable output.
+struct Prog {
+    mir: MirProgram,
+    structs: HashMap<String, StructDef>,
+    sigs: HashMap<String, FnSig>,
+}
+
+impl Prog {
+    fn index_of(&self, name: &str) -> Option<usize> {
+        self.mir.functions.iter().position(|(n, _)| n == name)
+    }
+
+    /// Whether any function name ends with `suffix` (e.g. `.__copyinit__`) — used to
+    /// decide whether copy/move needs the lifecycle-method path at all.
+    fn defines(&self, suffix: &str) -> bool {
+        self.mir.functions.iter().any(|(n, _)| n.ends_with(suffix))
+    }
+
+    /// Arity-based overload fallback: resolve a *source* name to the lowered
+    /// function it must mean, for the calls the checker records no per-span
+    /// target for. Its callers are the VM-synthesized dispatches — operator/
+    /// `__str__`/`__hash__` dunders (`call_dunder`), `__setitem__`,
+    /// the `for`-loop `__next__` protocol, `__init__` construction reached
+    /// without a recorded target, and `runtime_method_name` when `resolved` is
+    /// absent or its abstract callable-contract suffix retargets to a plain,
+    /// non-overloaded nominal `__call__`. Checker-resolved concrete overloads
+    /// carry their exact lowered callee and never depend on this fallback.
+    fn overload_name(&self, name: &str, argc: usize) -> String {
+        if self.index_of(name).is_some() {
+            return name.to_string();
+        }
+        let expected_params = if name.contains('.') { argc + 1 } else { argc };
+        let mut matches = self
+            .mir
+            .functions
+            .iter()
+            .filter(|(fname, f)| {
+                crate::symbol::is_overload_of(fname, name) && f.n_params == expected_params
+            })
+            .map(|(fname, _)| fname.clone())
+            .collect::<Vec<_>>();
+        if matches.len() == 1 {
+            matches.remove(0)
+        } else {
+            name.to_string()
+        }
+    }
+
+    /// Resolve a selected method signature against the receiver's concrete
+    /// runtime type. Bounded generic calls carry an abstract checker symbol;
+    /// retargeting its suffix preserves overload selection even when every
+    /// overload has the same positional arity (for example `**kwargs` methods).
+    fn runtime_method_name(
+        &self,
+        receiver_type: &str,
+        method: &str,
+        resolved: Option<&str>,
+        argc: usize,
+    ) -> String {
+        if let Some(selected) = resolved {
+            if let Some(retargeted) = crate::symbol::retarget_method_symbol(selected, receiver_type)
+                && self.index_of(&retargeted).is_some()
+            {
+                return retargeted;
+            }
+            if self.index_of(selected).is_some() {
+                return selected.to_string();
+            }
+        }
+        self.overload_name(&format!("{receiver_type}.{method}"), argc)
+    }
+}
+
+fn vm_type_is_symbolic(ty: &Ty) -> bool {
+    match ty {
+        Ty::Infer | Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
+        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+            crate::types::TyArg::Ty(ty) => vm_type_is_symbolic(ty),
+            crate::types::TyArg::Val(value) => vm_ct_value_is_symbolic(value),
+        }),
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        } => {
+            params.iter().any(vm_type_is_symbolic)
+                || vm_type_is_symbolic(ret)
+                || variadic.as_deref().is_some_and(vm_type_is_symbolic)
+                || kw_variadic.as_deref().is_some_and(vm_type_is_symbolic)
+                || error.as_deref().is_some_and(vm_type_is_symbolic)
+        }
+        Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
+            types.iter().any(vm_type_is_symbolic)
+        }
+        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
+            vm_type_is_symbolic(element)
+        }
+        Ty::Ref(reference) => vm_type_is_symbolic(&reference.referent),
+        Ty::Int
+        | Ty::UInt
+        | Ty::Bool
+        | Ty::String
+        | Ty::Float64
+        | Ty::None
+        | Ty::Never
+        | Ty::IntLiteral
+        | Ty::FloatLiteral
+        | Ty::Simd { .. }
+        | Ty::Error => false,
+    }
+}
+
+struct CallerFrame<'a> {
+    id: FrameId,
+    registers: &'a mut [Value],
+    variables: &'a mut [Value],
+}
+
+/// Take the single argument of a one-arg built-in (the checker guarantees arity;
+/// a mismatch is a defensive clean error, never a panic).
+fn arg1(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    let mut args = args;
+    if args.len() != 1 {
+        return Err(RuntimeError::ArityMismatch {
+            name: name.to_string(),
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    Ok(args.pop().expect("arity checked above"))
+}
+
+/// A free function's calling signature (the MIR doesn't keep it), for matching
+/// positional + keyword arguments to parameter slots — filling defaults and
+/// collecting a trailing `*args`. Covers only the *regular* parameters;
+/// `variadic` is either the homogeneous element type or an explicit
+/// `Ty::RuntimePack` sequence for a specialized heterogeneous collector.
+struct FnSig {
+    param_names: Vec<String>,
+    param_types: Vec<Ty>,
+    /// Const-evaluated default per regular parameter (`None` = no default, or a
+    /// non-constant default the VM can't fold — using such a slot errors).
+    defaults: Vec<Option<Value>>,
+    required: Vec<bool>,
+    variadic: Option<Ty>,
+    /// Where the collected `*args` list belongs among source parameters. For a
+    /// signature like `def f(a, *xs, b)`, this is `Some(1)`.
+    variadic_index: Option<usize>,
+    kw_variadic: Option<Ty>,
+    kw_variadic_index: Option<usize>,
+    /// Indexes into the regular-parameter list.
+    positional_only: Option<usize>,
+    keyword_only: Option<usize>,
+    /// Checker-resolved compile-time parameters. Value parameters become typed
+    /// frame locals; type parameters remain erased.
+    param_decls: Vec<ParamDecl>,
+}
+
+/// Reify generic value parameters in declaration order. Missing source
+/// arguments are filled from checked scalar/callable defaults; callable aliases
+/// can therefore reuse an earlier runtime closure without ever converting its
+/// capture payload into `CtValue`.
+fn reify_value_parameters(
+    declarations: &[ParamDecl],
+    supplied: &[Option<Value>],
+) -> Vec<(String, Value)> {
+    let resolved = resolve_value_parameter_slots(declarations, supplied);
+    declarations
+        .iter()
+        .enumerate()
+        .filter_map(|(index, declaration)| {
+            let ParamDecl::Value { name, ty, .. } = declaration else {
+                return None;
+            };
+            let value = resolved
+                .get(index)
+                .cloned()
+                .flatten()
+                .unwrap_or(Value::None);
+            Some((
+                name.clone(),
+                crate::runtime::coerce_checked(value, ty.as_ref()),
+            ))
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FrameId(u64);
+
+struct SynchronousCall<'a> {
+    function_index: usize,
+    arguments: Vec<Value>,
+    value_params: &'a [(String, Value)],
+    reference_inputs: &'a [(usize, Value)],
+}
+
+/// A struct type's runtime shape, gathered from the program AST (the MIR doesn't
+/// keep field layout): field names + types (for constructor coercion), and which
+/// methods take `mut self` (so their receiver is written back).
+struct StructDef {
+    fields: Vec<(String, Ty)>,
+    mut_self_methods: std::collections::HashSet<String>,
+    fieldwise_init: bool,
+    /// Checker-resolved compile-time parameters. Type parameters are erased;
+    /// value parameters are materialized to their declared type on reification.
+    param_decls: Vec<ParamDecl>,
+}
+
+fn runtime_value_as_ct(value: &Value) -> Option<CtValue> {
+    Some(match value {
+        Value::Int(value) => CtValue::Int(*value),
+        Value::UInt(value) => CtValue::UInt(*value),
+        Value::Float64(value) => CtValue::Float(value.to_bits()),
+        Value::IntLiteral(value) => CtValue::IntLiteral(value.clone()),
+        Value::FloatLiteral(value) => CtValue::FloatLiteral(value.clone()),
+        Value::Bool(value) => CtValue::Bool(*value),
+        Value::Str(value) => CtValue::Str(value.clone()),
+        Value::Tuple(values) => CtValue::Tuple(
+            values
+                .iter()
+                .map(runtime_value_as_ct)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        Value::ComptimeList(values) => CtValue::List(
+            values
+                .iter()
+                .map(runtime_value_as_ct)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        _ => return None,
+    })
+}
+
+fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
+    Some(match value {
+        CtValue::Int(value) => Value::Int(value),
+        CtValue::UInt(value) => Value::UInt(value),
+        CtValue::Float(bits) => Value::Float64(f64::from_bits(bits)),
+        CtValue::IntLiteral(value) => Value::IntLiteral(value),
+        CtValue::FloatLiteral(value) => Value::FloatLiteral(value),
+        CtValue::Bool(value) => Value::Bool(value),
+        CtValue::Str(value) => Value::Str(value),
+        CtValue::Tuple(values) => Value::Tuple(
+            values
+                .into_iter()
+                .map(ct_value_as_runtime)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        CtValue::List(values) => Value::ComptimeList(
+            values
+                .into_iter()
+                .map(ct_value_as_runtime)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => return None,
+    })
+}
+
+fn resolve_callable_default(
+    default: &CallableDefault,
+    runtime: &HashMap<String, Value>,
+    comptime: &HashMap<String, CtValue>,
+) -> Option<Value> {
+    match default {
+        CallableDefault::Symbol(symbol) => Some(Value::Function(symbol.clone())),
+        CallableDefault::Parameter(name) => runtime.get(name).cloned(),
+        CallableDefault::If {
+            condition,
+            then_value,
+            else_value,
+        } => match condition.evaluate(comptime)? {
+            CtValue::Bool(true) => resolve_callable_default(then_value, runtime, comptime),
+            CtValue::Bool(false) => resolve_callable_default(else_value, runtime, comptime),
+            _ => None,
+        },
+    }
+}
+
+/// Take the two arguments of a two-arg built-in (`min`/`max`).
+fn arg2(name: &str, args: Vec<Value>) -> Result<(Value, Value), RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::ArityMismatch {
+            name: name.to_string(),
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let mut it = args.into_iter();
+    Ok((
+        it.next().expect("arity checked above"),
+        it.next().expect("arity checked above"),
+    ))
+}
+
+/// Resolve every supplied or defaulted value in declaration order. This is
+/// separate from frame-local naming so an indirect call can resolve the
+/// anonymous contract's defaults, then reify those concrete values under the
+/// implementation's (alpha-equivalent) declaration names.
+fn resolve_value_parameter_slots(
+    declarations: &[ParamDecl],
+    supplied: &[Option<Value>],
+) -> Vec<Option<Value>> {
+    let mut resolved = vec![None; declarations.len()];
+    let mut runtime = HashMap::new();
+    let mut comptime = HashMap::new();
+    for (index, declaration) in declarations.iter().enumerate() {
+        let ParamDecl::Value {
+            name,
+            ty,
+            default,
+            callable_default,
+            ..
+        } = declaration
+        else {
+            continue;
+        };
+        let value = supplied
+            .get(index)
+            .cloned()
+            .flatten()
+            .or_else(|| {
+                callable_default
+                    .as_ref()
+                    .and_then(|default| resolve_callable_default(default, &runtime, &comptime))
+            })
+            .or_else(|| {
+                default.as_ref().and_then(|default| {
+                    default
+                        .evaluate(&comptime)
+                        .and_then(|value| value.materialize_as(ty))
+                        .and_then(ct_value_as_runtime)
+                })
+            })
+            .map(|value| crate::runtime::coerce_checked(value, ty.as_ref()));
+        let Some(value) = value else {
+            continue;
+        };
+        runtime.insert(name.clone(), value.clone());
+        if let Some(value) = runtime_value_as_ct(&value) {
+            comptime.insert(name.clone(), value);
+        }
+        resolved[index] = Some(value);
+    }
+    resolved
+}
+
+fn vm_ct_value_is_symbolic(value: &CtValue) -> bool {
+    match value {
+        CtValue::Param(_) => true,
+        CtValue::Tuple(values) | CtValue::List(values) => {
+            values.iter().any(vm_ct_value_is_symbolic)
+        }
+        CtValue::Type(ty) | CtValue::Reflected(ty) => vm_type_is_symbolic(ty),
+        CtValue::Int(_)
+        | CtValue::UInt(_)
+        | CtValue::Float(_)
+        | CtValue::IntLiteral(_)
+        | CtValue::FloatLiteral(_)
+        | CtValue::Bool(_)
+        | CtValue::Str(_) => false,
+    }
+}
+
+struct Frame {
+    id: FrameId,
+    function: usize,
+    registers: Vec<Value>,
+    variables: Vec<Value>,
+    block: usize,
+    instruction: usize,
+    continuation: Option<ReturnContinuation>,
+}
+
+struct WritebackCall<'a> {
+    function_name: &'a str,
+    function_index: usize,
+    positional_args: Vec<Value>,
+    keyword_args: Vec<(String, Value)>,
+    argument_places: &'a [Option<MirPlace>],
+    keyword_argument_places: &'a [Option<MirPlace>],
+    value_params: Vec<(String, Value)>,
+}
+
+struct MethodInvocation<'a> {
+    receiver: Value,
+    method: &'a str,
+    resolved_name: Option<&'a str>,
+    arguments: Vec<Value>,
+    keyword_arguments: Vec<(String, Value)>,
+    receiver_place: &'a Option<MirPlace>,
+    argument_places: &'a [Option<MirPlace>],
+    keyword_argument_places: &'a [Option<MirPlace>],
+    parameter_arguments: &'a [crate::mir::MirParamArg],
+    parameter_declarations: &'a [crate::types::ParamDecl],
+}
+
+/// Recover the retained caller place selected for one bound parameter. Keyword
+/// slots are deliberately matched by parameter name: `bind_for_call` expands
+/// `**kwargs^`, so its internal keyword index is not necessarily an index into
+/// the original MIR keyword vectors. A forwarded entry has no retained source
+/// place and therefore correctly returns `None` here.
+fn bound_argument_place<'a>(
+    slot: Option<&ArgSlot>,
+    parameter_name: Option<&str>,
+    positional_offset: usize,
+    argument_places: &'a [Option<MirPlace>],
+    keyword_names: &[String],
+    keyword_argument_places: &'a [Option<MirPlace>],
+) -> Option<&'a MirPlace> {
+    match slot? {
+        ArgSlot::Positional(argument) => argument
+            .checked_sub(positional_offset)
+            .and_then(|argument| argument_places.get(argument))
+            .and_then(Option::as_ref),
+        ArgSlot::Keyword(_) => parameter_name
+            .and_then(|name| keyword_names.iter().position(|candidate| candidate == name))
+            .and_then(|argument| keyword_argument_places.get(argument))
+            .and_then(Option::as_ref),
+        ArgSlot::Default => None,
+    }
+}
+
+#[derive(Default)]
+struct HeapAllocation {
+    slots: Vec<Value>,
+    #[allow(dead_code)]
+    alignment: usize,
+    live: bool,
+}
+
 fn build_prog_checked(checked: &crate::checked::CheckedProgram) -> Result<Prog, RuntimeError> {
     let mut mir =
         crate::analysis::elaborate_drops_program(crate::mir::lower_checked_program(checked));
@@ -2485,6 +2420,68 @@ fn build_prog_checked(checked: &crate::checked::CheckedProgram) -> Result<Prog, 
         structs,
         sigs,
     })
+}
+
+/// Bind source-ordered compile-time arguments to their checked declarations.
+/// Keyword arguments may skip defaults or appear out of declaration order, and
+/// an erased type argument still occupies its selected declaration slot.
+fn align_parameter_arguments<T>(
+    declarations: &[ParamDecl],
+    arguments: Vec<(Option<String>, Option<T>)>,
+) -> Vec<Option<T>> {
+    let mut aligned: Vec<Option<T>> = (0..declarations.len()).map(|_| None).collect();
+    let mut next_positional = 0;
+    for (name, value) in arguments {
+        let index = match name {
+            Some(name) => declarations
+                .iter()
+                .position(|declaration| declaration.name().trim_start_matches('*') == name),
+            None => {
+                while declarations
+                    .get(next_positional)
+                    .is_some_and(|declaration| match declaration {
+                        ParamDecl::Type { infer_only, .. }
+                        | ParamDecl::Value { infer_only, .. } => *infer_only,
+                    })
+                {
+                    next_positional += 1;
+                }
+                let index = (next_positional < declarations.len()).then_some(next_positional);
+                next_positional += usize::from(index.is_some());
+                index
+            }
+        };
+        if let Some(index) = index {
+            aligned[index] = value;
+        }
+    }
+    aligned
+}
+
+fn runtime_parameter_arguments(
+    declarations: &[ParamDecl],
+    arguments: &[crate::mir::MirParamArg],
+    registers: &[Value],
+) -> Vec<Option<Value>> {
+    align_parameter_arguments(
+        declarations,
+        arguments
+            .iter()
+            .map(|argument| {
+                (
+                    argument.name.clone(),
+                    argument
+                        .value
+                        .map(|register| registers[register.0 as usize].clone()),
+                )
+            })
+            .collect(),
+    )
+}
+
+struct ReturnContinuation {
+    dest: Reg,
+    writebacks: Vec<(usize, MirPlace)>,
 }
 
 /// Build the VM registry from declaration metadata carried by MIR.
@@ -2536,31 +2533,6 @@ fn build_sigs(declarations: &crate::mir::MirDeclarations) -> HashMap<String, FnS
         .collect()
 }
 
-mod calls;
-mod exec;
-mod frames;
-mod references;
-use calls::*;
-/// Read a struct field (or a reified value parameter, e.g. `Self.n`) by name.
-fn get_field(base: &Value, field: &str) -> Result<Value, RuntimeError> {
-    match base {
-        Value::Struct {
-            fields,
-            value_params,
-            ..
-        } => fields
-            .iter()
-            .chain(value_params.iter())
-            .find(|(f, _)| f == field)
-            .map(|(_, v)| v.clone())
-            .ok_or_else(|| RuntimeError::TypeError(format!("no field '{field}'"))),
-        other => Err(RuntimeError::TypeError(format!(
-            "field access on non-struct {}",
-            crate::runtime::type_name(other)
-        ))),
-    }
-}
-
 fn apply_format_spec(value: &Value, rendered: &str, spec: &str) -> Result<String, RuntimeError> {
     if spec.is_empty() {
         return Ok(rendered.to_string());
@@ -2595,25 +2567,6 @@ fn apply_format_spec(value: &Value, rendered: &str, spec: &str) -> Result<String
         rendered,
         " ".repeat(right)
     ))
-}
-
-/// Store through a flattened reference whose final projection selects a SIMD
-/// lane. SIMD lanes are packed scalars rather than independent `Value` slots,
-/// so the ordinary mutable projection navigator cannot return one by address.
-fn write_simd_reference_lane(
-    root: &mut Value,
-    projection: &[RefProjection],
-    value: Value,
-) -> Result<bool, RuntimeError> {
-    let Some((RefProjection::Index(index), prefix)) = projection.split_last() else {
-        return Ok(false);
-    };
-    let parent = navigate_reference_mut(root, prefix)?;
-    let Value::Simd { dtype, lanes } = parent else {
-        return Ok(false);
-    };
-    crate::runtime::set_simd_lane(*dtype, lanes, *index as i64, value)?;
-    Ok(true)
 }
 
 fn navigate_reference_mut<'a>(
@@ -2698,6 +2651,78 @@ fn navigate_reference_mut<'a>(
     Ok(value)
 }
 
+/// The control-flow outcome of executing an instruction or a `try` sub-region.
+/// Most execution is `Normal`; a `return` that crosses a `try` boundary surfaces
+/// as `Return`, so `finally` can run before control leaves the function. (A
+/// `raise` propagates separately as `RuntimeError::Raised`; `break`/`continue`
+/// crossing a `try` are refused at lowering — the mini-CFG region can't name the
+/// outer loop's target block.)
+enum Flow {
+    Normal,
+    Return {
+        value: Value,
+        cleanup: Vec<VarId>,
+    },
+    /// A `break`/`continue` that crossed a `try` boundary, already resolved to the
+    /// target loop block in the enclosing **function** CFG. Propagates out of the
+    /// `try` (running each `finally`) until the function driver jumps there.
+    Jump(usize),
+}
+
+struct TryRegions<'a> {
+    body: &'a [MirBlock],
+    handler: &'a Option<(Option<VarId>, Vec<MirBlock>)>,
+    orelse: &'a Option<Vec<MirBlock>>,
+    finalbody: &'a Option<Vec<MirBlock>>,
+    cleanup: &'a [VarId],
+}
+
+struct ReferencePointerBoundary<'a> {
+    allocation: u64,
+    offset: i64,
+    index: usize,
+    suffix: &'a [RefProjection],
+}
+
+/// Read a struct field (or a reified value parameter, e.g. `Self.n`) by name.
+fn get_field(base: &Value, field: &str) -> Result<Value, RuntimeError> {
+    match base {
+        Value::Struct {
+            fields,
+            value_params,
+            ..
+        } => fields
+            .iter()
+            .chain(value_params.iter())
+            .find(|(f, _)| f == field)
+            .map(|(_, v)| v.clone())
+            .ok_or_else(|| RuntimeError::TypeError(format!("no field '{field}'"))),
+        other => Err(RuntimeError::TypeError(format!(
+            "field access on non-struct {}",
+            crate::runtime::type_name(other)
+        ))),
+    }
+}
+
+/// Store through a flattened reference whose final projection selects a SIMD
+/// lane. SIMD lanes are packed scalars rather than independent `Value` slots,
+/// so the ordinary mutable projection navigator cannot return one by address.
+fn write_simd_reference_lane(
+    root: &mut Value,
+    projection: &[RefProjection],
+    value: Value,
+) -> Result<bool, RuntimeError> {
+    let Some((RefProjection::Index(index), prefix)) = projection.split_last() else {
+        return Ok(false);
+    };
+    let parent = navigate_reference_mut(root, prefix)?;
+    let Value::Simd { dtype, lanes } = parent else {
+        return Ok(false);
+    };
+    crate::runtime::set_simd_lane(*dtype, lanes, *index as i64, value)?;
+    Ok(true)
+}
+
 /// Index internal tuple-pack storage or a SIMD value. Nominal collections route
 /// through their checked `__getitem__` implementation before reaching here.
 fn index_value(base: &Value, idx: i64) -> Result<Value, RuntimeError> {
@@ -2716,38 +2741,6 @@ fn index_value(base: &Value, idx: i64) -> Result<Value, RuntimeError> {
     }
 }
 
-/// Take the single argument of a one-arg built-in (the checker guarantees arity;
-/// a mismatch is a defensive clean error, never a panic).
-fn arg1(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let mut args = args;
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch {
-            name: name.to_string(),
-            expected: 1,
-            got: args.len(),
-        });
-    }
-    Ok(args.pop().expect("arity checked above"))
-}
-
-/// Take the two arguments of a two-arg built-in (`min`/`max`).
-fn arg2(name: &str, args: Vec<Value>) -> Result<(Value, Value), RuntimeError> {
-    if args.len() != 2 {
-        return Err(RuntimeError::ArityMismatch {
-            name: name.to_string(),
-            expected: 2,
-            got: args.len(),
-        });
-    }
-    let mut it = args.into_iter();
-    Ok((
-        it.next().expect("arity checked above"),
-        it.next().expect("arity checked above"),
-    ))
-}
-
-mod places;
-use places::*;
 /// Whether a branch condition register holds `True`.
 fn is_true(v: &Value) -> bool {
     matches!(v, Value::Bool(true))
@@ -2766,6 +2759,20 @@ fn const_value(k: &Const) -> Value {
         Const::None => Value::None,
     }
 }
+
+mod calls;
+
+mod exec;
+
+mod frames;
+
+mod references;
+
+use calls::*;
+
+mod places;
+
+use places::*;
 
 #[cfg(test)]
 mod pointer_storage_tests {

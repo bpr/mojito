@@ -30,11 +30,233 @@ pub(super) fn materialize_expression(expr: &Expr, consts: &HashMap<String, CtVal
     expr
 }
 
+/// Replace a specialized type-pack use such as `Tuple[*Ts]` with the concrete
+/// parameter list selected for this specialization. Root signature types have
+/// no nested binders, so they use a one-scope rewriter; bodies use the scoped
+/// entry points below.
+pub(super) fn expand_type_packs(ty: &mut Type, packs: &HashMap<String, Vec<Type>>) {
+    PackRewriter::new(packs).expand_type(ty);
+}
+
+/// Expand pack operations in one specialized function body. Runtime pack
+/// identity comes from the already-specialized `$pack[...]` parameter type, not
+/// from a name-to-length side table.
+pub(super) fn expand_pack_spreads_in_function_body(
+    statements: &mut [Stmt],
+    parameters: &[FnParam],
+    type_packs: &HashMap<String, Vec<Type>>,
+) {
+    let mut rewriter = PackRewriter::new(type_packs);
+    rewriter.declare_parameters(parameters);
+    rewriter.expand_block(statements);
+}
+
+/// Expand a declaration tree such as a specialized variadic struct. Each method
+/// establishes its own parameter identities, preventing pack metadata from one
+/// method leaking into a same-named ordinary parameter in another.
+pub(super) fn expand_pack_spreads_in_stmt(
+    statement: &mut Stmt,
+    type_packs: &HashMap<String, Vec<Type>>,
+) {
+    PackRewriter::new(type_packs).expand_statement(statement);
+}
+
+pub(super) fn rewrite_stmt_cloned(s: &Stmt, subs: Subs, into_defs: bool) -> Stmt {
+    let mut s = s.clone();
+    rewrite_stmt(&mut s, subs, into_defs);
+    s
+}
+
+fn rewrite_expr(e: &mut Expr, subs: Subs) {
+    match &mut e.kind {
+        ExprKind::Identifier(name) => {
+            if let Some(v) = subs(name)
+                && let Some(materialized) = v.materialize(e.span)
+            {
+                *e = materialized;
+            }
+        }
+        ExprKind::Spread(value) => rewrite_expr(value, subs),
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::None
+        | ExprKind::TString { .. } => {}
+        // A value **parameter** argument (`Box[CAP](…)`, `UnsafePointer[CAP]`) may
+        // reference a comptime constant, so rewrite the `Value` param args too.
+        ExprKind::TypeApply { args, .. } => rewrite_param_args(args, subs),
+        ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) => rewrite_expr(inner, subs),
+        ExprKind::Infix(_, l, r) => {
+            rewrite_expr(l, subs);
+            rewrite_expr(r, subs);
+        }
+        ExprKind::Compare { first, rest } => {
+            rewrite_expr(first, subs);
+            for (_, r) in rest {
+                rewrite_expr(r, subs);
+            }
+        }
+        ExprKind::Call {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } => {
+            rewrite_param_args(param_args, subs);
+            rewrite_exprs(args, subs);
+            for k in kwargs {
+                rewrite_expr(&mut k.value, subs);
+            }
+        }
+        ExprKind::Member { object, .. } => rewrite_expr(object, subs),
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } => {
+            rewrite_expr(object, subs);
+            rewrite_exprs(args, subs);
+            for k in kwargs {
+                rewrite_expr(&mut k.value, subs);
+            }
+        }
+        ExprKind::Index { object, index } => {
+            rewrite_expr(object, subs);
+            rewrite_expr(index, subs);
+        }
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => {
+            rewrite_expr(object, subs);
+            for b in [lower, upper, step].into_iter().flatten() {
+                rewrite_expr(b, subs);
+            }
+        }
+        ExprKind::MultiIndex { object, args } => {
+            rewrite_expr(object, subs);
+            for argument in args {
+                match argument {
+                    crate::ast::SubscriptArg::Index(value) => rewrite_expr(value, subs),
+                    crate::ast::SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    } => {
+                        for value in [lower, upper, step].into_iter().flatten() {
+                            rewrite_expr(value, subs);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::ListLit(elems) | ExprKind::TupleLit(elems) => rewrite_exprs(elems, subs),
+        ExprKind::TypeValue(_) => {}
+        ExprKind::Invoke { .. } => {}
+        ExprKind::BraceLit(_) => {}
+        // Comprehension targets introduce a nested lexical environment. The
+        // runtime checker/lowerer handles their expressions; blindly applying
+        // this flat comptime substitution could replace a shadowed target.
+        ExprKind::Comprehension { .. } => {}
+        ExprKind::Uninitialized => {}
+        ExprKind::Named { value, .. } => rewrite_expr(value, subs),
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_expr(cond, subs);
+            rewrite_expr(then_branch, subs);
+            rewrite_expr(else_branch, subs);
+        }
+    }
+}
+
+fn rewrite_block(body: &mut [Stmt], subs: Subs, into_defs: bool) {
+    for s in body {
+        rewrite_stmt(s, subs, into_defs);
+    }
+}
+
 /// Identity assigned by the pre-check pack rewriter. These IDs are deliberately
 /// private to elaboration: checked `OwnerId`s do not exist yet, while source
 /// names are not identities in the presence of lexical shadowing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ElabBindingId(u32);
+
+/// Substitute compile-time loop bindings inside nested type syntax as well as
+/// value arguments. A dependent type such as `Ts[i]` stores `i` below a
+/// `ParamArg::Type`, so rewriting only top-level value arguments leaves an
+/// unbound index in an otherwise-unrolled specialization.
+fn rewrite_type(ty: &mut Type, subs: Subs) {
+    match ty {
+        Type::Named(_, arguments) => rewrite_param_args(arguments, subs),
+        Type::Assoc { base, .. } => rewrite_type(base, subs),
+        Type::IndexedProjection { base, index } => {
+            rewrite_type(base, subs);
+            rewrite_expr(index, subs);
+        }
+        Type::Func {
+            type_params,
+            params,
+            ret,
+            capturing,
+            raises_type,
+            ..
+        } => {
+            for parameter in type_params {
+                if let Some(value_type) = &mut parameter.value_type {
+                    rewrite_type(value_type, subs);
+                }
+                if let Some(callable) = &mut parameter.callable_bound {
+                    rewrite_type(callable, subs);
+                }
+                if let Some(mutability) = &mut parameter.origin_mutability {
+                    rewrite_expr(mutability, subs);
+                }
+                if let Some(default) = &mut parameter.default {
+                    rewrite_expr(default, subs);
+                }
+                for constraint in &mut parameter.constraints {
+                    rewrite_expr(constraint, subs);
+                }
+            }
+            for parameter in params {
+                rewrite_type(&mut parameter.ty, subs);
+                if let Some(origins) = &mut parameter.origin {
+                    for origin in origins {
+                        rewrite_expr(origin, subs);
+                    }
+                }
+            }
+            rewrite_type(ret, subs);
+            for origin in capturing.iter_mut().flatten() {
+                rewrite_expr(origin, subs);
+            }
+            if let Some(error) = raises_type {
+                rewrite_type(error, subs);
+            }
+        }
+        Type::Ref { referent, origin } => {
+            rewrite_type(referent, subs);
+            for origin in origin.iter_mut().flatten() {
+                rewrite_expr(origin, subs);
+            }
+        }
+        Type::Int
+        | Type::UInt
+        | Type::Bool
+        | Type::String
+        | Type::Float64
+        | Type::None
+        | Type::SelfParam(_)
+        | Type::SelfType
+        | Type::MaterializedCallable(_) => {}
+    }
+}
 
 /// Scope-aware resolver for the two namespaces pack rewriting touches. A
 /// specialized `$pack[T0, ...]` parameter records its length against the
@@ -781,151 +1003,6 @@ impl PackRewriter {
     }
 }
 
-/// Replace a specialized type-pack use such as `Tuple[*Ts]` with the concrete
-/// parameter list selected for this specialization. Root signature types have
-/// no nested binders, so they use a one-scope rewriter; bodies use the scoped
-/// entry points below.
-pub(super) fn expand_type_packs(ty: &mut Type, packs: &HashMap<String, Vec<Type>>) {
-    PackRewriter::new(packs).expand_type(ty);
-}
-
-/// Expand pack operations in one specialized function body. Runtime pack
-/// identity comes from the already-specialized `$pack[...]` parameter type, not
-/// from a name-to-length side table.
-pub(super) fn expand_pack_spreads_in_function_body(
-    statements: &mut [Stmt],
-    parameters: &[FnParam],
-    type_packs: &HashMap<String, Vec<Type>>,
-) {
-    let mut rewriter = PackRewriter::new(type_packs);
-    rewriter.declare_parameters(parameters);
-    rewriter.expand_block(statements);
-}
-
-/// Expand a declaration tree such as a specialized variadic struct. Each method
-/// establishes its own parameter identities, preventing pack metadata from one
-/// method leaking into a same-named ordinary parameter in another.
-pub(super) fn expand_pack_spreads_in_stmt(
-    statement: &mut Stmt,
-    type_packs: &HashMap<String, Vec<Type>>,
-) {
-    PackRewriter::new(type_packs).expand_statement(statement);
-}
-
-pub(super) fn rewrite_stmt_cloned(s: &Stmt, subs: Subs, into_defs: bool) -> Stmt {
-    let mut s = s.clone();
-    rewrite_stmt(&mut s, subs, into_defs);
-    s
-}
-
-fn rewrite_expr(e: &mut Expr, subs: Subs) {
-    match &mut e.kind {
-        ExprKind::Identifier(name) => {
-            if let Some(v) = subs(name)
-                && let Some(materialized) = v.materialize(e.span)
-            {
-                *e = materialized;
-            }
-        }
-        ExprKind::Spread(value) => rewrite_expr(value, subs),
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Str(_)
-        | ExprKind::None
-        | ExprKind::TString { .. } => {}
-        // A value **parameter** argument (`Box[CAP](…)`, `UnsafePointer[CAP]`) may
-        // reference a comptime constant, so rewrite the `Value` param args too.
-        ExprKind::TypeApply { args, .. } => rewrite_param_args(args, subs),
-        ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) => rewrite_expr(inner, subs),
-        ExprKind::Infix(_, l, r) => {
-            rewrite_expr(l, subs);
-            rewrite_expr(r, subs);
-        }
-        ExprKind::Compare { first, rest } => {
-            rewrite_expr(first, subs);
-            for (_, r) in rest {
-                rewrite_expr(r, subs);
-            }
-        }
-        ExprKind::Call {
-            param_args,
-            args,
-            kwargs,
-            ..
-        } => {
-            rewrite_param_args(param_args, subs);
-            rewrite_exprs(args, subs);
-            for k in kwargs {
-                rewrite_expr(&mut k.value, subs);
-            }
-        }
-        ExprKind::Member { object, .. } => rewrite_expr(object, subs),
-        ExprKind::MethodCall {
-            object,
-            args,
-            kwargs,
-            ..
-        } => {
-            rewrite_expr(object, subs);
-            rewrite_exprs(args, subs);
-            for k in kwargs {
-                rewrite_expr(&mut k.value, subs);
-            }
-        }
-        ExprKind::Index { object, index } => {
-            rewrite_expr(object, subs);
-            rewrite_expr(index, subs);
-        }
-        ExprKind::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            ..
-        } => {
-            rewrite_expr(object, subs);
-            for b in [lower, upper, step].into_iter().flatten() {
-                rewrite_expr(b, subs);
-            }
-        }
-        ExprKind::MultiIndex { object, args } => {
-            rewrite_expr(object, subs);
-            for argument in args {
-                match argument {
-                    crate::ast::SubscriptArg::Index(value) => rewrite_expr(value, subs),
-                    crate::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    } => {
-                        for value in [lower, upper, step].into_iter().flatten() {
-                            rewrite_expr(value, subs);
-                        }
-                    }
-                }
-            }
-        }
-        ExprKind::ListLit(elems) | ExprKind::TupleLit(elems) => rewrite_exprs(elems, subs),
-        ExprKind::TypeValue(_) => {}
-        ExprKind::Invoke { .. } => {}
-        ExprKind::BraceLit(_) => {}
-        // Comprehension targets introduce a nested lexical environment. The
-        // runtime checker/lowerer handles their expressions; blindly applying
-        // this flat comptime substitution could replace a shadowed target.
-        ExprKind::Comprehension { .. } => {}
-        ExprKind::Uninitialized => {}
-        ExprKind::Named { value, .. } => rewrite_expr(value, subs),
-        ExprKind::IfExpr {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            rewrite_expr(cond, subs);
-            rewrite_expr(then_branch, subs);
-            rewrite_expr(else_branch, subs);
-        }
-    }
-}
-
 fn rewrite_exprs(es: &mut [Expr], subs: Subs) {
     for e in es {
         rewrite_expr(e, subs);
@@ -941,83 +1018,6 @@ fn rewrite_param_args(args: &mut [crate::ast::ParamArg], subs: Subs) {
                 rewrite_param_args(std::slice::from_mut(value), subs);
             }
         }
-    }
-}
-
-/// Substitute compile-time loop bindings inside nested type syntax as well as
-/// value arguments. A dependent type such as `Ts[i]` stores `i` below a
-/// `ParamArg::Type`, so rewriting only top-level value arguments leaves an
-/// unbound index in an otherwise-unrolled specialization.
-fn rewrite_type(ty: &mut Type, subs: Subs) {
-    match ty {
-        Type::Named(_, arguments) => rewrite_param_args(arguments, subs),
-        Type::Assoc { base, .. } => rewrite_type(base, subs),
-        Type::IndexedProjection { base, index } => {
-            rewrite_type(base, subs);
-            rewrite_expr(index, subs);
-        }
-        Type::Func {
-            type_params,
-            params,
-            ret,
-            capturing,
-            raises_type,
-            ..
-        } => {
-            for parameter in type_params {
-                if let Some(value_type) = &mut parameter.value_type {
-                    rewrite_type(value_type, subs);
-                }
-                if let Some(callable) = &mut parameter.callable_bound {
-                    rewrite_type(callable, subs);
-                }
-                if let Some(mutability) = &mut parameter.origin_mutability {
-                    rewrite_expr(mutability, subs);
-                }
-                if let Some(default) = &mut parameter.default {
-                    rewrite_expr(default, subs);
-                }
-                for constraint in &mut parameter.constraints {
-                    rewrite_expr(constraint, subs);
-                }
-            }
-            for parameter in params {
-                rewrite_type(&mut parameter.ty, subs);
-                if let Some(origins) = &mut parameter.origin {
-                    for origin in origins {
-                        rewrite_expr(origin, subs);
-                    }
-                }
-            }
-            rewrite_type(ret, subs);
-            for origin in capturing.iter_mut().flatten() {
-                rewrite_expr(origin, subs);
-            }
-            if let Some(error) = raises_type {
-                rewrite_type(error, subs);
-            }
-        }
-        Type::Ref { referent, origin } => {
-            rewrite_type(referent, subs);
-            for origin in origin.iter_mut().flatten() {
-                rewrite_expr(origin, subs);
-            }
-        }
-        Type::Int
-        | Type::UInt
-        | Type::Bool
-        | Type::String
-        | Type::Float64
-        | Type::None
-        | Type::SelfParam(_)
-        | Type::SelfType
-        | Type::MaterializedCallable(_) => {}
-    }
-}
-
-fn rewrite_block(body: &mut [Stmt], subs: Subs, into_defs: bool) {
-    for s in body {
-        rewrite_stmt(s, subs, into_defs);
     }
 }
 

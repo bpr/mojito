@@ -29,102 +29,6 @@ use crate::origin::{Mutability, PointerOrigin};
 use crate::types::{DependentType, ParamDecl, Ty, TyArg, tuple_elements};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Clone, Copy)]
-enum ReferencePermission {
-    Immutable,
-    Mutable,
-    Param(crate::origin::OriginParamId),
-}
-
-impl ReferencePermission {
-    fn from_mutability(mutability: Mutability) -> Self {
-        match mutability {
-            Mutability::Immutable => Self::Immutable,
-            Mutability::Mutable => Self::Mutable,
-            Mutability::Param(parameter) => Self::Param(parameter),
-        }
-    }
-
-    fn allows_write(self) -> bool {
-        !matches!(self, Self::Immutable)
-    }
-
-    /// Whether a capability with this permission can initialize or be viewed
-    /// as one requiring `target`. A symbolic permission has already been
-    /// constrained by the checker; retaining it here avoids guessing that an
-    /// executable generic body is either mutable or immutable.
-    fn satisfies(self, target: Self) -> bool {
-        match target {
-            Self::Immutable => true,
-            Self::Mutable => self.allows_write(),
-            Self::Param(target) => match self {
-                Self::Mutable => true,
-                Self::Param(found) => found == target,
-                Self::Immutable => false,
-            },
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ReferenceCapability<'a> {
-    target: &'a Ty,
-    permission: ReferencePermission,
-}
-
-/// Runtime frame/slot capabilities are represented either by a source-level
-/// `ref T` or by an origin-bearing `UnsafePointer[T, origin]`. Raw/static/
-/// untracked pointer values use allocation arithmetic and are not valid
-/// operands for `ReadRef`/`WriteRef`.
-fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
-    match ty {
-        Ty::Ref(reference) => Some(ReferenceCapability {
-            target: &reference.referent,
-            permission: ReferencePermission::from_mutability(reference.mutability),
-        }),
-        Ty::Pointer { element, origin } => {
-            let permission = match origin {
-                PointerOrigin::Place { mutable, .. } => {
-                    if *mutable {
-                        ReferencePermission::Mutable
-                    } else {
-                        ReferencePermission::Immutable
-                    }
-                }
-                PointerOrigin::Param { mutability, .. } => {
-                    ReferencePermission::from_mutability(*mutability)
-                }
-                PointerOrigin::Legacy
-                | PointerOrigin::Static
-                | PointerOrigin::Untracked { .. }
-                | PointerOrigin::UnsafeAny { .. } => return None,
-            };
-            Some(ReferenceCapability {
-                target: element,
-                permission,
-            })
-        }
-        _ => None,
-    }
-}
-
-/// The storage a `MakeRef` handle designates. A capability-typed root already
-/// contains a runtime frame/slot handle, so `MakeRef` forwards that handle and
-/// extends its projection instead of borrowing the capability slot itself.
-/// An ordinary root, including a struct field whose value happens to be a
-/// reference, is borrowed as storage and therefore retains `place.ty`.
-fn make_ref_target(place: &MirPlace) -> Option<(&Ty, Option<ReferencePermission>)> {
-    let root_capability = place.root_ty.as_ref().and_then(reference_capability);
-    match (root_capability, place.proj.is_empty()) {
-        (Some(capability), true) => Some((capability.target, Some(capability.permission))),
-        (Some(capability), false) => place
-            .ty
-            .as_ref()
-            .map(|target| (target, Some(capability.permission))),
-        (None, _) => place.ty.as_ref().map(|target| (target, None)),
-    }
-}
-
 pub fn verify(program: &MirProgram) -> Vec<String> {
     let mut errors = Vec::new();
     verify_runtime_pack_abi(&program.declarations, &mut errors);
@@ -431,12 +335,402 @@ pub(crate) fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg
     }
 }
 
-fn subscript_arg_regs(argument: &super::MirSubscriptArg, out: &mut Vec<Reg>) {
-    match argument {
-        super::MirSubscriptArg::Index(register) => out.push(*register),
-        super::MirSubscriptArg::Slice {
-            lower, upper, step, ..
-        } => out.extend([lower, upper, step].into_iter().flatten().copied()),
+/// Compatibility for verification purposes: either direction of the checker's
+/// coercion predicate. Lowering emits checker-approved conversions before
+/// values flow, so remaining differences are representational (literal
+/// materialization, generic instantiation), not errors to re-litigate. A type
+/// mentioning an unsubstituted parameter is not compared — instantiation is
+/// the checker's domain and the verifier never re-derives it.
+fn types_compatible(found: &Ty, expected: &Ty) -> bool {
+    fn callable_environment(ty: &Ty) -> Option<&crate::origin::CallableEnvironment> {
+        match ty {
+            Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } => Some(environment),
+            _ => None,
+        }
+    }
+    // Some semantic-only sum types (notably unresolved overload sets) are not
+    // ordinary value-coercion sources or destinations. Identity is still the
+    // strongest possible compatibility proof and must precede those structural
+    // special cases.
+    if found == expected {
+        return true;
+    }
+    if let (Some(found), Some(expected)) =
+        (callable_environment(found), callable_environment(expected))
+        && !crate::checker::callable_environment_coerces(found, expected)
+    {
+        // Environment differences are semantic, not a representational detail
+        // that lowering may erase. In particular, an inference/default contract
+        // is not a general MIR-level wildcard for a concrete capture set.
+        return false;
+    }
+    if contains_type_param(found) || contains_type_param(expected) {
+        return true;
+    }
+    // A bare `Struct(name, [])` is the established erased spelling for a
+    // receiver or synthesized construction of any instantiation of `name`.
+    if let (Ty::Struct(found_name, found_args), Ty::Struct(expected_name, expected_args)) =
+        (found, expected)
+        && found_name == expected_name
+        && (found_args.is_empty() || expected_args.is_empty())
+    {
+        return true;
+    }
+    // A contextual selection narrows an overload set to one member.
+    if let Ty::Overload(members) = found {
+        return members
+            .iter()
+            .any(|member| types_compatible(member, expected));
+    }
+    // A struct may nominally conform to a `def(...)` callable trait; the
+    // conformance is checker-verified and not yet recorded in MIR
+    // declarations, so the verifier does not re-check it here.
+    if matches!(found, Ty::Struct(..)) && matches!(expected, Ty::Func { .. }) {
+        return true;
+    }
+    crate::checker::value_coerces(found, expected) || crate::checker::value_coerces(expected, found)
+}
+
+fn declared<'a>(
+    declarations: &'a MirDeclarations,
+    callee: &str,
+) -> Option<&'a MirFunctionDeclaration> {
+    declarations
+        .functions
+        .iter()
+        .find(|declaration| declaration.lowered_name == callee)
+}
+
+fn contains_runtime_pack(ty: &Ty) -> bool {
+    match ty {
+        Ty::RuntimePack(_) => true,
+        Ty::ComptimeList(inner) | Ty::Pointer { element: inner, .. } => {
+            contains_runtime_pack(inner)
+        }
+        Ty::Tuple(elements) | Ty::Variant(elements) | Ty::Overload(elements) => {
+            elements.iter().any(contains_runtime_pack)
+        }
+        Ty::Ref(reference) => contains_runtime_pack(&reference.referent),
+        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+            crate::types::TyArg::Ty(inner) => contains_runtime_pack(inner),
+            crate::types::TyArg::Val(_) => false,
+        }),
+        Ty::Assoc { base, .. } => contains_runtime_pack(base),
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        } => {
+            params.iter().any(contains_runtime_pack)
+                || contains_runtime_pack(ret)
+                || variadic.as_deref().is_some_and(contains_runtime_pack)
+                || kw_variadic.as_deref().is_some_and(contains_runtime_pack)
+                || error.as_deref().is_some_and(contains_runtime_pack)
+        }
+        _ => false,
+    }
+}
+
+fn instantiate_checked_type(
+    ty: &Ty,
+    type_arguments: &HashMap<String, Ty>,
+    value_arguments: &HashMap<String, CtValue>,
+    bound_values: &HashSet<String>,
+) -> Result<Ty, String> {
+    Ok(match ty {
+        Ty::Param {
+            name,
+            bounds,
+            callable_bound,
+        } => type_arguments
+            .get(name)
+            .or_else(|| type_arguments.get(name.trim_start_matches('*')))
+            .cloned()
+            .unwrap_or_else(|| Ty::Param {
+                name: name.clone(),
+                bounds: bounds.clone(),
+                callable_bound: callable_bound.clone(),
+            }),
+        Ty::Dependent(DependentType::Indexed { elements, index }) => {
+            let elements = elements
+                .iter()
+                .map(|element| {
+                    instantiate_checked_type(element, type_arguments, value_arguments, bound_values)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let Some(value) = index.evaluate(value_arguments) else {
+                let mut referenced = HashSet::new();
+                index.referenced_parameters(&mut referenced);
+                if !referenced.is_empty()
+                    && referenced.iter().all(|name| bound_values.contains(name))
+                {
+                    return Ok(Ty::Dependent(DependentType::Indexed {
+                        elements,
+                        index: index.clone(),
+                    }));
+                }
+                let mut unbound: Vec<_> = referenced.difference(bound_values).cloned().collect();
+                unbound.sort();
+                return Err(if unbound.is_empty() {
+                    "dependent index did not evaluate to a compile-time value".to_string()
+                } else {
+                    format!(
+                        "dependent index references unsubstituted parameter(s): {}",
+                        unbound.join(", ")
+                    )
+                });
+            };
+            let index_value = match value {
+                CtValue::Int(value) => Some(value),
+                CtValue::UInt(value) => i64::try_from(value).ok(),
+                CtValue::IntLiteral(value) => value.to_i64(),
+                _ => None,
+            }
+            .ok_or_else(|| "dependent index is not an Int".to_string())?;
+            let position = usize::try_from(index_value)
+                .map_err(|_| format!("dependent index {index_value} is negative"))?;
+            elements.get(position).cloned().ok_or_else(|| {
+                format!(
+                    "dependent index {index_value} is out of range for {} element(s)",
+                    elements.len()
+                )
+            })?
+        }
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => {
+                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                            .map(TyArg::Ty)
+                    }
+                    TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        ),
+        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(instantiate_checked_type(
+            element,
+            type_arguments,
+            value_arguments,
+            bound_values,
+        )?)),
+        Ty::Tuple(elements) => Ty::Tuple(
+            elements
+                .iter()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(
+            elements
+                .iter()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(instantiate_checked_type(
+            element,
+            type_arguments,
+            value_arguments,
+            bound_values,
+        )?)),
+        Ty::Variant(elements) => Ty::Variant(
+            elements
+                .iter()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(instantiate_checked_type(
+                element,
+                type_arguments,
+                value_arguments,
+                bound_values,
+            )?),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(instantiate_checked_type(
+                &reference.referent,
+                type_arguments,
+                value_arguments,
+                bound_values,
+            )?);
+            Ty::Ref(reference)
+        }
+        Ty::Assoc { base, name } => Ty::Assoc {
+            base: Box::new(instantiate_checked_type(
+                base,
+                type_arguments,
+                value_arguments,
+                bound_values,
+            )?),
+            name: name.clone(),
+        },
+        Ty::Overload(candidates) => Ty::Overload(
+            candidates
+                .iter()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Ty::Func {
+            environment,
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+        } => Ty::Func {
+            environment: environment.clone(),
+            params: params
+                .iter()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            names: names.clone(),
+            ret: Box::new(instantiate_checked_type(
+                ret,
+                type_arguments,
+                value_arguments,
+                bound_values,
+            )?),
+            required: required.clone(),
+            variadic: variadic
+                .as_ref()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                        .map(Box::new)
+                })
+                .transpose()?,
+            kw_variadic: kw_variadic
+                .as_ref()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                        .map(Box::new)
+                })
+                .transpose()?,
+            positional_only: *positional_only,
+            keyword_only: *keyword_only,
+            raises: *raises,
+            error: error
+                .as_ref()
+                .map(|ty| {
+                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                        .map(Box::new)
+                })
+                .transpose()?,
+            conventions: conventions.clone(),
+            ref_params: ref_params.clone(),
+            ref_return: ref_return.clone(),
+        },
+        // Nested generic callable contracts own their own binder scope. The
+        // outer verifier validates that scope recursively; retaining it is
+        // sound and avoids capturing same-spelled outer substitution names.
+        Ty::GenericFunc { .. } => ty.clone(),
+        _ => ty.clone(),
+    })
+}
+
+fn contains_type_param(ty: &Ty) -> bool {
+    match ty {
+        Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) => true,
+        Ty::ComptimeList(inner) | Ty::Pointer { element: inner, .. } => contains_type_param(inner),
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            elements.iter().any(contains_type_param)
+        }
+        Ty::Ref(reference) => contains_type_param(&reference.referent),
+        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+            crate::types::TyArg::Ty(inner) => contains_type_param(inner),
+            crate::types::TyArg::Val(_) => false,
+        }),
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        } => {
+            params.iter().any(contains_type_param)
+                || contains_type_param(ret)
+                || variadic.as_deref().is_some_and(contains_type_param)
+                || kw_variadic.as_deref().is_some_and(contains_type_param)
+                || error.as_deref().is_some_and(contains_type_param)
+        }
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ReferencePermission {
+    Immutable,
+    Mutable,
+    Param(crate::origin::OriginParamId),
+}
+
+impl ReferencePermission {
+    fn from_mutability(mutability: Mutability) -> Self {
+        match mutability {
+            Mutability::Immutable => Self::Immutable,
+            Mutability::Mutable => Self::Mutable,
+            Mutability::Param(parameter) => Self::Param(parameter),
+        }
+    }
+
+    fn allows_write(self) -> bool {
+        !matches!(self, Self::Immutable)
+    }
+
+    /// Whether a capability with this permission can initialize or be viewed
+    /// as one requiring `target`. A symbolic permission has already been
+    /// constrained by the checker; retaining it here avoids guessing that an
+    /// executable generic body is either mutable or immutable.
+    fn satisfies(self, target: Self) -> bool {
+        match target {
+            Self::Immutable => true,
+            Self::Mutable => self.allows_write(),
+            Self::Param(target) => match self {
+                Self::Mutable => true,
+                Self::Param(found) => found == target,
+                Self::Immutable => false,
+            },
+        }
     }
 }
 
@@ -454,6 +748,841 @@ struct RegionContext {
     /// Whether a raise from this position reaches an `except` handler before
     /// leaving the function.
     protected: bool,
+}
+
+struct SubscriptSources<'a> {
+    receiver_ty: Option<&'a Ty>,
+    method: &'static str,
+    receiver_place: Option<&'a MirPlace>,
+    positional_places: &'a [Option<MirPlace>],
+    keyword_places: &'a [Option<MirPlace>],
+    positional_types: &'a [Option<Ty>],
+    keyword_types: &'a [Option<Ty>],
+    dest: Option<Reg>,
+}
+
+/// Runtime frame/slot capabilities are represented either by a source-level
+/// `ref T` or by an origin-bearing `UnsafePointer[T, origin]`. Raw/static/
+/// untracked pointer values use allocation arithmetic and are not valid
+/// operands for `ReadRef`/`WriteRef`.
+fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
+    match ty {
+        Ty::Ref(reference) => Some(ReferenceCapability {
+            target: &reference.referent,
+            permission: ReferencePermission::from_mutability(reference.mutability),
+        }),
+        Ty::Pointer { element, origin } => {
+            let permission = match origin {
+                PointerOrigin::Place { mutable, .. } => {
+                    if *mutable {
+                        ReferencePermission::Mutable
+                    } else {
+                        ReferencePermission::Immutable
+                    }
+                }
+                PointerOrigin::Param { mutability, .. } => {
+                    ReferencePermission::from_mutability(*mutability)
+                }
+                PointerOrigin::Legacy
+                | PointerOrigin::Static
+                | PointerOrigin::Untracked { .. }
+                | PointerOrigin::UnsafeAny { .. } => return None,
+            };
+            Some(ReferenceCapability {
+                target: element,
+                permission,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn verify_subscript_receiver_place(
+    prefix: &str,
+    receiver_ty: Option<&Ty>,
+    receiver_place: Option<&MirPlace>,
+    errors: &mut Vec<String>,
+) {
+    let (Some(found), Some(storage)) = (
+        receiver_ty,
+        receiver_place.and_then(|place| place.ty.as_ref()),
+    ) else {
+        return;
+    };
+    let receiver = match storage {
+        Ty::Ref(reference) => reference.referent.as_ref(),
+        other => other,
+    };
+    if !types_compatible(found, receiver) {
+        errors.push(format!(
+            "{prefix}: subscript receiver place type {receiver} does not match base value type {found}"
+        ));
+    }
+}
+
+fn verify_subscript_call(
+    prefix: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    call: &crate::mir::MirSubscriptCall,
+    sources: SubscriptSources<'_>,
+    errors: &mut Vec<String>,
+) {
+    let SubscriptSources {
+        receiver_ty,
+        method,
+        receiver_place,
+        positional_places,
+        keyword_places,
+        positional_types,
+        keyword_types,
+        dest,
+    } = sources;
+    verify_capture_accesses(prefix, function, &call.capture_accesses, errors);
+    let abstract_trait_dispatch = call.target.starts_with("__trait_dispatch.");
+    let target_family = call.target.rsplit_once('.').is_some_and(|(_, symbol)| {
+        symbol == method
+            || symbol
+                .strip_prefix(method)
+                .is_some_and(|suffix| suffix.starts_with('$'))
+            || method == "__getitem__"
+                && (symbol == "__getitem_param__"
+                    || symbol.starts_with("__getitem_param__$")
+                    || symbol.starts_with("__getitem_param_value__$"))
+    });
+    if !target_family {
+        errors.push(format!(
+            "{prefix}: selected subscript target '{}' is not in the {method} method family",
+            call.target
+        ));
+    }
+    let concrete_receiver = match receiver_ty {
+        Some(Ty::Struct(name, _)) => Some(name.as_str()),
+        Some(Ty::Ref(reference)) => match reference.referent.as_ref() {
+            Ty::Struct(name, _) => Some(name.as_str()),
+            _ => None,
+        },
+        _ => None,
+    };
+    if !abstract_trait_dispatch
+        && let Some(receiver) = concrete_receiver
+        && call
+            .target
+            .rsplit_once('.')
+            .is_some_and(|(owner, _)| owner != receiver)
+    {
+        errors.push(format!(
+            "{prefix}: selected subscript target '{}' does not belong to receiver type {receiver}",
+            call.target
+        ));
+    }
+    if call.receiver_requires_place && receiver_place.is_none() {
+        errors.push(format!(
+            "{prefix}: selected subscript reference receiver has no retained caller place"
+        ));
+    }
+    if positional_places.len() != positional_types.len()
+        || keyword_places.len() != keyword_types.len()
+    {
+        errors.push(format!(
+            "{prefix}: subscript argument place/type metadata is not aligned"
+        ));
+    }
+    let mut positional_uses = vec![0usize; positional_places.len()];
+    let mut keyword_uses = vec![0usize; keyword_places.len()];
+    for argument in &call.arguments {
+        let (retained, actual_ty) = match argument.source {
+            crate::checked::CheckedCallArgumentSource::Positional(index) => {
+                if let Some(uses) = positional_uses.get_mut(index) {
+                    *uses += 1;
+                } else {
+                    errors.push(format!(
+                        "{prefix}: selected subscript positional source {index} is out of range"
+                    ));
+                }
+                (
+                    positional_places.get(index).and_then(Option::as_ref),
+                    positional_types.get(index).and_then(Option::as_ref),
+                )
+            }
+            crate::checked::CheckedCallArgumentSource::Keyword(index) => {
+                if let Some(uses) = keyword_uses.get_mut(index) {
+                    *uses += 1;
+                } else {
+                    errors.push(format!(
+                        "{prefix}: selected subscript keyword source {index} is out of range"
+                    ));
+                }
+                (
+                    keyword_places.get(index).and_then(Option::as_ref),
+                    keyword_types.get(index).and_then(Option::as_ref),
+                )
+            }
+            crate::checked::CheckedCallArgumentSource::Default => (None, None),
+        };
+        if argument.requires_place && retained.is_none() {
+            errors.push(format!(
+                "{prefix}: selected subscript mut/ref argument has no retained caller place"
+            ));
+        }
+        if let Some(actual_ty) = actual_ty
+            && !types_compatible(actual_ty, &argument.parameter_ty)
+        {
+            errors.push(format!(
+                "{prefix}: subscript source has type {actual_ty}, selected parameter expects {}",
+                argument.parameter_ty
+            ));
+        }
+        if matches!(
+            argument.convention,
+            Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
+        ) && !argument.requires_place
+        {
+            errors.push(format!(
+                "{prefix}: selected subscript mut/ref convention does not require a caller place"
+            ));
+        }
+    }
+    for (index, uses) in positional_uses.iter().enumerate() {
+        if *uses != 1 {
+            errors.push(format!(
+                "{prefix}: subscript positional source {index} is represented {uses} times"
+            ));
+        }
+    }
+    for (index, uses) in keyword_uses.iter().enumerate() {
+        if *uses != 1 {
+            errors.push(format!(
+                "{prefix}: subscript keyword source {index} is represented {uses} times"
+            ));
+        }
+    }
+    let retained_reference_ty = call
+        .reference_result
+        .as_ref()
+        .map(|reference| Ty::Ref(reference.clone()));
+    match &retained_reference_ty {
+        Some(expected) if &call.result_ty != expected => errors.push(format!(
+            "{prefix}: subscript reference-result metadata {expected} does not match selected result type {}",
+            call.result_ty
+        )),
+        None if matches!(call.result_ty, Ty::Ref(_)) => errors.push(format!(
+            "{prefix}: subscript selected result type {} lacks reference-result metadata",
+            call.result_ty
+        )),
+        _ => {}
+    }
+    if let Some(dest) = dest
+        && let Some(found) = function.reg_types.get(&dest.0)
+    {
+        let exact_reference_mismatch = matches!(
+            (found, &call.result_ty),
+            (Ty::Ref(found), Ty::Ref(expected)) if found != expected
+        );
+        if exact_reference_mismatch || !types_compatible(found, &call.result_ty) {
+            errors.push(format!(
+                "{prefix}: subscript result has type {found}, selected contract returns {}",
+                call.result_ty
+            ));
+        }
+    }
+    verify_param_arguments(
+        prefix,
+        function,
+        &call.param_decls,
+        &call.param_arg_regs,
+        errors,
+    );
+    match declared(declarations, &call.target) {
+        // Trait-bound dispatch is intentionally abstract in checked MIR. Its
+        // complete selected argument/result contract is still verified here;
+        // the VM retargets the symbol to the concrete receiver declaration.
+        None if abstract_trait_dispatch => {}
+        None => errors.push(format!(
+            "{prefix}: subscript refers to undeclared method '{}'",
+            call.target
+        )),
+        Some(declaration) => {
+            if !declaration.has_receiver {
+                errors.push(format!(
+                    "{prefix}: selected subscript target '{}' has no declared receiver",
+                    call.target
+                ));
+            }
+            if !effective_call_convention_matches(
+                declaration.receiver_convention,
+                call.receiver_convention,
+            ) {
+                errors.push(format!(
+                    "{prefix}: subscript receiver convention {:?} does not match '{}' declaration {:?}",
+                    call.receiver_convention, call.target, declaration.receiver_convention
+                ));
+            }
+            let declared_receiver_place = matches!(
+                declaration.receiver_convention,
+                Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
+            );
+            if call.receiver_requires_place != declared_receiver_place {
+                errors.push(format!(
+                    "{prefix}: subscript receiver place requirement does not match '{}' declaration",
+                    call.target
+                ));
+            }
+            if declaration.param_decls != call.param_decls {
+                errors.push(format!(
+                    "{prefix}: subscript generic declaration metadata does not match '{}'",
+                    call.target
+                ));
+            }
+            if declaration.raises != call.raises.is_some() {
+                errors.push(format!(
+                    "{prefix}: subscript raising metadata does not match '{}'",
+                    call.target
+                ));
+            } else if let (Some(found), Some(expected)) =
+                (&call.raises, declaration.error_ty.as_ref())
+                && !types_compatible(found, expected)
+            {
+                errors.push(format!(
+                    "{prefix}: subscript error type {found} does not match '{}' contract {expected}",
+                    call.target
+                ));
+            }
+            if declaration.returns_reference != call.reference_result.is_some() {
+                errors.push(format!(
+                    "{prefix}: subscript reference-result ABI does not match '{}' declaration",
+                    call.target
+                ));
+            }
+            if let Some(reference) = &call.reference_result
+                && !types_compatible(reference.referent.as_ref(), &declaration.ret_ty)
+            {
+                errors.push(format!(
+                    "{prefix}: subscript reference-result referent {} does not match '{}' declaration {}",
+                    reference.referent, call.target, declaration.ret_ty
+                ));
+            }
+            if call.reference_result.is_none()
+                && !types_compatible(&call.result_ty, &declaration.ret_ty)
+            {
+                errors.push(format!(
+                    "{prefix}: subscript selected result type {} does not match '{}' declaration {}",
+                    call.result_ty, call.target, declaration.ret_ty
+                ));
+            }
+            if call.arguments.len() < declaration.param_types.len() {
+                errors.push(format!(
+                    "{prefix}: selected subscript has {} argument contract(s), but '{}' declares {} fixed parameter(s)",
+                    call.arguments.len(),
+                    call.target,
+                    declaration.param_types.len()
+                ));
+            }
+            for (index, expected) in declaration.param_types.iter().enumerate() {
+                let Some(argument) = call.arguments.get(index) else {
+                    continue;
+                };
+                let declared_convention =
+                    declaration.param_conventions.get(index).copied().flatten();
+                if !effective_call_convention_matches(declared_convention, argument.convention) {
+                    errors.push(format!(
+                        "{prefix}: selected subscript parameter {index} convention {:?} does not match '{}' declaration {:?}",
+                        argument.convention, call.target, declared_convention
+                    ));
+                }
+                if !types_compatible(&argument.parameter_ty, expected) {
+                    errors.push(format!(
+                        "{prefix}: selected subscript parameter type {} does not match '{}' declaration {expected}",
+                        argument.parameter_ty, call.target
+                    ));
+                }
+                let requires_place = declaration.ref_params.get(index).copied().unwrap_or(false);
+                if argument.requires_place != requires_place {
+                    errors.push(format!(
+                        "{prefix}: selected subscript parameter {index} place requirement does not match '{}' declaration",
+                        call.target
+                    ));
+                }
+                if matches!(
+                    argument.source,
+                    crate::checked::CheckedCallArgumentSource::Default
+                ) && declaration.required.get(index).copied().unwrap_or(true)
+                {
+                    errors.push(format!(
+                        "{prefix}: required subscript parameter {index} of '{}' is bound to a default",
+                        call.target
+                    ));
+                }
+            }
+            let overflow = call
+                .arguments
+                .get(declaration.param_types.len()..)
+                .unwrap_or_default();
+            let positional_overflow = overflow
+                .iter()
+                .filter(|argument| {
+                    matches!(
+                        argument.source,
+                        crate::checked::CheckedCallArgumentSource::Positional(_)
+                    )
+                })
+                .collect::<Vec<_>>();
+            let expected_positional = match declaration.variadic.as_ref() {
+                Some(Ty::RuntimePack(elements)) => {
+                    if elements.len() != positional_overflow.len() {
+                        errors.push(format!(
+                            "{prefix}: selected subscript has {} positional overflow argument(s), but '{}' requires RuntimePack arity {}",
+                            positional_overflow.len(),
+                            call.target,
+                            elements.len()
+                        ));
+                    }
+                    Some(elements.as_slice())
+                }
+                _ => None,
+            };
+            let mut positional_index = 0;
+            for argument in overflow {
+                let expected = match argument.source {
+                    crate::checked::CheckedCallArgumentSource::Positional(_) => {
+                        let expected = match (&declaration.variadic, expected_positional) {
+                            (Some(Ty::RuntimePack(_)), Some(elements)) => {
+                                elements.get(positional_index)
+                            }
+                            (Some(element), _) => Some(element),
+                            (None, _) => None,
+                        };
+                        positional_index += 1;
+                        expected
+                    }
+                    crate::checked::CheckedCallArgumentSource::Keyword(_) => {
+                        declaration.kw_variadic.as_ref()
+                    }
+                    crate::checked::CheckedCallArgumentSource::Default => {
+                        errors.push(format!(
+                            "{prefix}: selected subscript overflow argument cannot use a default"
+                        ));
+                        None
+                    }
+                };
+                let Some(expected) = expected else {
+                    if !matches!(
+                        argument.source,
+                        crate::checked::CheckedCallArgumentSource::Default
+                    ) {
+                        errors.push(format!(
+                            "{prefix}: selected subscript overflow argument has no matching variadic collector in '{}'",
+                            call.target
+                        ));
+                    }
+                    continue;
+                };
+                if !types_compatible(&argument.parameter_ty, expected) {
+                    errors.push(format!(
+                        "{prefix}: selected subscript overflow type {} does not match '{}' collector {expected}",
+                        argument.parameter_ty, call.target
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Check the source-order MIR representation against a declaration-order
+/// generic ABI. Keyword names select their declaration directly; positional
+/// entries skip infer-only declarations. A type argument occupies a slot but
+/// has no register, while every supplied value argument must carry a register
+/// compatible with its declared checked type.
+fn verify_param_arguments(
+    prefix: &str,
+    function: &MirFunction,
+    declarations: &[crate::types::ParamDecl],
+    arguments: &[crate::mir::MirParamArg],
+    errors: &mut Vec<String>,
+) {
+    if declarations.is_empty() {
+        // A specialized nominal constructor/method may retain erased source
+        // type applications even though its selected MIR declaration is
+        // monomorphic. They deliberately carry no register. A value argument,
+        // however, would imply a runtime compile-time slot absent from the ABI.
+        if arguments.iter().any(|argument| argument.value.is_some()) {
+            errors.push(format!(
+                "{prefix}: nongeneric call carries a compile-time value argument"
+            ));
+        }
+        return;
+    }
+    let mut occupied = vec![false; declarations.len()];
+    let mut next_positional = 0;
+    for argument in arguments {
+        let index = if let Some(name) = &argument.name {
+            declarations
+                .iter()
+                .position(|declaration| declaration.name().trim_start_matches('*') == name.as_str())
+        } else {
+            while declarations
+                .get(next_positional)
+                .is_some_and(|declaration| {
+                    occupied[next_positional]
+                        || match declaration {
+                            crate::types::ParamDecl::Type { infer_only, .. }
+                            | crate::types::ParamDecl::Value { infer_only, .. } => *infer_only,
+                        }
+                })
+            {
+                next_positional += 1;
+            }
+            let index = (next_positional < declarations.len()).then_some(next_positional);
+            next_positional += usize::from(index.is_some());
+            index
+        };
+        let Some(index) = index else {
+            errors.push(format!(
+                "{prefix}: compile-time argument does not match a parameter declaration"
+            ));
+            continue;
+        };
+        if occupied[index] {
+            errors.push(format!(
+                "{prefix}: compile-time parameter '{}' is supplied more than once",
+                declarations[index].name()
+            ));
+            continue;
+        }
+        occupied[index] = true;
+        match (&declarations[index], argument.value) {
+            (crate::types::ParamDecl::Type { name, .. }, Some(_)) => errors.push(format!(
+                "{prefix}: type parameter '{name}' unexpectedly carries a runtime register"
+            )),
+            (crate::types::ParamDecl::Value { name, .. }, None) => errors.push(format!(
+                "{prefix}: value parameter '{name}' has no runtime register"
+            )),
+            (crate::types::ParamDecl::Value { name, ty, .. }, Some(register)) => {
+                if let Some(found) = function.reg_types.get(&register.0)
+                    && !(matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. })
+                        && crate::checker::callable_bound_accepts(found, ty))
+                    && !types_compatible(found, ty)
+                {
+                    errors.push(format!(
+                        "{prefix}: compile-time value parameter '{name}' has register type {found}, declared {ty}"
+                    ));
+                }
+            }
+            (crate::types::ParamDecl::Type { .. }, None) => {}
+        }
+    }
+    for (index, declaration) in declarations.iter().enumerate() {
+        if occupied[index] {
+            continue;
+        }
+        if let crate::types::ParamDecl::Value {
+            name,
+            default,
+            callable_default,
+            infer_only,
+            variadic,
+            ..
+        } = declaration
+            && default.is_none()
+            && callable_default.is_none()
+            && !infer_only
+            && !variadic
+        {
+            errors.push(format!(
+                "{prefix}: required compile-time value parameter '{name}' is missing"
+            ));
+        }
+    }
+}
+
+fn verify_capture_accesses(
+    prefix: &str,
+    function: &MirFunction,
+    accesses: &[crate::mir::MirCaptureAccess],
+    errors: &mut Vec<String>,
+) {
+    for access in accesses {
+        if access.root as usize >= function.var_names.len() {
+            errors.push(format!(
+                "{prefix}: callable capture access uses unknown owner slot {}",
+                access.root
+            ));
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReferenceCapability<'a> {
+    target: &'a Ty,
+    permission: ReferencePermission,
+}
+
+fn verify_blocks(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    blocks: &[MirBlock],
+    context: &RegionContext,
+    errors: &mut Vec<String>,
+) {
+    for (block_index, block) in blocks.iter().enumerate() {
+        for instruction in &block.instrs {
+            verify_instruction(
+                name,
+                function,
+                declarations,
+                block_index,
+                instruction,
+                context,
+                errors,
+            );
+        }
+        verify_terminator(name, function, block_index, &block.term, context, errors);
+    }
+}
+
+/// Arity, argument-type, and write-back checks against a declaration. Only the
+/// plain positional shape is compared — defaulted, keyword, and variadic calls
+/// are bound by the runtime matcher, whose slotting the verifier does not
+/// replicate.
+fn verify_direct_call(
+    prefix: &str,
+    function: &MirFunction,
+    declaration: &MirFunctionDeclaration,
+    args: &[Reg],
+    kwargs: &[(String, Reg)],
+    arg_places: &[Option<MirPlace>],
+    errors: &mut Vec<String>,
+) {
+    let plain = kwargs.is_empty()
+        && declaration.variadic.is_none()
+        && declaration.kw_variadic.is_none()
+        && args.len() == declaration.param_types.len();
+    if !plain {
+        return;
+    }
+    for (index, (argument, expected)) in args.iter().zip(&declaration.param_types).enumerate() {
+        if let Some(found) = function.reg_types.get(&argument.0)
+            && !types_compatible(found, expected)
+        {
+            errors.push(format!(
+                "{prefix}: argument {index} of '{}' has type {found}, declared {expected}",
+                declaration.lowered_name
+            ));
+        }
+        if declaration.ref_params.get(index).copied().unwrap_or(false)
+            && arg_places
+                .get(index)
+                .map(Option::as_ref)
+                .unwrap_or(None)
+                .is_none()
+        {
+            errors.push(format!(
+                "{prefix}: write-back parameter {index} of '{}' has no caller place",
+                declaration.lowered_name
+            ));
+        }
+    }
+}
+
+fn subscript_arg_regs(argument: &super::MirSubscriptArg, out: &mut Vec<Reg>) {
+    match argument {
+        super::MirSubscriptArg::Index(register) => out.push(*register),
+        super::MirSubscriptArg::Slice {
+            lower, upper, step, ..
+        } => out.extend([lower, upper, step].into_iter().flatten().copied()),
+    }
+}
+
+fn simd_element_type(dtype: crate::ast::Dtype) -> Ty {
+    match dtype {
+        crate::ast::Dtype::Int => Ty::Int,
+        crate::ast::Dtype::Float64 => Ty::Float64,
+        dtype => Ty::Simd { dtype, width: 1 },
+    }
+}
+
+fn slice_descriptor_ty(kind: crate::types::SliceKind) -> Ty {
+    Ty::Struct(kind.type_name().to_string(), Vec::new())
+}
+
+fn subscript_argument_ty(
+    function: &MirFunction,
+    argument: &crate::mir::MirSubscriptArg,
+) -> Option<Ty> {
+    match argument {
+        crate::mir::MirSubscriptArg::Index(register) => {
+            function.reg_types.get(&register.0).cloned()
+        }
+        crate::mir::MirSubscriptArg::Slice { kind, .. } => Some(slice_descriptor_ty(*kind)),
+    }
+}
+
+fn effective_call_convention_matches(
+    declared: Option<crate::ast::ArgConvention>,
+    effective: Option<crate::ast::ArgConvention>,
+) -> bool {
+    declared == effective
+        || matches!(
+            (declared, effective),
+            (
+                Some(crate::ast::ArgConvention::Ref),
+                Some(crate::ast::ArgConvention::Read)
+            )
+        )
+}
+
+fn generic_callable_decls(ty: &Ty) -> Option<&[crate::types::ParamDecl]> {
+    match ty {
+        Ty::GenericFunc { decls, .. } => Some(decls),
+        Ty::Param {
+            callable_bound: Some(bound),
+            ..
+        } => generic_callable_decls(bound),
+        _ => None,
+    }
+}
+
+struct GenericArgumentMaps {
+    types: HashMap<String, Ty>,
+    values: HashMap<String, CtValue>,
+}
+
+/// Ensure each symbolic dependent index is owned by an explicit enclosing
+/// value-parameter binder. This permits generic MIR to remain symbolic while
+/// rejecting a misspelled or escaped index name before wildcard compatibility
+/// could hide it.
+fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
+    fn walk(ty: &Ty, bound: &HashSet<String>) -> Result<(), String> {
+        match ty {
+            Ty::Dependent(DependentType::Indexed { elements, index }) => {
+                let mut referenced = HashSet::new();
+                index.referenced_parameters(&mut referenced);
+                let mut unbound: Vec<_> = referenced.difference(bound).cloned().collect();
+                unbound.sort();
+                if !unbound.is_empty() {
+                    return Err(format!(
+                        "dependent index references unbound parameter(s): {}",
+                        unbound.join(", ")
+                    ));
+                }
+                for element in elements {
+                    walk(element, bound)?;
+                }
+            }
+            Ty::GenericFunc {
+                decls,
+                params,
+                ret,
+                variadic,
+                kw_variadic,
+                error,
+                ..
+            } => {
+                let mut signature_scope = bound.clone();
+                for declaration in decls {
+                    match declaration {
+                        ParamDecl::Type {
+                            callable_bound,
+                            default,
+                            ..
+                        } => {
+                            if let Some(callable) = callable_bound {
+                                walk(callable, &signature_scope)?;
+                            }
+                            if let Some(default) = default {
+                                walk(default, &signature_scope)?;
+                            }
+                        }
+                        ParamDecl::Value { name, ty, .. } => {
+                            walk(ty, &signature_scope)?;
+                            signature_scope.insert(name.trim_start_matches('*').to_string());
+                        }
+                    }
+                }
+                for parameter in params {
+                    walk(parameter, &signature_scope)?;
+                }
+                walk(ret, &signature_scope)?;
+                if let Some(parameter) = variadic {
+                    walk(parameter, &signature_scope)?;
+                }
+                if let Some(parameter) = kw_variadic {
+                    walk(parameter, &signature_scope)?;
+                }
+                if let Some(error) = error {
+                    walk(error, &signature_scope)?;
+                }
+            }
+            Ty::Func {
+                params,
+                ret,
+                variadic,
+                kw_variadic,
+                error,
+                ..
+            } => {
+                for parameter in params {
+                    walk(parameter, bound)?;
+                }
+                walk(ret, bound)?;
+                if let Some(parameter) = variadic {
+                    walk(parameter, bound)?;
+                }
+                if let Some(parameter) = kw_variadic {
+                    walk(parameter, bound)?;
+                }
+                if let Some(error) = error {
+                    walk(error, bound)?;
+                }
+            }
+            Ty::Param {
+                callable_bound: Some(callable),
+                ..
+            } => walk(callable, bound)?,
+            Ty::Struct(_, arguments) => {
+                for argument in arguments {
+                    if let TyArg::Ty(ty) = argument {
+                        walk(ty, bound)?;
+                    }
+                }
+            }
+            Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
+                walk(element, bound)?
+            }
+            Ty::Tuple(elements)
+            | Ty::RuntimePack(elements)
+            | Ty::Variant(elements)
+            | Ty::Overload(elements) => {
+                for element in elements {
+                    walk(element, bound)?;
+                }
+            }
+            Ty::Assoc { base, .. } => walk(base, bound)?,
+            Ty::Ref(reference) => walk(&reference.referent, bound)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    walk(ty, &HashSet::new())
+}
+
+/// The storage a `MakeRef` handle designates. A capability-typed root already
+/// contains a runtime frame/slot handle, so `MakeRef` forwards that handle and
+/// extends its projection instead of borrowing the capability slot itself.
+/// An ordinary root, including a struct field whose value happens to be a
+/// reference, is borrowed as storage and therefore retains `place.ty`.
+fn make_ref_target(place: &MirPlace) -> Option<(&Ty, Option<ReferencePermission>)> {
+    let root_capability = place.root_ty.as_ref().and_then(reference_capability);
+    match (root_capability, place.proj.is_empty()) {
+        (Some(capability), true) => Some((capability.target, Some(capability.permission))),
+        (Some(capability), false) => place
+            .ty
+            .as_ref()
+            .map(|target| (target, Some(capability.permission))),
+        (None, _) => place.ty.as_ref().map(|target| (target, None)),
+    }
 }
 
 fn verify_function(
@@ -596,30 +1725,6 @@ fn verify_runtime_pack_abi(declarations: &MirDeclarations, errors: &mut Vec<Stri
                 ));
             }
         }
-    }
-}
-
-fn verify_blocks(
-    name: &str,
-    function: &MirFunction,
-    declarations: &MirDeclarations,
-    blocks: &[MirBlock],
-    context: &RegionContext,
-    errors: &mut Vec<String>,
-) {
-    for (block_index, block) in blocks.iter().enumerate() {
-        for instruction in &block.instrs {
-            verify_instruction(
-                name,
-                function,
-                declarations,
-                block_index,
-                instruction,
-                context,
-                errors,
-            );
-        }
-        verify_terminator(name, function, block_index, &block.term, context, errors);
     }
 }
 
@@ -1547,50 +2652,6 @@ fn verify_instruction(
     }
 }
 
-/// Arity, argument-type, and write-back checks against a declaration. Only the
-/// plain positional shape is compared — defaulted, keyword, and variadic calls
-/// are bound by the runtime matcher, whose slotting the verifier does not
-/// replicate.
-fn verify_direct_call(
-    prefix: &str,
-    function: &MirFunction,
-    declaration: &MirFunctionDeclaration,
-    args: &[Reg],
-    kwargs: &[(String, Reg)],
-    arg_places: &[Option<MirPlace>],
-    errors: &mut Vec<String>,
-) {
-    let plain = kwargs.is_empty()
-        && declaration.variadic.is_none()
-        && declaration.kw_variadic.is_none()
-        && args.len() == declaration.param_types.len();
-    if !plain {
-        return;
-    }
-    for (index, (argument, expected)) in args.iter().zip(&declaration.param_types).enumerate() {
-        if let Some(found) = function.reg_types.get(&argument.0)
-            && !types_compatible(found, expected)
-        {
-            errors.push(format!(
-                "{prefix}: argument {index} of '{}' has type {found}, declared {expected}",
-                declaration.lowered_name
-            ));
-        }
-        if declaration.ref_params.get(index).copied().unwrap_or(false)
-            && arg_places
-                .get(index)
-                .map(Option::as_ref)
-                .unwrap_or(None)
-                .is_none()
-        {
-            errors.push(format!(
-                "{prefix}: write-back parameter {index} of '{}' has no caller place",
-                declaration.lowered_name
-            ));
-        }
-    }
-}
-
 fn verify_intrinsic_index(
     prefix: &str,
     intrinsic: MirIntrinsicSubscript,
@@ -1659,14 +2720,6 @@ fn verify_intrinsic_index(
     }
 }
 
-fn simd_element_type(dtype: crate::ast::Dtype) -> Ty {
-    match dtype {
-        crate::ast::Dtype::Int => Ty::Int,
-        crate::ast::Dtype::Float64 => Ty::Float64,
-        dtype => Ty::Simd { dtype, width: 1 },
-    }
-}
-
 /// Element types a raw MIR place projection may select. Nominal collection
 /// indexing is absent by construction: it must retain a checked call contract
 /// instead of becoming storage navigation. Public Tuple spellings are accepted
@@ -1709,449 +2762,6 @@ fn verify_intrinsic_slice(
         errors.push(format!(
             "{prefix}: String slice intrinsic has result type {dest}"
         ));
-    }
-}
-
-fn slice_descriptor_ty(kind: crate::types::SliceKind) -> Ty {
-    Ty::Struct(kind.type_name().to_string(), Vec::new())
-}
-
-fn subscript_argument_ty(
-    function: &MirFunction,
-    argument: &crate::mir::MirSubscriptArg,
-) -> Option<Ty> {
-    match argument {
-        crate::mir::MirSubscriptArg::Index(register) => {
-            function.reg_types.get(&register.0).cloned()
-        }
-        crate::mir::MirSubscriptArg::Slice { kind, .. } => Some(slice_descriptor_ty(*kind)),
-    }
-}
-
-fn verify_subscript_receiver_place(
-    prefix: &str,
-    receiver_ty: Option<&Ty>,
-    receiver_place: Option<&MirPlace>,
-    errors: &mut Vec<String>,
-) {
-    let (Some(found), Some(storage)) = (
-        receiver_ty,
-        receiver_place.and_then(|place| place.ty.as_ref()),
-    ) else {
-        return;
-    };
-    let receiver = match storage {
-        Ty::Ref(reference) => reference.referent.as_ref(),
-        other => other,
-    };
-    if !types_compatible(found, receiver) {
-        errors.push(format!(
-            "{prefix}: subscript receiver place type {receiver} does not match base value type {found}"
-        ));
-    }
-}
-
-struct SubscriptSources<'a> {
-    receiver_ty: Option<&'a Ty>,
-    method: &'static str,
-    receiver_place: Option<&'a MirPlace>,
-    positional_places: &'a [Option<MirPlace>],
-    keyword_places: &'a [Option<MirPlace>],
-    positional_types: &'a [Option<Ty>],
-    keyword_types: &'a [Option<Ty>],
-    dest: Option<Reg>,
-}
-
-fn effective_call_convention_matches(
-    declared: Option<crate::ast::ArgConvention>,
-    effective: Option<crate::ast::ArgConvention>,
-) -> bool {
-    declared == effective
-        || matches!(
-            (declared, effective),
-            (
-                Some(crate::ast::ArgConvention::Ref),
-                Some(crate::ast::ArgConvention::Read)
-            )
-        )
-}
-
-fn verify_subscript_call(
-    prefix: &str,
-    function: &MirFunction,
-    declarations: &MirDeclarations,
-    call: &crate::mir::MirSubscriptCall,
-    sources: SubscriptSources<'_>,
-    errors: &mut Vec<String>,
-) {
-    let SubscriptSources {
-        receiver_ty,
-        method,
-        receiver_place,
-        positional_places,
-        keyword_places,
-        positional_types,
-        keyword_types,
-        dest,
-    } = sources;
-    verify_capture_accesses(prefix, function, &call.capture_accesses, errors);
-    let abstract_trait_dispatch = call.target.starts_with("__trait_dispatch.");
-    let target_family = call.target.rsplit_once('.').is_some_and(|(_, symbol)| {
-        symbol == method
-            || symbol
-                .strip_prefix(method)
-                .is_some_and(|suffix| suffix.starts_with('$'))
-            || method == "__getitem__"
-                && (symbol == "__getitem_param__"
-                    || symbol.starts_with("__getitem_param__$")
-                    || symbol.starts_with("__getitem_param_value__$"))
-    });
-    if !target_family {
-        errors.push(format!(
-            "{prefix}: selected subscript target '{}' is not in the {method} method family",
-            call.target
-        ));
-    }
-    let concrete_receiver = match receiver_ty {
-        Some(Ty::Struct(name, _)) => Some(name.as_str()),
-        Some(Ty::Ref(reference)) => match reference.referent.as_ref() {
-            Ty::Struct(name, _) => Some(name.as_str()),
-            _ => None,
-        },
-        _ => None,
-    };
-    if !abstract_trait_dispatch
-        && let Some(receiver) = concrete_receiver
-        && call
-            .target
-            .rsplit_once('.')
-            .is_some_and(|(owner, _)| owner != receiver)
-    {
-        errors.push(format!(
-            "{prefix}: selected subscript target '{}' does not belong to receiver type {receiver}",
-            call.target
-        ));
-    }
-    if call.receiver_requires_place && receiver_place.is_none() {
-        errors.push(format!(
-            "{prefix}: selected subscript reference receiver has no retained caller place"
-        ));
-    }
-    if positional_places.len() != positional_types.len()
-        || keyword_places.len() != keyword_types.len()
-    {
-        errors.push(format!(
-            "{prefix}: subscript argument place/type metadata is not aligned"
-        ));
-    }
-    let mut positional_uses = vec![0usize; positional_places.len()];
-    let mut keyword_uses = vec![0usize; keyword_places.len()];
-    for argument in &call.arguments {
-        let (retained, actual_ty) = match argument.source {
-            crate::checked::CheckedCallArgumentSource::Positional(index) => {
-                if let Some(uses) = positional_uses.get_mut(index) {
-                    *uses += 1;
-                } else {
-                    errors.push(format!(
-                        "{prefix}: selected subscript positional source {index} is out of range"
-                    ));
-                }
-                (
-                    positional_places.get(index).and_then(Option::as_ref),
-                    positional_types.get(index).and_then(Option::as_ref),
-                )
-            }
-            crate::checked::CheckedCallArgumentSource::Keyword(index) => {
-                if let Some(uses) = keyword_uses.get_mut(index) {
-                    *uses += 1;
-                } else {
-                    errors.push(format!(
-                        "{prefix}: selected subscript keyword source {index} is out of range"
-                    ));
-                }
-                (
-                    keyword_places.get(index).and_then(Option::as_ref),
-                    keyword_types.get(index).and_then(Option::as_ref),
-                )
-            }
-            crate::checked::CheckedCallArgumentSource::Default => (None, None),
-        };
-        if argument.requires_place && retained.is_none() {
-            errors.push(format!(
-                "{prefix}: selected subscript mut/ref argument has no retained caller place"
-            ));
-        }
-        if let Some(actual_ty) = actual_ty
-            && !types_compatible(actual_ty, &argument.parameter_ty)
-        {
-            errors.push(format!(
-                "{prefix}: subscript source has type {actual_ty}, selected parameter expects {}",
-                argument.parameter_ty
-            ));
-        }
-        if matches!(
-            argument.convention,
-            Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
-        ) && !argument.requires_place
-        {
-            errors.push(format!(
-                "{prefix}: selected subscript mut/ref convention does not require a caller place"
-            ));
-        }
-    }
-    for (index, uses) in positional_uses.iter().enumerate() {
-        if *uses != 1 {
-            errors.push(format!(
-                "{prefix}: subscript positional source {index} is represented {uses} times"
-            ));
-        }
-    }
-    for (index, uses) in keyword_uses.iter().enumerate() {
-        if *uses != 1 {
-            errors.push(format!(
-                "{prefix}: subscript keyword source {index} is represented {uses} times"
-            ));
-        }
-    }
-    let retained_reference_ty = call
-        .reference_result
-        .as_ref()
-        .map(|reference| Ty::Ref(reference.clone()));
-    match &retained_reference_ty {
-        Some(expected) if &call.result_ty != expected => errors.push(format!(
-            "{prefix}: subscript reference-result metadata {expected} does not match selected result type {}",
-            call.result_ty
-        )),
-        None if matches!(call.result_ty, Ty::Ref(_)) => errors.push(format!(
-            "{prefix}: subscript selected result type {} lacks reference-result metadata",
-            call.result_ty
-        )),
-        _ => {}
-    }
-    if let Some(dest) = dest
-        && let Some(found) = function.reg_types.get(&dest.0)
-    {
-        let exact_reference_mismatch = matches!(
-            (found, &call.result_ty),
-            (Ty::Ref(found), Ty::Ref(expected)) if found != expected
-        );
-        if exact_reference_mismatch || !types_compatible(found, &call.result_ty) {
-            errors.push(format!(
-                "{prefix}: subscript result has type {found}, selected contract returns {}",
-                call.result_ty
-            ));
-        }
-    }
-    verify_param_arguments(
-        prefix,
-        function,
-        &call.param_decls,
-        &call.param_arg_regs,
-        errors,
-    );
-    match declared(declarations, &call.target) {
-        // Trait-bound dispatch is intentionally abstract in checked MIR. Its
-        // complete selected argument/result contract is still verified here;
-        // the VM retargets the symbol to the concrete receiver declaration.
-        None if abstract_trait_dispatch => {}
-        None => errors.push(format!(
-            "{prefix}: subscript refers to undeclared method '{}'",
-            call.target
-        )),
-        Some(declaration) => {
-            if !declaration.has_receiver {
-                errors.push(format!(
-                    "{prefix}: selected subscript target '{}' has no declared receiver",
-                    call.target
-                ));
-            }
-            if !effective_call_convention_matches(
-                declaration.receiver_convention,
-                call.receiver_convention,
-            ) {
-                errors.push(format!(
-                    "{prefix}: subscript receiver convention {:?} does not match '{}' declaration {:?}",
-                    call.receiver_convention, call.target, declaration.receiver_convention
-                ));
-            }
-            let declared_receiver_place = matches!(
-                declaration.receiver_convention,
-                Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
-            );
-            if call.receiver_requires_place != declared_receiver_place {
-                errors.push(format!(
-                    "{prefix}: subscript receiver place requirement does not match '{}' declaration",
-                    call.target
-                ));
-            }
-            if declaration.param_decls != call.param_decls {
-                errors.push(format!(
-                    "{prefix}: subscript generic declaration metadata does not match '{}'",
-                    call.target
-                ));
-            }
-            if declaration.raises != call.raises.is_some() {
-                errors.push(format!(
-                    "{prefix}: subscript raising metadata does not match '{}'",
-                    call.target
-                ));
-            } else if let (Some(found), Some(expected)) =
-                (&call.raises, declaration.error_ty.as_ref())
-                && !types_compatible(found, expected)
-            {
-                errors.push(format!(
-                    "{prefix}: subscript error type {found} does not match '{}' contract {expected}",
-                    call.target
-                ));
-            }
-            if declaration.returns_reference != call.reference_result.is_some() {
-                errors.push(format!(
-                    "{prefix}: subscript reference-result ABI does not match '{}' declaration",
-                    call.target
-                ));
-            }
-            if let Some(reference) = &call.reference_result
-                && !types_compatible(reference.referent.as_ref(), &declaration.ret_ty)
-            {
-                errors.push(format!(
-                    "{prefix}: subscript reference-result referent {} does not match '{}' declaration {}",
-                    reference.referent, call.target, declaration.ret_ty
-                ));
-            }
-            if call.reference_result.is_none()
-                && !types_compatible(&call.result_ty, &declaration.ret_ty)
-            {
-                errors.push(format!(
-                    "{prefix}: subscript selected result type {} does not match '{}' declaration {}",
-                    call.result_ty, call.target, declaration.ret_ty
-                ));
-            }
-            if call.arguments.len() < declaration.param_types.len() {
-                errors.push(format!(
-                    "{prefix}: selected subscript has {} argument contract(s), but '{}' declares {} fixed parameter(s)",
-                    call.arguments.len(),
-                    call.target,
-                    declaration.param_types.len()
-                ));
-            }
-            for (index, expected) in declaration.param_types.iter().enumerate() {
-                let Some(argument) = call.arguments.get(index) else {
-                    continue;
-                };
-                let declared_convention =
-                    declaration.param_conventions.get(index).copied().flatten();
-                if !effective_call_convention_matches(declared_convention, argument.convention) {
-                    errors.push(format!(
-                        "{prefix}: selected subscript parameter {index} convention {:?} does not match '{}' declaration {:?}",
-                        argument.convention, call.target, declared_convention
-                    ));
-                }
-                if !types_compatible(&argument.parameter_ty, expected) {
-                    errors.push(format!(
-                        "{prefix}: selected subscript parameter type {} does not match '{}' declaration {expected}",
-                        argument.parameter_ty, call.target
-                    ));
-                }
-                let requires_place = declaration.ref_params.get(index).copied().unwrap_or(false);
-                if argument.requires_place != requires_place {
-                    errors.push(format!(
-                        "{prefix}: selected subscript parameter {index} place requirement does not match '{}' declaration",
-                        call.target
-                    ));
-                }
-                if matches!(
-                    argument.source,
-                    crate::checked::CheckedCallArgumentSource::Default
-                ) && declaration.required.get(index).copied().unwrap_or(true)
-                {
-                    errors.push(format!(
-                        "{prefix}: required subscript parameter {index} of '{}' is bound to a default",
-                        call.target
-                    ));
-                }
-            }
-            let overflow = call
-                .arguments
-                .get(declaration.param_types.len()..)
-                .unwrap_or_default();
-            let positional_overflow = overflow
-                .iter()
-                .filter(|argument| {
-                    matches!(
-                        argument.source,
-                        crate::checked::CheckedCallArgumentSource::Positional(_)
-                    )
-                })
-                .collect::<Vec<_>>();
-            let expected_positional = match declaration.variadic.as_ref() {
-                Some(Ty::RuntimePack(elements)) => {
-                    if elements.len() != positional_overflow.len() {
-                        errors.push(format!(
-                            "{prefix}: selected subscript has {} positional overflow argument(s), but '{}' requires RuntimePack arity {}",
-                            positional_overflow.len(),
-                            call.target,
-                            elements.len()
-                        ));
-                    }
-                    Some(elements.as_slice())
-                }
-                _ => None,
-            };
-            let mut positional_index = 0;
-            for argument in overflow {
-                let expected = match argument.source {
-                    crate::checked::CheckedCallArgumentSource::Positional(_) => {
-                        let expected = match (&declaration.variadic, expected_positional) {
-                            (Some(Ty::RuntimePack(_)), Some(elements)) => {
-                                elements.get(positional_index)
-                            }
-                            (Some(element), _) => Some(element),
-                            (None, _) => None,
-                        };
-                        positional_index += 1;
-                        expected
-                    }
-                    crate::checked::CheckedCallArgumentSource::Keyword(_) => {
-                        declaration.kw_variadic.as_ref()
-                    }
-                    crate::checked::CheckedCallArgumentSource::Default => {
-                        errors.push(format!(
-                            "{prefix}: selected subscript overflow argument cannot use a default"
-                        ));
-                        None
-                    }
-                };
-                let Some(expected) = expected else {
-                    if !matches!(
-                        argument.source,
-                        crate::checked::CheckedCallArgumentSource::Default
-                    ) {
-                        errors.push(format!(
-                            "{prefix}: selected subscript overflow argument has no matching variadic collector in '{}'",
-                            call.target
-                        ));
-                    }
-                    continue;
-                };
-                if !types_compatible(&argument.parameter_ty, expected) {
-                    errors.push(format!(
-                        "{prefix}: selected subscript overflow type {} does not match '{}' collector {expected}",
-                        argument.parameter_ty, call.target
-                    ));
-                }
-            }
-        }
-    }
-}
-
-fn generic_callable_decls(ty: &Ty) -> Option<&[crate::types::ParamDecl]> {
-    match ty {
-        Ty::GenericFunc { decls, .. } => Some(decls),
-        Ty::Param {
-            callable_bound: Some(bound),
-            ..
-        } => generic_callable_decls(bound),
-        _ => None,
     }
 }
 
@@ -2223,11 +2833,6 @@ fn instantiate_generic_callable_contract(contract: &Ty, arguments: &[TyArg]) -> 
     Ok(instantiated)
 }
 
-struct GenericArgumentMaps {
-    types: HashMap<String, Ty>,
-    values: HashMap<String, CtValue>,
-}
-
 fn generic_argument_maps(
     declarations: &[ParamDecl],
     arguments: &[TyArg],
@@ -2259,450 +2864,6 @@ fn generic_argument_maps(
         }
     }
     Ok(GenericArgumentMaps { types, values })
-}
-
-fn instantiate_checked_type(
-    ty: &Ty,
-    type_arguments: &HashMap<String, Ty>,
-    value_arguments: &HashMap<String, CtValue>,
-    bound_values: &HashSet<String>,
-) -> Result<Ty, String> {
-    Ok(match ty {
-        Ty::Param {
-            name,
-            bounds,
-            callable_bound,
-        } => type_arguments
-            .get(name)
-            .or_else(|| type_arguments.get(name.trim_start_matches('*')))
-            .cloned()
-            .unwrap_or_else(|| Ty::Param {
-                name: name.clone(),
-                bounds: bounds.clone(),
-                callable_bound: callable_bound.clone(),
-            }),
-        Ty::Dependent(DependentType::Indexed { elements, index }) => {
-            let elements = elements
-                .iter()
-                .map(|element| {
-                    instantiate_checked_type(element, type_arguments, value_arguments, bound_values)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let Some(value) = index.evaluate(value_arguments) else {
-                let mut referenced = HashSet::new();
-                index.referenced_parameters(&mut referenced);
-                if !referenced.is_empty()
-                    && referenced.iter().all(|name| bound_values.contains(name))
-                {
-                    return Ok(Ty::Dependent(DependentType::Indexed {
-                        elements,
-                        index: index.clone(),
-                    }));
-                }
-                let mut unbound: Vec<_> = referenced.difference(bound_values).cloned().collect();
-                unbound.sort();
-                return Err(if unbound.is_empty() {
-                    "dependent index did not evaluate to a compile-time value".to_string()
-                } else {
-                    format!(
-                        "dependent index references unsubstituted parameter(s): {}",
-                        unbound.join(", ")
-                    )
-                });
-            };
-            let index_value = match value {
-                CtValue::Int(value) => Some(value),
-                CtValue::UInt(value) => i64::try_from(value).ok(),
-                CtValue::IntLiteral(value) => value.to_i64(),
-                _ => None,
-            }
-            .ok_or_else(|| "dependent index is not an Int".to_string())?;
-            let position = usize::try_from(index_value)
-                .map_err(|_| format!("dependent index {index_value} is negative"))?;
-            elements.get(position).cloned().ok_or_else(|| {
-                format!(
-                    "dependent index {index_value} is out of range for {} element(s)",
-                    elements.len()
-                )
-            })?
-        }
-        Ty::Struct(name, arguments) => Ty::Struct(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => {
-                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                            .map(TyArg::Ty)
-                    }
-                    TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
-                })
-                .collect::<Result<Vec<_>, String>>()?,
-        ),
-        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(instantiate_checked_type(
-            element,
-            type_arguments,
-            value_arguments,
-            bound_values,
-        )?)),
-        Ty::Tuple(elements) => Ty::Tuple(
-            elements
-                .iter()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(
-            elements
-                .iter()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(instantiate_checked_type(
-            element,
-            type_arguments,
-            value_arguments,
-            bound_values,
-        )?)),
-        Ty::Variant(elements) => Ty::Variant(
-            elements
-                .iter()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(instantiate_checked_type(
-                element,
-                type_arguments,
-                value_arguments,
-                bound_values,
-            )?),
-            origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(instantiate_checked_type(
-                &reference.referent,
-                type_arguments,
-                value_arguments,
-                bound_values,
-            )?);
-            Ty::Ref(reference)
-        }
-        Ty::Assoc { base, name } => Ty::Assoc {
-            base: Box::new(instantiate_checked_type(
-                base,
-                type_arguments,
-                value_arguments,
-                bound_values,
-            )?),
-            name: name.clone(),
-        },
-        Ty::Overload(candidates) => Ty::Overload(
-            candidates
-                .iter()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Ty::Func {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-        } => Ty::Func {
-            environment: environment.clone(),
-            params: params
-                .iter()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-            names: names.clone(),
-            ret: Box::new(instantiate_checked_type(
-                ret,
-                type_arguments,
-                value_arguments,
-                bound_values,
-            )?),
-            required: required.clone(),
-            variadic: variadic
-                .as_ref()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                        .map(Box::new)
-                })
-                .transpose()?,
-            kw_variadic: kw_variadic
-                .as_ref()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                        .map(Box::new)
-                })
-                .transpose()?,
-            positional_only: *positional_only,
-            keyword_only: *keyword_only,
-            raises: *raises,
-            error: error
-                .as_ref()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                        .map(Box::new)
-                })
-                .transpose()?,
-            conventions: conventions.clone(),
-            ref_params: ref_params.clone(),
-            ref_return: ref_return.clone(),
-        },
-        // Nested generic callable contracts own their own binder scope. The
-        // outer verifier validates that scope recursively; retaining it is
-        // sound and avoids capturing same-spelled outer substitution names.
-        Ty::GenericFunc { .. } => ty.clone(),
-        _ => ty.clone(),
-    })
-}
-
-/// Ensure each symbolic dependent index is owned by an explicit enclosing
-/// value-parameter binder. This permits generic MIR to remain symbolic while
-/// rejecting a misspelled or escaped index name before wildcard compatibility
-/// could hide it.
-fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
-    fn walk(ty: &Ty, bound: &HashSet<String>) -> Result<(), String> {
-        match ty {
-            Ty::Dependent(DependentType::Indexed { elements, index }) => {
-                let mut referenced = HashSet::new();
-                index.referenced_parameters(&mut referenced);
-                let mut unbound: Vec<_> = referenced.difference(bound).cloned().collect();
-                unbound.sort();
-                if !unbound.is_empty() {
-                    return Err(format!(
-                        "dependent index references unbound parameter(s): {}",
-                        unbound.join(", ")
-                    ));
-                }
-                for element in elements {
-                    walk(element, bound)?;
-                }
-            }
-            Ty::GenericFunc {
-                decls,
-                params,
-                ret,
-                variadic,
-                kw_variadic,
-                error,
-                ..
-            } => {
-                let mut signature_scope = bound.clone();
-                for declaration in decls {
-                    match declaration {
-                        ParamDecl::Type {
-                            callable_bound,
-                            default,
-                            ..
-                        } => {
-                            if let Some(callable) = callable_bound {
-                                walk(callable, &signature_scope)?;
-                            }
-                            if let Some(default) = default {
-                                walk(default, &signature_scope)?;
-                            }
-                        }
-                        ParamDecl::Value { name, ty, .. } => {
-                            walk(ty, &signature_scope)?;
-                            signature_scope.insert(name.trim_start_matches('*').to_string());
-                        }
-                    }
-                }
-                for parameter in params {
-                    walk(parameter, &signature_scope)?;
-                }
-                walk(ret, &signature_scope)?;
-                if let Some(parameter) = variadic {
-                    walk(parameter, &signature_scope)?;
-                }
-                if let Some(parameter) = kw_variadic {
-                    walk(parameter, &signature_scope)?;
-                }
-                if let Some(error) = error {
-                    walk(error, &signature_scope)?;
-                }
-            }
-            Ty::Func {
-                params,
-                ret,
-                variadic,
-                kw_variadic,
-                error,
-                ..
-            } => {
-                for parameter in params {
-                    walk(parameter, bound)?;
-                }
-                walk(ret, bound)?;
-                if let Some(parameter) = variadic {
-                    walk(parameter, bound)?;
-                }
-                if let Some(parameter) = kw_variadic {
-                    walk(parameter, bound)?;
-                }
-                if let Some(error) = error {
-                    walk(error, bound)?;
-                }
-            }
-            Ty::Param {
-                callable_bound: Some(callable),
-                ..
-            } => walk(callable, bound)?,
-            Ty::Struct(_, arguments) => {
-                for argument in arguments {
-                    if let TyArg::Ty(ty) = argument {
-                        walk(ty, bound)?;
-                    }
-                }
-            }
-            Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-                walk(element, bound)?
-            }
-            Ty::Tuple(elements)
-            | Ty::RuntimePack(elements)
-            | Ty::Variant(elements)
-            | Ty::Overload(elements) => {
-                for element in elements {
-                    walk(element, bound)?;
-                }
-            }
-            Ty::Assoc { base, .. } => walk(base, bound)?,
-            Ty::Ref(reference) => walk(&reference.referent, bound)?,
-            _ => {}
-        }
-        Ok(())
-    }
-
-    walk(ty, &HashSet::new())
-}
-
-/// Check the source-order MIR representation against a declaration-order
-/// generic ABI. Keyword names select their declaration directly; positional
-/// entries skip infer-only declarations. A type argument occupies a slot but
-/// has no register, while every supplied value argument must carry a register
-/// compatible with its declared checked type.
-fn verify_param_arguments(
-    prefix: &str,
-    function: &MirFunction,
-    declarations: &[crate::types::ParamDecl],
-    arguments: &[crate::mir::MirParamArg],
-    errors: &mut Vec<String>,
-) {
-    if declarations.is_empty() {
-        // A specialized nominal constructor/method may retain erased source
-        // type applications even though its selected MIR declaration is
-        // monomorphic. They deliberately carry no register. A value argument,
-        // however, would imply a runtime compile-time slot absent from the ABI.
-        if arguments.iter().any(|argument| argument.value.is_some()) {
-            errors.push(format!(
-                "{prefix}: nongeneric call carries a compile-time value argument"
-            ));
-        }
-        return;
-    }
-    let mut occupied = vec![false; declarations.len()];
-    let mut next_positional = 0;
-    for argument in arguments {
-        let index = if let Some(name) = &argument.name {
-            declarations
-                .iter()
-                .position(|declaration| declaration.name().trim_start_matches('*') == name.as_str())
-        } else {
-            while declarations
-                .get(next_positional)
-                .is_some_and(|declaration| {
-                    occupied[next_positional]
-                        || match declaration {
-                            crate::types::ParamDecl::Type { infer_only, .. }
-                            | crate::types::ParamDecl::Value { infer_only, .. } => *infer_only,
-                        }
-                })
-            {
-                next_positional += 1;
-            }
-            let index = (next_positional < declarations.len()).then_some(next_positional);
-            next_positional += usize::from(index.is_some());
-            index
-        };
-        let Some(index) = index else {
-            errors.push(format!(
-                "{prefix}: compile-time argument does not match a parameter declaration"
-            ));
-            continue;
-        };
-        if occupied[index] {
-            errors.push(format!(
-                "{prefix}: compile-time parameter '{}' is supplied more than once",
-                declarations[index].name()
-            ));
-            continue;
-        }
-        occupied[index] = true;
-        match (&declarations[index], argument.value) {
-            (crate::types::ParamDecl::Type { name, .. }, Some(_)) => errors.push(format!(
-                "{prefix}: type parameter '{name}' unexpectedly carries a runtime register"
-            )),
-            (crate::types::ParamDecl::Value { name, .. }, None) => errors.push(format!(
-                "{prefix}: value parameter '{name}' has no runtime register"
-            )),
-            (crate::types::ParamDecl::Value { name, ty, .. }, Some(register)) => {
-                if let Some(found) = function.reg_types.get(&register.0)
-                    && !(matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. })
-                        && crate::checker::callable_bound_accepts(found, ty))
-                    && !types_compatible(found, ty)
-                {
-                    errors.push(format!(
-                        "{prefix}: compile-time value parameter '{name}' has register type {found}, declared {ty}"
-                    ));
-                }
-            }
-            (crate::types::ParamDecl::Type { .. }, None) => {}
-        }
-    }
-    for (index, declaration) in declarations.iter().enumerate() {
-        if occupied[index] {
-            continue;
-        }
-        if let crate::types::ParamDecl::Value {
-            name,
-            default,
-            callable_default,
-            infer_only,
-            variadic,
-            ..
-        } = declaration
-            && default.is_none()
-            && callable_default.is_none()
-            && !infer_only
-            && !variadic
-        {
-            errors.push(format!(
-                "{prefix}: required compile-time value parameter '{name}' is missing"
-            ));
-        }
-    }
 }
 
 /// Verify an indirect call whose callee register carries a checked anonymous
@@ -2943,167 +3104,6 @@ fn verify_terminator(
                 errors.push(format!("{prefix}: escape to invalid block {target}"));
             }
         }
-    }
-}
-
-fn declared<'a>(
-    declarations: &'a MirDeclarations,
-    callee: &str,
-) -> Option<&'a MirFunctionDeclaration> {
-    declarations
-        .functions
-        .iter()
-        .find(|declaration| declaration.lowered_name == callee)
-}
-
-fn verify_capture_accesses(
-    prefix: &str,
-    function: &MirFunction,
-    accesses: &[crate::mir::MirCaptureAccess],
-    errors: &mut Vec<String>,
-) {
-    for access in accesses {
-        if access.root as usize >= function.var_names.len() {
-            errors.push(format!(
-                "{prefix}: callable capture access uses unknown owner slot {}",
-                access.root
-            ));
-        }
-    }
-}
-
-/// Compatibility for verification purposes: either direction of the checker's
-/// coercion predicate. Lowering emits checker-approved conversions before
-/// values flow, so remaining differences are representational (literal
-/// materialization, generic instantiation), not errors to re-litigate. A type
-/// mentioning an unsubstituted parameter is not compared — instantiation is
-/// the checker's domain and the verifier never re-derives it.
-fn types_compatible(found: &Ty, expected: &Ty) -> bool {
-    fn callable_environment(ty: &Ty) -> Option<&crate::origin::CallableEnvironment> {
-        match ty {
-            Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } => Some(environment),
-            _ => None,
-        }
-    }
-    // Some semantic-only sum types (notably unresolved overload sets) are not
-    // ordinary value-coercion sources or destinations. Identity is still the
-    // strongest possible compatibility proof and must precede those structural
-    // special cases.
-    if found == expected {
-        return true;
-    }
-    if let (Some(found), Some(expected)) =
-        (callable_environment(found), callable_environment(expected))
-        && !crate::checker::callable_environment_coerces(found, expected)
-    {
-        // Environment differences are semantic, not a representational detail
-        // that lowering may erase. In particular, an inference/default contract
-        // is not a general MIR-level wildcard for a concrete capture set.
-        return false;
-    }
-    if contains_type_param(found) || contains_type_param(expected) {
-        return true;
-    }
-    // A bare `Struct(name, [])` is the established erased spelling for a
-    // receiver or synthesized construction of any instantiation of `name`.
-    if let (Ty::Struct(found_name, found_args), Ty::Struct(expected_name, expected_args)) =
-        (found, expected)
-        && found_name == expected_name
-        && (found_args.is_empty() || expected_args.is_empty())
-    {
-        return true;
-    }
-    // A contextual selection narrows an overload set to one member.
-    if let Ty::Overload(members) = found {
-        return members
-            .iter()
-            .any(|member| types_compatible(member, expected));
-    }
-    // A struct may nominally conform to a `def(...)` callable trait; the
-    // conformance is checker-verified and not yet recorded in MIR
-    // declarations, so the verifier does not re-check it here.
-    if matches!(found, Ty::Struct(..)) && matches!(expected, Ty::Func { .. }) {
-        return true;
-    }
-    crate::checker::value_coerces(found, expected) || crate::checker::value_coerces(expected, found)
-}
-
-fn contains_type_param(ty: &Ty) -> bool {
-    match ty {
-        Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) => true,
-        Ty::ComptimeList(inner) | Ty::Pointer { element: inner, .. } => contains_type_param(inner),
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
-            elements.iter().any(contains_type_param)
-        }
-        Ty::Ref(reference) => contains_type_param(&reference.referent),
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-            crate::types::TyArg::Ty(inner) => contains_type_param(inner),
-            crate::types::TyArg::Val(_) => false,
-        }),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().any(contains_type_param)
-                || contains_type_param(ret)
-                || variadic.as_deref().is_some_and(contains_type_param)
-                || kw_variadic.as_deref().is_some_and(contains_type_param)
-                || error.as_deref().is_some_and(contains_type_param)
-        }
-        _ => false,
-    }
-}
-
-fn contains_runtime_pack(ty: &Ty) -> bool {
-    match ty {
-        Ty::RuntimePack(_) => true,
-        Ty::ComptimeList(inner) | Ty::Pointer { element: inner, .. } => {
-            contains_runtime_pack(inner)
-        }
-        Ty::Tuple(elements) | Ty::Variant(elements) | Ty::Overload(elements) => {
-            elements.iter().any(contains_runtime_pack)
-        }
-        Ty::Ref(reference) => contains_runtime_pack(&reference.referent),
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-            crate::types::TyArg::Ty(inner) => contains_runtime_pack(inner),
-            crate::types::TyArg::Val(_) => false,
-        }),
-        Ty::Assoc { base, .. } => contains_runtime_pack(base),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().any(contains_runtime_pack)
-                || contains_runtime_pack(ret)
-                || variadic.as_deref().is_some_and(contains_runtime_pack)
-                || kw_variadic.as_deref().is_some_and(contains_runtime_pack)
-                || error.as_deref().is_some_and(contains_runtime_pack)
-        }
-        _ => false,
     }
 }
 

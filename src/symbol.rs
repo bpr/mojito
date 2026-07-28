@@ -28,11 +28,6 @@ use crate::ast::{
 };
 use crate::types::{Ty, TyArg};
 
-/// The separator that marks a signature-qualified overload symbol:
-/// `pick$ov$Int`, `Box.__init__$ov$String`. Never referenced outside this
-/// module.
-const OV_SEP: &str = "$ov$";
-
 /// The canonical mangled spelling of one parameter type. Only this module can
 /// construct one, so every signature part obeys the same sanitization rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,197 +45,6 @@ impl TypeKey {
     pub fn from_ty(ty: &Ty) -> TypeKey {
         TypeKey(sanitize(&ty_raw(ty)))
     }
-}
-
-fn ast_raw(
-    ty: &Type,
-    comptimes: &HashMap<String, i64>,
-    type_bounds: &HashMap<String, Vec<String>>,
-) -> String {
-    match ty {
-        Type::Int => "Int".to_string(),
-        Type::UInt => "UInt".to_string(),
-        Type::Bool => "Bool".to_string(),
-        Type::String => "String".to_string(),
-        Type::Float64 => "Float64".to_string(),
-        Type::None => "None".to_string(),
-        Type::Named(name, args) => {
-            let mut s = parameter_raw(name, type_bounds);
-            for arg in args {
-                s.push('$');
-                match arg {
-                    ParamArg::Type(t) => s.push_str(&ast_raw(t, comptimes, type_bounds)),
-                    ParamArg::Value(v) => {
-                        s.push('V');
-                        s.push_str(&value_expr_raw(v, comptimes));
-                    }
-                    ParamArg::Named { name, value } => {
-                        s.push_str(name);
-                        s.push('=');
-                        match &**value {
-                            ParamArg::Type(t) => s.push_str(&ast_raw(t, comptimes, type_bounds)),
-                            ParamArg::Value(v) => s.push_str(&value_expr_raw(v, comptimes)),
-                            ParamArg::Named { .. } => unreachable!(),
-                        }
-                    }
-                }
-            }
-            s
-        }
-        // `Self.T` names the same parameter a bare `T` does inside the struct,
-        // and the checker resolves both to the same `Ty::Param` — spell them
-        // identically so the two sides agree.
-        Type::SelfParam(name) => parameter_raw(name, type_bounds),
-        Type::Assoc { base, name } => format!(
-            "Assoc${}${}",
-            ast_raw(base, comptimes, type_bounds),
-            encode_identifier(name)
-        ),
-        Type::SelfType => "Self".to_string(),
-        Type::MaterializedCallable(key) => key.clone(),
-        other => format!("{other:?}"),
-    }
-}
-
-fn ty_raw(ty: &Ty) -> String {
-    match ty {
-        Ty::Int | Ty::IntLiteral => "Int".to_string(),
-        Ty::UInt => "UInt".to_string(),
-        Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
-        Ty::Bool => "Bool".to_string(),
-        Ty::String => "String".to_string(),
-        Ty::None => "None".to_string(),
-        Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw(elem)),
-        Ty::Tuple(elems) => format!(
-            "Tuple${}",
-            elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
-        ),
-        Ty::RuntimePack(elems) => format!(
-            "$pack${}",
-            elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
-        ),
-        Ty::VariadicPack(element) => format!("$variadic${}", ty_raw(element)),
-        Ty::Variant(alternatives) => format!(
-            "Variant${}",
-            alternatives
-                .iter()
-                .map(ty_raw)
-                .collect::<Vec<_>>()
-                .join("$")
-        ),
-        // A struct type spells as its annotation does (`Point`, `Pair$Int`) —
-        // no `Struct$` marker, so the MIR definition name matches.
-        Ty::Struct(name, args) => {
-            let mut s = encode_identifier(name);
-            for arg in args {
-                s.push('$');
-                match arg {
-                    TyArg::Ty(t) => s.push_str(&ty_raw(t)),
-                    TyArg::Val(v) => s.push_str(&format!("V{v}")),
-                }
-            }
-            s
-        }
-        // A type parameter spells as the bare annotation `T` does.
-        Ty::Param {
-            name,
-            bounds,
-            callable_bound,
-        } => {
-            let mut result = encode_identifier(name);
-            for bound in bounds {
-                result.push('$');
-                result.push_str(&encode_identifier(bound));
-            }
-            if let Some(callable) = callable_bound {
-                result.push_str("$Callable$");
-                result.push_str(&ty_raw(callable));
-            }
-            result
-        }
-        // Pointer origins affect checking/lifetimes but erase from the runtime
-        // callable ABI, just like origin parameters on `ref` arguments.
-        Ty::Pointer { element, .. } => format!("UnsafePointer${}", ty_raw(element)),
-        Ty::Assoc { base, name } => {
-            format!("Assoc${}${}", ty_raw(base), encode_identifier(name))
-        }
-        Ty::SelfType => "Self".to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn parameter_raw(name: &str, type_bounds: &HashMap<String, Vec<String>>) -> String {
-    let mut result = encode_identifier(name);
-    if let Some(bounds) = type_bounds.get(name) {
-        for bound in bounds {
-            result.push('$');
-            result.push_str(&encode_identifier(bound));
-        }
-    }
-    result
-}
-
-/// The mangled spelling of a compile-time value argument in an annotation
-/// (`FixedBuffer[8]` → `8`). A non-literal expression degrades to a stable
-/// placeholder — good enough because the name only needs to be deterministic.
-fn value_expr_raw(expr: &Expr, comptimes: &HashMap<String, i64>) -> String {
-    if let Some(value) = eval_comptime_int(expr, comptimes) {
-        return value.to_string();
-    }
-    match &expr.kind {
-        ExprKind::Bool(b) => b.to_string(),
-        ExprKind::Str(s) => encode_identifier(s),
-        ExprKind::Identifier(name) => encode_identifier(name),
-        _ => "expr".to_string(),
-    }
-}
-
-fn eval_comptime_int(expr: &Expr, comptimes: &HashMap<String, i64>) -> Option<i64> {
-    use crate::ast::{InfixOp, PrefixOp};
-    match &expr.kind {
-        ExprKind::Int(value) => value.to_i64(),
-        ExprKind::Identifier(name) => comptimes.get(name).copied(),
-        ExprKind::Prefix(PrefixOp::Neg, value) => {
-            eval_comptime_int(value, comptimes)?.checked_neg()
-        }
-        ExprKind::Infix(op, left, right) => {
-            let (left, right) = (
-                eval_comptime_int(left, comptimes)?,
-                eval_comptime_int(right, comptimes)?,
-            );
-            match op {
-                InfixOp::Add => left.checked_add(right),
-                InfixOp::Sub => left.checked_sub(right),
-                InfixOp::Mul => left.checked_mul(right),
-                InfixOp::FloorDiv if right != 0 => Some(left.div_euclid(right)),
-                InfixOp::Mod if right != 0 => Some(left.rem_euclid(right)),
-                InfixOp::Pow if right >= 0 => left.checked_pow(right as u32),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
-/// Encode source-controlled identifier text injectively while leaving ordinary
-/// ASCII identifiers unchanged. Structural `$` separators are added only after
-/// this encoding, so stropped names such as `A-B` and `A_B` cannot collide.
-fn encode_identifier(name: &str) -> String {
-    let mut encoded = String::new();
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            encoded.push(ch);
-        } else {
-            encoded.push_str(&format!("$u{:X}$", ch as u32));
-        }
-    }
-    encoded
-}
-
-fn sanitize(raw: &str) -> String {
-    raw.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '$' })
-        .collect()
 }
 
 /// An overload signature as typed data: the ordered parameter type keys.
@@ -414,19 +218,6 @@ impl OverloadSets {
     }
 }
 
-fn keep_overloaded(counts: HashMap<String, Vec<usize>>) -> HashMap<String, HashSet<usize>> {
-    counts
-        .into_iter()
-        .filter_map(|(name, arities)| {
-            if arities.len() > 1 {
-                Some((name, arities.into_iter().collect()))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 /// The name a top-level `def` lowers to: signature-qualified when the name is
 /// overloaded, the plain source name otherwise.
 pub fn lowered_def_name(
@@ -466,23 +257,6 @@ pub fn lowered_method_name(
     }
 }
 
-fn signature_from_ast(
-    params: &[FnParam],
-    type_params: &[TypeParam],
-    comptimes: &HashMap<String, i64>,
-) -> SignatureKey {
-    let type_bounds = type_params
-        .iter()
-        .map(|param| (param.name.clone(), param.bounds.clone()))
-        .collect();
-    SignatureKey(
-        params
-            .iter()
-            .map(|param| TypeKey(sanitize(&ast_raw(&param.ty, comptimes, &type_bounds))))
-            .collect(),
-    )
-}
-
 /// The name a method is *registered and counted* under: current Mojo spells the
 /// copy constructor as an `__init__` overload with an `out self, copy: Self`
 /// shape, which the whole pipeline models as `__copyinit__`.
@@ -494,39 +268,6 @@ pub fn lifecycle_method_name(m: &Method) -> &str {
     } else {
         &m.name
     }
-}
-
-fn is_mojo_move_constructor(m: &Method) -> bool {
-    m.name == "__init__"
-        && m.has_self
-        && matches!(m.self_convention, Some(ArgConvention::Out))
-        && m.positional_only.is_none()
-        && m.keyword_only == Some(0)
-        && m.params.len() == 1
-        && m.params[0].name == "move"
-        && m.params[0].default.is_none()
-        && m.params[0].kind == ParamKind::Regular
-        // Current Mojo requires the consuming `deinit move: Self`
-        // convention. Keep the earlier bare `move: Self` shape as the
-        // documented source-compatibility spelling.
-        && matches!(m.params[0].convention, None | Some(ArgConvention::Deinit))
-        && matches!(m.params[0].ty, Type::SelfType)
-        && m.ret.is_none()
-}
-
-fn is_mojo_copy_constructor(m: &Method) -> bool {
-    m.name == "__init__"
-        && m.has_self
-        && matches!(m.self_convention, Some(ArgConvention::Out))
-        && m.positional_only.is_none()
-        && m.keyword_only == Some(0)
-        && m.params.len() == 1
-        && m.params[0].name == "copy"
-        && m.params[0].default.is_none()
-        && m.params[0].kind == ParamKind::Regular
-        && m.params[0].convention.is_none()
-        && matches!(m.params[0].ty, Type::SelfType)
-        && m.ret.is_none()
 }
 
 /// The lifted name of a nested `def` (`inner` declared inside `outer`).
@@ -565,4 +306,263 @@ pub fn is_overload_of(symbol: &str, base: &str) -> bool {
 pub fn init_overload_struct(symbol: &str) -> Option<&str> {
     let (struct_name, rest) = symbol.rsplit_once(".__init__")?;
     rest.starts_with(OV_SEP).then_some(struct_name)
+}
+
+fn ty_raw(ty: &Ty) -> String {
+    match ty {
+        Ty::Int | Ty::IntLiteral => "Int".to_string(),
+        Ty::UInt => "UInt".to_string(),
+        Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
+        Ty::Bool => "Bool".to_string(),
+        Ty::String => "String".to_string(),
+        Ty::None => "None".to_string(),
+        Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw(elem)),
+        Ty::Tuple(elems) => format!(
+            "Tuple${}",
+            elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
+        ),
+        Ty::RuntimePack(elems) => format!(
+            "$pack${}",
+            elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
+        ),
+        Ty::VariadicPack(element) => format!("$variadic${}", ty_raw(element)),
+        Ty::Variant(alternatives) => format!(
+            "Variant${}",
+            alternatives
+                .iter()
+                .map(ty_raw)
+                .collect::<Vec<_>>()
+                .join("$")
+        ),
+        // A struct type spells as its annotation does (`Point`, `Pair$Int`) —
+        // no `Struct$` marker, so the MIR definition name matches.
+        Ty::Struct(name, args) => {
+            let mut s = encode_identifier(name);
+            for arg in args {
+                s.push('$');
+                match arg {
+                    TyArg::Ty(t) => s.push_str(&ty_raw(t)),
+                    TyArg::Val(v) => s.push_str(&format!("V{v}")),
+                }
+            }
+            s
+        }
+        // A type parameter spells as the bare annotation `T` does.
+        Ty::Param {
+            name,
+            bounds,
+            callable_bound,
+        } => {
+            let mut result = encode_identifier(name);
+            for bound in bounds {
+                result.push('$');
+                result.push_str(&encode_identifier(bound));
+            }
+            if let Some(callable) = callable_bound {
+                result.push_str("$Callable$");
+                result.push_str(&ty_raw(callable));
+            }
+            result
+        }
+        // Pointer origins affect checking/lifetimes but erase from the runtime
+        // callable ABI, just like origin parameters on `ref` arguments.
+        Ty::Pointer { element, .. } => format!("UnsafePointer${}", ty_raw(element)),
+        Ty::Assoc { base, name } => {
+            format!("Assoc${}${}", ty_raw(base), encode_identifier(name))
+        }
+        Ty::SelfType => "Self".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Encode source-controlled identifier text injectively while leaving ordinary
+/// ASCII identifiers unchanged. Structural `$` separators are added only after
+/// this encoding, so stropped names such as `A-B` and `A_B` cannot collide.
+fn encode_identifier(name: &str) -> String {
+    let mut encoded = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            encoded.push(ch);
+        } else {
+            encoded.push_str(&format!("$u{:X}$", ch as u32));
+        }
+    }
+    encoded
+}
+
+fn ast_raw(
+    ty: &Type,
+    comptimes: &HashMap<String, i64>,
+    type_bounds: &HashMap<String, Vec<String>>,
+) -> String {
+    match ty {
+        Type::Int => "Int".to_string(),
+        Type::UInt => "UInt".to_string(),
+        Type::Bool => "Bool".to_string(),
+        Type::String => "String".to_string(),
+        Type::Float64 => "Float64".to_string(),
+        Type::None => "None".to_string(),
+        Type::Named(name, args) => {
+            let mut s = parameter_raw(name, type_bounds);
+            for arg in args {
+                s.push('$');
+                match arg {
+                    ParamArg::Type(t) => s.push_str(&ast_raw(t, comptimes, type_bounds)),
+                    ParamArg::Value(v) => {
+                        s.push('V');
+                        s.push_str(&value_expr_raw(v, comptimes));
+                    }
+                    ParamArg::Named { name, value } => {
+                        s.push_str(name);
+                        s.push('=');
+                        match &**value {
+                            ParamArg::Type(t) => s.push_str(&ast_raw(t, comptimes, type_bounds)),
+                            ParamArg::Value(v) => s.push_str(&value_expr_raw(v, comptimes)),
+                            ParamArg::Named { .. } => unreachable!(),
+                        }
+                    }
+                }
+            }
+            s
+        }
+        // `Self.T` names the same parameter a bare `T` does inside the struct,
+        // and the checker resolves both to the same `Ty::Param` — spell them
+        // identically so the two sides agree.
+        Type::SelfParam(name) => parameter_raw(name, type_bounds),
+        Type::Assoc { base, name } => format!(
+            "Assoc${}${}",
+            ast_raw(base, comptimes, type_bounds),
+            encode_identifier(name)
+        ),
+        Type::SelfType => "Self".to_string(),
+        Type::MaterializedCallable(key) => key.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn eval_comptime_int(expr: &Expr, comptimes: &HashMap<String, i64>) -> Option<i64> {
+    use crate::ast::{InfixOp, PrefixOp};
+    match &expr.kind {
+        ExprKind::Int(value) => value.to_i64(),
+        ExprKind::Identifier(name) => comptimes.get(name).copied(),
+        ExprKind::Prefix(PrefixOp::Neg, value) => {
+            eval_comptime_int(value, comptimes)?.checked_neg()
+        }
+        ExprKind::Infix(op, left, right) => {
+            let (left, right) = (
+                eval_comptime_int(left, comptimes)?,
+                eval_comptime_int(right, comptimes)?,
+            );
+            match op {
+                InfixOp::Add => left.checked_add(right),
+                InfixOp::Sub => left.checked_sub(right),
+                InfixOp::Mul => left.checked_mul(right),
+                InfixOp::FloorDiv if right != 0 => Some(left.div_euclid(right)),
+                InfixOp::Mod if right != 0 => Some(left.rem_euclid(right)),
+                InfixOp::Pow if right >= 0 => left.checked_pow(right as u32),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The separator that marks a signature-qualified overload symbol:
+/// `pick$ov$Int`, `Box.__init__$ov$String`. Never referenced outside this
+/// module.
+const OV_SEP: &str = "$ov$";
+
+fn sanitize(raw: &str) -> String {
+    raw.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '$' })
+        .collect()
+}
+
+fn parameter_raw(name: &str, type_bounds: &HashMap<String, Vec<String>>) -> String {
+    let mut result = encode_identifier(name);
+    if let Some(bounds) = type_bounds.get(name) {
+        for bound in bounds {
+            result.push('$');
+            result.push_str(&encode_identifier(bound));
+        }
+    }
+    result
+}
+
+/// The mangled spelling of a compile-time value argument in an annotation
+/// (`FixedBuffer[8]` → `8`). A non-literal expression degrades to a stable
+/// placeholder — good enough because the name only needs to be deterministic.
+fn value_expr_raw(expr: &Expr, comptimes: &HashMap<String, i64>) -> String {
+    if let Some(value) = eval_comptime_int(expr, comptimes) {
+        return value.to_string();
+    }
+    match &expr.kind {
+        ExprKind::Bool(b) => b.to_string(),
+        ExprKind::Str(s) => encode_identifier(s),
+        ExprKind::Identifier(name) => encode_identifier(name),
+        _ => "expr".to_string(),
+    }
+}
+
+fn keep_overloaded(counts: HashMap<String, Vec<usize>>) -> HashMap<String, HashSet<usize>> {
+    counts
+        .into_iter()
+        .filter_map(|(name, arities)| {
+            if arities.len() > 1 {
+                Some((name, arities.into_iter().collect()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn signature_from_ast(
+    params: &[FnParam],
+    type_params: &[TypeParam],
+    comptimes: &HashMap<String, i64>,
+) -> SignatureKey {
+    let type_bounds = type_params
+        .iter()
+        .map(|param| (param.name.clone(), param.bounds.clone()))
+        .collect();
+    SignatureKey(
+        params
+            .iter()
+            .map(|param| TypeKey(sanitize(&ast_raw(&param.ty, comptimes, &type_bounds))))
+            .collect(),
+    )
+}
+
+fn is_mojo_move_constructor(m: &Method) -> bool {
+    m.name == "__init__"
+        && m.has_self
+        && matches!(m.self_convention, Some(ArgConvention::Out))
+        && m.positional_only.is_none()
+        && m.keyword_only == Some(0)
+        && m.params.len() == 1
+        && m.params[0].name == "move"
+        && m.params[0].default.is_none()
+        && m.params[0].kind == ParamKind::Regular
+        // Current Mojo requires the consuming `deinit move: Self`
+        // convention. Keep the earlier bare `move: Self` shape as the
+        // documented source-compatibility spelling.
+        && matches!(m.params[0].convention, None | Some(ArgConvention::Deinit))
+        && matches!(m.params[0].ty, Type::SelfType)
+        && m.ret.is_none()
+}
+
+fn is_mojo_copy_constructor(m: &Method) -> bool {
+    m.name == "__init__"
+        && m.has_self
+        && matches!(m.self_convention, Some(ArgConvention::Out))
+        && m.positional_only.is_none()
+        && m.keyword_only == Some(0)
+        && m.params.len() == 1
+        && m.params[0].name == "copy"
+        && m.params[0].default.is_none()
+        && m.params[0].kind == ParamKind::Regular
+        && m.params[0].convention.is_none()
+        && matches!(m.params[0].ty, Type::SelfType)
+        && m.ret.is_none()
 }
