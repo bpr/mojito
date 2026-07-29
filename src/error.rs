@@ -150,6 +150,14 @@ pub enum TypeError {
         op: String,
         operands: String,
     },
+    /// An augmented assignment (`OP=`) on a user-defined value whose type does
+    /// not define the required in-place dunder (`+=` needs `__iadd__`, …). Mojo
+    /// dispatches augmented assignment to the dedicated in-place method and does
+    /// not fall back to the ordinary binary operator.
+    MissingInPlaceOperator {
+        op: String,
+        ty: String,
+    },
     /// A type annotation named an identifier that is not a known type/struct.
     UnknownType(String),
     /// Field access on a value whose type has no such field.
@@ -453,6 +461,13 @@ impl fmt::Display for TypeError {
             }
             TypeError::BadOperator { op, operands } => {
                 write!(f, "operator '{}' is not defined for {}", op, operands)
+            }
+            TypeError::MissingInPlaceOperator { op, ty } => {
+                write!(
+                    f,
+                    "augmented assignment '{}' requires an in-place method on '{}'",
+                    op, ty
+                )
             }
             TypeError::UnknownType(name) => write!(f, "unknown type '{}'", name),
             TypeError::NoSuchField { object_type, field } => {

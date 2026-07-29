@@ -798,9 +798,10 @@ fn dunder_operator_and_builtin_dispatch() {
 }
 
 #[test]
-fn dunder_augmented_assignment_uses_add() {
-    // `c += d` expands to `c = c + d`, which dispatches to `__add__`.
-    let src = "@fieldwise_init\nstruct Acc(Writable):\n    var n: Int\n    def __add__(self, o: Acc) -> Acc:\n        return Acc(self.n + o.n)\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(self.n)\n\ndef main():\n    var c: Acc = Acc(1)\n    c += Acc(10)\n    c += Acc(100)\n    print(String(c))\n";
+fn dunder_augmented_assignment_uses_iadd() {
+    // `c += d` dispatches to the dedicated in-place dunder `__iadd__(mut self, …)`,
+    // which mutates the receiver in place; Mojo does not fall back to `__add__`.
+    let src = "@fieldwise_init\nstruct Acc(Writable):\n    var n: Int\n    def __iadd__(mut self, o: Acc):\n        self.n += o.n\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(self.n)\n\ndef main():\n    var c: Acc = Acc(1)\n    c += Acc(10)\n    c += Acc(100)\n    print(String(c))\n";
     assert_eq!(parity(src), "111\n");
 }
 

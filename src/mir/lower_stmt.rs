@@ -316,6 +316,51 @@ impl Flatten<'_> {
     /// getter instead establishes the lvalue before the RHS and finishes with a
     /// direct `WriteRef`, exactly as current Mojo does. In both paths each source
     /// expression and slice bound is evaluated once.
+    /// Lower `place OP= rhs` on a user-defined value to its in-place dunder call
+    /// (`counter += 2` → `counter.__iadd__(2)`), a `mut self` method that mutates
+    /// the receiver in place. Returns `false` for native scalar targets, which
+    /// keep the builtin `BinOp` read-modify-write. The selected contract rides the
+    /// place node's `SelectedCall` adjustment, so this reuses the ordinary
+    /// method-call machinery — `lower_call_receiver` commits the mutation through
+    /// the receiver place (var slot, alias, pointer, or reference handle) exactly
+    /// as any other `mut self` call.
+    pub(super) fn lower_augmented_in_place(
+        &mut self,
+        place: &Expr,
+        op: InfixOp,
+        rhs_expression: &Expr,
+    ) -> bool {
+        let Some(contract) = self.augmented_in_place_contract(place) else {
+            return false;
+        };
+        let (recv, recv_place) = self.lower_call_receiver(place);
+        let (args, arg_places) = self.lower_call_arguments(std::slice::from_ref(rhs_expression));
+        let dest = self.fresh(place.source_span(), None);
+        self.emit_interior_invalidations(place, None);
+        self.emit_checked_call_boundary(&contract, place.source_span());
+        let method = op
+            .inplace_dunder()
+            .expect("augmented in-place operator has an in-place dunder")
+            .to_string();
+        self.emit(MirInstr::MethodCall {
+            dest,
+            recv,
+            method,
+            resolved: Some(contract.target.clone()),
+            raises: contract.raises.clone(),
+            args,
+            kwargs: Vec::new(),
+            recv_place,
+            arg_places,
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: contract.param_decls.clone(),
+        });
+        self.emit_nested_closure_argument_keepalives(std::slice::from_ref(rhs_expression), &[]);
+        true
+    }
+
     pub(super) fn lower_augmented_subscript(
         &mut self,
         target: &Expr,
@@ -1551,6 +1596,9 @@ impl Flatten<'_> {
             }
             StmtKind::AugAssign { place, op, value } => {
                 if self.lower_augmented_subscript(place, *op, value) {
+                    return;
+                }
+                if self.lower_augmented_in_place(place, *op, value) {
                     return;
                 }
                 // `place OP= e` — read the place, apply the op, write it back. A bare

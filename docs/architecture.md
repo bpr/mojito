@@ -554,6 +554,17 @@ builtins). Recording the resolved operator dunder as a MIR adjustment for the
 textual schema is deferred to that milestone, where its shape can be validated
 against a real consumer.
 
+Augmented assignment (`place OP= rhs`) on a user-defined value dispatches to the
+dedicated in-place dunder rather than the binary operator: the checker selects
+`__iadd__`/`__isub__`/… as a full `mut self` `CheckedCallContract` and records it
+as an `AugmentedInPlace` adjustment on the place, so lowering emits an ordinary
+receiver-committing `MethodCall` (the mutation writes back through the receiver's
+slot, alias, or reference handle) instead of a `BinOp` read-modify-write. There
+is no fall-through to `__add__`; a missing in-place dunder is a checker error.
+Native scalar targets keep the primitive `BinOp` path, and the same in-place
+dispatch for a user-struct nominal-subscript element is still pending (its two
+getter paths must route through a mutable temporary or the reference handle).
+
 Printing and `String()` require `Writable`. A custom `write_to` or
 `write_repr_to` receives `Some[Writer]`; `Writer.write` accepts heterogeneous
 Writable values and ultimately feeds UTF-8 strings to `write_string`. The VM's

@@ -1035,6 +1035,24 @@ impl InfixOp {
             InfixOp::And | InfixOp::Or | InfixOp::In | InfixOp::NotIn => return None,
         })
     }
+
+    /// The in-place dunder an augmented assignment dispatches to on a user
+    /// `struct` target (`a += b` → `a.__iadd__(b)`), or `None` for operators with
+    /// no augmented form. Only the seven parser-accepted augmented operators
+    /// (`+= -= *= /= //= %= **=`; see `aug_assign_op`) have an in-place dunder;
+    /// Mojo calls this dedicated method rather than the ordinary binary dunder.
+    pub fn inplace_dunder(self) -> Option<&'static str> {
+        Some(match self {
+            InfixOp::Add => "__iadd__",
+            InfixOp::Sub => "__isub__",
+            InfixOp::Mul => "__imul__",
+            InfixOp::Div => "__itruediv__",
+            InfixOp::FloorDiv => "__ifloordiv__",
+            InfixOp::Mod => "__imod__",
+            InfixOp::Pow => "__ipow__",
+            _ => return None,
+        })
+    }
 }
 
 /// Ensure a unique identity for every statement and expression occurrence in a

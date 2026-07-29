@@ -212,6 +212,13 @@ pub enum SemanticAdjustment {
     /// coexisting `SelectedCall` is the setter for consumers that only inspect
     /// assignment syntax; MIR uses this record as the authoritative pair.
     AugmentedSubscript(Box<CheckedAugmentedSubscript>),
+    /// In-place dunder selected for `place OP= rhs` on a user-defined value
+    /// (`counter += 2` → `counter.__iadd__(2)`). The contract carries the
+    /// `mut self` receiver, argument conventions/conversions, effects, and raising
+    /// type; MIR emits a receiver-committing method call instead of a `BinOp`
+    /// read-modify-write. Absent for native scalar operands, which keep the
+    /// builtin operator path.
+    AugmentedInPlace(Box<CheckedCallContract>),
     /// Normalize an `Indexer` expression through the exact checked
     /// `__mlir_index__() -> Int` method before a concrete indexing operation.
     /// MIR evaluates the source expression once and emits this call explicitly;

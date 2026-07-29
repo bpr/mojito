@@ -76,6 +76,70 @@ impl Checker {
         result
     }
 
+    /// Select the in-place dunder (`__iadd__`, …) for `receiver OP= value` on a
+    /// user-defined `operand_ty`, returning its complete checked method-call
+    /// contract. The contract (and the call's effects/conversions) is keyed at
+    /// `span`. A missing in-place dunder is a hard error: Mojo dispatches
+    /// augmented assignment to the dedicated method and does not fall back to the
+    /// ordinary binary operator. `__iadd__` returns `None`; a value-returning
+    /// method is rejected.
+    pub(super) fn select_inplace_operator(
+        &mut self,
+        span: SourceSpan,
+        receiver: &Expr,
+        op: InfixOp,
+        value: &Expr,
+        operand_ty: &Ty,
+    ) -> Result<crate::checked::CheckedCallContract, TypeError> {
+        let missing = || TypeError::MissingInPlaceOperator {
+            op: infix_symbol(op).to_string(),
+            ty: operand_ty.to_string(),
+        };
+        let Ty::Struct(name, _) = operand_ty else {
+            return Err(missing());
+        };
+        let dunder = op.inplace_dunder().ok_or_else(missing)?;
+        let has_method = self
+            .structs
+            .get(name)
+            .and_then(|info| info.methods.get(dunder))
+            .is_some();
+        if !has_method {
+            return Err(missing());
+        }
+        let args = std::slice::from_ref(value);
+        let ret = self.infer_method_call(
+            span.clone(),
+            receiver,
+            dunder,
+            MethodCallArguments::ordinary(args, &[]),
+        )?;
+        if ret != Ty::None {
+            return Err(TypeError::TypeMismatch {
+                expected: "None".to_string(),
+                found: ret.to_string(),
+                context: format!("in-place operator '{dunder}'"),
+            });
+        }
+        let contract = self
+            .selected_calls
+            .borrow()
+            .get(&span)
+            .cloned()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "in-place operator lost its selected call contract".to_string(),
+                )
+            })?;
+        // The receiver is a place, not a computed call. Keep the selected
+        // contract solely in the `AugmentedInPlace` record so lowering treats the
+        // receiver as a place (write-back through `recv_place`) rather than as a
+        // reference-returning call result keyed at this span.
+        self.selected_calls.borrow_mut().remove(&span);
+        self.overload_targets.borrow_mut().remove(&span);
+        Ok(contract)
+    }
+
     pub(super) fn check_stmt(
         &mut self,
         stmt: &Stmt,
@@ -404,6 +468,26 @@ impl Checker {
                     return Err(TypeError::ImmutableBinding(
                         "immutable reference field".to_string(),
                     ));
+                }
+                // A user-defined value dispatches augmented assignment to its
+                // dedicated in-place dunder (`x += y` → `x.__iadd__(y)`), which
+                // mutates `mut self`; Mojo does not fall back to the binary
+                // operator. Native scalars keep the builtin operator path below.
+                if !nominal_subscript
+                    && matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
+                {
+                    let contract = self.select_inplace_operator(
+                        place.source_span(),
+                        place,
+                        *op,
+                        value,
+                        &target,
+                    )?;
+                    self.operation_adjustments.borrow_mut().insert(
+                        place.source_span(),
+                        crate::checked::SemanticAdjustment::AugmentedInPlace(Box::new(contract)),
+                    );
+                    return Ok(());
                 }
                 let result = self.infer_infix(None, *op, place, value)?;
                 if !coerces(&result, &target) {

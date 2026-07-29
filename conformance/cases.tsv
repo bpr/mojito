@@ -133,7 +133,7 @@ subscript-mutable-aliasing	reject	conformance/fixtures/subscript_mutable_aliasin
 subscript-late-argument-invalidation	reject	conformance/fixtures/subscript_late_argument_invalidation.mojo
 dict-projected-value-refresh	reject	conformance/fixtures/dict_projected_value_refresh.mojo
 operator-completion	run	conformance/fixtures/operator_completion.mojo
-current-inplace-dunders	mojo-only	conformance/fixtures/current_inplace_dunders.mojo
+current-inplace-dunders	run	conformance/fixtures/current_inplace_dunders.mojo
 advanced-origins	run	conformance/fixtures/advanced_origins.mojo
 pointer-origin-aggregate	run	conformance/fixtures/pointer_origin_aggregate.mojo
 hidden-unsafe-any-origin	reject	conformance/fixtures/hidden_unsafe_any_origin.mojo

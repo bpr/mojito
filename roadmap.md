@@ -68,16 +68,18 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Current in-place operator dispatch** — replace the compatibility
-  lowering of `OP=` through the ordinary `__add__`/`__sub__` family with current
-  Mojo's `__iadd__`, `__isub__`, and corresponding in-place protocols. Retain
-  the selected target, conventions, effects, conversions, and result contract
-  through checked HIR and verified MIR for variables, projected fields, and
-  nominal subscripts. Preserve the distinct subscript paths: a value getter
-  computes and sends a value through `__setitem__`, while a mutable-reference
-  getter establishes the lvalue before the RHS and writes through it directly.
-  Cover exact one-evaluation order plus missing, immutable, raising, and
-  type-mismatched in-place contracts.
+- [ ] **In-place operator dispatch for nominal subscripts** — extend the
+  in-place dunder dispatch already landed for variables and projected fields
+  (`x += y` → `x.__iadd__(y)`; see `docs/features.md`) to a `receiver[index] OP=
+  rhs` whose element is a user-defined value, replacing the ordinary
+  `__add__`/`__sub__` operator step with `__iadd__`/`__isub__`/… through checked
+  HIR and verified MIR. Preserve the distinct subscript paths: a value getter
+  materializes the element into a mutable temporary, applies the in-place dunder,
+  and sends the result through `__setitem__`; a mutable-reference getter applies
+  the in-place dunder through the reference handle with no setter. Retain exact
+  one-evaluation order and cover the missing, immutable, raising, and
+  type-mismatched in-place contracts at the element level. (Native scalar
+  elements keep the builtin read-modify-write.)
 - [ ] **Parameterized associated types and borrowed iterator origins** —
   generalize trait and struct compile-time members to retain parameter
   declarations and associated-type applications, including current Mojo's

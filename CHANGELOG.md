@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Augmented assignment on a user-defined value now dispatches to its dedicated
+  in-place dunder — `x += y` selects `__iadd__(mut self, y)` (and `__isub__`,
+  `__imul__`, `__itruediv__`, `__ifloordiv__`, `__imod__`, `__ipow__`) as a
+  checked `mut self` method call carried through checked HIR and verified MIR,
+  mutating the receiver in place for variable and projected-field targets. Mojo
+  no longer falls back to the ordinary `__add__` family: a missing in-place
+  dunder is a hard error, an immutable receiver and a mismatched right-hand side
+  are rejected, and a raising in-place dunder participates in ordinary `try`
+  handling. Native scalar targets keep the builtin read-modify-write. In-place
+  dispatch for a user-struct nominal-subscript element remains roadmap work.
+
 - Method-dispatched nominal `Index`, `Slice`, `MultiIndex`, and `MultiSet` now
   carry one complete
   checker-selected method-call contract through checked HIR and verified MIR:

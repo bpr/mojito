@@ -208,6 +208,23 @@ impl Flatten<'_> {
             })
     }
 
+    /// The in-place dunder contract for `place OP= rhs` on a user-defined value
+    /// (`__iadd__`, …), or `None` for native scalar targets that keep the builtin
+    /// `BinOp` read-modify-write. The contract is self-contained (target, raises,
+    /// arguments, boundary, param decls); the place node stays an ordinary place so
+    /// `lower_call_receiver` commits the `mut self` mutation through its slot.
+    pub(super) fn augmented_in_place_contract(
+        &self,
+        expression: &Expr,
+    ) -> Option<crate::checked::CheckedCallContract> {
+        self.checked_adjustments(expression)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                crate::SemanticAdjustment::AugmentedInPlace(contract) => Some(*contract),
+                _ => None,
+            })
+    }
+
     pub(super) fn checked_augmented_subscript(
         &self,
         expression: &Expr,
