@@ -316,6 +316,64 @@ impl Flatten<'_> {
     /// getter instead establishes the lvalue before the RHS and finishes with a
     /// direct `WriteRef`, exactly as current Mojo does. In both paths each source
     /// expression and slice bound is evaluated once.
+    /// Apply a nominal-subscript element's in-place dunder (`c[i] += v` →
+    /// `element.__iadd__(v)`). `current` is the element value read from the getter
+    /// (value getter) or through the reference handle (`ReadRef`, ref getter). It
+    /// is bound to a fresh mutable temporary so the `mut self` call commits through
+    /// `recv_place`, then the mutated element is read back and returned for the
+    /// setter or `WriteRef` step. This reuses the variable in-place mechanism, so
+    /// the VM is unchanged.
+    pub(super) fn emit_augmented_inplace(
+        &mut self,
+        current: Reg,
+        contract: &crate::checked::CheckedCallContract,
+        rhs: Reg,
+        operand_ty: &Ty,
+        op: InfixOp,
+        span: SourceSpan,
+    ) -> Reg {
+        let tmp = self.fresh_var();
+        self.var_types.insert(tmp, operand_ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: tmp,
+            src: current,
+            binding_ty: Some(operand_ty.clone()),
+        });
+        let recv = self.fresh_typed(span.clone(), Some(tmp), operand_ty.clone());
+        self.emit(MirInstr::UseVar {
+            dest: recv,
+            var: tmp,
+            mode: UseMode::BorrowMut,
+        });
+        self.emit_checked_call_boundary(contract, span.clone());
+        let dest = self.fresh(span.clone(), None);
+        self.emit(MirInstr::MethodCall {
+            dest,
+            recv,
+            method: op
+                .inplace_dunder()
+                .expect("augmented in-place operator has an in-place dunder")
+                .to_string(),
+            resolved: Some(contract.target.clone()),
+            raises: contract.raises.clone(),
+            args: vec![rhs],
+            kwargs: Vec::new(),
+            recv_place: Some(MirPlace::root(tmp, Some(operand_ty.clone()))),
+            arg_places: vec![None],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: contract.param_decls.clone(),
+        });
+        let updated = self.fresh_typed(span, Some(tmp), operand_ty.clone());
+        self.emit(MirInstr::UseVar {
+            dest: updated,
+            var: tmp,
+            mode: UseMode::Move,
+        });
+        updated
+    }
+
     /// Lower `place OP= rhs` on a user-defined value to its in-place dunder call
     /// (`counter += 2` → `counter.__iadd__(2)`), a `mut self` method that mutates
     /// the receiver in place. Returns `false` for native scalar targets, which
@@ -434,15 +492,27 @@ impl Flatten<'_> {
                         dest: current,
                         reference: handle,
                     });
-                    let result =
-                        self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
-                    self.emit(MirInstr::BinOp {
-                        op,
-                        dest: result,
-                        a: current,
-                        b: rhs,
-                        resolved: None,
-                    });
+                    let result = if let Some(inplace) = &plan.inplace {
+                        self.emit_augmented_inplace(
+                            current,
+                            inplace,
+                            rhs,
+                            &plan.operand_ty,
+                            op,
+                            target.source_span(),
+                        )
+                    } else {
+                        let result =
+                            self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
+                        self.emit(MirInstr::BinOp {
+                            op,
+                            dest: result,
+                            a: current,
+                            b: rhs,
+                            resolved: None,
+                        });
+                        result
+                    };
                     self.emit(MirInstr::WriteRef {
                         reference: handle,
                         value: result,
@@ -479,14 +549,27 @@ impl Flatten<'_> {
                     call: Some(getter_call),
                     intrinsic: None,
                 });
-                let result = self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
-                self.emit(MirInstr::BinOp {
-                    op,
-                    dest: result,
-                    a: current,
-                    b: rhs,
-                    resolved: None,
-                });
+                let result = if let Some(inplace) = &plan.inplace {
+                    self.emit_augmented_inplace(
+                        current,
+                        inplace,
+                        rhs,
+                        &plan.operand_ty,
+                        op,
+                        target.source_span(),
+                    )
+                } else {
+                    let result =
+                        self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
+                    self.emit(MirInstr::BinOp {
+                        op,
+                        dest: result,
+                        a: current,
+                        b: rhs,
+                        resolved: None,
+                    });
+                    result
+                };
 
                 let setter = plan
                     .setter
@@ -598,15 +681,27 @@ impl Flatten<'_> {
                         dest: current,
                         reference: handle,
                     });
-                    let result =
-                        self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
-                    self.emit(MirInstr::BinOp {
-                        op,
-                        dest: result,
-                        a: current,
-                        b: rhs,
-                        resolved: None,
-                    });
+                    let result = if let Some(inplace) = &plan.inplace {
+                        self.emit_augmented_inplace(
+                            current,
+                            inplace,
+                            rhs,
+                            &plan.operand_ty,
+                            op,
+                            target.source_span(),
+                        )
+                    } else {
+                        let result =
+                            self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
+                        self.emit(MirInstr::BinOp {
+                            op,
+                            dest: result,
+                            a: current,
+                            b: rhs,
+                            resolved: None,
+                        });
+                        result
+                    };
                     self.emit(MirInstr::WriteRef {
                         reference: handle,
                         value: result,
@@ -630,14 +725,27 @@ impl Flatten<'_> {
                     call: Some(getter_call),
                     intrinsic: None,
                 });
-                let result = self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
-                self.emit(MirInstr::BinOp {
-                    op,
-                    dest: result,
-                    a: current,
-                    b: rhs,
-                    resolved: None,
-                });
+                let result = if let Some(inplace) = &plan.inplace {
+                    self.emit_augmented_inplace(
+                        current,
+                        inplace,
+                        rhs,
+                        &plan.operand_ty,
+                        op,
+                        target.source_span(),
+                    )
+                } else {
+                    let result =
+                        self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
+                    self.emit(MirInstr::BinOp {
+                        op,
+                        dest: result,
+                        a: current,
+                        b: rhs,
+                        resolved: None,
+                    });
+                    result
+                };
                 let setter = plan
                     .setter
                     .as_ref()
@@ -802,15 +910,27 @@ impl Flatten<'_> {
                         dest: current,
                         reference: handle,
                     });
-                    let result =
-                        self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
-                    self.emit(MirInstr::BinOp {
-                        op,
-                        dest: result,
-                        a: current,
-                        b: rhs,
-                        resolved: None,
-                    });
+                    let result = if let Some(inplace) = &plan.inplace {
+                        self.emit_augmented_inplace(
+                            current,
+                            inplace,
+                            rhs,
+                            &plan.operand_ty,
+                            op,
+                            target.source_span(),
+                        )
+                    } else {
+                        let result =
+                            self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
+                        self.emit(MirInstr::BinOp {
+                            op,
+                            dest: result,
+                            a: current,
+                            b: rhs,
+                            resolved: None,
+                        });
+                        result
+                    };
                     self.emit(MirInstr::WriteRef {
                         reference: handle,
                         value: result,
@@ -830,14 +950,27 @@ impl Flatten<'_> {
                     arg_places: getter_places,
                     call: Some(getter_call),
                 });
-                let result = self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
-                self.emit(MirInstr::BinOp {
-                    op,
-                    dest: result,
-                    a: current,
-                    b: rhs,
-                    resolved: None,
-                });
+                let result = if let Some(inplace) = &plan.inplace {
+                    self.emit_augmented_inplace(
+                        current,
+                        inplace,
+                        rhs,
+                        &plan.operand_ty,
+                        op,
+                        target.source_span(),
+                    )
+                } else {
+                    let result =
+                        self.fresh_typed(target.source_span(), None, plan.result_ty.clone());
+                    self.emit(MirInstr::BinOp {
+                        op,
+                        dest: result,
+                        a: current,
+                        b: rhs,
+                        resolved: None,
+                    });
+                    result
+                };
                 let setter = plan
                     .setter
                     .as_ref()

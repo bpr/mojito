@@ -68,18 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **In-place operator dispatch for nominal subscripts** — extend the
-  in-place dunder dispatch already landed for variables and projected fields
-  (`x += y` → `x.__iadd__(y)`; see `docs/features.md`) to a `receiver[index] OP=
-  rhs` whose element is a user-defined value, replacing the ordinary
-  `__add__`/`__sub__` operator step with `__iadd__`/`__isub__`/… through checked
-  HIR and verified MIR. Preserve the distinct subscript paths: a value getter
-  materializes the element into a mutable temporary, applies the in-place dunder,
-  and sends the result through `__setitem__`; a mutable-reference getter applies
-  the in-place dunder through the reference handle with no setter. Retain exact
-  one-evaluation order and cover the missing, immutable, raising, and
-  type-mismatched in-place contracts at the element level. (Native scalar
-  elements keep the builtin read-modify-write.)
 - [ ] **Parameterized associated types and borrowed iterator origins** —
   generalize trait and struct compile-time members to retain parameter
   declarations and associated-type applications, including current Mojo's

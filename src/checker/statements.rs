@@ -140,6 +140,42 @@ impl Checker {
         Ok(contract)
     }
 
+    /// Select the in-place dunder for a nominal-subscript element
+    /// (`c[i] += v` → `element.__iadd__(v)`). The receiver is a fresh mutable
+    /// temporary typed as the element, declared in a throwaway scope, so
+    /// selection reuses `select_inplace_operator` without re-inferring the
+    /// subscript `place` — which would disturb the getter/setter adjustment state
+    /// this branch carefully snapshots. The RHS conversion is recorded on the real
+    /// `value` span and survives the scope pop; lowering materializes the element
+    /// into its own temporary and applies the returned contract.
+    pub(super) fn select_subscript_inplace_operator(
+        &mut self,
+        place: &Expr,
+        op: InfixOp,
+        value: &Expr,
+        operand_ty: &Ty,
+    ) -> Result<crate::checked::CheckedCallContract, TypeError> {
+        self.push_scope();
+        let selection = self
+            .declare("$inplace_elem", operand_ty.clone())
+            .and_then(|()| {
+                let mut receiver = Expr::new(
+                    ExprKind::Identifier("$inplace_elem".to_string()),
+                    place.span,
+                );
+                receiver.source = place.source.clone();
+                self.select_inplace_operator(
+                    receiver.source_span(),
+                    &receiver,
+                    op,
+                    value,
+                    operand_ty,
+                )
+            });
+        self.pop_scope();
+        selection
+    }
+
     pub(super) fn check_stmt(
         &mut self,
         stmt: &Stmt,
@@ -489,14 +525,28 @@ impl Checker {
                     );
                     return Ok(());
                 }
-                let result = self.infer_infix(None, *op, place, value)?;
-                if !coerces(&result, &target) {
-                    return Err(TypeError::TypeMismatch {
-                        expected: target.to_string(),
-                        found: result.to_string(),
-                        context: "augmented assignment".to_string(),
-                    });
-                }
+                // A user-struct subscript element dispatches augmented assignment
+                // to its in-place dunder, exactly like a variable or field target;
+                // a native element keeps the binary operator + setter path. The
+                // mutated element keeps its own type, so `result` is the element
+                // type and the value-getter's `__setitem__` selection binds it.
+                let (result, inplace_contract) = if nominal_subscript
+                    && matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
+                {
+                    let contract =
+                        self.select_subscript_inplace_operator(place, *op, value, &target)?;
+                    (target.clone(), Some(contract))
+                } else {
+                    let result = self.infer_infix(None, *op, place, value)?;
+                    if !coerces(&result, &target) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: target.to_string(),
+                            found: result.to_string(),
+                            context: "augmented assignment".to_string(),
+                        });
+                    }
+                    (result, None)
+                };
                 if nominal_subscript {
                     let site = place.source_span();
                     let getter = getter.expect("nominal getter was captured above");
@@ -520,6 +570,7 @@ impl Checker {
                                 crate::checked::CheckedAugmentedSubscript {
                                     getter,
                                     setter: None,
+                                    inplace: inplace_contract.clone(),
                                     operand_ty: target,
                                     result_ty: result,
                                     value_source: None,
@@ -598,6 +649,7 @@ impl Checker {
                             crate::checked::CheckedAugmentedSubscript {
                                 getter,
                                 setter: Some(setter),
+                                inplace: inplace_contract,
                                 operand_ty: target,
                                 result_ty: result,
                                 value_source: Some(value_source),

@@ -54,9 +54,10 @@ within the descriptor family and does not invoke an arbitrary user constructor;
 the pinned compiler and Mojito reject that attempted wrapping before lowering.
 For an augmented assignment on a user-defined value, the pinned compiler calls
 the dedicated `__iadd__`/corresponding in-place dunder rather than the ordinary
-binary method. Mojito now matches this for a variable or projected-field target,
-so `current-inplace-dunders` runs in both. Extending the same dispatch to a
-user-struct nominal-subscript element remains roadmap work.
+binary method. Mojito matches this for variable, projected-field, and
+nominal-subscript-element targets (both the value-getter and mutable-reference-getter
+subscript paths), so `current-inplace-dunders` and `inplace-subscript-dunders` run
+in both.
 The pinned
 nightly currently rejects a competing positional-only/keyword-only
 `__setitem__` overload pair that Mojito resolves from the right-hand-side type;

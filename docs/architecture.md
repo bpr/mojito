@@ -561,9 +561,12 @@ as an `AugmentedInPlace` adjustment on the place, so lowering emits an ordinary
 receiver-committing `MethodCall` (the mutation writes back through the receiver's
 slot, alias, or reference handle) instead of a `BinOp` read-modify-write. There
 is no fall-through to `__add__`; a missing in-place dunder is a checker error.
-Native scalar targets keep the primitive `BinOp` path, and the same in-place
-dispatch for a user-struct nominal-subscript element is still pending (its two
-getter paths must route through a mutable temporary or the reference handle).
+Native scalar targets keep the primitive `BinOp` path. A user-struct
+nominal-subscript element dispatches the same way, recorded on the
+`CheckedAugmentedSubscript`: lowering materializes the element into a mutable
+temporary and sends the mutated result through `__setitem__` (value getter) or
+reads it through the reference handle (mutable-reference getter), applies the
+in-place dunder to that temporary, and commits the result.
 
 Printing and `String()` require `Writable`. A custom `write_to` or
 `write_repr_to` receives `Some[Writer]`; `Writer.write` accepts heterogeneous

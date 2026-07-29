@@ -134,6 +134,12 @@ pub struct CheckedAugmentedSubscript {
     /// Absent exactly when `getter.reference_result` is mutable and lowering
     /// must finish with `WriteRef` instead of invoking `__setitem__`.
     pub setter: Option<CheckedCallContract>,
+    /// In-place dunder selected on the element type when it is a user-defined
+    /// value (`c[i] += v` → `element.__iadd__(v)`). Lowering materializes the
+    /// element into a mutable temporary, applies this `mut self` call, and sends
+    /// the result through the setter or reference handle. `None` for a native
+    /// scalar element, whose operator step stays a `BinOp` read-modify-write.
+    pub inplace: Option<CheckedCallContract>,
     /// Ordinary value type read from the getter (the referent for `ref` results).
     pub operand_ty: Ty,
     pub result_ty: Ty,
