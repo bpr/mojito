@@ -372,6 +372,7 @@ impl ConformanceOracle {
                     conformance_conditions: conformance_conditions.iter().cloned().collect(),
                     fields: field_types?,
                     associated: HashMap::new(),
+                    parameterized_associated: HashMap::new(),
                     methods: method_names,
                     fieldwise_init: *fieldwise_init,
                     explicit_destroy_message: None,
@@ -1580,10 +1581,33 @@ struct StructInfo {
     /// Associated compile-time facts declared by `comptime NAME = ...` in the
     /// struct body. These live on the type, not on runtime instances.
     associated: HashMap<String, CtValue>,
+    /// Parameterized associated types declared by `comptime NAME[params] = body`.
+    /// Unlike `associated`, the body cannot be evaluated eagerly (it references
+    /// the member's own parameters); it is lowered once to a symbolic template
+    /// and substituted per application. See [`ParameterizedMember`].
+    parameterized_associated: HashMap<String, ParameterizedMember>,
     methods: HashMap<String, Vec<MethodSig>>,
     fieldwise_init: bool,
     explicit_destroy_message: Option<String>,
     explicit_destructors: HashMap<String, bool>,
+}
+
+/// A parameterized associated type a conforming struct defines
+/// (`comptime Buf[n: Int] = Fixed[n]`). The body is lowered once with the
+/// member's own parameters in scope, so the resulting `template` carries them
+/// symbolically (`Ty::Param`, `CtValue::Param`, `Origin::Param`); concrete
+/// resolution substitutes an application's arguments into it. The raw
+/// `TypeParam`s are retained (rather than classified `ParamDecl`s) so the
+/// argument-to-parameter binding can distinguish type, value, and origin kinds.
+#[derive(Clone)]
+struct ParameterizedMember {
+    params: Vec<crate::ast::TypeParam>,
+    template: Ty,
+    /// The index the member's parameters started at in `enclosing_type_params`
+    /// while the template was lowered. An origin parameter at member position `k`
+    /// therefore appears in the template as `Origin::Param(param_base + k)`, which
+    /// concrete substitution uses to bind the application's origin argument.
+    param_base: usize,
 }
 
 #[derive(Clone, Copy)]

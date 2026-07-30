@@ -336,7 +336,8 @@ impl Checker {
             );
             field_tys.push((f.name.clone(), ty));
         }
-        let associated_values = self.check_struct_associated(associated)?;
+        let (associated_values, parameterized_associated) =
+            self.check_struct_associated(associated)?;
         let callable_conformance = declaration
             .callable_conformance
             .as_ref()
@@ -367,6 +368,7 @@ impl Checker {
                     .collect(),
                 fields: field_tys,
                 associated: associated_values,
+                parameterized_associated,
                 methods: HashMap::new(),
                 fieldwise_init,
                 explicit_destroy_message,
@@ -591,6 +593,33 @@ impl Checker {
             }
         }
         for (member, req) in &trait_info.comptime_members {
+            // A parameterized associated type is stored separately and cannot be
+            // eagerly evaluated. Its parameterization was validated at declaration;
+            // require the definition's explicit parameter count to match the
+            // requirement's, and that the requirement is itself parameterized.
+            if let Some(parameterized) = struct_info.parameterized_associated.get(member) {
+                let CtMemberReq::Type { params, .. } = req else {
+                    return Err(TypeError::TraitComptimeMemberMismatch {
+                        struct_name: name.to_string(),
+                        trait_name: tr.to_string(),
+                        member: member.clone(),
+                    });
+                };
+                let required = params.iter().filter(|p| !p.infer_only).count();
+                let provided = parameterized
+                    .params
+                    .iter()
+                    .filter(|p| !p.infer_only)
+                    .count();
+                if required != provided {
+                    return Err(TypeError::TraitComptimeMemberMismatch {
+                        struct_name: name.to_string(),
+                        trait_name: tr.to_string(),
+                        member: member.clone(),
+                    });
+                }
+                continue;
+            }
             let got = struct_info.associated.get(member).ok_or_else(|| {
                 TypeError::MissingTraitComptimeMember {
                     struct_name: name.to_string(),

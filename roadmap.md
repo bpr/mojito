@@ -69,19 +69,25 @@ growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
 The former single "Parameterized associated types and borrowed iterator origins"
-task is split into the subtasks below. Its foundation has landed: trait/struct
-associated members retain type/value/origin parameter lists (with the `//`
-infer-only boundary), and a parameterized application such as
-`Self.IteratorType[origin_of(self)]` is arity-validated and resolves to a symbolic
-associated type (see `docs/features.md`).
+task is split into the subtasks below. Its foundation and concrete substitution
+have landed: trait/struct associated members retain type/value/origin parameter
+lists (with the `//` infer-only boundary); a parameterized application such as
+`Self.IteratorType[origin_of(self)]` is arity-validated; the checked type carries
+the application's arguments (type, value, and *origin*, first-class in `TyArg`);
+and a type-parameterized member instantiated by a conforming struct resolves
+concretely through checked declarations, specialization, HIR, typed MIR,
+verification, and the register VM (see `docs/features.md`).
 
-- [ ] **Concrete parameterized-associated-type substitution** — substitute a
-  parameterized application's arguments (type, value, and *origin* arguments)
-  when a conforming struct instantiates the member, so `C.IteratorType[o]`
-  resolves to the concrete iterator type through checked declarations,
-  specialization, HIR, typed MIR, verification, and origin/loan analysis. This
-  requires carrying origin arguments in the checked type-argument representation
-  (`Ty::Assoc` application args / `TyArg`), the piece the foundation left symbolic.
+- [x] **Concrete parameterized-associated-type substitution** — the checked
+  `Ty::Assoc` carries application arguments (`TyArg` gained a first-class `Origin`
+  variant), and a conforming struct's parameterized member resolves concretely by
+  substituting them into the member's lowered template. A *type*-parameterized
+  member (`C.Wrap[T]` → `List[T]`) resolves end-to-end and runs. Two carried-over
+  limitations fold into the subtasks below: substituting an *origin* argument
+  supplied as `origin_of(self)` needs the self-origin resolution that arrives with
+  generic borrowed iteration, and *value*-parameter forwarding into another
+  parameterized struct (`Fixed[n]`) is blocked by a pre-existing generic
+  value-forwarding gap unrelated to associated types.
 - [ ] **Migrate the bundled iterator protocols** to `IteratorType[...]` and
   `IteratorOwnedType`: rewrite `Iterable`/`IterableOwned` (and the Range/List/Set/
   Dict conformances) to parameterized associated iterator types once concrete

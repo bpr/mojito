@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Concrete parameterized-associated-type substitution. The checked `Ty::Assoc`
+  now carries a parameterized application's arguments — `TyArg` gained a
+  first-class `Origin` variant, so an origin argument participates in checked type
+  identity while erasing from the runtime ABI like a `Ty::Pointer` origin. When a
+  conforming struct instantiates a parameterized member, the application resolves
+  concretely by substituting the arguments into the member's lowered template: a
+  type-parameterized member (`C.Wrap[T]` → `List[T]`) resolves end-to-end through
+  checked declarations, specialization, HIR, verified MIR, and the register VM.
+  Substituting an `origin_of(self)` origin argument (which needs self-origin
+  resolution) and forwarding a value parameter into another parameterized struct
+  (a pre-existing generic gap) remain later iteration work.
+
 - Parameterized associated types (foundation). Trait and struct compile-time
   members now retain a parameter list — type, value, and origin parameters with
   the `//` infer-only boundary — so current Mojo's
@@ -16,9 +28,7 @@ to evolve under the `0.x` compatibility rules.
   application such as `Self.IteratorType[origin_of(self)]` (spelled like a
   dependent index but naming a parameterized member) is recognized, validated
   against the declared explicit-parameter arity, and resolves to a symbolic
-  associated type. Concrete substitution of the application's arguments —
-  including origin arguments in the checked type-argument representation — when a
-  conforming struct instantiates the member remains later iteration work.
+  associated type.
 
 - Augmented assignment on a user-defined value now dispatches to its dedicated
   in-place dunder — `x += y` selects `__iadd__(mut self, y)` (and `__isub__`,

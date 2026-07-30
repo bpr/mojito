@@ -606,6 +606,89 @@ pub(super) fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<Ty
         .collect()
 }
 
+/// The bindings concrete resolution of a parameterized associated type
+/// substitutes into its symbolic template: type parameters by name (the
+/// enclosing struct's and the member's), value parameters by name, and origin
+/// parameters by `OriginParamId`.
+pub(super) struct AssocBindings {
+    pub types: HashMap<String, Ty>,
+    pub values: HashMap<String, CtValue>,
+    pub origins: HashMap<u32, crate::origin::Origin>,
+}
+
+/// Substitute a parameterized associated type's template with concrete
+/// arguments. Types are substituted first with the ordinary type substitution;
+/// a second pass then replaces symbolic value parameters (`CtValue::Param`) and
+/// origin parameters (`Origin::Param`), which the type-only pass carries through.
+pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
+    let typed = substitute(ty, &bindings.types);
+    substitute_values_and_origins(&typed, &bindings.values, &bindings.origins)
+}
+
+fn substitute_values_and_origins(
+    ty: &Ty,
+    values: &HashMap<String, CtValue>,
+    origins: &HashMap<u32, crate::origin::Origin>,
+) -> Ty {
+    let recur = |t: &Ty| substitute_values_and_origins(t, values, origins);
+    let map_args = |args: &[TyArg]| -> Vec<TyArg> {
+        args.iter()
+            .map(|argument| match argument {
+                TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
+                TyArg::Val(CtValue::Param(name)) => {
+                    TyArg::Val(values.get(name).cloned().unwrap_or(CtValue::Param(name.clone())))
+                }
+                TyArg::Val(value) => TyArg::Val(value.clone()),
+                TyArg::Origin(origin) => TyArg::Origin(substitute_origin(origin, origins)),
+            })
+            .collect()
+    };
+    match ty {
+        Ty::Struct(name, args) => Ty::Struct(name.clone(), map_args(args)),
+        Ty::Assoc { base, name, args } => Ty::Assoc {
+            base: Box::new(recur(base)),
+            name: name.clone(),
+            args: map_args(args),
+        },
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(recur(element)),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(recur(&reference.referent));
+            reference.origin = substitute_origin(&reference.origin, origins);
+            Ty::Ref(reference)
+        }
+        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(recur).collect()),
+        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(recur(element))),
+        Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(recur).collect()),
+        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(recur(element))),
+        Ty::Dependent(crate::types::DependentType::Indexed { elements, index }) => {
+            Ty::Dependent(crate::types::DependentType::Indexed {
+                elements: elements.iter().map(recur).collect(),
+                index: index.clone(),
+            })
+        }
+        other => other.clone(),
+    }
+}
+
+fn substitute_origin(
+    origin: &crate::origin::Origin,
+    origins: &HashMap<u32, crate::origin::Origin>,
+) -> crate::origin::Origin {
+    use crate::origin::Origin;
+    match origin {
+        Origin::Param(id) => origins.get(&id.0).cloned().unwrap_or_else(|| origin.clone()),
+        Origin::Union(members) => {
+            Origin::Union(members.iter().map(|m| substitute_origin(m, origins)).collect())
+        }
+        _ => origin.clone(),
+    }
+}
+
 /// Callable specialization and method-generic instantiation moved from `checker.rs`.
 impl Checker {
     /// Split the source parameter list at an explicit specialization site.

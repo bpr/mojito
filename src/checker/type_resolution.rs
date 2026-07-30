@@ -310,7 +310,7 @@ impl Checker {
             },
             SourceType::Assoc { base, name, .. } => {
                 let base_ty = self.ty_from_anno(base)?;
-                self.associated_type_from_base(&base_ty, name)?
+                self.associated_type_from_base(&base_ty, name, &[])?
             }
             SourceType::IndexedProjection { base, index } => {
                 // A parameterized associated-type application such as
@@ -755,16 +755,29 @@ impl Checker {
         {
             return Err(TypeError::UnknownSelfParam(name.to_string()));
         }
-        self.associated_type_from_base(self_ty, name)
+        self.associated_type_from_base(self_ty, name, &[])
     }
 
-    pub(super) fn associated_type_from_base(&self, base: &Ty, name: &str) -> Result<Ty, TypeError> {
+    pub(super) fn associated_type_from_base(
+        &self,
+        base: &Ty,
+        name: &str,
+        args: &[TyArg],
+    ) -> Result<Ty, TypeError> {
         match base {
             Ty::Struct(sname, targs) => {
                 let info = self
                     .structs
                     .get(sname)
                     .ok_or_else(|| TypeError::UnknownType(sname.clone()))?;
+                // A parameterized associated member instantiated by a conforming
+                // struct: substitute the application's arguments into its template.
+                if let Some(member) = info.parameterized_associated.get(name) {
+                    let member = member.clone();
+                    let decls = info.decls.clone();
+                    let targs = targs.clone();
+                    return self.resolve_parameterized_member(base, name, &member, &decls, &targs, args);
+                }
                 let value =
                     info.associated
                         .get(name)
@@ -786,7 +799,7 @@ impl Checker {
                     Ok(Ty::Assoc {
                         base: Box::new(base.clone()),
                         name: name.to_string(),
-                        args: Vec::new(),
+                        args: args.to_vec(),
                     })
                 } else {
                     Err(TypeError::NoSuchAssociatedType {
@@ -798,13 +811,75 @@ impl Checker {
             Ty::Assoc { .. } => Ok(Ty::Assoc {
                 base: Box::new(base.clone()),
                 name: name.to_string(),
-                args: Vec::new(),
+                args: args.to_vec(),
             }),
             _ => Err(TypeError::NoSuchAssociatedType {
                 object_type: base.to_string(),
                 member: name.to_string(),
             }),
         }
+    }
+
+    /// Concretely resolve a parameterized associated-type application on a
+    /// conforming struct. Binds the struct's own parameters (from its type
+    /// arguments) and the member's parameters (from the application arguments)
+    /// into the member's symbolic template. When the arguments were not carried —
+    /// an `origin_of(self)` dropped at the abstract trait signature — the result
+    /// stays symbolic rather than resolving with missing bindings.
+    fn resolve_parameterized_member(
+        &self,
+        base: &Ty,
+        name: &str,
+        member: &ParameterizedMember,
+        struct_decls: &[ParamDecl],
+        struct_targs: &[TyArg],
+        args: &[TyArg],
+    ) -> Result<Ty, TypeError> {
+        let explicit = member.params.iter().filter(|p| !p.infer_only).count();
+        if args.len() != explicit {
+            return Ok(Ty::Assoc {
+                base: Box::new(base.clone()),
+                name: name.to_string(),
+                args: args.to_vec(),
+            });
+        }
+        // The struct's own type and value parameters concretize `Self.T` / `Self.n`
+        // references in the template.
+        let mut types = struct_subst(struct_decls, struct_targs);
+        let mut values = HashMap::new();
+        for (decl, targ) in struct_decls.iter().zip(struct_targs) {
+            if let (ParamDecl::Value { name, .. }, TyArg::Val(value)) = (decl, targ) {
+                values.insert(name.clone(), value.clone());
+            }
+        }
+        // The member's own explicit parameters concretize from the application.
+        // Origin parameters are keyed by the id assigned while the template was
+        // lowered (their position in `enclosing_type_params`).
+        let mut origins = HashMap::new();
+        let mut supplied = args.iter();
+        for (index, param) in member.params.iter().enumerate() {
+            if param.infer_only {
+                continue;
+            }
+            let Some(arg) = supplied.next() else { break };
+            match arg {
+                TyArg::Ty(ty) => {
+                    types.insert(param.name.clone(), ty.clone());
+                }
+                TyArg::Val(value) => {
+                    values.insert(param.name.clone(), value.clone());
+                }
+                TyArg::Origin(origin) => {
+                    origins.insert((member.param_base + index) as u32, origin.clone());
+                }
+            }
+        }
+        let bindings = AssocBindings {
+            types,
+            values,
+            origins,
+        };
+        Ok(self.resolve_assoc_ty(&substitute_assoc(&member.template, &bindings)))
     }
 
     pub(super) fn resolve_assoc_ty(&self, ty: &Ty) -> Ty {
@@ -823,7 +898,7 @@ impl Checker {
             Ty::Assoc { base, name, args } => {
                 let base = self.resolve_assoc_ty(base);
                 let args = map_tyargs(args, |t| self.resolve_assoc_ty(t));
-                self.associated_type_from_base(&base, name)
+                self.associated_type_from_base(&base, name, &args)
                     .unwrap_or_else(|_| Ty::Assoc {
                         base: Box::new(base),
                         name: name.clone(),

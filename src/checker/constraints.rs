@@ -115,18 +115,70 @@ impl Checker {
     }
 
     pub(super) fn check_struct_associated(
-        &self,
+        &mut self,
         associated: &[StructComptime],
-    ) -> Result<HashMap<String, CtValue>, TypeError> {
+    ) -> Result<(HashMap<String, CtValue>, HashMap<String, ParameterizedMember>), TypeError> {
         let mut out = HashMap::new();
+        let mut parameterized = HashMap::new();
         for member in associated {
-            if out.contains_key(&member.name) {
+            if out.contains_key(&member.name) || parameterized.contains_key(&member.name) {
                 return Err(TypeError::Redeclaration(member.name.clone()));
             }
-            let value = self.eval_associated_ct(&member.value, &out)?;
-            out.insert(member.name.clone(), value);
+            if member.params.is_empty() {
+                let value = self.eval_associated_ct(&member.value, &out)?;
+                out.insert(member.name.clone(), value);
+            } else {
+                let param_base = self.enclosing_type_params.len();
+                let template = self.lower_parameterized_member(&member.params, &member.value)?;
+                parameterized.insert(
+                    member.name.clone(),
+                    ParameterizedMember {
+                        params: member.params.clone(),
+                        template,
+                        param_base,
+                    },
+                );
+            }
         }
-        Ok(out)
+        Ok((out, parameterized))
+    }
+
+    /// Lower the body of a parameterized associated type to its symbolic template.
+    /// The member's own parameters are put in scope (as the enclosing struct's
+    /// parameters already are), so type parameters resolve to `Ty::Param`, value
+    /// parameters to `CtValue::Param`, and origin parameters to `Origin::Param`;
+    /// concrete resolution substitutes an application's arguments into the result.
+    fn lower_parameterized_member(
+        &mut self,
+        params: &[crate::ast::TypeParam],
+        value: &Expr,
+    ) -> Result<Ty, TypeError> {
+        let source_ty = assoc_body_source_type(value)?;
+        // Member type parameters resolve as `Ty::Param` (via the `tparams` scope,
+        // like a generic def's parameters); origin parameters resolve to
+        // `Origin::Param` via `enclosing_type_params`; value parameters resolve to
+        // a symbolic `CtValue::Param`.
+        let scope: HashMap<String, Ty> = params
+            .iter()
+            .filter(|p| matches!(assoc_param_kind(p), AssocParamKind::Type))
+            .map(|p| {
+                (
+                    p.name.clone(),
+                    Ty::Param {
+                        name: p.name.clone(),
+                        bounds: p.bounds.clone(),
+                        callable_bound: None,
+                    },
+                )
+            })
+            .collect();
+        self.tparams.push(scope);
+        let saved = self.enclosing_type_params.len();
+        self.enclosing_type_params.extend(params.iter().cloned());
+        let template = self.ty_from_anno(&source_ty);
+        self.enclosing_type_params.truncate(saved);
+        self.tparams.pop();
+        template
     }
 
     /// Evaluate a struct-level associated comptime value. This intentionally
@@ -599,4 +651,65 @@ impl Checker {
             ConstraintOperand::Type(ty) => Some(TyArg::Ty(ty.clone())),
         }
     }
+}
+
+/// The type a parameterized associated type's body denotes. The body parses as
+/// an ordinary compile-time expression; the type-valued forms are a bare name
+/// (`Element`), a type application (`List[T]`, `Fixed[n]`), an explicit type
+/// value, or a `Self.` member.
+fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeError> {
+    match &value.kind {
+        ExprKind::TypeValue(ty) => Ok(ty.clone()),
+        ExprKind::Identifier(name) => Ok(SourceType::Named(name.clone(), Vec::new())),
+        ExprKind::TypeApply { name, args } => Ok(SourceType::Named(name.clone(), args.clone())),
+        // A type application such as `List[T]` parses as a subscript over the
+        // type's name; recover the parameter-argument list from the index.
+        ExprKind::Index { object, index } => {
+            let ExprKind::Identifier(name) = &object.kind else {
+                return Err(unsupported_assoc_body());
+            };
+            let args = match &index.kind {
+                ExprKind::TupleLit(elements) => elements
+                    .iter()
+                    .cloned()
+                    .map(crate::ast::ParamArg::Value)
+                    .collect(),
+                _ => vec![crate::ast::ParamArg::Value((**index).clone())],
+            };
+            Ok(SourceType::Named(name.clone(), args))
+        }
+        ExprKind::Member { object, field }
+            if matches!(&object.kind, ExprKind::Identifier(s) if s == "Self") =>
+        {
+            Ok(SourceType::SelfParam(field.clone()))
+        }
+        _ => Err(unsupported_assoc_body()),
+    }
+}
+
+/// The parameter kind of one associated-type parameter, classified from its raw
+/// declaration (origin parameters are erased by `classify_params`, so the arity
+/// and template lowering read the raw `TypeParam` directly).
+pub(super) enum AssocParamKind {
+    Origin,
+    Value,
+    Type,
+}
+
+pub(super) fn assoc_param_kind(param: &crate::ast::TypeParam) -> AssocParamKind {
+    if matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
+        AssocParamKind::Origin
+    } else if param.value_type.is_some()
+        || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some())
+    {
+        AssocParamKind::Value
+    } else {
+        AssocParamKind::Type
+    }
+}
+
+fn unsupported_assoc_body() -> TypeError {
+    TypeError::Unsupported(
+        "a parameterized associated type must be defined by a type".to_string(),
+    )
 }
