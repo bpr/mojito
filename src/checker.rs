@@ -1610,6 +1610,14 @@ struct ParameterizedMember {
     param_base: usize,
 }
 
+/// A struct's checked associated compile-time members: the eagerly evaluated
+/// monomorphic values, and the parameterized members lowered to their symbolic
+/// templates for later concrete substitution.
+type StructAssociatedMembers = (
+    HashMap<String, CtValue>,
+    HashMap<String, ParameterizedMember>,
+);
+
 #[derive(Clone, Copy)]
 struct DependentIndexAccessorFamily {
     place: &'static str,

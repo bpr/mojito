@@ -76,7 +76,7 @@ struct List[T: Movable](
 ):
     comptime Element = Self.T
     comptime Iter = _ListIter[Self.T]
-    comptime OwnedIter = _ListOwnedIter[Self.T]
+    comptime IteratorOwnedType = _ListOwnedIter[Self.T]
 
     var data: UnsafePointer[Self.T]
     var size: Int

@@ -79,7 +79,15 @@ impl std::fmt::Display for Origin {
             }
             Origin::Static => write!(f, "StaticOrigin"),
             Origin::Untracked { mutable } => {
-                write!(f, "{}", if *mutable { "UnsafeAnyOrigin" } else { "UntrackedOrigin" })
+                write!(
+                    f,
+                    "{}",
+                    if *mutable {
+                        "UnsafeAnyOrigin"
+                    } else {
+                        "UntrackedOrigin"
+                    }
+                )
             }
         }
     }

@@ -4186,6 +4186,32 @@ fn unrelated_conditional_conformance_does_not_prove_an_iterator_contract() {
 }
 
 #[test]
+fn owned_iterable_conformance_binds_iterator_owned_type() {
+    // The owned protocol's associated iterator is the monomorphic
+    // `IteratorOwnedType` (current Mojo's owned-iterator member), consumed by an
+    // ownership-taking `__iter__(var self)`.
+    ok(
+        "trait Iterator:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\ntrait IterableOwned:\n    comptime Element: Movable\n    comptime IteratorOwnedType: Iterator\n    def __iter__(var self) -> Self.IteratorOwnedType: ...\n\n@fieldwise_init\nstruct Drain[T: Movable](Iterator):\n    comptime Element = Self.T\n    var value: Self.T\n    def __next__(mut self) -> Self.T:\n        return self.value^\n\n@fieldwise_init\nstruct Bucket[T: Movable](IterableOwned):\n    comptime Element = Self.T\n    comptime IteratorOwnedType = Drain[Self.T]\n    var value: Self.T\n    def __iter__(var self) -> Drain[Self.T]:\n        return Drain[Self.T](self.value^)\n",
+    );
+}
+
+#[test]
+fn owned_iterable_rejects_the_legacy_owned_iter_member_name() {
+    // The owned protocol's iterator member is now `IteratorOwnedType`. A
+    // conformer that keeps the pre-migration `OwnedIter` name cannot name its own
+    // `Self.IteratorOwnedType`, the exact contract `IterableOwned.__iter__`
+    // requires — the same failure the bundled `List` would hit if the trait and
+    // its conformance drifted apart.
+    let error = err(
+        "trait Iterator:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\ntrait IterableOwned:\n    comptime Element: Movable\n    comptime IteratorOwnedType: Iterator\n    def __iter__(var self) -> Self.IteratorOwnedType: ...\n\n@fieldwise_init\nstruct IntDrain(Iterator):\n    comptime Element = Int\n    var value: Int\n    def __next__(mut self) -> Int:\n        return self.value\n\n@fieldwise_init\nstruct IntBucket(IterableOwned):\n    comptime Element = Int\n    comptime OwnedIter = IntDrain\n    var value: Int\n    def __iter__(var self) -> Self.IteratorOwnedType:\n        return IntDrain(self.value)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::NoSuchAssociatedType { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn variadic_struct_template_cannot_be_checked_raw() {
     // A `struct S[*Ts]` template is compiled by compile-time specialization;
     // reaching the checker unspecialized (i.e. without elaboration) is rejected

@@ -776,7 +776,8 @@ impl Checker {
                     let member = member.clone();
                     let decls = info.decls.clone();
                     let targs = targs.clone();
-                    return self.resolve_parameterized_member(base, name, &member, &decls, &targs, args);
+                    return self
+                        .resolve_parameterized_member(base, name, &member, &decls, &targs, args);
                 }
                 let value =
                     info.associated

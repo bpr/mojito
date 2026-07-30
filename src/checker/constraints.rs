@@ -117,7 +117,7 @@ impl Checker {
     pub(super) fn check_struct_associated(
         &mut self,
         associated: &[StructComptime],
-    ) -> Result<(HashMap<String, CtValue>, HashMap<String, ParameterizedMember>), TypeError> {
+    ) -> Result<StructAssociatedMembers, TypeError> {
         let mut out = HashMap::new();
         let mut parameterized = HashMap::new();
         for member in associated {
@@ -678,9 +678,7 @@ fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeError> {
             };
             Ok(SourceType::Named(name.clone(), args))
         }
-        ExprKind::Member { object, field }
-            if matches!(&object.kind, ExprKind::Identifier(s) if s == "Self") =>
-        {
+        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(s) if s == "Self") => {
             Ok(SourceType::SelfParam(field.clone()))
         }
         _ => Err(unsupported_assoc_body()),
@@ -709,7 +707,5 @@ pub(super) fn assoc_param_kind(param: &crate::ast::TypeParam) -> AssocParamKind 
 }
 
 fn unsupported_assoc_body() -> TypeError {
-    TypeError::Unsupported(
-        "a parameterized associated type must be defined by a type".to_string(),
-    )
+    TypeError::Unsupported("a parameterized associated type must be defined by a type".to_string())
 }

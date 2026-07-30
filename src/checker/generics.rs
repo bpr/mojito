@@ -635,9 +635,12 @@ fn substitute_values_and_origins(
         args.iter()
             .map(|argument| match argument {
                 TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
-                TyArg::Val(CtValue::Param(name)) => {
-                    TyArg::Val(values.get(name).cloned().unwrap_or(CtValue::Param(name.clone())))
-                }
+                TyArg::Val(CtValue::Param(name)) => TyArg::Val(
+                    values
+                        .get(name)
+                        .cloned()
+                        .unwrap_or(CtValue::Param(name.clone())),
+                ),
                 TyArg::Val(value) => TyArg::Val(value.clone()),
                 TyArg::Origin(origin) => TyArg::Origin(substitute_origin(origin, origins)),
             })
@@ -681,10 +684,16 @@ fn substitute_origin(
 ) -> crate::origin::Origin {
     use crate::origin::Origin;
     match origin {
-        Origin::Param(id) => origins.get(&id.0).cloned().unwrap_or_else(|| origin.clone()),
-        Origin::Union(members) => {
-            Origin::Union(members.iter().map(|m| substitute_origin(m, origins)).collect())
-        }
+        Origin::Param(id) => origins
+            .get(&id.0)
+            .cloned()
+            .unwrap_or_else(|| origin.clone()),
+        Origin::Union(members) => Origin::Union(
+            members
+                .iter()
+                .map(|m| substitute_origin(m, origins))
+                .collect(),
+        ),
         _ => origin.clone(),
     }
 }

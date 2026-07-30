@@ -6,6 +6,16 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Changed
+
+- The bundled owned-iteration protocol now uses current Mojo's monomorphic
+  `IteratorOwnedType`. `IterableOwned`'s associated iterator member (and `List`'s
+  conformance) is renamed from the legacy `OwnedIter` to `IteratorOwnedType`; a
+  consuming iterator owns its storage, so the member needs no origin parameter.
+  The borrowed `Iterable` trait still uses the legacy monomorphic `Iter` member —
+  migrating it to origin-parameterized `IteratorType[origin_of(self)]` needs
+  self-origin resolution and lands with generic borrowed reference iteration.
+
 ### Added
 
 - Concrete parameterized-associated-type substitution. The checked `Ty::Assoc`

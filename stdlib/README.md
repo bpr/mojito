@@ -46,11 +46,13 @@ only from their authoritative `std` modules.
   public Tuple is nominal and is not a method-free runtime iterable.
 - `std/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
   including an empty constructor for generic absent values.
-- `std/iterable.mojo` — minimal self-hosted `Iterator` and `Iterable` proof
-  traits. They expose associated compile-time `Element` facts, and `Iterable`
-  exposes the legacy monomorphic `Iter` type so containers can return a separate
-  iterator object. Current Mojo's origin-parameterized `IteratorType[...]` and
-  `IteratorOwnedType` vocabulary remains compiler/roadmap work.
+- `std/iterable.mojo` — minimal self-hosted `Iterator`, `Iterable`, and
+  `IterableOwned` proof traits. They expose associated compile-time `Element`
+  facts. `IterableOwned` uses current Mojo's monomorphic `IteratorOwnedType` (a
+  consuming iterator owns its storage, so it needs no origin). Borrowed `Iterable`
+  still exposes the legacy monomorphic `Iter` type; migrating it to Mojo's
+  origin-parameterized `IteratorType[origin_of(self)]` remains compiler/roadmap
+  work (it needs self-origin resolution).
 - `std/collections/set.mojo` — a generic, list-backed `Set[T]` for `Equatable & Copyable & Movable`
   elements. It supports `add`, membership through `in`/`__contains__`, `len`, and
   borrowed iteration through the backing list's `_ListIter[T]`. It conforms to

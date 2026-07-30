@@ -1,12 +1,15 @@
 # Core iteration protocols.
 #
-# Current Mojo parameterizes `IteratorType` by the iterable origin.  Mojito's
-# trait AST cannot express parameterized associated types yet, so the bundled
-# contract keeps the older, monomorphic `Iter`/`OwnedIter` names.  Borrowed
-# collection iterators consequently yield copies and are available when their
-# element is `Copyable`; consuming iterators move elements.  Concrete `for ref`
-# over List remains a checked compiler bridge until origin-parameterized
-# associated types can represent it without erasing provenance.
+# The owned contract uses current Mojo's monomorphic `IteratorOwnedType`: a
+# consuming iterator owns its storage, so it needs no origin parameter.
+#
+# The borrowed contract still keeps the older, monomorphic `Iter` name.  Current
+# Mojo parameterizes `IteratorType` by the iterable origin
+# (`__iter__(ref self) -> Self.IteratorType[origin_of(self)]`); migrating the
+# borrowed protocol needs self-origin resolution and lands with generic borrowed
+# reference iteration.  Until then, borrowed collection iterators yield copies
+# and are available when their element is `Copyable`, and concrete `for ref`
+# over List remains a checked compiler bridge.
 
 @fieldwise_init
 struct StopIteration:
@@ -27,7 +30,7 @@ trait Iterable:
 
 trait IterableOwned:
     comptime Element: Movable
-    comptime OwnedIter: Iterator
+    comptime IteratorOwnedType: Iterator
 
-    def __iter__(var self) -> Self.OwnedIter:
+    def __iter__(var self) -> Self.IteratorOwnedType:
         ...

@@ -514,14 +514,21 @@ materialized as ordinary methods on each conforming struct. An explicit struct
 method wins; unresolved defaults from multiple paths are rejected. MIR and the
 VM retain static dispatch and need no trait-object representation.
 
-Associated compile-time members are currently monomorphic. `TraitComptime` and
-`StructComptime` retain a name and requirement/value but no member-local
-parameter list, while `Type::Assoc` and `Ty::Assoc` retain only a base and member
-name. They therefore cannot represent current Mojo declarations such as
+Associated compile-time members may be monomorphic or parameterized.
+`TraitComptime` and `StructComptime` retain a name and requirement/value plus an
+optional member-local parameter list (type, value, and origin parameters, with
+the `//` infer-only boundary), and `Type::Assoc`/`Ty::Assoc` carry application
+arguments (`TyArg::Ty`/`Val`/`Origin`, the origin erased from the runtime ABI like
+a pointer origin). A type-parameterized member instantiated by a conforming struct
+resolves concretely by substituting those arguments into the member's lowered
+template. The bundled owned iterator protocol uses the monomorphic
+`IteratorOwnedType` member. Current Mojo's borrowed
 `IteratorType[iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]]`
-or the dependent application `Self.IteratorType[origin_of(self)]`. The concrete
-List borrowed/reference-iteration bridges described below preserve provenance
-without pretending to implement that generic associated-type contract.
+and the dependent application `Self.IteratorType[origin_of(self)]` parse, check,
+and arity-validate, but resolving the `origin_of(self)` argument concretely still
+awaits self-origin resolution; until then the borrowed `Iterable` proof protocol
+keeps its monomorphic `Iter` member and the concrete List/Set/Dict
+borrowed/reference-iteration bridges described below preserve provenance.
 
 Trait method requirements retain `raises` and an optional concrete error type.
 A nonraising implementation may satisfy a raising requirement; a raising

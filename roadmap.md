@@ -88,16 +88,20 @@ verification, and the register VM (see `docs/features.md`).
   generic borrowed iteration, and *value*-parameter forwarding into another
   parameterized struct (`Fixed[n]`) is blocked by a pre-existing generic
   value-forwarding gap unrelated to associated types.
-- [ ] **Migrate the bundled iterator protocols** to `IteratorType[...]` and
-  `IteratorOwnedType`: rewrite `Iterable`/`IterableOwned` (and the Range/List/Set/
-  Dict conformances) to parameterized associated iterator types once concrete
-  substitution lands.
-- [ ] **Generic borrowed reference iteration** — make borrowed `for ref`
-  iteration generic over origin-bearing iterator elements and remove the concrete
+- [ ] **Generic borrowed reference iteration and the borrowed `Iterable`
+  protocol** — migrate the bundled borrowed `Iterable` to current Mojo's
+  origin-parameterized `IteratorType[iterable_mut: Bool, //, iterable_origin:
+  Origin[mut=iterable_mut]]` with `__iter__(ref self) ->
+  Self.IteratorType[origin_of(self)]` (the trait plus the Range/List/Set/Dict
+  conformances), landing the `origin_of(self)` self-origin resolution the
+  substitution plumbing already awaits. Then make borrowed `for ref` iteration
+  generic over origin-bearing iterator elements and remove the concrete
   List/Set/Dict collection-specific borrow bridges. Cover immutable and mutable
   origins, generic bounds, structural invalidation, and escape rejection; give a
   borrowed temporary distinct retained source-owner and iterator slots instead of
-  overwriting its only owner during normalization.
+  overwriting its only owner during normalization. The owned `IterableOwned`
+  protocol already exposes monomorphic `IteratorOwnedType`; only the borrowed
+  contract remains on the legacy monomorphic `Iter` member.
 - [ ] **Owned iteration of linear elements** — in the owned path, permit a List
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a
