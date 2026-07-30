@@ -133,6 +133,7 @@ impl Checker {
                     Ty::Assoc {
                         base: Box::new(ty.clone()),
                         name: "Element".to_string(),
+                        args: Vec::new(),
                     },
                     IterationProtocol {
                         mode,

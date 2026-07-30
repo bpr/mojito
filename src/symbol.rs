@@ -343,6 +343,10 @@ fn ty_raw(ty: &Ty) -> String {
                 match arg {
                     TyArg::Ty(t) => s.push_str(&ty_raw(t)),
                     TyArg::Val(v) => s.push_str(&format!("V{v}")),
+                    // Origins erase from the runtime ABI: every origin argument
+                    // mangles to one marker so origin-differing types share a
+                    // specialization and a lowering, like `Ty::Pointer` origins.
+                    TyArg::Origin(_) => s.push('O'),
                 }
             }
             s
@@ -367,8 +371,23 @@ fn ty_raw(ty: &Ty) -> String {
         // Pointer origins affect checking/lifetimes but erase from the runtime
         // callable ABI, just like origin parameters on `ref` arguments.
         Ty::Pointer { element, .. } => format!("UnsafePointer${}", ty_raw(element)),
-        Ty::Assoc { base, name } => {
-            format!("Assoc${}${}", ty_raw(base), encode_identifier(name))
+        // Application arguments participate in the mangled identity (so
+        // `IteratorType[a]` and `IteratorType[b]` are distinct), except origins,
+        // which erase from the runtime ABI like `Ty::Pointer` origins above.
+        Ty::Assoc { base, name, args } => {
+            let mut s = format!("Assoc${}${}", ty_raw(base), encode_identifier(name));
+            for arg in args {
+                s.push('$');
+                match arg {
+                    TyArg::Ty(t) => s.push_str(&ty_raw(t)),
+                    TyArg::Val(v) => s.push_str(&format!("V{v}")),
+                    // Origins erase from the runtime ABI: every origin argument
+                    // mangles to one marker so origin-differing types share a
+                    // specialization and a lowering, like `Ty::Pointer` origins.
+                    TyArg::Origin(_) => s.push('O'),
+                }
+            }
+            s
         }
         Ty::SelfType => "Self".to_string(),
         other => other.to_string(),

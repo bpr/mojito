@@ -391,18 +391,73 @@ impl Checker {
         };
         // Explicit parameters (after the `//` infer-only marker) are supplied at
         // the application; infer-only parameters are derived from them.
-        let explicit = params.iter().filter(|p| !p.infer_only).count();
-        if args.len() != explicit {
+        let explicit: Vec<&crate::ast::TypeParam> =
+            params.iter().filter(|p| !p.infer_only).collect();
+        if args.len() != explicit.len() {
             return Err(TypeError::WrongTypeArgCount {
                 name: name.to_string(),
-                expected: explicit,
+                expected: explicit.len(),
                 got: args.len(),
             });
         }
+        // Carry the application arguments in the checked type. The base here is
+        // still abstract (`Self` or a bounded parameter), so carrying is
+        // best-effort: an argument that needs a context not yet available — an
+        // `origin_of(self)` while the trait's abstract signature is checked, with
+        // no bound `self` place — leaves the application symbolic with no args,
+        // exactly the pre-existing behavior. Concrete substitution and per-kind
+        // argument validation happen once the base is a conforming struct.
+        let arguments = explicit
+            .iter()
+            .zip(args)
+            .map(|(param, arg)| self.lower_assoc_application_arg(param, arg))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_default();
         Ok(Some(Ty::Assoc {
             base: Box::new(base_ty.clone()),
             name: name.to_string(),
+            args: arguments,
         }))
+    }
+
+    /// Lower one application argument of a parameterized associated type into a
+    /// checked `TyArg`, dispatched by the declared parameter's kind: an origin
+    /// parameter takes an `origin_of(...)`/builtin origin, a value parameter a
+    /// compile-time value, and a type parameter a type.
+    fn lower_assoc_application_arg(
+        &self,
+        param: &crate::ast::TypeParam,
+        arg: &Expr,
+    ) -> Result<TyArg, TypeError> {
+        use crate::ast::ParamArg;
+        if matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
+            return Ok(TyArg::Origin(
+                self.explicit_origin_argument(&ParamArg::Value(arg.clone()))?,
+            ));
+        }
+        let is_value = param.value_type.is_some()
+            || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some());
+        if is_value {
+            return Ok(TyArg::Val(self.eval_associated_ct(arg, &HashMap::new())?));
+        }
+        // A type parameter: a bare identifier names a type; otherwise the
+        // argument must evaluate to a compile-time type value.
+        let ty = match &arg.kind {
+            ExprKind::Identifier(id) => {
+                self.ty_from_anno(&SourceType::Named(id.clone(), Vec::new()))?
+            }
+            _ => match self.eval_associated_ct(arg, &HashMap::new())? {
+                CtValue::Type(ty) => *ty,
+                _ => {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a type".to_string(),
+                        found: "a value".to_string(),
+                        context: format!("associated type parameter '{}'", param.name),
+                    });
+                }
+            },
+        };
+        Ok(TyArg::Ty(ty))
     }
 
     /// Resolve only the nominal identity embedded in a compiler-generated
@@ -560,6 +615,7 @@ impl Checker {
                     .map(|argument| match argument {
                         TyArg::Ty(ty) => self.resolve_dependent_ty(ty, parameters).map(TyArg::Ty),
                         TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
+                        TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
                     })
                     .collect::<Result<Vec<_>, TypeError>>()?,
             ),
@@ -670,7 +726,7 @@ impl Checker {
                     declaration.name().trim_start_matches('*').to_string(),
                     value.clone(),
                 )),
-                TyArg::Ty(_) => None,
+                TyArg::Ty(_) | TyArg::Origin(_) => None,
             })
             .collect()
     }
@@ -683,6 +739,7 @@ impl Checker {
                 CtMemberReq::Type { .. } => Ok(Ty::Assoc {
                     base: Box::new(Ty::SelfType),
                     name: name.to_string(),
+                    args: Vec::new(),
                 }),
                 CtMemberReq::Value(_) => Err(TypeError::NoSuchAssociatedType {
                     object_type: "Self".to_string(),
@@ -729,6 +786,7 @@ impl Checker {
                     Ok(Ty::Assoc {
                         base: Box::new(base.clone()),
                         name: name.to_string(),
+                        args: Vec::new(),
                     })
                 } else {
                     Err(TypeError::NoSuchAssociatedType {
@@ -740,6 +798,7 @@ impl Checker {
             Ty::Assoc { .. } => Ok(Ty::Assoc {
                 base: Box::new(base.clone()),
                 name: name.to_string(),
+                args: Vec::new(),
             }),
             _ => Err(TypeError::NoSuchAssociatedType {
                 object_type: base.to_string(),
@@ -761,12 +820,14 @@ impl Checker {
                     .as_ref()
                     .map(|bound| Box::new(self.resolve_assoc_ty(bound))),
             },
-            Ty::Assoc { base, name } => {
+            Ty::Assoc { base, name, args } => {
                 let base = self.resolve_assoc_ty(base);
+                let args = map_tyargs(args, |t| self.resolve_assoc_ty(t));
                 self.associated_type_from_base(&base, name)
                     .unwrap_or_else(|_| Ty::Assoc {
                         base: Box::new(base),
                         name: name.clone(),
+                        args,
                     })
             }
             Ty::Struct(name, args) => {

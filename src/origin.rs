@@ -53,6 +53,38 @@ pub enum Origin {
     Untracked { mutable: bool },
 }
 
+impl std::fmt::Display for Origin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Origin::Param(id) => write!(f, "origin#{}", id.0),
+            Origin::Place(place) => {
+                write!(f, "origin_of(#{}", place.root.0)?;
+                for segment in &place.path {
+                    match segment {
+                        OriginSeg::Field(name) => write!(f, ".{name}")?,
+                        OriginSeg::AnyIndex => write!(f, "[_]")?,
+                        OriginSeg::Interior(tag) => write!(f, ".<{tag}>")?,
+                    }
+                }
+                write!(f, ")")
+            }
+            Origin::Union(origins) => {
+                for (index, origin) in origins.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{origin}")?;
+                }
+                Ok(())
+            }
+            Origin::Static => write!(f, "StaticOrigin"),
+            Origin::Untracked { mutable } => {
+                write!(f, "{}", if *mutable { "UnsafeAnyOrigin" } else { "UntrackedOrigin" })
+            }
+        }
+    }
+}
+
 /// Access performed through one captured origin when a callable is invoked.
 /// This is deliberately part of the static environment summary: an OriginSet
 /// by itself extends lifetimes but cannot tell persistent-loan analysis whether

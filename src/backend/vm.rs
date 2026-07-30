@@ -2033,6 +2033,8 @@ fn vm_type_is_symbolic(ty: &Ty) -> bool {
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             crate::types::TyArg::Ty(ty) => vm_type_is_symbolic(ty),
             crate::types::TyArg::Val(value) => vm_ct_value_is_symbolic(value),
+            // Origins erase from the runtime ABI, so they never make a type symbolic.
+            crate::types::TyArg::Origin(_) => false,
         }),
         Ty::Func {
             params,

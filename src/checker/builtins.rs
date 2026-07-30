@@ -13,6 +13,7 @@ pub(super) fn default_literal(ty: &Ty) -> Ty {
                 .map(|argument| match argument {
                     TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
                     TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
                 })
                 .collect(),
         ),

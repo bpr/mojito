@@ -820,7 +820,7 @@ impl Checker {
                         assumption,
                         visiting,
                     ),
-                    TyArg::Val(_) => false,
+                    TyArg::Val(_) | TyArg::Origin(_) => false,
                 }),
             ConformsPack { param, trait_name } => environment
                 .get(param.as_str())

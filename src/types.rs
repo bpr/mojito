@@ -124,10 +124,14 @@ pub enum Ty {
     },
     /// A symbolic associated type lookup such as `C.Element` where `C` is an
     /// opaque type parameter. It may resolve to a concrete type once `C` is
-    /// substituted at a generic use site.
+    /// substituted at a generic use site. `args` is the parameter application of
+    /// a parameterized associated type (`C.IteratorType[o]`); it is empty for a
+    /// bare `C.Element`. The arguments are retained so the projection can be
+    /// resolved concretely once the base is a conforming struct.
     Assoc {
         base: Box<Ty>,
         name: String,
+        args: Vec<TyArg>,
     },
     /// Structured dependent type metadata. Generic declarations may retain it,
     /// but executable uses must substitute its index to a concrete type.
@@ -248,7 +252,7 @@ pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
         .iter()
         .map(|argument| match argument {
             TyArg::Ty(ty) => Some(ty),
-            TyArg::Val(_) => None,
+            TyArg::Val(_) | TyArg::Origin(_) => None,
         })
         .collect()
 }
@@ -266,7 +270,7 @@ pub fn contains_infer(ty: &Ty) -> bool {
         Ty::Infer => true,
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             TyArg::Ty(ty) => contains_infer(ty),
-            TyArg::Val(_) => false,
+            TyArg::Val(_) | TyArg::Origin(_) => false,
         }),
         Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
             contains_infer(element)
@@ -277,7 +281,13 @@ pub fn contains_infer(ty: &Ty) -> bool {
         Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
             elements.iter().any(contains_infer)
         }
-        Ty::Assoc { base, .. } => contains_infer(base),
+        Ty::Assoc { base, args, .. } => {
+            contains_infer(base)
+                || args.iter().any(|argument| match argument {
+                    TyArg::Ty(ty) => contains_infer(ty),
+                    TyArg::Val(_) | TyArg::Origin(_) => false,
+                })
+        }
         Ty::Func {
             params,
             ret,
@@ -384,12 +394,16 @@ impl ParamDecl {
     }
 }
 
-/// One argument in a struct type's parameter list: a type or a compile-time
-/// value. Part of a struct type's identity, so `FixedBuffer[8] != FixedBuffer[9]`.
+/// One argument in a struct type's parameter list: a type, a compile-time value,
+/// or an origin. Part of a struct type's identity, so `FixedBuffer[8] !=
+/// FixedBuffer[9]`. Origins participate in checked identity but erase from the
+/// runtime ABI, exactly like `Ty::Pointer` origins — a parameterized iterator's
+/// `origin` argument distinguishes checked types without changing lowering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TyArg {
     Ty(Ty),
     Val(CtValue),
+    Origin(crate::origin::Origin),
 }
 
 impl fmt::Display for TyArg {
@@ -397,6 +411,7 @@ impl fmt::Display for TyArg {
         match self {
             TyArg::Ty(t) => write!(f, "{}", t),
             TyArg::Val(v) => write!(f, "{}", v),
+            TyArg::Origin(o) => write!(f, "{}", o),
         }
     }
 }
@@ -492,7 +507,20 @@ impl fmt::Display for Ty {
                 write!(f, ")")
             }
             Ty::Param { name, .. } => write!(f, "{}", name),
-            Ty::Assoc { base, name } => write!(f, "{}.{}", base, name),
+            Ty::Assoc { base, name, args } => {
+                write!(f, "{}.{}", base, name)?;
+                if !args.is_empty() {
+                    write!(f, "[")?;
+                    for (position, argument) in args.iter().enumerate() {
+                        if position > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", argument)?;
+                    }
+                    write!(f, "]")?;
+                }
+                Ok(())
+            }
             Ty::Dependent(DependentType::Indexed { elements, index }) => {
                 write!(f, "type_sequence[")?;
                 for (position, element) in elements.iter().enumerate() {
@@ -601,7 +629,7 @@ fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>>
         .iter()
         .map(|argument| match argument {
             TyArg::Ty(ty) => Some(ty),
-            TyArg::Val(_) => None,
+            TyArg::Val(_) | TyArg::Origin(_) => None,
         })
         .collect()
 }

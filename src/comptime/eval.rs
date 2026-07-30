@@ -231,6 +231,8 @@ impl<'a> Elab<'a> {
                     let value = match argument {
                         TyArg::Ty(ty) => CtValue::Type(Box::new(ty.clone())),
                         TyArg::Val(value) => value.clone(),
+                        // Origins erase from runtime state; they bind no CTFE value.
+                        TyArg::Origin(_) => continue,
                     };
                     scope.insert(decl.name().trim_start_matches('*').to_string(), value);
                 }
@@ -387,13 +389,13 @@ impl<'a> Elab<'a> {
 
         let mut type_scope = scope.clone();
         for (decl, argument) in info.decls.iter().zip(arguments) {
-            type_scope.insert(
-                decl.name().trim_start_matches('*').to_string(),
-                match argument {
-                    TyArg::Ty(ty) => CtValue::Type(Box::new(ty.clone())),
-                    TyArg::Val(value) => value.clone(),
-                },
-            );
+            let value = match argument {
+                TyArg::Ty(ty) => CtValue::Type(Box::new(ty.clone())),
+                TyArg::Val(value) => value.clone(),
+                // Origins erase from runtime state; they bind no CTFE value.
+                TyArg::Origin(_) => continue,
+            };
+            type_scope.insert(decl.name().trim_start_matches('*').to_string(), value);
         }
         let field_ty = self.type_from_anno(&info.fields[index].ty, &type_scope)?;
         Ok(CtValue::Reflected(Box::new(field_ty)))

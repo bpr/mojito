@@ -128,9 +128,10 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             element: Box::new(substitute(element, subst)),
             origin: origin.clone(),
         },
-        Ty::Assoc { base, name } => Ty::Assoc {
+        Ty::Assoc { base, name, args } => Ty::Assoc {
             base: Box::new(substitute(base, subst)),
             name: name.clone(),
+            args: map_tyargs(args, |t| substitute(t, subst)),
         },
         Ty::Func {
             environment,
@@ -334,9 +335,10 @@ pub(super) fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, Strin
             reference.referent = Box::new(rename_dependent_parameters(&reference.referent, names));
             Ty::Ref(reference)
         }
-        Ty::Assoc { base, name } => Ty::Assoc {
+        Ty::Assoc { base, name, args } => Ty::Assoc {
             base: Box::new(rename_dependent_parameters(base, names)),
             name: name.clone(),
+            args: map_tyargs(args, |t| rename_dependent_parameters(t, names)),
         },
         Ty::Func {
             environment,
@@ -536,9 +538,10 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             element: Box::new(substitute_self(element, replacement)),
             origin: origin.clone(),
         },
-        Ty::Assoc { base, name } => Ty::Assoc {
+        Ty::Assoc { base, name, args } => Ty::Assoc {
             base: Box::new(substitute_self(base, replacement)),
             name: name.clone(),
+            args: map_tyargs(args, |t| substitute_self(t, replacement)),
         },
         Ty::Func {
             environment,
@@ -597,6 +600,8 @@ pub(super) fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<Ty
         .map(|a| match a {
             TyArg::Ty(t) => TyArg::Ty(f(t)),
             TyArg::Val(v) => TyArg::Val(v.clone()),
+            // Origin substitution is threaded separately; pass origins through.
+            TyArg::Origin(o) => TyArg::Origin(o.clone()),
         })
         .collect()
 }

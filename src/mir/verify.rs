@@ -413,7 +413,7 @@ fn contains_runtime_pack(ty: &Ty) -> bool {
         Ty::Ref(reference) => contains_runtime_pack(&reference.referent),
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             crate::types::TyArg::Ty(inner) => contains_runtime_pack(inner),
-            crate::types::TyArg::Val(_) => false,
+            crate::types::TyArg::Val(_) | crate::types::TyArg::Origin(_) => false,
         }),
         Ty::Assoc { base, .. } => contains_runtime_pack(base),
         Ty::Func {
@@ -517,6 +517,7 @@ fn instantiate_checked_type(
                             .map(TyArg::Ty)
                     }
                     TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
+                    TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
                 })
                 .collect::<Result<Vec<_>, String>>()?,
         ),
@@ -575,7 +576,7 @@ fn instantiate_checked_type(
             )?);
             Ty::Ref(reference)
         }
-        Ty::Assoc { base, name } => Ty::Assoc {
+        Ty::Assoc { base, name, args } => Ty::Assoc {
             base: Box::new(instantiate_checked_type(
                 base,
                 type_arguments,
@@ -583,6 +584,19 @@ fn instantiate_checked_type(
                 bound_values,
             )?),
             name: name.clone(),
+            args: args
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => Ok(TyArg::Ty(instantiate_checked_type(
+                        ty,
+                        type_arguments,
+                        value_arguments,
+                        bound_values,
+                    )?)),
+                    TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
+                    TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
+                })
+                .collect::<Result<Vec<_>, String>>()?,
         },
         Ty::Overload(candidates) => Ty::Overload(
             candidates
@@ -669,7 +683,7 @@ fn contains_type_param(ty: &Ty) -> bool {
         Ty::Ref(reference) => contains_type_param(&reference.referent),
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             crate::types::TyArg::Ty(inner) => contains_type_param(inner),
-            crate::types::TyArg::Val(_) => false,
+            crate::types::TyArg::Val(_) | crate::types::TyArg::Origin(_) => false,
         }),
         Ty::Func {
             params,
@@ -2861,6 +2875,9 @@ fn generic_argument_maps(
                     declaration.name()
                 ));
             }
+            // Origins erase from the runtime ABI, so they contribute no entry to
+            // the type/value argument maps used for generic instantiation.
+            (_, TyArg::Origin(_)) => {}
         }
     }
     Ok(GenericArgumentMaps { types, values })

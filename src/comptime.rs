@@ -568,7 +568,7 @@ fn collect_reference_origin_parameters(
         }
         Ty::Struct(_, arguments) => arguments.iter().try_for_each(|argument| match argument {
             TyArg::Ty(ty) => collect_reference_origin_parameters(ty, origins),
-            TyArg::Val(_) => Some(()),
+            TyArg::Val(_) | TyArg::Origin(_) => Some(()),
         }),
         Ty::Tuple(elements)
         | Ty::RuntimePack(elements)
@@ -861,6 +861,9 @@ fn source_type_from_ty_with_origins(
                             .map(ParamArg::Type)
                     }
                     TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
+                    // Origin arguments have no source-syntax reconstruction yet;
+                    // origin-parameterized types are not monomorphized in this slice.
+                    TyArg::Origin(_) => None,
                 })
                 .collect::<Option<Vec<_>>>()?,
         ),

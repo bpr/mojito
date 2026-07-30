@@ -535,7 +535,7 @@ impl Checker {
                 .get(param.as_str())
                 .and_then(|argument| match argument {
                     TyArg::Ty(ty) => Some(self.conforms_to(ty, trait_name)),
-                    TyArg::Val(_) => None,
+                    TyArg::Val(_) | TyArg::Origin(_) => None,
                 })
                 .unwrap_or(false),
             ConformsPack { param, trait_name } => environment

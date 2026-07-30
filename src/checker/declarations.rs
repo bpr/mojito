@@ -1458,6 +1458,10 @@ impl Checker {
                         .map(|result| match result? {
                             TyArg::Ty(ty) => Ok(CtValue::Type(Box::new(ty))),
                             TyArg::Val(value) => Ok(value),
+                            TyArg::Origin(_) => Err(TypeError::Unsupported(
+                                "an origin argument cannot bind a type or value parameter"
+                                    .to_string(),
+                            )),
                         })
                         .collect::<Result<Vec<_>, TypeError>>()?;
                     let value = CtValue::Tuple(values);

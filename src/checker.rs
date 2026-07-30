@@ -2252,7 +2252,7 @@ fn conformance_operand(expression: &Expr, arguments: &HashMap<&str, &TyArg>) -> 
         ExprKind::Str(value) => Some(CtValue::Str(value.clone())),
         ExprKind::Identifier(name) => match arguments.get(name.as_str())? {
             TyArg::Val(value) => Some((*value).clone()),
-            TyArg::Ty(_) => None,
+            TyArg::Ty(_) | TyArg::Origin(_) => None,
         },
         _ => None,
     }

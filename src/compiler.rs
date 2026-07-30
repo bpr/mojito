@@ -312,7 +312,7 @@ fn public_tuple_elements(ty: &Ty) -> Option<Vec<Ty>> {
             // `pair.reverse()` requested `[Int, Int]`, leaving the concrete
             // declaration without its discovered transform methods.
             TyArg::Ty(ty) => Some(runtime_tuple_element_type(ty)),
-            TyArg::Val(_) => None,
+            TyArg::Val(_) | TyArg::Origin(_) => None,
         })
         .collect()
 }
@@ -354,6 +354,8 @@ fn tuple_specialization_type_is_closed_in(
             TyArg::Ty(ty) => {
                 tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
             }
+            // Origins erase from the runtime ABI and carry no type/value binder.
+            TyArg::Origin(_) => true,
             TyArg::Val(value) => {
                 tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
             }
@@ -633,6 +635,7 @@ fn runtime_tuple_element_type(ty: &Ty) -> Ty {
                 .map(|argument| match argument {
                     TyArg::Ty(ty) => TyArg::Ty(runtime_tuple_element_type(ty)),
                     TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
                 })
                 .collect(),
         ),
