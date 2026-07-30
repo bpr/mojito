@@ -308,16 +308,101 @@ impl Checker {
                 Some(ty) => ty.clone(),
                 None => return Err(TypeError::UnknownSelfParam("Self".to_string())),
             },
-            SourceType::Assoc { base, name } => {
+            SourceType::Assoc { base, name, .. } => {
                 let base_ty = self.ty_from_anno(base)?;
                 self.associated_type_from_base(&base_ty, name)?
             }
             SourceType::IndexedProjection { base, index } => {
-                let elements = self.dependent_type_sequence(base)?;
-                let index = self.compile_dependent_ct_expr(index)?;
-                self.resolve_dependent_index(elements, index, &HashMap::new())?
+                // A parameterized associated-type application such as
+                // `Self.IteratorType[origin_of(self)]` is spelled like a dependent
+                // index but names a parameterized associated member; resolve it as
+                // an application rather than compile-time sequence indexing.
+                let application = match base.as_ref() {
+                    // `Self.IteratorType[..]` — the base is the trait's abstract Self.
+                    SourceType::SelfParam(name) => self.parameterized_assoc_application(
+                        &Ty::SelfType,
+                        name,
+                        std::slice::from_ref(index),
+                    )?,
+                    // `C.IteratorType[..]` — a bounded type parameter or other base.
+                    // If the base does not name a type (e.g. `values.element_types`
+                    // where `values` is a value binding), this is not an
+                    // associated-type application; fall through to dependent
+                    // sequence indexing instead of surfacing a "not a type" error.
+                    SourceType::Assoc {
+                        base: inner, name, ..
+                    } => match self.ty_from_anno(inner) {
+                        Ok(base_ty) => self.parameterized_assoc_application(
+                            &base_ty,
+                            name,
+                            std::slice::from_ref(index),
+                        )?,
+                        Err(_) => None,
+                    },
+                    _ => None,
+                };
+                if let Some(applied) = application {
+                    applied
+                } else {
+                    let elements = self.dependent_type_sequence(base)?;
+                    let index = self.compile_dependent_ct_expr(index)?;
+                    self.resolve_dependent_index(elements, index, &HashMap::new())?
+                }
             }
         })
+    }
+
+    /// The parameter list of a parameterized associated type `name` reachable from
+    /// a base type — a trait's abstract `Self` or a bounded type parameter — or
+    /// `None` when the member is monomorphic, absent, or on a concrete struct
+    /// (whose concrete resolution is handled separately).
+    fn parameterized_assoc_params(
+        &self,
+        base_ty: &Ty,
+        name: &str,
+    ) -> Option<Vec<crate::ast::TypeParam>> {
+        match base_ty {
+            Ty::SelfType => self
+                .trait_self_comptime
+                .last()
+                .and_then(|reqs| reqs.get(name))
+                .and_then(|req| match req {
+                    CtMemberReq::Type { params, .. } if !params.is_empty() => Some(params.clone()),
+                    _ => None,
+                }),
+            Ty::Param { bounds, .. } => self.lookup_trait_assoc_params(bounds, name),
+            _ => None,
+        }
+    }
+
+    /// Resolve a parameterized associated-type application `base.name[args]`.
+    /// Returns `None` when `name` is not a parameterized associated member of
+    /// `base` (so the caller falls back to dependent sequence indexing). The
+    /// result is a symbolic associated type; concrete resolution happens once the
+    /// base is a conforming struct (a later iteration subtask).
+    fn parameterized_assoc_application(
+        &self,
+        base_ty: &Ty,
+        name: &str,
+        args: &[Expr],
+    ) -> Result<Option<Ty>, TypeError> {
+        let Some(params) = self.parameterized_assoc_params(base_ty, name) else {
+            return Ok(None);
+        };
+        // Explicit parameters (after the `//` infer-only marker) are supplied at
+        // the application; infer-only parameters are derived from them.
+        let explicit = params.iter().filter(|p| !p.infer_only).count();
+        if args.len() != explicit {
+            return Err(TypeError::WrongTypeArgCount {
+                name: name.to_string(),
+                expected: explicit,
+                got: args.len(),
+            });
+        }
+        Ok(Some(Ty::Assoc {
+            base: Box::new(base_ty.clone()),
+            name: name.to_string(),
+        }))
     }
 
     /// Resolve only the nominal identity embedded in a compiler-generated
@@ -361,7 +446,7 @@ impl Checker {
         &self,
         projection: &SourceType,
     ) -> Result<Vec<Ty>, TypeError> {
-        let SourceType::Assoc { base, name } = projection else {
+        let SourceType::Assoc { base, name, .. } = projection else {
             return Err(TypeError::Unsupported(
                 "dependent type indexing requires a type-valued associated member".to_string(),
             ));

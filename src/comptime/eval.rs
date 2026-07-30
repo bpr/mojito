@@ -408,7 +408,7 @@ impl<'a> Elab<'a> {
         source: &Type,
         scope: &HashMap<String, CtValue>,
     ) -> Result<Type, ComptimeError> {
-        if let Type::Assoc { base, name } = source
+        if let Type::Assoc { base, name, .. } = source
             && name == "T"
             && let Type::Named(binding, arguments) = &**base
             && arguments.is_empty()
@@ -429,9 +429,13 @@ impl<'a> Elab<'a> {
                     .map(|argument| self.resolve_reflected_param_arg(argument, scope))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
-            Type::Assoc { base, name } => Type::Assoc {
+            Type::Assoc { base, name, args } => Type::Assoc {
                 base: Box::new(self.resolve_reflected_type(base, scope)?),
                 name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|argument| self.resolve_reflected_param_arg(argument, scope))
+                    .collect::<Result<Vec<_>, _>>()?,
             },
             Type::Func {
                 type_params,

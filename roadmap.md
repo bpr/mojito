@@ -68,24 +68,34 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Parameterized associated types and borrowed iterator origins** —
-  generalize trait and struct compile-time members to retain parameter
-  declarations and associated-type applications, including current Mojo's
-  `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
-  Origin[mut=iterable_mut]]: Iterator` and
-  `Self.IteratorType[origin_of(self)]`. Substitute those applications through
-  checked declarations, specialization, HIR, typed MIR, verification, and
-  origin/loan analysis; migrate the bundled iterator protocols to
-  `IteratorType[...]` and `IteratorOwnedType`; make borrowed reference iteration
-  generic over origin-bearing iterator elements; and remove the concrete
+The former single "Parameterized associated types and borrowed iterator origins"
+task is split into the subtasks below. Its foundation has landed: trait/struct
+associated members retain type/value/origin parameter lists (with the `//`
+infer-only boundary), and a parameterized application such as
+`Self.IteratorType[origin_of(self)]` is arity-validated and resolves to a symbolic
+associated type (see `docs/features.md`).
+
+- [ ] **Concrete parameterized-associated-type substitution** — substitute a
+  parameterized application's arguments (type, value, and *origin* arguments)
+  when a conforming struct instantiates the member, so `C.IteratorType[o]`
+  resolves to the concrete iterator type through checked declarations,
+  specialization, HIR, typed MIR, verification, and origin/loan analysis. This
+  requires carrying origin arguments in the checked type-argument representation
+  (`Ty::Assoc` application args / `TyArg`), the piece the foundation left symbolic.
+- [ ] **Migrate the bundled iterator protocols** to `IteratorType[...]` and
+  `IteratorOwnedType`: rewrite `Iterable`/`IterableOwned` (and the Range/List/Set/
+  Dict conformances) to parameterized associated iterator types once concrete
+  substitution lands.
+- [ ] **Generic borrowed reference iteration** — make borrowed `for ref`
+  iteration generic over origin-bearing iterator elements and remove the concrete
   List/Set/Dict collection-specific borrow bridges. Cover immutable and mutable
-  origins, generic bounds, structural invalidation, escape rejection, and owned
-  iteration; give a borrowed temporary distinct retained source-owner and
-  iterator slots instead of overwriting its only owner during normalization. In
-  the owned path, permit a List of non-`ImplicitlyDeletable`/linear elements
-  when every element is transferred by guaranteed exhaustion; reject only control-flow
-  paths that can abandon a residual linear iterator, with its remaining
-  obligations reported explicitly.
+  origins, generic bounds, structural invalidation, and escape rejection; give a
+  borrowed temporary distinct retained source-owner and iterator slots instead of
+  overwriting its only owner during normalization.
+- [ ] **Owned iteration of linear elements** — in the owned path, permit a List
+  of non-`ImplicitlyDeletable`/linear elements when every element is transferred
+  by guaranteed exhaustion; reject only control-flow paths that can abandon a
+  residual linear iterator, with its remaining obligations reported explicitly.
 - [ ] **Self-hosted Unicode String** — define storage; current explicit
   `s[byte=i]`, `s[codepoint=i]`, and `s[grapheme=i]` indexing plus Unicode
   slicing; comparison, hashing, and formatting without VM-only semantics;

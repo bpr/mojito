@@ -1508,7 +1508,15 @@ enum CtMemberReq {
     /// A compile-time value whose value type must match this type.
     Value(Box<Ty>),
     /// A compile-time type value whose type must conform to these trait bounds.
-    Type { bounds: Vec<String> },
+    /// `params` is non-empty for a parameterized associated type such as
+    /// `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
+    /// Origin[mut=iterable_mut]]: Iterator`; the raw `TypeParam`s are retained
+    /// (rather than classified `ParamDecl`s) because `classify_params` erases
+    /// origin parameters, which the application arity check needs.
+    Type {
+        bounds: Vec<String>,
+        params: Vec<crate::ast::TypeParam>,
+    },
 }
 
 enum OverloadSelect {
@@ -2207,7 +2215,22 @@ fn merge_associated_requirement(
     member: &str,
 ) -> Result<(), TypeError> {
     match (existing, incoming) {
-        (CtMemberReq::Type { bounds }, CtMemberReq::Type { bounds: more }) => {
+        (
+            CtMemberReq::Type { bounds, params },
+            CtMemberReq::Type {
+                bounds: more,
+                params: more_params,
+            },
+        ) => {
+            // A refined associated type must keep the same parameterization.
+            if !params.is_empty() && !more_params.is_empty() && params != more_params {
+                return Err(TypeError::Unsupported(format!(
+                    "refined associated type '{member}' changes its parameter list"
+                )));
+            }
+            if params.is_empty() {
+                *params = more_params.clone();
+            }
             for bound in more {
                 if !bounds.contains(bound) {
                     bounds.push(bound.clone());

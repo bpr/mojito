@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Parameterized associated types (foundation). Trait and struct compile-time
+  members now retain a parameter list — type, value, and origin parameters with
+  the `//` infer-only boundary — so current Mojo's
+  `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
+  Origin[mut=iterable_mut]]: Iterator` parses and checks. A parameterized
+  application such as `Self.IteratorType[origin_of(self)]` (spelled like a
+  dependent index but naming a parameterized member) is recognized, validated
+  against the declared explicit-parameter arity, and resolves to a symbolic
+  associated type. Concrete substitution of the application's arguments —
+  including origin arguments in the checked type-argument representation — when a
+  conforming struct instantiates the member remains later iteration work.
+
 - Augmented assignment on a user-defined value now dispatches to its dedicated
   in-place dunder — `x += y` selects `__iadd__(mut self, y)` (and `__isub__`,
   `__imul__`, `__itruediv__`, `__ifloordiv__`, `__imod__`, `__ipow__`) as a

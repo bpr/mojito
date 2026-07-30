@@ -60,7 +60,7 @@ current-parameter-indexing	run	conformance/fixtures/current_parameter_indexing.m
 list-values	run	conformance/fixtures/list_values.mojo
 protocolized-collections	run	conformance/fixtures/protocolized_collections.mojo
 borrowed-iteration-mutation	run	conformance/fixtures/borrowed_iteration_mutation.mojo
-parameterized-associated-iterator	mojo-only	conformance/fixtures/parameterized_associated_iterator.mojo
+parameterized-associated-iterator	run	conformance/fixtures/parameterized_associated_iterator.mojo
 struct-methods	run	conformance/fixtures/struct_methods.mojo
 lifecycle-initialization	run	assets/ok/init_out_self.mojo
 unified-lifecycle	run	conformance/fixtures/unified_lifecycle.mojo

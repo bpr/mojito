@@ -49,7 +49,7 @@ impl Checker {
             }
         }
         for member in comptime_members {
-            let requirement = self.ct_member_req_from_anno(&member.ty)?;
+            let requirement = self.ct_member_req_from_anno(&member.params, &member.ty)?;
             if let Some(existing) = ct_members.get_mut(&member.name) {
                 merge_associated_requirement(existing, &requirement, &member.name)?;
             } else {
@@ -729,7 +729,7 @@ impl Checker {
             CtMemberReq::Value(expected) => self
                 .ct_value_ty(value, self_ty)
                 .is_some_and(|actual| coerces(&actual, expected)),
-            CtMemberReq::Type { bounds } => {
+            CtMemberReq::Type { bounds, .. } => {
                 let CtValue::Type(ty) = value else {
                     return false;
                 };
@@ -1377,7 +1377,25 @@ impl Checker {
             .iter()
             .filter_map(|b| self.traits.get(b))
             .find_map(|info| match info.comptime_members.get(member) {
-                Some(CtMemberReq::Type { bounds }) => Some(bounds.clone()),
+                Some(CtMemberReq::Type { bounds, .. }) => Some(bounds.clone()),
+                _ => None,
+            })
+    }
+
+    /// The parameter list of a parameterized associated type required by one of
+    /// `bounds`, or `None` if the member is monomorphic or absent.
+    pub(super) fn lookup_trait_assoc_params(
+        &self,
+        bounds: &[String],
+        member: &str,
+    ) -> Option<Vec<crate::ast::TypeParam>> {
+        bounds
+            .iter()
+            .filter_map(|b| self.traits.get(b))
+            .find_map(|info| match info.comptime_members.get(member) {
+                Some(CtMemberReq::Type { params, .. }) if !params.is_empty() => {
+                    Some(params.clone())
+                }
                 _ => None,
             })
     }

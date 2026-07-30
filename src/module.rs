@@ -305,7 +305,7 @@ fn rewrite_type(
             rename(name, names);
             rewrite_args(args, names, namespaces);
         }
-        Type::Assoc { base, name } => {
+        Type::Assoc { base, name, .. } => {
             if let Some(namespace) = type_path(base)
                 && let Some(target) = namespaces
                     .get(&namespace)
@@ -1149,7 +1149,7 @@ fn namespace_member(
 fn type_path(ty: &Type) -> Option<String> {
     match ty {
         Type::Named(name, args) if args.is_empty() => Some(name.clone()),
-        Type::Assoc { base, name } => Some(format!("{}.{}", type_path(base)?, name)),
+        Type::Assoc { base, name, .. } => Some(format!("{}.{}", type_path(base)?, name)),
         _ => None,
     }
 }

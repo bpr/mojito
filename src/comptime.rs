@@ -1526,7 +1526,7 @@ impl<'a> Elab<'a> {
                     "unknown compile-time type Self.{name}"
                 ))),
             },
-            Type::Assoc { base, name } => {
+            Type::Assoc { base, name, .. } => {
                 if let Type::Named(binding, args) = &**base
                     && args.is_empty()
                     && name == "T"
@@ -1547,6 +1547,7 @@ impl<'a> Elab<'a> {
                 let Type::Assoc {
                     base: associated_base,
                     name,
+                    ..
                 } = base.as_ref()
                 else {
                     return Err(ComptimeError::NotComptime(

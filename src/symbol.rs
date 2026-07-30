@@ -429,7 +429,7 @@ fn ast_raw(
         // and the checker resolves both to the same `Ty::Param` — spell them
         // identically so the two sides agree.
         Type::SelfParam(name) => parameter_raw(name, type_bounds),
-        Type::Assoc { base, name } => format!(
+        Type::Assoc { base, name, .. } => format!(
             "Assoc${}${}",
             ast_raw(base, comptimes, type_bounds),
             encode_identifier(name)

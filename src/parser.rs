@@ -1225,10 +1225,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     fn parse_struct_comptime(&mut self) -> Result<crate::ast::StructComptime, ParseError> {
         self.expect(Token::Comptime, "Expected 'comptime'")?;
         let name = self.expect_identifier("Expected a name after 'comptime'")?;
+        // A parameterized associated type: `comptime IteratorType[params] = ...`.
+        let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
+            self.parse_type_params()?
+        } else {
+            Vec::new()
+        };
         self.expect(Token::Assign, "Expected '=' after the comptime member name")?;
         let value = self.parse_expression(Precedence::Lowest)?;
         self.expect_stmt_end()?;
-        Ok(crate::ast::StructComptime { name, value })
+        Ok(crate::ast::StructComptime {
+            name,
+            params,
+            value,
+        })
     }
 
     /// Parses an optional trait-conformance list `'(' NAME (',' NAME)* ')'`
@@ -1355,6 +1365,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     fn parse_trait_comptime(&mut self) -> Result<crate::ast::TraitComptime, ParseError> {
         self.expect(Token::Comptime, "Expected 'comptime'")?;
         let name = self.expect_identifier("Expected a name after 'comptime'")?;
+        // A parameterized associated type requirement:
+        // `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
+        // Origin[mut=iterable_mut]]: Iterator`.
+        let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
+            self.parse_type_params()?
+        } else {
+            Vec::new()
+        };
         self.expect(Token::Colon, "Expected ':' after the comptime member name")?;
         let first = self.parse_type()?;
         let mut bounds = vec![first];
@@ -1371,7 +1389,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             )
         };
         self.expect_stmt_end()?;
-        Ok(crate::ast::TraitComptime { name, ty })
+        Ok(crate::ast::TraitComptime { name, params, ty })
     }
 
     /// `def name([convention] self [, params]) -> ret:` followed by an indented
@@ -1869,6 +1887,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 ty = Type::Assoc {
                     base: Box::new(ty),
                     name,
+                    args: Vec::new(),
                 };
                 continue;
             }

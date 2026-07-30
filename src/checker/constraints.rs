@@ -65,6 +65,7 @@ impl Checker {
     /// conforms to `AnyType`.
     pub(super) fn ct_member_req_from_anno(
         &self,
+        params: &[crate::ast::TypeParam],
         ty: &SourceType,
     ) -> Result<CtMemberReq, TypeError> {
         if let SourceType::Named(name, args) = ty
@@ -88,7 +89,10 @@ impl Checker {
                     bounds.push(bound.clone());
                 }
             }
-            return Ok(CtMemberReq::Type { bounds });
+            return Ok(CtMemberReq::Type {
+                bounds,
+                params: params.to_vec(),
+            });
         }
         if let SourceType::Named(name, args) = ty
             && args.is_empty()
@@ -97,7 +101,15 @@ impl Checker {
             self.check_trait_name(name)?;
             return Ok(CtMemberReq::Type {
                 bounds: vec![name.clone()],
+                params: params.to_vec(),
             });
+        }
+        if !params.is_empty() {
+            return Err(TypeError::Unsupported(
+                "a compile-time value member cannot take parameters; only an \
+                 associated type may be parameterized"
+                    .to_string(),
+            ));
         }
         Ok(CtMemberReq::Value(Box::new(self.ty_from_anno(ty)?)))
     }

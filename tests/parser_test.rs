@@ -799,6 +799,7 @@ fn parses_trait_comptime_member() {
                 comptime_members,
                 &vec![TraitComptime {
                     name: "count".into(),
+                    params: vec![],
                     ty: Type::Int
                 }]
             );
@@ -816,6 +817,7 @@ fn parses_associated_type_annotation() {
                 &Some(Type::Assoc {
                     base: Box::new(Type::Named("C".into(), vec![])),
                     name: "Element".into(),
+                    args: vec![],
                 })
             );
         }
@@ -840,6 +842,7 @@ fn parses_dependent_indexed_type_projection_structurally() {
             base: Box::new(Type::Assoc {
                 base: Box::new(Type::Named("values".into(), vec![])),
                 name: "element_types".into(),
+                args: vec![],
             }),
             index: Box::new(Expr::from(ExprKind::Infix(
                 InfixOp::Add,
@@ -862,6 +865,7 @@ fn parses_struct_comptime_associated_member() {
                 associated,
                 &vec![StructComptime {
                     name: "Element".into(),
+                    params: vec![],
                     value: Expr::from(ExprKind::Member {
                         object: ident("Self"),
                         field: "T".into(),

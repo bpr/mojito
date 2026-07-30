@@ -1079,6 +1079,7 @@ impl<'a> Elab<'a> {
                             base: Box::new(Type::Assoc {
                                 base: Box::new(Type::SelfType),
                                 name: "element_types".to_string(),
+                                args: Vec::new(),
                             }),
                             index: Box::new(materialize_expression(index, env)),
                         };

@@ -35,10 +35,13 @@ pub enum Type {
     /// member when there is no struct parameter by that name.
     SelfParam(String),
     /// `Base.Member` in type position — an associated type/comptime member lookup
-    /// on a type parameter, `Self`, or a concrete type.
+    /// on a type parameter, `Self`, or a concrete type. `args` is the parameter
+    /// application of a parameterized associated type
+    /// (`Self.IteratorType[origin_of(self)]`); it is empty for a bare `C.Element`.
     Assoc {
         base: Box<Type>,
         name: String,
+        args: Vec<ParamArg>,
     },
     /// Index a compile-time sequence of types while remaining in type position.
     ///
@@ -433,6 +436,10 @@ pub struct TraitMethod {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitComptime {
     pub name: String,
+    /// Parameter declarations of a parameterized associated type
+    /// (`comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
+    /// Origin[mut=iterable_mut]]: Iterator`); empty for a monomorphic member.
+    pub params: Vec<TypeParam>,
     pub ty: Type,
 }
 
@@ -441,6 +448,9 @@ pub struct TraitComptime {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructComptime {
     pub name: String,
+    /// Parameter declarations when this defines a parameterized associated type
+    /// (`comptime IteratorType[params] = ...`); empty for a monomorphic member.
+    pub params: Vec<TypeParam>,
     pub value: Expr,
 }
 
