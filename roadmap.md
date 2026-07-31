@@ -97,13 +97,15 @@ verification, and the register VM (see `docs/features.md`).
   `origin_of(self)` lowers to a symbolic self-origin, so a conforming struct's
   origin-parameterized associated member (`Self.IteratorType[origin_of(self)]`)
   resolves concretely and conformance succeeds — including when a conformer spells
-  that application directly as its own `__iter__(ref self)` return type. What
-  remains: make borrowed
-  `for`/`for ref` iteration generic over origin-bearing iterator elements — a
-  reference-yielding `__next__` flowing through the loop as a handle rather than a
-  value binding, and a borrowed temporary with distinct retained-source-owner and
-  iterator slots instead of overwriting its only owner in one slot during
-  normalization; migrate the bundled borrowed `Iterable` and the
+  that application directly as its own `__iter__(ref self)` return type. A
+  borrowed temporary now also keeps distinct retained-source-owner and iterator
+  slots (instead of overwriting its only owner during normalization), so its
+  `__del__` runs after the loop and a future origin-bearing iterator has a live
+  source to loan. What remains: make borrowed `for`/`for ref` iteration generic
+  over origin-bearing iterator elements — a reference-yielding `__next__` flowing
+  through the loop as a handle rather than a value binding, with the retained
+  source's dependency recorded as a loan; migrate the bundled borrowed `Iterable`
+  and the
   Range/List/Set/Dict conformances to the origin-parameterized shape; and remove
   the concrete List/Set/Dict collection-specific borrow bridges and the List-only
   `for ref` bridge. Cover immutable and mutable origins, generic bounds,

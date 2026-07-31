@@ -383,3 +383,28 @@ fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
     let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __copyinit__(out self, existing: Self):\n        self.id = existing.id\n    def __del__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h\n    def __del__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
     assert_eq!(vm(src), "handle del 7\nbox del\nhandle del 7\nmid 7\n");
 }
+
+// Borrowed iteration source/iterator slot split: a temporary iterable that owns
+// its storage is kept live in its own slot through the loop and destroyed
+// exactly once, after the loop — in-place normalization would overwrite (leak)
+// it. `Numbers` uses the bounded `__len__`/`__next__` protocol; `NumbersIter`
+// borrows nothing observable so only the source has a `__del__`.
+const ITERABLE_NUMBERS: &str = "@fieldwise_init\nstruct NumbersIter:\n    var cur: Int\n    var stop: Int\n    def __len__(self) -> Int:\n        return self.stop - self.cur\n    def __next__(mut self) -> Int:\n        var v = self.cur\n        self.cur = self.cur + 1\n        return v\n\nstruct Numbers(Movable):\n    var stop: Int\n    def __init__(out self, stop: Int):\n        self.stop = stop\n    def __init__(out self, *, deinit move: Self):\n        self.stop = move.stop\n    def __del__(deinit self):\n        print(\"drop numbers\", self.stop)\n    def __iter__(self) -> NumbersIter:\n        return NumbersIter(0, self.stop)\n\n";
+
+#[test]
+fn borrowed_iteration_over_a_temporary_drops_the_source_after_the_loop() {
+    let src = format!(
+        "{ITERABLE_NUMBERS}def main():\n    for x in Numbers(3):\n        print(\"x\", x)\n    print(\"after\")\n"
+    );
+    assert_eq!(vm(&src), "x 0\nx 1\nx 2\ndrop numbers 3\nafter\n");
+}
+
+#[test]
+fn breaking_out_of_borrowed_temporary_iteration_still_drops_the_source_once() {
+    let src = format!(
+        "{ITERABLE_NUMBERS}def main():\n    for x in Numbers(5):\n        print(\"x\", x)\n        if x == 1:\n            break\n    print(\"after\")\n"
+    );
+    let out = vm(&src);
+    assert_eq!(out, "x 0\nx 1\ndrop numbers 5\nafter\n");
+    assert_eq!(out.matches("drop numbers").count(), 1);
+}

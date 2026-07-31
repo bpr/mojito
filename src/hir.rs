@@ -177,11 +177,21 @@ pub enum HirInstr {
     /// An ASAP destructor, spliced in by Stage 7 liveness (never by the Stage 4
     /// lowerer — present so later stages share the type).
     Drop(VarId),
-    /// Iterator protocol: normalize the iterable in `iter` to an *iterator* — for a
-    /// nominal iterable, `iter = iter.__iter__()`; compiler-private storage iterates in
-    /// place, so this is a no-op. Emitted once before the loop header.
+    /// A liveness anchor: `var` is read for analysis but not at runtime. Emitted at
+    /// a loop exit to keep a split iteration source live through the loop (its only
+    /// other use is `GetIter` before the loop), so ASAP-drop does not destroy it
+    /// while a borrowing iterator still refers to its storage.
+    KeepAlive(VarId),
+    /// Iterator protocol: normalize the iterable in `source` to an *iterator* in
+    /// `dest` — for a nominal iterable, `dest = source.__iter__()`. When
+    /// `source == dest` the iterable is normalized in place (a concrete borrowed
+    /// place, or compiler-private storage that iterates in place, a no-op). When
+    /// they differ, `source` retains the live iterable (kept in its own slot and
+    /// dropped after the loop) so a borrowing iterator does not clobber its only
+    /// owner. Emitted once before the loop header.
     GetIter {
-        iter: VarId,
+        source: VarId,
+        dest: VarId,
         protocol: crate::IterationProtocol,
     },
     /// Iterator protocol (`for` loops): `dest = whether `iter` yields another
@@ -1343,6 +1353,19 @@ impl Lower {
                         next: None,
                         exhaustion: None,
                     });
+                // A `Bind`-bound iterable that is normalized by `__iter__` is the
+                // *only* owner of its storage; a borrowing iterator would clobber
+                // it if normalization wrote back into the same slot. Give it a
+                // distinct iterator slot and keep the source live in `it_var` (a
+                // concrete `BorrowIter` place already retains its owner via an
+                // external loan, and an empty-`prepare` iterable normalizes in
+                // place, so both keep the single slot).
+                // Only borrowed iteration retains the source: owned iteration
+                // (`__iter__(var self)`) consumes it into the iterator, so the
+                // source must keep the single slot and not be dropped again.
+                let split_source = matches!(protocol.mode, crate::IterationMode::Borrowed)
+                    && protocol.borrowed_origin.is_none()
+                    && !protocol.prepare.is_empty();
                 if let Some(origin) = protocol.borrowed_origin.clone() {
                     self.push(HirInstr::BorrowIter {
                         dest: it_var,
@@ -1357,10 +1380,16 @@ impl Lower {
                         binding: None,
                     });
                 }
+                let iter_var = if split_source {
+                    self.var(&format!("$iterobj{}", self.vars.len()))
+                } else {
+                    it_var
+                };
                 // Normalize the iterable to an iterator (a user struct's `__iter__`;
                 // a no-op only for compiler-private iterator storage).
                 self.push(HirInstr::GetIter {
-                    iter: it_var,
+                    source: it_var,
+                    dest: iter_var,
                     protocol: protocol.clone(),
                 });
 
@@ -1386,7 +1415,7 @@ impl Lower {
                         .clone()
                         .expect("checked raising for-loop binding type");
                     self.push(HirInstr::TryNext {
-                        iter: it_var,
+                        iter: iter_var,
                         dest: v,
                         yielded: hn_var,
                         method: protocol
@@ -1399,7 +1428,7 @@ impl Lower {
                     });
                 } else {
                     self.push(HirInstr::HasNext {
-                        iter: it_var,
+                        iter: iter_var,
                         dest: hn_var,
                         method: protocol.has_next.clone(),
                     });
@@ -1415,7 +1444,7 @@ impl Lower {
                 self.cur = body_b;
                 if protocol.exhaustion.is_none() {
                     self.push(HirInstr::Next {
-                        iter: it_var,
+                        iter: iter_var,
                         dest: v,
                         method: protocol.next.clone(),
                         element_ty: element_ty
@@ -1428,7 +1457,11 @@ impl Lower {
                     header,
                     exit,
                     escape: false,
-                    cleanup: vec![v, it_var],
+                    cleanup: if split_source {
+                        vec![v, iter_var, it_var]
+                    } else {
+                        vec![v, iter_var]
+                    },
                 });
                 self.block(body);
                 self.loops.pop();
@@ -1446,8 +1479,20 @@ impl Lower {
                 // use from which drop elaboration could infer that ownership dies.
                 // Make the structured lifetime boundary explicit at the common
                 // exit so every path (including `break`) destroys residual owned
-                // iterator storage before execution continues after the loop.
-                self.push(HirInstr::Drop(it_var));
+                // iterator storage before execution continues after the loop. When
+                // the source was split into its own slot, its explicit exit drop
+                // also extends its liveness through the loop (no loan records the
+                // borrowing iterator's dependency yet), so it is not destroyed
+                // early and its `__del__` runs exactly once, after the loop.
+                self.push(HirInstr::Drop(iter_var));
+                if split_source {
+                    // The source is used only by `GetIter` before the loop, so a
+                    // liveness anchor at the exit keeps it live through the loop
+                    // body (a borrowing iterator still refers to its storage);
+                    // then it is destroyed exactly once, after the loop.
+                    self.push(HirInstr::KeepAlive(it_var));
+                    self.push(HirInstr::Drop(it_var));
+                }
             }
 
             StmtKind::Break => {

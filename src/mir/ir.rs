@@ -674,10 +674,14 @@ pub enum MirInstr {
     /// lowering-time `panic!` — so a backend can report a clean error instead of
     /// crashing on an otherwise-valid program.
     Unsupported(String),
-    /// Iterator protocol: normalize `iter` through its checker-selected nominal
-    /// `__iter__()` implementation.
+    /// Iterator protocol: normalize `source` through its checker-selected nominal
+    /// `__iter__()` implementation, producing the iterator in `dest`. When
+    /// `source == dest` the iterable is normalized in place; when they differ,
+    /// `source` retains the live iterable in its own slot (dropped after the loop)
+    /// so a borrowing iterator does not clobber its only owner.
     GetIter {
-        iter: VarId,
+        source: VarId,
+        dest: VarId,
         mode: crate::IterationMode,
         prepare: Vec<String>,
     },

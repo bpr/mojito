@@ -173,12 +173,20 @@ impl Flatten<'_> {
             HirInstr::Drop(var) => {
                 self.emit(MirInstr::DropVar { var: *var });
             }
+            HirInstr::KeepAlive(var) => {
+                self.emit(MirInstr::KeepAlive { var: *var });
+            }
             // Iterator protocol: compute into a register, then store to the target
             // variable (so the header's branch can read `has_next` as a `UseVar`,
             // and the body binds the loop variable).
-            HirInstr::GetIter { iter, protocol } => {
+            HirInstr::GetIter {
+                source,
+                dest,
+                protocol,
+            } => {
                 self.emit(MirInstr::GetIter {
-                    iter: *iter,
+                    source: *source,
+                    dest: *dest,
                     mode: protocol.mode,
                     prepare: protocol.prepare.clone(),
                 });

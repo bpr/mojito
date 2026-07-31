@@ -1208,21 +1208,26 @@ impl VmBackend {
             // method-free fallback in HasNext/Next below; public Tuple values
             // are nominal structs and must use their checked methods.
             MirInstr::GetIter {
-                iter,
+                source,
+                dest,
                 mode: _,
                 prepare,
             } => {
-                // Execute the exact normalization chain chosen by the checker.
-                let slot = *iter as usize;
+                // Execute the exact normalization chain chosen by the checker,
+                // starting from the source and producing the iterator in `dest`.
+                // When `dest != source` the source stays live in its own slot (a
+                // borrowing iterator must not clobber its only owner); when they
+                // are the same slot this normalizes in place, unchanged.
                 let dynamic_prepare = prepare
                     .iter()
                     .find(|symbol| symbol.starts_with("__trait_dispatch."))
                     .cloned();
+                let mut current = vars[*source as usize].clone();
                 for selected in prepare {
-                    let Value::Struct { name, .. } = &vars[slot] else {
+                    let Value::Struct { name, .. } = &current else {
                         return Err(RuntimeError::TypeError(format!(
                             "vm: checked iterator preparation applied to {}",
-                            crate::runtime::type_name(&vars[slot])
+                            crate::runtime::type_name(&current)
                         )));
                     };
                     let sname = name.clone();
@@ -1233,8 +1238,8 @@ impl VmBackend {
                             "vm: checked iterator method '{target}' is missing from MIR"
                         ))
                     })?;
-                    let (value, _) = self.call_frame(prog, fidx, vec![vars[slot].clone()], &[])?;
-                    vars[slot] = value;
+                    let (value, _) = self.call_frame(prog, fidx, vec![current.clone()], &[])?;
+                    current = value;
                 }
                 // A bounded `Iterable` may expose another iterable as its
                 // associated `Iter` (the self-hosted Set yields a List). Its
@@ -1244,7 +1249,7 @@ impl VmBackend {
                 // their complete static `prepare` chain and skip this path.
                 if let Some(selected) = dynamic_prepare {
                     for _ in 0..8 {
-                        let Value::Struct { name, .. } = &vars[slot] else {
+                        let Value::Struct { name, .. } = &current else {
                             break;
                         };
                         let sname = name.clone();
@@ -1263,10 +1268,10 @@ impl VmBackend {
                                 "vm: checked iterator method '{target}' is missing from MIR"
                             ))
                         })?;
-                        vars[slot] =
-                            self.call_function(prog, fidx, vec![vars[slot].clone()], &[])?;
+                        current = self.call_function(prog, fidx, vec![current.clone()], &[])?;
                     }
                 }
+                vars[*dest as usize] = current;
             }
             MirInstr::HasNext { dest, iter, method } => {
                 let slot = *iter as usize;

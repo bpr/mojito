@@ -6,6 +6,20 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Fixed
+
+- Borrowed iteration over a temporary that owns its storage no longer leaks the
+  source. `for x in Numbers(3)` (or `for x in make_list()`) normalized the
+  iterable to an iterator *in place*, overwriting the source in its only slot, so
+  its `__del__` never ran and a borrowing iterator aliased freed storage. The
+  borrowed-iteration source and iterator now occupy distinct slots (`GetIter`
+  reads the source, writes the iterator into its own slot); the source stays live
+  through the loop via a liveness anchor and is destroyed exactly once after it,
+  including on early `break`/`return`. Owned iteration keeps the single slot
+  (`__iter__(var self)` consumes the source), and concrete List/Set/Dict borrowed
+  iteration is unchanged (its named place is retained by an external loan). This
+  also gives a future origin-bearing iterator a live source to loan.
+
 ### Changed
 
 - The bundled owned-iteration protocol now uses current Mojo's monomorphic

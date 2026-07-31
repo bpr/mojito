@@ -370,8 +370,11 @@ impl Flatten<'_> {
                         binding_ty: iterator_ty.clone(),
                     });
                 }
+                // Comprehensions normalize the iterable in place (the source/
+                // iterator slot split is applied to `for` statements only).
                 self.emit(MirInstr::GetIter {
-                    iter: iterator,
+                    source: iterator,
+                    dest: iterator,
                     mode: protocol.mode,
                     prepare: protocol.prepare.clone(),
                 });

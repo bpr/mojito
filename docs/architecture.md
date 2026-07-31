@@ -1844,7 +1844,16 @@ The back-edge makes the moved state flow to the next iteration. The analysis can
 therefore reject the second iteration's attempted move.
 
 Borrowed iteration, and consuming iteration for a type with `__iter__(var self)`,
-first execute the checker-selected nominal `__iter__` normalization chain.
+first execute the checker-selected nominal `__iter__` normalization chain. For
+borrowed iteration whose iterable is normalized by `__iter__` (a generic or
+user-struct iterable, not a concrete `BorrowIter` place), `GetIter` reads the
+source from one slot and writes the iterator into a distinct slot, so a borrowed
+temporary — the only owner of its storage — stays live in its own slot through
+the loop and is destroyed exactly once after it, rather than being overwritten
+during normalization. A liveness anchor at the loop exit extends the source
+through the loop until a later stage records the borrowing iterator's dependency
+as a loan. Owned iteration keeps the single slot: `__iter__(var self)` consumes
+the source into the iterator.
 Bundled borrowed paths cover List, Set, Dict, and Range; the bundled owned path
 is currently List-specific. For a current typed-raising iterator, `TryNext`
 invokes `__next__(mut self)`, writes the mutated iterator back, and branches on
