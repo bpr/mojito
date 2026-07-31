@@ -101,7 +101,15 @@ verification, and the register VM (see `docs/features.md`).
   borrowed temporary now also keeps distinct retained-source-owner and iterator
   slots (instead of overwriting its only owner during normalization), so its
   `__del__` runs after the loop and a future origin-bearing iterator has a live
-  source to loan. What remains: make borrowed `for`/`for ref` iteration generic
+  source to loan. *Returning a struct-origin-parameter reference has landed:* a
+  method may return a `ref[origin] T` field/binding whose origin is a struct
+  origin parameter (the handle names its own borrowed region), which a
+  reference-yielding `__next__` needs — but only a *directly-read* reference value
+  executes; projecting or dereferencing through an origin parameter across the
+  return (`self.p[0]`, `self.src[i]`) still re-roots at the callee frame and stays
+  rejected until that runtime handle forwarding lands. What remains: forward such
+  projected/dereferenced handles across `__iter__`/`__next__` return boundaries in
+  the VM (they currently go stale); make borrowed `for`/`for ref` iteration generic
   over origin-bearing iterator elements — a reference-yielding `__next__` flowing
   through the loop as a handle rather than a value binding, with the retained
   source's dependency recorded as a loan; migrate the bundled borrowed `Iterable`

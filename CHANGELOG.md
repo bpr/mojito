@@ -6,6 +6,20 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Added
+
+- A method may now return a `ref[origin] T` field or binding whose origin is a
+  struct/callable origin *parameter* (for example `def get(self) -> ref[o] Int:
+  return self.slot` on `struct Cell[o: Origin[...]]`). The stored handle already
+  names its borrowed region, so returning it stays within the declared origin;
+  previously the return contract re-synthesized the handle's storage as a place
+  rooted at the receiver and rejected it as an escape. Immutable origins yield a
+  read-only borrow and a mutable origin returns a write-through handle to the
+  caller's storage. Returning a reference produced by *projecting or
+  dereferencing through* an origin parameter (`self.p[0]`, `self.src[i]`) stays
+  rejected until the runtime forwards such handles across the return boundary;
+  this is a foundation piece for generic borrowed reference iteration.
+
 ### Fixed
 
 - Borrowed iteration over a temporary that owns its storage no longer leaks the

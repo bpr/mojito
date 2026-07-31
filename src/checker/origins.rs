@@ -133,6 +133,45 @@ impl Checker {
         })
     }
 
+    /// The abstract origin carried directly by a returned reference *value* — a
+    /// `ref[origin] T` field or binding whose declared origin is a struct/callable
+    /// origin parameter rather than a concrete place. Such a handle already names
+    /// its borrowed region, so returning it stays within that region's parameter;
+    /// `reference_actual` would otherwise re-synthesize the handle's storage as a
+    /// concrete place rooted at the receiver, losing the parameter binding a
+    /// `ref[origin]` return contract is checked against.
+    ///
+    /// Only a directly-read reference value is recognized. Projecting or
+    /// dereferencing *through* an origin parameter (`handle.field`, `ptr[i]`)
+    /// re-roots at the callee frame at runtime and is not yet executable, so it
+    /// stays rejected at the return boundary until that forwarding lands.
+    pub(super) fn returned_reference_parameter_origin(
+        &self,
+        expr: &Expr,
+    ) -> Option<crate::origin::Origin> {
+        use crate::origin::Origin;
+        fn is_abstract(origin: &Origin) -> bool {
+            match origin {
+                Origin::Place(_) => false,
+                Origin::Union(members) => !members.is_empty() && members.iter().all(is_abstract),
+                Origin::Param(_)
+                | Origin::SelfParam
+                | Origin::Static
+                | Origin::Untracked { .. } => true,
+            }
+        }
+        match &expr.kind {
+            ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
+                self.returned_reference_parameter_origin(inner)
+            }
+            ExprKind::Member { .. } | ExprKind::Identifier(_) => self
+                .infer_reference_value(expr)
+                .map(|reference| reference.origin)
+                .filter(is_abstract),
+            _ => None,
+        }
+    }
+
     /// Resolve the compile-time value accepted by an `Origin` parameter at a
     /// function-value specialization site. `origin_of` observes checked places
     /// (including reference-valued places) and never evaluates at runtime.

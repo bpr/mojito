@@ -1807,7 +1807,10 @@ impl Checker {
                 if let (Some(e), Some(Some((signature, parameter_owners, self_owner)))) =
                     (expr, self.return_ref_contracts.last())
                 {
-                    let actual = self.reference_actual(e)?.origin;
+                    let actual = match self.returned_reference_parameter_origin(e) {
+                        Some(origin) => origin,
+                        None => self.reference_actual(e)?.origin,
+                    };
                     let parameter_origins: Vec<_> = parameter_owners
                         .iter()
                         .map(|owner| {
