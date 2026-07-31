@@ -96,7 +96,9 @@ verification, and the register VM (see `docs/features.md`).
   conformances). *Self-origin resolution has landed:* a trait method's abstract
   `origin_of(self)` lowers to a symbolic self-origin, so a conforming struct's
   origin-parameterized associated member (`Self.IteratorType[origin_of(self)]`)
-  resolves concretely and conformance succeeds. What remains: make borrowed
+  resolves concretely and conformance succeeds — including when a conformer spells
+  that application directly as its own `__iter__(ref self)` return type. What
+  remains: make borrowed
   `for`/`for ref` iteration generic over origin-bearing iterator elements — a
   reference-yielding `__next__` flowing through the loop as a handle rather than a
   value binding, and a borrowed temporary with distinct retained-source-owner and

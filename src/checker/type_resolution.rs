@@ -318,12 +318,22 @@ impl Checker {
                 // index but names a parameterized associated member; resolve it as
                 // an application rather than compile-time sequence indexing.
                 let application = match base.as_ref() {
-                    // `Self.IteratorType[..]` — the base is the trait's abstract Self.
-                    SourceType::SelfParam(name) => self.parameterized_assoc_application(
-                        &Ty::SelfType,
-                        name,
-                        std::slice::from_ref(index),
-                    )?,
+                    // `Self.IteratorType[..]` — the abstract trait `Self` in a trait
+                    // method, or the concrete struct when a conformer spells the
+                    // application as its own return type. Use the concrete `Self`
+                    // (a registered struct) when available so the member resolves
+                    // concretely; otherwise the trait's abstract `Self`.
+                    SourceType::SelfParam(name) => {
+                        let base = match &self.self_ty {
+                            Some(ty @ Ty::Struct(..)) => ty.clone(),
+                            _ => Ty::SelfType,
+                        };
+                        self.parameterized_assoc_application(
+                            &base,
+                            name,
+                            std::slice::from_ref(index),
+                        )?
+                    }
                     // `C.IteratorType[..]` — a bounded type parameter or other base.
                     // If the base does not name a type (e.g. `values.element_types`
                     // where `values` is a value binding), this is not an
@@ -371,6 +381,15 @@ impl Checker {
                     _ => None,
                 }),
             Ty::Param { bounds, .. } => self.lookup_trait_assoc_params(bounds, name),
+            // A concrete struct that instantiates the member: its parameter list
+            // comes from the struct's own parameterized definition, so an
+            // application such as a conformer's `Self.IteratorType[origin_of(self)]`
+            // resolves concretely rather than falling through to dependent indexing.
+            Ty::Struct(sname, _) => self
+                .structs
+                .get(sname)
+                .and_then(|info| info.parameterized_associated.get(name))
+                .map(|member| member.params.clone()),
             _ => None,
         }
     }
@@ -411,6 +430,16 @@ impl Checker {
             .zip(args)
             .map(|(param, arg)| self.lower_assoc_application_arg(param, arg))
             .collect::<Result<Vec<_>, _>>()?;
+        // A concrete struct base instantiates the member here and now (a conformer
+        // spelling `Self.IteratorType[origin_of(self)]` as its own return type):
+        // resolve it through the same path as a non-indexed struct-based
+        // application. An abstract base (`Self` or a bounded parameter) stays
+        // symbolic until the base becomes a conforming struct.
+        if matches!(base_ty, Ty::Struct(..)) {
+            return Ok(Some(
+                self.associated_type_from_base(base_ty, name, &arguments)?,
+            ));
+        }
         Ok(Some(Ty::Assoc {
             base: Box::new(base_ty.clone()),
             name: name.to_string(),

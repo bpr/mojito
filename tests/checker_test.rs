@@ -4215,6 +4215,31 @@ fn self_origin_requirement_resolves_concretely_and_rejects_a_mismatch() {
 }
 
 #[test]
+fn conformer_may_return_the_parameterized_associated_application_directly() {
+    // A conforming struct spells the application as its own return type
+    // (`-> Self.IterType[origin_of(self)]`). With the concrete struct substituted
+    // for `Self`, the indexed application resolves through the struct's member
+    // (`= Bag`) instead of failing as a dependent index.
+    ok(
+        "trait HasIter:\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: AnyType\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Bag(Copyable, Movable):\n    var n: Int\n\n@fieldwise_init\nstruct Holder(HasIter):\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Bag\n    var v: Int\n    def make(ref self) -> Self.IterType[origin_of(self)]:\n        return Bag(self.v)\n",
+    );
+}
+
+#[test]
+fn conformer_return_application_resolves_to_the_concrete_member() {
+    // `Self.IterType[origin_of(self)]` resolves to the struct's member `Bag`, so a
+    // body returning a different type is a return mismatch — proving the
+    // application resolved concretely rather than staying an unconstrained index.
+    let error = err(
+        "trait HasIter:\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: AnyType\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Bag(Copyable, Movable):\n    var n: Int\n\n@fieldwise_init\nstruct Other(Copyable, Movable):\n    var n: Int\n\n@fieldwise_init\nstruct Holder(HasIter):\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Bag\n    var v: Int\n    def make(ref self) -> Self.IterType[origin_of(self)]:\n        return Other(self.v)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::TypeMismatch { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn owned_iterable_conformance_binds_iterator_owned_type() {
     // The owned protocol's associated iterator is the monomorphic
     // `IteratorOwnedType` (current Mojo's owned-iterator member), consumed by an

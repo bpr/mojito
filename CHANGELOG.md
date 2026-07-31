@@ -18,6 +18,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameterized associated-type application on a concrete struct base now
+  resolves. A conformer may spell the application directly as its own return type
+  (`def __iter__(ref self) -> Self.IteratorType[origin_of(self)]`): with the
+  concrete struct substituted for `Self`, the indexed application routes through
+  the struct's parameterized member instead of failing as a dependent type index.
+  This is the faithful current-Mojo `__iter__` shape for the borrowed `Iterable`
+  conformers. A generic free function returning `C.IteratorType[origin_of(c)]`
+  remains later work (a declaration-time value-parameter-origin gap).
+
 - Self-origin resolution for a parameterized associated type. A trait method's
   abstract `Self.IteratorType[origin_of(self)]` has no bound `self` place; its
   receiver origin now lowers to the symbolic `Origin::SelfParam` (the
