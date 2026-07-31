@@ -104,12 +104,16 @@ verification, and the register VM (see `docs/features.md`).
   source to loan. *Returning a struct-origin-parameter reference has landed:* a
   method may return a `ref[origin] T` field/binding whose origin is a struct
   origin parameter (the handle names its own borrowed region), which a
-  reference-yielding `__next__` needs — but only a *directly-read* reference value
-  executes; projecting or dereferencing through an origin parameter across the
-  return (`self.p[0]`, `self.src[i]`) still re-roots at the callee frame and stays
-  rejected until that runtime handle forwarding lands. What remains: forward such
-  projected/dereferenced handles across `__iter__`/`__next__` return boundaries in
-  the VM (they currently go stale); make borrowed `for`/`for ref` iteration generic
+  reference-yielding `__next__` needs. *Projecting through a `ref[origin]`
+  aggregate across a return now executes:* a reference indexed/projected out of a
+  `ref[origin] <aggregate>` field (`self.src[i]`) is re-rooted by the VM at the
+  borrowed storage, so it survives the accessor frame — including when the receiver
+  is a `mut`/`ref self` handle to a caller frame. What remains: an origin-bearing
+  *pointer* deref return (`self.p[0]`) is still rejected (its place lowering keeps
+  an offset-0 index the runtime cannot yet forward); a nominal subscript of a
+  `ref[origin]` field under a `mut self` receiver still fails in the VM ("subscript
+  receiver is ref"), which a `mut self` `__next__` reading `self.src[i]` hits; make
+  borrowed `for`/`for ref` iteration generic
   over origin-bearing iterator elements — a reference-yielding `__next__` flowing
   through the loop as a handle rather than a value binding, with the retained
   source's dependency recorded as a loan; migrate the bundled borrowed `Iterable`

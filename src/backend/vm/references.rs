@@ -44,6 +44,80 @@ impl VmBackend {
         })
     }
 
+    /// Re-root a reference at the storage it ultimately designates. Applied to a
+    /// reference *returned* from a method while the returning frame is still live:
+    /// a reference projected through a stored handle — a `ref[origin]` field's
+    /// element — is rooted at that frame and would dangle once it unwinds. Follow
+    /// the root handle and the first handle reached along the projection,
+    /// recursively across frames, until the reference is rooted in surviving
+    /// storage (a live caller frame, reached even through a `mut`/`ref self`
+    /// receiver handle). Segments past an unnavigable step (a pointer or
+    /// list-storage index into the heap) are retained for lazy read-time
+    /// resolution against that surviving root. When nothing along the path is a
+    /// stored handle, the result is the original `(frame, slot, projection)` — so a
+    /// directly-returned handle and an ordinary local reference are unchanged.
+    pub(super) fn canonical_reference_parts(
+        &self,
+        current: FrameId,
+        current_variables: &[Value],
+        frame: u64,
+        slot: usize,
+        projection: Vec<RefProjection>,
+    ) -> (u64, usize, Vec<RefProjection>) {
+        let storage = if frame == current.0 {
+            current_variables.get(slot)
+        } else {
+            self.frames
+                .iter()
+                .find(|candidate| candidate.id.0 == frame)
+                .and_then(|owner| owner.variables.get(slot))
+        };
+        let Some(mut value) = storage else {
+            return (frame, slot, projection);
+        };
+        // A handle stored directly in the root slot: adopt it and prepend its
+        // own projection ahead of ours.
+        if let Value::Ref {
+            frame: handle_frame,
+            slot: handle_slot,
+            projection: handle_projection,
+        } = value
+        {
+            let mut combined = handle_projection.clone();
+            combined.extend(projection);
+            return self.canonical_reference_parts(
+                current,
+                current_variables,
+                *handle_frame,
+                *handle_slot,
+                combined,
+            );
+        }
+        // Otherwise walk the projection and re-root at the first handle reached.
+        for (position, segment) in projection.iter().enumerate() {
+            match navigate_reference_step(value, segment) {
+                Some(Value::Ref {
+                    frame: handle_frame,
+                    slot: handle_slot,
+                    projection: handle_projection,
+                }) => {
+                    let mut combined = handle_projection.clone();
+                    combined.extend_from_slice(&projection[position + 1..]);
+                    return self.canonical_reference_parts(
+                        current,
+                        current_variables,
+                        *handle_frame,
+                        *handle_slot,
+                        combined,
+                    );
+                }
+                Some(next) => value = next,
+                None => break,
+            }
+        }
+        (frame, slot, projection)
+    }
+
     /// Turn a closure environment into the leading reference arguments of its
     /// lifted function. Reference captures already are handles. Owned copy/move
     /// captures instead borrow the stable slot inside the closure value itself,
@@ -470,5 +544,32 @@ impl VmBackend {
             slot: *slot,
             projection,
         }))
+    }
+}
+
+/// Step one reference-projection segment into a concrete frame-stored value while
+/// re-rooting a reference (`canonical_reference_parts`). Only frame-local storage
+/// is navigated — struct fields and tuple/variant/closure payloads; crossing into
+/// pointer or list-storage heap, or a SIMD lane, returns `None`, leaving the rest
+/// of the projection to resolve lazily at read time against the surviving root.
+fn navigate_reference_step<'a>(value: &'a Value, segment: &RefProjection) -> Option<&'a Value> {
+    match (segment, value) {
+        (RefProjection::Field(name), Value::Struct { fields, .. }) => fields
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, value)| value),
+        (RefProjection::Index(index), Value::Tuple(items)) => items.get(*index),
+        (
+            RefProjection::Variant(expected),
+            Value::Variant {
+                index,
+                value: payload,
+                ..
+            },
+        ) if index == expected => Some(payload),
+        (RefProjection::Capture(index), Value::Closure { captures, .. }) => {
+            captures.get(*index).map(|capture| &capture.value)
+        }
+        _ => None,
     }
 }

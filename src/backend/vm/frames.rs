@@ -165,6 +165,31 @@ impl VmBackend {
                 }
                 MirTerm::FallOff | MirTerm::EscapeJump { .. } => Value::None,
             };
+            // A reference returned by projecting through a stored handle (a
+            // `ref[origin]` field's element) is still rooted at this frame; re-root
+            // it at the borrowed storage while this frame's variables are live, so
+            // it survives the frame's disposal.
+            let returned = if let Value::Ref {
+                frame: reference_frame,
+                slot,
+                projection,
+            } = returned
+            {
+                let (reference_frame, slot, projection) = self.canonical_reference_parts(
+                    frame.id,
+                    &frame.variables,
+                    reference_frame,
+                    slot,
+                    projection,
+                );
+                Value::Ref {
+                    frame: reference_frame,
+                    slot,
+                    projection,
+                }
+            } else {
+                returned
+            };
             if let Some(done) = self.finish_frame(prog, target, frame, returned)? {
                 return Ok(done);
             }

@@ -15,10 +15,17 @@ to evolve under the `0.x` compatibility rules.
   previously the return contract re-synthesized the handle's storage as a place
   rooted at the receiver and rejected it as an escape. Immutable origins yield a
   read-only borrow and a mutable origin returns a write-through handle to the
-  caller's storage. Returning a reference produced by *projecting or
-  dereferencing through* an origin parameter (`self.p[0]`, `self.src[i]`) stays
-  rejected until the runtime forwards such handles across the return boundary;
-  this is a foundation piece for generic borrowed reference iteration.
+  caller's storage. This is a foundation piece for generic borrowed reference
+  iteration.
+- A method may now also return a reference obtained by *indexing/projecting
+  through* a `ref[origin] <aggregate>` field (for example `def at(self, i: Int) ->
+  ref[o] Int: return self.src[i]` on a `ref[o] List[Int]` field). The VM re-roots
+  the returned handle at the borrowed storage — following the stored `ref`/pointer
+  handle across frames, including through a `mut`/`ref self` receiver — so it
+  survives the accessor frame instead of dangling (`vm: stale reference to frame
+  N`). Dereferencing an origin-bearing *pointer* field and returning it
+  (`self.p[0]`) remains rejected: its place lowering keeps an offset-0 index the
+  runtime cannot yet forward.
 
 ### Fixed
 

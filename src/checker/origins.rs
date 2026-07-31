@@ -133,18 +133,21 @@ impl Checker {
         })
     }
 
-    /// The abstract origin carried directly by a returned reference *value* — a
-    /// `ref[origin] T` field or binding whose declared origin is a struct/callable
-    /// origin parameter rather than a concrete place. Such a handle already names
-    /// its borrowed region, so returning it stays within that region's parameter;
-    /// `reference_actual` would otherwise re-synthesize the handle's storage as a
-    /// concrete place rooted at the receiver, losing the parameter binding a
-    /// `ref[origin]` return contract is checked against.
+    /// The abstract origin a returned reference stays within when it is carried by,
+    /// or projected out of, a reference *value* — a `ref[origin] T` field or
+    /// binding whose declared origin is a struct/callable origin parameter rather
+    /// than a concrete place. Such a handle already names its borrowed region, so
+    /// returning the handle itself, or a field/element reached through it, stays
+    /// within that region's parameter; `reference_actual` would otherwise
+    /// re-synthesize the storage as a concrete place rooted at the receiver, losing
+    /// the parameter binding a `ref[origin]` return contract is checked against.
     ///
-    /// Only a directly-read reference value is recognized. Projecting or
-    /// dereferencing *through* an origin parameter (`handle.field`, `ptr[i]`)
-    /// re-roots at the callee frame at runtime and is not yet executable, so it
-    /// stays rejected at the return boundary until that forwarding lands.
+    /// Recognized: a directly-read reference value (`self.value`), and a
+    /// field/element projected through one (`self.src[i]`, `self.pair.first`) — the
+    /// VM re-roots the runtime handle at the borrowed storage. Dereferencing an
+    /// origin-bearing *pointer* (`self.p[0]`) is deliberately *not* recognized: its
+    /// place lowering keeps an offset-0 index the runtime cannot yet forward, so it
+    /// stays rejected at the return boundary until that lands.
     pub(super) fn returned_reference_parameter_origin(
         &self,
         expr: &Expr,
@@ -164,7 +167,15 @@ impl Checker {
             ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
                 self.returned_reference_parameter_origin(inner)
             }
-            ExprKind::Member { .. } | ExprKind::Identifier(_) => self
+            // A reference-valued place carries its declared origin directly; a
+            // field/element projected out of one stays within that origin's region.
+            ExprKind::Member { object, .. } => self
+                .infer_reference_value(expr)
+                .map(|reference| reference.origin)
+                .filter(is_abstract)
+                .or_else(|| self.returned_reference_parameter_origin(object)),
+            ExprKind::Index { object, .. } => self.returned_reference_parameter_origin(object),
+            ExprKind::Identifier(_) => self
                 .infer_reference_value(expr)
                 .map(|reference| reference.origin)
                 .filter(is_abstract),
