@@ -29,6 +29,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Reading a `ref[origin] <aggregate>` field's referent under a `mut self`/`ref
+  self` receiver (subscript `self.src[i]`, `len(self.src)`, …) no longer fails with
+  `vm: checked nominal subscript receiver is ref`. A borrowed receiver is a runtime
+  alias, so the `LoadPlace` fast-path reached the field's stored handle but skipped
+  the `ref`-typed post-dereference the by-value path applies; the value load now
+  yields the referent under every receiver convention. (Value reads only — a
+  *returned* reference bound to a `ref` local still needs its source loan, tracked
+  as later borrowed-iteration work.)
 - Borrowed iteration over a temporary that owns its storage no longer leaks the
   source. `for x in Numbers(3)` (or `for x in make_list()`) normalized the
   iterable to an iterator *in place*, overwriting the source in its only slot, so

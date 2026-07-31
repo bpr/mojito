@@ -1166,7 +1166,19 @@ impl VmBackend {
                 regs[dest.0 as usize] = if let Some(reference) =
                     self.extend_reference(&vars[place.root as usize], &place.proj, regs)?
                 {
-                    self.read_reference(&reference, frame_id, vars)?
+                    // Reading through a reference-alias root (a `mut`/`ref self`
+                    // receiver) reaches the referent in one handle read. A
+                    // `ref[origin]`-typed field stored behind that alias yields
+                    // *another* handle, which needs the same second dereference the
+                    // plain-root branch applies — but only then: an alias that
+                    // already reaches its referent (a directly aliased value) must
+                    // keep it, so gate on the loaded value still being a handle.
+                    let value = self.read_reference(&reference, frame_id, vars)?;
+                    if matches!(value, Value::Ref { .. }) && matches!(place.ty, Some(Ty::Ref(_))) {
+                        self.read_reference(&value, frame_id, vars)?
+                    } else {
+                        value
+                    }
                 } else {
                     match self.load_index_dunder(prog, place, regs, vars)? {
                         Some(v) => v,

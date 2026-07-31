@@ -108,12 +108,16 @@ verification, and the register VM (see `docs/features.md`).
   aggregate across a return now executes:* a reference indexed/projected out of a
   `ref[origin] <aggregate>` field (`self.src[i]`) is re-rooted by the VM at the
   borrowed storage, so it survives the accessor frame — including when the receiver
-  is a `mut`/`ref self` handle to a caller frame. What remains: an origin-bearing
-  *pointer* deref return (`self.p[0]`) is still rejected (its place lowering keeps
-  an offset-0 index the runtime cannot yet forward); a nominal subscript of a
-  `ref[origin]` field under a `mut self` receiver still fails in the VM ("subscript
-  receiver is ref"), which a `mut self` `__next__` reading `self.src[i]` hits; make
-  borrowed `for`/`for ref` iteration generic
+  is a `mut`/`ref self` handle to a caller frame. *Reading a `ref[origin]` field's
+  referent under a `mut`/`ref self` receiver now works too* (subscript, `len`, …):
+  the borrowed-receiver runtime alias no longer leaves the field load as its stored
+  handle, so a `mut self` `__next__`'s `len(self.src)`/`self.src[i]` value reads
+  succeed. What remains: an origin-bearing *pointer* deref return (`self.p[0]`) is
+  still rejected (its place lowering keeps an offset-0 index the runtime cannot yet
+  forward); a *returned* reference projected out of a `ref[origin]` field and then
+  bound to a `ref` local does not keep its ultimate source alive (the source is
+  dropped and the handle dangles) — the returned reference's dependency must be
+  recorded as a loan; make borrowed `for`/`for ref` iteration generic
   over origin-bearing iterator elements — a reference-yielding `__next__` flowing
   through the loop as a handle rather than a value binding, with the retained
   source's dependency recorded as a loan; migrate the bundled borrowed `Iterable`
