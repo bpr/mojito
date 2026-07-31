@@ -692,6 +692,11 @@ impl Checker {
                 &actual,
                 Some(self_reference.origin),
             );
+            // A struct origin parameter in the return (`ref[o]`) resolves to the
+            // origin the receiver's `ref[o]` field borrows, so the returned
+            // reference records a loan on its ultimate source rather than an
+            // abstract parameter the loan machinery would drop.
+            let origin = self.resolve_receiver_origin_arguments(origin, object);
             let mutable = match signature.mutability {
                 crate::origin::SigMutability::Immutable => crate::origin::Mutability::Immutable,
                 crate::origin::SigMutability::Mutable => crate::origin::Mutability::Mutable,

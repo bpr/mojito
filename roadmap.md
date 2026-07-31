@@ -112,12 +112,15 @@ verification, and the register VM (see `docs/features.md`).
   referent under a `mut`/`ref self` receiver now works too* (subscript, `len`, …):
   the borrowed-receiver runtime alias no longer leaves the field load as its stored
   handle, so a `mut self` `__next__`'s `len(self.src)`/`self.src[i]` value reads
-  succeed. What remains: an origin-bearing *pointer* deref return (`self.p[0]`) is
-  still rejected (its place lowering keeps an offset-0 index the runtime cannot yet
-  forward); a *returned* reference projected out of a `ref[origin]` field and then
-  bound to a `ref` local does not keep its ultimate source alive (the source is
-  dropped and the handle dangles) — the returned reference's dependency must be
-  recorded as a loan; make borrowed `for`/`for ref` iteration generic
+  succeed. *A reference returned from a struct method and bound to a `ref` local
+  now keeps its source alive:* the returned reference's struct origin parameter
+  resolves to the origin the receiver's `ref[o]` field borrows, so the loan roots
+  at the ultimate owner and it is not dropped while the reference is live — so a
+  `mut self` reference-yielding accessor (`def take(mut self) -> ref[o] Int: return
+  self.src[i]`) bound to `ref` locals now reads and writes through end-to-end. What
+  remains: an origin-bearing *pointer* deref return (`self.p[0]`) is still rejected
+  (its place lowering keeps an offset-0 index the runtime cannot yet forward); make
+  borrowed `for`/`for ref` iteration generic
   over origin-bearing iterator elements — a reference-yielding `__next__` flowing
   through the loop as a handle rather than a value binding, with the retained
   source's dependency recorded as a loan; migrate the bundled borrowed `Iterable`

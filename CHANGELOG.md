@@ -29,6 +29,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A reference returned from a struct method whose declared origin is a struct
+  origin parameter, then bound to a `ref` local, now keeps its ultimate source
+  alive instead of dangling (`invalid reference projection … on None`). The
+  caller-side origin resolution maps the struct origin parameter to the origin the
+  receiver's `ref[o]` field borrows (recorded at construction), so the returned
+  reference records a loan on the owner and drop elaboration keeps it live while
+  the reference is used — previously the abstract parameter was dropped by the loan
+  machinery and the owner was freed early. A `mut self` reference-yielding accessor
+  (`def take(mut self) -> ref[o] Int: return self.src[i]`) bound to `ref` locals
+  now reads and writes through end-to-end.
 - Reading a `ref[origin] <aggregate>` field's referent under a `mut self`/`ref
   self` receiver (subscript `self.src[i]`, `len(self.src)`, …) no longer fails with
   `vm: checked nominal subscript receiver is ref`. A borrowed receiver is a runtime

@@ -183,6 +183,53 @@ impl Checker {
         }
     }
 
+    /// Resolve any abstract struct origin parameters in a method-returned
+    /// reference's origin to the receiver's concrete stored origin arguments. A
+    /// method returning `ref[o] T` for a struct origin parameter `o` yields the
+    /// abstract `Origin::Param(o)`; the loan machinery only tracks concrete places,
+    /// so this maps `o` back to the origin the receiver's `ref[o]` (or origin-bearing
+    /// `UnsafePointer[..., o]`) field borrows — recorded when the aggregate was
+    /// constructed — mirroring what `reference_actual` does for a directly-read
+    /// reference field. Without it a returned reference records no loan on its
+    /// ultimate source, so the source is dropped while the reference is still live.
+    pub(super) fn resolve_receiver_origin_arguments(
+        &self,
+        origin: crate::origin::Origin,
+        object: &Expr,
+    ) -> crate::origin::Origin {
+        let Ok(Ty::Struct(name, _)) = self.infer(object) else {
+            return origin;
+        };
+        let Some(info) = self.structs.get(&name) else {
+            return origin;
+        };
+        let field_origins = self.aggregate_field_origins(object);
+        let flat = self.aggregate_origins(object);
+        // The concrete origin(s) the receiver's field carrying origin parameter
+        // `id` borrows, from the aggregate's construction-time bindings (falling
+        // back to the flat receiver origins for a single-origin-param struct).
+        let concrete = |id: crate::origin::OriginParamId| -> Option<crate::origin::Origin> {
+            let mut retained: Vec<crate::origin::Origin> = Vec::new();
+            for (field, ty) in &info.fields {
+                if !field_carries_origin_param(ty, id) {
+                    continue;
+                }
+                let origins = field_origins
+                    .get(field)
+                    .filter(|origins| !origins.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| flat.clone());
+                for origin in origins {
+                    if !retained.contains(&origin) {
+                        retained.push(origin);
+                    }
+                }
+            }
+            (!retained.is_empty()).then(|| crate::origin::Origin::union(retained))
+        };
+        substitute_origin_params(origin, &concrete)
+    }
+
     /// Resolve the compile-time value accepted by an `Origin` parameter at a
     /// function-value specialization site. `origin_of` observes checked places
     /// (including reference-valued places) and never evaluates at runtime.
@@ -850,6 +897,37 @@ pub(super) fn sig_origin_has_bound(signature: &crate::origin::SigOrigin) -> bool
         SigOrigin::Projected(base, _) => sig_origin_has_bound(base),
         SigOrigin::Union(members) => members.iter().any(sig_origin_has_bound),
         _ => false,
+    }
+}
+
+/// Whether a struct field's declared type borrows origin parameter `id` — a
+/// `ref[o]` field or an origin-bearing `UnsafePointer[..., o]` field.
+fn field_carries_origin_param(ty: &Ty, id: crate::origin::OriginParamId) -> bool {
+    use crate::origin::{Origin, PointerOrigin};
+    match ty {
+        Ty::Ref(reference) => matches!(reference.origin, Origin::Param(k) if k == id),
+        Ty::Pointer { origin, .. } => {
+            matches!(origin, PointerOrigin::Param { id: k, .. } if *k == id)
+        }
+        _ => false,
+    }
+}
+
+/// Replace each `Origin::Param(id)` for which `concrete` yields a binding with that
+/// concrete origin, recursing through unions and leaving every other origin as-is.
+fn substitute_origin_params(
+    origin: crate::origin::Origin,
+    concrete: &impl Fn(crate::origin::OriginParamId) -> Option<crate::origin::Origin>,
+) -> crate::origin::Origin {
+    use crate::origin::Origin;
+    match origin {
+        Origin::Param(id) => concrete(id).unwrap_or(Origin::Param(id)),
+        Origin::Union(members) => Origin::union(
+            members
+                .into_iter()
+                .map(|member| substitute_origin_params(member, concrete)),
+        ),
+        other => other,
     }
 }
 
