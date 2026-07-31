@@ -82,24 +82,30 @@ verification, and the register VM (see `docs/features.md`).
   `Ty::Assoc` carries application arguments (`TyArg` gained a first-class `Origin`
   variant), and a conforming struct's parameterized member resolves concretely by
   substituting them into the member's lowered template. A *type*-parameterized
-  member (`C.Wrap[T]` → `List[T]`) resolves end-to-end and runs. Two carried-over
-  limitations fold into the subtasks below: substituting an *origin* argument
-  supplied as `origin_of(self)` needs the self-origin resolution that arrives with
-  generic borrowed iteration, and *value*-parameter forwarding into another
-  parameterized struct (`Fixed[n]`) is blocked by a pre-existing generic
-  value-forwarding gap unrelated to associated types.
+  member (`C.Wrap[T]` → `List[T]`) resolves end-to-end and runs. Substituting an
+  *origin* argument supplied as `origin_of(self)` now resolves too (see the
+  self-origin note in the borrowed-iteration subtask below). One carried-over
+  limitation remains: *value*-parameter forwarding into another parameterized
+  struct (`Fixed[n]`) is blocked by a pre-existing generic value-forwarding gap
+  unrelated to associated types.
 - [ ] **Generic borrowed reference iteration and the borrowed `Iterable`
   protocol** — migrate the bundled borrowed `Iterable` to current Mojo's
   origin-parameterized `IteratorType[iterable_mut: Bool, //, iterable_origin:
   Origin[mut=iterable_mut]]` with `__iter__(ref self) ->
   Self.IteratorType[origin_of(self)]` (the trait plus the Range/List/Set/Dict
-  conformances), landing the `origin_of(self)` self-origin resolution the
-  substitution plumbing already awaits. Then make borrowed `for ref` iteration
-  generic over origin-bearing iterator elements and remove the concrete
-  List/Set/Dict collection-specific borrow bridges. Cover immutable and mutable
-  origins, generic bounds, structural invalidation, and escape rejection; give a
-  borrowed temporary distinct retained source-owner and iterator slots instead of
-  overwriting its only owner during normalization. The owned `IterableOwned`
+  conformances). *Self-origin resolution has landed:* a trait method's abstract
+  `origin_of(self)` lowers to a symbolic self-origin, so a conforming struct's
+  origin-parameterized associated member (`Self.IteratorType[origin_of(self)]`)
+  resolves concretely and conformance succeeds. What remains: make borrowed
+  `for`/`for ref` iteration generic over origin-bearing iterator elements — a
+  reference-yielding `__next__` flowing through the loop as a handle rather than a
+  value binding, and a borrowed temporary with distinct retained-source-owner and
+  iterator slots instead of overwriting its only owner in one slot during
+  normalization; migrate the bundled borrowed `Iterable` and the
+  Range/List/Set/Dict conformances to the origin-parameterized shape; and remove
+  the concrete List/Set/Dict collection-specific borrow bridges and the List-only
+  `for ref` bridge. Cover immutable and mutable origins, generic bounds,
+  structural invalidation, and escape rejection. The owned `IterableOwned`
   protocol already exposes monomorphic `IteratorOwnedType`; only the borrowed
   contract remains on the legacy monomorphic `Iter` member.
 - [ ] **Owned iteration of linear elements** — in the owned path, permit a List

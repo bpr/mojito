@@ -525,10 +525,20 @@ template. The bundled owned iterator protocol uses the monomorphic
 `IteratorOwnedType` member. Current Mojo's borrowed
 `IteratorType[iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]]`
 and the dependent application `Self.IteratorType[origin_of(self)]` parse, check,
-and arity-validate, but resolving the `origin_of(self)` argument concretely still
-awaits self-origin resolution; until then the borrowed `Iterable` proof protocol
-keeps its monomorphic `Iter` member and the concrete List/Set/Dict
-borrowed/reference-iteration bridges described below preserve provenance.
+and arity-validate.
+
+An `origin_of(self)` argument on a trait method's *abstract* signature has no
+bound `self` place, so it lowers to the symbolic `Origin::SelfParam` — the
+`Origin`-level analogue of the signature contract's `SigOrigin::Self_` — which
+carries the receiver origin through the associated-type application and, like
+every non-`Place` origin, erases from the runtime ABI (collapsing to the single
+mangling marker). A conforming struct then resolves the origin-parameterized
+member concretely, so a requirement returning `Self.IteratorType[origin_of(self)]`
+is satisfiable and conformance succeeds. The borrowed `Iterable` proof protocol
+nonetheless still keeps its monomorphic `Iter` member: migrating it needs the
+reference-yielding generic iteration runtime, so until then the concrete
+List/Set/Dict borrowed/reference-iteration bridges described below preserve
+provenance.
 
 Trait method requirements retain `raises` and an optional concrete error type.
 A nonraising implementation may satisfy a raising requirement; a raising

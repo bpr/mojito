@@ -474,6 +474,9 @@ impl fmt::Display for Ty {
                                         crate::origin::Origin::Place(place) => {
                                             write!(f, "origin@{}", place.root.0)?
                                         }
+                                        crate::origin::Origin::SelfParam => {
+                                            write!(f, "origin_of(self)")?
+                                        }
                                         crate::origin::Origin::Static => write!(f, "static")?,
                                         crate::origin::Origin::Untracked { mutable: true } => {
                                             write!(f, "mut-untracked")?

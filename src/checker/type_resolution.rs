@@ -401,18 +401,16 @@ impl Checker {
             });
         }
         // Carry the application arguments in the checked type. The base here is
-        // still abstract (`Self` or a bounded parameter), so carrying is
-        // best-effort: an argument that needs a context not yet available — an
-        // `origin_of(self)` while the trait's abstract signature is checked, with
-        // no bound `self` place — leaves the application symbolic with no args,
-        // exactly the pre-existing behavior. Concrete substitution and per-kind
-        // argument validation happen once the base is a conforming struct.
+        // still abstract (`Self` or a bounded parameter). An `origin_of(self)`
+        // argument in a trait method's abstract signature has no bound `self`
+        // place; it lowers to the symbolic `Origin::SelfParam`, resolved to the
+        // concrete receiver origin once the base is a conforming struct. Concrete
+        // substitution and per-kind argument validation happen there.
         let arguments = explicit
             .iter()
             .zip(args)
             .map(|(param, arg)| self.lower_assoc_application_arg(param, arg))
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap_or_default();
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Some(Ty::Assoc {
             base: Box::new(base_ty.clone()),
             name: name.to_string(),

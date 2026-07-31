@@ -4186,6 +4186,35 @@ fn unrelated_conditional_conformance_does_not_prove_an_iterator_contract() {
 }
 
 #[test]
+fn self_origin_resolves_a_parameterized_associated_member_on_a_conformer() {
+    // A trait method returning `Self.IterType[origin_of(self)]` has no bound
+    // `self` in its abstract signature; the origin argument is the symbolic
+    // self-origin. A conforming struct's member (`= Bag`) then resolves the
+    // requirement concretely (the origin erases), so a concrete `-> Bag`
+    // implementation satisfies it.
+    ok(
+        "trait HasIter:\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: AnyType\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Bag(Copyable, Movable):\n    var n: Int\n\n@fieldwise_init\nstruct Holder(HasIter):\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Bag\n    var v: Int\n    def make(ref self) -> Bag:\n        return Bag(self.v)\n",
+    );
+}
+
+#[test]
+fn self_origin_requirement_resolves_concretely_and_rejects_a_mismatch() {
+    // The resolved requirement is exactly the conformer's member (`Bag`), so a
+    // method returning a different type fails conformance — proving the
+    // application resolved concretely rather than staying unconstrained.
+    let error = err(
+        "trait HasIter:\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: AnyType\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Bag(Copyable, Movable):\n    var n: Int\n\n@fieldwise_init\nstruct Other(Copyable, Movable):\n    var n: Int\n\n@fieldwise_init\nstruct Holder(HasIter):\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Bag\n    var v: Int\n    def make(ref self) -> Other:\n        return Other(self.v)\n",
+    );
+    assert!(
+        matches!(
+            &error,
+            TypeError::TraitMethodMismatch { .. } | TypeError::TraitNotSatisfied { .. }
+        ),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn owned_iterable_conformance_binds_iterator_owned_type() {
     // The owned protocol's associated iterator is the monomorphic
     // `IteratorOwnedType` (current Mojo's owned-iterator member), consumed by an

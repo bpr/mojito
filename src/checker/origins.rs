@@ -51,6 +51,7 @@ impl Checker {
                                 }
                             }
                             crate::origin::Origin::Param(_)
+                            | crate::origin::Origin::SelfParam
                             | crate::origin::Origin::Static
                             | crate::origin::Origin::Untracked { .. } => {}
                         }
@@ -167,6 +168,18 @@ impl Checker {
                 }
                 args.iter()
                     .map(|place| {
+                        // In an abstract signature — a trait method's return type
+                        // such as `Self.IteratorType[origin_of(self)]` — there is
+                        // no bound `self` place. Represent the receiver origin
+                        // symbolically so the application still carries an
+                        // argument; it is resolved to the concrete receiver origin
+                        // at the conformance/call site and erases at runtime.
+                        if let ExprKind::Identifier(name) = &place.kind
+                            && name == "self"
+                            && self.lookup_owner("self").is_none()
+                        {
+                            return Ok(Origin::SelfParam);
+                        }
                         self.reference_actual(place)
                             .map(|reference| reference.origin)
                     })
@@ -204,7 +217,9 @@ impl Checker {
             Origin::Union(origins) => origins
                 .iter()
                 .any(|origin| self.aggregate_origin_escapes(origin)),
-            Origin::Param(_) | Origin::Static | Origin::Untracked { .. } => false,
+            Origin::Param(_) | Origin::SelfParam | Origin::Static | Origin::Untracked { .. } => {
+                false
+            }
         }
     }
 
@@ -1084,6 +1099,7 @@ impl Checker {
                 }
             }
             crate::origin::Origin::Param(_)
+            | crate::origin::Origin::SelfParam
             | crate::origin::Origin::Static
             | crate::origin::Origin::Untracked { .. } => {}
         }

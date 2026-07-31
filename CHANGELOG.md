@@ -18,6 +18,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Self-origin resolution for a parameterized associated type. A trait method's
+  abstract `Self.IteratorType[origin_of(self)]` has no bound `self` place; its
+  receiver origin now lowers to the symbolic `Origin::SelfParam` (the
+  `Origin`-level analogue of the signature contract's `SigOrigin::Self_`), so the
+  application carries its origin argument instead of collapsing to zero args. A
+  conforming struct then resolves the origin-parameterized member concretely (the
+  origin erasing from the runtime ABI like a pointer origin), so a requirement
+  returning `Self.IteratorType[origin_of(self)]` is satisfiable and conformance
+  succeeds. This is the self-origin prerequisite for migrating the borrowed
+  `Iterable` protocol; the reference-yielding iteration runtime and the stdlib
+  migration remain later work.
+
 - Concrete parameterized-associated-type substitution. The checked `Ty::Assoc`
   now carries a parameterized application's arguments — `TyArg` gained a
   first-class `Origin` variant, so an origin argument participates in checked type
@@ -26,9 +38,9 @@ to evolve under the `0.x` compatibility rules.
   concretely by substituting the arguments into the member's lowered template: a
   type-parameterized member (`C.Wrap[T]` → `List[T]`) resolves end-to-end through
   checked declarations, specialization, HIR, verified MIR, and the register VM.
-  Substituting an `origin_of(self)` origin argument (which needs self-origin
-  resolution) and forwarding a value parameter into another parameterized struct
-  (a pre-existing generic gap) remain later iteration work.
+  (An `origin_of(self)` origin argument now resolves too — see the self-origin
+  entry above. Forwarding a value parameter into another parameterized struct
+  remains blocked by a pre-existing generic value-forwarding gap.)
 
 - Parameterized associated types (foundation). Trait and struct compile-time
   members now retain a parameter list — type, value, and origin parameters with

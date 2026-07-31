@@ -47,16 +47,25 @@ pub struct OriginPlace {
 /// Canonical checked description of storage a reference may designate.
 pub enum Origin {
     Param(OriginParamId),
+    /// The receiver's origin in an abstract signature where no `self` place is
+    /// bound (a trait method's `origin_of(self)` in an associated-type
+    /// application). It is resolved to the concrete receiver origin at the
+    /// conformance/call site, and — like every non-`Place` origin — erases from
+    /// the runtime ABI.
+    SelfParam,
     Place(OriginPlace),
     Union(Vec<Origin>),
     Static,
-    Untracked { mutable: bool },
+    Untracked {
+        mutable: bool,
+    },
 }
 
 impl std::fmt::Display for Origin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Origin::Param(id) => write!(f, "origin#{}", id.0),
+            Origin::SelfParam => write!(f, "origin_of(self)"),
             Origin::Place(place) => {
                 write!(f, "origin_of(#{}", place.root.0)?;
                 for segment in &place.path {
@@ -370,6 +379,7 @@ fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
             Origin::Static => 2,
             Origin::Untracked { .. } => 3,
             Origin::Union(_) => 4,
+            Origin::SelfParam => 5,
         }
     }
     tag(left)
