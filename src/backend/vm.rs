@@ -2598,6 +2598,11 @@ fn navigate_reference_mut<'a>(
                 Value::Tuple(items) => items.get_mut(*index).ok_or_else(|| {
                     RuntimeError::TypeError("reference index out of bounds".to_string())
                 })?,
+                // Offset-0 identity deref of an origin-erased single-pointee
+                // `to=place` pointer written through a mutable origin: the handle
+                // was re-rooted at the pointee itself, so `Index(0)` targets that
+                // value in place (see `read_reference_projection`).
+                _ if *index == 0 => value,
                 _ => {
                     return Err(RuntimeError::TypeError(
                         "mutable index reference did not cross a nominal collection's pointer \

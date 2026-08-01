@@ -130,9 +130,11 @@ verification, and the register VM (see `docs/features.md`).
   borrowed, not copied:* it binds the source slot to a genuine reference (`MakeRef`)
   and records the whole-source dependency as a shared loan on the iterator, so the
   source is not copied, stays live through the loop without the `KeepAlive` hack,
-  and mutating it during iteration is rejected as a loan conflict. What remains: an
-  origin-bearing *pointer* deref return (`self.p[0]`) is still rejected (its place
-  lowering keeps an offset-0 index the runtime cannot yet forward); migrate the
+  and mutating it during iteration is rejected as a loan conflict. *An
+  origin-bearing pointer-deref return (`self.p[0]`) now executes too:* the returned
+  handle re-roots at the single pointee and the VM forwards its offset-0 index, so a
+  method returning `ref[o] Int` from an `UnsafePointer[Int, o]` field reads (and,
+  for a mutable origin, writes) through the source. What remains: migrate the
   bundled borrowed `Iterable` and the Range/List/Set/Dict conformances to the
   origin-parameterized shape; and remove the concrete List/Set/Dict
   collection-specific borrow bridges and the List-only `for ref` bridge. Cover

@@ -1836,7 +1836,14 @@ loan exactly like reference-valued aggregates. Because an origin-bearing
 pointer designates one checked value rather than an allocation, the checker
 rejects non-zero offsets, pointer arithmetic and comparison, `free()`, writes
 through immutable provenance, and returns that would escape the origin
-(`returned pointer escapes storage outside its declared origin`).
+(`returned pointer escapes storage outside its declared origin`). A method may,
+however, return the *dereference* of an origin-bearing pointer field whose origin
+is a struct/callable parameter (`def get(self) -> ref[o] Int: return self.p[0]`):
+the returned `ref[o]` stays within that parameter, so the return-boundary
+re-rooter (`canonical_reference_parts`) follows the field handle to the single
+pointee and retains the residual offset-0 index, which the runtime projection
+walkers forward as the identity deref of that pointee — an immutable origin reads,
+a mutable origin writes through the caller's storage.
 
 ### Loops
 

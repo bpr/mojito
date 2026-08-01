@@ -332,6 +332,14 @@ impl VmBackend {
                     .ok_or_else(|| {
                         RuntimeError::TypeError("closure capture index out of bounds".to_string())
                     })?,
+                // Offset-0 identity deref of an origin-erased single-pointee
+                // `to=place` pointer. `UnsafePointer(to=v)` lowers to a `Value::Ref`
+                // straight at `v`, so `self.p[0]` re-roots (across a return) at the
+                // pointee itself with a residual `Index(0)`. That pointer designates
+                // exactly one value — the checker rejects any other offset — so
+                // index 0 is the value. A non-collection pointee (a scalar, or a
+                // non-List struct falling through the guarded List arm) resolves here.
+                (RefProjection::Index(0), value) => value,
                 (segment, value) => {
                     return Err(RuntimeError::TypeError(format!(
                         "invalid reference projection {segment:?} on {}",

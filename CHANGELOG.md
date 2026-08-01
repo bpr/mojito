@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method may now return the *dereference* of an origin-bearing pointer field
+  whose origin is a struct/callable parameter (`def get(self) -> ref[o] Int:
+  return self.p[0]` on `struct Borrow[o: Origin[...]]` with `var p:
+  UnsafePointer[Int, Self.o]`). `UnsafePointer(to=v)` is a runtime handle straight
+  at `v`, so the returned `ref[o]` re-roots at the single pointee at the return
+  boundary and the VM forwards the pointer's offset-0 index as the identity deref
+  of that pointee — an immutable origin reads, a mutable origin writes through the
+  caller's storage. Previously the checker rejected this shape (`escapes storage`)
+  because the residual offset-0 index had no runtime forwarding.
 - A `for` loop over a user-defined iterator whose `__next__` returns a *reference*
   into the borrowed source now executes: the yielded reference flows through the
   loop as a handle. The loop invokes `__iter__`/`__next__` with the loop frame

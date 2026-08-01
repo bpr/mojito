@@ -859,6 +859,24 @@ fn reference_yielding_iteration_borrows_a_named_source() {
 }
 
 #[test]
+fn returned_origin_pointer_deref_reads_and_writes_through_the_pointee() {
+    // `def get(self) -> ref[o] Int: return self.p[0]` over an origin-bearing
+    // `UnsafePointer[Int, o]` field executes: the returned handle is re-rooted at
+    // the single pointee and the offset-0 index is forwarded to it. Immutable
+    // origin reads `7`; a mutable origin writes `42` back through the source.
+    let read = include_str!("../assets/origin_ok/returned_pointer_deref.mojo");
+    assert_eq!(
+        run_compiled(read).expect("immutable pointer-deref return reads the pointee"),
+        "7\n"
+    );
+    let write = include_str!("../assets/origin_ok/returned_pointer_deref_mut.mojo");
+    assert_eq!(
+        run_compiled(write).expect("mutable pointer-deref return writes through"),
+        "7\n42\n"
+    );
+}
+
+#[test]
 fn reference_list_iteration_writes_through_checked_element_handles() {
     let source = include_str!("../conformance/fixtures/reference_iteration.mojo");
     assert_eq!(

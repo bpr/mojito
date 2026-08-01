@@ -142,12 +142,12 @@ impl Checker {
     /// re-synthesize the storage as a concrete place rooted at the receiver, losing
     /// the parameter binding a `ref[origin]` return contract is checked against.
     ///
-    /// Recognized: a directly-read reference value (`self.value`), and a
-    /// field/element projected through one (`self.src[i]`, `self.pair.first`) — the
-    /// VM re-roots the runtime handle at the borrowed storage. Dereferencing an
-    /// origin-bearing *pointer* (`self.p[0]`) is deliberately *not* recognized: its
-    /// place lowering keeps an offset-0 index the runtime cannot yet forward, so it
-    /// stays rejected at the return boundary until that lands.
+    /// Recognized: a directly-read reference value (`self.value`), a field/element
+    /// projected through one (`self.src[i]`, `self.pair.first`), and dereferencing
+    /// an origin-bearing *pointer* field whose origin is a parameter (`self.p[0]`,
+    /// with `p: UnsafePointer[T, o]`). In each case the VM re-roots the runtime
+    /// handle at the borrowed storage; for the pointer deref it forwards the
+    /// offset-0 index to the single pointee.
     pub(super) fn returned_reference_parameter_origin(
         &self,
         expr: &Expr,
@@ -174,7 +174,21 @@ impl Checker {
                 .map(|reference| reference.origin)
                 .filter(is_abstract)
                 .or_else(|| self.returned_reference_parameter_origin(object)),
-            ExprKind::Index { object, .. } => self.returned_reference_parameter_origin(object),
+            // Dereferencing an origin-bearing pointer field (`self.p[0]`) reaches
+            // storage inside the pointer's origin parameter, just like indexing a
+            // `ref[o]` aggregate. The pointer is not a reference *value*, so recover
+            // the parameter directly from its declared origin; the VM re-roots the
+            // returned handle at the pointee and forwards the offset-0 index.
+            ExprKind::Index { object, .. } => {
+                if let Ok(Ty::Pointer {
+                    origin: crate::origin::PointerOrigin::Param { id, .. },
+                    ..
+                }) = self.infer(object)
+                {
+                    return Some(Origin::Param(id));
+                }
+                self.returned_reference_parameter_origin(object)
+            }
             ExprKind::Identifier(_) => self
                 .infer_reference_value(expr)
                 .map(|reference| reference.origin)
