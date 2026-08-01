@@ -968,6 +968,15 @@ checked indexed element places. These bridges preserve concrete provenance but
 are not a substitute for current Mojo's origin-parameterized associated
 `IteratorType`.
 
+Concrete iterator selection retains an exact checked `__next__` operation:
+target, raising effect, executable result type, and (when present) the
+origin-bearing reference result. HIR and MIR carry that contract unchanged, and
+MIR verification checks it against the selected declaration. Thus a
+reference-yielding iterator writes a `Ty::Ref` register and binding; the VM is
+never relied on to smuggle a reference handle through a register typed as its
+referent. Compiler-private iterator carriers alone omit the nominal operation
+contract.
+
 ### Try Regions
 
 `try` is represented structurally rather than fully inlining all exceptional

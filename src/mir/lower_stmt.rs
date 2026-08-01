@@ -264,7 +264,7 @@ impl Flatten<'_> {
             HirInstr::Next {
                 iter,
                 dest,
-                method,
+                call,
                 element_ty,
                 binding,
             } => {
@@ -274,12 +274,14 @@ impl Flatten<'_> {
                 let r = self.fresh_typed(
                     SourceSpan::new(None, DUMMY_SPAN),
                     Some(*iter),
-                    element_ty.clone(),
+                    call.as_ref()
+                        .map(|call| call.result_ty.clone())
+                        .unwrap_or_else(|| element_ty.clone()),
                 );
                 self.emit(MirInstr::Next {
                     dest: r,
                     iter: *iter,
-                    method: method.clone(),
+                    call: call.clone(),
                 });
                 self.emit(MirInstr::DefVar {
                     var: *dest,
@@ -291,7 +293,7 @@ impl Flatten<'_> {
                 iter,
                 dest,
                 yielded,
-                method,
+                call,
                 exhaustion,
                 element_ty,
                 binding,
@@ -299,13 +301,17 @@ impl Flatten<'_> {
                 if let Some(binding) = binding {
                     self.owner_vars.insert(*binding, *dest);
                 }
-                let element = self.fresh(SourceSpan::new(None, DUMMY_SPAN), Some(*iter));
+                let element = self.fresh_typed(
+                    SourceSpan::new(None, DUMMY_SPAN),
+                    Some(*iter),
+                    call.result_ty.clone(),
+                );
                 let has_element = self.fresh(SourceSpan::new(None, DUMMY_SPAN), Some(*iter));
                 self.emit(MirInstr::TryNext {
                     dest: element,
                     yielded: has_element,
                     iter: *iter,
-                    method: method.clone(),
+                    call: call.clone(),
                     exhaustion: exhaustion.clone(),
                 });
                 self.emit(MirInstr::DefVar {

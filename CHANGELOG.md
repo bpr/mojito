@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Structural iterator selection now preserves a reference-returning
+  `__next__` as an origin-bearing `Ty::Ref` result through the checked protocol,
+  HIR, typed MIR, verification, and VM dispatch. Previously the VM happened to
+  carry the reference handle through a register statically typed as the
+  referent, leaving the checked/MIR boundary inconsistent even though simple
+  reference-yielding loops executed.
 - A method may now return the *dereference* of an origin-bearing pointer field
   whose origin is a struct/callable parameter (`def get(self) -> ref[o] Int:
   return self.p[0]` on `struct Borrow[o: Origin[...]]` with `var p:

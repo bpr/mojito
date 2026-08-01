@@ -18,6 +18,21 @@ fn checked_cfg(src: &str) -> Cfg {
     Cfg::build_checked_fn(&checked, &[], checked.statements())
 }
 
+/// Lower one named function body through the checked HIR handoff.
+fn checked_function_cfg(src: &str, function: &str) -> Cfg {
+    let program = parse(src).expect("parse error");
+    let checked = check_program(&program).expect("type error");
+    let body = checked
+        .statements()
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, body, .. } if name == function => Some(body),
+            _ => None,
+        })
+        .expect("function body");
+    Cfg::build_checked_fn(&checked, &[], body)
+}
+
 /// Every block must be sealed with exactly one terminator (CFG well-formedness).
 fn assert_all_sealed(cfg: &Cfg) {
     for b in cfg.g.node_indices() {
@@ -443,31 +458,62 @@ fn checked_hir_next_retains_a_shadowed_loop_binder_identity() {
 #[test]
 fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
-    let program = mojito::parse(source).expect("parse");
-    let checked = mojito::check_program(&program).expect("check");
-    let body = checked
-        .statements()
-        .iter()
-        .find_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, body, .. } if name == "main" => Some(body),
-            _ => None,
-        })
-        .expect("main body");
-    let cfg = Cfg::build_checked_fn(&checked, &[], body);
+    let cfg = checked_function_cfg(source, "main");
     let operations: Vec<_> = cfg
         .g
         .node_weights()
         .flat_map(|block| &block.instrs)
         .collect();
-    assert!(operations.iter().any(|instruction| matches!(
-        instruction,
-        mojito::hir::HirInstr::TryNext {
-            exhaustion: mojito::Ty::Struct(name, arguments),
-            ..
-        } if name == "StopIteration" && arguments.is_empty()
-    )));
+    let (element_ty, call) = operations
+        .iter()
+        .copied()
+        .find_map(|instruction| match instruction {
+            mojito::hir::HirInstr::TryNext {
+                exhaustion: mojito::Ty::Struct(name, arguments),
+                element_ty,
+                call,
+                ..
+            } if name == "StopIteration" && arguments.is_empty() => Some((element_ty, call)),
+            _ => None,
+        })
+        .expect("typed TryNext");
+    assert_eq!(element_ty, &mojito::Ty::Int);
+    assert_eq!(&call.result_ty, &mojito::Ty::Int);
+    assert!(call.reference_result.is_none());
     assert!(!operations.iter().any(|instruction| matches!(
         instruction,
         mojito::hir::HirInstr::HasNext { .. } | mojito::hir::HirInstr::Next { .. }
     )));
+}
+
+#[test]
+fn checked_hir_reference_yielding_try_next_retains_a_reference_result() {
+    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
+    let cfg = checked_function_cfg(source, "main");
+    let (element_ty, call) = cfg
+        .g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            mojito::hir::HirInstr::TryNext {
+                element_ty, call, ..
+            } => Some((element_ty, call)),
+            _ => None,
+        })
+        .expect("reference-yielding TryNext");
+    assert!(matches!(
+        element_ty,
+        mojito::Ty::Ref(reference) if reference.referent.as_ref() == &mojito::Ty::Int
+    ));
+    assert!(matches!(
+        &call.result_ty,
+        mojito::Ty::Ref(reference) if reference.referent.as_ref() == &mojito::Ty::Int
+    ));
+    assert_eq!(
+        call.reference_result.as_ref(),
+        match &call.result_ty {
+            mojito::Ty::Ref(reference) => Some(reference),
+            _ => None,
+        }
+    );
 }

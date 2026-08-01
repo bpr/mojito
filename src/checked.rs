@@ -158,6 +158,19 @@ pub enum IterationMode {
     Owned,
 }
 
+/// Exact checked contract for one iterator `__next__` call.  The result type is
+/// the type produced by the call itself, so a reference-yielding iterator keeps
+/// its `Ty::Ref` handle type rather than collapsing to the referent.  The
+/// parallel reference fact carries the executable origin/capability contract
+/// needed by lowering, while `raises` records the selected exhaustion effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedIteratorCall {
+    pub target: String,
+    pub result_ty: Ty,
+    pub reference_result: Option<crate::origin::RefTy>,
+    pub raises: Option<Ty>,
+}
+
 /// Exact operations used by the concrete List `for ref` bridge.  This remains
 /// separate from the ordinary iterator protocol because the bundled List
 /// iterator yields copied values; reference iteration indexes the original
@@ -188,7 +201,7 @@ pub struct IterationProtocol {
     pub reference: Option<Box<ReferenceIterationProtocol>>,
     pub prepare: Vec<String>,
     pub has_next: Option<String>,
-    pub next: Option<String>,
+    pub next: Option<Box<CheckedIteratorCall>>,
     pub exhaustion: Option<Ty>,
 }
 

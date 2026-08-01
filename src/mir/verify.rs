@@ -401,6 +401,23 @@ fn declared<'a>(
         .find(|declaration| declaration.lowered_name == callee)
 }
 
+fn iterator_result_matches_declaration(
+    call: &crate::checked::CheckedIteratorCall,
+    declaration: &MirFunctionDeclaration,
+) -> bool {
+    match (&call.reference_result, &call.result_ty) {
+        (Some(reference), Ty::Ref(result_reference)) => {
+            declaration.returns_reference
+                && reference == result_reference
+                && types_compatible(&reference.referent, &declaration.ret_ty)
+        }
+        (None, result) => {
+            !declaration.returns_reference && types_compatible(result, &declaration.ret_ty)
+        }
+        _ => false,
+    }
+}
+
 fn contains_runtime_pack(ty: &Ty) -> bool {
     match ty {
         Ty::RuntimePack(_) => true,
@@ -1944,11 +1961,61 @@ fn verify_instruction(
                 ));
             }
         }
+        MirInstr::Next { dest, iter, call } => {
+            if *iter as usize >= function.n_vars {
+                errors.push(format!("{prefix}: Next uses invalid iterator slot {iter}"));
+            }
+            let Some(call) = call else {
+                return;
+            };
+            if reg_ty(dest) != Some(&call.result_ty) {
+                errors.push(format!(
+                    "{prefix}: Next result does not match its checked type {}",
+                    call.result_ty
+                ));
+            }
+            if call.raises.is_some() {
+                errors.push(format!(
+                    "{prefix}: bounded Next carries a raising iterator contract"
+                ));
+            }
+            if call.target.starts_with("__iterator_dispatch.") {
+                return;
+            }
+            match declared(declarations, &call.target) {
+                None => errors.push(format!(
+                    "{prefix}: Next refers to undeclared iterator method '{}'",
+                    call.target
+                )),
+                Some(declaration) => {
+                    if !declaration.param_types.is_empty()
+                        || declaration.receiver_convention != Some(crate::ast::ArgConvention::Mut)
+                    {
+                        errors.push(format!(
+                            "{prefix}: Next method '{}' is not a nullary 'mut self' operation",
+                            call.target
+                        ));
+                    }
+                    if declaration.raises {
+                        errors.push(format!(
+                            "{prefix}: bounded Next method '{}' unexpectedly raises",
+                            call.target
+                        ));
+                    }
+                    if !iterator_result_matches_declaration(call, declaration) {
+                        errors.push(format!(
+                            "{prefix}: Next result contract does not match '{}'",
+                            call.target
+                        ));
+                    }
+                }
+            }
+        }
         MirInstr::TryNext {
             dest,
             yielded,
             iter,
-            method,
+            call,
             exhaustion,
         } => {
             if *iter as usize >= function.n_vars {
@@ -1973,28 +2040,41 @@ fn verify_instruction(
                     "{prefix}: TryNext catches non-StopIteration type {exhaustion}"
                 ));
             }
-            match declared(declarations, method) {
+            if reg_ty(dest) != Some(&call.result_ty) {
+                errors.push(format!(
+                    "{prefix}: TryNext result does not match its checked type {}",
+                    call.result_ty
+                ));
+            }
+            if call.raises.as_ref() != Some(exhaustion) {
+                errors.push(format!(
+                    "{prefix}: TryNext exhaustion type {exhaustion} does not match its checked call effect"
+                ));
+            }
+            match declared(declarations, &call.target) {
                 None => errors.push(format!(
-                    "{prefix}: TryNext refers to undeclared iterator method '{method}'"
+                    "{prefix}: TryNext refers to undeclared iterator method '{}'",
+                    call.target
                 )),
                 Some(declaration) => {
-                    if !declaration.param_types.is_empty() {
+                    if !declaration.param_types.is_empty()
+                        || declaration.receiver_convention != Some(crate::ast::ArgConvention::Mut)
+                    {
                         errors.push(format!(
-                            "{prefix}: TryNext iterator method '{method}' has {} explicit parameter(s)",
-                            declaration.param_types.len()
+                            "{prefix}: TryNext method '{}' is not a nullary 'mut self' operation",
+                            call.target
                         ));
                     }
                     if !declaration.raises || declaration.error_ty.as_ref() != Some(exhaustion) {
                         errors.push(format!(
-                            "{prefix}: TryNext exhaustion type {exhaustion} does not match '{method}' raising contract"
+                            "{prefix}: TryNext exhaustion type {exhaustion} does not match '{}' raising contract",
+                            call.target
                         ));
                     }
-                    if let Some(found) = reg_ty(dest)
-                        && !types_compatible(found, &declaration.ret_ty)
-                    {
+                    if !iterator_result_matches_declaration(call, declaration) {
                         errors.push(format!(
-                            "{prefix}: TryNext result has type {found}, '{method}' returns {}",
-                            declaration.ret_ty
+                            "{prefix}: TryNext result contract does not match '{}'",
+                            call.target
                         ));
                     }
                 }

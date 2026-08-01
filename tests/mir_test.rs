@@ -555,17 +555,63 @@ fn raising_iterator_lowers_to_typed_try_next() {
         .map(|(_, function)| function)
         .expect("main MIR");
     let instructions: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
-    assert!(instructions.iter().any(|instruction| matches!(
-        instruction,
-        MirInstr::TryNext {
-            exhaustion: mojito::Ty::Struct(name, arguments),
-            ..
-        } if name == "StopIteration" && arguments.is_empty()
-    )));
+    let (dest, call) = instructions
+        .iter()
+        .copied()
+        .find_map(|instruction| match instruction {
+            MirInstr::TryNext {
+                dest,
+                call,
+                exhaustion: mojito::Ty::Struct(name, arguments),
+                ..
+            } if name == "StopIteration" && arguments.is_empty() => Some((dest, call)),
+            _ => None,
+        })
+        .expect("typed TryNext");
+    assert_eq!(main.reg_types.get(&dest.0), Some(&mojito::Ty::Int));
+    assert_eq!(&call.result_ty, &mojito::Ty::Int);
+    assert!(call.reference_result.is_none());
     assert!(!instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::HasNext { .. } | MirInstr::Next { .. }
     )));
+}
+
+#[test]
+fn reference_yielding_try_next_retains_a_typed_reference_destination() {
+    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
+    let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
+    let main = &program
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main MIR")
+        .1;
+    let (dest, call) = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::TryNext { dest, call, .. } => Some((dest, call)),
+            _ => None,
+        })
+        .expect("reference-yielding TryNext");
+    let destination_ty = main
+        .reg_types
+        .get(&dest.0)
+        .expect("typed TryNext destination");
+    assert!(matches!(
+        destination_ty,
+        mojito::Ty::Ref(reference) if reference.referent.as_ref() == &mojito::Ty::Int
+    ));
+    assert_eq!(&call.result_ty, destination_ty);
+    assert_eq!(
+        call.reference_result.as_ref(),
+        match destination_ty {
+            mojito::Ty::Ref(reference) => Some(reference),
+            _ => None,
+        }
+    );
 }
 
 #[test]

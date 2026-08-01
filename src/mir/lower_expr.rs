@@ -389,7 +389,12 @@ impl Flatten<'_> {
                 let binding = bindings
                     .get(binding_index)
                     .expect("checked comprehension binder metadata");
-                let element_value = self.fresh(iter.source_span(), Some(iterator));
+                let yield_ty = protocol
+                    .next
+                    .as_ref()
+                    .map(|call| call.result_ty.clone())
+                    .unwrap_or_else(|| binding.ty.clone());
+                let element_value = self.fresh_typed(iter.source_span(), Some(iterator), yield_ty);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = header;
                 let has_next = self.fresh(iter.source_span(), Some(iterator));
@@ -398,10 +403,10 @@ impl Flatten<'_> {
                         dest: element_value,
                         yielded: has_next,
                         iter: iterator,
-                        method: protocol
+                        call: *protocol
                             .next
                             .clone()
-                            .expect("raising iterator has checked __next__ symbol"),
+                            .expect("raising iterator has checked __next__ contract"),
                         exhaustion,
                     });
                 } else {
@@ -422,7 +427,7 @@ impl Flatten<'_> {
                     self.emit(MirInstr::Next {
                         dest: element_value,
                         iter: iterator,
-                        method: protocol.next.clone(),
+                        call: protocol.next.as_deref().cloned(),
                     });
                 }
                 let binding_var = self.var(&format!("$comp{}${}", var, binding.owner.0));

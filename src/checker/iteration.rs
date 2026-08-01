@@ -129,12 +129,13 @@ impl Checker {
                         ),
                     });
                 }
+                let element = Ty::Assoc {
+                    base: Box::new(ty.clone()),
+                    name: "Element".to_string(),
+                    args: Vec::new(),
+                };
                 Ok((
-                    Ty::Assoc {
-                        base: Box::new(ty.clone()),
-                        name: "Element".to_string(),
-                        args: Vec::new(),
-                    },
+                    element.clone(),
                     IterationProtocol {
                         mode,
                         borrowed_origin: None,
@@ -144,7 +145,12 @@ impl Checker {
                             IterationMode::Owned => crate::ast::ArgConvention::Var,
                         })],
                         has_next: Some("__iterator_dispatch.__len__".to_string()),
-                        next: Some("__iterator_dispatch.__next__".to_string()),
+                        next: Some(Box::new(crate::checked::CheckedIteratorCall {
+                            target: "__iterator_dispatch.__next__".to_string(),
+                            result_ty: element,
+                            reference_result: None,
+                            raises: None,
+                        })),
                         exhaustion: None,
                     },
                 ))
@@ -199,7 +205,7 @@ impl Checker {
             })
             .filter_map(|sig| {
                 self.instantiate_iteration_method(cname, cinfo, ctargs, sig)
-                    .map(|(ret, error)| (sig, ret, error))
+                    .map(|(ret, _, error)| (sig, ret, error))
             })
             .collect::<Vec<_>>();
         let [(iter_sig, it_ty, iter_error)] = matching.as_slice() else {
@@ -257,10 +263,10 @@ impl Checker {
             .iter()
             .filter_map(|sig| {
                 self.instantiate_iteration_method(iname, iinfo, itargs, sig)
-                    .map(|(ret, error)| (sig, ret, error))
+                    .map(|(ret, reference, error)| (sig, ret, reference, error))
             })
             .collect::<Vec<_>>();
-        let [(next_sig, element, next_error)] = applicable_next.as_slice() else {
+        let [(next_sig, element, reference_result, next_error)] = applicable_next.as_slice() else {
             return Err(no_method(it_ty, "__next__"));
         };
         if !matches!(
@@ -281,6 +287,12 @@ impl Checker {
             method_lowered_name(iname, "__next__", next_sig)
         } else {
             format!("{iname}.__next__")
+        };
+        let checked_next = crate::checked::CheckedIteratorCall {
+            target: next_symbol,
+            result_ty: element.clone(),
+            reference_result: reference_result.clone(),
+            raises: next_error.clone(),
         };
         if next_sig.raises {
             let exhaustion = next_error.clone().unwrap_or(Ty::Error);
@@ -305,7 +317,7 @@ impl Checker {
                     reference: None,
                     prepare: vec![prepare_symbol],
                     has_next: None,
-                    next: Some(next_symbol),
+                    next: Some(Box::new(checked_next)),
                     exhaustion: Some(exhaustion),
                 },
             ));
@@ -321,7 +333,7 @@ impl Checker {
             .iter()
             .filter_map(|sig| {
                 self.instantiate_iteration_method(iname, iinfo, itargs, sig)
-                    .map(|(ret, _)| (sig, ret))
+                    .map(|(ret, _, _)| (sig, ret))
             })
             .collect::<Vec<_>>();
         let [(len_sig, len_ret)] = applicable_len.as_slice() else {
@@ -352,7 +364,7 @@ impl Checker {
                         format!("{iname}.__len__")
                     },
                 ),
-                next: Some(next_symbol),
+                next: Some(Box::new(checked_next)),
                 exhaustion: None,
             },
         ))
@@ -370,7 +382,7 @@ impl Checker {
         info: &StructInfo,
         receiver_arguments: &[TyArg],
         signature: &MethodSig,
-    ) -> Option<(Ty, Option<Ty>)> {
+    ) -> Option<(Ty, Option<crate::origin::RefTy>, Option<Ty>)> {
         if !signature.has_self || !signature.params.is_empty() {
             return None;
         }
@@ -400,6 +412,7 @@ impl Checker {
                 &[],
             )
             .ok()?;
+        let method_arguments = arguments.clone();
         // Iterator dunders have no explicit runtime arguments. A variadic or
         // keyword-variadic declaration is not the exact protocol shape even
         // though an empty ordinary call could technically invoke it.
@@ -416,8 +429,27 @@ impl Checker {
             return None;
         }
         let instantiate = |ty: &Ty| substitute(&substitute(ty, &receiver_subst), &method_subst);
+        let referent = instantiate(&signature.ret);
+        let mut semantic_arguments = receiver_arguments.to_vec();
+        semantic_arguments.extend(signature.decls.iter().filter_map(|declaration| {
+            method_arguments
+                .get(declaration.name().trim_start_matches('*'))
+                .cloned()
+        }));
+        let reference_result = signature.ref_return.as_ref().map(|reference| {
+            instantiate_iterator_reference(
+                reference,
+                referent.clone(),
+                &semantic_arguments,
+                signature.self_convention == Some(crate::ast::ArgConvention::Mut),
+            )
+        });
+        let result = reference_result
+            .as_ref()
+            .map_or_else(|| referent.clone(), |reference| Ty::Ref(reference.clone()));
         Some((
-            instantiate(&signature.ret),
+            result,
+            reference_result,
             signature.raises.then(|| {
                 signature
                     .error
@@ -427,4 +459,103 @@ impl Checker {
             }),
         ))
     }
+}
+
+fn instantiate_iterator_reference(
+    signature: &crate::origin::RefSig,
+    referent: Ty,
+    arguments: &[TyArg],
+    mutable_receiver: bool,
+) -> crate::origin::RefTy {
+    use crate::origin::{Mutability, RefTy, SigMutability};
+
+    let origin = instantiate_iterator_sig_origin(&signature.origin, arguments);
+    let mutability = match signature.mutability {
+        SigMutability::Immutable => Mutability::Immutable,
+        SigMutability::Mutable => Mutability::Mutable,
+        SigMutability::BoolParam(index) => match iterator_bool_argument(arguments, index) {
+            Some(true) => Mutability::Mutable,
+            Some(false) => Mutability::Immutable,
+            None => Mutability::Param(crate::origin::OriginParamId(index as u32)),
+        },
+        SigMutability::Infer => match &origin {
+            crate::origin::Origin::Static => Mutability::Immutable,
+            crate::origin::Origin::Untracked { mutable: true } => Mutability::Mutable,
+            crate::origin::Origin::Untracked { mutable: false } => Mutability::Immutable,
+            crate::origin::Origin::Param(parameter) => Mutability::Param(*parameter),
+            _ if mutable_receiver => Mutability::Mutable,
+            _ => Mutability::Immutable,
+        },
+    };
+    RefTy {
+        referent: Box::new(referent),
+        origin,
+        mutability,
+    }
+}
+
+fn instantiate_iterator_sig_origin(
+    signature: &crate::origin::SigOrigin,
+    arguments: &[TyArg],
+) -> crate::origin::Origin {
+    use crate::origin::{Origin, OriginParamId, SigOrigin};
+
+    match signature {
+        SigOrigin::Self_ | SigOrigin::Infer => Origin::SelfParam,
+        SigOrigin::Param(index) => Origin::Param(OriginParamId(*index as u32)),
+        SigOrigin::Bound(origin) => instantiate_iterator_bound_origin(origin, arguments),
+        SigOrigin::Static => Origin::Static,
+        SigOrigin::Untracked { mutable } => Origin::Untracked { mutable: *mutable },
+        SigOrigin::Projected(base, path) => crate::checker::origins::project_origin(
+            instantiate_iterator_sig_origin(base, arguments),
+            path,
+        ),
+        SigOrigin::Union(members) => Origin::union(
+            members
+                .iter()
+                .map(|member| instantiate_iterator_sig_origin(member, arguments)),
+        ),
+    }
+}
+
+fn instantiate_iterator_bound_origin(
+    origin: &crate::origin::Origin,
+    arguments: &[TyArg],
+) -> crate::origin::Origin {
+    use crate::origin::Origin;
+
+    match origin {
+        Origin::Param(parameter) => iterator_origin_argument(arguments, parameter.0 as usize)
+            .unwrap_or(Origin::Param(*parameter)),
+        Origin::Union(members) => Origin::union(
+            members
+                .iter()
+                .map(|member| instantiate_iterator_bound_origin(member, arguments)),
+        ),
+        _ => origin.clone(),
+    }
+}
+
+fn iterator_origin_argument(arguments: &[TyArg], index: usize) -> Option<crate::origin::Origin> {
+    if let Some(TyArg::Origin(origin)) = arguments.get(index) {
+        return Some(origin.clone());
+    }
+    let mut origins = arguments.iter().filter_map(|argument| match argument {
+        TyArg::Origin(origin) => Some(origin),
+        TyArg::Ty(_) | TyArg::Val(_) => None,
+    });
+    let only = origins.next()?.clone();
+    origins.next().is_none().then_some(only)
+}
+
+fn iterator_bool_argument(arguments: &[TyArg], index: usize) -> Option<bool> {
+    if let Some(TyArg::Val(crate::ct::CtValue::Bool(value))) = arguments.get(index) {
+        return Some(*value);
+    }
+    let mut values = arguments.iter().filter_map(|argument| match argument {
+        TyArg::Val(crate::ct::CtValue::Bool(value)) => Some(*value),
+        TyArg::Ty(_) | TyArg::Origin(_) | TyArg::Val(_) => None,
+    });
+    let only = values.next()?;
+    values.next().is_none().then_some(only)
 }

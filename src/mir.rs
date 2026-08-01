@@ -2046,25 +2046,31 @@ fn close_register_types(
                         }),
                     )),
                     MirInstr::HasNext { dest, .. } => Some((dest, Some(Ty::Bool))),
-                    MirInstr::Next { dest, iter, .. } | MirInstr::TryNext { dest, iter, .. } => {
-                        // The element register's type is the loop variable's
-                        // checked binding type (its definition may sit in the
-                        // loop's body block), or falls back to the iterator
-                        // slot's element type.
-                        let consumer = blocks
-                            .iter()
-                            .flat_map(|candidate| candidate.instrs.iter())
-                            .find_map(|candidate| match candidate {
-                                MirInstr::DefVar {
-                                    src,
-                                    binding_ty: Some(ty),
-                                    ..
-                                } if src == dest => Some(ty.clone()),
-                                MirInstr::DefVar { src, var, .. } if src == dest => {
-                                    var_tys.get(var).cloned()
-                                }
-                                MirInstr::Store { place, src } if src == dest => place.ty.clone(),
-                                _ => None,
+                    MirInstr::Next { dest, iter, call } => {
+                        // Nominal iteration carries its checked executable
+                        // result directly. Only compiler-private storage has no
+                        // call contract and needs the binding/slot fallback.
+                        let result = call
+                            .as_ref()
+                            .map(|call| call.result_ty.clone())
+                            .or_else(|| {
+                                blocks
+                                    .iter()
+                                    .flat_map(|candidate| candidate.instrs.iter())
+                                    .find_map(|candidate| match candidate {
+                                        MirInstr::DefVar {
+                                            src,
+                                            binding_ty: Some(ty),
+                                            ..
+                                        } if src == dest => Some(ty.clone()),
+                                        MirInstr::DefVar { src, var, .. } if src == dest => {
+                                            var_tys.get(var).cloned()
+                                        }
+                                        MirInstr::Store { place, src } if src == dest => {
+                                            place.ty.clone()
+                                        }
+                                        _ => None,
+                                    })
                             })
                             .or_else(|| {
                                 var_tys.get(iter).and_then(|ty| match ty {
@@ -2074,7 +2080,10 @@ fn close_register_types(
                                     _ => None,
                                 })
                             });
-                        Some((dest, consumer))
+                        Some((dest, result))
+                    }
+                    MirInstr::TryNext { dest, call, .. } => {
+                        Some((dest, Some(call.result_ty.clone())))
                     }
                     MirInstr::EstablishLoans { marker, .. }
                     | MirInstr::InvalidateInteriors { marker, .. }

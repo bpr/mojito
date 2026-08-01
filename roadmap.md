@@ -68,80 +68,30 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-The former single "Parameterized associated types and borrowed iterator origins"
-task is split into the subtasks below. Its foundation and concrete substitution
-have landed: trait/struct associated members retain type/value/origin parameter
-lists (with the `//` infer-only boundary); a parameterized application such as
-`Self.IteratorType[origin_of(self)]` is arity-validated; the checked type carries
-the application's arguments (type, value, and *origin*, first-class in `TyArg`);
-and a type-parameterized member instantiated by a conforming struct resolves
-concretely through checked declarations, specialization, HIR, typed MIR,
-verification, and the register VM (see `docs/features.md`).
-
-- [x] **Concrete parameterized-associated-type substitution** — the checked
-  `Ty::Assoc` carries application arguments (`TyArg` gained a first-class `Origin`
-  variant), and a conforming struct's parameterized member resolves concretely by
-  substituting them into the member's lowered template. A *type*-parameterized
-  member (`C.Wrap[T]` → `List[T]`) resolves end-to-end and runs. Substituting an
-  *origin* argument supplied as `origin_of(self)` now resolves too (see the
-  self-origin note in the borrowed-iteration subtask below). One carried-over
-  limitation remains: *value*-parameter forwarding into another parameterized
-  struct (`Fixed[n]`) is blocked by a pre-existing generic value-forwarding gap
-  unrelated to associated types.
-- [ ] **Generic borrowed reference iteration and the borrowed `Iterable`
-  protocol** — migrate the bundled borrowed `Iterable` to current Mojo's
-  origin-parameterized `IteratorType[iterable_mut: Bool, //, iterable_origin:
-  Origin[mut=iterable_mut]]` with `__iter__(ref self) ->
-  Self.IteratorType[origin_of(self)]` (the trait plus the Range/List/Set/Dict
-  conformances). *Self-origin resolution has landed:* a trait method's abstract
-  `origin_of(self)` lowers to a symbolic self-origin, so a conforming struct's
-  origin-parameterized associated member (`Self.IteratorType[origin_of(self)]`)
-  resolves concretely and conformance succeeds — including when a conformer spells
-  that application directly as its own `__iter__(ref self)` return type. A
-  borrowed temporary now also keeps distinct retained-source-owner and iterator
-  slots (instead of overwriting its only owner during normalization), so its
-  `__del__` runs after the loop and a future origin-bearing iterator has a live
-  source to loan. *Returning a struct-origin-parameter reference has landed:* a
-  method may return a `ref[origin] T` field/binding whose origin is a struct
-  origin parameter (the handle names its own borrowed region), which a
-  reference-yielding `__next__` needs. *Projecting through a `ref[origin]`
-  aggregate across a return now executes:* a reference indexed/projected out of a
-  `ref[origin] <aggregate>` field (`self.src[i]`) is re-rooted by the VM at the
-  borrowed storage, so it survives the accessor frame — including when the receiver
-  is a `mut`/`ref self` handle to a caller frame. *Reading a `ref[origin]` field's
-  referent under a `mut`/`ref self` receiver now works too* (subscript, `len`, …):
-  the borrowed-receiver runtime alias no longer leaves the field load as its stored
-  handle, so a `mut self` `__next__`'s `len(self.src)`/`self.src[i]` value reads
-  succeed. *A reference returned from a struct method and bound to a `ref` local
-  now keeps its source alive:* the returned reference's struct origin parameter
-  resolves to the origin the receiver's `ref[o]` field borrows, so the loan roots
-  at the ultimate owner and it is not dropped while the reference is live — so a
-  `mut self` reference-yielding accessor (`def take(mut self) -> ref[o] Int: return
-  self.src[i]`) bound to `ref` locals now reads and writes through end-to-end.
-  *A `for` loop over a user-defined reference-yielding iterator now executes:* the
-  loop invokes `__iter__`/`__next__` with the loop frame reachable (previously the
-  synchronous `call_frame` path drove the callee with its caller popped out of the
-  frame stack, so a user iterator holding a `ref` into the loop frame could not
-  dereference it — `stale reference to frame N`), and a borrowed `__iter__(ref
-  self)` receives a `ref self` handle so the iterator's borrow roots at the live
-  loop frame. The yielded reference flows through the loop as a handle. This holds
-  for an owned-temporary source (`for x in Numbers(3)`), which is retained and
-  dropped exactly once after the loop. *A *named* source (`for x in nums`) is now
-  borrowed, not copied:* it binds the source slot to a genuine reference (`MakeRef`)
-  and records the whole-source dependency as a shared loan on the iterator, so the
-  source is not copied, stays live through the loop without the `KeepAlive` hack,
-  and mutating it during iteration is rejected as a loan conflict. *An
-  origin-bearing pointer-deref return (`self.p[0]`) now executes too:* the returned
-  handle re-roots at the single pointee and the VM forwards its offset-0 index, so a
-  method returning `ref[o] Int` from an `UnsafePointer[Int, o]` field reads (and,
-  for a mutable origin, writes) through the source. What remains: migrate the
-  bundled borrowed `Iterable` and the Range/List/Set/Dict conformances to the
-  origin-parameterized shape; and remove the concrete List/Set/Dict
-  collection-specific borrow bridges and the List-only `for ref` bridge. Cover
-  mutable origins, generic bounds, structural invalidation, and escape rejection.
-  The owned `IterableOwned` protocol already exposes monomorphic
-  `IteratorOwnedType`; only the borrowed contract remains on the legacy monomorphic
-  `Iter` member.
+- [ ] **`Copyable` iterator-result refinement** — permit a concrete
+  `__next__ -> ref[o] T` to satisfy an abstract `__next__ -> T` requirement when
+  `T` is `Copyable`, with an explicit abstract-call read/copy adapter; reject
+  mismatched referents, the reverse direction, and linear values.
+- [ ] **Loop binding and source modes** — model immutable, `var`, and `ref` loop
+  bindings independently from whether the source is borrowed or consumed, with
+  explicit copy, move, and reference requirements for each combination.
+- [ ] **Uniform borrowed-source lowering** — lower borrowed sources through
+  `MakeRef` with distinct retained-source and iterator-object slots; represent
+  whole-source versus interior borrowing only as loan granularity and use the
+  same rules for comprehensions.
+- [ ] **Origin-parameterized borrowed `Iterable`** — adopt
+  `IteratorType[iterable_mut: Bool, //, iterable_origin:
+  Origin[mut=iterable_mut]]` and
+  `__iter__(ref self) -> Self.IteratorType[origin_of(self)]`; migrate Range,
+  List, Set, Dict, HashDict, StringDict, and generic library consumers.
+- [ ] **Generic reference-yielding collection iteration** — make List and Set
+  iterators borrow their source and yield element references, route generic
+  `for ref` through the selected iterator result, and remove the List-only index
+  desugaring.
+- [ ] **Mapping invalidation and borrowed-iteration safety** — define mapping
+  mutation during iteration, remove the remaining collection-specific bridges,
+  and cover shared/mutable origins, generic bounds, element replacement,
+  structural invalidation, comprehension parity, and reference-escape rejection.
 - [ ] **Owned iteration of linear elements** — in the owned path, permit a List
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a

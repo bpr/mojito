@@ -207,7 +207,10 @@ pub enum HirInstr {
     Next {
         iter: VarId,
         dest: VarId,
-        method: Option<String>,
+        /// Exact checker-selected `__next__` operation. `None` is reserved for
+        /// compiler-private iterator storage; nominal iterators always retain
+        /// their selected target and executable result convention here.
+        call: Option<crate::checked::CheckedIteratorCall>,
         /// Checker-resolved element type for the loop binding. Keeping it on
         /// HIR makes legacy bounded iteration as typed as the raising path;
         /// MIR must not recover it from a later consumer or iterator spelling.
@@ -222,7 +225,8 @@ pub enum HirInstr {
         iter: VarId,
         dest: VarId,
         yielded: VarId,
-        method: String,
+        /// Exact checker-selected reference/value result and effect contract.
+        call: crate::checked::CheckedIteratorCall,
         exhaustion: Ty,
         element_ty: Ty,
         binding: Option<crate::origin::OwnerId>,
@@ -1435,10 +1439,10 @@ impl Lower {
                         iter: iter_var,
                         dest: v,
                         yielded: hn_var,
-                        method: protocol
+                        call: *protocol
                             .next
                             .clone()
-                            .expect("raising iterator has checked __next__ symbol"),
+                            .expect("raising iterator has checked __next__ contract"),
                         exhaustion,
                         element_ty,
                         binding,
@@ -1463,7 +1467,7 @@ impl Lower {
                     self.push(HirInstr::Next {
                         iter: iter_var,
                         dest: v,
-                        method: protocol.next.clone(),
+                        call: protocol.next.as_deref().cloned(),
                         element_ty: element_ty
                             .clone()
                             .expect("checked bounded for-loop binding type"),

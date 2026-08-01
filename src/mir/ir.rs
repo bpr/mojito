@@ -697,7 +697,9 @@ pub enum MirInstr {
     Next {
         dest: Reg,
         iter: VarId,
-        method: Option<String>,
+        /// Exact checked nominal operation; absent only for compiler-private
+        /// iterator storage.
+        call: Option<crate::checked::CheckedIteratorCall>,
     },
     /// Invoke a typed-raising iterator `__next__`. `yielded` is true when
     /// `dest` contains an element and false when the call raises exactly the
@@ -706,7 +708,8 @@ pub enum MirInstr {
         dest: Reg,
         yielded: Reg,
         iter: VarId,
-        method: String,
+        /// Exact selected target, reference/value ABI, and raising effect.
+        call: crate::checked::CheckedIteratorCall,
         exhaustion: Ty,
     },
 }

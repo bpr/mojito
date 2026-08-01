@@ -1373,12 +1373,12 @@ impl VmBackend {
                 };
                 regs[dest.0 as usize] = Value::Bool(has);
             }
-            MirInstr::Next { dest, iter, method } => {
+            MirInstr::Next { dest, iter, call } => {
                 let slot = *iter as usize;
                 // A struct iterator advances via `__next__(mut self)`: the element is
                 // the return value, and the advanced iterator (frame slot 0) is
                 // written back into the iterator variable.
-                if let Some(selected) = method {
+                if let Some(call) = call {
                     let Value::Struct { name, .. } = &vars[slot] else {
                         return Err(RuntimeError::TypeError(format!(
                             "vm: checked iterator next applied to {}",
@@ -1387,7 +1387,7 @@ impl VmBackend {
                     };
                     let sname = name.clone();
                     let target =
-                        prog.runtime_method_name(&sname, "__next__", Some(selected.as_str()), 0);
+                        prog.runtime_method_name(&sname, "__next__", Some(call.target.as_str()), 0);
                     let fidx = prog.index_of(&target).ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
                             "vm: checked iterator method '{target}' is missing from MIR"
@@ -1424,7 +1424,7 @@ impl VmBackend {
                 dest,
                 yielded,
                 iter,
-                method,
+                call,
                 exhaustion,
             } => {
                 let slot = *iter as usize;
@@ -1435,7 +1435,12 @@ impl VmBackend {
                     )));
                 };
                 let receiver_name = name.clone();
-                let target = prog.runtime_method_name(&receiver_name, "__next__", Some(method), 0);
+                let target = prog.runtime_method_name(
+                    &receiver_name,
+                    "__next__",
+                    Some(call.target.as_str()),
+                    0,
+                );
                 let fidx = prog.index_of(&target).ok_or_else(|| {
                     RuntimeError::Unsupported(format!(
                         "vm: checked iterator method '{target}' is missing from MIR"

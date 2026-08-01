@@ -3811,9 +3811,15 @@ fn user_iterator_protocol_typing() {
 
 #[test]
 fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
-    ok(
-        "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n",
-    );
+    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n";
+    let program = parse(source).expect("parse value-yielding iterator");
+    let checked = check_program(&program).expect("check value-yielding iterator");
+    let value = checked
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.name == "value")
+        .expect("loop binding");
+    assert_eq!(value.ty.as_ref(), Some(&mojito::Ty::Int));
 
     let error = err(
         "@fieldwise_init\nstruct OtherError:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    def __next__(mut self) raises OtherError -> Int:\n        raise OtherError(0)\n        return self.current\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n",
@@ -3823,6 +3829,22 @@ fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
             if context == "iterator '__next__' exhaustion contract"),
         "got {error:?}"
     );
+}
+
+#[test]
+fn raising_reference_iterator_preserves_the_reference_loop_binding_type() {
+    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
+    let program = parse(source).expect("parse reference-yielding iterator");
+    let checked = check_program(&program).expect("check reference-yielding iterator");
+    let item = checked
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.name == "item")
+        .expect("loop binding");
+    assert!(matches!(
+        item.ty.as_ref(),
+        Some(mojito::Ty::Ref(reference)) if reference.referent.as_ref() == &mojito::Ty::Int
+    ));
 }
 
 #[test]

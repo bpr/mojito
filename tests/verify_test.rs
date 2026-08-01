@@ -1391,7 +1391,12 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
                 dest: Reg(0),
                 yielded: Reg(1),
                 iter: 0,
-                method: "Iterator.__next__".to_string(),
+                call: mojito::checked::CheckedIteratorCall {
+                    target: "Iterator.__next__".to_string(),
+                    result_ty: Ty::Int,
+                    reference_result: None,
+                    raises: Some(other_error.clone()),
+                },
                 exhaustion: other_error,
             }],
             MirTerm::Return(None),
@@ -1417,8 +1422,8 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
         positional_only: None,
         keyword_only: None,
         param_decls: Vec::new(),
-        has_receiver: false,
-        receiver_convention: None,
+        has_receiver: true,
+        receiver_convention: Some(mojito::ast::ArgConvention::Mut),
         param_conventions: Vec::new(),
         ret_ty: Ty::Int,
         returns_reference: false,
@@ -1429,4 +1434,65 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
 
     expect_finding(&prog, "TryNext catches non-StopIteration type OtherError");
     expect_finding(&prog, "does not match 'Iterator.__next__' raising contract");
+}
+
+#[test]
+fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
+    use mojito::mir::MirFunctionDeclaration;
+
+    let stop_iteration = Ty::Struct("StopIteration".to_string(), Vec::new());
+    let result_ty = reference_ty(Ty::Int, mojito::Mutability::Immutable);
+    let Ty::Ref(reference_result) = &result_ty else {
+        unreachable!("reference_ty constructs Ty::Ref")
+    };
+    let mut f = function(
+        vec![block(
+            vec![MirInstr::TryNext {
+                dest: Reg(0),
+                yielded: Reg(1),
+                iter: 0,
+                call: mojito::checked::CheckedIteratorCall {
+                    target: "Iterator.__next__".to_string(),
+                    result_ty: result_ty.clone(),
+                    reference_result: Some(reference_result.clone()),
+                    raises: Some(stop_iteration.clone()),
+                },
+                exhaustion: stop_iteration.clone(),
+            }],
+            MirTerm::Return(None),
+        )],
+        2,
+        &[(0, result_ty), (1, Ty::Bool)],
+    );
+    f.var_names[0] = "iterator".to_string();
+    f.var_tys
+        .insert(0, Ty::Struct("Iterator".to_string(), Vec::new()));
+
+    let mut prog = program(f);
+    prog.declarations.functions.push(MirFunctionDeclaration {
+        lowered_name: "Iterator.__next__".to_string(),
+        param_names: Vec::new(),
+        param_types: Vec::new(),
+        defaults: Vec::new(),
+        required: Vec::new(),
+        variadic: None,
+        variadic_index: None,
+        kw_variadic: None,
+        kw_variadic_index: None,
+        positional_only: None,
+        keyword_only: None,
+        param_decls: Vec::new(),
+        has_receiver: true,
+        receiver_convention: Some(mojito::ast::ArgConvention::Mut),
+        param_conventions: Vec::new(),
+        ret_ty: Ty::Int,
+        // Deliberately corrupt: the checked operation returns a reference, but
+        // the retained declaration claims an owned-value ABI.
+        returns_reference: false,
+        raises: true,
+        error_ty: Some(stop_iteration),
+        ref_params: Vec::new(),
+    });
+
+    expect_finding(&prog, "TryNext result contract does not match");
 }
