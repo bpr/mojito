@@ -1235,6 +1235,13 @@ impl VmBackend {
                     .find(|symbol| symbol.starts_with("__trait_dispatch."))
                     .cloned();
                 let mut current = vars[*source as usize].clone();
+                // A borrowed named source binds the source slot to a reference;
+                // follow it to the underlying source struct for method resolution.
+                // A borrowed `__iter__(ref self)` re-roots at the source below via
+                // `reference_to_place_parts`, so this deref is only for the name.
+                if matches!(current, Value::Ref { .. }) {
+                    current = self.read_reference(&current, frame_id, vars)?;
+                }
                 for (step, selected) in prepare.iter().enumerate() {
                     let Value::Struct { name, .. } = &current else {
                         return Err(RuntimeError::TypeError(format!(

@@ -232,6 +232,10 @@ fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::TryNext { dest, iter, .. } => {
             vec![(*iter, *dest)]
         }
+        // `GetIter` normalizes its source into the iterator; count the source as a
+        // use so a borrowed named source (a reference bound before the loop) stays
+        // live through the read and is not dropped before the iterator is derived.
+        MirInstr::GetIter { source, .. } => vec![(*source, Reg(0))],
         // A `try` reads every variable its sub-regions read: the outer liveness must
         // treat it as one big use, so a value used only inside the `try` is not
         // dropped *before* it.

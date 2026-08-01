@@ -1363,9 +1363,26 @@ impl Lower {
                 // Only borrowed iteration retains the source: owned iteration
                 // (`__iter__(var self)`) consumes it into the iterator, so the
                 // source must keep the single slot and not be dropped again.
+                // A concrete collection borrows an interior element generation and
+                // normalizes in place (its iterator holds a heap pointer, not a
+                // frame reference), so it keeps the single source slot. Any other
+                // borrowed user iterator (a whole-value named borrow, or a copied
+                // temporary) holds a frame reference into the source, so it needs a
+                // distinct iterator slot: `GetIter` normalization must not clobber
+                // the source slot the iterator still refers to.
+                let borrowed_interior = protocol.borrowed_origin.as_ref().is_some_and(|origin| {
+                    origin
+                        .path
+                        .iter()
+                        .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
+                });
                 let split_source = matches!(protocol.mode, crate::IterationMode::Borrowed)
-                    && protocol.borrowed_origin.is_none()
-                    && !protocol.prepare.is_empty();
+                    && !protocol.prepare.is_empty()
+                    && !borrowed_interior;
+                // A `BorrowIter`'d source (borrowed origin present) is a loan of
+                // storage owned elsewhere; only a `Bind`'d owned temporary is kept
+                // alive and dropped by the loop.
+                let borrowed = protocol.borrowed_origin.is_some();
                 if let Some(origin) = protocol.borrowed_origin.clone() {
                     self.push(HirInstr::BorrowIter {
                         dest: it_var,
@@ -1457,7 +1474,7 @@ impl Lower {
                     header,
                     exit,
                     escape: false,
-                    cleanup: if split_source {
+                    cleanup: if split_source && !borrowed {
                         vec![v, iter_var, it_var]
                     } else {
                         vec![v, iter_var]
@@ -1485,11 +1502,14 @@ impl Lower {
                 // borrowing iterator's dependency yet), so it is not destroyed
                 // early and its `__del__` runs exactly once, after the loop.
                 self.push(HirInstr::Drop(iter_var));
-                if split_source {
-                    // The source is used only by `GetIter` before the loop, so a
-                    // liveness anchor at the exit keeps it live through the loop
-                    // body (a borrowing iterator still refers to its storage);
-                    // then it is destroyed exactly once, after the loop.
+                if split_source && !borrowed {
+                    // An owned temporary source is used only by `GetIter` before
+                    // the loop, so a liveness anchor at the exit keeps it live
+                    // through the loop body (a borrowing iterator still refers to
+                    // its storage); then it is destroyed exactly once, after the
+                    // loop. A borrowed named source is owned by the enclosing scope
+                    // (dropped there) and kept live by its loan, so the loop neither
+                    // anchors nor drops it.
                     self.push(HirInstr::KeepAlive(it_var));
                     self.push(HirInstr::Drop(it_var));
                 }

@@ -1673,6 +1673,21 @@ impl Checker {
                         .push(crate::origin::OriginSeg::Interior("element".to_string()));
                     protocol.borrowed_origin = Some(origin);
                 }
+                // A user-defined borrowed iterator (a concrete struct with a
+                // non-empty `__iter__` prepare chain) over a *named* source
+                // borrows it rather than copying it: record the whole source
+                // place as the borrowed origin so HIR takes the no-copy
+                // `BorrowIter` path and the loan keeps the source live while
+                // rejecting mutation during iteration. A temporary source has no
+                // place (`origin_place` errs) and keeps the value copy.
+                if !*owned
+                    && protocol.borrowed_origin.is_none()
+                    && !protocol.prepare.is_empty()
+                    && matches!(iter_ty, Ty::Struct(..))
+                    && let Ok(origin) = self.origin_place(iter)
+                {
+                    protocol.borrowed_origin = Some(origin);
+                }
                 if *owned && !matches!(iter.kind, ExprKind::Transfer(_)) {
                     return Err(TypeError::Unsupported(
                         "owned iteration requires a transferred iterable (`for var item in collection^`)"

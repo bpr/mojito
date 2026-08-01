@@ -17,8 +17,11 @@ to evolve under the `0.x` compatibility rules.
   borrowed `__iter__(ref self)` receives a `ref self` handle so the iterator's
   borrow roots at the live loop frame. Supported for an owned-temporary source
   (`for x in Numbers(3)`), retained and dropped exactly once after the loop. A
-  *named* source (`for x in nums`) is still copied rather than borrowed, tracked as
-  later borrowed-iteration work.
+  *named* source (`for x in nums`) is now borrowed rather than copied: the source
+  slot binds a genuine reference (`MakeRef`) and the whole-source dependency is
+  recorded as a shared loan on the iterator, so the source is not copied, stays live
+  through the loop without the `KeepAlive` liveness hack, and mutating it during
+  iteration (a `mut self` call, reassignment, …) is rejected as a loan conflict.
 - A method may now return a `ref[origin] T` field or binding whose origin is a
   struct/callable origin *parameter* (for example `def get(self) -> ref[o] Int:
   return self.slot` on `struct Cell[o: Origin[...]]`). The stored handle already

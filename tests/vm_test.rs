@@ -846,6 +846,19 @@ fn borrowed_list_iteration_observes_element_replacement_without_copying() {
 }
 
 #[test]
+fn reference_yielding_iteration_borrows_a_named_source() {
+    // `for x in nums` over a user reference-yielding iterator borrows the *named*
+    // source (a live shared loan), not a copy: reads flow through the yielded
+    // references, `nums` stays usable after the loop, and its `__del__` (`-1`)
+    // runs exactly once at its ASAP last use — not the two drops a copy emits.
+    let source = include_str!("../assets/ok/reference_yielding_iteration_named_source.mojo");
+    assert_eq!(
+        run_compiled(source).expect("named-source reference iteration compiles"),
+        "-2\n0\n10\n20\n-1\n3\n-3\n"
+    );
+}
+
+#[test]
 fn reference_list_iteration_writes_through_checked_element_handles() {
     let source = include_str!("../conformance/fixtures/reference_iteration.mojo");
     assert_eq!(

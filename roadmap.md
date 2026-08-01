@@ -126,20 +126,20 @@ verification, and the register VM (see `docs/features.md`).
   self)` receives a `ref self` handle so the iterator's borrow roots at the live
   loop frame. The yielded reference flows through the loop as a handle. This holds
   for an owned-temporary source (`for x in Numbers(3)`), which is retained and
-  dropped exactly once after the loop. What remains: an origin-bearing *pointer*
-  deref return (`self.p[0]`) is still rejected (its place lowering keeps an offset-0
-  index the runtime cannot yet forward); a *named* source (`for x in nums`) is still
-  copied into the loop rather than borrowed, so its dependency must be recorded as a
-  loan (a reference-yielding `__next__` flowing through the loop with the retained
-  source loaned) — replacing the `KeepAlive` liveness hack; migrate the bundled
-  borrowed `Iterable`
-  and the
-  Range/List/Set/Dict conformances to the origin-parameterized shape; and remove
-  the concrete List/Set/Dict collection-specific borrow bridges and the List-only
-  `for ref` bridge. Cover immutable and mutable origins, generic bounds,
-  structural invalidation, and escape rejection. The owned `IterableOwned`
-  protocol already exposes monomorphic `IteratorOwnedType`; only the borrowed
-  contract remains on the legacy monomorphic `Iter` member.
+  dropped exactly once after the loop. *A *named* source (`for x in nums`) is now
+  borrowed, not copied:* it binds the source slot to a genuine reference (`MakeRef`)
+  and records the whole-source dependency as a shared loan on the iterator, so the
+  source is not copied, stays live through the loop without the `KeepAlive` hack,
+  and mutating it during iteration is rejected as a loan conflict. What remains: an
+  origin-bearing *pointer* deref return (`self.p[0]`) is still rejected (its place
+  lowering keeps an offset-0 index the runtime cannot yet forward); migrate the
+  bundled borrowed `Iterable` and the Range/List/Set/Dict conformances to the
+  origin-parameterized shape; and remove the concrete List/Set/Dict
+  collection-specific borrow bridges and the List-only `for ref` bridge. Cover
+  mutable origins, generic bounds, structural invalidation, and escape rejection.
+  The owned `IterableOwned` protocol already exposes monomorphic
+  `IteratorOwnedType`; only the borrowed contract remains on the legacy monomorphic
+  `Iter` member.
 - [ ] **Owned iteration of linear elements** — in the owned path, permit a List
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a
