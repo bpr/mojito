@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `for` loop over a user-defined iterator whose `__next__` returns a *reference*
+  into the borrowed source now executes: the yielded reference flows through the
+  loop as a handle. The loop invokes `__iter__`/`__next__` with the loop frame
+  reachable — previously the synchronous protocol-call path drove the callee with
+  its caller popped off the frame stack, so a user iterator holding a `ref` into the
+  loop frame could not dereference it (`vm: stale reference to frame N`) — and a
+  borrowed `__iter__(ref self)` receives a `ref self` handle so the iterator's
+  borrow roots at the live loop frame. Supported for an owned-temporary source
+  (`for x in Numbers(3)`), retained and dropped exactly once after the loop. A
+  *named* source (`for x in nums`) is still copied rather than borrowed, tracked as
+  later borrowed-iteration work.
 - A method may now return a `ref[origin] T` field or binding whose origin is a
   struct/callable origin *parameter* (for example `def get(self) -> ref[o] Int:
   return self.slot` on `struct Cell[o: Origin[...]]`). The stored handle already

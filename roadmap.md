@@ -117,13 +117,22 @@ verification, and the register VM (see `docs/features.md`).
   resolves to the origin the receiver's `ref[o]` field borrows, so the loan roots
   at the ultimate owner and it is not dropped while the reference is live — so a
   `mut self` reference-yielding accessor (`def take(mut self) -> ref[o] Int: return
-  self.src[i]`) bound to `ref` locals now reads and writes through end-to-end. What
-  remains: an origin-bearing *pointer* deref return (`self.p[0]`) is still rejected
-  (its place lowering keeps an offset-0 index the runtime cannot yet forward); make
-  borrowed `for`/`for ref` iteration generic
-  over origin-bearing iterator elements — a reference-yielding `__next__` flowing
-  through the loop as a handle rather than a value binding, with the retained
-  source's dependency recorded as a loan; migrate the bundled borrowed `Iterable`
+  self.src[i]`) bound to `ref` locals now reads and writes through end-to-end.
+  *A `for` loop over a user-defined reference-yielding iterator now executes:* the
+  loop invokes `__iter__`/`__next__` with the loop frame reachable (previously the
+  synchronous `call_frame` path drove the callee with its caller popped out of the
+  frame stack, so a user iterator holding a `ref` into the loop frame could not
+  dereference it — `stale reference to frame N`), and a borrowed `__iter__(ref
+  self)` receives a `ref self` handle so the iterator's borrow roots at the live
+  loop frame. The yielded reference flows through the loop as a handle. This holds
+  for an owned-temporary source (`for x in Numbers(3)`), which is retained and
+  dropped exactly once after the loop. What remains: an origin-bearing *pointer*
+  deref return (`self.p[0]`) is still rejected (its place lowering keeps an offset-0
+  index the runtime cannot yet forward); a *named* source (`for x in nums`) is still
+  copied into the loop rather than borrowed, so its dependency must be recorded as a
+  loan (a reference-yielding `__next__` flowing through the loop with the retained
+  source loaned) — replacing the `KeepAlive` liveness hack; migrate the bundled
+  borrowed `Iterable`
   and the
   Range/List/Set/Dict conformances to the origin-parameterized shape; and remove
   the concrete List/Set/Dict collection-specific borrow bridges and the List-only

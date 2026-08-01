@@ -7,6 +7,43 @@ use super::*;
 impl VmBackend {
     /// Execute one function, returning its return value plus the final variable
     /// slots (so a `mut self` method call can recover the mutated receiver).
+    /// Run a synchronous iterator-protocol call (`__iter__`/`__next__`/`__len__`)
+    /// with the caller frame reachable, so a reference the callee holds into the
+    /// caller — a user iterator's `ref[origin]` field rooted at the loop frame —
+    /// resolves. `call_frame` otherwise drives the child while its caller is a
+    /// local popped out of `self.frames` (unlike `prepare_direct_call`, which
+    /// keeps the caller pushed). The caller's variables are *moved* into a shadow
+    /// frame (no clone) for the duration of the call and moved back after, so the
+    /// callee reads the caller's real storage — including any write-through — and
+    /// per-iteration cost stays O(1).
+    pub(super) fn call_frame_caller_reachable(
+        &mut self,
+        prog: &Prog,
+        fidx: usize,
+        args: Vec<Value>,
+        frame_id: FrameId,
+        function: usize,
+        variables: &mut Vec<Value>,
+    ) -> Result<(Value, Vec<Value>), RuntimeError> {
+        let shadow = Frame {
+            id: frame_id,
+            function,
+            registers: Vec::new(),
+            variables: std::mem::take(variables),
+            block: 0,
+            instruction: 0,
+            continuation: None,
+        };
+        self.frames.push(shadow);
+        let result = self.call_frame(prog, fidx, args, &[]);
+        // `call_frame` truncates to the shadow on error and unwinds its own child
+        // on success, leaving the shadow on top either way; move its storage back.
+        if let Some(shadow) = self.frames.pop() {
+            *variables = shadow.variables;
+        }
+        result
+    }
+
     pub(super) fn call_frame(
         &mut self,
         prog: &Prog,

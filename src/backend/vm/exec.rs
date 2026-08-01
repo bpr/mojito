@@ -16,7 +16,7 @@ impl VmBackend {
         function: usize,
         frame_id: FrameId,
         regs: &mut [Value],
-        vars: &mut [Value],
+        vars: &mut Vec<Value>,
     ) -> Result<Flow, RuntimeError> {
         self.burn_ctfe()?;
         match i {
@@ -1235,7 +1235,7 @@ impl VmBackend {
                     .find(|symbol| symbol.starts_with("__trait_dispatch."))
                     .cloned();
                 let mut current = vars[*source as usize].clone();
-                for selected in prepare {
+                for (step, selected) in prepare.iter().enumerate() {
                     let Value::Struct { name, .. } = &current else {
                         return Err(RuntimeError::TypeError(format!(
                             "vm: checked iterator preparation applied to {}",
@@ -1250,7 +1250,34 @@ impl VmBackend {
                             "vm: checked iterator method '{target}' is missing from MIR"
                         ))
                     })?;
-                    let (value, _) = self.call_frame(prog, fidx, vec![current.clone()], &[])?;
+                    // SPIKE seam A: a borrowed `__iter__(ref self)` receives a handle
+                    // to the source slot so the iterator's borrow roots at the loop
+                    // frame; caller-reachable so that root resolves inside `__iter__`.
+                    let borrowed = step == 0
+                        && prog.mir.functions[fidx]
+                            .1
+                            .ref_params
+                            .first()
+                            .copied()
+                            .unwrap_or(false);
+                    let arg = if borrowed {
+                        Self::reference_to_place_parts(
+                            frame_id,
+                            regs,
+                            vars,
+                            &MirPlace::root(*source, None),
+                        )?
+                    } else {
+                        current.clone()
+                    };
+                    let (value, _) = self.call_frame_caller_reachable(
+                        prog,
+                        fidx,
+                        vec![arg],
+                        frame_id,
+                        function,
+                        vars,
+                    )?;
                     current = value;
                 }
                 // A bounded `Iterable` may expose another iterable as its
@@ -1307,7 +1334,14 @@ impl VmBackend {
                         ))
                     })?;
                     match self
-                        .call_frame(prog, fidx, vec![vars[slot].clone()], &[])?
+                        .call_frame_caller_reachable(
+                            prog,
+                            fidx,
+                            vec![vars[slot].clone()],
+                            frame_id,
+                            function,
+                            vars,
+                        )?
                         .0
                     {
                         Value::Int(n) => n > 0,
@@ -1352,8 +1386,14 @@ impl VmBackend {
                             "vm: checked iterator method '{target}' is missing from MIR"
                         ))
                     })?;
-                    let (ret, frame_vars) =
-                        self.call_frame(prog, fidx, vec![vars[slot].clone()], &[])?;
+                    let (ret, frame_vars) = self.call_frame_caller_reachable(
+                        prog,
+                        fidx,
+                        vec![vars[slot].clone()],
+                        frame_id,
+                        function,
+                        vars,
+                    )?;
                     vars[slot] = frame_vars.into_iter().next().unwrap_or(Value::None);
                     regs[dest.0 as usize] = ret;
                 } else {
@@ -1394,7 +1434,14 @@ impl VmBackend {
                         "vm: checked iterator method '{target}' is missing from MIR"
                     ))
                 })?;
-                match self.call_frame(prog, fidx, vec![vars[slot].clone()], &[]) {
+                match self.call_frame_caller_reachable(
+                    prog,
+                    fidx,
+                    vec![vars[slot].clone()],
+                    frame_id,
+                    function,
+                    vars,
+                ) {
                     Ok((element, frame_vars)) => {
                         vars[slot] = frame_vars.into_iter().next().unwrap_or(Value::None);
                         regs[dest.0 as usize] = element;
@@ -1619,7 +1666,7 @@ impl VmBackend {
         frame_id: FrameId,
         blocks: &[MirBlock],
         regs: &mut [Value],
-        vars: &mut [Value],
+        vars: &mut Vec<Value>,
     ) -> Result<Flow, RuntimeError> {
         let mut block = 0usize;
         loop {

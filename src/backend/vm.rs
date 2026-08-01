@@ -2082,7 +2082,7 @@ fn vm_type_is_symbolic(ty: &Ty) -> bool {
 struct CallerFrame<'a> {
     id: FrameId,
     registers: &'a mut [Value],
-    variables: &'a mut [Value],
+    variables: &'a mut Vec<Value>,
 }
 
 /// Take the single argument of a one-arg built-in (the checker guarantees arity;
