@@ -535,16 +535,33 @@ every non-`Place` origin, erases from the runtime ABI (collapsing to the single
 mangling marker). A conforming struct then resolves the origin-parameterized
 member concretely, so a requirement returning `Self.IteratorType[origin_of(self)]`
 is satisfiable and conformance succeeds. The borrowed `Iterable` proof protocol
-nonetheless still keeps its monomorphic `Iter` member: migrating it needs the
-reference-yielding generic iteration runtime, so until then the concrete
-List/Set/Dict borrowed/reference-iteration bridges described below preserve
-provenance.
+nonetheless still keeps its monomorphic `Iter` member. The abstract
+copy-reference result adapter is now available, but migrating the protocol also
+needs generic source/yield-origin substitution and loop binding/source modes;
+until then the concrete List/Set/Dict borrowed/reference-iteration bridges
+described below preserve provenance.
 
 Trait method requirements retain `raises` and an optional concrete error type.
 A nonraising implementation may satisfy a raising requirement; a raising
 implementation must not widen the requirement's error family. Bounded method
 selection substitutes that contract, records it on the checked call expression,
 and passes it through HIR to the call instruction just like direct dispatch.
+
+Mojo defines one additional directional refinement for methods named
+`__next__`: a concrete `ref[o] T` return may satisfy an abstract value return
+`T` when the referent is identical and `T: Copyable`. It does not apply in the
+reverse direction or to linear referents. Trait registration retains the
+concrete reference ABI, while the abstract call contract carries
+`CheckedResultAdapter::CopyIteratorReference`. The adapter survives HIR and MIR;
+after runtime dispatch selects the concrete declaration, the VM tests that
+declaration's return ABI and, only for a reference ABI, performs the semantic
+read and `__copyinit__`. This ABI test is essential because a value-returning
+method may legitimately return a reference-valued element. MIR verification
+requires the adapter on abstract value-result `__next__` calls and forbids it on
+concrete calls. The VM temporarily restores both the executing caller and the
+identified just-completed iterator frame while user copy code runs; reference
+handles nested inside a `Copyable` result therefore resolve against real storage
+and any permitted write-through is preserved.
 
 Opaque trait-bounded collection indexing uses the requirement signature for its
 index and result types, then executes through concrete dunder dispatch after
@@ -976,6 +993,14 @@ reference-yielding iterator writes a `Ty::Ref` register and binding; the VM is
 never relied on to smuggle a reference handle through a register typed as its
 referent. Compiler-private iterator carriers alone omit the nominal operation
 contract.
+
+Abstract iteration instead retains the value type promised by the trait. Its
+checked `Next`/`TryNext` operation carries the same explicit copy-reference
+adapter as an ordinary bounded `iterator.__next__()` call. Runtime retargeting
+leaves a concrete value return unchanged, or materializes and lifecycle-copies a
+concrete reference return before writing the value-typed destination. A
+reference into the iterator receiver is read from the identified just-completed
+callee frame before that temporary frame storage is discarded.
 
 ### Try Regions
 
@@ -1899,9 +1924,12 @@ Borrowed concrete List, Set, and Dict place iteration retains an `element`
 interior-origin loan for the live iterator. For List, nonstructural replacement
 remains visible, while a structural mutation invalidates that generation and a
 subsequent iterator use is rejected. Concrete List `for ref` similarly creates
-write-through indexed element references. Generic `T: Iterable` and user-defined
-reference-yielding iterators cannot yet derive these facts because parameterized
-associated iterator types are not represented.
+write-through indexed element references. A user-defined reference-yielding
+iterator can now satisfy an abstract value `__next__` contract for a `Copyable`
+element and execute through the checked copy adapter. Generic code still cannot
+derive a borrowed source loan, yielded-reference origin, or abstract `for ref`
+binding from the associated iterator contract until the bundled protocol and
+loop source/binding modes are migrated.
 
 Consuming `for var item in collection^` moves the source once into the iterator
 slot. Each `Next` transfers one element, so the current loop binding and the

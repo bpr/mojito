@@ -449,6 +449,14 @@ pub enum MirInstr {
         resolved: Option<String>,
         /// Checker-selected concrete or trait-requirement error contract.
         raises: Option<Ty>,
+        /// Reference-return ABI retained independently from the destination
+        /// value type. A value-returning method may itself produce a
+        /// reference-valued element, so the verifier must not infer ABI from
+        /// `reg_types[dest]`.
+        reference_result: Option<crate::origin::RefTy>,
+        /// Checker-proven adaptation from a concrete implementation ABI to the
+        /// abstract result promised at this call site.
+        result_adapter: Option<crate::checked::CheckedResultAdapter>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         recv_place: Option<MirPlace>,

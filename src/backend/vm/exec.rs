@@ -327,13 +327,6 @@ impl VmBackend {
                     .get(&func.0)
                     .map(|signature| reify_value_parameters(&signature.param_decls, &pvals))
                     .unwrap_or_default();
-                let constructor_needs_caller = constructor_index.is_some_and(|index| {
-                    prog.mir.functions[index]
-                        .1
-                        .ref_params
-                        .iter()
-                        .any(|is_ref| *is_ref)
-                });
                 let result = match writeback {
                     Some(idx) => self.call_with_writeback(
                         prog,
@@ -352,13 +345,19 @@ impl VmBackend {
                             variables: vars,
                         },
                     )?,
-                    None if constructor_needs_caller => {
+                    None => {
+                        // Reaching the instruction interpreter means this call
+                        // is executing synchronously (for example inside a
+                        // structured try region); the continuation path handles
+                        // ordinary direct calls earlier. Keep the caller's real
+                        // frame identity reachable even without direct ref
+                        // parameters because by-value arguments may contain
+                        // nested reference handles.
                         let stack_base = self.push_caller_mirror(frame_id, regs, vars);
                         let outcome = self.call_named(prog, &func.0, argv, kw, &pvals);
                         self.restore_caller_mirror(stack_base, vars)?;
                         outcome?
                     }
-                    None => self.call_named(prog, &func.0, argv, kw, &pvals)?,
                 };
                 let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
                 regs[dest.0 as usize] = self.materialize_checked_result(prog, result, target)?;
@@ -529,7 +528,7 @@ impl VmBackend {
                         reference_inputs.push((parameter, handle));
                     }
                 }
-                let (result, _) = self.call_synchronously_with_references(
+                let (result, _, _) = self.call_synchronously_with_references(
                     prog,
                     SynchronousCall {
                         function_index: index,
@@ -550,6 +549,7 @@ impl VmBackend {
                 recv,
                 method,
                 resolved,
+                result_adapter,
                 args,
                 kwargs,
                 recv_place,
@@ -571,6 +571,7 @@ impl VmBackend {
                         receiver: recv_val,
                         method,
                         resolved_name: resolved.as_deref(),
+                        result_adapter: *result_adapter,
                         arguments: argv,
                         keyword_arguments: kw,
                         receiver_place: recv_place,
@@ -680,6 +681,7 @@ impl VmBackend {
                             receiver: recv,
                             method: "__getitem__",
                             resolved_name: Some(&call.target),
+                            result_adapter: None,
                             arguments,
                             keyword_arguments: Vec::new(),
                             receiver_place: base_place,
@@ -776,6 +778,7 @@ impl VmBackend {
                             receiver,
                             method: "__getitem__",
                             resolved_name: Some(&call.target),
+                            result_adapter: None,
                             arguments: vec![slice],
                             keyword_arguments: Vec::new(),
                             receiver_place: object_place,
@@ -851,6 +854,7 @@ impl VmBackend {
                         receiver: regs[object.0 as usize].clone(),
                         method: "__getitem__",
                         resolved_name: Some(&call.target),
+                        result_adapter: None,
                         arguments,
                         keyword_arguments: Vec::new(),
                         receiver_place: object_place,
@@ -919,6 +923,7 @@ impl VmBackend {
                         receiver: regs[receiver.0 as usize].clone(),
                         method: "__setitem__",
                         resolved_name: Some(&call.target),
+                        result_adapter: None,
                         arguments,
                         keyword_arguments,
                         receiver_place,
@@ -1277,7 +1282,7 @@ impl VmBackend {
                     } else {
                         current.clone()
                     };
-                    let (value, _) = self.call_frame_caller_reachable(
+                    let (value, _, _) = self.call_frame_caller_reachable(
                         prog,
                         fidx,
                         vec![arg],
@@ -1393,16 +1398,29 @@ impl VmBackend {
                             "vm: checked iterator method '{target}' is missing from MIR"
                         ))
                     })?;
-                    let (ret, frame_vars) = self.call_frame_caller_reachable(
+                    let concrete_returns_reference = prog.mir.functions[fidx].1.returns_reference;
+                    let (ret, mut frame_vars, returned_frame_id) = self
+                        .call_frame_caller_reachable(
+                            prog,
+                            fidx,
+                            vec![vars[slot].clone()],
+                            frame_id,
+                            function,
+                            vars,
+                        )?;
+                    let adapted = self.apply_checked_result_adapter(
                         prog,
-                        fidx,
-                        vec![vars[slot].clone()],
-                        frame_id,
-                        function,
-                        vars,
+                        ret,
+                        call.result_adapter,
+                        concrete_returns_reference,
+                        ResultAdapterFrames {
+                            current: frame_id,
+                            current_variables: vars,
+                            returned: Some((returned_frame_id, &mut frame_vars)),
+                        },
                     )?;
                     vars[slot] = frame_vars.into_iter().next().unwrap_or(Value::None);
-                    regs[dest.0 as usize] = ret;
+                    regs[dest.0 as usize] = adapted;
                 } else {
                     match &mut vars[slot] {
                         Value::ComptimeList(items) if self.ctfe_fuel.is_some() => {
@@ -1446,6 +1464,7 @@ impl VmBackend {
                         "vm: checked iterator method '{target}' is missing from MIR"
                     ))
                 })?;
+                let concrete_returns_reference = prog.mir.functions[fidx].1.returns_reference;
                 match self.call_frame_caller_reachable(
                     prog,
                     fidx,
@@ -1454,9 +1473,20 @@ impl VmBackend {
                     function,
                     vars,
                 ) {
-                    Ok((element, frame_vars)) => {
+                    Ok((element, mut frame_vars, returned_frame_id)) => {
+                        let adapted = self.apply_checked_result_adapter(
+                            prog,
+                            element,
+                            call.result_adapter,
+                            concrete_returns_reference,
+                            ResultAdapterFrames {
+                                current: frame_id,
+                                current_variables: vars,
+                                returned: Some((returned_frame_id, &mut frame_vars)),
+                            },
+                        )?;
                         vars[slot] = frame_vars.into_iter().next().unwrap_or(Value::None);
-                        regs[dest.0 as usize] = element;
+                        regs[dest.0 as usize] = adapted;
                         regs[yielded.0 as usize] = Value::Bool(true);
                     }
                     Err(RuntimeError::Raised(error)) => {

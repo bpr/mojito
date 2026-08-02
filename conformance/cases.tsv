@@ -61,6 +61,11 @@ list-values	run	conformance/fixtures/list_values.mojo
 protocolized-collections	run	conformance/fixtures/protocolized_collections.mojo
 borrowed-iteration-mutation	run	conformance/fixtures/borrowed_iteration_mutation.mojo
 parameterized-associated-iterator	run	conformance/fixtures/parameterized_associated_iterator.mojo
+copyable-iterator-refinement	run	conformance/fixtures/copyable_iterator_refinement.mojo
+copyable-iterator-refinement-read-self	run	conformance/fixtures/copyable_iterator_refinement_read_self.mojo
+copyable-iterator-refinement-noncopyable	reject	conformance/fixtures/copyable_iterator_refinement_noncopyable.mojo
+copyable-iterator-refinement-mismatch	reject	conformance/fixtures/copyable_iterator_refinement_mismatch.mojo
+copyable-iterator-refinement-reverse	reject	conformance/fixtures/copyable_iterator_refinement_reverse.mojo
 struct-methods	run	conformance/fixtures/struct_methods.mojo
 lifecycle-initialization	run	assets/ok/init_out_self.mojo
 unified-lifecycle	run	conformance/fixtures/unified_lifecycle.mojo

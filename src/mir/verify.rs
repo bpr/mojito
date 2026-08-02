@@ -405,6 +405,9 @@ fn iterator_result_matches_declaration(
     call: &crate::checked::CheckedIteratorCall,
     declaration: &MirFunctionDeclaration,
 ) -> bool {
+    if call.result_adapter.is_some() {
+        return false;
+    }
     match (&call.reference_result, &call.result_ty) {
         (Some(reference), Ty::Ref(result_reference)) => {
             declaration.returns_reference
@@ -416,6 +419,34 @@ fn iterator_result_matches_declaration(
         }
         _ => false,
     }
+}
+
+fn verify_iterator_result_adapter(
+    prefix: &str,
+    call: &crate::checked::CheckedIteratorCall,
+    errors: &mut Vec<String>,
+) -> bool {
+    let abstract_dispatch = call.target == "__iterator_dispatch.__next__";
+    match call.result_adapter {
+        Some(crate::checked::CheckedResultAdapter::CopyIteratorReference) => {
+            if !abstract_dispatch {
+                errors.push(format!(
+                    "{prefix}: iterator copy-reference adapter is attached to concrete target '{}'",
+                    call.target
+                ));
+            }
+            if call.reference_result.is_some() {
+                errors.push(format!(
+                    "{prefix}: adapted abstract iterator result also carries a concrete reference ABI"
+                ));
+            }
+        }
+        None if abstract_dispatch && call.reference_result.is_none() => errors.push(format!(
+            "{prefix}: abstract value-returning iterator dispatch lacks its copy-reference adapter"
+        )),
+        None => {}
+    }
+    abstract_dispatch
 }
 
 fn contains_runtime_pack(ty: &Ty) -> bool {
@@ -1979,7 +2010,7 @@ fn verify_instruction(
                     "{prefix}: bounded Next carries a raising iterator contract"
                 ));
             }
-            if call.target.starts_with("__iterator_dispatch.") {
+            if verify_iterator_result_adapter(&prefix, call, errors) {
                 return;
             }
             match declared(declarations, &call.target) {
@@ -2050,6 +2081,9 @@ fn verify_instruction(
                 errors.push(format!(
                     "{prefix}: TryNext exhaustion type {exhaustion} does not match its checked call effect"
                 ));
+            }
+            if verify_iterator_result_adapter(&prefix, call, errors) {
+                return;
             }
             match declared(declarations, &call.target) {
                 None => errors.push(format!(
@@ -2477,7 +2511,11 @@ fn verify_instruction(
             }
         }
         MirInstr::MethodCall {
+            dest,
+            method,
             resolved: Some(callee),
+            reference_result,
+            result_adapter,
             args,
             kwargs,
             arg_places,
@@ -2488,6 +2526,30 @@ fn verify_instruction(
             ..
         } => {
             verify_capture_accesses(&prefix, function, capture_accesses, errors);
+            let abstract_value_next = callee.starts_with("__trait_dispatch.")
+                && method == "__next__"
+                && reference_result.is_none();
+            if let Some(reference) = reference_result {
+                let expected = Ty::Ref(reference.clone());
+                if function.reg_types.get(&dest.0) != Some(&expected) {
+                    errors.push(format!(
+                        "{prefix}: method-call reference ABI {expected} does not match its destination type"
+                    ));
+                }
+            }
+            match result_adapter {
+                Some(crate::checked::CheckedResultAdapter::CopyIteratorReference) => {
+                    if !abstract_value_next {
+                        errors.push(format!(
+                            "{prefix}: copy-reference result adapter is not attached to an abstract value-returning __next__ call"
+                        ));
+                    }
+                }
+                None if abstract_value_next => errors.push(format!(
+                    "{prefix}: abstract value-returning __next__ call lacks its copy-reference adapter"
+                )),
+                None => {}
+            }
             if let Some(declaration) = declared(declarations, callee) {
                 verify_direct_call(
                     &prefix,
@@ -2498,6 +2560,25 @@ fn verify_instruction(
                     arg_places,
                     errors,
                 );
+                let result_abi_matches = match reference_result {
+                    Some(reference) => {
+                        declaration.returns_reference
+                            && types_compatible(&reference.referent, &declaration.ret_ty)
+                    }
+                    None => {
+                        !declaration.returns_reference
+                            && function
+                                .reg_types
+                                .get(&dest.0)
+                                .is_some_and(|result| types_compatible(result, &declaration.ret_ty))
+                    }
+                };
+                if !result_abi_matches {
+                    errors.push(format!(
+                        "{prefix}: method-call result ABI does not match '{}'",
+                        declaration.lowered_name
+                    ));
+                }
                 if &declaration.param_decls != param_decls {
                     errors.push(format!(
                         "{prefix}: method-call compile-time parameter metadata does not match '{}'",

@@ -615,6 +615,71 @@ fn reference_yielding_try_next_retains_a_typed_reference_destination() {
 }
 
 #[test]
+fn abstract_next_calls_retain_the_copyable_reference_adapter() {
+    let source = include_str!("../conformance/fixtures/copyable_iterator_refinement.mojo");
+    let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
+
+    let take = &program
+        .functions
+        .iter()
+        .find(|(name, _)| name == "take")
+        .expect("generic take MIR")
+        .1;
+    let direct = take
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                resolved,
+                reference_result,
+                result_adapter,
+                ..
+            } if method == "__next__" => Some((resolved, reference_result, result_adapter)),
+            _ => None,
+        })
+        .expect("abstract __next__ method call");
+    assert!(
+        direct
+            .0
+            .as_deref()
+            .is_some_and(|target| target.starts_with("__trait_dispatch.__next__"))
+    );
+    assert!(direct.1.is_none(), "abstract contract has a value ABI");
+    assert_eq!(
+        *direct.2,
+        Some(mojito::checked::CheckedResultAdapter::CopyIteratorReference)
+    );
+
+    let loop_source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
+    let loop_program =
+        lower_program(&parse(loop_source).expect("parse")).expect("checked lowering");
+    let first = &loop_program
+        .functions
+        .iter()
+        .find(|(name, _)| name == "first")
+        .expect("generic first MIR")
+        .1;
+    let loop_adapter = first
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::Next {
+                call: Some(call), ..
+            }
+            | MirInstr::TryNext { call, .. } => Some(call.result_adapter),
+            _ => None,
+        })
+        .expect("abstract iterator next call");
+    assert_eq!(
+        loop_adapter,
+        Some(mojito::checked::CheckedResultAdapter::CopyIteratorReference)
+    );
+}
+
+#[test]
 fn bounded_iterator_carries_its_checked_element_type_into_mir() {
     let source = "def main():\n    for value in range(2):\n        print(value)\n";
     let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");

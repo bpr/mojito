@@ -229,6 +229,8 @@ impl Flatten<'_> {
             method,
             resolved: Some(resolved.to_string()),
             raises: None,
+            reference_result: None,
+            result_adapter: None,
             args: args.clone(),
             kwargs: Vec::new(),
             recv_place: Some(MirPlace::root(collection, Some(target.clone()))),
@@ -569,6 +571,8 @@ impl Flatten<'_> {
                 method: "__mlir_index__".to_string(),
                 resolved: Some(target),
                 raises: None,
+                reference_result: None,
+                result_adapter: None,
                 args: Vec::new(),
                 kwargs: Vec::new(),
                 recv_place: None,
@@ -784,6 +788,8 @@ impl Flatten<'_> {
                     method: "__contains__".to_string(),
                     resolved: self.resolved_callable(e),
                     raises: self.checked_raises(e),
+                    reference_result: None,
+                    result_adapter: None,
                     args: vec![argument],
                     kwargs: Vec::new(),
                     recv_place,
@@ -1111,6 +1117,12 @@ impl Flatten<'_> {
                         method: field.clone(),
                         resolved: self.resolved_callable(e),
                         raises: self.checked_raises(e),
+                        reference_result: self
+                            .checked_call_contract(e)
+                            .and_then(|contract| contract.reference_result),
+                        result_adapter: self
+                            .checked_call_contract(e)
+                            .and_then(|contract| contract.result_adapter),
                         args: argument_regs,
                         kwargs: keyword_regs,
                         recv_place: if implicitly_copied_receiver {
@@ -1295,6 +1307,12 @@ impl Flatten<'_> {
                     method: method.clone(),
                     resolved: self.resolved_callable(e),
                     raises: self.checked_raises(e),
+                    reference_result: self
+                        .checked_call_contract(e)
+                        .and_then(|contract| contract.reference_result),
+                    result_adapter: self
+                        .checked_call_contract(e)
+                        .and_then(|contract| contract.result_adapter),
                     args: regs,
                     kwargs: kw,
                     recv_place: if explicit_destroy || implicitly_copied_receiver {

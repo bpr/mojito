@@ -24,7 +24,7 @@ impl VmBackend {
         frame_id: FrameId,
         function: usize,
         variables: &mut Vec<Value>,
-    ) -> Result<(Value, Vec<Value>), RuntimeError> {
+    ) -> Result<(Value, Vec<Value>, FrameId), RuntimeError> {
         let shadow = Frame {
             id: frame_id,
             function,
@@ -35,7 +35,7 @@ impl VmBackend {
             continuation: None,
         };
         self.frames.push(shadow);
-        let result = self.call_frame(prog, fidx, args, &[]);
+        let result = self.call_frame_with_id(prog, fidx, args, &[]);
         // `call_frame` truncates to the shadow on error and unwinds its own child
         // on success, leaving the shadow on top either way; move its storage back.
         if let Some(shadow) = self.frames.pop() {
@@ -51,6 +51,20 @@ impl VmBackend {
         args: Vec<Value>,
         value_params: &[(String, Value)],
     ) -> Result<(Value, Vec<Value>), RuntimeError> {
+        self.call_frame_with_id(prog, fidx, args, value_params)
+            .map(|(value, variables, _)| (value, variables))
+    }
+
+    /// Synchronous call result together with the identity of the completed
+    /// frame. Reference-result adapters use that identity to distinguish a
+    /// handle into the just-returned receiver from an unrelated stale handle.
+    pub(super) fn call_frame_with_id(
+        &mut self,
+        prog: &Prog,
+        fidx: usize,
+        args: Vec<Value>,
+        value_params: &[(String, Value)],
+    ) -> Result<(Value, Vec<Value>, FrameId), RuntimeError> {
         let frame = self.make_frame(prog, fidx, args, value_params, None)?;
         let target = frame.id;
         let stack_base = self.frames.len();
@@ -62,7 +76,7 @@ impl VmBackend {
             // no abandoned child frame may leak into the next call.
             self.frames.truncate(stack_base);
         }
-        result
+        result.map(|(value, variables)| (value, variables, target))
     }
 
     pub(super) fn make_frame(
@@ -442,6 +456,7 @@ impl VmBackend {
             recv,
             method,
             resolved,
+            result_adapter,
             args,
             kwargs,
             recv_place,
@@ -458,6 +473,13 @@ impl VmBackend {
             let Some(index) = prog.index_of(&function_name) else {
                 return Ok(None);
             };
+            // An adapted abstract result must be materialized while the caller
+            // frame is directly available. Let the synchronous instruction path
+            // perform the checked read/copy instead of installing the ordinary
+            // raw-reference return continuation.
+            if result_adapter.is_some() {
+                return Ok(None);
+            }
             if !prog.mir.functions[index].1.returns_reference {
                 return Ok(None);
             }

@@ -517,3 +517,25 @@ fn checked_hir_reference_yielding_try_next_retains_a_reference_result() {
         }
     );
 }
+
+#[test]
+fn checked_hir_retains_the_abstract_iterator_copy_adapter() {
+    let source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
+    let cfg = checked_function_cfg(source, "first");
+    let adapter = cfg
+        .g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            mojito::hir::HirInstr::Next {
+                call: Some(call), ..
+            } => Some(call.result_adapter),
+            mojito::hir::HirInstr::TryNext { call, .. } => Some(call.result_adapter),
+            _ => None,
+        })
+        .expect("abstract iterator next");
+    assert_eq!(
+        adapter,
+        Some(mojito::checked::CheckedResultAdapter::CopyIteratorReference)
+    );
+}

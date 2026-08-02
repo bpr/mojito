@@ -68,10 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **`Copyable` iterator-result refinement** — permit a concrete
-  `__next__ -> ref[o] T` to satisfy an abstract `__next__ -> T` requirement when
-  `T` is `Copyable`, with an explicit abstract-call read/copy adapter; reject
-  mismatched referents, the reverse direction, and linear values.
 - [ ] **Loop binding and source modes** — model immutable, `var`, and `ref` loop
   bindings independently from whether the source is borrowed or consumed, with
   explicit copy, move, and reference requirements for each combination.

@@ -982,6 +982,85 @@ fn rejects_struct_with_mismatched_trait_method_signature() {
 }
 
 #[test]
+fn copyable_reference_next_refines_a_value_requirement() {
+    ok(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct IntIterator(IteratorContract):\n    comptime Element = Int\n    var value: Int\n    def __next__(mut self) -> ref[origin_of(self.value)] Int:\n        return self.value\n",
+    );
+
+    // The rule is Copyable, not the stronger ImplicitlyCopyable contract.
+    ok(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n\n@fieldwise_init\nstruct BoxIterator(IteratorContract):\n    comptime Element = Box\n    var value: Box\n    def __next__(mut self) -> ref[origin_of(self.value)] Box:\n        return self.value\n",
+    );
+
+    // A conditional generic conformance supplies the Copyable proof while the
+    // iterator template is still symbolic.
+    ok(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct GenericIterator[T: Movable](\n    IteratorContract where conforms_to(T, Copyable)\n):\n    comptime Element = Self.T\n    var value: Self.T\n    def __next__(mut self) -> ref[origin_of(self.value)] Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n",
+    );
+}
+
+#[test]
+fn reference_next_refinement_rejects_noncopyable_or_mismatched_referents() {
+    let noncopyable = err(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct Token(Movable):\n    var value: Int\n\n@fieldwise_init\nstruct TokenIterator(IteratorContract):\n    comptime Element = Token\n    var value: Token\n    def __next__(mut self) -> ref[origin_of(self.value)] Token:\n        return self.value\n",
+    );
+    assert!(matches!(
+        noncopyable,
+        TypeError::TraitMethodMismatch { method, .. } if method == "__next__"
+    ));
+
+    let unsatisfied_conditional = err(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct NeverCopyable(Copyable where False, Movable):\n    var value: Int\n\n@fieldwise_init\nstruct ConditionalIterator(IteratorContract):\n    comptime Element = NeverCopyable\n    var value: NeverCopyable\n    def __next__(mut self) -> ref[origin_of(self.value)] NeverCopyable:\n        return self.value\n",
+    );
+    assert!(
+        matches!(
+            &unsatisfied_conditional,
+            TypeError::TraitMethodMismatch { method, .. } if method == "__next__"
+        ),
+        "got {unsatisfied_conditional:?}"
+    );
+
+    let unavailable_copy_initializer = err(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\nstruct UnavailableCopy(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, copy: Self) where False:\n        self.value = copy.value\n\n@fieldwise_init\nstruct UnavailableCopyIterator(IteratorContract):\n    comptime Element = UnavailableCopy\n    var value: UnavailableCopy\n    def __next__(mut self) -> ref[origin_of(self.value)] UnavailableCopy:\n        return self.value\n",
+    );
+    assert!(matches!(
+        unavailable_copy_initializer,
+        TypeError::TraitMethodMismatch { ref method, .. } if method == "__next__"
+    ));
+
+    let mismatched = err(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct BadIterator(IteratorContract):\n    comptime Element = Int\n    var value: Bool\n    def __next__(mut self) -> ref[origin_of(self.value)] Bool:\n        return self.value\n",
+    );
+    assert!(matches!(
+        mismatched,
+        TypeError::TraitMethodMismatch { ref method, .. } if method == "__next__"
+    ));
+}
+
+#[test]
+fn value_next_cannot_refine_a_reference_requirement() {
+    let error = err(
+        "trait ReferenceIteratorContract:\n    def __next__(mut self) -> ref[UnsafeAnyOrigin] Int: ...\n\n@fieldwise_init\nstruct ValueIterator(ReferenceIteratorContract):\n    var value: Int\n    def __next__(mut self) -> Int:\n        return self.value\n",
+    );
+    assert!(matches!(
+        error,
+        TypeError::TraitMethodMismatch { ref method, .. } if method == "__next__"
+    ));
+}
+
+#[test]
+fn a_registered_iterator_trait_is_not_a_shallow_builtin_marker() {
+    let error = err(
+        "trait Iterator:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct MissingNext(Iterator):\n    comptime Element = Int\n    var value: Int\n",
+    );
+    assert!(matches!(
+        error,
+        TypeError::MissingTraitMethod { ref trait_name, ref method, .. }
+            if trait_name == "Iterator" && method == "__next__"
+    ));
+}
+
+#[test]
 fn trait_method_requirements_preserve_and_enforce_raises_effects() {
     let declarations = "trait Fallible:\n    def run(self) raises -> Int: ...\n\n@fieldwise_init\nstruct Failure(Fallible):\n    var code: Int\n    def run(self) raises -> Int:\n        raise \"failed\"\n        return self.code\n";
 

@@ -1876,6 +1876,7 @@ struct MethodCallResolution {
     conventions: Vec<Option<ArgConvention>>,
     self_convention: Option<ArgConvention>,
     return_type: Ty,
+    result_adapter: Option<crate::checked::CheckedResultAdapter>,
     raises: bool,
     error: Option<Box<Ty>>,
     mutates_receiver: bool,

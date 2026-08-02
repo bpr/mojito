@@ -656,6 +656,64 @@ impl VmBackend {
         }
     }
 
+    /// Run lifecycle copying while reference handles embedded in the value can
+    /// still resolve against the executing caller and (for iterator results)
+    /// the just-completed callee. The VM normally pops the executing frame while
+    /// interpreting one instruction; moving its real slots into temporary frame
+    /// views preserves both reads and any observable write-through performed by
+    /// user copy code. Storage is restored on success or failure.
+    fn clone_value_with_reachable_frames(
+        &mut self,
+        prog: &Prog,
+        value: &Value,
+        current: FrameId,
+        current_variables: &mut Vec<Value>,
+        returned_frame: Option<(FrameId, &mut Vec<Value>)>,
+    ) -> Result<Value, RuntimeError> {
+        let stack_base = self.frames.len();
+        debug_assert!(self.frames.iter().all(|frame| frame.id != current));
+        self.frames.push(Frame {
+            id: current,
+            function: 0,
+            registers: Vec::new(),
+            variables: std::mem::take(current_variables),
+            block: 0,
+            instruction: 0,
+            continuation: None,
+        });
+
+        let mut returned_variables = returned_frame.map(|(id, variables)| {
+            debug_assert!(id != current);
+            debug_assert!(self.frames.iter().all(|frame| frame.id != id));
+            self.frames.push(Frame {
+                id,
+                function: 0,
+                registers: Vec::new(),
+                variables: std::mem::take(variables),
+                block: 0,
+                instruction: 0,
+                continuation: None,
+            });
+            variables
+        });
+
+        let result = self.clone_value(prog, value);
+        if let Some(variables) = returned_variables.as_mut() {
+            let frame = self
+                .frames
+                .pop()
+                .expect("copy lifecycle retained returned frame");
+            **variables = frame.variables;
+        }
+        let frame = self
+            .frames
+            .pop()
+            .expect("copy lifecycle retained current frame");
+        *current_variables = frame.variables;
+        debug_assert_eq!(self.frames.len(), stack_base);
+        result
+    }
+
     /// Relocate a **moved** value (a `UseVar { Move }` / `^` transfer). For a struct
     /// that defines `__moveinit__`, run it (`existing` is consumed); otherwise the
     /// default move — the value's slot was already tombstoned — suffices. Only
@@ -671,6 +729,74 @@ impl VmBackend {
             return Ok(frame_vars.into_iter().next().unwrap_or(Value::None));
         }
         Ok(v)
+    }
+
+    /// Apply an explicit checker-proven abstract-result adapter after runtime
+    /// retargeting has selected the concrete declaration.  The declaration ABI,
+    /// not the returned `Value` shape, decides whether a read is needed: a
+    /// value-returning method may legitimately return a reference-valued value.
+    fn apply_checked_result_adapter(
+        &mut self,
+        prog: &Prog,
+        value: Value,
+        adapter: Option<crate::checked::CheckedResultAdapter>,
+        concrete_returns_reference: bool,
+        frames: ResultAdapterFrames<'_>,
+    ) -> Result<Value, RuntimeError> {
+        let ResultAdapterFrames {
+            current,
+            current_variables,
+            mut returned,
+        } = frames;
+        match adapter {
+            None => Ok(value),
+            Some(crate::checked::CheckedResultAdapter::CopyIteratorReference)
+                if !concrete_returns_reference =>
+            {
+                Ok(value)
+            }
+            Some(crate::checked::CheckedResultAdapter::CopyIteratorReference) => {
+                let value = match self.read_reference(&value, current, current_variables) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        // A nominal method can execute a read-only, consuming,
+                        // or write-back receiver in a temporary callee frame. A
+                        // reference to that receiver's own field still names the
+                        // just-returned frame; materialize it from the returned
+                        // receiver slots before those slots are discarded.
+                        let Some((returned_frame_id, returned)) = returned.as_mut() else {
+                            return Err(error);
+                        };
+                        let Value::Ref {
+                            frame,
+                            slot,
+                            projection,
+                        } = &value
+                        else {
+                            return Err(error);
+                        };
+                        if *frame != returned_frame_id.0 {
+                            return Err(error);
+                        }
+                        let Some(root) = returned.get(*slot) else {
+                            return Err(error);
+                        };
+                        self.read_reference_projection(root, projection)?
+                    }
+                };
+                if self.has_copyinit {
+                    self.clone_value_with_reachable_frames(
+                        prog,
+                        &value,
+                        current,
+                        current_variables,
+                        returned,
+                    )
+                } else {
+                    Ok(value)
+                }
+            }
+        }
     }
 
     /// Materialize an intrinsic result at its checked MIR type boundary. Public
@@ -890,7 +1016,7 @@ impl VmBackend {
                 Self::reference_to_place_parts(frame_id, regs, vars, place)?,
             ));
         }
-        let (result, _) = self.call_synchronously_with_references(
+        let (result, _, _) = self.call_synchronously_with_references(
             prog,
             SynchronousCall {
                 function_index: idx,
@@ -911,14 +1037,15 @@ impl VmBackend {
     /// than the continuation-driven frame stack. A temporary mirror with the
     /// caller's real frame identity makes ordinary frame/slot handles work
     /// unchanged: mutations are immediate even on raising paths, and references
-    /// nested anywhere in the return value already point at the caller. Every
-    /// synchronous call kind uses this one boundary.
+    /// nested anywhere in the return value already point at the caller. The
+    /// completed child identity is retained for references into its own receiver.
+    /// Every synchronous call kind uses this one boundary.
     fn call_synchronously_with_references(
         &mut self,
         prog: &Prog,
         call: SynchronousCall<'_>,
         caller: CallerFrame<'_>,
-    ) -> Result<(Value, Vec<Value>), RuntimeError> {
+    ) -> Result<(Value, Vec<Value>, FrameId), RuntimeError> {
         let SynchronousCall {
             function_index,
             mut arguments,
@@ -939,7 +1066,7 @@ impl VmBackend {
             *slot = handle.clone();
         }
         let stack_base = self.push_caller_mirror(caller_id, caller_registers, caller_variables);
-        let outcome = self.call_frame(prog, function_index, arguments, value_params);
+        let outcome = self.call_frame_with_id(prog, function_index, arguments, value_params);
         self.restore_caller_mirror(stack_base, caller_variables)?;
         outcome
     }
@@ -1126,6 +1253,7 @@ impl VmBackend {
             receiver: recv,
             method,
             resolved_name: resolved,
+            result_adapter,
             arguments: args,
             keyword_arguments: kwargs,
             receiver_place: recv_place,
@@ -1308,26 +1436,43 @@ impl VmBackend {
                         reify_value_parameters(&signature.param_decls, &supplied)
                     })
                     .unwrap_or_default();
-                let (ret, frame_vars) = self.call_synchronously_with_references(
-                    prog,
-                    SynchronousCall {
-                        function_index: fidx,
-                        arguments: call_args,
-                        value_params: &value_params,
-                        reference_inputs: &reference_inputs,
-                    },
-                    CallerFrame {
-                        id: frame_id,
-                        registers: regs,
-                        variables: vars,
-                    },
-                )?;
-                if prog.mir.functions[fidx].1.returns_reference && !matches!(ret, Value::Ref { .. })
-                {
+                let (ret, mut frame_vars, returned_frame_id) = self
+                    .call_synchronously_with_references(
+                        prog,
+                        SynchronousCall {
+                            function_index: fidx,
+                            arguments: call_args,
+                            value_params: &value_params,
+                            reference_inputs: &reference_inputs,
+                        },
+                        CallerFrame {
+                            id: frame_id,
+                            registers: regs,
+                            variables: vars,
+                        },
+                    )?;
+                let returns_reference = prog.mir.functions[fidx].1.returns_reference;
+                if returns_reference && !matches!(ret, Value::Ref { .. }) {
                     return Err(RuntimeError::TypeError(format!(
                         "vm: reference-returning method '{fname}' produced {ret:?}"
                     )));
                 }
+                // Adapt while the completed method frame is still available.
+                // A read-only or consuming receiver may return a reference into
+                // that temporary frame, and adapter-time lifecycle code may
+                // write through handles nested in the result. Receiver write-back
+                // therefore follows adaptation rather than preceding it.
+                let ret = self.apply_checked_result_adapter(
+                    prog,
+                    ret,
+                    result_adapter,
+                    returns_reference,
+                    ResultAdapterFrames {
+                        current: frame_id,
+                        current_variables: vars,
+                        returned: Some((returned_frame_id, &mut frame_vars)),
+                    },
+                )?;
                 // `mut self`: write the (possibly mutated) receiver back.
                 let is_mut = prog.structs.get(name).is_some_and(|d| {
                     let key = if fname != source_fname {
@@ -2085,6 +2230,15 @@ struct CallerFrame<'a> {
     variables: &'a mut Vec<Value>,
 }
 
+/// Executing-frame storage that must remain reachable while adapting an
+/// abstract call result. A concrete reference result may point into either the
+/// caller or the just-completed iterator frame while its lifecycle copy runs.
+struct ResultAdapterFrames<'a> {
+    current: FrameId,
+    current_variables: &'a mut Vec<Value>,
+    returned: Option<(FrameId, &'a mut Vec<Value>)>,
+}
+
 /// Take the single argument of a one-arg built-in (the checker guarantees arity;
 /// a mismatch is a defensive clean error, never a panic).
 fn arg1(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -2355,6 +2509,7 @@ struct MethodInvocation<'a> {
     receiver: Value,
     method: &'a str,
     resolved_name: Option<&'a str>,
+    result_adapter: Option<crate::checked::CheckedResultAdapter>,
     arguments: Vec<Value>,
     keyword_arguments: Vec<(String, Value)>,
     receiver_place: &'a Option<MirPlace>,

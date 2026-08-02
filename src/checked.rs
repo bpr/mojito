@@ -100,6 +100,20 @@ pub struct CheckedCallBoundary {
     pub invalidations: Vec<InteriorInvalidation>,
 }
 
+/// A checker-proven adaptation applied at an abstract call boundary.  This is
+/// deliberately not inferred from the runtime value: a value-returning method
+/// may itself produce a reference-valued element.  Execution consults the
+/// retargeted declaration's ABI and performs this adapter only when that
+/// declaration returns through the reference ABI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckedResultAdapter {
+    /// Mojo permits `Iterator.__next__ -> Element` to be implemented as
+    /// `__next__ -> ref[o] Element` when `Element: Copyable`.  An abstract call
+    /// observes the promised value result, so it must read and lifecycle-copy
+    /// the concrete reference return.
+    CopyIteratorReference,
+}
+
 /// Canonical checker-to-lowering contract for one selected method-like call.
 /// Nominal subscripts use this exact record rather than a reduced parallel
 /// resolver.  Future syntactic call forms can share it without teaching MIR
@@ -112,6 +126,9 @@ pub struct CheckedCallContract {
     /// carry the full instantiated `ref` type here; surface expression typing
     /// still exposes the referent as a place-like value.
     pub result_ty: Ty,
+    /// Explicit adaptation needed after retargeting an abstract call to its
+    /// concrete implementation. Concrete calls never carry an adapter.
+    pub result_adapter: Option<CheckedResultAdapter>,
     pub receiver_requires_place: bool,
     /// Effective receiver access; `receiver_requires_place` independently
     /// retains the declared ABI handle requirement.
@@ -169,6 +186,7 @@ pub struct CheckedIteratorCall {
     pub result_ty: Ty,
     pub reference_result: Option<crate::origin::RefTy>,
     pub raises: Option<Ty>,
+    pub result_adapter: Option<CheckedResultAdapter>,
 }
 
 /// Exact operations used by the concrete List `for ref` bridge.  This remains

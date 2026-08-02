@@ -28,7 +28,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Structural call binding | `call::{match_call_slots, ArgSlot, CallSlots}` | Checker and VM call adapters. |
 | Parser-to-call marker normalization | `call::{regular_marker_index, effective_keyword_only_index}` | Checker and MIR declaration lowering. |
 | Callable identity and overload names | `symbol::{OverloadSets, lowered_def_name, lowered_method_name, function_symbol, method_symbol}` | Checker, MIR, VM registries, symbol tests. |
-| Checked semantic facts | `checked::{CheckedProgram, CheckedConst, AnnotationSite}` | MIR, ownership driver, backends. |
+| Checked semantic facts | `checked::{CheckedProgram, CheckedConst, AnnotationSite, CheckedCallContract, CheckedIteratorCall, CheckedResultAdapter}` | MIR, ownership driver, backends. |
 | Source annotation syntax | `ast::SourceType` (alias of the AST `Type` node) | Parser, checker input, HIR/MIR source metadata. |
 | Source location/provenance | `token::{Span, SourceSpan}` | AST, checker side tables, MIR diagnostics. |
 | Compile-time values | `ct::CtValue` | Elaborator, specialization, checked constants. |

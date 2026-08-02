@@ -74,7 +74,7 @@ impl Checker {
                 }
             }
             for m in methods {
-                self.validate_origin_signature(&[], &m.params, m.self_origin.as_ref())?;
+                self.validate_origin_signature(&m.type_params, &m.params, m.self_origin.as_ref())?;
                 if ct_members.contains_key(&m.name) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
@@ -139,6 +139,18 @@ impl Checker {
                     .filter(|(_, param)| param.kind == crate::ast::ParamKind::Regular)
                     .collect();
                 let regular_params: Vec<_> = regular.iter().map(|(_, param)| *param).collect();
+                let ref_return = match &m.ret {
+                    Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
+                        origin.as_ref().ok_or_else(|| {
+                            TypeError::Unsupported(
+                                "reference return requires an origin".to_string(),
+                            )
+                        })?,
+                        &m.type_params,
+                        &regular_params,
+                    )?),
+                    _ => None,
+                };
                 let sig = MethodSig {
                     decls,
                     availability: Vec::new(),
@@ -164,7 +176,7 @@ impl Checker {
                     error: error.map(Box::new),
                     self_convention: m.self_convention,
                     ref_params: lower_ref_param_sigs(&m.type_params, &regular_params)?,
-                    ref_return: None,
+                    ref_return,
                     implicit: false,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
@@ -514,7 +526,11 @@ impl Checker {
         tr: &str,
         self_ty: &Ty,
     ) -> Result<(), TypeError> {
-        if BUILTIN_TRAITS.contains(&tr) {
+        // The focused checker can recognize protocol bounds without linking the
+        // implicit prelude, but a registered nominal trait is authoritative.
+        // In production `Iterator`/`Iterable` are ordinary stdlib traits; the
+        // builtin compatibility spelling must not bypass their requirements.
+        if BUILTIN_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
             return self.verify_builtin_conformance(name, tr, self_ty);
         }
         let trait_info = match self.traits.get(tr) {
@@ -582,6 +598,7 @@ impl Checker {
                         got,
                         &want,
                         conformance_assumption.as_ref(),
+                        mname == "__next__",
                     )
                 }) {
                     return Err(TypeError::TraitMethodMismatch {
@@ -643,6 +660,7 @@ impl Checker {
         got: &MethodSig,
         required: &MethodSig,
         conformance_assumption: Option<&GenericConstraint>,
+        allow_copyable_iterator_reference: bool,
     ) -> bool {
         let availability_is_covered = got.availability.iter().all(|constraint| {
             required
@@ -659,7 +677,121 @@ impl Checker {
         // comparing the remainder of the callable contract.
         let mut normalized = got.clone();
         normalized.availability = required.availability.clone();
+        if normalized.ref_return != required.ref_return {
+            let copyable_reference_refinement = allow_copyable_iterator_reference
+                && normalized.ref_return.is_some()
+                && required.ref_return.is_none()
+                && normalized.ret == required.ret
+                && self.is_copyable_under_assumption(&required.ret, conformance_assumption);
+            if !copyable_reference_refinement {
+                return false;
+            }
+            // The concrete reference ABI is observed as the abstract value ABI
+            // through an explicit checked result adapter. Normalize only after
+            // proving that directional refinement is legal.
+            normalized.ref_return = None;
+        }
         method_satisfies_requirement(&normalized, required)
+    }
+
+    /// Prove Copyable without treating a conditional marker declaration as
+    /// unconditional. This is used at a conformance boundary where the
+    /// conformer's `where` premise is available even though its type remains
+    /// symbolic.
+    fn is_copyable_under_assumption(
+        &self,
+        ty: &Ty,
+        assumption: Option<&GenericConstraint>,
+    ) -> bool {
+        match ty {
+            Ty::ComptimeList(element) => self.is_copyable_under_assumption(element, assumption),
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+                .iter()
+                .all(|element| self.is_copyable_under_assumption(element, assumption)),
+            Ty::Variant(alternatives) => alternatives
+                .iter()
+                .all(|alternative| self.is_copyable_under_assumption(alternative, assumption)),
+            Ty::Param { name, bounds, .. } => {
+                bounds.iter().any(|bound| {
+                    matches!(bound.as_str(), "Copyable" | "ImplicitlyCopyable")
+                        || self.trait_refines(bound, "Copyable")
+                }) || ["Copyable", "ImplicitlyCopyable"].iter().any(|required| {
+                    let needed = GenericConstraint::Conforms {
+                        param: name.trim_start_matches('*').to_string(),
+                        trait_name: (*required).to_string(),
+                    };
+                    assumption.is_some_and(|known| generic_constraint_implies(known, &needed))
+                })
+            }
+            Ty::Assoc { base, name, .. } => match base.as_ref() {
+                Ty::Param { bounds, .. } => {
+                    self.lookup_trait_assoc_type(bounds, name)
+                        .is_some_and(|associated_bounds| {
+                            associated_bounds.iter().any(|bound| {
+                                matches!(bound.as_str(), "Copyable" | "ImplicitlyCopyable")
+                                    || self.trait_refines(bound, "Copyable")
+                            })
+                        })
+                }
+                _ => false,
+            },
+            Ty::Struct(name, arguments) => {
+                let Some(info) = self.structs.get(name) else {
+                    // A compatibility spelling may produce an opaque nominal
+                    // type without registering its declaration. That is not a
+                    // Copyable proof strong enough to change a method ABI.
+                    return false;
+                };
+                let environment: HashMap<&str, &TyArg> = info
+                    .decls
+                    .iter()
+                    .zip(arguments)
+                    .map(|(declaration, argument)| {
+                        (declaration.name().trim_start_matches('*'), argument)
+                    })
+                    .collect();
+                if let Some(methods) = info.methods.get("__copyinit__") {
+                    // A declared copy initializer suppresses the fieldwise copy
+                    // path. Its method availability is therefore the real
+                    // capability; do not fall through to a nominal marker and
+                    // mistake an unavailable initializer for a usable copy.
+                    return methods.iter().any(|method| {
+                        method.availability.iter().all(|condition| {
+                            self.eval_constraint_under_assumption(
+                                condition,
+                                &environment,
+                                assumption,
+                                &mut HashSet::new(),
+                            )
+                        })
+                    });
+                }
+                info.conforms.iter().any(|declared| {
+                    if !matches!(declared.as_str(), "Copyable" | "ImplicitlyCopyable") {
+                        return false;
+                    }
+                    let Some(condition) = info.conformance_conditions.get(declared) else {
+                        return true;
+                    };
+                    let Ok(condition) = self.compile_generic_constraint(condition) else {
+                        return false;
+                    };
+                    self.eval_constraint_under_assumption(
+                        &condition,
+                        &environment,
+                        assumption,
+                        &mut HashSet::new(),
+                    )
+                })
+            }
+            Ty::VariadicPack(element) => self.is_copyable_under_assumption(element, assumption),
+            // These types still depend on substitution or trait context. The
+            // ordinary capability helper defaults unknown concrete spellings to
+            // copyable for compatibility, but that is not a proof strong enough
+            // to change an abstract method ABI.
+            Ty::Dependent(_) | Ty::SelfType | Ty::Infer => false,
+            _ => self.is_copyable(ty),
+        }
     }
 
     pub(super) fn verify_builtin_conformance(
@@ -944,7 +1076,7 @@ impl Checker {
         {
             return true;
         }
-        if BUILTIN_TRAITS.contains(&tr) {
+        if BUILTIN_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
             return match tr {
                 "AnyType" => true,
                 "Copyable" => self.is_copyable(ty),

@@ -1101,6 +1101,7 @@ impl Checker {
                             conventions: sig.conventions.clone(),
                             self_convention: sig.self_convention,
                             return_type: self.struct_instance_type(name, Vec::new()),
+                            result_adapter: None,
                             raises: sig.raises,
                             error: sig.error.clone(),
                             mutates_receiver: false,

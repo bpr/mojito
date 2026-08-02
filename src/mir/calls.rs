@@ -269,6 +269,8 @@ impl Flatten<'_> {
                         method: "__mlir_index__".to_string(),
                         resolved: Some(target.clone()),
                         raises: None,
+                        reference_result: None,
+                        result_adapter: None,
                         args: Vec::new(),
                         kwargs: Vec::new(),
                         recv_place: None,

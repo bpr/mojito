@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Trait conformance now accepts Mojo's directional `__next__` result
+  refinement: a concrete `ref[o] T` result may implement an abstract value
+  result `T` only when the referent matches exactly and `T` is proven
+  `Copyable`. The reverse direction, mismatched referents, and non-`Copyable` values
+  remain errors. Abstract method calls and generic loop advancement retain an
+  explicit checked/HIR/MIR adapter; after runtime retargeting, the VM consults
+  the concrete declaration ABI and performs the reference read plus lifecycle
+  copy. Caller and just-returned iterator frames remain reachable while user
+  copy code runs, so a `Copyable` element containing reference handles can read
+  its nested referents. Registered `Iterator` declarations are now authoritative
+  instead of being bypassed by the focused checker's builtin compatibility
+  marker.
 - Structural iterator selection now preserves a reference-returning
   `__next__` as an origin-bearing `Ty::Ref` result through the checked protocol,
   HIR, typed MIR, verification, and VM dispatch. Previously the VM happened to

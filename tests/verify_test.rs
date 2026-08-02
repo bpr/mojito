@@ -1396,6 +1396,7 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
                     result_ty: Ty::Int,
                     reference_result: None,
                     raises: Some(other_error.clone()),
+                    result_adapter: None,
                 },
                 exhaustion: other_error,
             }],
@@ -1456,6 +1457,7 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
                     result_ty: result_ty.clone(),
                     reference_result: Some(reference_result.clone()),
                     raises: Some(stop_iteration.clone()),
+                    result_adapter: None,
                 },
                 exhaustion: stop_iteration.clone(),
             }],
@@ -1495,4 +1497,182 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
     });
 
     expect_finding(&prog, "TryNext result contract does not match");
+}
+
+#[test]
+fn verifier_rejects_missing_or_concrete_iterator_result_adapters() {
+    let source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
+    let mut missing = lower_source(source);
+    let call = missing
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "first")
+        .expect("generic first MIR")
+        .1
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.instrs.iter_mut())
+        .find_map(|instruction| match instruction {
+            MirInstr::Next {
+                call: Some(call), ..
+            }
+            | MirInstr::TryNext { call, .. } => Some(call),
+            _ => None,
+        })
+        .expect("abstract iterator next");
+    call.result_adapter = None;
+    expect_finding(
+        &missing,
+        "abstract value-returning iterator dispatch lacks its copy-reference adapter",
+    );
+
+    let mut concrete = lower_source(source);
+    let call = concrete
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "first")
+        .expect("generic first MIR")
+        .1
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.instrs.iter_mut())
+        .find_map(|instruction| match instruction {
+            MirInstr::Next {
+                call: Some(call), ..
+            }
+            | MirInstr::TryNext { call, .. } => Some(call),
+            _ => None,
+        })
+        .expect("abstract iterator next");
+    call.target = "IntRefIter.__next__".to_string();
+    expect_finding(
+        &concrete,
+        "iterator copy-reference adapter is attached to concrete target",
+    );
+}
+
+#[test]
+fn verifier_rejects_a_missing_abstract_next_method_adapter() {
+    let source = include_str!("../conformance/fixtures/copyable_iterator_refinement.mojo");
+    let mut prog = lower_source(source);
+    let adapter = prog
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "take")
+        .expect("generic take MIR")
+        .1
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.instrs.iter_mut())
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                result_adapter,
+                ..
+            } if method == "__next__" => Some(result_adapter),
+            _ => None,
+        })
+        .expect("abstract __next__ method call");
+    *adapter = None;
+    expect_finding(
+        &prog,
+        "abstract value-returning __next__ call lacks its copy-reference adapter",
+    );
+}
+
+#[test]
+fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
+    let result_ty = reference_ty(Ty::Int, mojito::Mutability::Immutable);
+    let Ty::Ref(reference) = &result_ty else {
+        unreachable!("reference_ty constructs Ty::Ref")
+    };
+    let abstract_next = |reference_result, result_adapter| {
+        function(
+            vec![block(
+                vec![MirInstr::MethodCall {
+                    dest: Reg(1),
+                    recv: Reg(0),
+                    method: "__next__".to_string(),
+                    resolved: Some("__trait_dispatch.__next__".to_string()),
+                    raises: None,
+                    reference_result,
+                    result_adapter,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    recv_place: None,
+                    arg_places: Vec::new(),
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    param_decls: Vec::new(),
+                }],
+                MirTerm::Return(None),
+            )],
+            2,
+            &[
+                (0, Ty::Struct("OpaqueIterator".to_string(), Vec::new())),
+                (1, result_ty.clone()),
+            ],
+        )
+    };
+
+    // A value-returning contract can have a reference-shaped Element. Its ABI
+    // still needs the adapter because ABI is not inferred from the value type.
+    let value_abi = program(abstract_next(
+        None,
+        Some(mojito::checked::CheckedResultAdapter::CopyIteratorReference),
+    ));
+    assert_eq!(verify(&value_abi), Vec::<String>::new());
+
+    // A genuine abstract reference ABI carries its reference metadata and does
+    // not use the value-result adapter.
+    let reference_abi = program(abstract_next(Some(reference.clone()), None));
+    assert_eq!(verify(&reference_abi), Vec::<String>::new());
+}
+
+#[test]
+fn verifier_rejects_corrupt_concrete_method_result_abis() {
+    let reference_source = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def get(ref self) -> ref[origin_of(self.value)] Int:\n        return self.value\n\ndef main():\n    var box = Box(1)\n    ref value = box.get()\n    print(value)\n";
+    let mut erased = lower_source(reference_source);
+    let reference_result = erased
+        .functions
+        .iter_mut()
+        .flat_map(|(_, function)| function.blocks.iter_mut())
+        .flat_map(|block| block.instrs.iter_mut())
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                reference_result,
+                ..
+            } if method == "get" => Some(reference_result),
+            _ => None,
+        })
+        .expect("reference-returning method call");
+    assert!(reference_result.take().is_some());
+    expect_finding(&erased, "method-call result ABI does not match 'Box.get'");
+
+    let value_source = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def get(self) -> Int:\n        return self.value\n\ndef main():\n    var box = Box(1)\n    print(box.get())\n";
+    let mut fabricated = lower_source(value_source);
+    let reference_result = fabricated
+        .functions
+        .iter_mut()
+        .flat_map(|(_, function)| function.blocks.iter_mut())
+        .flat_map(|block| block.instrs.iter_mut())
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                reference_result,
+                ..
+            } if method == "get" => Some(reference_result),
+            _ => None,
+        })
+        .expect("value-returning method call");
+    *reference_result = match reference_ty(Ty::Int, mojito::Mutability::Immutable) {
+        Ty::Ref(reference) => Some(reference),
+        _ => unreachable!("reference_ty constructs Ty::Ref"),
+    };
+    expect_finding(
+        &fabricated,
+        "method-call result ABI does not match 'Box.get'",
+    );
 }

@@ -465,6 +465,9 @@ The instruction carries:
 - an optional writable receiver place
 - optional writable places for positional and keyword ordinary arguments
 - an optional concrete error type selected from the method or trait requirement
+- an optional `reference_result` describing the selected concrete reference ABI
+  independently from `%dest`'s value type
+- an optional verified `result_adapter` for an abstract result convention
 
 For a `mut`/`ref self` method, the receiver place becomes a frame/slot handle.
 `mut` and `ref` ordinary parameters likewise bind through their argument
@@ -475,6 +478,11 @@ dispatch path.
 Calls made by a structured `try` region use a temporary mirror with the caller's
 real frame identity. This preserves the same handles, including nested projected
 returns and mutations on raising paths, until the synchronous child completes.
+
+An abstract value-result `__next__` carries `CopyIteratorReference`. Runtime
+retargeting checks the concrete declaration ABI: a value return passes through,
+while a `ref T` return is read and lifecycle-copied before reaching `%dest`.
+Concrete method calls carry their exact `reference_result` and no adapter.
 
 ## Places and Aggregate Access
 
@@ -695,7 +703,11 @@ Calls the checker-selected typed-raising `__next__(mut self)` exactly once and
 writes the final receiver back into `$iterator`. On success, `%dest` receives the
 element and `%yielded` is `True`. Raising exactly the retained exhaustion type
 sets `%yielded` to `False`; any other raised value propagates. Current bundled
-iterators use this path.
+iterators use this path. An abstract value-result call may carry the verified
+`CopyIteratorReference` adapter: runtime dispatch consults the selected concrete
+declaration's ABI and, when it returns `ref T`, reads and lifecycle-copies the
+`Copyable` referent before writing `%dest`. Exhaustion is never interpreted as an
+adapter failure.
 
 ### `iter.has_next` — Test A Legacy Iterator
 
@@ -721,6 +733,10 @@ On the compatibility nonraising path, calls the checker-selected
 final nominal receiver back into the iterator slot. The CTFE-only
 `Value::ComptimeList` and private runtime-pack `Value::Tuple` fallbacks instead
 remove their first element.
+
+Abstract value-result calls use the same verified `CopyIteratorReference`
+adapter described for `iter.try_next`; concrete calls retain their exact value
+or reference result and never carry an adapter.
 
 Calling this instruction when no element remains is invalid; the generated loop
 tests `iter.has_next` first.

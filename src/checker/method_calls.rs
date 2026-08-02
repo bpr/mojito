@@ -73,6 +73,7 @@ impl Checker {
                         conventions: sig.conventions.clone(),
                         self_convention: sig.self_convention,
                         return_type: substitute(&sig.ret, &method_subst),
+                        result_adapter: None,
                         raises: sig.raises,
                         error: sig
                             .error
@@ -317,6 +318,7 @@ impl Checker {
                                         &substitute(&sig.ret, &subst),
                                         &method_subst,
                                     ),
+                                    result_adapter: None,
                                     raises: sig.raises,
                                     error: sig.error.as_ref().map(|error| {
                                         Box::new(substitute(
@@ -417,6 +419,8 @@ impl Checker {
                             &substitute_self(&sig.ret, &obj_ty),
                             &method_subst,
                         )),
+                        result_adapter: (method == "__next__" && sig.ref_return.is_none())
+                            .then_some(crate::checked::CheckedResultAdapter::CopyIteratorReference),
                         raises: sig.raises,
                         error: sig.error.as_ref().map(|error| {
                             Box::new(self.resolve_assoc_ty(&substitute(
@@ -461,6 +465,7 @@ impl Checker {
                     conventions: vec![],
                     self_convention: None,
                     return_type: Ty::UInt,
+                    result_adapter: None,
                     raises: false,
                     error: None,
                     mutates_receiver: false,
@@ -840,6 +845,7 @@ impl Checker {
                         .clone()
                         .map(Ty::Ref)
                         .unwrap_or_else(|| resolved.return_type.clone()),
+                    result_adapter: resolved.result_adapter,
                     receiver_requires_place: matches!(
                         resolved.self_convention,
                         Some(ArgConvention::Mut | ArgConvention::Ref)

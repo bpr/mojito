@@ -150,6 +150,9 @@ impl Checker {
                             result_ty: element,
                             reference_result: None,
                             raises: None,
+                            result_adapter: Some(
+                                crate::checked::CheckedResultAdapter::CopyIteratorReference,
+                            ),
                         })),
                         exhaustion: None,
                     },
@@ -293,6 +296,7 @@ impl Checker {
             result_ty: element.clone(),
             reference_result: reference_result.clone(),
             raises: next_error.clone(),
+            result_adapter: None,
         };
         if next_sig.raises {
             let exhaustion = next_error.clone().unwrap_or(Ty::Error);

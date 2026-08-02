@@ -903,6 +903,43 @@ fn raising_iterator_catches_only_typed_stop_iteration() {
 }
 
 #[test]
+fn abstract_next_copies_a_copyable_reference_result() {
+    let source = include_str!("../conformance/fixtures/copyable_iterator_refinement.mojo");
+    assert_eq!(
+        run_compiled(source).expect("copyable iterator refinement runs"),
+        "copy\n41\n"
+    );
+}
+
+#[test]
+fn generic_iteration_applies_the_copyable_reference_adapter() {
+    let source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
+    assert_eq!(
+        run_compiled(source).expect("generic refined iterator runs"),
+        "42\n"
+    );
+}
+
+#[test]
+fn abstract_next_copy_keeps_nested_reference_origins_reachable() {
+    let source = include_str!("../assets/ok/copyable_iterator_reference_aggregate.mojo");
+    assert_eq!(
+        run_compiled(source).expect("reference-bearing iterator element copies"),
+        "copy 41\n41\n"
+    );
+}
+
+#[test]
+fn abstract_next_adapts_a_reference_into_a_read_self_frame() {
+    let source =
+        include_str!("../conformance/fixtures/copyable_iterator_refinement_read_self.mojo");
+    assert_eq!(
+        run_compiled(source).expect("read-self refined iterator result runs"),
+        "7\n"
+    );
+}
+
+#[test]
 fn raising_iter_normalization_propagates_to_the_enclosing_try() {
     let src = "@fieldwise_init\nstruct IterError:\n    var code: Int\n\n@fieldwise_init\nstruct I:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C:\n    var marker: Int\n    def __iter__(self) raises IterError -> I:\n        raise IterError(self.marker)\n        return I(0)\n\ndef main():\n    try:\n        for value in C(7):\n            print(value)\n    except error:\n        print(error.code)\n";
     assert_eq!(run_compiled(src).expect("compiler pipeline failed"), "7\n");
