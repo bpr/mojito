@@ -175,6 +175,39 @@ pub enum IterationMode {
     Owned,
 }
 
+/// Checker-proven adaptation from one raw `__next__` result into the loop
+/// target's storage convention.  Source ownership is deliberately absent:
+/// [`IterationMode`] selects borrowed versus consuming `__iter__`, while this
+/// enum describes only what the target spelling does with each yielded item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IterationBindingAction {
+    /// Move a freshly yielded value into an explicit `var` target that owns it
+    /// and may transfer it onward.
+    MoveValue,
+    /// Bind a freshly yielded rvalue into an immutable or `ref` target's own
+    /// per-iteration storage, dropped at each iteration's end rather than moved
+    /// onward. The value is stored directly (not aliased) because it has no
+    /// external referent to borrow.
+    BorrowValue,
+    /// Read and lifecycle-copy a yielded reference into an owned `var` target.
+    CopyReference,
+    /// Preserve a yielded reference, possibly attenuating it to immutable for
+    /// an implicit loop target.
+    BorrowReference,
+}
+
+/// Complete checked plan for one loop/comprehension target. `yielded_ty` is the
+/// exact result type of `__next__`; `binding_ty` is the user-visible storage
+/// type. `mutable` is the loop variable's declared mutability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedIterationBinding {
+    pub mode: crate::ast::LoopBindingMode,
+    pub action: IterationBindingAction,
+    pub yielded_ty: Ty,
+    pub binding_ty: Ty,
+    pub mutable: bool,
+}
+
 /// Exact checked contract for one iterator `__next__` call.  The result type is
 /// the type produced by the call itself, so a reference-yielding iterator keeps
 /// its `Ty::Ref` handle type rather than collapsing to the referent.  The
@@ -209,6 +242,10 @@ pub struct ReferenceIterationProtocol {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IterationProtocol {
     pub mode: IterationMode,
+    /// Target convention and result-category adaptation, filled once the
+    /// checker has combined this source protocol with its loop target. Boxed to
+    /// keep `SemanticAdjustment::Iterate` compact.
+    pub binding: Option<Box<CheckedIterationBinding>>,
     /// Concrete borrowed collection storage retained by this iteration.  The
     /// checker records the canonical owner identity and interior generation;
     /// HIR/MIR use it both to avoid an accidental value copy and to keep the
@@ -463,7 +500,7 @@ pub struct CheckedComprehensionBinding {
     pub name: String,
     pub owner: crate::origin::OwnerId,
     pub ty: Ty,
-    pub mutable: bool,
+    pub plan: CheckedIterationBinding,
     /// Whether this binding's storage is droppable in the checked constraint
     /// environment at its introduction site. Conditional generic conformances
     /// cannot be reconstructed from the nominal type after checking.

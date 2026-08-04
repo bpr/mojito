@@ -182,6 +182,67 @@ fn owned_iteration_moves_elements_and_drops_the_residual_on_break() {
 }
 
 #[test]
+fn loop_binding_modes_are_independent_of_the_source_mode() {
+    // A List[Int] source under each `{immutable, var, ref} x {borrowed, consumed}`
+    // combination: `var` binds a mutable copy (the source is unchanged), `ref`
+    // writes through to the borrowed element, and the plain target is immutable.
+    let output = vm(include_str!(
+        "../conformance/fixtures/loop_binding_modes.mojo"
+    ));
+    assert_eq!(
+        output,
+        "imm borrowed 1\nvar borrowed 12\nvar source 2\nref borrowed 13\nref source 13\n\
+         imm consumed 4\nvar consumed 15\nref consumed 16\n"
+    );
+}
+
+#[test]
+fn value_iteration_binding_modes_over_a_user_iterator() {
+    // A user iterator that yields owned values: `var`/`ref` targets can transfer
+    // the yielded item onward, while the immutable target reads it.
+    let output = vm(include_str!(
+        "../conformance/fixtures/value_iteration_binding_modes.mojo"
+    ));
+    assert_eq!(
+        output,
+        "imm borrowed 1\ntake 2\nref borrowed 13\nimm consumed 4\ntake 5\nref consumed 16\n"
+    );
+}
+
+#[test]
+fn value_iteration_binds_droppable_items_per_iteration() {
+    // Each yielded value lives in the loop variable's own per-iteration storage
+    // and is destroyed at its last use, whether the target is immutable, `var`,
+    // or `ref`.
+    let output = vm(include_str!(
+        "../conformance/fixtures/value_iteration_cleanup.mojo"
+    ));
+    assert_eq!(
+        output,
+        "drop 1\nimm 1\ndrop 2\nvar 2\ndrop 13\nref 13\ndone\n"
+    );
+}
+
+#[test]
+fn value_iteration_ref_target_transfers_the_yielded_item() {
+    let output = vm(include_str!(
+        "../conformance/fixtures/value_iteration_reference_transfer.mojo"
+    ));
+    assert_eq!(output, "take 1\ndone\n");
+}
+
+#[test]
+fn reference_iteration_binding_modes_borrow_or_copy_the_referent() {
+    // A reference-yielding iterator: the plain and `ref` targets borrow the
+    // referent through the retained handle; a `var` target copies it into owned
+    // storage, leaving the source untouched.
+    let output = vm(include_str!(
+        "../conformance/fixtures/reference_iteration_binding_modes.mojo"
+    ));
+    assert_eq!(output, "imm 1\nvar 102\nsrc 2\nref 3\n");
+}
+
+#[test]
 fn string_concat_and_builtins() {
     assert_eq!(
         parity("var s: String = \"ab\" + \"cd\"\nprint(s)\nprint(len(s))\nprint(String(42))\n"),

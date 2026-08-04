@@ -9,8 +9,8 @@ use std::iter::Peekable;
 
 use crate::ast::{
     ArgConvention, Capture, CaptureKind, CaptureList, Decorator, Expr, ExprKind, FnParam,
-    FunctionTypeParam, InfixOp, KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind,
-    SubscriptArg, TStringPart, Type, WithItem,
+    FunctionTypeParam, InfixOp, KwArg, LoopBindingMode, Method, Param, ParamKind, PrefixOp, Stmt,
+    StmtKind, SubscriptArg, TStringPart, Type, WithItem,
 };
 use crate::error::{LexError, ParseError};
 use crate::lexer::Lexer;
@@ -479,8 +479,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Ok(StmtKind::ComptimeIf { branches, orelse })
             }
             Some(Token::For) => {
-                let (var, reference, owned, iter, body) = self.parse_for_rest()?;
-                if reference || owned {
+                let (var, binding, iter, body) = self.parse_for_rest()?;
+                if binding != LoopBindingMode::Immutable {
                     return Err(ParseError::UnexpectedToken(
                         Token::For,
                         "comptime for cannot use an explicit ref/var binding".to_string(),
@@ -1673,14 +1673,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(StmtKind::While { cond, body, orelse })
     }
 
-    /// `for var in iter: <block>`
+    /// `for [ref | var] name in iter: <block>`
     fn parse_for(&mut self) -> Result<StmtKind, ParseError> {
-        let (var, reference, owned, iter, body) = self.parse_for_rest()?;
+        let (var, binding, iter, body) = self.parse_for_rest()?;
         let orelse = self.parse_loop_else()?;
         Ok(StmtKind::For {
             var,
-            reference,
-            owned,
+            binding,
             iter,
             body,
             orelse,
@@ -1696,29 +1695,31 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(Some(self.parse_suite()?))
     }
 
-    /// Parses a `for var in iter: <block>` — the current token must be `for`.
-    /// Shared by the runtime `for` and the compile-time `comptime for`.
-    fn parse_for_rest(&mut self) -> Result<(String, bool, bool, Expr, Vec<Stmt>), ParseError> {
+    fn parse_loop_binding_mode(&mut self) -> Result<LoopBindingMode, ParseError> {
+        match self.peek_token()? {
+            Some(Token::Identifier(word)) if word == "ref" => {
+                self.next_token()?;
+                Ok(LoopBindingMode::Ref)
+            }
+            Some(Token::Var) => {
+                self.next_token()?;
+                Ok(LoopBindingMode::Var)
+            }
+            _ => Ok(LoopBindingMode::Immutable),
+        }
+    }
+
+    /// Parses a `for [ref | var] name in iter: <block>` — the current token
+    /// must be `for`. Shared by runtime and compile-time loops.
+    fn parse_for_rest(&mut self) -> Result<(String, LoopBindingMode, Expr, Vec<Stmt>), ParseError> {
         self.expect(Token::For, "Expected 'for'")?;
-        let reference = if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "ref")
-        {
-            self.next_token()?;
-            true
-        } else {
-            false
-        };
-        let owned = if !reference && matches!(self.peek_token()?, Some(Token::Var)) {
-            self.next_token()?;
-            true
-        } else {
-            false
-        };
+        let binding = self.parse_loop_binding_mode()?;
         let var = self.expect_identifier("Expected a loop variable name after 'for'")?;
         self.expect(Token::In, "Expected 'in' after the loop variable")?;
         let iter = self.parse_expression(Precedence::Lowest)?;
         self.expect(Token::Colon, "Expected ':' after the for-loop iterable")?;
         let body = self.parse_suite()?;
-        Ok((var, reference, owned, iter, body))
+        Ok((var, binding, iter, body))
     }
 
     /// `return` or `return expr`
@@ -2347,27 +2348,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             match self.peek_token()? {
                 Some(Token::For) => {
                     self.next_token()?;
-                    let reference = if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "ref")
-                    {
-                        self.next_token()?;
-                        true
-                    } else {
-                        false
-                    };
-                    let owned = if !reference && matches!(self.peek_token()?, Some(Token::Var)) {
-                        self.next_token()?;
-                        true
-                    } else {
-                        false
-                    };
+                    let binding = self.parse_loop_binding_mode()?;
                     let var =
                         self.expect_identifier("Expected a comprehension variable after 'for'")?;
                     self.expect(Token::In, "Expected 'in' in comprehension")?;
                     let iter = self.parse_expression(Precedence::Conditional)?;
                     clauses.push(ComprehensionClause::For {
                         var,
-                        reference,
-                        owned,
+                        binding,
                         iter: Box::new(iter),
                     });
                 }

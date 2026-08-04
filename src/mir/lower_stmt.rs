@@ -263,14 +263,10 @@ impl Flatten<'_> {
             }
             HirInstr::Next {
                 iter,
-                dest,
+                raw,
                 call,
                 element_ty,
-                binding,
             } => {
-                if let Some(binding) = binding {
-                    self.owner_vars.insert(*binding, *dest);
-                }
                 let r = self.fresh_typed(
                     SourceSpan::new(None, DUMMY_SPAN),
                     Some(*iter),
@@ -283,24 +279,23 @@ impl Flatten<'_> {
                     iter: *iter,
                     call: call.clone(),
                 });
+                // The raw `__next__` result is retained untouched in a
+                // compiler-owned slot; `BindIteration` adapts it to the loop
+                // target only on the yielded edge.
                 self.emit(MirInstr::DefVar {
-                    var: *dest,
+                    var: *raw,
                     src: r,
                     binding_ty: Some(element_ty.clone()),
                 });
             }
             HirInstr::TryNext {
                 iter,
-                dest,
+                raw,
                 yielded,
                 call,
                 exhaustion,
                 element_ty,
-                binding,
             } => {
-                if let Some(binding) = binding {
-                    self.owner_vars.insert(*binding, *dest);
-                }
                 let element = self.fresh_typed(
                     SourceSpan::new(None, DUMMY_SPAN),
                     Some(*iter),
@@ -315,7 +310,7 @@ impl Flatten<'_> {
                     exhaustion: exhaustion.clone(),
                 });
                 self.emit(MirInstr::DefVar {
-                    var: *dest,
+                    var: *raw,
                     src: element,
                     binding_ty: Some(element_ty.clone()),
                 });
@@ -323,6 +318,96 @@ impl Flatten<'_> {
                     var: *yielded,
                     src: has_element,
                     binding_ty: Some(Ty::Bool),
+                });
+            }
+            HirInstr::BindIteration {
+                raw,
+                dest,
+                plan,
+                binding,
+            } => {
+                self.bind_iteration_result(plan, *raw, *dest, *binding);
+            }
+        }
+    }
+
+    /// Adapt one raw `__next__` result (`raw`) into the user-visible loop target
+    /// (`dest`) per the checked [`CheckedIterationBinding`]. This runs only in the
+    /// yielded body, so moves and lifecycle copies never execute on the
+    /// `StopIteration` edge. Source ownership (borrowed vs consuming `__iter__`)
+    /// is already fixed upstream; here only the target convention matters.
+    pub(super) fn bind_iteration_result(
+        &mut self,
+        plan: &crate::checked::CheckedIterationBinding,
+        raw: VarId,
+        dest: VarId,
+        binding: crate::origin::OwnerId,
+    ) {
+        use crate::checked::IterationBindingAction;
+        let span = SourceSpan::new(None, DUMMY_SPAN);
+        self.owner_vars.insert(binding, dest);
+        match plan.action {
+            // A value result binds directly into the loop variable's own
+            // storage: `var` owns and may transfer it onward; an immutable or
+            // `ref` target (`BorrowValue`) instead drops it at each iteration's
+            // end. Both simply move the freshly yielded value into `dest`; the
+            // binding's declared mutability enforces the difference.
+            IterationBindingAction::MoveValue | IterationBindingAction::BorrowValue => {
+                let value = self.fresh_typed(span.clone(), Some(raw), plan.binding_ty.clone());
+                self.emit(MirInstr::UseVar {
+                    dest: value,
+                    var: raw,
+                    mode: UseMode::Move,
+                });
+                self.var_types.insert(dest, plan.binding_ty.clone());
+                self.emit(MirInstr::DefVar {
+                    var: dest,
+                    src: value,
+                    binding_ty: Some(plan.binding_ty.clone()),
+                });
+            }
+            // `var` target over a reference result: read through the handle and
+            // lifecycle-copy the referent into owned storage. `MakeRef` forwards
+            // the handle stored in `raw` unchanged; a plain read would instead
+            // dereference it and lose the reference identity.
+            IterationBindingAction::CopyReference => {
+                let handle = self.fresh_typed(span.clone(), Some(raw), plan.yielded_ty.clone());
+                self.emit(MirInstr::MakeRef {
+                    dest: handle,
+                    place: MirPlace::root(raw, Some(plan.yielded_ty.clone())),
+                });
+                let read = self.fresh_typed(span.clone(), None, plan.binding_ty.clone());
+                self.emit(MirInstr::ReadRef {
+                    dest: read,
+                    reference: handle,
+                });
+                let owned = self.fresh_typed(span.clone(), None, plan.binding_ty.clone());
+                self.emit(MirInstr::CopyValue {
+                    dest: owned,
+                    value: read,
+                });
+                self.var_types.insert(dest, plan.binding_ty.clone());
+                self.emit(MirInstr::DefVar {
+                    var: dest,
+                    src: owned,
+                    binding_ty: Some(plan.binding_ty.clone()),
+                });
+            }
+            // Immutable/`ref` target over a reference result: keep the yielded
+            // handle as the binding so body accesses read/write through it.
+            // `MakeRef` forwards `raw`'s handle unchanged.
+            IterationBindingAction::BorrowReference => {
+                let handle = self.fresh_typed(span.clone(), Some(raw), plan.binding_ty.clone());
+                self.emit(MirInstr::MakeRef {
+                    dest: handle,
+                    place: MirPlace::root(raw, Some(plan.yielded_ty.clone())),
+                });
+                self.runtime_aliases.insert(dest);
+                self.var_types.insert(dest, plan.binding_ty.clone());
+                self.emit(MirInstr::DefVar {
+                    var: dest,
+                    src: handle,
+                    binding_ty: Some(plan.binding_ty.clone()),
                 });
             }
         }

@@ -1650,8 +1650,7 @@ impl Checker {
 
             StmtKind::For {
                 var,
-                reference,
-                owned,
+                binding,
                 iter,
                 body,
                 orelse,
@@ -1661,8 +1660,10 @@ impl Checker {
                 // `range`, the element type for a `List`, or — for a user struct —
                 // the element type of its `__iter__()` iterator (`__next__`'s return).
                 let iter_ty = self.infer(iter)?;
-                let (elem_ty, mut protocol) = self.iteration_protocol(&iter_ty, *owned)?;
-                if !*owned
+                let source_mode = Self::iteration_mode(iter);
+                let (mut yielded_ty, mut protocol) =
+                    self.iteration_protocol(&iter_ty, source_mode)?;
+                if source_mode == crate::checked::IterationMode::Borrowed
                     && (list_element(&iter_ty).is_some()
                         || set_element(&iter_ty).is_some()
                         || dict_elements(&iter_ty).is_some())
@@ -1680,7 +1681,7 @@ impl Checker {
                 // `BorrowIter` path and the loan keeps the source live while
                 // rejecting mutation during iteration. A temporary source has no
                 // place (`origin_place` errs) and keeps the value copy.
-                if !*owned
+                if source_mode == crate::checked::IterationMode::Borrowed
                     && protocol.borrowed_origin.is_none()
                     && !protocol.prepare.is_empty()
                     && matches!(iter_ty, Ty::Struct(..))
@@ -1688,43 +1689,17 @@ impl Checker {
                 {
                     protocol.borrowed_origin = Some(origin);
                 }
-                if *owned && !matches!(iter.kind, ExprKind::Transfer(_)) {
-                    return Err(TypeError::Unsupported(
-                        "owned iteration requires a transferred iterable (`for var item in collection^`)"
-                            .to_string(),
-                    ));
-                }
-                if !*owned && matches!(iter.kind, ExprKind::Transfer(_)) {
-                    return Err(TypeError::Unsupported(
-                        "a transferred iterable requires an explicit `var` loop binding"
-                            .to_string(),
-                    ));
-                }
-                if *reference && *owned {
-                    return Err(TypeError::Unsupported(
-                        "a loop binding cannot be both `ref` and `var`".to_string(),
-                    ));
-                }
-                if !*owned && !*reference && !self.is_copyable(&elem_ty) {
-                    return Err(TypeError::NonCopyable {
-                        ty: elem_ty.to_string(),
-                        context: "immutable iteration; use `for var item in collection^`"
-                            .to_string(),
-                    });
-                }
-                if *owned
-                    && !self.is_implicitly_deletable(&elem_ty)
-                    && block_can_escape_owned_iteration(body, 0)
+                // Until bundled List itself yields references, retain its
+                // checked index bridge for a borrowed named `for ref`. Every
+                // structural reference-yielding iterator uses the generic path.
+                if *binding == crate::ast::LoopBindingMode::Ref
+                    && source_mode == crate::checked::IterationMode::Borrowed
+                    && list_element(&iter_ty).is_some()
                 {
-                    return Err(TypeError::Unsupported(format!(
-                        "owned iteration over non-ImplicitlyDeletable '{}' cannot exit early; its residual elements would require explicit destruction",
-                        elem_ty
-                    )));
-                }
-                let binding_ty = if *reference {
-                    if list_element(&iter_ty).is_none() {
+                    if !matches!(iter.kind, ExprKind::Identifier(_)) {
                         return Err(TypeError::Unsupported(
-                            "reference iteration currently requires a List place".to_string(),
+                            "reference iteration over a temporary List awaits generic borrowed collection iterators"
+                                .to_string(),
                         ));
                     }
                     let reference_protocol = self.reference_iteration_protocol(iter)?;
@@ -1739,10 +1714,21 @@ impl Checker {
                             )
                         })?;
                     protocol.reference = Some(Box::new(reference_protocol));
-                    Ty::Ref(reference)
-                } else {
-                    elem_ty
-                };
+                    yielded_ty = Ty::Ref(reference);
+                }
+                let binding_plan = self.iteration_binding_plan(*binding, &yielded_ty)?;
+                if source_mode == crate::checked::IterationMode::Owned
+                    && binding_plan.action == crate::checked::IterationBindingAction::MoveValue
+                    && !self.is_implicitly_deletable(&binding_plan.binding_ty)
+                    && block_can_escape_owned_iteration(body, 0)
+                {
+                    return Err(TypeError::Unsupported(format!(
+                        "owned iteration over non-ImplicitlyDeletable '{}' cannot exit early; its residual elements would require explicit destruction",
+                        binding_plan.binding_ty
+                    )));
+                }
+                let binding_ty = binding_plan.binding_ty.clone();
+                protocol.binding = Some(Box::new(binding_plan.clone()));
                 self.iteration_protocols
                     .borrow_mut()
                     .insert(iter.source_span(), protocol);
@@ -1756,16 +1742,11 @@ impl Checker {
                         .bindings
                         .insert(stmt.source_span());
                 }
-                let mutable = *owned
-                    || !*reference
-                    || matches!(&binding_ty, Ty::Ref(reference) if reference.mutability == crate::origin::Mutability::Mutable);
-                let result = match self.declare_with_mutability(var, binding_ty, mutable) {
-                    Ok(()) => {
-                        self.record_statement_binding(stmt, var);
-                        self.check_block(body, ret, true)
-                    }
-                    Err(e) => Err(e),
-                };
+                let result = (|| {
+                    self.declare_with_mutability(var, binding_ty, binding_plan.mutable)?;
+                    self.record_statement_binding(stmt, var);
+                    self.check_block(body, ret, true)
+                })();
                 self.pop_scope();
                 result?;
                 if let Some(body) = orelse {

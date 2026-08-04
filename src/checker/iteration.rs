@@ -4,6 +4,116 @@
 use super::*;
 
 impl Checker {
+    /// Select source ownership independently from the loop target convention.
+    /// A top-level transfer is the source-language request for consuming
+    /// `__iter__(var self)`; every other expression uses borrowed iteration.
+    pub(super) fn iteration_mode(iter: &Expr) -> crate::checked::IterationMode {
+        if matches!(iter.kind, ExprKind::Transfer(_)) {
+            crate::checked::IterationMode::Owned
+        } else {
+            crate::checked::IterationMode::Borrowed
+        }
+    }
+
+    /// Combine a target convention with the exact checked `__next__` result.
+    /// This is the single matrix shared by statements and comprehensions.
+    pub(super) fn iteration_binding_plan(
+        &mut self,
+        mode: crate::ast::LoopBindingMode,
+        yielded_ty: &Ty,
+    ) -> Result<crate::checked::CheckedIterationBinding, TypeError> {
+        use crate::ast::LoopBindingMode;
+        use crate::checked::{CheckedIterationBinding, IterationBindingAction};
+        use crate::origin::Mutability;
+
+        if let Ty::Ref(reference) = yielded_ty {
+            return match mode {
+                LoopBindingMode::Immutable => {
+                    let mut binding = reference.clone();
+                    binding.mutability = Mutability::Immutable;
+                    Ok(CheckedIterationBinding {
+                        mode,
+                        action: IterationBindingAction::BorrowReference,
+                        yielded_ty: yielded_ty.clone(),
+                        binding_ty: Ty::Ref(binding),
+                        mutable: false,
+                    })
+                }
+                LoopBindingMode::Var => {
+                    if !self.is_implicitly_copyable(&reference.referent) {
+                        return Err(TypeError::TraitNotSatisfied {
+                            param: "loop item".to_string(),
+                            ty: reference.referent.to_string(),
+                            trait_name: "ImplicitlyCopyable".to_string(),
+                            reason: self
+                                .trait_failure_reason(&reference.referent, "ImplicitlyCopyable"),
+                        });
+                    }
+                    Ok(CheckedIterationBinding {
+                        mode,
+                        action: IterationBindingAction::CopyReference,
+                        yielded_ty: yielded_ty.clone(),
+                        binding_ty: (*reference.referent).clone(),
+                        mutable: true,
+                    })
+                }
+                LoopBindingMode::Ref => Ok(CheckedIterationBinding {
+                    mode,
+                    action: IterationBindingAction::BorrowReference,
+                    yielded_ty: yielded_ty.clone(),
+                    binding_ty: yielded_ty.clone(),
+                    mutable: reference.mutability == Mutability::Mutable,
+                }),
+            };
+        }
+
+        if !self.is_movable(yielded_ty) {
+            return Err(TypeError::TraitNotSatisfied {
+                param: "loop item".to_string(),
+                ty: yielded_ty.to_string(),
+                trait_name: "Movable".to_string(),
+                reason: self.trait_failure_reason(yielded_ty, "Movable"),
+            });
+        }
+        if mode == LoopBindingMode::Var {
+            return Ok(CheckedIterationBinding {
+                mode,
+                action: IterationBindingAction::MoveValue,
+                yielded_ty: yielded_ty.clone(),
+                binding_ty: yielded_ty.clone(),
+                mutable: true,
+            });
+        }
+
+        // An immutable/`ref` target over an rvalue result is a borrow of the
+        // freshly yielded value: it lives in the loop variable's own
+        // per-iteration storage and is dropped at the end of each iteration
+        // rather than moved onward, so it must be droppable. Unlike a `var`
+        // target it cannot be transferred out when immutable. Because `__next__`
+        // already produced an owned value with no external referent, the binding
+        // stores that value directly instead of an alias — a synthetic reference
+        // into per-iteration storage would dangle on early control-flow exits.
+        // A `Copyable` element is droppable even without an explicit
+        // `ImplicitlyDeletable` bound (its copies must be destroyed), so it also
+        // qualifies; only a linear element with no implicit destructor is
+        // rejected.
+        if !self.is_implicitly_deletable(yielded_ty) && !self.is_copyable(yielded_ty) {
+            return Err(TypeError::TraitNotSatisfied {
+                param: "loop item".to_string(),
+                ty: yielded_ty.to_string(),
+                trait_name: "ImplicitlyDeletable".to_string(),
+                reason: self.trait_failure_reason(yielded_ty, "ImplicitlyDeletable"),
+            });
+        }
+        Ok(CheckedIterationBinding {
+            mode,
+            action: IterationBindingAction::BorrowValue,
+            yielded_ty: yielded_ty.clone(),
+            binding_ty: yielded_ty.clone(),
+            mutable: mode == LoopBindingMode::Ref,
+        })
+    }
+
     /// Resolve the exact methods used by the bundled List `for ref` bridge.
     /// These synthetic calls are checked here and retained on the iteration
     /// protocol; their syntax is never added to the source-expression arena.
@@ -66,19 +176,15 @@ impl Checker {
     pub(super) fn iteration_protocol(
         &self,
         ty: &Ty,
-        owned: bool,
+        mode: crate::checked::IterationMode,
     ) -> Result<(Ty, crate::checked::IterationProtocol), TypeError> {
         use crate::checked::{IterationMode, IterationProtocol};
-        let mode = if owned {
-            IterationMode::Owned
-        } else {
-            IterationMode::Borrowed
-        };
         let builtin = |element| {
             (
                 element,
                 IterationProtocol {
                     mode,
+                    binding: None,
                     borrowed_origin: None,
                     reference: None,
                     prepare: Vec::new(),
@@ -109,6 +215,7 @@ impl Checker {
             Ty::VariadicPack(element) => Ok(builtin((**element).clone())),
             Ty::Struct(..) => self.struct_iteration_protocol(ty, mode, 0),
             Ty::Param { bounds, .. } => {
+                let owned = mode == IterationMode::Owned;
                 let required = if owned { "IterableOwned" } else { "Iterable" };
                 if !bounds.iter().any(|bound| bound == required)
                     && self.lookup_trait_assoc_type(bounds, "Element").is_none()
@@ -138,6 +245,7 @@ impl Checker {
                     element.clone(),
                     IterationProtocol {
                         mode,
+                        binding: None,
                         borrowed_origin: None,
                         reference: None,
                         prepare: vec![crate::symbol::iterator_dispatch_symbol(match mode {
@@ -159,7 +267,7 @@ impl Checker {
                 ))
             }
             other => Err(TypeError::TypeMismatch {
-                expected: if owned {
+                expected: if mode == IterationMode::Owned {
                     "a nominal collection or a type with __iter__(var self)"
                 } else {
                     "a nominal collection or a type with borrowed __iter__"
@@ -317,6 +425,7 @@ impl Checker {
                 element.clone(),
                 crate::checked::IterationProtocol {
                     mode,
+                    binding: None,
                     borrowed_origin: None,
                     reference: None,
                     prepare: vec![prepare_symbol],
@@ -354,6 +463,7 @@ impl Checker {
             element.clone(),
             crate::checked::IterationProtocol {
                 mode,
+                binding: None,
                 borrowed_origin: None,
                 reference: None,
                 prepare: vec![prepare_symbol],

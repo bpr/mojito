@@ -1992,6 +1992,76 @@ fn verify_instruction(
                 ));
             }
         }
+        MirInstr::GetIter {
+            source,
+            dest,
+            mode,
+            prepare,
+        } => {
+            if *source as usize >= function.n_vars {
+                errors.push(format!(
+                    "{prefix}: GetIter uses invalid source slot {source}"
+                ));
+            }
+            if *dest as usize >= function.n_vars {
+                errors.push(format!(
+                    "{prefix}: GetIter uses invalid destination slot {dest}"
+                ));
+            }
+            let Some(first) = prepare.first() else {
+                return;
+            };
+            let convention_matches = |convention| match mode {
+                crate::checked::IterationMode::Borrowed => matches!(
+                    convention,
+                    None | Some(crate::ast::ArgConvention::Read)
+                        | Some(crate::ast::ArgConvention::Ref)
+                ),
+                crate::checked::IterationMode::Owned => {
+                    convention == Some(crate::ast::ArgConvention::Var)
+                }
+            };
+            match declared(declarations, first) {
+                Some(declaration) => {
+                    if !declaration.has_receiver || !declaration.param_types.is_empty() {
+                        errors.push(format!(
+                            "{prefix}: GetIter preparation method '{first}' is not a nullary receiver operation"
+                        ));
+                    }
+                    if !convention_matches(declaration.receiver_convention) {
+                        errors.push(format!(
+                            "{prefix}: GetIter {mode:?} mode does not match preparation method '{first}' receiver convention {:?}",
+                            declaration.receiver_convention
+                        ));
+                    }
+                }
+                None => {
+                    let matches_dispatch = match mode {
+                        crate::checked::IterationMode::Borrowed => {
+                            first
+                                == &crate::symbol::iterator_dispatch_symbol(
+                                    crate::ast::ArgConvention::Read,
+                                )
+                                || first
+                                    == &crate::symbol::iterator_dispatch_symbol(
+                                        crate::ast::ArgConvention::Ref,
+                                    )
+                        }
+                        crate::checked::IterationMode::Owned => {
+                            first
+                                == &crate::symbol::iterator_dispatch_symbol(
+                                    crate::ast::ArgConvention::Var,
+                                )
+                        }
+                    };
+                    if !matches_dispatch {
+                        errors.push(format!(
+                            "{prefix}: GetIter refers to undeclared preparation method '{first}'"
+                        ));
+                    }
+                }
+            }
+        }
         MirInstr::Next { dest, iter, call } => {
             if *iter as usize >= function.n_vars {
                 errors.push(format!("{prefix}: Next uses invalid iterator slot {iter}"));

@@ -528,6 +528,22 @@ impl From<StmtKind> for Stmt {
     }
 }
 
+/// The source-level binding convention on an iteration target.
+///
+/// Ordinary `for` statements and comprehension clauses share these spellings.
+/// The convention is independent of whether the iterable expression is
+/// transferred with `^`: an unadorned target is immutable, while `var` and
+/// contextual `ref` are explicit target conventions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopBindingMode {
+    /// `for item in iterable`.
+    Immutable,
+    /// `for var item in iterable`.
+    Var,
+    /// `for ref item in iterable`.
+    Ref,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum StmtKind {
@@ -669,14 +685,10 @@ pub enum StmtKind {
         body: Vec<Stmt>,
         orelse: Option<Vec<Stmt>>,
     },
-    /// `for var in iter: <body>` — `iter` must evaluate to a `range(...)`.
+    /// `for [ref | var] name in iter: <body>`.
     For {
         var: String,
-        reference: bool,
-        /// An explicit `var` target. Current Mojo uses this only with a
-        /// transferred iterable (`for var item in collection^`) to request
-        /// consuming/owned iteration.
-        owned: bool,
+        binding: LoopBindingMode,
         iter: Expr,
         body: Vec<Stmt>,
         orelse: Option<Vec<Stmt>>,
@@ -952,8 +964,7 @@ pub enum CollectionKind {
 pub enum ComprehensionClause {
     For {
         var: String,
-        reference: bool,
-        owned: bool,
+        binding: LoopBindingMode,
         iter: Box<Expr>,
     },
     If(Box<Expr>),

@@ -448,7 +448,7 @@ fn checked_hir_next_retains_a_shadowed_loop_binder_identity() {
         .node_weights()
         .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
-            mojito::hir::HirInstr::Next { binding, .. } => *binding,
+            mojito::hir::HirInstr::BindIteration { binding, .. } => Some(*binding),
             _ => None,
         })
         .expect("loop item binding");

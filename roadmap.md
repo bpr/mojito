@@ -68,9 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Loop binding and source modes** — model immutable, `var`, and `ref` loop
-  bindings independently from whether the source is borrowed or consumed, with
-  explicit copy, move, and reference requirements for each combination.
 - [ ] **Uniform borrowed-source lowering** — lower borrowed sources through
   `MakeRef` with distinct retained-source and iterator-object slots; represent
   whole-source versus interior borrowing only as loan granularity and use the

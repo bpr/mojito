@@ -26,16 +26,13 @@ impl Checker {
         let result = (|| {
             for clause in clauses {
                 match clause {
-                    crate::ast::ComprehensionClause::For {
-                        var,
-                        reference,
-                        owned,
-                        iter,
-                    } => {
+                    crate::ast::ComprehensionClause::For { var, binding, iter } => {
                         self.register_named_bindings(iter)?;
                         let iter_ty = self.infer(iter)?;
-                        let (elem_ty, mut protocol) = self.iteration_protocol(&iter_ty, *owned)?;
-                        if !*owned
+                        let source_mode = Self::iteration_mode(iter);
+                        let (yielded_ty, mut protocol) =
+                            self.iteration_protocol(&iter_ty, source_mode)?;
+                        if source_mode == crate::checked::IterationMode::Borrowed
                             && (list_element(&iter_ty).is_some()
                                 || set_element(&iter_ty).is_some()
                                 || dict_elements(&iter_ty).is_some())
@@ -46,43 +43,19 @@ impl Checker {
                                 .push(crate::origin::OriginSeg::Interior("element".to_string()));
                             protocol.borrowed_origin = Some(origin);
                         }
+                        let binding_plan = self.iteration_binding_plan(*binding, &yielded_ty)?;
+                        protocol.binding = Some(Box::new(binding_plan.clone()));
                         self.iteration_protocols
                             .borrow_mut()
                             .insert(iter.source_span(), protocol);
-                        if *reference {
-                            return Err(TypeError::Unsupported(
-                                "reference bindings in collection comprehensions are not implemented; use an explicit `for ref` loop"
-                                    .to_string(),
-                            ));
-                        }
-                        if *owned && !matches!(iter.kind, ExprKind::Transfer(_)) {
-                            return Err(TypeError::Unsupported(
-                                "an owned comprehension binding requires a transferred iterable (`for var x in values^`)"
-                                    .to_string(),
-                            ));
-                        }
-                        if !*owned && matches!(iter.kind, ExprKind::Transfer(_)) {
-                            return Err(TypeError::Unsupported(
-                                "a transferred comprehension iterable requires an explicit `var` binding"
-                                    .to_string(),
-                            ));
-                        }
-                        if !*owned && !*reference && !self.is_copyable(&elem_ty) {
-                            return Err(TypeError::NonCopyable {
-                                ty: elem_ty.to_string(),
-                                context:
-                                    "immutable comprehension iteration; use `for var ... in ...^`"
-                                        .to_string(),
-                            });
-                        }
-                        let binding_ty = elem_ty;
+                        let binding_ty = binding_plan.binding_ty.clone();
                         let implicitly_deletable = self.is_implicitly_deletable(&binding_ty);
                         // A generator binder scopes everything to its right, but
                         // not its own iterable. Giving every generator a lexical
                         // scope also permits a later generator to shadow the same
                         // spelling without changing an outer local.
                         self.push_scope();
-                        self.declare_with_mutability(var, binding_ty, *owned)?;
+                        self.declare_with_mutability(var, binding_ty, binding_plan.mutable)?;
                         let owner = self.lookup_owner(var).ok_or_else(|| {
                             TypeError::InvariantViolation(format!(
                                 "comprehension binder '{var}' has no stable owner"
@@ -96,7 +69,7 @@ impl Checker {
                                     "comprehension binder '{var}' has no checked type"
                                 ))
                             })?,
-                            mutable: *owned,
+                            plan: binding_plan,
                             implicitly_deletable,
                         });
                     }

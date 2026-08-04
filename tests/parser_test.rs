@@ -1,8 +1,8 @@
 use mojito::ast::{
     ArgConvention, Capture, CaptureKind, CollectionKind, ComprehensionClause, Decorator, Expr,
-    ExprKind, FnParam, FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, Method, Param,
-    ParamArg, ParamKind, PrefixOp, Stmt, StmtKind, StructComptime, TStringPart, TraitComptime,
-    TraitMethod, Type, TypeParam, WithItem,
+    ExprKind, FnParam, FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, LoopBindingMode,
+    Method, Param, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind, StructComptime, TStringPart,
+    TraitComptime, TraitMethod, Type, TypeParam, WithItem,
 };
 use mojito::{FloatLiteral, Lexer, Parser, parse_diagnostics};
 
@@ -412,8 +412,7 @@ fn parses_for_over_range() {
         stmts[0],
         Stmt::from(StmtKind::For {
             var: "i".into(),
-            reference: false,
-            owned: false,
+            binding: LoopBindingMode::Immutable,
             iter: Expr::from(ExprKind::Call {
                 name: "range".into(),
                 param_args: vec![],
@@ -427,14 +426,13 @@ fn parses_for_over_range() {
 }
 
 #[test]
-fn parses_owned_iteration_and_collection_comprehensions() {
+fn parses_var_loop_binding_and_collection_comprehensions() {
     let loop_statement = parse("for var item in values^:\n    pass\n");
     assert!(matches!(
         &loop_statement[0].kind,
         StmtKind::For {
             var,
-            owned: true,
-            reference: false,
+            binding: LoopBindingMode::Var,
             iter: Expr {
                 kind: ExprKind::Transfer(_),
                 ..
@@ -457,9 +455,50 @@ fn parses_owned_iteration_and_collection_comprehensions() {
     assert_eq!(*kind, CollectionKind::Dict);
     assert!(key.is_some());
     assert_eq!(clauses.len(), 3);
-    assert!(matches!(clauses[0], ComprehensionClause::For { .. }));
-    assert!(matches!(clauses[1], ComprehensionClause::For { .. }));
+    assert!(matches!(
+        clauses[0],
+        ComprehensionClause::For {
+            binding: LoopBindingMode::Immutable,
+            ..
+        }
+    ));
+    assert!(matches!(
+        clauses[1],
+        ComprehensionClause::For {
+            binding: LoopBindingMode::Immutable,
+            ..
+        }
+    ));
     assert!(matches!(clauses[2], ComprehensionClause::If(_)));
+}
+
+#[test]
+fn parses_explicit_reference_loop_bindings() {
+    let loop_statement = parse("for ref item in values:\n    pass\n");
+    assert!(matches!(
+        &loop_statement[0].kind,
+        StmtKind::For {
+            var,
+            binding: LoopBindingMode::Ref,
+            ..
+        } if var == "item"
+    ));
+
+    let statement = parse("var result = [item for ref item in values]\n");
+    let StmtKind::VarDecl { value, .. } = &statement[0].kind else {
+        panic!("expected variable declaration");
+    };
+    let ExprKind::Comprehension { clauses, .. } = &value.kind else {
+        panic!("expected comprehension");
+    };
+    assert!(matches!(
+        &clauses[0],
+        ComprehensionClause::For {
+            var,
+            binding: LoopBindingMode::Ref,
+            ..
+        } if var == "item"
+    ));
 }
 
 #[test]

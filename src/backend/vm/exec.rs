@@ -177,20 +177,28 @@ impl VmBackend {
             } => {
                 let v = regs[src.0 as usize].clone();
                 let slot = *var as usize;
-                let current = if let Value::Ref { .. } = &vars[slot] {
-                    self.read_reference(&vars[slot], frame_id, vars)?
+                if let Some(ty) = binding_ty {
+                    // A typed DefVar establishes fresh binding storage. In
+                    // particular, rebinding a per-iteration reference target
+                    // replaces the previous handle instead of assigning
+                    // through the referent it designated.
+                    vars[slot] = crate::runtime::coerce_checked(v, ty);
                 } else {
-                    vars[slot].clone()
-                };
-                let assigned = match binding_ty {
-                    Some(t) => crate::runtime::coerce_checked(v, t),
-                    None => crate::runtime::coerce_like(v, &current),
-                };
-                if let Value::Ref { .. } = &vars[slot] {
-                    let handle = vars[slot].clone();
-                    self.write_reference(&handle, frame_id, vars, assigned)?;
-                } else {
-                    vars[slot] = assigned;
+                    // An untyped DefVar is assignment to an established
+                    // binding. Reference bindings therefore write through;
+                    // ordinary bindings retain their existing runtime shape.
+                    let current = if let Value::Ref { .. } = &vars[slot] {
+                        self.read_reference(&vars[slot], frame_id, vars)?
+                    } else {
+                        vars[slot].clone()
+                    };
+                    let assigned = crate::runtime::coerce_like(v, &current);
+                    if let Value::Ref { .. } = &vars[slot] {
+                        let handle = vars[slot].clone();
+                        self.write_reference(&handle, frame_id, vars, assigned)?;
+                    } else {
+                        vars[slot] = assigned;
+                    }
                 }
             }
             MirInstr::UnOp { op, dest, a } => {
@@ -1419,6 +1427,13 @@ impl VmBackend {
                             returned: Some((returned_frame_id, &mut frame_vars)),
                         },
                     )?;
+                    let adapted = self.rebase_iterator_result(
+                        adapted,
+                        returned_frame_id,
+                        &frame_vars,
+                        frame_id,
+                        *iter,
+                    );
                     vars[slot] = frame_vars.into_iter().next().unwrap_or(Value::None);
                     regs[dest.0 as usize] = adapted;
                 } else {
@@ -1485,6 +1500,13 @@ impl VmBackend {
                                 returned: Some((returned_frame_id, &mut frame_vars)),
                             },
                         )?;
+                        let adapted = self.rebase_iterator_result(
+                            adapted,
+                            returned_frame_id,
+                            &frame_vars,
+                            frame_id,
+                            *iter,
+                        );
                         vars[slot] = frame_vars.into_iter().next().unwrap_or(Value::None);
                         regs[dest.0 as usize] = adapted;
                         regs[yielded.0 as usize] = Value::Bool(true);
@@ -1763,6 +1785,49 @@ impl VmBackend {
                     self.run_cleanup(prog, cleanup, vars)?;
                     return Ok(Flow::Jump(*target));
                 }
+            }
+        }
+    }
+
+    /// Preserve a reference yielded directly from an iterator receiver after
+    /// the temporary `__next__` frame is discarded. Stored handles are first
+    /// canonicalized while that frame remains available. A handle still rooted
+    /// at receiver slot zero then names the caller's write-back iterator slot,
+    /// which contains the same advanced receiver after the call completes.
+    fn rebase_iterator_result(
+        &self,
+        value: Value,
+        returned_frame: FrameId,
+        returned_variables: &[Value],
+        caller_frame: FrameId,
+        iterator: VarId,
+    ) -> Value {
+        let Value::Ref {
+            frame,
+            slot,
+            projection,
+        } = value
+        else {
+            return value;
+        };
+        let (frame, slot, projection) = self.canonical_reference_parts(
+            returned_frame,
+            returned_variables,
+            frame,
+            slot,
+            projection,
+        );
+        if frame == returned_frame.0 && slot == 0 {
+            Value::Ref {
+                frame: caller_frame.0,
+                slot: iterator as usize,
+                projection,
+            }
+        } else {
+            Value::Ref {
+                frame,
+                slot,
+                projection,
             }
         }
     }

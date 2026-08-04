@@ -302,9 +302,7 @@ impl Flatten<'_> {
                 self.f.blocks[self.cur].term = MirTerm::Jump(continuation);
                 self.cur = continuation;
             }
-            crate::ast::ComprehensionClause::For {
-                var, owned, iter, ..
-            } => {
+            crate::ast::ComprehensionClause::For { var, iter, .. } => {
                 let iterator_name = format!("$compiter{}", self.vars.len());
                 let iterator = self.var(&iterator_name);
                 let iterator_ty = self.checked_ty(iter);
@@ -319,11 +317,12 @@ impl Flatten<'_> {
                         _ => None,
                     })
                     .unwrap_or(crate::IterationProtocol {
-                        mode: if *owned {
+                        mode: if matches!(iter.kind, ExprKind::Transfer(_)) {
                             crate::IterationMode::Owned
                         } else {
                             crate::IterationMode::Borrowed
                         },
+                        binding: None,
                         borrowed_origin: None,
                         reference: None,
                         prepare: Vec::new(),
@@ -395,7 +394,7 @@ impl Flatten<'_> {
                     .next
                     .as_ref()
                     .map(|call| call.result_ty.clone())
-                    .unwrap_or_else(|| binding.ty.clone());
+                    .unwrap_or_else(|| binding.plan.yielded_ty.clone());
                 let element_value = self.fresh_typed(iter.source_span(), Some(iterator), yield_ty);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = header;
@@ -433,16 +432,18 @@ impl Flatten<'_> {
                     });
                 }
                 let binding_var = self.var(&format!("$comp{}${}", var, binding.owner.0));
-                self.owner_vars.insert(binding.owner, binding_var);
-                let element_ty = Some(binding.ty.clone());
-                if let Some(ty) = element_ty.clone() {
-                    self.var_types.insert(binding_var, ty);
-                }
+                // Retain the raw `__next__` result in a compiler-owned slot, then
+                // adapt it to the comprehension target with the same checked
+                // matrix the statement path uses via `BindIteration`.
+                let raw_var = self.var(&format!("$compyield{}${}", var, binding.owner.0));
+                self.var_types
+                    .insert(raw_var, binding.plan.yielded_ty.clone());
                 self.emit(MirInstr::DefVar {
-                    var: binding_var,
+                    var: raw_var,
                     src: element_value,
-                    binding_ty: element_ty,
+                    binding_ty: Some(binding.plan.yielded_ty.clone()),
                 });
+                self.bind_iteration_result(&binding.plan, raw_var, binding_var, binding.owner);
                 self.comprehension_clauses(clauses, bindings, index + 1, plan);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = exit;

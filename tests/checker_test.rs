@@ -614,19 +614,19 @@ fn checks_owned_iteration_and_collection_comprehensions() {
     ok(&format!(
         "{move_only}def main():\n    var values = [Item(1), Item(2)]\n    for var item in values^:\n        print(item.value)\n"
     ));
+    // Binding convention and source mode are independent: a `var` target over a
+    // borrowed source binds a mutable copy, and an immutable target over a
+    // consumed source is accepted. Neither the old `var`-requires-transfer nor
+    // transfer-requires-`var` coupling exists any longer.
+    ok(
+        "def main():\n    var values = [1, 2]\n    for var item in values:\n        item += 1\n        print(item)\n",
+    );
+    ok("def main():\n    var values = [1, 2]\n    for item in values^:\n        print(item)\n");
+    // An unadorned target is immutable regardless of the source mode, so
+    // mutating it is rejected.
     assert!(matches!(
-        err(&format!(
-            "{move_only}def main():\n    var values = [Item(1)]\n    for item in values:\n        print(item.value)\n"
-        )),
-        TypeError::NonCopyable { .. }
-    ));
-    assert!(matches!(
-        err("def main():\n    var values = [1, 2]\n    for var item in values:\n        print(item)\n"),
-        TypeError::Unsupported(message) if message.contains("transferred iterable")
-    ));
-    assert!(matches!(
-        err("def main():\n    var values = [1, 2]\n    for item in values^:\n        print(item)\n"),
-        TypeError::Unsupported(message) if message.contains("explicit `var`")
+        err("def main():\n    var values = [1, 2]\n    for item in values:\n        item += 1\n"),
+        TypeError::ImmutableBinding(name) if name == "item"
     ));
 
     ok(

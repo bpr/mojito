@@ -202,34 +202,42 @@ pub enum HirInstr {
         dest: VarId,
         method: Option<String>,
     },
-    /// Iterator protocol: `dest = iter.next()` — bind the current element and
-    /// advance `iter` in place (a mutating read of the iterator).
+    /// Iterator protocol: `raw = iter.next()` — retain the unchecked operation's
+    /// exact result in a compiler-owned slot and advance `iter` in place. The
+    /// successful body adapts `raw` to the source loop target with
+    /// [`HirInstr::BindIteration`].
     Next {
         iter: VarId,
-        dest: VarId,
+        raw: VarId,
         /// Exact checker-selected `__next__` operation. `None` is reserved for
         /// compiler-private iterator storage; nominal iterators always retain
         /// their selected target and executable result convention here.
         call: Option<crate::checked::CheckedIteratorCall>,
-        /// Checker-resolved element type for the loop binding. Keeping it on
-        /// HIR makes legacy bounded iteration as typed as the raising path;
-        /// MIR must not recover it from a later consumer or iterator spelling.
+        /// Exact checker-resolved result type of `__next__`. Keeping it on HIR
+        /// makes legacy bounded iteration as typed as the raising path.
         element_ty: Ty,
-        binding: Option<crate::origin::OwnerId>,
     },
     /// Current iterator protocol: call a typed-raising `__next__` exactly once,
-    /// storing its element in `dest` and whether it yielded in `yielded`.
+    /// storing its exact result in `raw` and whether it yielded in `yielded`.
     /// Raising the checked exhaustion type sets `yielded = False`; every other
     /// runtime error propagates normally.
     TryNext {
         iter: VarId,
-        dest: VarId,
+        raw: VarId,
         yielded: VarId,
         /// Exact checker-selected reference/value result and effect contract.
         call: crate::checked::CheckedIteratorCall,
         exhaustion: Ty,
         element_ty: Ty,
-        binding: Option<crate::origin::OwnerId>,
+    },
+    /// Adapt one raw iterator result into the user-visible target. This executes
+    /// only in the yielded body, so reference copies and value moves never run on
+    /// the `StopIteration` edge.
+    BindIteration {
+        raw: VarId,
+        dest: VarId,
+        plan: crate::checked::CheckedIterationBinding,
+        binding: crate::origin::OwnerId,
     },
     /// A `try` statement whose sub-regions are lowered in Stage 5 as mini-CFGs.
     /// `loop_targets` snapshots the enclosing **function-level** loop stack
@@ -1154,30 +1162,38 @@ impl Lower {
             // binds the loop variable via `next` (which advances the iterator).
             StmtKind::For {
                 var,
-                reference,
-                owned,
+                binding: binding_mode,
                 iter,
                 body,
                 orelse,
             } => {
-                if *reference {
+                let checked_iter = self.expr(iter);
+                let protocol = checked_iter
+                    .adjustments
+                    .iter()
+                    .find_map(|adjustment| match adjustment {
+                        SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
+                        _ => None,
+                    })
+                    .expect("checked for-loop iterable has an iteration protocol");
+                let binding_plan = *protocol
+                    .binding
+                    .clone()
+                    .expect("checked for-loop protocol has a binding plan");
+                debug_assert_eq!(binding_plan.mode, *binding_mode);
+
+                // The temporary concrete-List bridge is selected by the checked
+                // protocol, never reconstructed from the target's source syntax.
+                if protocol.reference.is_some() {
                     let ExprKind::Identifier(_) = &iter.kind else {
                         self.push(HirInstr::Stmt(
                             self.statement(Stmt::new(StmtKind::Pass, s.span)),
                         ));
                         return;
                     };
-                    let checked_iter = self.expr(iter);
-                    let protocol = checked_iter
-                        .adjustments
-                        .iter()
-                        .find_map(|adjustment| match adjustment {
-                            SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
-                            _ => None,
-                        })
-                        .expect("checked reference iteration has a protocol");
                     let reference_protocol = protocol
                         .reference
+                        .clone()
                         .expect("checked List reference iteration has exact calls");
                     let declaration = self
                         .checked_declarations
@@ -1336,27 +1352,6 @@ impl Lower {
                 // user variables; a monotone `vars.len()` suffix keeps them unique.
                 let it_name = format!("$iter{}", self.vars.len());
                 let it_var = self.var(&it_name);
-                let checked_iter = self.expr(iter);
-                let protocol = checked_iter
-                    .adjustments
-                    .iter()
-                    .find_map(|adjustment| match adjustment {
-                        SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or(crate::IterationProtocol {
-                        mode: if *owned {
-                            crate::IterationMode::Owned
-                        } else {
-                            crate::IterationMode::Borrowed
-                        },
-                        borrowed_origin: None,
-                        reference: None,
-                        prepare: Vec::new(),
-                        has_next: None,
-                        next: None,
-                        exhaustion: None,
-                    });
                 // A `Bind`-bound iterable that is normalized by `__iter__` is the
                 // *only* owner of its storage; a borrowing iterator would clobber
                 // it if normalization wrote back into the same slot. Give it a
@@ -1420,9 +1415,15 @@ impl Lower {
                 let normal_exit = orelse.as_ref().map(|_| self.new_block()).unwrap_or(exit);
                 self.scopes.push(HashMap::new());
                 let v = self.declare_var(var);
-                let declaration = self.checked_declarations.get(&s.source_span());
-                let binding = declaration.and_then(|declaration| declaration.binding);
-                let element_ty = declaration.and_then(|declaration| declaration.ty.clone());
+                let declaration = self
+                    .checked_declarations
+                    .get(&s.source_span())
+                    .expect("checked for-loop binding declaration");
+                let binding = declaration
+                    .binding
+                    .expect("checked for-loop binding has a stable owner");
+                debug_assert_eq!(declaration.ty.as_ref(), Some(&binding_plan.binding_ty));
+                let raw_var = self.var(&format!("$yield{}", self.vars.len()));
                 self.seal(Terminator::Jump(header));
 
                 // A current typed-raising iterator calls `__next__` in the
@@ -1432,20 +1433,16 @@ impl Lower {
                 let hn_name = format!("$hasnext{}", self.vars.len());
                 let hn_var = self.var(&hn_name);
                 if let Some(exhaustion) = protocol.exhaustion.clone() {
-                    let element_ty = element_ty
-                        .clone()
-                        .expect("checked raising for-loop binding type");
                     self.push(HirInstr::TryNext {
                         iter: iter_var,
-                        dest: v,
+                        raw: raw_var,
                         yielded: hn_var,
                         call: *protocol
                             .next
                             .clone()
                             .expect("raising iterator has checked __next__ contract"),
                         exhaustion,
-                        element_ty,
-                        binding,
+                        element_ty: binding_plan.yielded_ty.clone(),
                     });
                 } else {
                     self.push(HirInstr::HasNext {
@@ -1466,23 +1463,28 @@ impl Lower {
                 if protocol.exhaustion.is_none() {
                     self.push(HirInstr::Next {
                         iter: iter_var,
-                        dest: v,
+                        raw: raw_var,
                         call: protocol.next.as_deref().cloned(),
-                        element_ty: element_ty
-                            .clone()
-                            .expect("checked bounded for-loop binding type"),
-                        binding,
+                        element_ty: binding_plan.yielded_ty.clone(),
                     });
+                }
+                self.push(HirInstr::BindIteration {
+                    raw: raw_var,
+                    dest: v,
+                    plan: binding_plan.clone(),
+                    binding,
+                });
+                let mut cleanup = vec![v];
+                cleanup.push(raw_var);
+                cleanup.push(iter_var);
+                if split_source && !borrowed {
+                    cleanup.push(it_var);
                 }
                 self.loops.push(LoopFrame {
                     header,
                     exit,
                     escape: false,
-                    cleanup: if split_source && !borrowed {
-                        vec![v, iter_var, it_var]
-                    } else {
-                        vec![v, iter_var]
-                    },
+                    cleanup,
                 });
                 self.block(body);
                 self.loops.pop();

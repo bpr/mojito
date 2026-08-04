@@ -1212,8 +1212,7 @@ impl<'a> Elab<'a> {
             }
             StmtKind::For {
                 var,
-                reference,
-                owned,
+                binding,
                 iter,
                 body,
                 orelse,
@@ -1223,8 +1222,7 @@ impl<'a> Elab<'a> {
                 out.push(mk(
                     StmtKind::For {
                         var: var.clone(),
-                        reference: *reference,
-                        owned: *owned,
+                        binding: *binding,
                         iter: iter.clone(),
                         body,
                         orelse,

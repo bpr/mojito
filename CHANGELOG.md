@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Loop and comprehension targets now model their binding convention —
+  unadorned (immutable), `var`, and `ref` — independently of whether the source
+  is borrowed (`for x in xs`) or consumed (`for x in xs^`). Each of the six
+  combinations carries an explicit checked requirement: a `var` target moves an
+  owned result or lifecycle-copies a yielded reference (requiring an
+  `ImplicitlyCopyable` referent); an unadorned or `ref` target binds an owned
+  result directly into per-iteration storage (requiring a droppable element —
+  `ImplicitlyDeletable` or `Copyable` — dropped each iteration) or retains a
+  yielded reference handle to read/write through the borrowed referent. The raw `__next__` result is retained in a
+  compiler-owned slot and adapted to the target only on the yielded edge, so
+  moves and copies never run on the `StopIteration` path. Mutating an immutable
+  target, and a copying `var` target over a non-`ImplicitlyCopyable` reference
+  result, are rejected with contextual checker errors.
 - Trait conformance now accepts Mojo's directional `__next__` result
   refinement: a concrete `ref[o] T` result may implement an abstract value
   result `T` only when the referent matches exactly and `T` is proven

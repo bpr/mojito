@@ -5,6 +5,15 @@
 use super::*;
 
 impl Checker {
+    /// Allocate a stable identity for a source binding's storage.
+    pub(super) fn fresh_owner(&mut self) -> Result<crate::origin::OwnerId, TypeError> {
+        let owner = crate::origin::OwnerId(self.next_owner);
+        self.next_owner = self.next_owner.checked_add(1).ok_or_else(|| {
+            TypeError::InvariantViolation("checker exhausted binding identities".to_string())
+        })?;
+        Ok(owner)
+    }
+
     /// Bind `name` in the innermost scope. Repeated function declarations form an
     /// overload set when their call shapes differ; other same-scope repeats remain
     /// redeclarations.
@@ -50,10 +59,7 @@ impl Checker {
                 TypeError::InvariantViolation("checker mutability scope stack is empty".to_string())
             })?
             .insert(name.to_string(), mutable);
-        let owner = crate::origin::OwnerId(self.next_owner);
-        self.next_owner = self.next_owner.checked_add(1).ok_or_else(|| {
-            TypeError::InvariantViolation("checker exhausted binding identities".to_string())
-        })?;
+        let owner = self.fresh_owner()?;
         self.owner_scopes
             .last_mut()
             .ok_or_else(|| {
@@ -78,10 +84,7 @@ impl Checker {
         }
         self.scopes[scope_index].insert(name.to_string(), ty);
         self.mutable_scopes[scope_index].insert(name.to_string(), true);
-        let owner = crate::origin::OwnerId(self.next_owner);
-        self.next_owner = self.next_owner.checked_add(1).ok_or_else(|| {
-            TypeError::InvariantViolation("checker exhausted binding identities".to_string())
-        })?;
+        let owner = self.fresh_owner()?;
         self.owner_scopes[scope_index].insert(name.to_string(), owner);
         Ok(())
     }
