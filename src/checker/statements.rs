@@ -1663,32 +1663,7 @@ impl Checker {
                 let source_mode = Self::iteration_mode(iter);
                 let (mut yielded_ty, mut protocol) =
                     self.iteration_protocol(&iter_ty, source_mode)?;
-                if source_mode == crate::checked::IterationMode::Borrowed
-                    && (list_element(&iter_ty).is_some()
-                        || set_element(&iter_ty).is_some()
-                        || dict_elements(&iter_ty).is_some())
-                    && let Ok(mut origin) = self.origin_place(iter)
-                {
-                    origin
-                        .path
-                        .push(crate::origin::OriginSeg::Interior("element".to_string()));
-                    protocol.borrowed_origin = Some(origin);
-                }
-                // A user-defined borrowed iterator (a concrete struct with a
-                // non-empty `__iter__` prepare chain) over a *named* source
-                // borrows it rather than copying it: record the whole source
-                // place as the borrowed origin so HIR takes the no-copy
-                // `BorrowIter` path and the loan keeps the source live while
-                // rejecting mutation during iteration. A temporary source has no
-                // place (`origin_place` errs) and keeps the value copy.
-                if source_mode == crate::checked::IterationMode::Borrowed
-                    && protocol.borrowed_origin.is_none()
-                    && !protocol.prepare.is_empty()
-                    && matches!(iter_ty, Ty::Struct(..))
-                    && let Ok(origin) = self.origin_place(iter)
-                {
-                    protocol.borrowed_origin = Some(origin);
-                }
+                self.attach_borrowed_iteration_origin(iter, &iter_ty, source_mode, &mut protocol);
                 // Until bundled List itself yields references, retain its
                 // checked index bridge for a borrowed named `for ref`. Every
                 // structural reference-yielding iterator uses the generic path.

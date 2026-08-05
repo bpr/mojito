@@ -306,9 +306,6 @@ impl Flatten<'_> {
                 let iterator_name = format!("$compiter{}", self.vars.len());
                 let iterator = self.var(&iterator_name);
                 let iterator_ty = self.checked_ty(iter);
-                if let Some(ty) = iterator_ty.clone() {
-                    self.var_types.insert(iterator, ty);
-                }
                 let protocol = self
                     .checked_adjustments(iter)
                     .into_iter()
@@ -336,34 +333,17 @@ impl Flatten<'_> {
                         .clone()
                         .or_else(|| place.ty.clone())
                         .expect("checked borrowed comprehension iterable has a type");
-                    let iterator_value =
-                        self.fresh_typed(iter.source_span(), Some(place.root), value_ty);
-                    self.emit(MirInstr::LoadPlace {
-                        dest: iterator_value,
-                        place: place.clone(),
-                    });
-                    self.emit(MirInstr::DefVar {
-                        var: iterator,
-                        src: iterator_value,
-                        binding_ty: iterator_ty.clone(),
-                    });
-                    let canonical = self
-                        .mir_interior_origin(origin, Some(place.root))
-                        .expect("checked borrowed comprehension origin has a MIR owner");
-                    let loans = vec![MirLoan {
+                    self.borrow_iteration_source(
+                        iterator,
+                        iter.source_span(),
                         place,
-                        mutable: false,
-                        interior: Some(canonical),
-                    }];
-                    let marker =
-                        self.fresh_typed(iter.source_span(), Some(loans[0].place.root), Ty::None);
-                    self.emit(MirInstr::EstablishLoans {
-                        reference: iterator,
-                        loans: loans.clone(),
-                        marker,
-                    });
-                    self.aggregate_loans.insert(iterator, loans);
+                        value_ty,
+                        origin,
+                    );
                 } else {
+                    if let Some(ty) = iterator_ty.clone() {
+                        self.var_types.insert(iterator, ty);
+                    }
                     let iterator_value = self.expr(iter);
                     self.emit(MirInstr::DefVar {
                         var: iterator,
@@ -371,14 +351,27 @@ impl Flatten<'_> {
                         binding_ty: iterator_ty.clone(),
                     });
                 }
-                // Comprehensions normalize the iterable in place (the source/
-                // iterator slot split is applied to `for` statements only).
+                // The same retained-source/iterator-object slot split as the
+                // statement path: a borrowed source stays in its own slot, so
+                // `GetIter` normalization cannot clobber the storage (or the
+                // reference handle) the iterator still refers to.
+                let borrowed = protocol.borrowed_origin.is_some();
+                let split_source = matches!(protocol.mode, crate::IterationMode::Borrowed)
+                    && (borrowed || !protocol.prepare.is_empty());
+                let iterator_object = if split_source {
+                    self.var(&format!("$compiterobj{}", self.vars.len()))
+                } else {
+                    iterator
+                };
                 self.emit(MirInstr::GetIter {
                     source: iterator,
-                    dest: iterator,
+                    dest: iterator_object,
                     mode: protocol.mode,
                     prepare: protocol.prepare.clone(),
                 });
+                if borrowed && split_source {
+                    self.reestablish_source_loans(iterator, iterator_object);
+                }
 
                 let header = self.new_block();
                 let body = self.new_block();
@@ -395,15 +388,16 @@ impl Flatten<'_> {
                     .as_ref()
                     .map(|call| call.result_ty.clone())
                     .unwrap_or_else(|| binding.plan.yielded_ty.clone());
-                let element_value = self.fresh_typed(iter.source_span(), Some(iterator), yield_ty);
+                let element_value =
+                    self.fresh_typed(iter.source_span(), Some(iterator_object), yield_ty);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = header;
-                let has_next = self.fresh(iter.source_span(), Some(iterator));
+                let has_next = self.fresh(iter.source_span(), Some(iterator_object));
                 if let Some(exhaustion) = protocol.exhaustion.clone() {
                     self.emit(MirInstr::TryNext {
                         dest: element_value,
                         yielded: has_next,
-                        iter: iterator,
+                        iter: iterator_object,
                         call: *protocol
                             .next
                             .clone()
@@ -413,7 +407,7 @@ impl Flatten<'_> {
                 } else {
                     self.emit(MirInstr::HasNext {
                         dest: has_next,
-                        iter: iterator,
+                        iter: iterator_object,
                         method: protocol.has_next.clone(),
                     });
                 }
@@ -427,7 +421,7 @@ impl Flatten<'_> {
                 if protocol.exhaustion.is_none() {
                     self.emit(MirInstr::Next {
                         dest: element_value,
-                        iter: iterator,
+                        iter: iterator_object,
                         call: protocol.next.as_deref().cloned(),
                     });
                 }
@@ -447,6 +441,17 @@ impl Flatten<'_> {
                 self.comprehension_clauses(clauses, bindings, index + 1, plan);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = exit;
+                if split_source && !borrowed {
+                    // An owned temporary source is used only by `GetIter` before
+                    // the loop, so a liveness anchor at the exit keeps it live
+                    // through the loop (a borrowing iterator still refers to its
+                    // storage); then it is destroyed exactly once, after the
+                    // loop. A borrowed source is kept live by its loan and owned
+                    // (dropped) by its enclosing scope. Mirrors the statement
+                    // loop's exit anchor.
+                    self.emit(MirInstr::KeepAlive { var: iterator });
+                    self.emit(MirInstr::DropVar { var: iterator });
+                }
             }
         }
     }

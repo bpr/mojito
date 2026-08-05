@@ -32,17 +32,12 @@ impl Checker {
                         let source_mode = Self::iteration_mode(iter);
                         let (yielded_ty, mut protocol) =
                             self.iteration_protocol(&iter_ty, source_mode)?;
-                        if source_mode == crate::checked::IterationMode::Borrowed
-                            && (list_element(&iter_ty).is_some()
-                                || set_element(&iter_ty).is_some()
-                                || dict_elements(&iter_ty).is_some())
-                            && let Ok(mut origin) = self.origin_place(iter)
-                        {
-                            origin
-                                .path
-                                .push(crate::origin::OriginSeg::Interior("element".to_string()));
-                            protocol.borrowed_origin = Some(origin);
-                        }
+                        self.attach_borrowed_iteration_origin(
+                            iter,
+                            &iter_ty,
+                            source_mode,
+                            &mut protocol,
+                        );
                         let binding_plan = self.iteration_binding_plan(*binding, &yielded_ty)?;
                         protocol.binding = Some(Box::new(binding_plan.clone()));
                         self.iteration_protocols

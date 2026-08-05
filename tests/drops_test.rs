@@ -408,3 +408,18 @@ fn breaking_out_of_borrowed_temporary_iteration_still_drops_the_source_once() {
     assert_eq!(out, "x 0\nx 1\ndrop numbers 5\nafter\n");
     assert_eq!(out.matches("drop numbers").count(), 1);
 }
+
+#[test]
+fn borrowed_comprehension_over_a_temporary_drops_the_source_once() {
+    // The comprehension twin of the statement-loop split: the borrowed
+    // temporary source keeps its own retained slot while the iterator object
+    // is normalized into a distinct one, so the source's `__del__` runs
+    // exactly once, immediately after the comprehension — in-place
+    // normalization would overwrite (leak) it.
+    let src = format!(
+        "{ITERABLE_NUMBERS}def main():\n    var values = [x for x in Numbers(3)]\n    print(\"len\", len(values))\n"
+    );
+    let out = vm(&src);
+    assert_eq!(out, "drop numbers 3\nlen 3\n");
+    assert_eq!(out.matches("drop numbers").count(), 1);
+}

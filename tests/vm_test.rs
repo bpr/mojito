@@ -920,6 +920,19 @@ fn reference_yielding_iteration_borrows_a_named_source() {
 }
 
 #[test]
+fn comprehension_borrows_a_named_user_source() {
+    // A comprehension over a named user iterable follows the same borrowed-
+    // source rules as a `for` statement: the source is bound by reference (one
+    // `__del__`, at its ASAP last use), stays usable after the comprehension,
+    // and the yielded references feed the comprehension element expression.
+    let source = include_str!("../assets/ok/comprehension_borrowed_named_source.mojo");
+    assert_eq!(
+        run_compiled(source).expect("named-source comprehension compiles"),
+        "-2\n0\n20\n40\n-1\n3\n-3\n"
+    );
+}
+
+#[test]
 fn returned_origin_pointer_deref_reads_and_writes_through_the_pointee() {
     // `def get(self) -> ref[o] Int: return self.p[0]` over an origin-bearing
     // `UnsafePointer[Int, o]` field executes: the returned handle is re-rooted at

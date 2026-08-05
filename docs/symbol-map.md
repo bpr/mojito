@@ -110,7 +110,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `mir/lower_expr.rs` owns expression lowering (the `expr_unconverted`
   dispatcher, collections/comprehensions, nested closures).
 - `mir/lower_stmt.rs` owns statement, place, subscript-assignment, `try`-region,
-  and terminator lowering.
+  and terminator lowering, plus the borrowed-iteration source binding and loan
+  re-establishment helpers shared with comprehension lowering.
 - `mir/nested.rs` owns capture analysis and nested-function lifting.
 
 ### VM and Comptime

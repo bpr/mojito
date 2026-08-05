@@ -1570,7 +1570,7 @@ fn list_element_references_lower_with_interior_generation_metadata() {
 }
 
 #[test]
-fn borrowed_list_iteration_lowers_a_place_read_and_interior_loan() {
+fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
     use mojito::OriginSeg;
 
     let source = include_str!("../conformance/fixtures/borrowed_iteration_mutation.mojo");
@@ -1589,35 +1589,51 @@ fn borrowed_list_iteration_lowers_a_place_read_and_interior_loan() {
         .iter()
         .position(|name| name == "values")
         .expect("values slot") as u32;
+    let source_slot = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$iter") && !name.starts_with("$iterobj"))
+        .expect("retained-source slot") as u32;
     let iterator = main
         .var_names
         .iter()
-        .position(|name| name.starts_with("$iter"))
-        .expect("iterator slot") as u32;
+        .position(|name| name.starts_with("$iterobj"))
+        .expect("iterator-object slot") as u32;
     let instructions = main
         .blocks
         .iter()
         .flat_map(|block| &block.instrs)
         .collect::<Vec<_>>();
 
+    // The retained source is a genuine reference to the whole collection place
+    // (never a value copy); interior granularity lives only in the loan.
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::LoadPlace { place, .. } if place.root == values && place.proj.is_empty()
+        MirInstr::MakeRef { place, .. } if place.root == values && place.proj.is_empty()
     )));
-    assert!(instructions.iter().any(|instruction| matches!(
-        instruction,
-        MirInstr::EstablishLoans { reference, loans, .. }
-            if *reference == iterator
-                && loans.iter().any(|loan| {
-                    loan.place.root == values
-                        && loan.interior.as_ref().is_some_and(|origin| {
-                            origin.path.iter().any(|segment| matches!(
-                                segment,
-                                OriginSeg::Interior(name) if name == "element"
-                            ))
+    assert!(matches!(main.var_tys.get(&source_slot), Some(Ty::Ref(_))));
+    let interior_loan = |reference: u32| {
+        instructions.iter().any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference: r, loans, .. }
+                    if *r == reference
+                        && loans.iter().any(|loan| {
+                            loan.place.root == values
+                                && loan.interior.as_ref().is_some_and(|origin| {
+                                    origin.path.iter().any(|segment| matches!(
+                                        segment,
+                                        OriginSeg::Interior(name) if name == "element"
+                                    ))
+                                })
                         })
-                })
-    )));
+            )
+        })
+    };
+    // The loan is established on the retained-source slot and re-established on
+    // the long-lived iterator-object slot.
+    assert!(interior_loan(source_slot));
+    assert!(interior_loan(iterator));
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::InvalidateInteriors { base, .. }
@@ -1628,6 +1644,202 @@ fn borrowed_list_iteration_lowers_a_place_read_and_interior_loan() {
         MirInstr::InvalidateInteriors { base, .. }
             if base.root == values && base.path.is_empty()
     )));
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
+fn borrowed_named_user_source_lowers_a_reference_bind_and_whole_place_loan() {
+    let source = include_str!("../assets/ok/reference_yielding_iteration_named_source.mojo");
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile borrowed named user-source iteration");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let nums = main
+        .var_names
+        .iter()
+        .position(|name| name == "nums")
+        .expect("nums slot") as u32;
+    let source_slot = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$iter") && !name.starts_with("$iterobj"))
+        .expect("retained-source slot") as u32;
+    let iterator = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$iterobj"))
+        .expect("iterator-object slot") as u32;
+    let instructions = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+
+    // Uniform shape with the collection case: `MakeRef` into a `Ty::Ref`-typed
+    // retained-source slot; the only difference is the loan granularity — a
+    // whole-place shared loan (`interior: None`) instead of an element
+    // generation.
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::MakeRef { place, .. } if place.root == nums && place.proj.is_empty()
+    )));
+    assert!(matches!(main.var_tys.get(&source_slot), Some(Ty::Ref(_))));
+    let whole_place_loan = |reference: u32| {
+        instructions.iter().any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference: r, loans, .. }
+                    if *r == reference
+                        && loans.iter().any(|loan| {
+                            loan.place.root == nums
+                                && loan.place.proj.is_empty()
+                                && loan.interior.is_none()
+                        })
+            )
+        })
+    };
+    assert!(whole_place_loan(source_slot));
+    assert!(whole_place_loan(iterator));
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
+fn borrowed_comprehension_sources_lower_like_statement_loops() {
+    use mojito::OriginSeg;
+
+    // Interior granularity: a comprehension over a named List binds the same
+    // `MakeRef` retained-source slot and `element` interior loan as a `for`
+    // statement, re-established on the iterator-object slot.
+    let source = "def main():\n    var values = [1, 2, 3]\n    var doubled = [x * 2 for x in values]\n    print(len(doubled))\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile borrowed List comprehension");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let values = main
+        .var_names
+        .iter()
+        .position(|name| name == "values")
+        .expect("values slot") as u32;
+    let source_slot = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$compiter") && !name.starts_with("$compiterobj"))
+        .expect("retained-source slot") as u32;
+    let iterator = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$compiterobj"))
+        .expect("iterator-object slot") as u32;
+    let instructions = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::MakeRef { place, .. } if place.root == values && place.proj.is_empty()
+    )));
+    assert!(matches!(main.var_tys.get(&source_slot), Some(Ty::Ref(_))));
+    let interior_loan = |reference: u32| {
+        instructions.iter().any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference: r, loans, .. }
+                    if *r == reference
+                        && loans.iter().any(|loan| {
+                            loan.place.root == values
+                                && loan.interior.as_ref().is_some_and(|origin| {
+                                    origin.path.iter().any(|segment| matches!(
+                                        segment,
+                                        OriginSeg::Interior(name) if name == "element"
+                                    ))
+                                })
+                        })
+            )
+        })
+    };
+    assert!(interior_loan(source_slot));
+    assert!(interior_loan(iterator));
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+
+    // Whole-place granularity: a comprehension over a named user iterable
+    // borrows the whole source (`interior: None`) instead of copying it.
+    let source = include_str!("../assets/ok/comprehension_borrowed_named_source.mojo");
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile borrowed named-source comprehension");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let nums = main
+        .var_names
+        .iter()
+        .position(|name| name == "nums")
+        .expect("nums slot") as u32;
+    let source_slot = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$compiter") && !name.starts_with("$compiterobj"))
+        .expect("retained-source slot") as u32;
+    let iterator = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$compiterobj"))
+        .expect("iterator-object slot") as u32;
+    let instructions = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::MakeRef { place, .. } if place.root == nums && place.proj.is_empty()
+    )));
+    assert!(matches!(main.var_tys.get(&source_slot), Some(Ty::Ref(_))));
+    let whole_place_loan = |reference: u32| {
+        instructions.iter().any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference: r, loans, .. }
+                    if *r == reference
+                        && loans.iter().any(|loan| {
+                            loan.place.root == nums
+                                && loan.place.proj.is_empty()
+                                && loan.interior.is_none()
+                        })
+            )
+        })
+    };
+    assert!(whole_place_loan(source_slot));
+    assert!(whole_place_loan(iterator));
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",

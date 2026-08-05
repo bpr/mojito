@@ -890,28 +890,27 @@ Conditional lifecycle conformances are folded per specialization: a `deinit`
 method may implicitly copy a named tuple only when every element is
 `ImplicitlyCopyable`; otherwise the call must transfer the tuple with `^`.
 
-Concrete borrowed List, Set, and Dict place iteration also records the source's
-`element` interior origin. HIR `BorrowIter` preserves the source place instead
-of invoking its value copy lifecycle; MIR makes the load and `EstablishLoans`
-operation explicit, so the outer owner remains live through iteration. A
-collection origin ends in an `Interior` segment, so its `BorrowIter` uses a
-handle-preserving `LoadPlace` and normalizes in place (its iterator holds a heap
-pointer). A **user reference-yielding iterator over a named source** records the
-*whole* source place (no `Interior` segment) as its borrowed origin: `BorrowIter`
-then binds a genuine reference (`MakeRef`) rather than copying, the iterator gets
-its own split slot (the borrowed `__iter__(ref self)` re-roots at the source, so
-the reference is only read by `GetIter` and dropped afterward as a no-op), and the
-whole-source shared loan is re-established on the long-lived iterator variable so
-it stays live through the loop — keeping the source live without the `KeepAlive`
-hack and rejecting mutation of the source during iteration. List iteration
-additionally observes element replacement and rejects structural invalidation
-before a later iterator use; concrete List `for ref` binds checked indexed element
-places directly. These are deliberately narrow collection bridges until
-parameterized associated iterator types can derive the same facts for generic and
-user-defined iterables. The only method-free collection behavior
-in the VM is the explicitly CTFE-only `ComptimeList` bridge; the separate
-method-free tuple-shaped path is compiler-private runtime-pack storage, not a
-public collection.
+Borrowed-source iteration lowers uniformly, in statements and comprehensions
+alike. The checker records a borrowed origin for a named source — a concrete
+List/Set/Dict place gains an `element` `Interior` segment, while a named
+user-struct iterable records the *whole* source place — and HIR `BorrowIter`
+preserves that place instead of invoking its value copy lifecycle. MIR always
+binds the retained source as a genuine reference (`MakeRef` into a
+`Ty::Ref`-typed retained-source slot; a borrowed `__iter__(ref self)` re-roots
+at the source, so the handle is read only by `GetIter` and dropped afterward
+as a no-op) and normalizes the iterator into a distinct iterator-object slot.
+Whole-source versus interior borrowing is expressed only as loan granularity:
+`EstablishLoans` carries either a whole-place shared loan or an interior
+`element` generation, re-established on the long-lived iterator-object slot so
+the source stays live through the loop and mutation of it during iteration is
+rejected. List iteration additionally observes element replacement and rejects
+structural invalidation before a later iterator use; concrete List `for ref`
+binds checked indexed element places directly. The collection-specific
+checker rules remain narrow bridges until parameterized associated iterator
+types can derive the same facts for generic iterables. The only method-free
+collection behavior in the VM is the explicitly CTFE-only `ComptimeList`
+bridge; the separate method-free tuple-shaped path is compiler-private
+runtime-pack storage, not a public collection.
 
 Tuple specialization is a closed-set, two-phase handoff. The discovery check
 collects every public Tuple element sequence and only the transforms actually
@@ -1895,18 +1894,19 @@ The back-edge makes the moved state flow to the next iteration. The analysis can
 therefore reject the second iteration's attempted move.
 
 Borrowed iteration, and consuming iteration for a type with `__iter__(var self)`,
-first execute the checker-selected nominal `__iter__` normalization chain. For
-borrowed iteration whose iterable is normalized by `__iter__` (a generic or
-user-struct iterable, not a concrete `Interior`-origin collection place),
-`GetIter` reads the source from one slot and writes the iterator into a distinct
-slot, so the source stays live in its own slot through the loop rather than being
-overwritten during normalization. A borrowed **temporary** — the only owner of its
-storage — is `Bind`-bound and kept live by a `KeepAlive` liveness anchor at the
-loop exit, then destroyed exactly once after the loop. A borrowed **named** source
-is instead `MakeRef`-bound (a genuine reference, no copy) and its whole-source
-dependency is recorded as a shared loan re-established on the long-lived iterator
-variable: the loan keeps the source live through the loop (no `KeepAlive` needed)
-and rejects mutation of the source during iteration; the reference slot is read
+first execute the checker-selected nominal `__iter__` normalization chain. Every
+borrowed source is retained in its own slot — statement loops and comprehension
+clauses share the rule — and `GetIter` writes the normalized iterator into a
+distinct iterator-object slot, so the source stays live in its own slot through
+the loop rather than being overwritten during normalization. A borrowed
+**temporary** — the only owner of its storage — is `Bind`-bound and kept live by
+a `KeepAlive` liveness anchor at the loop exit, then destroyed exactly once
+after the loop. A borrowed **named** source is instead `MakeRef`-bound (a
+genuine reference, no copy) and its dependency is recorded as a loan — a
+whole-place shared loan, or an interior `element` generation for a concrete
+collection place — re-established on the long-lived iterator-object slot: the
+loan keeps the source live through the loop (no `KeepAlive` needed) and rejects
+conflicting mutation of the source during iteration; the reference slot is read
 only by `GetIter` and dropped afterward as a no-op. Owned iteration keeps the
 single slot: `__iter__(var self)` consumes the source into the iterator.
 Bundled borrowed paths cover List, Set, Dict, and Range; the bundled owned path

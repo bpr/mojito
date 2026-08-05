@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Borrowed iteration sources now lower uniformly, in `for` statements and
+  comprehensions alike: every borrowed named source is bound as a genuine
+  reference (`MakeRef`) into a retained-source slot, the iterator object is
+  normalized into a distinct slot, and whole-source versus interior borrowing
+  is expressed only as loan granularity — a whole-place shared loan for a
+  user iterable, an interior `element` generation for a concrete
+  List/Set/Dict place — re-established on the long-lived iterator slot. The
+  former collection-only `LoadPlace` single-slot bridge is gone.
+  Comprehensions gain the statement loop's semantics they previously lacked: a
+  comprehension over a named user iterable borrows its source instead of
+  copying it (one `__del__`, source usable afterward), mutating a borrowed
+  source mid-comprehension is now rejected as a loan conflict or interior
+  invalidation (previously a silent copy permitted it), and a comprehension
+  over a borrowed user-iterable temporary no longer leaks the source — it is
+  retained in its own slot and destroyed exactly once, after the
+  comprehension.
 - Loop and comprehension targets now model their binding convention —
   unadorned (immutable), `var`, and `ref` — independently of whether the source
   is borrowed (`for x in xs`) or consumed (`for x in xs^`). Each of the six

@@ -68,10 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Uniform borrowed-source lowering** — lower borrowed sources through
-  `MakeRef` with distinct retained-source and iterator-object slots; represent
-  whole-source versus interior borrowing only as loan granularity and use the
-  same rules for comprehensions.
 - [ ] **Origin-parameterized borrowed `Iterable`** — adopt
   `IteratorType[iterable_mut: Bool, //, iterable_origin:
   Origin[mut=iterable_mut]]` and

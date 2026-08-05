@@ -114,6 +114,43 @@ impl Checker {
         })
     }
 
+    /// Attach the borrowed-source origin fact shared by `for` statements and
+    /// comprehensions: an `element` interior origin for a borrowed concrete
+    /// List/Set/Dict place, or the whole source place for a named user-struct
+    /// iterable with a non-empty `__iter__` prepare chain (borrowed rather than
+    /// copied; the loan keeps the source live while rejecting mutation during
+    /// iteration). A temporary source has no place (`origin_place` errs) and
+    /// keeps the owned value copy.
+    pub(super) fn attach_borrowed_iteration_origin(
+        &self,
+        iter: &Expr,
+        iter_ty: &Ty,
+        source_mode: crate::checked::IterationMode,
+        protocol: &mut crate::checked::IterationProtocol,
+    ) {
+        if source_mode != crate::checked::IterationMode::Borrowed {
+            return;
+        }
+        if (list_element(iter_ty).is_some()
+            || set_element(iter_ty).is_some()
+            || dict_elements(iter_ty).is_some())
+            && let Ok(mut origin) = self.origin_place(iter)
+        {
+            origin
+                .path
+                .push(crate::origin::OriginSeg::Interior("element".to_string()));
+            protocol.borrowed_origin = Some(origin);
+            return;
+        }
+        if protocol.borrowed_origin.is_none()
+            && !protocol.prepare.is_empty()
+            && matches!(iter_ty, Ty::Struct(..))
+            && let Ok(origin) = self.origin_place(iter)
+        {
+            protocol.borrowed_origin = Some(origin);
+        }
+    }
+
     /// Resolve the exact methods used by the bundled List `for ref` bridge.
     /// These synthetic calls are checked here and retained on the iteration
     /// protocol; their syntax is never added to the source-expression arena.

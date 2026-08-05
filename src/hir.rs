@@ -1352,36 +1352,21 @@ impl Lower {
                 // user variables; a monotone `vars.len()` suffix keeps them unique.
                 let it_name = format!("$iter{}", self.vars.len());
                 let it_var = self.var(&it_name);
-                // A `Bind`-bound iterable that is normalized by `__iter__` is the
-                // *only* owner of its storage; a borrowing iterator would clobber
-                // it if normalization wrote back into the same slot. Give it a
-                // distinct iterator slot and keep the source live in `it_var` (a
-                // concrete `BorrowIter` place already retains its owner via an
-                // external loan, and an empty-`prepare` iterable normalizes in
-                // place, so both keep the single slot).
-                // Only borrowed iteration retains the source: owned iteration
-                // (`__iter__(var self)`) consumes it into the iterator, so the
-                // source must keep the single slot and not be dropped again.
-                // A concrete collection borrows an interior element generation and
-                // normalizes in place (its iterator holds a heap pointer, not a
-                // frame reference), so it keeps the single source slot. Any other
-                // borrowed user iterator (a whole-value named borrow, or a copied
-                // temporary) holds a frame reference into the source, so it needs a
-                // distinct iterator slot: `GetIter` normalization must not clobber
-                // the source slot the iterator still refers to.
-                let borrowed_interior = protocol.borrowed_origin.as_ref().is_some_and(|origin| {
-                    origin
-                        .path
-                        .iter()
-                        .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
-                });
-                let split_source = matches!(protocol.mode, crate::IterationMode::Borrowed)
-                    && !protocol.prepare.is_empty()
-                    && !borrowed_interior;
+                // Every borrowed source is retained in its own slot — `it_var`
+                // holds either a `BorrowIter` reference handle to the named
+                // source or the `Bind`-bound owned temporary — and the iterator
+                // object lives in a distinct slot: `GetIter` normalization must
+                // not clobber the source the iterator still refers to. Only an
+                // empty-`prepare` iterable normalizes in place, and owned
+                // iteration (`__iter__(var self)`) consumes the source into the
+                // iterator, so both keep the single slot (retaining and dropping
+                // a consumed source again would double-free).
                 // A `BorrowIter`'d source (borrowed origin present) is a loan of
                 // storage owned elsewhere; only a `Bind`'d owned temporary is kept
                 // alive and dropped by the loop.
                 let borrowed = protocol.borrowed_origin.is_some();
+                let split_source = matches!(protocol.mode, crate::IterationMode::Borrowed)
+                    && (borrowed || !protocol.prepare.is_empty());
                 if let Some(origin) = protocol.borrowed_origin.clone() {
                     self.push(HirInstr::BorrowIter {
                         dest: it_var,

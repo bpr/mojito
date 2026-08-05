@@ -97,70 +97,7 @@ impl Flatten<'_> {
                     .clone()
                     .or_else(|| place.ty.clone())
                     .expect("checked borrowed iterator place has a type");
-                let canonical = self
-                    .mir_interior_origin(origin, Some(place.root))
-                    .expect("checked borrowed iterator origin has a MIR owner");
-                // A concrete collection borrows an interior element generation
-                // (its origin ends in an `Interior` segment); a whole-value user
-                // source is an exclusive shared loan of the source place itself.
-                let interior = canonical
-                    .path
-                    .iter()
-                    .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
-                    .then_some(canonical);
-                if interior.is_some() {
-                    // Collection bridge: a handle-preserving `LoadPlace` normalizes
-                    // in place (single slot). It does not run `__copyinit__`, so the
-                    // iterator observes element replacement in the original
-                    // allocation.
-                    self.var_types.insert(*dest, value_ty.clone());
-                    let source = self.fresh_typed(expr.source_span(), Some(place.root), value_ty);
-                    self.emit(MirInstr::LoadPlace {
-                        dest: source,
-                        place: place.clone(),
-                    });
-                    self.emit(MirInstr::DefVar {
-                        var: *dest,
-                        src: source,
-                        binding_ty: expr.ty.clone(),
-                    });
-                } else {
-                    // Whole-value named source: bind a genuine reference (no copy),
-                    // so the iterator's `ref self` borrow roots at the source and
-                    // the slot is never dropped or copied. The reference is only
-                    // read by `GetIter` (which re-roots the iterator at the source),
-                    // after which dropping the handle is a no-op.
-                    let ref_ty = Ty::Ref(crate::origin::RefTy {
-                        referent: Box::new(value_ty),
-                        origin: crate::origin::Origin::Place(origin.clone()),
-                        mutability: crate::origin::Mutability::Immutable,
-                    });
-                    self.var_types.insert(*dest, ref_ty.clone());
-                    let handle =
-                        self.fresh_typed(expr.source_span(), Some(place.root), ref_ty.clone());
-                    self.emit(MirInstr::MakeRef {
-                        dest: handle,
-                        place: place.clone(),
-                    });
-                    self.emit(MirInstr::DefVar {
-                        var: *dest,
-                        src: handle,
-                        binding_ty: Some(ref_ty),
-                    });
-                }
-                let loans = vec![MirLoan {
-                    place,
-                    mutable: false,
-                    interior,
-                }];
-                let marker =
-                    self.fresh_typed(expr.source_span(), Some(loans[0].place.root), Ty::None);
-                self.emit(MirInstr::EstablishLoans {
-                    reference: *dest,
-                    loans: loans.clone(),
-                    marker,
-                });
-                self.aggregate_loans.insert(*dest, loans);
+                self.borrow_iteration_source(*dest, expr.source_span(), place, value_ty, origin);
             }
             HirInstr::Eval(e) => {
                 let _ = self.expr_hir(e); // evaluated for its effect; result discarded
@@ -224,28 +161,12 @@ impl Flatten<'_> {
                     mode: protocol.mode,
                     prepare: protocol.prepare.clone(),
                 });
-                // A borrowed *named* source is normalized into its own iterator
-                // slot (`source != dest`); re-establish its source loan on the
-                // long-lived iterator variable so the loan stays live through the
+                // A borrowed source is normalized into its own iterator slot
+                // (`source != dest`); re-establish its source loans on the
+                // long-lived iterator variable so they stay live through the
                 // whole loop, rejecting mutation of the source during iteration.
-                // The concrete single-slot case (`source == dest`) already carries
-                // the loan on that shared slot.
-                if protocol.borrowed_origin.is_some()
-                    && source != dest
-                    && let Some(loans) = self.aggregate_loans.get(source).cloned()
-                    && let Some(first) = loans.first()
-                {
-                    let marker = self.fresh_typed(
-                        SourceSpan::new(None, DUMMY_SPAN),
-                        Some(first.place.root),
-                        Ty::None,
-                    );
-                    self.emit(MirInstr::EstablishLoans {
-                        reference: *dest,
-                        loans: loans.clone(),
-                        marker,
-                    });
-                    self.aggregate_loans.insert(*dest, loans);
+                if protocol.borrowed_origin.is_some() && source != dest {
+                    self.reestablish_source_loans(*source, *dest);
                 }
             }
             HirInstr::HasNext { iter, dest, method } => {
@@ -410,6 +331,92 @@ impl Flatten<'_> {
                     binding_ty: Some(plan.binding_ty.clone()),
                 });
             }
+        }
+    }
+
+    /// Bind a borrowed iteration source into its retained-source slot: a genuine
+    /// reference into the source place (never a value copy), with the owner
+    /// dependency established at the granularity the checker proved — an interior
+    /// element generation when the origin ends in an `Interior` segment, a
+    /// whole-place shared loan otherwise. The reference itself always designates
+    /// the whole retained source; granularity lives only in the loan. Shared by
+    /// `for` statements (`HirInstr::BorrowIter`) and comprehension clauses.
+    pub(super) fn borrow_iteration_source(
+        &mut self,
+        dest: VarId,
+        span: SourceSpan,
+        place: MirPlace,
+        value_ty: Ty,
+        origin: &crate::origin::OriginPlace,
+    ) {
+        let canonical = self
+            .mir_interior_origin(origin, Some(place.root))
+            .expect("checked borrowed iteration origin has a MIR owner");
+        let interior = canonical
+            .path
+            .iter()
+            .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
+            .then_some(canonical);
+        let mut ref_origin = origin.clone();
+        if let Some(first_interior) = ref_origin
+            .path
+            .iter()
+            .position(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
+        {
+            ref_origin.path.truncate(first_interior);
+        }
+        // The slot holds only a handle: `GetIter` reads it to normalize the
+        // iterator (re-rooting a `ref self` `__iter__` at the source), after
+        // which dropping the handle is a no-op. The source is never copied.
+        let ref_ty = Ty::Ref(crate::origin::RefTy {
+            referent: Box::new(value_ty),
+            origin: crate::origin::Origin::Place(ref_origin),
+            mutability: crate::origin::Mutability::Immutable,
+        });
+        self.var_types.insert(dest, ref_ty.clone());
+        let handle = self.fresh_typed(span.clone(), Some(place.root), ref_ty.clone());
+        self.emit(MirInstr::MakeRef {
+            dest: handle,
+            place: place.clone(),
+        });
+        self.emit(MirInstr::DefVar {
+            var: dest,
+            src: handle,
+            binding_ty: Some(ref_ty),
+        });
+        let loans = vec![MirLoan {
+            place,
+            mutable: false,
+            interior,
+        }];
+        let marker = self.fresh_typed(span, Some(loans[0].place.root), Ty::None);
+        self.emit(MirInstr::EstablishLoans {
+            reference: dest,
+            loans: loans.clone(),
+            marker,
+        });
+        self.aggregate_loans.insert(dest, loans);
+    }
+
+    /// Copy a normalized borrowed source's loans onto the long-lived iterator
+    /// slot so the source dependency survives for the whole loop even though the
+    /// retained-source slot's last read is the normalization itself. Shared by
+    /// `for` statements and comprehension clauses.
+    pub(super) fn reestablish_source_loans(&mut self, source: VarId, iterator: VarId) {
+        if let Some(loans) = self.aggregate_loans.get(&source).cloned()
+            && let Some(first) = loans.first()
+        {
+            let marker = self.fresh_typed(
+                SourceSpan::new(None, DUMMY_SPAN),
+                Some(first.place.root),
+                Ty::None,
+            );
+            self.emit(MirInstr::EstablishLoans {
+                reference: iterator,
+                loans: loans.clone(),
+                marker,
+            });
+            self.aggregate_loans.insert(iterator, loans);
         }
     }
 
