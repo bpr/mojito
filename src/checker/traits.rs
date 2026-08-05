@@ -615,7 +615,7 @@ impl Checker {
             // require the definition's explicit parameter count to match the
             // requirement's, and that the requirement is itself parameterized.
             if let Some(parameterized) = struct_info.parameterized_associated.get(member) {
-                let CtMemberReq::Type { params, .. } = req else {
+                let CtMemberReq::Type { bounds, params } = req else {
                     return Err(TypeError::TraitComptimeMemberMismatch {
                         struct_name: name.to_string(),
                         trait_name: tr.to_string(),
@@ -634,6 +634,47 @@ impl Checker {
                         trait_name: tr.to_string(),
                         member: member.clone(),
                     });
+                }
+                // Enforce the requirement's bound, not just its arity:
+                // instantiate the definition's template with placeholder
+                // explicit arguments and check the result. An explicit value
+                // parameter has no fabricable placeholder witness; that shape
+                // keeps the arity-only contract.
+                let placeholders = parameterized
+                    .params
+                    .iter()
+                    .filter(|param| !param.infer_only)
+                    .map(|param| match constraints::assoc_param_kind(param) {
+                        constraints::AssocParamKind::Origin => {
+                            Some(TyArg::Origin(crate::origin::Origin::Untracked {
+                                mutable: false,
+                            }))
+                        }
+                        constraints::AssocParamKind::Type => Some(TyArg::Ty(Ty::Param {
+                            name: param.name.clone(),
+                            bounds: param.bounds.clone(),
+                            callable_bound: None,
+                        })),
+                        constraints::AssocParamKind::Value => None,
+                    })
+                    .collect::<Option<Vec<_>>>();
+                if let Some(placeholders) = placeholders {
+                    let instantiated =
+                        self.associated_type_from_base(self_ty, member, &placeholders)?;
+                    let satisfied = bounds.iter().all(|bound| {
+                        self.conforms_to_under_assumption(
+                            &instantiated,
+                            bound,
+                            conformance_assumption.as_ref(),
+                        )
+                    });
+                    if !satisfied {
+                        return Err(TypeError::TraitComptimeMemberMismatch {
+                            struct_name: name.to_string(),
+                            trait_name: tr.to_string(),
+                            member: member.clone(),
+                        });
+                    }
                 }
                 continue;
             }

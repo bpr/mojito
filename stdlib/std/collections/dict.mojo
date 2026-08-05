@@ -50,7 +50,9 @@ struct Dict[
     Writable where conforms_to(K, Writable) and conforms_to(V, Writable),
 ):
     comptime Element = Self.K
-    comptime Iter = _DictKeyIter[Self.K, Self.V]
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _DictKeyIter[Self.K, Self.V]
     var entries: List[DictEntry[Self.K, Self.V]]
 
     def __init__(out self):
@@ -145,7 +147,7 @@ struct Dict[
     def items(self) -> List[DictEntry[Self.K, Self.V]]:
         return self.entries
 
-    def __iter__(self) -> _DictKeyIter[Self.K, Self.V]:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _DictKeyIter[Self.K, Self.V](self.entries)
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(

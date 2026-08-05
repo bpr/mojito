@@ -8,6 +8,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The bundled borrowed `Iterable` protocol is now origin-parameterized, as in
+  current Mojo: `std.iterable` declares
+  `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
+  Origin[mut=iterable_mut]]: Iterator` with
+  `def __iter__(ref self) -> Self.IteratorType[origin_of(self)]`, replacing the
+  legacy monomorphic `Iter` member, and Range, List, Set, Dict, HashDict, and
+  StringDict conform through the parameterized member with the
+  application-spelled `ref self` return. The bundled conformers erase the
+  origin in their member templates, so borrowed iterators still yield element
+  copies; borrowing the source through the origin parameter and yielding
+  references is the next generic-reference-iteration subtask. Two compiler
+  gaps closed with the migration: trait conformance now enforces a
+  parameterized associated member's declared bound (instantiating the
+  definition's template with placeholder explicit arguments, discharging
+  conditional cases through the struct's conformance assumption, and keeping
+  the arity-only contract when an explicit value parameter has no fabricable
+  witness), and generic borrowed `__iter__` dispatch now reaches a conformer
+  whose borrowed receiver spelling (`self` vs `ref self`) differs from the
+  abstract dispatch symbol — previously a `RuntimeError` for an overloaded
+  borrowed/owned `__iter__` pair like migrated List's.
+
 - Borrowed iteration sources now lower uniformly, in `for` statements and
   comprehensions alike: every borrowed named source is bound as a genuine
   reference (`MakeRef`) into a retained-source slot, the iterator object is

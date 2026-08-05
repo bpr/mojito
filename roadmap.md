@@ -68,11 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Origin-parameterized borrowed `Iterable`** — adopt
-  `IteratorType[iterable_mut: Bool, //, iterable_origin:
-  Origin[mut=iterable_mut]]` and
-  `__iter__(ref self) -> Self.IteratorType[origin_of(self)]`; migrate Range,
-  List, Set, Dict, HashDict, StringDict, and generic library consumers.
 - [ ] **Generic reference-yielding collection iteration** — make List and Set
   iterators borrow their source and yield element references, route generic
   `for ref` through the selected iterator result, and remove the List-only index
@@ -85,6 +80,16 @@ schema.
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a
   residual linear iterator, with its remaining obligations reported explicitly.
+- [ ] **Explicit generic application of a non-generic struct** — an explicit
+  compile-time type argument naming a non-generic nominal struct
+  (`pick[Plain](value)`, `first_or[Range](r, -1)`) fails comptime
+  specialization with "Undefined variable 'Plain'"/"'Range'", while the same
+  call specializes and runs when the argument is inferred
+  (`first_or(Range(5, 9, 1), -1)`) or names a generic application
+  (`first_or[List[Int]]`). Accept the bare non-generic type argument. Found
+  migrating the borrowed `Iterable` protocol; until fixed,
+  `assets/ok/self_hosted_algorithms.mojo` has no explicit `first_or[Range]`
+  coverage.
 - [ ] **Self-hosted Unicode String** — define storage; current explicit
   `s[byte=i]`, `s[codepoint=i]`, and `s[grapheme=i]` indexing plus Unicode
   slicing; comparison, hashing, and formatting without VM-only semantics;

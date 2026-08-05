@@ -123,6 +123,23 @@ pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
     )
 }
 
+/// The sibling borrowed-receiver spelling of an abstract `__iter__` dispatch
+/// symbol. A borrowed conformer may declare `self` (Read) or `ref self` (Ref),
+/// while the checker pins one spelling in the iteration protocol; runtime
+/// retargeting probes the sibling before giving up. Owned (`var self`) dispatch
+/// has no sibling.
+pub fn borrowed_iterator_dispatch_alternate(symbol: &str) -> Option<String> {
+    let read = iterator_dispatch_symbol(ArgConvention::Read);
+    let reference = iterator_dispatch_symbol(ArgConvention::Ref);
+    if symbol == read {
+        Some(reference)
+    } else if symbol == reference {
+        Some(read)
+    } else {
+        None
+    }
+}
+
 /// Retarget a checker-selected method symbol from an abstract receiver (for
 /// example `__trait_dispatch.pick$ov$Int`) to the concrete runtime type while
 /// preserving the exact selected method/signature suffix. Keeping this parsing

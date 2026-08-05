@@ -4341,6 +4341,52 @@ fn conformer_return_application_resolves_to_the_concrete_member() {
 }
 
 #[test]
+fn parameterized_associated_application_rejects_a_wrong_explicit_arity() {
+    // The application supplies the explicit (post-`//`) arguments; one origin
+    // argument under-applies a two-explicit-parameter member.
+    let error = err(
+        "trait HasIter:\n    comptime IterType[a_mut: Bool, b_mut: Bool, //, a: Origin[mut=a_mut], b: Origin[mut=b_mut]]: AnyType\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n",
+    );
+    assert!(
+        matches!(&error, TypeError::WrongTypeArgCount { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn parameterized_member_must_satisfy_its_declared_bound() {
+    // Conformance instantiates the definition's template with placeholder
+    // explicit arguments and enforces the requirement's bound; a member that
+    // resolves to a non-conforming type is rejected, not waved through on
+    // arity alone.
+    let error = err(
+        "trait NextLike:\n    def step(self) -> Int: ...\n\n@fieldwise_init\nstruct Bag(Copyable, Movable):\n    var n: Int\n\ntrait HasIter:\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: NextLike\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Holder(HasIter):\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Bag\n    var v: Int\n    def make(ref self) -> Bag:\n        return Bag(self.v)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::TraitComptimeMemberMismatch { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn parameterized_member_satisfying_its_bound_conforms() {
+    ok(
+        "trait NextLike:\n    def step(self) -> Int: ...\n\n@fieldwise_init\nstruct Stepper(Copyable, Movable, NextLike):\n    var n: Int\n    def step(self) -> Int:\n        return self.n\n\ntrait HasIter:\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: NextLike\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Holder(HasIter):\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Stepper\n    var v: Int\n    def make(ref self) -> Self.IterType[origin_of(self)]:\n        return Stepper(self.v)\n",
+    );
+}
+
+#[test]
+fn conditional_conformance_discharges_a_parameterized_member_bound() {
+    // The member's `IteratorContract` bound on `Cursor[Self.T]` holds only
+    // where `conforms_to(T, Copyable)`; the struct's conformance condition is
+    // the assumption that discharges it — the shape the origin-parameterized
+    // collection iterators use.
+    ok(
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: IteratorContract\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n\n@fieldwise_init\nstruct Container[T: Movable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Cursor[Self.T]\n    var value: Self.T\n    def make(ref self) -> Self.IterType[origin_of(self)] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value)\n",
+    );
+}
+
+#[test]
 fn owned_iterable_conformance_binds_iterator_owned_type() {
     // The owned protocol's associated iterator is the monomorphic
     // `IteratorOwnedType` (current Mojo's owned-iterator member), consumed by an

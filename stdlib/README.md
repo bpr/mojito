@@ -49,10 +49,12 @@ only from their authoritative `std` modules.
 - `std/iterable.mojo` — minimal self-hosted `Iterator`, `Iterable`, and
   `IterableOwned` proof traits. They expose associated compile-time `Element`
   facts. `IterableOwned` uses current Mojo's monomorphic `IteratorOwnedType` (a
-  consuming iterator owns its storage, so it needs no origin). Borrowed `Iterable`
-  still exposes the legacy monomorphic `Iter` type; migrating it to Mojo's
-  origin-parameterized `IteratorType[origin_of(self)]` remains compiler/roadmap
-  work (it needs self-origin resolution).
+  consuming iterator owns its storage, so it needs no origin). Borrowed
+  `Iterable` uses Mojo's origin-parameterized `IteratorType[iterable_mut: Bool,
+  //, iterable_origin: Origin[mut=iterable_mut]]` with
+  `__iter__(ref self) -> Self.IteratorType[origin_of(self)]`; the bundled
+  conformers erase the origin in their member templates, so borrowed iterators
+  still yield element copies pending generic reference-yielding iteration.
 - `std/collections/set.mojo` — a generic, list-backed `Set[T]` for `Equatable & Copyable & Movable`
   elements. It supports `add`, membership through `in`/`__contains__`, `len`, and
   borrowed iteration through the backing list's `_ListIter[T]`. It conforms to

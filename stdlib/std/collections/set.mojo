@@ -9,7 +9,9 @@ struct Set[T: Equatable & Copyable & Movable](
     Writable where conforms_to(T, Writable),
 ):
     comptime Element = Self.T
-    comptime Iter = _ListIter[Self.T]
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _ListIter[Self.T]
 
     # A dense list deliberately preserves display and iteration insertion order.
     var items: List[Self.T]
@@ -48,7 +50,7 @@ struct Set[T: Equatable & Copyable & Movable](
     def __len__(self) -> Int:
         return len(self.items)
 
-    def __iter__(self) -> _ListIter[Self.T]:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.items.__iter__()
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(

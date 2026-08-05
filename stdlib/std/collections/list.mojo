@@ -75,7 +75,9 @@ struct List[T: Movable](
     Writable where conforms_to(T, Writable),
 ):
     comptime Element = Self.T
-    comptime Iter = _ListIter[Self.T]
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _ListIter[Self.T]
     comptime IteratorOwnedType = _ListOwnedIter[Self.T]
 
     var data: UnsafePointer[Self.T]
@@ -258,7 +260,7 @@ struct List[T: Movable](
             i += 1
         return -1
 
-    def __iter__(self) -> _ListIter[Self.T] where conforms_to(
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.T, Copyable
     ):
         return _ListIter[Self.T](self.data, self.size)

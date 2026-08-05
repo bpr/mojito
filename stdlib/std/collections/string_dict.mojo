@@ -13,7 +13,9 @@ from std.optional import Optional
 
 struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     comptime Element = String
-    comptime Iter = _DictKeyIter[String, Self.V]
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _DictKeyIter[String, Self.V]
 
     var entries: List[DictEntry[String, Self.V]]
     var index: List[List[Int]]
@@ -128,5 +130,5 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     def items(self) -> List[DictEntry[String, Self.V]]:
         return self.entries
 
-    def __iter__(self) -> _DictKeyIter[String, Self.V]:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _DictKeyIter[String, Self.V](self.entries)

@@ -1263,8 +1263,23 @@ impl VmBackend {
                         )));
                     };
                     let sname = name.clone();
-                    let target =
+                    let mut target =
                         prog.runtime_method_name(&sname, "__iter__", Some(selected.as_str()), 0);
+                    // A borrowed conformer may spell its receiver `self` (Read)
+                    // or `ref self` (Ref); the checker pinned one spelling in
+                    // the abstract dispatch symbol, so probe the sibling before
+                    // giving up.
+                    if prog.index_of(&target).is_none()
+                        && let Some(alternate) =
+                            crate::symbol::borrowed_iterator_dispatch_alternate(selected)
+                    {
+                        target = prog.runtime_method_name(
+                            &sname,
+                            "__iter__",
+                            Some(alternate.as_str()),
+                            0,
+                        );
+                    }
                     let fidx = prog.index_of(&target).ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
                             "vm: checked iterator method '{target}' is missing from MIR"

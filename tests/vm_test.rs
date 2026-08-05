@@ -995,6 +995,15 @@ fn generic_iteration_applies_the_copyable_reference_adapter() {
 }
 
 #[test]
+fn generic_borrowed_dispatch_reaches_an_overloaded_ref_self_iter() {
+    let source = include_str!("../assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo");
+    assert_eq!(
+        run_compiled(source).expect("overloaded ref-self __iter__ dispatches generically"),
+        "0\n-1\n"
+    );
+}
+
+#[test]
 fn abstract_next_copy_keeps_nested_reference_origins_reachable() {
     let source = include_str!("../assets/ok/copyable_iterator_reference_aggregate.mojo");
     assert_eq!(

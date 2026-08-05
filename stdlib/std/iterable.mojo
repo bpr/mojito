@@ -3,13 +3,15 @@
 # The owned contract uses current Mojo's monomorphic `IteratorOwnedType`: a
 # consuming iterator owns its storage, so it needs no origin parameter.
 #
-# The borrowed contract still keeps the older, monomorphic `Iter` name.  Current
-# Mojo parameterizes `IteratorType` by the iterable origin
-# (`__iter__(ref self) -> Self.IteratorType[origin_of(self)]`); migrating the
-# borrowed protocol still needs the ordered source-mode, lowering, and library
-# migration work tracked under generic borrowed reference iteration. Until then,
-# borrowed collection iterators yield copies when their element is `Copyable`,
-# and concrete `for ref` over List remains a checked compiler bridge.
+# The borrowed contract uses current Mojo's origin-parameterized
+# `IteratorType[iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]]`
+# with `__iter__(ref self) -> Self.IteratorType[origin_of(self)]`. Conforming
+# collections currently erase the origin in their member templates: borrowed
+# iterators still copy or point into their storage and yield element copies
+# when the element is `Copyable`. Making iterators borrow their source through
+# the origin parameter and yield references — and removing the concrete List
+# `for ref` compiler bridge — is tracked under generic borrowed reference
+# iteration.
 
 @fieldwise_init
 struct StopIteration:
@@ -23,9 +25,11 @@ trait Iterator:
 
 trait Iterable:
     comptime Element: Movable
-    comptime Iter: Iterator
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ]: Iterator
 
-    def __iter__(self) -> Self.Iter:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         ...
 
 trait IterableOwned:

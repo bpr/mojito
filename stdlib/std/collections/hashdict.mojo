@@ -12,7 +12,9 @@ from std.optional import Optional
 
 struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Movable](Copyable, Iterable):
     comptime Element = Self.K
-    comptime Iter = _DictKeyIter[Self.K, Self.V]
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _DictKeyIter[Self.K, Self.V]
 
     var entries: List[DictEntry[Self.K, Self.V]]
     var index: List[List[Int]]
@@ -127,5 +129,5 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
     def items(self) -> List[DictEntry[Self.K, Self.V]]:
         return self.entries
 
-    def __iter__(self) -> _DictKeyIter[Self.K, Self.V]:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _DictKeyIter[Self.K, Self.V](self.entries)

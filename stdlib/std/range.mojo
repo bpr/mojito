@@ -39,7 +39,9 @@ struct _RangeIter(Iterator):
 @fieldwise_init
 struct Range(Copyable, ImplicitlyDeletable, Iterable, Movable, Writable):
     comptime Element = Int
-    comptime Iter = _RangeIter
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _RangeIter
     var start: Int
     var stop: Int
     var step: Int
@@ -61,7 +63,7 @@ struct Range(Copyable, ImplicitlyDeletable, Iterable, Movable, Writable):
                 return False
         return (value - self.start) % self.step == 0
 
-    def __iter__(self) -> _RangeIter:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _RangeIter(self.start, self.stop, self.step)
 
     def write_to(self, mut writer: Some[Writer]):
