@@ -8,6 +8,29 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Bound-generic monomorphization, Stages A-C. Explicit concrete generic
+  applications now clone and re-check the body with the concrete type
+  substituted, matching real Mojo's per-instantiation model. Every comptime
+  specialization bakes its concrete type arguments into the clone
+  (annotations, compile-time argument lists, and constructor heads) and drops
+  them from the residual signature and rewritten calls, with each dropped
+  parameter's trait bounds enforced at the requesting call via the new
+  contextual `ComptimeError::GenericBound`; this fixes the explicit
+  non-generic type-argument bug (`pick[Plain]`, `first_or[Range]`). Plain
+  trait-bound generics with a unique top-level name join the specialization
+  registry with soft resolution: unresolvable references (inferred calls,
+  symbolic arguments, function values) stay on the retained template's
+  abstract erased-dispatch path, and a dead template keeps its abstract
+  pre-check. Generic-bound reference iteration now works through explicit
+  application: the clone iterates concretely with ordinary borrowed loans.
+  The checker also records every resolved generic instantiation
+  (`CheckedProgram::generic_instantiations`, groundwork for monomorphizing
+  inferred calls), `Ty::Assoc` copyability now derives from declared
+  associated-member bounds instead of defaulting to copyable (the stdlib
+  `Iterable.Element` bound strengthened to `Copyable & Movable`
+  accordingly), and the stage-composed test seam's `VmBackend::run` enforces
+  the pre-drop ownership analysis, closing the raw-path divergence.
+
 - Mapping invalidation and borrowed-iteration safety (core). The Dict,
   HashDict, and StringDict key iterator (`_DictKeyIter`) now borrows the
   entries list through a parametric-mut struct origin and yields key

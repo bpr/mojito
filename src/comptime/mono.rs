@@ -399,6 +399,11 @@ impl<'a> Elab<'a> {
                         "variadic struct '{name}' requires explicit compile-time type arguments, e.g. `{name}[Int, Bool](...)`"
                     )));
                 }
+                // A function-value use of a bound generic pins the abstract
+                // template: there is no application to monomorphize against.
+                if mono.resolves_top_template(name) && self.bound_generics.contains(name.as_str()) {
+                    mono.retained.insert(name.clone());
+                }
                 Ok(())
             }
             ExprKind::TypeApply { name, args } => {
@@ -477,6 +482,33 @@ impl<'a> Elab<'a> {
                             return Ok(());
                         };
                         (values, Vec::new(), false)
+                    } else if self.bound_generics.contains(name.as_str()) {
+                        // Soft resolution: only an explicit application whose
+                        // arguments resolve concretely monomorphizes. A bound
+                        // violation on a resolved argument is a real error;
+                        // any other failure (inference, symbolic arguments)
+                        // leaves the call on the template's abstract path and
+                        // retains the template.
+                        let template = self.specializable[name.as_str()];
+                        match self.resolve_spec_args_for(
+                            template,
+                            name,
+                            SpecRequest {
+                                param_args,
+                                call_args: args,
+                                kwargs,
+                                consts,
+                                request_site: &request_site,
+                                forwarded_pack_types: None,
+                            },
+                        ) {
+                            Ok((values, kept)) => (values, kept, false),
+                            Err(error @ ComptimeError::GenericBound(_)) => return Err(error),
+                            Err(_) => {
+                                mono.retained.insert(name.clone());
+                                return Ok(());
+                            }
+                        }
                     } else {
                         let template = self.specializable[name.as_str()];
                         let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
@@ -922,8 +954,30 @@ impl<'a> Elab<'a> {
                     }
                 }
             };
-            if matches!(decl, ParamDecl::Type { .. }) {
-                kept_type_args.extend(arguments.into_iter().cloned());
+            if let ParamDecl::Type { bounds, .. } = &decl {
+                if spec_type_param_substitution(&decl, &value).is_some() {
+                    // The argument is baked into the specialization
+                    // (`generate_def_spec` makes the matching decision), so
+                    // the checker never re-validates it against the residual
+                    // signature; enforce the parameter's trait bounds here.
+                    let CtValue::Type(ty) = &value else {
+                        unreachable!("a dropped type parameter binds a type value");
+                    };
+                    for trait_name in bounds {
+                        if let Err(failure) = self.conformance.require(ty, trait_name) {
+                            return Err(ComptimeError::GenericBound(Box::new(GenericBoundError {
+                                function: display_name.to_string(),
+                                param: decl.name().to_string(),
+                                ty: ty.to_string(),
+                                trait_name: trait_name.clone(),
+                                site: request_site.to_string(),
+                                reason: failure.reason,
+                            })));
+                        }
+                    }
+                } else {
+                    kept_type_args.extend(arguments.into_iter().cloned());
+                }
             }
             environment.insert(binding, value.clone());
             vals.push(value);

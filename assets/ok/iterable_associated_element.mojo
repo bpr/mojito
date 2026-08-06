@@ -1,8 +1,8 @@
 trait Iterable:
-    comptime Element: AnyType
+    comptime Element: Copyable & Movable
 
 @fieldwise_init
-struct Bag[T: AnyType](Iterable):
+struct Bag[T: Copyable & Movable](Iterable):
     comptime Element = Self.T
     var value: Self.T
 

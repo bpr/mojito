@@ -69,12 +69,17 @@ impl<'a> Elab<'a> {
                 });
             }
         }
-        // Rewrite call sites in every non-template statement, seeding the worklist.
+        // Rewrite call sites in every non-template statement, seeding the
+        // worklist. A bound-generic template's body is live code whether the
+        // template is retained or dropped, so it is scanned like any other
+        // statement (its own symbolic-argument calls soft-retain their
+        // callees); comptime-class templates are replaced wholesale below.
         for stmt in program.iter_mut() {
             if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &stmt.kind
                 && self.specializable.contains_key(name)
+                && !self.bound_generics.contains(name)
             {
-                continue; // a template — replaced wholesale below
+                continue;
             }
             self.mono_stmt(stmt, &consts, &mut mono)?;
         }
@@ -120,20 +125,35 @@ impl<'a> Elab<'a> {
         // binds names sequentially, without forward references).
         let mut out = Vec::with_capacity(program.len());
         for stmt in program {
-            match &stmt.kind {
+            let template_name = match &stmt.kind {
                 StmtKind::Def { name, .. } | StmtKind::Struct { name, .. }
                     if self.specializable.contains_key(name) =>
                 {
-                    if let Some(mut specs) = mono.generated.remove(name) {
-                        specs.reverse();
-                        if name == "Tuple" {
-                            specs = self.order_tuple_specializations(specs)?;
-                        }
-                        out.extend(specs);
-                    }
-                    // No call sites ⇒ dead generic template, dropped.
+                    name.clone()
                 }
-                _ => out.push(stmt),
+                _ => {
+                    out.push(stmt);
+                    continue;
+                }
+            };
+            let generated = mono.generated.remove(&template_name);
+            let monomorphized = generated.is_some();
+            if let Some(mut specs) = generated {
+                specs.reverse();
+                if template_name == "Tuple" {
+                    specs = self.order_tuple_specializations(specs)?;
+                }
+                out.extend(specs);
+            }
+            // A comptime-class template either specialized or is a dead
+            // generic, dropped either way. A bound-generic template survives
+            // while any reference stays on its abstract path — and when it has
+            // no references at all, keeping the uninstantiated body's
+            // Mojo-style pre-check.
+            if self.bound_generics.contains(&template_name)
+                && (mono.retained.contains(&template_name) || !monomorphized)
+            {
+                out.push(stmt);
             }
         }
         Ok(out)
@@ -288,6 +308,7 @@ impl<'a> Elab<'a> {
             subs.remove(&p.name);
         }
         let mut kept_type_params = Vec::new();
+        let mut type_substitutions: HashMap<String, Type> = HashMap::new();
         let mut specialized_params = params.clone();
         let mut type_pack_expansions: HashMap<String, Vec<Type>> = HashMap::new();
         let mut type_pack_values: HashMap<String, Vec<CtValue>> = HashMap::new();
@@ -339,7 +360,16 @@ impl<'a> Elab<'a> {
                         }
                     }
                 }
-                ParamDecl::Type { .. } => kept_type_params.push(tp.clone()),
+                ParamDecl::Type { .. } => match spec_type_param_substitution(&decl, v) {
+                    // A concrete type argument is baked into the clone rather
+                    // than kept on the residual signature, so the clone checks
+                    // concretely. `resolve_spec_args_for` makes the matching
+                    // decision for the rewritten call's arguments.
+                    Some(concrete) => {
+                        type_substitutions.insert(binding.clone(), concrete);
+                    }
+                    None => kept_type_params.push(tp.clone()),
+                },
             }
         }
         debug_assert!(values.next().is_none());
@@ -385,7 +415,7 @@ impl<'a> Elab<'a> {
                 argument.value = materialize_expression(&argument.value, &subs);
             }
         }
-        let specialized_where = match &template.kind {
+        let mut specialized_where = match &template.kind {
             StmtKind::Def { where_clause, .. } => where_clause
                 .as_ref()
                 .map(|predicate| materialize_expression(predicate, &subs)),
@@ -403,6 +433,28 @@ impl<'a> Elab<'a> {
         for parameter in &mut specialized_params {
             expand_type_packs(&mut parameter.ty, &type_pack_expansions);
         }
+        let mut specialized_raises_type = raises_type.clone();
+        // Bake each dropped type parameter's concrete type into every remaining
+        // type position: the residual signature no longer declares the binding
+        // and the rewritten calls no longer supply it.
+        if !type_substitutions.is_empty() {
+            for parameter in &mut specialized_params {
+                substitute_type_bindings_in_type(&mut parameter.ty, &type_substitutions);
+                if let Some(default) = &mut parameter.default {
+                    substitute_type_bindings_in_expr(default, &type_substitutions);
+                }
+            }
+            if let Some(ret) = &mut specialized_ret {
+                substitute_type_bindings_in_type(ret, &type_substitutions);
+            }
+            if let Some(error) = &mut specialized_raises_type {
+                substitute_type_bindings_in_type(error, &type_substitutions);
+            }
+            if let Some(predicate) = &mut specialized_where {
+                substitute_type_bindings_in_expr(predicate, &type_substitutions);
+            }
+            substitute_type_bindings_in_block(&mut final_body, &type_substitutions);
+        }
         let mut specialization = mk(
             StmtKind::Def {
                 name: output_name.clone(),
@@ -416,7 +468,7 @@ impl<'a> Elab<'a> {
                     _ => None,
                 },
                 raises: *raises,
-                raises_type: raises_type.clone(),
+                raises_type: specialized_raises_type,
                 ret: specialized_ret,
                 where_clause: specialized_where,
                 body: final_body,

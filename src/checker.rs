@@ -236,6 +236,7 @@ pub(crate) fn check_program_with_materialized_callables(
     Ok(crate::checked::CheckedProgram::new(
         expanded,
         checker.overload_targets.into_inner(),
+        checker.generic_instantiations.into_inner(),
         checker.implicit_conversions.into_inner(),
         checker.declaration_types.into_inner(),
         checker.generic_parameters.into_inner(),
@@ -530,6 +531,9 @@ pub struct Checker {
     /// overload set. Interior mutability keeps expression inference usable from
     /// read-only helper methods while still recording resolution facts.
     overload_targets: RefCell<HashMap<SourceSpan, String>>,
+    /// The resolved generic application per bound-generic call site (callee +
+    /// exact compile-time arguments), retained for instantiation discovery.
+    generic_instantiations: RefCell<HashMap<SourceSpan, crate::checked::GenericInstantiation>>,
     implicit_conversions: RefCell<HashMap<SourceSpan, String>>,
     simd_constructions: RefCell<HashMap<SourceSpan, (Dtype, i64)>>,
     /// Checked operation decisions — `Variant` construction/tag/projection/
@@ -652,6 +656,7 @@ impl Checker {
             self_mutable: false,
             self_initializing: false,
             overload_targets: RefCell::new(HashMap::new()),
+            generic_instantiations: RefCell::new(HashMap::new()),
             implicit_conversions: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),

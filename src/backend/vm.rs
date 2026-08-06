@@ -2058,9 +2058,22 @@ impl VmBackend {
 }
 
 impl VmBackend {
-    /// Run a checked program, entering through `main()` when present.
+    /// Run a checked program, entering through `main()` when present. This
+    /// executable entry enforces the same pre-drop ownership contract the
+    /// production `Compiler` pipeline does, so a stage-composed caller cannot
+    /// execute a program the analysis rejects. (The VM-CTFE entry
+    /// `run_function_value` deliberately keeps the lighter checked boundary.)
     pub fn run(&mut self, program: &crate::checked::CheckedProgram) -> Result<(), RuntimeError> {
-        self.run_prog(build_prog_checked(program)?)
+        let lowered = crate::mir::lower_checked_program(program);
+        if !lowered.invariant_errors.is_empty() {
+            return Err(RuntimeError::Unsupported(format!(
+                "invalid checked program: {}",
+                lowered.invariant_errors.join("; ")
+            )));
+        }
+        crate::analysis::check_ownership_program(&lowered)
+            .map_err(|error| RuntimeError::Unsupported(format!("ownership error: {error}")))?;
+        self.run_prog(build_prog_lowered(lowered)?)
     }
 
     /// Captured standard output.
@@ -2554,8 +2567,11 @@ struct HeapAllocation {
 }
 
 fn build_prog_checked(checked: &crate::checked::CheckedProgram) -> Result<Prog, RuntimeError> {
-    let mut mir =
-        crate::analysis::elaborate_drops_program(crate::mir::lower_checked_program(checked));
+    build_prog_lowered(crate::mir::lower_checked_program(checked))
+}
+
+fn build_prog_lowered(lowered: crate::mir::MirProgram) -> Result<Prog, RuntimeError> {
+    let mut mir = crate::analysis::elaborate_drops_program(lowered);
     // The VM executes the drop-elaborated program, so it is re-verified after
     // the DropVar/edge-cleanup rewrite — the elaborated MIR must satisfy the
     // same contract the pre-elaboration program did.

@@ -67,6 +67,35 @@ pub(super) fn rewrite_stmt_cloned(s: &Stmt, subs: Subs, into_defs: bool) -> Stmt
     s
 }
 
+// --- Dropped type-parameter substitution ------------------------------------
+//
+// `generate_def_spec` bakes concrete type arguments out of a clone's signature.
+// `materialize_block` above substitutes *value* occurrences of the bindings;
+// this second rewrite substitutes the *type* occurrences it leaves behind:
+// annotations, compile-time argument lists, and constructor-call heads. Unlike
+// the value rewrite it always descends into nested `def`/`struct` bodies —
+// a dropped binding is in scope throughout the clone — shadowed only by a
+// nested declaration's own type parameter of the same name.
+
+/// A binding→concrete-source-type lookup for a dropped-parameter rewrite.
+pub(super) type TypeSubs<'a> = &'a HashMap<String, Type>;
+
+pub(super) fn substitute_type_bindings_in_block(body: &mut [Stmt], subs: TypeSubs) {
+    for statement in body {
+        retype_stmt(statement, subs);
+    }
+}
+
+pub(super) fn substitute_type_bindings_in_type(ty: &mut Type, subs: TypeSubs) {
+    for (binding, replacement) in subs {
+        substitute_source_type_binding(ty, binding, replacement);
+    }
+}
+
+pub(super) fn substitute_type_bindings_in_expr(expr: &mut Expr, subs: TypeSubs) {
+    retype_expr(expr, subs);
+}
+
 fn rewrite_expr(e: &mut Expr, subs: Subs) {
     match &mut e.kind {
         ExprKind::Identifier(name) => {
@@ -1116,4 +1145,359 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
         }
         StmtKind::Trait { .. } => {}
     }
+}
+
+fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
+    match &mut s.kind {
+        StmtKind::VarDecl { ty, value, .. } => {
+            if let Some(ty) = ty {
+                substitute_type_bindings_in_type(ty, subs);
+            }
+            retype_expr(value, subs);
+        }
+        StmtKind::RefDecl { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::Comptime { value, .. }
+        | StmtKind::Raise(value)
+        | StmtKind::Return(Some(value)) => retype_expr(value, subs),
+        StmtKind::Return(None) | StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
+        StmtKind::Import { .. } | StmtKind::FromImport { .. } => {}
+        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+            retype_expr(place, subs);
+            retype_expr(value, subs);
+        }
+        StmtKind::Unpack { targets, value, .. } => {
+            retype_exprs(targets, subs);
+            retype_expr(value, subs);
+        }
+        StmtKind::Expr(e) => retype_expr(e, subs),
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            for (c, b) in branches {
+                retype_expr(c, subs);
+                substitute_type_bindings_in_block(b, subs);
+            }
+            if let Some(b) = orelse {
+                substitute_type_bindings_in_block(b, subs);
+            }
+        }
+        StmtKind::While { cond, body, orelse } => {
+            retype_expr(cond, subs);
+            substitute_type_bindings_in_block(body, subs);
+            if let Some(body) = orelse {
+                substitute_type_bindings_in_block(body, subs);
+            }
+        }
+        StmtKind::For {
+            iter, body, orelse, ..
+        } => {
+            retype_expr(iter, subs);
+            substitute_type_bindings_in_block(body, subs);
+            if let Some(body) = orelse {
+                substitute_type_bindings_in_block(body, subs);
+            }
+        }
+        StmtKind::ComptimeFor { iter, body, .. } => {
+            retype_expr(iter, subs);
+            substitute_type_bindings_in_block(body, subs);
+        }
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            substitute_type_bindings_in_block(body, subs);
+            if let Some((_, b)) = except {
+                substitute_type_bindings_in_block(b, subs);
+            }
+            if let Some(b) = orelse {
+                substitute_type_bindings_in_block(b, subs);
+            }
+            if let Some(b) = finalbody {
+                substitute_type_bindings_in_block(b, subs);
+            }
+        }
+        StmtKind::With { items, body } => {
+            for WithItem { context, .. } in items {
+                retype_expr(context, subs);
+            }
+            substitute_type_bindings_in_block(body, subs);
+        }
+        StmtKind::Def {
+            type_params,
+            params,
+            raises_type,
+            ret,
+            where_clause,
+            body,
+            ..
+        } => {
+            let Some(inner) = without_shadowed(subs, type_params) else {
+                return;
+            };
+            for parameter in params.iter_mut() {
+                substitute_type_bindings_in_type(&mut parameter.ty, &inner);
+                if let Some(default) = &mut parameter.default {
+                    retype_expr(default, &inner);
+                }
+            }
+            if let Some(ret) = ret {
+                substitute_type_bindings_in_type(ret, &inner);
+            }
+            if let Some(error) = raises_type {
+                substitute_type_bindings_in_type(error, &inner);
+            }
+            if let Some(predicate) = where_clause {
+                retype_expr(predicate, &inner);
+            }
+            substitute_type_bindings_in_block(body, &inner);
+        }
+        StmtKind::Struct {
+            type_params,
+            fields,
+            associated,
+            methods,
+            ..
+        } => {
+            let Some(inner) = without_shadowed(subs, type_params) else {
+                return;
+            };
+            for field in fields.iter_mut() {
+                substitute_type_bindings_in_type(&mut field.ty, &inner);
+            }
+            for member in associated.iter_mut() {
+                retype_expr(&mut member.value, &inner);
+            }
+            for method in methods.iter_mut() {
+                let Some(inner) = without_shadowed(&inner, &method.type_params) else {
+                    continue;
+                };
+                for parameter in method.params.iter_mut() {
+                    substitute_type_bindings_in_type(&mut parameter.ty, &inner);
+                    if let Some(default) = &mut parameter.default {
+                        retype_expr(default, &inner);
+                    }
+                }
+                if let Some(ret) = &mut method.ret {
+                    substitute_type_bindings_in_type(ret, &inner);
+                }
+                if let Some(error) = &mut method.raises_type {
+                    substitute_type_bindings_in_type(error, &inner);
+                }
+                if let Some(predicate) = &mut method.where_clause {
+                    retype_expr(predicate, &inner);
+                }
+                substitute_type_bindings_in_block(&mut method.body, &inner);
+            }
+        }
+        StmtKind::Trait { .. } => {}
+    }
+}
+
+fn retype_expr(e: &mut Expr, subs: TypeSubs) {
+    match &mut e.kind {
+        ExprKind::Identifier(_) => {}
+        ExprKind::Spread(value) => retype_expr(value, subs),
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::None
+        | ExprKind::TString { .. } => {}
+        ExprKind::TypeApply { name, args } => {
+            retype_head(name, args, subs);
+            retype_param_args(args, subs);
+        }
+        ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) => retype_expr(inner, subs),
+        ExprKind::Infix(_, l, r) => {
+            retype_expr(l, subs);
+            retype_expr(r, subs);
+        }
+        ExprKind::Compare { first, rest } => {
+            retype_expr(first, subs);
+            for (_, r) in rest {
+                retype_expr(r, subs);
+            }
+        }
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            retype_head(name, param_args, subs);
+            retype_param_args(param_args, subs);
+            retype_exprs(args, subs);
+            for k in kwargs {
+                retype_expr(&mut k.value, subs);
+            }
+        }
+        ExprKind::Member { object, .. } => retype_expr(object, subs),
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } => {
+            retype_expr(object, subs);
+            retype_exprs(args, subs);
+            for k in kwargs {
+                retype_expr(&mut k.value, subs);
+            }
+        }
+        ExprKind::Index { object, index } => {
+            retype_expr(object, subs);
+            retype_expr(index, subs);
+        }
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => {
+            retype_expr(object, subs);
+            for b in [lower, upper, step].into_iter().flatten() {
+                retype_expr(b, subs);
+            }
+        }
+        ExprKind::MultiIndex { object, args } => {
+            retype_expr(object, subs);
+            for argument in args {
+                match argument {
+                    crate::ast::SubscriptArg::Index(value) => retype_expr(value, subs),
+                    crate::ast::SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    } => {
+                        for value in [lower, upper, step].into_iter().flatten() {
+                            retype_expr(value, subs);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::ListLit(elems) | ExprKind::TupleLit(elems) => retype_exprs(elems, subs),
+        ExprKind::TypeValue(ty) => substitute_type_bindings_in_type(ty, subs),
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            retype_expr(callee, subs);
+            retype_param_args(param_args, subs);
+            retype_exprs(args, subs);
+            for k in kwargs {
+                retype_expr(&mut k.value, subs);
+            }
+        }
+        ExprKind::BraceLit(entries) => {
+            for (key, value) in entries {
+                retype_expr(key, subs);
+                if let Some(value) = value {
+                    retype_expr(value, subs);
+                }
+            }
+        }
+        // Comprehension targets bind runtime values, which cannot shadow a
+        // type-parameter binding in type position, so descend unconditionally.
+        ExprKind::Comprehension {
+            key,
+            value,
+            clauses,
+            ..
+        } => {
+            if let Some(key) = key {
+                retype_expr(key, subs);
+            }
+            retype_expr(value, subs);
+            for clause in clauses {
+                match clause {
+                    crate::ast::ComprehensionClause::For { iter, .. } => retype_expr(iter, subs),
+                    crate::ast::ComprehensionClause::If(condition) => retype_expr(condition, subs),
+                }
+            }
+        }
+        ExprKind::Uninitialized => {}
+        ExprKind::Named { value, .. } => retype_expr(value, subs),
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            retype_expr(cond, subs);
+            retype_expr(then_branch, subs);
+            retype_expr(else_branch, subs);
+        }
+    }
+}
+
+fn retype_param_args(args: &mut Vec<ParamArg>, subs: TypeSubs) {
+    for argument in args {
+        retype_param_arg(argument, subs);
+    }
+}
+
+fn retype_param_arg(argument: &mut ParamArg, subs: TypeSubs) {
+    match argument {
+        ParamArg::Type(ty) => substitute_type_bindings_in_type(ty, subs),
+        ParamArg::Named { value, .. } => retype_param_arg(value, subs),
+        // The parser encodes a bare identifier argument (`pick[T]`) as a value
+        // expression; once the binding is concrete it is a type argument.
+        ParamArg::Value(expr) => {
+            if let ExprKind::Identifier(name) = &expr.kind
+                && let Some(replacement) = subs.get(name)
+            {
+                *argument = ParamArg::Type(replacement.clone());
+            } else {
+                retype_expr(expr, subs);
+            }
+        }
+    }
+}
+
+/// Rewrite a constructor/type-application head that names a dropped binding
+/// (`T(…)` / `T[…]`) to the concrete type's own head, prepending the concrete
+/// type's arguments (`List[Int](…)` is head `List` with argument `[Int]`).
+fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
+    let Some(replacement) = subs.get(name.as_str()) else {
+        return;
+    };
+    let (head, head_args) = match replacement {
+        Type::Named(head, head_args) => (head.clone(), head_args.clone()),
+        Type::Int => ("Int".to_string(), Vec::new()),
+        Type::UInt => ("UInt".to_string(), Vec::new()),
+        Type::Bool => ("Bool".to_string(), Vec::new()),
+        Type::String => ("String".to_string(), Vec::new()),
+        Type::Float64 => ("Float64".to_string(), Vec::new()),
+        // No source constructor head exists (function types, references);
+        // leave the call for the checker to report against the clone.
+        _ => return,
+    };
+    *name = head;
+    let mut merged = head_args;
+    merged.append(args);
+    *args = merged;
+}
+
+fn retype_exprs(exprs: &mut [Expr], subs: TypeSubs) {
+    for value in exprs {
+        retype_expr(value, subs);
+    }
+}
+
+/// The substitutions still live inside a nested declaration that introduces its
+/// own type parameters: a same-named parameter shadows the outer binding.
+/// `None` means nothing is left to substitute.
+fn without_shadowed(subs: TypeSubs, type_params: &[TypeParam]) -> Option<HashMap<String, Type>> {
+    let inner: HashMap<String, Type> = subs
+        .iter()
+        .filter(|(binding, _)| {
+            !type_params
+                .iter()
+                .any(|parameter| parameter.name.trim_start_matches('*') == binding.as_str())
+        })
+        .map(|(binding, replacement)| (binding.clone(), replacement.clone()))
+        .collect();
+    if inner.is_empty() { None } else { Some(inner) }
 }

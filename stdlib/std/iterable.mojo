@@ -23,7 +23,12 @@ trait Iterator:
         ...
 
 trait Iterable:
-    comptime Element: Movable
+    # Borrowed iteration yields element references whose ordinary value reads
+    # copy, so the borrowed protocol's element is Copyable — matching the
+    # bundled conformers' existing conditional conformances. (The consuming
+    # `IterableOwned` protocol keeps `Movable` so owned iteration can move
+    # non-Copyable elements.)
+    comptime Element: Copyable & Movable
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ]: Iterator

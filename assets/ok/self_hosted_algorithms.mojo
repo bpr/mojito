@@ -35,3 +35,4 @@ def main():
     var names: StringDict[Int] = StringDict[Int]()
     names["beta"] = 2
     print(first_or[StringDict[Int]](names, "none"))
+    print(first_or[Range](range(3, 7), -1))

@@ -110,3 +110,10 @@ generated test per fixture in the `tests/corpus_test.rs` binary
 pipeline entry path; the phase-grouped files keep only targeted tests. The
 outcome folders are `ok`, `parse_error`, `type_error`, `runtime_error`,
 `ownership_ok`, and `ownership_error`. See `assets/README.md`.
+
+The stage-composed test seam (`link`/`parse` → `elaborate` →
+`check_program` → `backend.run`) enforces the same pre-drop ownership
+contract as the production `Compiler`: `VmBackend::run` runs the ownership
+analysis before executing. It remains non-authoritative only for the
+whole-program discovery/specialization handoff, which `Compiler`-based
+helpers (`run_compiled`) still own.

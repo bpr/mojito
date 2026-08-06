@@ -68,18 +68,29 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Generic-bound reference iteration** — an abstract `Iterable`-bound
-  `for ref` target is still rejected: `__iterator_dispatch.__next__` yields
-  lifecycle copies through the checked `CopyIteratorReference` adapter. Add a
-  non-copying reference-result adapter through checked HIR, `mir::verify`, and
-  the VM; instantiate yielded-reference and interior-projection facts for
-  `Ty::Param` receivers in `iteration_protocol`; and relax
-  `attach_borrowed_iteration_origin`'s `Ty::Struct` guard so a generic-bound
-  source place carries a borrowed origin and loan. The raw
-  link/elaborate/check test boundary also skips the whole-program handoff that
-  makes mapping-iteration invalidation executable — rejection pins use the
-  authoritative `Compiler`; close that gap or document it as a permanent
-  non-authoritative seam.
+- [ ] **Bound-generic monomorphization** — converge on real Mojo's model:
+  each generic instantiation clones and re-checks the body with the concrete
+  type substituted, so generic-bound `for`/`for ref` iteration, copyability,
+  and member access get Mojo-identical static answers with no runtime
+  adapter. Landed: the raw `backend.run` test seam enforces ownership;
+  `Ty::Assoc` copyability derives from declared member bounds; the checker
+  records every resolved generic instantiation
+  (`CheckedProgram::generic_instantiations`); comptime-class specialization
+  bakes concrete type arguments into each clone and drops them from the
+  residual signature and calls, enforcing trait bounds at the requesting
+  call (`ComptimeError::GenericBound`); and plain trait-bound generics with
+  a unique top-level name monomorphize per explicit concrete application
+  with soft resolution — unresolvable references stay on the retained
+  template's abstract erased-dispatch path, and a dead template keeps its
+  Mojo-style abstract pre-check. Remaining, in order: (D) monomorphize
+  inferred calls by feeding the recorded instantiation table through an
+  iterated discover→elaborate→check fixpoint (closed arguments only;
+  per-round fuel plus a hard round cap with a divergence diagnostic);
+  (E) retire erased `__trait_dispatch`/`__iterator_dispatch` use at
+  monomorphized sites and re-pin its coverage through the function-value
+  fallback — after E, re-confirm the remaining abstract-dispatch witnesses
+  before freezing the MIR schema. Residue that stays erased: function
+  values/indirect calls, overloaded generic names, and generic methods.
 - [ ] **Reference-escape analysis beyond returns** — return boundaries reject
   reference escapes, but storing a reference or a reference-bearing value (a
   manually held borrowing iterator, a closure that captured a loop reference)
@@ -94,16 +105,6 @@ schema.
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a
   residual linear iterator, with its remaining obligations reported explicitly.
-- [ ] **Explicit generic application of a non-generic struct** — an explicit
-  compile-time type argument naming a non-generic nominal struct
-  (`pick[Plain](value)`, `first_or[Range](r, -1)`) fails comptime
-  specialization with "Undefined variable 'Plain'"/"'Range'", while the same
-  call specializes and runs when the argument is inferred
-  (`first_or(Range(5, 9, 1), -1)`) or names a generic application
-  (`first_or[List[Int]]`). Accept the bare non-generic type argument. Found
-  migrating the borrowed `Iterable` protocol; until fixed,
-  `assets/ok/self_hosted_algorithms.mojo` has no explicit `first_or[Range]`
-  coverage.
 - [ ] **Self-hosted Unicode String** — define storage; current explicit
   `s[byte=i]`, `s[codepoint=i]`, and `s[grapheme=i]` indexing plus Unicode
   slicing; comparison, hashing, and formatting without VM-only semantics;

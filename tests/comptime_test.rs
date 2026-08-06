@@ -831,3 +831,53 @@ fn associated_type_facts_request_nested_variadic_struct_specializations() {
     let src = "@fieldwise_init\nstruct Nested[*Ts: Movable](Movable):\n    pass\n\n@fieldwise_init\nstruct Family[*Ts: Movable](Movable):\n    comptime NestedType = Nested[*Ts]\n    var marker: Int\n\ndef main():\n    var value = Family[Int, Bool](42)\n    print(value.marker)\n";
     assert_eq!(run(src).unwrap(), "42\n");
 }
+
+#[test]
+fn explicit_type_argument_naming_a_non_generic_struct_specializes() {
+    // Regression: the retained `[Plain]` argument on the rewritten call used to
+    // be misresolved by the checker as an undefined value. A concrete type
+    // argument is now baked into the clone and dropped from the call.
+    let src = "@fieldwise_init\nstruct Plain(Copyable, Movable):\n    var n: Int\n\ndef pick[T: Movable](x: T) -> Int:\n    comptime if is_same_type[T, Plain]():\n        return 1\n    else:\n        return 0\n\ndef main():\n    print(pick[Plain](Plain(3)))\n    print(pick[Int](4))\n";
+    assert_eq!(run(src).unwrap(), "1\n0\n");
+}
+
+#[test]
+fn explicit_type_argument_bound_violation_is_reported_at_the_call() {
+    // A dropped type argument is never re-validated by the checker against the
+    // residual signature, so the elaborator enforces the parameter's trait
+    // bounds when the instantiation is requested.
+    let src = "struct Pinned:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef pick[T: Copyable](x: T) -> Int:\n    comptime if is_same_type[T, Int]():\n        return 1\n    else:\n        return 0\n\ndef main():\n    print(pick[Pinned](Pinned(3)))\n";
+    let error = run(src).unwrap_err();
+    assert!(
+        error.contains("generic bound failed at 'pick' instantiation"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("type parameter 'T' received type 'Pinned'"),
+        "got: {error}"
+    );
+    assert!(error.contains("'Copyable'"), "got: {error}");
+}
+
+#[test]
+fn bound_generic_clone_reports_concrete_body_errors() {
+    // A plain trait-bound generic (no comptime constructs) monomorphizes per
+    // explicit concrete application, so a body-invalid instantiation fails
+    // against the concrete type — Mojo's post-instantiation error — rather
+    // than an abstract trait query on `T`.
+    let src = "@fieldwise_init\nstruct Plain(Copyable, Movable):\n    var n: Int\n\ndef broken[T: Movable](x: T) -> Int:\n    return x.definitely_missing_member\n\ndef main():\n    print(broken[Plain](Plain(3)))\n";
+    let error = run(src).unwrap_err();
+    assert!(
+        error.contains("type 'Plain' has no field 'definitely_missing_member'"),
+        "got: {error}"
+    );
+}
+
+#[test]
+fn bound_generic_template_survives_for_inferred_calls() {
+    // Mixed usage of one bound generic: the explicit application monomorphizes
+    // while the inferred call stays on the retained template's abstract
+    // erased-dispatch path.
+    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident[Int](1))\n    print(ident(2))\n";
+    assert_eq!(run(src).unwrap(), "1\n2\n");
+}

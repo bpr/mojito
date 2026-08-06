@@ -457,7 +457,7 @@ fn self_hosted_algorithms_use_comptime_facts() {
         .join("self_hosted_algorithms.mojo");
     assert_eq!(
         run(&main).unwrap(),
-        "1 2 0\n8 24\n4 17\n42\nfallback\n7\nalpha\n11\nbeta\n"
+        "1 2 0\n8 24\n4 17\n42\nfallback\n7\nalpha\n11\nbeta\n3\n"
     );
 }
 

@@ -939,18 +939,7 @@ impl Checker {
                     assumption.is_some_and(|known| generic_constraint_implies(known, &needed))
                 })
             }
-            Ty::Assoc { base, name, .. } => match base.as_ref() {
-                Ty::Param { bounds, .. } => {
-                    self.lookup_trait_assoc_type(bounds, name)
-                        .is_some_and(|associated_bounds| {
-                            associated_bounds.iter().any(|bound| {
-                                matches!(bound.as_str(), "Copyable" | "ImplicitlyCopyable")
-                                    || self.trait_refines(bound, "Copyable")
-                            })
-                        })
-                }
-                _ => false,
-            },
+            Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
             Ty::Struct(name, arguments) => {
                 let Some(info) = self.structs.get(name) else {
                     // A compatibility spelling may produce an opaque nominal
@@ -1552,6 +1541,10 @@ impl Checker {
             Ty::Param { bounds, .. } => bounds
                 .iter()
                 .any(|b| matches!(b.as_str(), "Copyable" | "ImplicitlyCopyable")),
+            // An abstract associated type (`C.Element`) is copyable only when
+            // the bound trait's member declaration proves it — never
+            // vacuously.
+            Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
             // Scalars, `String`, `List`/`Tuple`/`Simd`/`Range`, `Error`, closures,
             // and `Self` are treated as copyable (element-wise copyability of
             // aggregates is not modeled).
@@ -1580,8 +1573,34 @@ impl Checker {
                     && self.struct_implicitly_copyable_conformance_ok(name)
             }),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "ImplicitlyCopyable"),
+            // An abstract associated type is implicitly copyable only when its
+            // declared member bounds say so, mirroring the `Ty::Param` rule.
+            Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "ImplicitlyCopyable"),
             _ => true,
         }
+    }
+
+    /// Whether an associated type projected off a bounded parameter
+    /// (`C.Element`) proves `required` through the bound trait's declared
+    /// member bounds. `Copyable` is satisfied by `Copyable`,
+    /// `ImplicitlyCopyable`, or a refining trait; `ImplicitlyCopyable`
+    /// requires the exact marker, matching the `Ty::Param` rule.
+    fn assoc_member_bound_proves(&self, ty: &Ty, required: &str) -> bool {
+        let Ty::Assoc { base, name, .. } = ty else {
+            return false;
+        };
+        let Ty::Param { bounds, .. } = base.as_ref() else {
+            return false;
+        };
+        self.lookup_trait_assoc_type(bounds, name)
+            .is_some_and(|associated_bounds| {
+                associated_bounds.iter().any(|bound| {
+                    bound == required
+                        || (required == "Copyable"
+                            && (bound == "ImplicitlyCopyable"
+                                || self.trait_refines(bound, "Copyable")))
+                })
+            })
     }
 
     pub(super) fn is_movable(&self, _ty: &Ty) -> bool {

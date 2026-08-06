@@ -177,6 +177,7 @@ impl Checker {
         // reference-returning call result keyed at this span.
         self.selected_calls.borrow_mut().remove(&span);
         self.overload_targets.borrow_mut().remove(&span);
+        self.generic_instantiations.borrow_mut().remove(&span);
         Ok(contract)
     }
 

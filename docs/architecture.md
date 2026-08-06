@@ -47,7 +47,11 @@ let execution = compiler.execute(&program)?;
 the driver only after linking, comptime elaboration, semantic checking, and
 ownership analysis succeed. The wrapper records pipeline provenance rather than
 adding a second semantic representation. `CompilerError` identifies the failing
-stage. Individual stage functions remain public for tests and diagnostic tools.
+stage. Individual stage functions remain public for tests and diagnostic tools;
+a stage-composed execution still cannot bypass the ownership contract, because
+`VmBackend::run` itself re-checks pre-drop ownership before executing (the
+composition remains non-authoritative only for the whole-program
+discovery/specialization handoff).
 
 The design is an hourglass:
 
@@ -252,6 +256,26 @@ The implemented forms are:
 - Materialization: module-level `comptime` constants are inlined as runtime
   literals into later code, so a function can use a constant computed at module
   elaboration time.
+
+Generic `def` templates monomorphize in two classes sharing one worklist,
+mangling, and clone generator. A **comptime-class** template (a `comptime
+if`/`for` body, or a type pack) must specialize at every reference: resolution
+failure is an error, and the template is replaced by its clones (a dead
+template is dropped unchecked). A **bound-generic** template — a plain
+trait-bound generic `def` with no comptime constructs and a unique top-level
+name — resolves softly: only an explicit application whose arguments resolve
+concretely monomorphizes, while inferred calls, symbolic arguments, and
+function-value uses stay on the template's abstract erased-dispatch path and
+retain the template; a template with no references at all also survives,
+keeping its Mojo-style abstract pre-check. In both classes each clone bakes
+its concrete type arguments into every remaining type position — annotations,
+compile-time argument lists, and constructor heads — and drops them from the
+residual signature and the rewritten calls, so the clone checks concretely.
+Because the checker never re-validates a dropped argument, the resolver
+enforces each dropped parameter's declared trait bounds at the requesting call
+through the conformance oracle. Type packs, callable-value bindings, and
+types that do not round-trip to source syntax remain symbolic on the residual
+signature.
 
 The important distinction is that the elaborator still owns compile-time AST
 rewriting, while function-body execution now goes through the MIR/VM path. The

@@ -191,9 +191,14 @@ impl Checker {
                     param_args,
                     candidate.clone(),
                     origin_signatures.get(index),
-                ) && let Ok((ret, score, error)) =
-                    self.infer_callable_ty(name, prepared, &ordinary_param_args, args, kwargs)
-                    && let Some(target) = callable_lowered_name(name, candidate)
+                ) && let Ok((ret, score, error)) = self.infer_callable_ty(
+                    &span,
+                    name,
+                    prepared,
+                    &ordinary_param_args,
+                    args,
+                    kwargs,
+                ) && let Some(target) = callable_lowered_name(name, candidate)
                 {
                     matches.push((ret, score, target, error));
                 }
@@ -220,6 +225,7 @@ impl Checker {
                                 origin_signatures.get(index),
                             )?;
                         self.infer_callable_ty(
+                            &span,
                             name,
                             prepared.clone(),
                             &ordinary_param_args,
@@ -273,7 +279,7 @@ impl Checker {
             );
         }
         let (ret, _, error) =
-            self.infer_callable_ty(name, ty.clone(), &ordinary_param_args, args, kwargs)?;
+            self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
         self.record_call_environment_effects(
             span.clone(),
             &ty,
@@ -295,6 +301,7 @@ impl Checker {
 
     pub(super) fn infer_callable_ty(
         &self,
+        span: &SourceSpan,
         name: &str,
         ty: Ty,
         param_args: &[crate::ast::ParamArg],
@@ -320,7 +327,7 @@ impl Checker {
                 callable_bound: Some(bound),
                 ..
             } => {
-                return self.infer_callable_ty(name, *bound, param_args, args, kwargs);
+                return self.infer_callable_ty(span, name, *bound, param_args, args, kwargs);
             }
             Ty::Struct(struct_name, arguments) => {
                 let actual = Ty::Struct(struct_name.clone(), arguments);
@@ -330,7 +337,7 @@ impl Checker {
                         ty: struct_name.clone(),
                     }
                 })?;
-                return self.infer_callable_ty(name, callable, param_args, args, kwargs);
+                return self.infer_callable_ty(span, name, callable, param_args, args, kwargs);
             }
             // A non-generic function takes no compile-time parameters.
             Ty::Func {
@@ -375,7 +382,7 @@ impl Checker {
             // Bind ordinary arguments first, then infer or apply the generic
             // function's compile-time parameters from the occupied slots.
             generic @ Ty::GenericFunc { .. } => {
-                return self.infer_generic_call(name, &generic, param_args, args, kwargs);
+                return self.infer_generic_call(span, name, &generic, param_args, args, kwargs);
             }
             other => {
                 return Err(TypeError::NotCallable {
@@ -569,6 +576,7 @@ impl Checker {
     /// parameter type and return the substituted result type.
     pub(super) fn infer_generic_call(
         &self,
+        span: &SourceSpan,
         name: &str,
         generic: &Ty,
         param_args: &[crate::ast::ParamArg],
@@ -776,6 +784,16 @@ impl Checker {
             })
             .unwrap_or(referent);
         let error = error.as_ref().map(|error| resolve(error)).transpose()?;
+        // Retain the resolved application for instantiation discovery.
+        // Speculative overload attempts overwrite the same span; the selected
+        // candidate's re-run writes last.
+        self.generic_instantiations.borrow_mut().insert(
+            span.clone(),
+            crate::checked::GenericInstantiation {
+                callee: name.to_string(),
+                arguments: tyargs.clone(),
+            },
+        );
         Ok((
             result,
             overload_rank(

@@ -222,6 +222,15 @@ pub struct CheckedIteratorCall {
     pub result_adapter: Option<CheckedResultAdapter>,
 }
 
+/// One resolved generic free-function application at a call site: the source
+/// callee name and the compile-time arguments, in declaration order, exactly
+/// as `resolve_use_params` returned them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericInstantiation {
+    pub callee: String,
+    pub arguments: Vec<crate::types::TyArg>,
+}
+
 /// Fully resolved iterator protocol retained across the checked boundary.
 /// `prepare` contains the exact `__iter__` symbols needed to normalize a user
 /// iterable; builtin ranges/collections leave it empty.  User iterators carry
@@ -557,6 +566,7 @@ pub struct CheckedCapture {
 pub struct CheckedProgram {
     statements: Vec<Stmt>,
     compatibility_overload_targets: HashMap<SourceSpan, String>,
+    generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
     compatibility_implicit_conversions: HashMap<SourceSpan, String>,
     checked_types: HashMap<AnnotationSite, Ty>,
     generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
@@ -689,6 +699,7 @@ impl CheckedProgram {
     pub(crate) fn new(
         statements: Vec<Stmt>,
         overload_targets: HashMap<SourceSpan, String>,
+        generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
         implicit_conversions: HashMap<SourceSpan, String>,
         checked_types: HashMap<AnnotationSite, Ty>,
         generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
@@ -750,6 +761,7 @@ impl CheckedProgram {
         Self {
             statements,
             compatibility_overload_targets: overload_targets,
+            generic_instantiations,
             compatibility_implicit_conversions: implicit_conversions,
             checked_types,
             generic_parameters,
@@ -769,6 +781,15 @@ impl CheckedProgram {
     /// Checker-selected lowered callable name at each resolved call site.
     pub fn overload_targets(&self) -> &HashMap<SourceSpan, String> {
         &self.compatibility_overload_targets
+    }
+
+    /// The resolved generic application at each bound-generic call site: the
+    /// source callee and the exact compile-time arguments `resolve_use_params`
+    /// selected (types, values, and origins, symbolic entries included).
+    /// Recorded so instantiation discovery can monomorphize call sites the
+    /// elaborator cannot re-infer on its own.
+    pub fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
+        &self.generic_instantiations
     }
 
     /// Checker-selected converting constructor for an expression used in a

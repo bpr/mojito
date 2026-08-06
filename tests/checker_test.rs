@@ -864,6 +864,49 @@ fn rejects_type_arguments_on_non_generic_struct() {
 }
 
 #[test]
+fn generic_call_sites_record_their_resolved_instantiations() {
+    // Every bound-generic call site retains its resolved application (callee
+    // plus exact compile-time arguments) for instantiation discovery —
+    // explicit and inferred alike.
+    let program = Parser::new(Lexer::new(
+        "def pick[T: Movable](x: T) -> T:\n    return x^\n\ndef main():\n    var a = pick[Int](1)\n    var b = pick(\"s\")\n",
+    ))
+    .parse_program()
+    .expect("parse error");
+    let checked = check_program(&program).expect("check");
+    let picks: Vec<String> = checked
+        .generic_instantiations()
+        .values()
+        .filter(|instantiation| instantiation.callee == "pick")
+        .map(|instantiation| format!("{:?}", instantiation.arguments))
+        .collect();
+    assert_eq!(picks.len(), 2, "got {picks:?}");
+    assert!(
+        picks.iter().any(|arguments| arguments.contains("Int")),
+        "got {picks:?}"
+    );
+    assert!(
+        picks.iter().any(|arguments| arguments.contains("String")),
+        "got {picks:?}"
+    );
+}
+
+#[test]
+fn abstract_element_copyability_derives_from_member_bounds() {
+    // A `C.Element` copy is proven by the bound trait's member declaration,
+    // never vacuously: a Movable-only element cannot be returned by copy from
+    // a generic loop, while a Copyable-bounded one can.
+    let movable = "trait Items:\n    comptime Element: Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
+    let error = err(movable);
+    assert!(
+        matches!(&error, TypeError::NonCopyable { ty, .. } if ty == "C.Element"),
+        "got {error:?}"
+    );
+    let copyable = "trait Items:\n    comptime Element: Copyable & Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
+    ok(copyable);
+}
+
+#[test]
 fn abstract_bound_for_ref_is_rejected() {
     // A generic bound advances through the abstract `__iterator_dispatch`
     // contract, whose `__next__` yields `Element` values — mutating the

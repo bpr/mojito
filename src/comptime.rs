@@ -218,6 +218,9 @@ pub enum ComptimeError {
     /// An inferred type-pack element failed one of the pack's trait bounds at
     /// the call that requested specialization.
     PackBound(Box<PackBoundError>),
+    /// An explicit type argument failed its type parameter's trait bound at
+    /// the call that requested specialization.
+    GenericBound(Box<GenericBoundError>),
     /// The compile-time step/iteration quota was exceeded (a likely infinite loop).
     QuotaExceeded,
 }
@@ -227,6 +230,16 @@ pub struct PackBoundError {
     function: String,
     pack: String,
     index: usize,
+    ty: String,
+    trait_name: String,
+    site: String,
+    reason: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct GenericBoundError {
+    function: String,
+    param: String,
     ty: String,
     trait_name: String,
     site: String,
@@ -258,6 +271,24 @@ impl std::fmt::Display for ComptimeError {
                     f,
                     "type-pack bound failed at '{function}' instantiation {site}: element {} of type pack '{pack}' has type '{ty}', which does not conform to trait '{trait_name}'",
                     index + 1
+                )?;
+                if let Some(reason) = reason {
+                    write!(f, " ({reason})")?;
+                }
+                Ok(())
+            }
+            ComptimeError::GenericBound(error) => {
+                let GenericBoundError {
+                    function,
+                    param,
+                    ty,
+                    trait_name,
+                    site,
+                    reason,
+                } = error.as_ref();
+                write!(
+                    f,
+                    "generic bound failed at '{function}' instantiation {site}: type parameter '{param}' received type '{ty}', which does not conform to trait '{trait_name}'"
                 )?;
                 if let Some(reason) = reason {
                     write!(f, " ({reason})")?;
@@ -315,11 +346,13 @@ pub(crate) fn elaborate_with_tuple_requests(
         .into_iter()
         .map(|(key, ty)| (ty, key))
         .collect();
+    let bound_generics = collect_bound_generic_templates(&program);
     let elab = Elab {
         program: &program,
         fns: collect_fns(&program),
         structs: collect_structs(&program),
-        specializable: collect_specializable(&program),
+        specializable: collect_specializable(&program, &bound_generics),
+        bound_generics,
         conformance,
         tuple_universe,
         tuple_transforms,
@@ -1069,6 +1102,11 @@ struct Elab<'a> {
     /// Top-level generic `def`s whose value parameters feed a `comptime if`/`for`
     /// (so they must be monomorphized per call), by name → the template `Stmt`.
     specializable: HashMap<String, &'a Stmt>,
+    /// The subset of `specializable` that is a plain trait-bound generic `def`
+    /// (no comptime constructs). Calls resolve softly: an explicit concrete
+    /// application monomorphizes, every other reference stays on the template's
+    /// abstract erased-dispatch path and retains the template.
+    bound_generics: HashSet<String>,
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: crate::checker::ConformanceOracle,
@@ -1829,6 +1867,10 @@ struct Mono {
     /// Exact bare public `Tuple(...)` occurrences selected by the checker and
     /// the concrete variadic-struct symbol each one constructs.
     tuple_call_targets: HashMap<SourceSpan, String>,
+    /// Bound-generic templates with at least one reference left on the
+    /// abstract path (an unresolvable call or a function-value use). The
+    /// program rebuild keeps these templates alongside their specializations.
+    retained: HashSet<String>,
 }
 
 impl Mono {
@@ -2160,16 +2202,62 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
 /// comptime construct, so only the *selected* branch is type-checked. Because the
 /// elaborator does not infer types, such a `def` must be called with explicit
 /// `[...]` arguments.
-fn collect_specializable(program: &[Stmt]) -> HashMap<String, &Stmt> {
+fn collect_specializable<'a>(
+    program: &'a [Stmt],
+    bound_generics: &HashSet<String>,
+) -> HashMap<String, &'a Stmt> {
     let mut m = HashMap::new();
     for s in program {
-        if is_specializable_declaration(s)
-            && let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
+        if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
+            && (is_specializable_declaration(s) || bound_generics.contains(name))
         {
             m.insert(name.clone(), s);
         }
     }
     m
+}
+
+/// Top-level trait-bound generic `def`s with no comptime constructs. These
+/// monomorphize per explicit concrete application like the comptime class, but
+/// resolution is soft — an unresolvable call (inference, symbolic arguments)
+/// stays on the template's abstract erased-dispatch path — and the template
+/// survives whenever any reference stays abstract or none exists, keeping the
+/// Mojo-style pre-check of the uninstantiated body. An overloaded name stays
+/// entirely on the abstract path: the registry is name-keyed and overload
+/// selection is the checker's.
+fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
+    let mut def_counts: HashMap<&str, usize> = HashMap::new();
+    for statement in program {
+        if let StmtKind::Def { name, .. } = &statement.kind {
+            *def_counts.entry(name.as_str()).or_default() += 1;
+        }
+    }
+    program
+        .iter()
+        .filter_map(|statement| {
+            let StmtKind::Def {
+                name, type_params, ..
+            } = &statement.kind
+            else {
+                return None;
+            };
+            if is_specializable_declaration(statement) || def_counts[name.as_str()] != 1 {
+                return None;
+            }
+            type_params
+                .iter()
+                .any(|parameter| {
+                    matches!(
+                        classify_ct_param(parameter, type_params),
+                        Some(ParamDecl::Type {
+                            variadic: false,
+                            ..
+                        })
+                    )
+                })
+                .then(|| name.clone())
+        })
+        .collect()
 }
 
 fn stmt_has_comptime(s: &Stmt) -> bool {
@@ -2225,6 +2313,32 @@ fn retained_specialization_param(tp: &TypeParam, siblings: &[TypeParam]) -> bool
 
 /// Classify one source parameter that participates in compile-time evaluation.
 /// `None` means the parameter is retained symbolically by specialization.
+/// The concrete source type to substitute for a specialization type parameter
+/// that is dropped from the clone's signature and calls, or `None` when the
+/// parameter must remain symbolic: type packs, callable-value bindings,
+/// constrained parameters, and types that do not round-trip to source syntax
+/// (such as origin-carrying references). The resolver (`resolve_spec_args_for`)
+/// and the clone generator (`generate_def_spec`) must agree on this decision,
+/// so both consult this one predicate.
+fn spec_type_param_substitution(decl: &ParamDecl, value: &CtValue) -> Option<Type> {
+    let ParamDecl::Type {
+        variadic: false,
+        callable_bound: None,
+        constraints,
+        ..
+    } = decl
+    else {
+        return None;
+    };
+    if !constraints.is_empty() {
+        return None;
+    }
+    let CtValue::Type(ty) = value else {
+        return None;
+    };
+    source_type_from_ty(ty)
+}
+
 fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Option<ParamDecl> {
     if retained_specialization_param(tp, siblings) {
         return None;

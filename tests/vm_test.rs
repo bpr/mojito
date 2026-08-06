@@ -1463,3 +1463,13 @@ fn struct_conversions_and_rounding_dispatch_through_dunders() {
     let src = "@fieldwise_init\nstruct Money:\n    var cents: Int\n    def __int__(self) -> Int:\n        return self.cents\n    def __bool__(self) -> Bool:\n        return self.cents != 0\n    def __abs__(self) -> Money:\n        return Money(-self.cents) if self.cents < 0 else Money(self.cents)\n\ndef main():\n    print(Int(Money(-250)))\n    print(abs(Money(-250)).cents)\n    print(Bool(Money(0)))\n";
     assert_eq!(vm(src), "-250\n250\nFalse\n");
 }
+
+#[test]
+fn explicit_bound_generic_application_iterates_concrete_collections() {
+    // An explicit concrete application of a plain trait-bound generic clones
+    // and re-checks the body with `C := List[Int]` / `Set[Int]`, so the
+    // generic `for` runs through ordinary concrete borrowed iteration with no
+    // erased dispatch at these call sites.
+    let src = "def total[C: Iterable](c: C) -> Int:\n    var acc = 0\n    for item in c:\n        acc += item\n    return acc\n\ndef main():\n    var xs = [3, 4, 5]\n    print(total[List[Int]](xs))\n    var s: Set[Int] = Set[Int]()\n    s.add(30)\n    print(total[Set[Int]](s))\n";
+    assert_eq!(run_compiled(src).unwrap(), "12\n30\n");
+}

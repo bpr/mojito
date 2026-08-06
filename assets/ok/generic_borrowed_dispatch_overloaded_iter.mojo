@@ -15,7 +15,7 @@ trait CountIterator:
         ...
 
 trait CountIterable:
-    comptime Element: Movable
+    comptime Element: Copyable & Movable
     comptime Iter: CountIterator
 
     def __iter__(ref self) -> Self.Iter:
