@@ -3,9 +3,10 @@
 //! `check_ownership` runs after type-checking and models Mojo's move semantics: a
 //! value transferred with `^` may not be used again. These tests cover the
 //! positive cases (a move is fine if the value isn't used afterward, or is
-//! reinitialized) and the violations (use-after-move, conditional move), including
-//! the file fixtures under `assets/ownership_error/` (each pinned with `# expect:`)
-//! and `assets/ownership_ok/`.
+//! reinitialized) and the violations (use-after-move, conditional move); the
+//! file fixtures under `assets/ownership_error/` and `assets/ownership_ok/`
+//! run per-file in `tests/corpus_test.rs` (`ownership_error::*` /
+//! `ownership_ok::*`).
 
 use mojito::{OwnershipError, check, check_ownership, elaborate, parse};
 
@@ -641,62 +642,6 @@ fn move_in_loop_is_rejected() {
         "{THING}def main():\n    var a: Thing = Thing(1)\n    for i in range(3):\n        var b: Thing = a^\n        print(b.x)\n"
     );
     assert!(own(&src).is_err());
-}
-
-#[test]
-fn ownership_error_fixtures() {
-    // Every `assets/ownership_error/*.mojo` must be a move violation whose message
-    // contains its `# expect:` substring.
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ownership_error");
-    let mut n = 0;
-    for entry in std::fs::read_dir(dir).expect("assets/ownership_error exists") {
-        let path = entry.unwrap().path();
-        if path.extension().and_then(|e| e.to_str()) != Some("mojo") {
-            continue;
-        }
-        let src = std::fs::read_to_string(&path).unwrap();
-        let expect = expect_substring(&src);
-        match own(&src) {
-            Err(e) => {
-                let msg = e.to_string();
-                assert!(
-                    msg.contains(expect),
-                    "{}: message {msg:?} lacks expected {expect:?}",
-                    path.display()
-                );
-                n += 1;
-            }
-            Ok(()) => panic!("{}: expected an ownership error", path.display()),
-        }
-    }
-    assert!(n >= 4, "expected several ownership-error fixtures, ran {n}");
-}
-
-#[test]
-fn ownership_ok_fixtures() {
-    // Every `assets/ownership_ok/*.mojo` must pass the ownership analysis.
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ownership_ok");
-    for entry in std::fs::read_dir(dir).expect("assets/ownership_ok exists") {
-        let path = entry.unwrap().path();
-        if path.extension().and_then(|e| e.to_str()) != Some("mojo") {
-            continue;
-        }
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            own(&src).is_ok(),
-            "{}: expected no ownership error, got {:?}",
-            path.display(),
-            own(&src)
-        );
-    }
-}
-
-/// The `# expect: <substring>` pinned at the top of a fixture.
-fn expect_substring(src: &str) -> &str {
-    src.lines()
-        .find_map(|l| l.trim_start().strip_prefix("# expect:"))
-        .map(str::trim)
-        .expect("fixture must pin a `# expect:` substring")
 }
 
 #[test]

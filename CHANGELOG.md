@@ -6,6 +6,16 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Changed
+
+- Developer infrastructure: the whole-corpus fixture sweeps are now one
+  generated test per fixture in the `tests/corpus_test.rs` binary
+  (libtest-mimic, the project's first dev-dependency), preserving each sweep's
+  distinct pipeline entry path while letting the test runner schedule fixture
+  compiles across cores; `scripts/check` runs the suite through
+  `cargo nextest run`, and the `quick` nextest profile excludes the corpus
+  binary for the iteration loop.
+
 ### Added
 
 - Generic reference-yielding collection iteration. The bundled List and Set

@@ -394,35 +394,6 @@ fn vm_reports_unsupported_features_cleanly() {
 }
 
 #[test]
-fn vm_runs_every_ok_fixture() {
-    // The VM is the sole executor: every `assets/ok/*.mojo` fixture must pass the
-    // authoritative whole-program discovery/specialization pipeline and run
-    // without error. (Exact-output correctness is asserted by targeted tests.)
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ok");
-    let compiler = Compiler::default();
-    let mut ran = 0;
-    for entry in std::fs::read_dir(dir).expect("assets/ok exists") {
-        let path = entry.unwrap().path();
-        if path.extension().and_then(|e| e.to_str()) != Some("mojo") {
-            continue;
-        }
-        // This fixture intentionally reads stdin; an integration test inherits
-        // Cargo's terminal and would wait for user input forever.
-        if path.file_name().and_then(|n| n.to_str()) == Some("input.mojo") {
-            continue;
-        }
-        let program = compiler.compile_path(&path).unwrap_or_else(|error| {
-            panic!("compile failed on ok fixture {}: {error}", path.display())
-        });
-        compiler
-            .execute(&program)
-            .unwrap_or_else(|error| panic!("vm failed on ok fixture {}: {error}", path.display()));
-        ran += 1;
-    }
-    assert!(ran > 0, "expected some ok fixtures");
-}
-
-#[test]
 fn structs_construction_fields_and_mut_self() {
     // Construction, field read, a read-only method, and a `mut self` method whose
     // mutation persists (written back through the receiver place).

@@ -1,50 +1,14 @@
 //! Phase — standalone typed-MIR verification tests.
 //!
-//! Positive coverage lowers every executable fixture and requires complete
-//! register/place typing with no invariant errors, before and after drop
-//! elaboration. Negative coverage (hand-built malformed MIR) pins each
-//! verifier check class.
+//! Positive per-fixture coverage lives in `tests/corpus_test.rs` (`verify::*`),
+//! which lowers every executable fixture and requires complete register/place
+//! typing with no invariant errors, before and after drop elaboration.
+//! Negative coverage here (hand-built malformed MIR) pins each verifier check
+//! class.
 
-use mojito::analysis::elaborate_drops_program;
 use mojito::mir::verify::verify;
-use mojito::{check_program, link, parse};
-use std::fs;
+use mojito::{check_program, parse};
 use std::path::Path;
-
-#[test]
-fn every_executable_fixture_lowers_with_complete_typed_mir() {
-    let mut checked_fixtures = 0;
-    for category in ["ok", "origin_ok", "ownership_ok"] {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("assets")
-            .join(category);
-        for entry in fs::read_dir(dir).expect("fixture directory") {
-            let path = entry.expect("fixture entry").path();
-            if path.extension().is_none_or(|extension| extension != "mojo") {
-                continue;
-            }
-            let program = link(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-            let program = mojito::elaborate(program)
-                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-            let checked = check_program(&program)
-                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-            let mir = mojito::mir::lower_checked_program(&checked);
-            assert!(
-                mir.invariant_errors.is_empty(),
-                "{}: {:?}",
-                path.display(),
-                mir.invariant_errors
-            );
-            // Drop elaboration must preserve every verification invariant the
-            // VM relies on: the executed program is the elaborated one.
-            let elaborated = elaborate_drops_program(mir);
-            let errors = verify(&elaborated);
-            assert!(errors.is_empty(), "{}: {errors:?}", path.display());
-            checked_fixtures += 1;
-        }
-    }
-    assert!(checked_fixtures > 40, "fixture corpus unexpectedly small");
-}
 
 // --- Negative coverage: hand-built malformed MIR per verifier check class ---
 

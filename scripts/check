@@ -9,8 +9,10 @@ scripts/check-parity-manifest
 echo "==> cargo fmt --check"
 cargo fmt --check
 
-echo "==> cargo test"
-cargo test
+echo "==> cargo nextest run"
+# nextest does not run doctests; this crate has none. If doctests are
+# ever added, run them separately here (cargo test --doc).
+cargo nextest run
 
 echo "==> cargo clippy --all-targets -- -D warnings"
 cargo clippy --all-targets -- -D warnings

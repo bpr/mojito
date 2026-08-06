@@ -1,0 +1,10 @@
+# Nextest profiles.
+#
+# `cargo nextest run --profile quick` is the iteration loop: it excludes the
+# per-fixture corpus binary (tests/corpus_test.rs), which dominates suite wall
+# time and earns its keep at commit-sized step boundaries rather than per
+# edit. The default profile — and the required `scripts/check` gate — still
+# runs everything; never call a step done on quick-profile results alone.
+
+[profile.quick]
+default-filter = "not binary(=corpus_test)"

@@ -84,8 +84,11 @@ move.
 ## Commands
 
 - Required gate: `env RUSTC_WRAPPER= scripts/check`
-- One integration target: `cargo test --test vm_test`
-- One named test: `cargo test test_name`
+- Full suite: `cargo nextest run`; iteration loop:
+  `cargo nextest run --profile quick` (excludes the per-fixture corpus
+  binary). Plain `cargo test` remains a working fallback.
+- One integration target: `cargo nextest run --test vm_test`
+- One named test: `cargo nextest run test_name`
 - CLI: `cargo run -- <lex|parse|check|own|run> [FILE]`
 - Module roots: repeat `--module-path PATH` / `-I PATH`; use `--stdlib PATH`
   to replace the bundled standard-library root.
@@ -96,10 +99,14 @@ and `git diff --check` pass.
 ## Test and Fixture Ownership
 
 Integration tests are grouped by phase: lexer, parser, checker, comptime, HIR,
-MIR, ownership, drops, VM, modules, symbols, compiler driver, self-hosted stdlib,
-and file assets. `tests/evaluator_test.rs` is a historical filename; it exercises
-the compiler-and-VM execution path.
+MIR, ownership, drops, VM, modules, symbols, compiler driver, and self-hosted
+stdlib. `tests/evaluator_test.rs` is a historical filename; it exercises the
+compiler-and-VM execution path.
 
-Files under `assets/<outcome>/` run through the whole pipeline. The outcome
-folders are `ok`, `parse_error`, `type_error`, `runtime_error`,
+Files under `assets/<outcome>/` run through the whole pipeline as one
+generated test per fixture in the `tests/corpus_test.rs` binary
+(`harness = false`, libtest-mimic), grouped as `assets_*`, `vm_ok`,
+`verify::*`, `origin_*`, and `ownership_*` — each group pinning a distinct
+pipeline entry path; the phase-grouped files keep only targeted tests. The
+outcome folders are `ok`, `parse_error`, `type_error`, `runtime_error`,
 `ownership_ok`, and `ownership_error`. See `assets/README.md`.
