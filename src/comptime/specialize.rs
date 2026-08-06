@@ -270,7 +270,7 @@ impl<'a> Elab<'a> {
         };
         let evaluated_count = type_params
             .iter()
-            .filter(|parameter| classify_ct_param(parameter).is_some())
+            .filter(|parameter| classify_ct_param(parameter, type_params).is_some())
             .count();
         if evaluated_count != vals.len() {
             return Err(ComptimeError::Arity(format!(
@@ -293,7 +293,7 @@ impl<'a> Elab<'a> {
         let mut type_pack_values: HashMap<String, Vec<CtValue>> = HashMap::new();
         let mut values = vals.iter();
         for tp in type_params {
-            let Some(decl) = classify_ct_param(tp) else {
+            let Some(decl) = classify_ct_param(tp, type_params) else {
                 // Origin/OriginSet binders and explicit callable-value
                 // parameters remain symbolic. Their arguments are retained at
                 // each rewritten call and therefore never enter `CtValue`.

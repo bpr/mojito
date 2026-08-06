@@ -328,8 +328,12 @@ impl Checker {
             // runtime generic argument binding. `Origin` participates in ref
             // signatures; `OriginSet` names a capturing callable's environment.
             // Both are inferred from places/callable values rather than occupying
-            // a source-visible value-parameter slot.
+            // a source-visible value-parameter slot. An infer-only `Bool` that
+            // binds a sibling origin parameter's `mut=` erases with it.
             if matches!(tp.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
+                continue;
+            }
+            if tp.is_origin_mutability_binder(tps) {
                 continue;
             }
             if let Some(value_type) = &tp.value_type {

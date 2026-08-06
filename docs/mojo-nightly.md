@@ -26,13 +26,14 @@ The `Copyable` iterator-result refinement also matches: a concrete
 and an abstract call observes a lifecycle copy of the referent. Mojito rejects
 the reverse direction, mismatched referents, and non-`Copyable` elements, and
 retains the adaptation explicitly through checked HIR and verified MIR.
-This does not yet implement the nightly's generic borrowed-iterator type family.
-Current `Iterable` declares an origin- and mutability-parameterized
-`IteratorType[...]` and returns `Self.IteratorType[origin_of(self)]`; Mojito's
-bundled borrowed contract remains monomorphic (the owned protocol already uses
-`IteratorOwnedType`) and its concrete List provenance is carried by a checked
-bridge. The Mojo-only parameterized-associated-iterator fixture keeps that subset
-boundary executable.
+The bundled borrowed contract now matches the nightly's shape: `Iterable`
+declares the origin- and mutability-parameterized `IteratorType[...]` and
+returns `Self.IteratorType[origin_of(self)]`, and the bundled List/Set iterator
+borrows its source through a parametric-mut struct origin and yields element
+references — `for ref` write-through runs the ordinary protocol with no
+List-only desugaring. Remaining subset boundaries: mapping iterators snapshot
+and copy, and a `ref` loop target over an abstract generic `Iterable` bound is
+rejected (the abstract `__next__` contract yields values).
 The interior-origin run/rejection cases also match: overlapping List element
 references and direct element writes remain valid, while a structural mutation
 or a user-declared interior-return contract makes an older generation stale.

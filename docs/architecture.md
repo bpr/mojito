@@ -535,11 +535,13 @@ every non-`Place` origin, erases from the runtime ABI (collapsing to the single
 mangling marker). A conforming struct then resolves the origin-parameterized
 member concretely, so a requirement returning `Self.IteratorType[origin_of(self)]`
 is satisfiable and conformance succeeds. The borrowed `Iterable` proof protocol
-nonetheless still keeps its monomorphic `Iter` member. The abstract
-copy-reference result adapter is now available, but migrating the protocol also
-needs generic source/yield-origin substitution and loop binding/source modes;
-until then the concrete List/Set/Dict borrowed/reference-iteration bridges
-described below preserve provenance.
+uses this origin-parameterized member, and the bundled List/Set iterator
+carries its origin as an erased struct parameter (with an infer-only `Bool`
+binding its `mut=`, likewise erased), borrows its source through a `ref`
+field, and yields element references whose mutability the checker resolves
+from the source at each loop site. Concrete List/Set/Dict borrowed iteration
+keeps its checker-attached interior `element` loan; the mapping iterators
+remain snapshot/copy bridges until mapping invalidation lands.
 
 Trait method requirements retain `raises` and an optional concrete error type.
 A nonraising implementation may satisfy a raising requirement; a raising
@@ -904,10 +906,12 @@ Whole-source versus interior borrowing is expressed only as loan granularity:
 `element` generation, re-established on the long-lived iterator-object slot so
 the source stays live through the loop and mutation of it during iteration is
 rejected. List iteration additionally observes element replacement and rejects
-structural invalidation before a later iterator use; concrete List `for ref`
-binds checked indexed element places directly. The collection-specific
-checker rules remain narrow bridges until parameterized associated iterator
-types can derive the same facts for generic iterables. The only method-free
+structural invalidation before a later iterator use; `for ref` binds the
+yielded reference handles of the ordinary protocol, with the iterator's source
+loans re-established on each binding. The remaining collection-specific
+checker rules (the interior-`element` attachment and the mapping snapshots)
+stay narrow until generic-bound origin derivation lands with mapping
+invalidation. The only method-free
 collection behavior in the VM is the explicitly CTFE-only `ComptimeList`
 bridge; the separate method-free tuple-shaped path is compiler-private
 runtime-pack storage, not a public collection.
@@ -979,10 +983,9 @@ exit:
 The compatibility path for a nonraising iterator instead executes
 `has_next(iterator)` through its selected `__len__`, then `next(iterator)` in the
 body. For a concrete borrowed List, Set, or Dict place, the preheader carries its
-checked interior origin through `BorrowIter`; concrete List `for ref` uses
-checked indexed element places. These bridges preserve concrete provenance but
-are not a substitute for current Mojo's origin-parameterized associated
-`IteratorType`.
+checked interior origin through `BorrowIter`; `for ref` binds the protocol's
+yielded reference handles directly — the former List-only indexed-place
+desugaring is gone.
 
 Concrete iterator selection retains an exact checked `__next__` operation:
 target, raising effect, executable result type, and (when present) the

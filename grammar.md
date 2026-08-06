@@ -452,9 +452,12 @@ support loop `else`; `break` bypasses it. A `for` target is a single `NAME`, opt
 introduced with `ref` for mutable list-element iteration; its
 iterable is any `expression` whose nominal type supplies the checked iteration
 protocol. The implicit prelude provides this for `Range`, `List`, `Set`, and
-`Dict`, and user structs may provide the same methods. `for ref` currently has
-an origin-preserving concrete List-place bridge; generic reference-yielding
-iteration awaits parameterized associated iterator types. `for var item in
+`Dict`, and user structs may provide the same methods. `for ref` runs the
+ordinary reference-yielding iterator protocol: the bundled List/Set iterators
+(and any user iterator with a parametric-mut origin) yield element references
+whose mutability resolves from the source at the loop site; a `ref` target
+over a generic `Iterable` bound is rejected because the abstract contract
+yields values. `for var item in
 collection^` moves the collection and successively transfers its elements,
 including non-Copyable elements. An early exit destroys an implicitly deletable
 residual collection; it is rejected when residual linear elements would require

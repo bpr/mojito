@@ -80,44 +80,6 @@ impl HirExpr {
             comprehension_bindings: Vec::new(),
         }
     }
-
-    fn synthetic(
-        kind: ExprKind,
-        ty: Ty,
-        category: ValueCategory,
-        children: Vec<HirExpr>,
-        adjustments: Vec<SemanticAdjustment>,
-    ) -> Self {
-        let raises = adjustments.iter().find_map(|adjustment| match adjustment {
-            SemanticAdjustment::SelectedCall(contract) => contract.raises.clone(),
-            _ => None,
-        });
-        Self {
-            syntax: Expr::new(kind, DUMMY_SPAN),
-            checked: None,
-            ty: Some(ty),
-            category,
-            binding: None,
-            effects: EffectFacts {
-                raises,
-                ..EffectFacts::default()
-            },
-            adjustments,
-            children,
-            place: None,
-            comprehension_bindings: Vec::new(),
-        }
-    }
-
-    fn synthetic_identifier(name: String, ty: Ty) -> Self {
-        Self::synthetic(
-            ExprKind::Identifier(name),
-            ty,
-            ValueCategory::Place,
-            Vec::new(),
-            Vec::new(),
-        )
-    }
 }
 
 impl std::ops::Deref for HirExpr {
@@ -232,10 +194,12 @@ pub enum HirInstr {
     },
     /// Adapt one raw iterator result into the user-visible target. This executes
     /// only in the yielded body, so reference copies and value moves never run on
-    /// the `StopIteration` edge.
+    /// the `StopIteration` edge. `iter` is the iterator-object slot whose source
+    /// loans a borrowed reference binding re-establishes on itself.
     BindIteration {
         raw: VarId,
         dest: VarId,
+        iter: VarId,
         plan: crate::checked::CheckedIterationBinding,
         binding: crate::origin::OwnerId,
     },
@@ -1182,171 +1146,6 @@ impl Lower {
                     .expect("checked for-loop protocol has a binding plan");
                 debug_assert_eq!(binding_plan.mode, *binding_mode);
 
-                // The temporary concrete-List bridge is selected by the checked
-                // protocol, never reconstructed from the target's source syntax.
-                if protocol.reference.is_some() {
-                    let ExprKind::Identifier(_) = &iter.kind else {
-                        self.push(HirInstr::Stmt(
-                            self.statement(Stmt::new(StmtKind::Pass, s.span)),
-                        ));
-                        return;
-                    };
-                    let reference_protocol = protocol
-                        .reference
-                        .clone()
-                        .expect("checked List reference iteration has exact calls");
-                    let declaration = self
-                        .checked_declarations
-                        .get(&s.source_span())
-                        .cloned()
-                        .expect("checked reference-loop binding declaration");
-                    let reference_ty = match declaration.ty.clone() {
-                        Some(Ty::Ref(reference)) => reference,
-                        other => panic!(
-                            "checked reference-loop binding must be a reference, got {other:?}"
-                        ),
-                    };
-                    let index_name = format!("$refindex{}", self.vars.len());
-                    let index_var = self.var(&index_name);
-                    self.push(HirInstr::Bind {
-                        dest: index_var,
-                        expr: HirExpr::synthetic(
-                            ExprKind::Int(0i64.into()),
-                            Ty::IntLiteral,
-                            ValueCategory::Value,
-                            Vec::new(),
-                            Vec::new(),
-                        ),
-                        binding_ty: Some(Ty::Int),
-                        binding: None,
-                    });
-                    let header = self.new_block();
-                    let body_b = self.new_block();
-                    let exit = self.new_block();
-                    let normal_exit = orelse.as_ref().map(|_| self.new_block()).unwrap_or(exit);
-                    self.seal(Terminator::Jump(header));
-                    self.cur = header;
-                    let length = HirExpr::synthetic(
-                        ExprKind::MethodCall {
-                            object: Box::new(checked_iter.syntax.clone()),
-                            method: "__len__".to_string(),
-                            args: Vec::new(),
-                            kwargs: Vec::new(),
-                        },
-                        Ty::Int,
-                        ValueCategory::Value,
-                        vec![checked_iter.clone()],
-                        vec![SemanticAdjustment::SelectedCall(Box::new(
-                            reference_protocol.len.clone(),
-                        ))],
-                    );
-                    let index_read = HirExpr::synthetic_identifier(index_name.clone(), Ty::Int);
-                    self.seal(Terminator::Branch {
-                        cond: HirExpr::synthetic(
-                            ExprKind::Infix(
-                                crate::ast::InfixOp::Lt,
-                                Box::new(index_read.syntax.clone()),
-                                Box::new(length.syntax.clone()),
-                            ),
-                            Ty::Bool,
-                            ValueCategory::Value,
-                            vec![index_read, length],
-                            Vec::new(),
-                        ),
-                        then_b: body_b,
-                        else_b: normal_exit,
-                    });
-                    self.cur = body_b;
-                    self.scopes.push(HashMap::new());
-                    let binding_var = self.declare_var(var);
-                    let binding_name = self.vars[binding_var as usize].clone();
-                    let index_read = HirExpr::synthetic_identifier(index_name.clone(), Ty::Int);
-                    let reference = reference_protocol
-                        .getitem
-                        .reference_result
-                        .clone()
-                        .expect("checked reference iteration getter returns a reference");
-                    debug_assert_eq!(reference, reference_ty);
-                    let borrow = if reference.mutability == crate::origin::Mutability::Mutable {
-                        SemanticAdjustment::BorrowMutable
-                    } else {
-                        SemanticAdjustment::BorrowShared
-                    };
-                    let target = HirExpr::synthetic(
-                        ExprKind::Index {
-                            object: Box::new(checked_iter.syntax.clone()),
-                            index: Box::new(index_read.syntax.clone()),
-                        },
-                        (*reference.referent).clone(),
-                        ValueCategory::Place,
-                        vec![checked_iter, index_read],
-                        vec![
-                            SemanticAdjustment::SelectedCall(Box::new(
-                                reference_protocol.getitem.clone(),
-                            )),
-                            SemanticAdjustment::ReferenceResult {
-                                reference: reference.clone(),
-                            },
-                            borrow,
-                        ],
-                    );
-                    let mut syntax = Stmt::new(
-                        StmtKind::RefDecl {
-                            name: binding_name,
-                            value: target.syntax.clone(),
-                        },
-                        s.span,
-                    );
-                    syntax.module = s.module.clone();
-                    self.push(HirInstr::Stmt(HirStmt {
-                        syntax,
-                        declaration: Some(declaration.id),
-                        binding: declaration.binding,
-                        expressions: vec![target],
-                    }));
-                    self.loops.push(LoopFrame {
-                        header,
-                        exit,
-                        escape: false,
-                        cleanup: Vec::new(),
-                    });
-                    self.block(body);
-                    self.loops.pop();
-                    self.scopes.pop();
-                    let index_read = HirExpr::synthetic_identifier(index_name.clone(), Ty::Int);
-                    let one = HirExpr::synthetic(
-                        ExprKind::Int(1i64.into()),
-                        Ty::IntLiteral,
-                        ValueCategory::Value,
-                        Vec::new(),
-                        Vec::new(),
-                    );
-                    let next = HirExpr::synthetic(
-                        ExprKind::Infix(
-                            crate::ast::InfixOp::Add,
-                            Box::new(index_read.syntax.clone()),
-                            Box::new(one.syntax.clone()),
-                        ),
-                        Ty::Int,
-                        ValueCategory::Value,
-                        vec![index_read, one],
-                        Vec::new(),
-                    );
-                    self.push(HirInstr::Bind {
-                        dest: index_var,
-                        expr: next,
-                        binding_ty: None,
-                        binding: None,
-                    });
-                    self.seal(Terminator::Jump(header));
-                    if let Some(body) = orelse {
-                        self.cur = normal_exit;
-                        self.scoped_block(body);
-                        self.seal(Terminator::Jump(exit));
-                    }
-                    self.cur = exit;
-                    return;
-                }
                 // Evaluate the iterable once into a fresh iterator variable. `$`
                 // names can't be produced by the parser, so they never collide with
                 // user variables; a monotone `vars.len()` suffix keeps them unique.
@@ -1456,6 +1255,7 @@ impl Lower {
                 self.push(HirInstr::BindIteration {
                     raw: raw_var,
                     dest: v,
+                    iter: iter_var,
                     plan: binding_plan.clone(),
                     binding,
                 });

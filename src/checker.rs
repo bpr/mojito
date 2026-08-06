@@ -309,13 +309,15 @@ impl ConformanceOracle {
         // Struct facts are likewise signature-only. Full conformance
         // verification still runs after elaboration, so accepting a declaration
         // into this registry never bypasses method or associated-member checks.
+        // Every struct name registers before any field type resolves, so a
+        // field may reference a struct declared later in the module (an
+        // iterator holding `ref[o] List[T]` above `List` itself).
         for statement in stmts {
             let StmtKind::Struct {
                 name,
                 type_params,
                 conforms,
                 conformance_conditions,
-                fields,
                 methods,
                 fieldwise_init,
                 ..
@@ -325,36 +327,6 @@ impl ConformanceOracle {
             };
 
             let decls = checker.classify_params(type_params)?;
-            let self_ty = Ty::Struct(name.clone(), decls.iter().map(param_as_arg).collect());
-            let saved_self_decls = std::mem::replace(&mut checker.self_decls, decls.clone());
-            let saved_type_params =
-                std::mem::replace(&mut checker.enclosing_type_params, type_params.clone());
-            let saved_self_ty = checker.self_ty.replace(self_ty);
-            let field_types = if decls.iter().any(|decl| {
-                matches!(
-                    decl,
-                    ParamDecl::Type { variadic: true, .. }
-                        | ParamDecl::Value { variadic: true, .. }
-                )
-            }) {
-                // Pack-dependent fields are expanded into ordinary concrete
-                // fields/types by specialization. The template itself cannot be
-                // resolved as a single erased type.
-                Ok(Vec::new())
-            } else {
-                fields
-                    .iter()
-                    .map(|field| {
-                        checker
-                            .ty_from_anno(&field.ty)
-                            .map(|ty| (field.name.clone(), ty))
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            };
-            checker.self_decls = saved_self_decls;
-            checker.enclosing_type_params = saved_type_params;
-            checker.self_ty = saved_self_ty;
-
             let mut method_names: HashMap<String, Vec<MethodSig>> = HashMap::new();
             for method in methods {
                 method_names
@@ -370,7 +342,7 @@ impl ConformanceOracle {
                     callable_conformance: None,
                     callable_target: None,
                     conformance_conditions: conformance_conditions.iter().cloned().collect(),
-                    fields: field_types?,
+                    fields: Vec::new(),
                     associated: HashMap::new(),
                     parameterized_associated: HashMap::new(),
                     methods: method_names,
@@ -379,6 +351,54 @@ impl ConformanceOracle {
                     explicit_destructors: HashMap::new(),
                 },
             );
+        }
+        for statement in stmts {
+            let StmtKind::Struct {
+                name,
+                type_params,
+                fields,
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+
+            let decls = checker
+                .structs
+                .get(name)
+                .map(|info| info.decls.clone())
+                .unwrap_or_default();
+            if decls.iter().any(|decl| {
+                matches!(
+                    decl,
+                    ParamDecl::Type { variadic: true, .. }
+                        | ParamDecl::Value { variadic: true, .. }
+                )
+            }) {
+                // Pack-dependent fields are expanded into ordinary concrete
+                // fields/types by specialization. The template itself cannot be
+                // resolved as a single erased type.
+                continue;
+            }
+            let self_ty = Ty::Struct(name.clone(), decls.iter().map(param_as_arg).collect());
+            let saved_self_decls = std::mem::replace(&mut checker.self_decls, decls);
+            let saved_type_params =
+                std::mem::replace(&mut checker.enclosing_type_params, type_params.clone());
+            let saved_self_ty = checker.self_ty.replace(self_ty);
+            let field_types = fields
+                .iter()
+                .map(|field| {
+                    checker
+                        .ty_from_anno(&field.ty)
+                        .map(|ty| (field.name.clone(), ty))
+                })
+                .collect::<Result<Vec<_>, _>>();
+            checker.self_decls = saved_self_decls;
+            checker.enclosing_type_params = saved_type_params;
+            checker.self_ty = saved_self_ty;
+            if let Some(info) = checker.structs.get_mut(name) {
+                info.fields = field_types?;
+            }
         }
 
         Ok(Self { checker })
@@ -403,7 +423,10 @@ pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<SourceSpan, St
     Ok(check_program(stmts)?.overload_targets().clone())
 }
 
-/// A single-pass static type checker over the parsed AST.
+/// A static type checker over the parsed AST. Top-level struct and trait
+/// declarations register order-independently (shells, member types, method
+/// signatures) before the source-order walk checks conformance and bodies;
+/// everything else checks in a single source-order pass.
 pub struct Checker {
     /// Lexical scope chain, innermost last. Starts with the global scope.
     scopes: Vec<HashMap<String, Ty>>,
@@ -447,6 +470,14 @@ pub struct Checker {
     /// checking. Concrete Tuple types can therefore select their generated
     /// implementation independent of declaration order.
     declared_structs: HashSet<String>,
+    /// Top-level structs whose shell, member types, and method signatures were
+    /// registered by `check_program`'s order-independent pre-passes. The
+    /// source-order walk removes each entry and runs only the completion phase
+    /// (conformance verification and method bodies).
+    predeclared_structs: HashSet<String>,
+    /// Top-level traits registered by `check_program`'s pre-pass; the walk
+    /// removes each entry instead of re-registering.
+    predeclared_traits: HashSet<String>,
     /// Fixed semantic arguments for every compiler-generated public Tuple in
     /// the final program. This signature-only predeclaration is populated as a
     /// closed set before sequential member checking, so reciprocal transforms
@@ -605,6 +636,8 @@ impl Checker {
             capture_contexts: RefCell::new(Vec::new()),
             structs: HashMap::new(),
             declared_structs: HashSet::new(),
+            predeclared_structs: HashSet::new(),
+            predeclared_traits: HashSet::new(),
             predeclared_generated_tuple_arguments: HashMap::new(),
             materialized_callables,
             allow_generated_tuple_forward_types: false,
@@ -2235,6 +2268,39 @@ struct StructDeclaration<'a> {
     methods: &'a [Method],
     fieldwise_init: bool,
     decorators: &'a [crate::ast::Decorator],
+}
+
+/// View a statement as a struct declaration, for the order-independent
+/// declaration pre-passes and the source-order walk alike.
+fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
+    let StmtKind::Struct {
+        name,
+        type_params,
+        conforms,
+        callable_conformance,
+        conformance_conditions,
+        fields,
+        associated,
+        methods,
+        fieldwise_init,
+        decorators,
+    } = &stmt.kind
+    else {
+        return None;
+    };
+    Some(StructDeclaration {
+        module: &stmt.module,
+        name,
+        type_params,
+        conforms,
+        callable_conformance,
+        conformance_conditions,
+        fields,
+        associated,
+        methods,
+        fieldwise_init: *fieldwise_init,
+        decorators,
+    })
 }
 
 /// Compose inherited associated-member requirements. Type-valued members with

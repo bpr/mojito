@@ -151,6 +151,29 @@ pub struct TypeParam {
     pub constraints: Vec<Expr>,
 }
 
+impl TypeParam {
+    /// Whether this parameter is an infer-only `Bool` that exists to bind a
+    /// sibling origin parameter's mutability (`iterable_mut: Bool, //,
+    /// iterable_origin: Origin[mut=iterable_mut]`). Like the origin parameter
+    /// it qualifies, such a binder is semantic-only: it is erased from runtime
+    /// generic argument binding and inferred from the borrowed place instead
+    /// of occupying a source-visible value-parameter slot.
+    pub fn is_origin_mutability_binder(&self, siblings: &[TypeParam]) -> bool {
+        self.infer_only
+            && matches!(self.bounds.as_slice(), [only] if only == "Bool")
+            && self.value_type.is_none()
+            && siblings.iter().any(|peer| {
+                matches!(
+                    &peer.origin_mutability,
+                    Some(Expr {
+                        kind: ExprKind::Identifier(name),
+                        ..
+                    }) if name == &self.name
+                )
+            })
+    }
+}
+
 /// A parameter **argument** supplied in a `[...]` list at a use site, i.e. a
 /// `Pair[Int]` / `FixedBuffer[8]`. A type parameter takes a `Type`; a value
 /// parameter takes a comptime value `Expr`. The two forms are distinguished by

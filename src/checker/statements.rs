@@ -42,6 +42,46 @@ impl Checker {
             }
         }
         self.allow_generated_tuple_forward_types = saved_forward_types;
+        // Same-module declarations resolve order-independently: every
+        // top-level struct registers its shell (name and parameters), then
+        // every trait, then every struct's field/associated types, then every
+        // struct's method signatures — all before the source-order walk below
+        // checks conformance and method bodies. A struct field or method
+        // signature may therefore reference a struct declared later in its
+        // module (an iterator holding `ref[o] List[T]` above `List` itself).
+        for statement in stmts {
+            let Some(declaration) = struct_declaration(statement) else {
+                continue;
+            };
+            self.check_struct_shell(&declaration)?;
+            self.predeclared_structs
+                .insert(declaration.name.to_string());
+        }
+        for statement in stmts {
+            let StmtKind::Trait {
+                name,
+                refines,
+                methods,
+                comptime_members,
+            } = &statement.kind
+            else {
+                continue;
+            };
+            self.check_trait(name, refines, methods, comptime_members)?;
+            self.predeclared_traits.insert(name.clone());
+        }
+        for statement in stmts {
+            let Some(declaration) = struct_declaration(statement) else {
+                continue;
+            };
+            self.check_struct_types(&declaration)?;
+        }
+        for statement in stmts {
+            let Some(declaration) = struct_declaration(statement) else {
+                continue;
+            };
+            self.check_struct_method_signatures(&declaration)?;
+        }
         // `ret = None` marks "not inside a function", so a top-level `return`
         // is rejected; `in_loop = false` likewise rejects a top-level `break`.
         self.check_block(stmts, None, false)
@@ -1470,7 +1510,7 @@ impl Checker {
                 if self.lookup(name).is_some() {
                     return Err(TypeError::Redeclaration(name.clone()));
                 }
-                self.check_struct(&StructDeclaration {
+                let declaration = StructDeclaration {
                     module: &stmt.module,
                     name,
                     type_params,
@@ -1482,7 +1522,12 @@ impl Checker {
                     methods,
                     fieldwise_init: *fieldwise_init,
                     decorators,
-                })
+                };
+                if self.predeclared_structs.remove(name) {
+                    self.check_struct_completion(&declaration)
+                } else {
+                    self.check_struct(&declaration)
+                }
             }
 
             StmtKind::Trait {
@@ -1490,7 +1535,13 @@ impl Checker {
                 refines,
                 methods,
                 comptime_members,
-            } => self.check_trait(name, refines, methods, comptime_members),
+            } => {
+                if self.predeclared_traits.remove(name) {
+                    Ok(())
+                } else {
+                    self.check_trait(name, refines, methods, comptime_members)
+                }
+            }
 
             StmtKind::Comptime { name, value } => {
                 // A comptime `Int` is recorded (for value-parameter use) and bound as
@@ -1664,32 +1715,18 @@ impl Checker {
                 let (mut yielded_ty, mut protocol) =
                     self.iteration_protocol(&iter_ty, source_mode)?;
                 self.attach_borrowed_iteration_origin(iter, &iter_ty, source_mode, &mut protocol);
-                // Until bundled List itself yields references, retain its
-                // checked index bridge for a borrowed named `for ref`. Every
-                // structural reference-yielding iterator uses the generic path.
-                if *binding == crate::ast::LoopBindingMode::Ref
-                    && source_mode == crate::checked::IterationMode::Borrowed
-                    && list_element(&iter_ty).is_some()
+                if let Some(resolved) =
+                    self.resolve_borrowed_iteration_reference(iter, &mut protocol)
                 {
-                    if !matches!(iter.kind, ExprKind::Identifier(_)) {
-                        return Err(TypeError::Unsupported(
-                            "reference iteration over a temporary List awaits generic borrowed collection iterators"
-                                .to_string(),
-                        ));
-                    }
-                    let reference_protocol = self.reference_iteration_protocol(iter)?;
-                    let reference = reference_protocol
-                        .getitem
-                        .reference_result
-                        .clone()
-                        .ok_or_else(|| {
-                            TypeError::InvariantViolation(
-                                "checked List reference iteration selected a value-returning __getitem__"
-                                    .to_string(),
-                            )
-                        })?;
-                    protocol.reference = Some(Box::new(reference_protocol));
-                    yielded_ty = Ty::Ref(reference);
+                    yielded_ty = resolved;
+                }
+                if *binding == crate::ast::LoopBindingMode::Ref
+                    && Self::is_abstract_iteration_dispatch(&protocol)
+                {
+                    return Err(TypeError::Unsupported(
+                        "`for ref` over a generic Iterable bound requires a reference-yielding iterator; the abstract Iterator.__next__ yields Element values — bind by value, or iterate the concrete collection"
+                            .to_string(),
+                    ));
                 }
                 let binding_plan = self.iteration_binding_plan(*binding, &yielded_ty)?;
                 if source_mode == crate::checked::IterationMode::Owned

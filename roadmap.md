@@ -68,10 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Generic reference-yielding collection iteration** — make List and Set
-  iterators borrow their source and yield element references, route generic
-  `for ref` through the selected iterator result, and remove the List-only index
-  desugaring.
 - [ ] **Mapping invalidation and borrowed-iteration safety** — define mapping
   mutation during iteration, remove the remaining collection-specific bridges,
   and cover shared/mutable origins, generic bounds, element replacement,

@@ -5,31 +5,28 @@
 
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
-struct _ListIter[T: Movable](Iterator where conforms_to(T, Copyable)):
+@fieldwise_init
+struct _ListIter[
+    iterable_mut: Bool, //, T: Movable, iterable_origin: Origin[mut=iterable_mut]
+](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
 
-    var data: UnsafePointer[Self.T]
-    var size: Int
+    var src: ref[iterable_origin] List[Self.T]
     var index: Int
-
-    def __init__(out self, data: UnsafePointer[Self.T], size: Int):
-        self.data = data
-        self.size = size
-        self.index = 0
 
     # Kept as an optimization hint and compatibility API.  Exhaustion is
     # reported by StopIteration, not by the old HasNext/length sentinel.
     def __len__(self) -> Int:
-        return self.size - self.index
+        return len(self.src) - self.index
 
-    def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
+    def __next__(mut self) raises StopIteration -> ref[iterable_origin] Self.T where conforms_to(
         Self.T, Copyable
     ):
-        if self.index >= self.size:
+        if self.index >= len(self.src):
             raise StopIteration()
-        var result: Self.T = self.data[self.index]
+        var r = self.index
         self.index += 1
-        return result^
+        return self.src[r]
 
 struct _ListOwnedIter[T: Movable](
     ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
@@ -263,7 +260,8 @@ struct List[T: Movable](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.T, Copyable
     ):
-        return _ListIter[Self.T](self.data, self.size)
+        ref source = self
+        return _ListIter[Self.T](source, 0)
 
     def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
         Self.T, ImplicitlyDeletable

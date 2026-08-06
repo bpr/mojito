@@ -30,7 +30,7 @@ impl Checker {
                         self.register_named_bindings(iter)?;
                         let iter_ty = self.infer(iter)?;
                         let source_mode = Self::iteration_mode(iter);
-                        let (yielded_ty, mut protocol) =
+                        let (mut yielded_ty, mut protocol) =
                             self.iteration_protocol(&iter_ty, source_mode)?;
                         self.attach_borrowed_iteration_origin(
                             iter,
@@ -38,6 +38,19 @@ impl Checker {
                             source_mode,
                             &mut protocol,
                         );
+                        if let Some(resolved) =
+                            self.resolve_borrowed_iteration_reference(iter, &mut protocol)
+                        {
+                            yielded_ty = resolved;
+                        }
+                        if *binding == crate::ast::LoopBindingMode::Ref
+                            && Self::is_abstract_iteration_dispatch(&protocol)
+                        {
+                            return Err(TypeError::Unsupported(
+                                "`for ref` over a generic Iterable bound requires a reference-yielding iterator; the abstract Iterator.__next__ yields Element values — bind by value, or iterate the concrete collection"
+                                    .to_string(),
+                            ));
+                        }
                         let binding_plan = self.iteration_binding_plan(*binding, &yielded_ty)?;
                         protocol.binding = Some(Box::new(binding_plan.clone()));
                         self.iteration_protocols

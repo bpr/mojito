@@ -244,10 +244,11 @@ impl Flatten<'_> {
             HirInstr::BindIteration {
                 raw,
                 dest,
+                iter,
                 plan,
                 binding,
             } => {
-                self.bind_iteration_result(plan, *raw, *dest, *binding);
+                self.bind_iteration_result(plan, *raw, *dest, *iter, *binding);
             }
         }
     }
@@ -262,6 +263,7 @@ impl Flatten<'_> {
         plan: &crate::checked::CheckedIterationBinding,
         raw: VarId,
         dest: VarId,
+        iterator: VarId,
         binding: crate::origin::OwnerId,
     ) {
         use crate::checked::IterationBindingAction;
@@ -330,6 +332,11 @@ impl Flatten<'_> {
                     src: handle,
                     binding_ty: Some(plan.binding_ty.clone()),
                 });
+                // The borrowed handle aliases the iterated source: re-establish
+                // the iterator's source loans on the binding so a structural
+                // invalidation names the user's variable, not just the
+                // compiler's iterator slot.
+                self.reestablish_source_loans(iterator, dest);
             }
         }
     }

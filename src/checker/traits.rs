@@ -209,13 +209,32 @@ impl Checker {
     /// parameters are validated and kept in scope (as `Self.T`) for its fields
     /// and methods; field/method types referring to them become `Ty::Param`.
     /// Declared trait conformances are verified once the members are known.
+    /// Check a struct declaration completely: shell, member types, method
+    /// signatures, then conformance and bodies. `check_program` runs the first
+    /// three phases for every top-level struct before the source-order walk,
+    /// so this whole-declaration entry serves declarations the walk discovers
+    /// without a predeclared shell.
     pub(super) fn check_struct(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+    ) -> Result<(), TypeError> {
+        self.check_struct_shell(declaration)?;
+        self.check_struct_types(declaration)?;
+        self.check_struct_method_signatures(declaration)?;
+        self.check_struct_completion(declaration)
+    }
+
+    /// Register the struct's shell — classified parameters, generated-Tuple
+    /// fixed arguments, and declaration-syntax facts — without resolving any
+    /// member type. Shells for every top-level struct land before field,
+    /// signature, or body resolution, so same-module struct declarations may
+    /// reference each other regardless of order.
+    pub(super) fn check_struct_shell(
         &mut self,
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
         let type_params = declaration.type_params;
-        let conforms = declaration.conforms;
         if self.structs.contains_key(name) || self.traits.contains_key(name) {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
@@ -240,9 +259,6 @@ impl Checker {
                 "variadic struct '{name}' is compiled by compile-time specialization; instantiate it with explicit compile-time arguments (e.g. `{name}[Int, Bool](...)`) instead of checking the template"
             )));
         }
-        for tr in conforms {
-            self.check_trait_name(tr)?;
-        }
 
         // A generated public-Tuple implementation has erased its source pack
         // declaration, but its materialized `element_types` member retains the
@@ -256,47 +272,11 @@ impl Checker {
         );
         let saved_type_params =
             std::mem::replace(&mut self.enclosing_type_params, type_params.to_vec());
-        let fixed_arguments = match self.generated_tuple_arguments(name, declaration.associated) {
-            Ok(arguments) => arguments,
-            Err(error) => {
-                self.enclosing_type_params = saved_type_params;
-                self.allow_generated_tuple_forward_types = saved_forward_types;
-                return Err(error);
-            }
-        };
-
-        // The struct's parameters are in scope as `Self.T` / `Self.n`, and bare
-        // `Self` is the struct type, while checking its members. Type parameters
-        // appear as `Ty::Param`, value parameters as symbolic `CtValue::Param`.
-        let self_ty = Ty::Struct(
-            name.to_string(),
-            fixed_arguments
-                .clone()
-                .unwrap_or_else(|| decls.iter().map(param_as_arg).collect()),
-        );
-        let saved_self_decls = std::mem::replace(&mut self.self_decls, decls.clone());
-        let saved_self_ty = self.self_ty.replace(self_ty.clone());
-        let result = self.check_struct_members(declaration, decls, fixed_arguments, &self_ty);
-        self.self_decls = saved_self_decls;
+        let fixed_arguments = self.generated_tuple_arguments(name, declaration.associated);
         self.enclosing_type_params = saved_type_params;
-        self.self_ty = saved_self_ty;
         self.allow_generated_tuple_forward_types = saved_forward_types;
-        result
-    }
+        let fixed_arguments = fixed_arguments?;
 
-    pub(super) fn check_struct_members(
-        &mut self,
-        declaration: &StructDeclaration<'_>,
-        decls: Vec<ParamDecl>,
-        fixed_arguments: Option<Vec<TyArg>>,
-        self_ty: &Ty,
-    ) -> Result<(), TypeError> {
-        let name = declaration.name;
-        let conforms = declaration.conforms;
-        let fields = declaration.fields;
-        let associated = declaration.associated;
-        let methods = declaration.methods;
-        let fieldwise_init = declaration.fieldwise_init;
         let explicit_destroy_message = declaration
             .decorators
             .iter()
@@ -317,21 +297,141 @@ impl Checker {
                 }
             })
             .transpose()?;
-        let explicit_destructors = methods
+        let explicit_destructors = declaration
+            .methods
             .iter()
             .filter(|method| {
                 method.name != "__del__" && method.self_convention == Some(ArgConvention::Deinit)
             })
             .map(|method| (method.name.clone(), method.raises))
             .collect::<HashMap<_, _>>();
-        // Field types are resolved against structs defined *so far* (so a struct
-        // can't contain itself); duplicate field names are a redeclaration.
+        self.structs.insert(
+            name.to_string(),
+            StructInfo {
+                decls,
+                fixed_arguments,
+                conforms: declaration.conforms.to_vec(),
+                callable_conformance: None,
+                callable_target: None,
+                conformance_conditions: declaration
+                    .conformance_conditions
+                    .iter()
+                    .cloned()
+                    .collect(),
+                fields: Vec::new(),
+                associated: HashMap::new(),
+                parameterized_associated: HashMap::new(),
+                methods: HashMap::new(),
+                fieldwise_init: declaration.fieldwise_init,
+                explicit_destroy_message,
+                explicit_destructors,
+            },
+        );
+        Ok(())
+    }
+
+    /// Enter the member-resolution scope of a shelled struct: its parameters
+    /// are in scope as `Self.T` / `Self.n` (type parameters as `Ty::Param`,
+    /// value parameters as symbolic `CtValue::Param`) and bare `Self` is the
+    /// struct type. Returns the `Self` type and the saved outer scope for
+    /// `exit_struct_scope`.
+    fn enter_struct_scope(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+    ) -> Result<(Ty, SavedStructScope), TypeError> {
+        let name = declaration.name;
+        let info = self.structs.get(name).ok_or_else(|| {
+            TypeError::InvariantViolation(format!(
+                "struct '{name}' was not registered before member resolution"
+            ))
+        })?;
+        let decls = info.decls.clone();
+        let fixed_arguments = info.fixed_arguments.clone();
+        let generated_tuple = name.starts_with("Tuple$") || name.contains("$Tuple$");
+        let self_ty = Ty::Struct(
+            name.to_string(),
+            fixed_arguments.unwrap_or_else(|| decls.iter().map(param_as_arg).collect()),
+        );
+        let saved = SavedStructScope {
+            forward_types: std::mem::replace(
+                &mut self.allow_generated_tuple_forward_types,
+                generated_tuple,
+            ),
+            type_params: std::mem::replace(
+                &mut self.enclosing_type_params,
+                declaration.type_params.to_vec(),
+            ),
+            self_decls: std::mem::replace(&mut self.self_decls, decls),
+            self_ty: self.self_ty.replace(self_ty.clone()),
+        };
+        Ok((self_ty, saved))
+    }
+
+    fn exit_struct_scope(&mut self, saved: SavedStructScope) {
+        self.self_decls = saved.self_decls;
+        self.enclosing_type_params = saved.type_params;
+        self.self_ty = saved.self_ty;
+        self.allow_generated_tuple_forward_types = saved.forward_types;
+    }
+
+    /// Resolve field, associated-member, and callable-conformance types into
+    /// the registered shell.
+    pub(super) fn check_struct_types(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+    ) -> Result<(), TypeError> {
+        let name = declaration.name;
+        let (_, saved) = self.enter_struct_scope(declaration)?;
+        let resolved = self.resolve_struct_member_types(declaration);
+        self.exit_struct_scope(saved);
+        let (fields, associated, parameterized_associated, callable_conformance) = resolved?;
+        if callable_conformance
+            .as_ref()
+            .is_some_and(|ty| !matches!(ty, Ty::Func { .. }))
+        {
+            return Err(TypeError::Unsupported(
+                "callable conformance must be a def(...) function type".to_string(),
+            ));
+        }
+        let info = self
+            .structs
+            .get_mut(name)
+            .expect("struct shell is registered before member-type resolution");
+        info.fields = fields;
+        info.associated = associated;
+        info.parameterized_associated = parameterized_associated;
+        info.callable_conformance = callable_conformance;
+        Ok(())
+    }
+
+    fn resolve_struct_member_types(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+    ) -> Result<StructMemberTypes, TypeError> {
+        let name = declaration.name;
+        // Field types resolve with every module struct shell registered, so a
+        // field may reference a struct declared later in the module (by-value
+        // self-containment is rejected separately at completion); duplicate
+        // field names are a redeclaration.
         let mut field_tys: Vec<(String, Ty)> = Vec::new();
-        for (field_index, f) in fields.iter().enumerate() {
+        let self_display = self.self_ty.as_ref().map(|ty| ty.to_string());
+        for (field_index, f) in declaration.fields.iter().enumerate() {
             if field_tys.iter().any(|(n, _)| n == &f.name) {
                 return Err(TypeError::Redeclaration(f.name.clone()));
             }
-            let ty = self.ty_from_anno(&f.ty)?;
+            // A field's `Self.name` may name only a declared parameter — the
+            // struct's associated members resolve after its fields, matching
+            // the pre-shell contract — so a miss on `Self` itself reports an
+            // unknown parameter, not a missing associated member.
+            let ty = self.ty_from_anno(&f.ty).map_err(|error| match error {
+                TypeError::NoSuchAssociatedType {
+                    object_type,
+                    member,
+                } if Some(&object_type) == self_display.as_ref() => {
+                    TypeError::UnknownSelfParam(member)
+                }
+                other => other,
+            })?;
             if Self::type_contains_unsafe_any_pointer(&ty) {
                 return Err(TypeError::Unsupported(format!(
                     "field '{}' cannot hide a MutUnsafeAnyOrigin or ImmutUnsafeAnyOrigin pointer",
@@ -349,46 +449,50 @@ impl Checker {
             field_tys.push((f.name.clone(), ty));
         }
         let (associated_values, parameterized_associated) =
-            self.check_struct_associated(associated)?;
+            self.check_struct_associated(declaration.associated)?;
         let callable_conformance = declaration
             .callable_conformance
             .as_ref()
             .map(|annotation| self.ty_from_anno(annotation))
             .transpose()?;
-        if callable_conformance
-            .as_ref()
-            .is_some_and(|ty| !matches!(ty, Ty::Func { .. }))
+        Ok((
+            field_tys,
+            associated_values,
+            parameterized_associated,
+            callable_conformance,
+        ))
+    }
+
+    /// Lower and register every method signature of a shelled struct.
+    pub(super) fn check_struct_method_signatures(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+    ) -> Result<(), TypeError> {
+        let name = declaration.name;
+        let (_, saved) = self.enter_struct_scope(declaration)?;
+        let result = self.register_struct_method_signatures(declaration);
+        self.exit_struct_scope(saved);
+        result?;
+        // `@fieldwise_init` and a hand-written `__init__` both define a
+        // constructor; having both is a conflict (the decorator *generates*
+        // `__init__`).
+        if declaration.fieldwise_init
+            && self
+                .structs
+                .get(name)
+                .is_some_and(|i| i.methods.contains_key("__init__"))
         {
-            return Err(TypeError::Unsupported(
-                "callable conformance must be a def(...) function type".to_string(),
-            ));
+            return Err(TypeError::ConflictingConstructor(name.to_string()));
         }
-        // Register the (method-less) struct first, so methods may reference the
-        // struct's own type (even parameterized, `Pair[Self.T]`) in signatures.
-        self.structs.insert(
-            name.to_string(),
-            StructInfo {
-                decls,
-                fixed_arguments,
-                conforms: conforms.to_vec(),
-                callable_conformance,
-                callable_target: None,
-                conformance_conditions: declaration
-                    .conformance_conditions
-                    .iter()
-                    .cloned()
-                    .collect(),
-                fields: field_tys,
-                associated: associated_values,
-                parameterized_associated,
-                methods: HashMap::new(),
-                fieldwise_init,
-                explicit_destroy_message,
-                explicit_destructors,
-            },
-        );
-        // Method signatures.
-        for (method_index, m) in methods.iter().enumerate() {
+        Ok(())
+    }
+
+    fn register_struct_method_signatures(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+    ) -> Result<(), TypeError> {
+        let name = declaration.name;
+        for (method_index, m) in declaration.methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m);
             let method_decls = self.classify_params(&m.type_params)?;
             self.generic_parameters.borrow_mut().insert(
@@ -454,18 +558,35 @@ impl Checker {
             }
             overloads.push(sig);
         }
-        // `@fieldwise_init` and a hand-written `__init__` both define a constructor;
-        // having both is a conflict (the decorator *generates* `__init__`).
-        if fieldwise_init
-            && self
-                .structs
-                .get(name)
-                .is_some_and(|i| i.methods.contains_key("__init__"))
-        {
-            return Err(TypeError::ConflictingConstructor(name.to_string()));
+        Ok(())
+    }
+
+    /// Verify declared conformances, select the callable target, and check
+    /// method bodies — the source-order completion phase of a struct whose
+    /// shell, member types, and method signatures are already registered.
+    pub(super) fn check_struct_completion(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+    ) -> Result<(), TypeError> {
+        for tr in declaration.conforms {
+            self.check_trait_name(tr)?;
         }
+        self.reject_value_field_self_containment(declaration.name)?;
+        let (self_ty, saved) = self.enter_struct_scope(declaration)?;
+        let result = self.verify_conformance_and_bodies(declaration, &self_ty);
+        self.exit_struct_scope(saved);
+        result
+    }
+
+    fn verify_conformance_and_bodies(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        self_ty: &Ty,
+    ) -> Result<(), TypeError> {
+        let name = declaration.name;
+        let methods = declaration.methods;
         // Verify each declared conformance now that the method signatures exist.
-        for tr in conforms {
+        for tr in declaration.conforms {
             self.verify_conformance(name, tr, self_ty)?;
         }
         if let Some(expected) = self
@@ -512,6 +633,60 @@ impl Checker {
         // parameters (so `self.field : Ty::Param` inside a generic struct).
         for (method_index, m) in methods.iter().enumerate() {
             self.check_method(self_ty, m, declaration.module.clone(), name, method_index)?;
+        }
+        Ok(())
+    }
+
+    /// With every module struct shell registered before field resolution, a
+    /// struct may reference itself — or a mutual peer — in a field type, but
+    /// only behind reference or pointer indirection: a by-value field cycle
+    /// has no finite layout. Runs at completion, when every module struct's
+    /// fields are resolved.
+    fn reject_value_field_self_containment(&self, name: &str) -> Result<(), TypeError> {
+        fn visit_struct(
+            checker: &Checker,
+            root: &str,
+            current: &Ty,
+            visiting: &mut HashSet<String>,
+        ) -> Result<(), TypeError> {
+            let Ty::Struct(current_name, args) = current else {
+                return Ok(());
+            };
+            if current_name == root {
+                return Err(TypeError::Unsupported(format!(
+                    "struct '{root}' cannot contain itself by value; use reference or pointer indirection"
+                )));
+            }
+            if !visiting.insert(current_name.clone()) {
+                return Ok(());
+            }
+            let Some(info) = checker.structs.get(current_name) else {
+                return Ok(());
+            };
+            let subst = struct_subst(&info.decls, args);
+            for (_, field_ty) in info.fields.clone() {
+                visit_field(checker, root, &substitute(&field_ty, &subst), visiting)?;
+            }
+            Ok(())
+        }
+        fn visit_field(
+            checker: &Checker,
+            root: &str,
+            ty: &Ty,
+            visiting: &mut HashSet<String>,
+        ) -> Result<(), TypeError> {
+            match ty {
+                // A handle or pointer breaks the by-value containment chain.
+                Ty::Ref(_) | Ty::Pointer { .. } => Ok(()),
+                _ => visit_struct(checker, root, ty, visiting),
+            }
+        }
+        let Some(info) = self.structs.get(name) else {
+            return Ok(());
+        };
+        let mut visiting = HashSet::new();
+        for (_, field_ty) in info.fields.clone() {
+            visit_field(self, name, &field_ty, &mut visiting)?;
         }
         Ok(())
     }
@@ -1617,3 +1792,21 @@ impl Checker {
             })
     }
 }
+
+/// The outer checker scope saved while a struct's members resolve at the
+/// struct's own type parameters; restored by `Checker::exit_struct_scope`.
+struct SavedStructScope {
+    forward_types: bool,
+    type_params: Vec<crate::ast::TypeParam>,
+    self_decls: Vec<ParamDecl>,
+    self_ty: Option<Ty>,
+}
+
+/// The resolved member types of one struct declaration: fields, associated
+/// values, parameterized associated members, and the callable conformance.
+type StructMemberTypes = (
+    Vec<(String, Ty)>,
+    HashMap<String, CtValue>,
+    HashMap<String, ParameterizedMember>,
+    Option<Ty>,
+);

@@ -222,16 +222,6 @@ pub struct CheckedIteratorCall {
     pub result_adapter: Option<CheckedResultAdapter>,
 }
 
-/// Exact operations used by the concrete List `for ref` bridge.  This remains
-/// separate from the ordinary iterator protocol because the bundled List
-/// iterator yields copied values; reference iteration indexes the original
-/// owner so each loop binding is an executable write-through handle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReferenceIterationProtocol {
-    pub len: CheckedCallContract,
-    pub getitem: CheckedCallContract,
-}
-
 /// Fully resolved iterator protocol retained across the checked boundary.
 /// `prepare` contains the exact `__iter__` symbols needed to normalize a user
 /// iterable; builtin ranges/collections leave it empty.  User iterators carry
@@ -250,10 +240,10 @@ pub struct IterationProtocol {
     /// checker records the canonical owner identity and interior generation;
     /// HIR/MIR use it both to avoid an accidental value copy and to keep the
     /// owner live while rejecting a use of an iterator after structural
-    /// invalidation.  Generic `Iterable` remains `None` until its associated
-    /// iterator type can carry an origin parameter.
+    /// invalidation.  Generic `Iterable` remains `None`: its abstract
+    /// `__iterator_dispatch` contract yields `Element` values, so a `ref`
+    /// loop target over a generic bound is rejected outright.
     pub borrowed_origin: Option<crate::origin::OriginPlace>,
-    pub reference: Option<Box<ReferenceIterationProtocol>>,
     pub prepare: Vec<String>,
     pub has_next: Option<String>,
     pub next: Option<Box<CheckedIteratorCall>>,

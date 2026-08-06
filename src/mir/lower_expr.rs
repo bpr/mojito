@@ -321,7 +321,6 @@ impl Flatten<'_> {
                         },
                         binding: None,
                         borrowed_origin: None,
-                        reference: None,
                         prepare: Vec::new(),
                         has_next: None,
                         next: None,
@@ -437,7 +436,13 @@ impl Flatten<'_> {
                     src: element_value,
                     binding_ty: Some(binding.plan.yielded_ty.clone()),
                 });
-                self.bind_iteration_result(&binding.plan, raw_var, binding_var, binding.owner);
+                self.bind_iteration_result(
+                    &binding.plan,
+                    raw_var,
+                    binding_var,
+                    iterator_object,
+                    binding.owner,
+                );
                 self.comprehension_clauses(clauses, bindings, index + 1, plan);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = exit;

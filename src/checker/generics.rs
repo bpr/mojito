@@ -128,6 +128,11 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             element: Box::new(substitute(element, subst)),
             origin: origin.clone(),
         },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(substitute(&reference.referent, subst));
+            Ty::Ref(reference)
+        }
         Ty::Assoc { base, name, args } => Ty::Assoc {
             base: Box::new(substitute(base, subst)),
             name: name.clone(),

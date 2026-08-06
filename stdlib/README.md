@@ -28,7 +28,10 @@ only from their authoritative `std` modules.
   `UnsafePointer[T]`, with the full value-type lifecycle (ordinary `__init__`,
   `__init__(..., copy:)`, and `__init__(..., deinit move:)`), subscript read/write
   (`__getitem__`/`__setitem__`), `__len__`, and the iterator protocol
-  (`__iter__` → `_ListIter[T]` with typed-raising `__next__`; `__len__` remains a
+  (`__iter__(ref self)` → a borrowing
+  `_ListIter[iterable_mut: Bool, //, T, iterable_origin: Origin[mut=iterable_mut]]`
+  holding `ref[iterable_origin] List[T]`, whose typed-raising `__next__` yields
+  `ref[iterable_origin] T` element references; `__len__` remains a
   compatibility/optimization hint). Exhaustion raises `StopIteration`. Growth
   reallocs the buffer. `_get_copy(index)` is a library-private, non-overloaded
   value accessor used by nested collection implementations until a
@@ -53,11 +56,15 @@ only from their authoritative `std` modules.
   `Iterable` uses Mojo's origin-parameterized `IteratorType[iterable_mut: Bool,
   //, iterable_origin: Origin[mut=iterable_mut]]` with
   `__iter__(ref self) -> Self.IteratorType[origin_of(self)]`; the bundled
-  conformers erase the origin in their member templates, so borrowed iterators
-  still yield element copies pending generic reference-yielding iteration.
+  member templates stay origin-erased; the List/Set iterator carries its origin
+  as an erased struct parameter, borrows its source, and yields element
+  references resolved to the source's mutability at each loop site, while the
+  mapping iterators still snapshot entries and yield copies (tracked under
+  mapping invalidation).
 - `std/collections/set.mojo` — a generic, list-backed `Set[T]` for `Equatable & Copyable & Movable`
   elements. It supports `add`, membership through `in`/`__contains__`, `len`, and
-  borrowed iteration through the backing list's `_ListIter[T]`. It conforms to
+  borrowed reference-yielding iteration through the backing list's borrowed
+  `_ListIter`. It conforms to
   `Iterable`.
 - `std/collections/dict.mojo` — a generic, insertion-ordered, list-backed
   `Dict[K, V]`. It supports subscripts, overloaded `get`, membership, key
@@ -93,11 +100,11 @@ only from their authoritative `std` modules.
 
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is
-public, matching Mojo's item-view element. Views are eager snapshots rather than
-reference views until origin-parameterized reference iterators and live view
-APIs are implemented.
+public, matching Mojo's item-view element. Mapping views are eager snapshots
+rather than reference views until the mapping iterators become
+origin-parameterized and live view APIs are implemented.
 
 The register VM executes the ordinary MIR produced for these declarations;
 `tests/self_host_test.rs` links and runs them. Public List/Tuple runtime variants
-have already been retired. The remaining private storage, concrete borrowed-List,
-and iterator-family bridges are documented in the architecture and roadmap.
+have already been retired. The remaining private storage and mapping-iterator
+bridges are documented in the architecture and roadmap.

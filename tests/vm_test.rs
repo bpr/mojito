@@ -995,6 +995,52 @@ fn generic_iteration_applies_the_copyable_reference_adapter() {
 }
 
 #[test]
+fn reference_iteration_over_a_temporary_list_writes_through() {
+    // Previously a checker error under the List bridge; the generic protocol
+    // retains the temporary in a loop-owned (mutable) slot.
+    let source = include_str!("../assets/ok/reference_iteration_temporary_list.mojo");
+    assert_eq!(
+        run_compiled(source).expect("temporary-List reference iteration runs"),
+        "36\n"
+    );
+}
+
+#[test]
+fn set_reference_iteration_writes_through_the_generic_protocol() {
+    // Set was never bridged: its `for ref` runs the generic reference-yielding
+    // protocol through the delegated borrowed `_ListIter`, writing into the
+    // set's backing storage two borrow frames deep.
+    let source = include_str!("../assets/ok/set_reference_iteration_write_through.mojo");
+    assert_eq!(
+        run_compiled(source).expect("set reference iteration writes through"),
+        "2\nTrue True\n23\n"
+    );
+}
+
+#[test]
+fn parametric_mut_iterator_writes_through_a_mutable_source() {
+    // The loop site resolves `Mutability::Param` from the source: a mutable
+    // named source yields mutable references, `for ref x: x += 10` lands in
+    // the source, and the comprehension path resolves the same way.
+    let source = include_str!("../assets/ok/reference_yielding_iteration_parametric_mut.mojo");
+    assert_eq!(
+        run_compiled(source).expect("parametric-mut iterator writes through"),
+        "45\n28 32\n"
+    );
+}
+
+#[test]
+fn parametric_mut_iterator_reads_through_the_immutable_fallback() {
+    // A parametric-mut origin iterator (`m: Bool, //, o: Origin[mut=m]`) over
+    // a read-only loop: the unresolved `Mutability::Param` binds immutably.
+    let source = include_str!("../assets/ok/parametric_mut_iterator_read.mojo");
+    assert_eq!(
+        run_compiled(source).expect("parametric-mut iterator reads"),
+        "15\n"
+    );
+}
+
+#[test]
 fn generic_borrowed_dispatch_reaches_an_overloaded_ref_self_iter() {
     let source = include_str!("../assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo");
     assert_eq!(

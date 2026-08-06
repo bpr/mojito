@@ -8,6 +8,33 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Generic reference-yielding collection iteration. The bundled List and Set
+  iterators now genuinely borrow their source and yield element references:
+  `_ListIter[iterable_mut: Bool, //, T, iterable_origin:
+  Origin[mut=iterable_mut]]` holds `ref[iterable_origin] List[T]` and its
+  `__next__` returns `ref[iterable_origin] T`, with the reference's mutability
+  resolved from the source at each loop or comprehension site — a mutable
+  source yields writable `for ref` handles (named or temporary sources alike)
+  while a read parameter yields immutable ones. The List-only `for ref` index
+  desugaring is gone: reference iteration runs the ordinary checked
+  `__iter__`/`__next__` protocol end-to-end, Set reference iteration works for
+  the first time (through its delegated borrowed `_ListIter`, two borrow
+  frames deep), and the iterator's source loans re-establish on each yielded
+  binding so a structural invalidation names the user's variable. A `ref`
+  loop target over an abstract generic `Iterable` bound is now rejected with a
+  clear error (the abstract `Iterator.__next__` contract yields `Element`
+  values; the previous behavior silently mutated a per-iteration copy).
+  Compiler capabilities that landed with the migration: top-level struct and
+  trait declarations register order-independently (shells, member types, and
+  method signatures precede body checking, so same-module structs may
+  reference each other in either order — with by-value self-containment now
+  rejected explicitly), an infer-only `Bool` parameter binding a sibling
+  origin's `mut=` erases from a struct's runtime parameters like the origin
+  itself, generic substitution descends into `ref` field referents, and the
+  specialization conformance oracle registers struct names before resolving
+  field types. Mapping iterators still snapshot entries and yield copies —
+  mapping invalidation is the next roadmap item.
+
 - The bundled borrowed `Iterable` protocol is now origin-parameterized, as in
   current Mojo: `std.iterable` declares
   `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:

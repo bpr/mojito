@@ -5,13 +5,11 @@
 #
 # The borrowed contract uses current Mojo's origin-parameterized
 # `IteratorType[iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]]`
-# with `__iter__(ref self) -> Self.IteratorType[origin_of(self)]`. Conforming
-# collections currently erase the origin in their member templates: borrowed
-# iterators still copy or point into their storage and yield element copies
-# when the element is `Copyable`. Making iterators borrow their source through
-# the origin parameter and yield references — and removing the concrete List
-# `for ref` compiler bridge — is tracked under generic borrowed reference
-# iteration.
+# with `__iter__(ref self) -> Self.IteratorType[origin_of(self)]`. The List and
+# Set iterators borrow their source through a parametric-mut origin and yield
+# element references, resolved to the source's mutability at each loop site;
+# the mapping iterators still snapshot their entries and yield copies (tracked
+# under mapping invalidation and borrowed-iteration safety).
 
 @fieldwise_init
 struct StopIteration:

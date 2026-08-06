@@ -1,5 +1,6 @@
-//! Iterator-protocol selection for `for`/comprehension iterables and the
-//! `for ref` bridge. Extracted from `checker.rs`; see `docs/symbol-map.md`.
+//! Iterator-protocol selection for `for`/comprehension iterables, including
+//! loop-site resolution of parametric yielded references. Extracted from
+//! `checker.rs`; see `docs/symbol-map.md`.
 
 use super::*;
 
@@ -151,59 +152,65 @@ impl Checker {
         }
     }
 
-    /// Resolve the exact methods used by the bundled List `for ref` bridge.
-    /// These synthetic calls are checked here and retained on the iteration
-    /// protocol; their syntax is never added to the source-expression arena.
-    pub(super) fn reference_iteration_protocol(
-        &self,
-        object: &Expr,
-    ) -> Result<crate::checked::ReferenceIterationProtocol, TypeError> {
-        let call_site = || {
-            let mut expression = Expr::new(ExprKind::None, crate::token::DUMMY_SPAN);
-            expression.source = object.source.clone();
-            expression.source_span()
-        };
-        let len_site = call_site();
-        self.infer_method_call(
-            len_site.clone(),
-            object,
-            "__len__",
-            MethodCallArguments::ordinary(&[], &[]),
-        )?;
-        let len = self
-            .selected_calls
-            .borrow_mut()
-            .remove(&len_site)
-            .ok_or_else(|| {
-                TypeError::InvariantViolation(
-                    "List reference iteration lost its selected __len__ contract".to_string(),
-                )
-            })?;
+    /// Whether a protocol advances through the abstract `__iterator_dispatch`
+    /// contract of a generic `Iterable`/`IterableOwned` bound. The abstract
+    /// `Iterator.__next__` yields `Element` values (a concrete reference
+    /// result is adapted to a lifecycle copy), so a reference-binding loop
+    /// target has no handle to retain.
+    pub(super) fn is_abstract_iteration_dispatch(
+        protocol: &crate::checked::IterationProtocol,
+    ) -> bool {
+        protocol
+            .next
+            .as_ref()
+            .is_some_and(|next| next.target.starts_with("__iterator_dispatch."))
+    }
 
-        let mut index = Expr::new(ExprKind::Int(0i64.into()), crate::token::DUMMY_SPAN);
-        index.source = object.source.clone();
-        let getitem_site = call_site();
-        self.infer_method_call(
-            getitem_site.clone(),
-            object,
-            "__getitem__",
-            MethodCallArguments::ordinary(std::slice::from_ref(&index), &[]),
-        )?;
-        let getitem = self
-            .selected_calls
-            .borrow_mut()
-            .remove(&getitem_site)
-            .ok_or_else(|| {
-                TypeError::InvariantViolation(
-                    "List reference iteration lost its selected __getitem__ contract".to_string(),
-                )
-            })?;
-        if getitem.reference_result.is_none() {
-            return Err(TypeError::InvariantViolation(
-                "List reference iteration requires a reference-returning __getitem__".to_string(),
-            ));
+    /// Resolve a borrowed protocol's parametric yielded-reference facts at the
+    /// loop site. A conformer's `__iter__(ref self)` iterator inherits
+    /// `origin_of(source)` under the borrowed `Iterable` contract, so a
+    /// `Mutability::Param` yielded reference takes the source's mutability (an
+    /// owned temporary is loop-owned and therefore mutable) and an abstract
+    /// origin takes the attached borrowed origin. Fixed `mut=True`/`mut=False`
+    /// declarations are never touched. Returns the resolved yielded type when
+    /// anything changed.
+    pub(super) fn resolve_borrowed_iteration_reference(
+        &self,
+        iter: &Expr,
+        protocol: &mut crate::checked::IterationProtocol,
+    ) -> Option<Ty> {
+        use crate::origin::{Mutability, Origin};
+
+        if protocol.mode != crate::checked::IterationMode::Borrowed || protocol.prepare.is_empty() {
+            return None;
         }
-        Ok(crate::checked::ReferenceIterationProtocol { len, getitem })
+        let next = protocol.next.as_mut()?;
+        let reference = next.reference_result.as_mut()?;
+        let mut resolved = false;
+        if matches!(reference.mutability, Mutability::Param(_)) {
+            let mutable = match self.origin_place(iter) {
+                Ok(place) => self.owner_is_mutable(place.root),
+                Err(_) => true,
+            };
+            reference.mutability = if mutable {
+                Mutability::Mutable
+            } else {
+                Mutability::Immutable
+            };
+            resolved = true;
+        }
+        if matches!(reference.origin, Origin::Param(_) | Origin::SelfParam)
+            && let Some(borrowed) = protocol.borrowed_origin.clone()
+        {
+            reference.origin = Origin::Place(borrowed);
+            resolved = true;
+        }
+        if !resolved {
+            return None;
+        }
+        let yielded = Ty::Ref(reference.clone());
+        next.result_ty = yielded.clone();
+        Some(yielded)
     }
 
     /// Resolve a loop's complete iterator protocol.  In particular, owned
@@ -223,7 +230,6 @@ impl Checker {
                     mode,
                     binding: None,
                     borrowed_origin: None,
-                    reference: None,
                     prepare: Vec::new(),
                     has_next: None,
                     next: None,
@@ -284,7 +290,6 @@ impl Checker {
                         mode,
                         binding: None,
                         borrowed_origin: None,
-                        reference: None,
                         prepare: vec![crate::symbol::iterator_dispatch_symbol(match mode {
                             IterationMode::Borrowed => crate::ast::ArgConvention::Read,
                             IterationMode::Owned => crate::ast::ArgConvention::Var,
@@ -464,7 +469,6 @@ impl Checker {
                     mode,
                     binding: None,
                     borrowed_origin: None,
-                    reference: None,
                     prepare: vec![prepare_symbol],
                     has_next: None,
                     next: Some(Box::new(checked_next)),
@@ -502,7 +506,6 @@ impl Checker {
                 mode,
                 binding: None,
                 borrowed_origin: None,
-                reference: None,
                 prepare: vec![prepare_symbol],
                 has_next: Some(
                     if iinfo

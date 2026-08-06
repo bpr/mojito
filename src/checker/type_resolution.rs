@@ -268,6 +268,17 @@ impl Checker {
                 if name == "Tuple" {
                     return self.tuple_type(args);
                 }
+                // A generated public-Tuple name keeps its forward-type
+                // resolution even once its shell is registered: its source
+                // parameter list is erased, so ordinary declaration binding
+                // cannot accept the semantic arguments the mangled reference
+                // spells.
+                if self.allow_generated_tuple_forward_types
+                    && (name.starts_with("Tuple$") || name.contains("$Tuple$"))
+                    && self.declared_structs.contains(name)
+                {
+                    return self.generated_tuple_forward_type(name, args);
+                }
                 if let Some(info) = self.structs.get(name) {
                     let decls = info.decls.clone();
                     let (_, tyargs) = self.resolve_use_params(name, &decls, args, &[], &[])?;

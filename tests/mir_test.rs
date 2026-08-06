@@ -1570,6 +1570,48 @@ fn list_element_references_lower_with_interior_generation_metadata() {
 }
 
 #[test]
+fn reference_iteration_binding_reestablishes_the_source_loans() {
+    // A `BorrowReference` loop binding aliases the borrowed source through the
+    // yielded handle, so the iterator's source loans re-establish on the
+    // binding itself: an invalidation then names the user's variable rather
+    // than only the compiler's iterator slot.
+    let source = include_str!("../assets/ok/reference_yielding_iteration_named_source.mojo");
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile reference-yielding iteration");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let nums = main
+        .var_names
+        .iter()
+        .position(|name| name == "nums")
+        .expect("nums slot") as u32;
+    let binding = main
+        .var_names
+        .iter()
+        .position(|name| name == "x")
+        .expect("loop binding slot") as u32;
+    let has_source_loan = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference, loans, .. }
+                    if *reference == binding
+                        && loans.iter().any(|loan| loan.place.root == nums)
+            )
+        });
+    assert!(has_source_loan, "loop binding carries the source loan");
+}
+
+#[test]
 fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
     use mojito::OriginSeg;
 
@@ -1848,9 +1890,14 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
 }
 
 #[test]
-fn reference_list_iteration_retains_typed_accessor_contracts() {
+fn reference_list_iteration_lowers_through_the_generic_protocol() {
     use mojito::OriginSeg;
 
+    // `for ref value in values` over a bundled List runs the ordinary
+    // reference-yielding protocol: a mutable `ref` binding fed by
+    // `_ListIter.__next__`'s reference result, with the `element` interior
+    // loan re-established on the binding — no synthesized `__len__`/`Index`
+    // accessor pair remains.
     let source = include_str!("../conformance/fixtures/reference_iteration.mojo");
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -1872,7 +1919,12 @@ fn reference_list_iteration_retains_typed_accessor_contracts() {
         .iter()
         .position(|name| name == "value")
         .expect("reference loop binding") as u32;
-    assert!(matches!(main.var_tys.get(&value), Some(Ty::Ref(_))));
+    match main.var_tys.get(&value) {
+        Some(Ty::Ref(reference)) => {
+            assert_eq!(reference.mutability, mojito::Mutability::Mutable);
+        }
+        other => panic!("loop binding is a mutable reference, got {other:?}"),
+    }
 
     let instructions = main
         .blocks
@@ -1881,27 +1933,20 @@ fn reference_list_iteration_retains_typed_accessor_contracts() {
         .collect::<Vec<_>>();
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::MethodCall {
-            dest,
-            method,
-            resolved: Some(_),
-            recv_place: Some(place),
-            ..
-        } if method == "__len__"
-            && main.reg_types.get(&dest.0) == Some(&Ty::Int)
-            && place.is_typed()
+        MirInstr::TryNext { call, .. }
+            if call.target.contains("__next__")
+                && call
+                    .reference_result
+                    .as_ref()
+                    .is_some_and(|reference| reference.mutability == mojito::Mutability::Mutable)
     )));
-    assert!(instructions.iter().any(|instruction| matches!(
-        instruction,
-        MirInstr::Index {
-            dest,
-            base_place: Some(place),
-            call: Some(call),
-            ..
-        } if matches!(main.reg_types.get(&dest.0), Some(Ty::Ref(_)))
-            && place.is_typed()
-            && call.reference_result.is_some()
-    )));
+    assert!(
+        !main
+            .var_names
+            .iter()
+            .any(|name| name.starts_with("$refindex")),
+        "the bridge's synthesized index counter is gone"
+    );
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::EstablishLoans { reference, loans, .. }

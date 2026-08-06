@@ -1089,7 +1089,9 @@ struct Elab<'a> {
 }
 
 fn classify_ct_params(tps: &[TypeParam]) -> Vec<ParamDecl> {
-    tps.iter().filter_map(classify_ct_param).collect()
+    tps.iter()
+        .filter_map(|tp| classify_ct_param(tp, tps))
+        .collect()
 }
 
 impl<'a> Elab<'a> {
@@ -2204,8 +2206,11 @@ fn stmt_has_comptime(s: &Stmt) -> bool {
 /// forms declare a compile-time callable value; evaluating that value as a
 /// [`CtValue`] would incorrectly require the compile-time universe to own VM
 /// closures and captured storage.
-fn retained_specialization_param(tp: &TypeParam) -> bool {
+fn retained_specialization_param(tp: &TypeParam, siblings: &[TypeParam]) -> bool {
     if matches!(tp.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
+        return true;
+    }
+    if tp.is_origin_mutability_binder(siblings) {
         return true;
     }
     matches!(
@@ -2220,8 +2225,8 @@ fn retained_specialization_param(tp: &TypeParam) -> bool {
 
 /// Classify one source parameter that participates in compile-time evaluation.
 /// `None` means the parameter is retained symbolically by specialization.
-fn classify_ct_param(tp: &TypeParam) -> Option<ParamDecl> {
-    if retained_specialization_param(tp) {
+fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Option<ParamDecl> {
+    if retained_specialization_param(tp, siblings) {
         return None;
     }
     if let Some(source_type) = &tp.value_type

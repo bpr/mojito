@@ -864,6 +864,94 @@ fn rejects_type_arguments_on_non_generic_struct() {
 }
 
 #[test]
+fn abstract_bound_for_ref_is_rejected() {
+    // A generic bound advances through the abstract `__iterator_dispatch`
+    // contract, whose `__next__` yields `Element` values — mutating the
+    // per-iteration copy would silently lose writes, so a `ref` target is
+    // rejected in both statement and comprehension form.
+    let header = "@fieldwise_init\nstruct StopIteration:\n    pass\n\ntrait ItemIterator:\n    comptime Element: Movable\n    def __next__(mut self) raises StopIteration -> Self.Element: ...\n\ntrait Items:\n    comptime Element: Movable\n    comptime Iter: ItemIterator\n    def __iter__(ref self) -> Self.Iter: ...\n\n";
+    let statement =
+        format!("{header}def touch[C: Items](xs: C):\n    for ref x in xs:\n        pass\n");
+    let error = err(&statement);
+    assert!(
+        matches!(&error, TypeError::Unsupported(message) if message.contains("generic Iterable bound")),
+        "got {error:?}"
+    );
+    let comprehension =
+        format!("{header}def collect[C: Items](xs: C):\n    var ys = [x for ref x in xs]\n");
+    let error = err(&comprehension);
+    assert!(
+        matches!(&error, TypeError::Unsupported(message) if message.contains("generic Iterable bound")),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn fixed_immutable_origin_iterator_still_binds_immutably() {
+    // Loop-site resolution touches only parametric mutability: a declared
+    // `Origin[mut=False]` iterator yields immutable references even over a
+    // mutable source, so a `for ref` write is rejected.
+    let error = err(
+        "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct FrozenIter[o: Origin[mut=False]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[o] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [1, 2]\n\n    def __iter__(ref self) -> FrozenIter:\n        ref items = self.items\n        return FrozenIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n",
+    );
+    assert!(
+        matches!(&error, TypeError::ImmutableBinding(name) if name == "x")
+            || matches!(&error, TypeError::Unsupported(_)),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn parametric_mut_origin_binder_is_erased_from_struct_parameters() {
+    // The infer-only `Bool` that binds a sibling origin parameter's `mut=`
+    // erases with the origin parameter: an application supplies only the
+    // ordinary type parameter, and spelling the Bool explicitly over-applies.
+    ok(
+        "@fieldwise_init\nstruct Slot[m: Bool, //, T: Movable, o: Origin[mut=m]]:\n    var value: ref[o] Self.T\n\ndef main():\n    var n = 5\n    ref h = n\n    var s = Slot[Int](h)\n    print(s.value)\n",
+    );
+    let error = err(
+        "@fieldwise_init\nstruct Slot[m: Bool, //, T: Movable, o: Origin[mut=m]]:\n    var value: ref[o] Self.T\n\ndef main():\n    var n = 5\n    ref h = n\n    var s = Slot[True, Int](h)\n    print(s.value)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::WrongTypeArgCount { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn struct_declarations_resolve_order_independently() {
+    // Signatures (fields, member types, method signatures) register for every
+    // top-level struct before any body checks, so same-module declarations may
+    // reference each other in either order — including mutually, as an
+    // iterator holding `ref[o] Container` declared above its container.
+    ok(
+        "@fieldwise_init\nstruct Holder:\n    var b: Bin\n\n@fieldwise_init\nstruct Bin(Copyable, Movable):\n    var n: Int\n\ndef main():\n    var h = Holder(Bin(3))\n    print(h.b.n)\n",
+    );
+    ok(
+        "struct A:\n    var n: Int\n\n    def __init__(out self):\n        self.n = 1\n\n    def make(self) -> Int:\n        var b = B(2)\n        return b.n + self.n\n\n@fieldwise_init\nstruct B:\n    var n: Int\n\ndef main():\n    print(A().make())\n",
+    );
+}
+
+#[test]
+fn rejects_by_value_struct_self_containment() {
+    // Order-independent shells would otherwise let a struct contain itself (or
+    // a mutual peer) by value; only reference or pointer indirection breaks
+    // the infinite layout.
+    let direct = err("struct S:\n    var s: S\n");
+    assert!(
+        matches!(&direct, TypeError::Unsupported(message) if message.contains("cannot contain itself by value")),
+        "got {direct:?}"
+    );
+    let mutual = err(
+        "@fieldwise_init\nstruct A:\n    var b: B\n\n@fieldwise_init\nstruct B:\n    var a: A\n",
+    );
+    assert!(
+        matches!(&mutual, TypeError::Unsupported(message) if message.contains("cannot contain itself by value")),
+        "got {mutual:?}"
+    );
+}
+
+#[test]
 fn rejects_self_param_naming_unknown_parameter() {
     let e = err("@fieldwise_init\nstruct Box[T: Copyable & Movable]:\n    var v: Self.U\n");
     assert_eq!(e, TypeError::UnknownSelfParam("U".into()));

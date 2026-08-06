@@ -806,7 +806,7 @@ impl<'a> Elab<'a> {
         let mut kept_type_args = Vec::new();
         let mut environment = consts.clone();
         for (parameter, arguments) in type_params.iter().zip(bound) {
-            if retained_specialization_param(parameter) {
+            if retained_specialization_param(parameter, type_params) {
                 if arguments.is_empty() && !parameter.infer_only && parameter.default.is_none() {
                     return Err(ComptimeError::Arity(format!(
                         "generic '{display_name}' requires compile-time parameter '{}'",
@@ -817,7 +817,7 @@ impl<'a> Elab<'a> {
                 continue;
             }
 
-            let decl = classify_ct_param(parameter)
+            let decl = classify_ct_param(parameter, type_params)
                 .expect("non-retained source parameter must have a comptime classification");
             let binding = decl.name().trim_start_matches('*').to_string();
             if parameter.name.starts_with('*') {
