@@ -640,8 +640,17 @@ pub(super) fn lower_ref_sig(
     let mut members = Vec::new();
     let mut mutability = SigMutability::Infer;
     for expression in spec {
-        if let Some((base, name)) = interior_origin_syntax(expression) {
-            let base = lower_sig_origin_expression(base, type_params, params)?;
+        if let Some((base_expression, name)) = interior_origin_syntax(expression) {
+            let base = lower_sig_origin_expression(base_expression, type_params, params)?;
+            // A projection off a named origin parameter carries that
+            // parameter's declared mutability, exactly like the bare binder.
+            if let ExprKind::Identifier(base_name) = &base_expression.kind
+                && let Some(origin_param) = type_params.iter().find(|parameter| {
+                    parameter.name == *base_name && parameter.bounds.as_slice() == ["Origin"]
+                })
+            {
+                mutability = origin_param_mutability(origin_param, type_params);
+            }
             members.push(SigOrigin::Projected(
                 Box::new(base),
                 vec![crate::origin::OriginSeg::Interior(name.to_string())],
@@ -673,19 +682,7 @@ pub(super) fn lower_ref_sig(
                     .enumerate()
                     .find(|(_, param)| param.name == *name && param.bounds.as_slice() == ["Origin"])
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
-                mutability = match origin_param.origin_mutability.as_ref().map(|e| &e.kind) {
-                    Some(ExprKind::Bool(true)) => SigMutability::Mutable,
-                    Some(ExprKind::Bool(false)) => SigMutability::Immutable,
-                    Some(ExprKind::Identifier(value)) => SigMutability::BoolParam(
-                        type_params
-                            .iter()
-                            .position(|parameter| {
-                                parameter.name == *value && parameter.bounds.as_slice() == ["Bool"]
-                            })
-                            .expect("validated Origin mutability names a Bool parameter"),
-                    ),
-                    _ => SigMutability::Infer,
-                };
+                mutability = origin_param_mutability(origin_param, type_params);
                 let first_member = members.len();
                 for (index, param) in params.iter().enumerate() {
                     if param.origin.as_ref().is_some_and(|origin| {
@@ -756,6 +753,29 @@ pub(super) fn lower_ref_sig(
     Ok(RefSig { origin, mutability })
 }
 
+/// The declared mutability of a named `Origin[mut=...]` type parameter:
+/// literal `True`/`False`, a sibling `Bool` parameter (`SigMutability::
+/// BoolParam` by its index among the raw type parameters), or `Infer`.
+fn origin_param_mutability(
+    origin_param: &crate::ast::TypeParam,
+    type_params: &[crate::ast::TypeParam],
+) -> crate::origin::SigMutability {
+    use crate::origin::SigMutability;
+    match origin_param.origin_mutability.as_ref().map(|e| &e.kind) {
+        Some(ExprKind::Bool(true)) => SigMutability::Mutable,
+        Some(ExprKind::Bool(false)) => SigMutability::Immutable,
+        Some(ExprKind::Identifier(value)) => SigMutability::BoolParam(
+            type_params
+                .iter()
+                .position(|parameter| {
+                    parameter.name == *value && parameter.bounds.as_slice() == ["Bool"]
+                })
+                .expect("validated Origin mutability names a Bool parameter"),
+        ),
+        _ => SigMutability::Infer,
+    }
+}
+
 pub(super) fn lower_sig_origin_expression(
     expression: &Expr,
     type_params: &[crate::ast::TypeParam],
@@ -774,11 +794,16 @@ pub(super) fn lower_sig_origin_expression(
             if let Some(index) = params.iter().position(|parameter| parameter.name == *name) {
                 return Ok(SigOrigin::Param(index));
             }
-            if type_params.iter().any(|parameter| {
-                parameter.name == *name && parameter.bounds.as_slice() == ["Origin"]
-            }) {
+            if let Some((origin_param_index, _)) =
+                type_params.iter().enumerate().find(|(_, parameter)| {
+                    parameter.name == *name && parameter.bounds.as_slice() == ["Origin"]
+                })
+            {
                 // A named origin parameter is represented by the value
-                // parameter(s) carrying it in this callable contract.
+                // parameter(s) carrying it in this callable contract. When no
+                // parameter carries it — an enclosing struct origin bound only
+                // by reference-valued fields — keep the checked semantic
+                // binder itself rather than collapsing to an inferred union.
                 let members = params
                     .iter()
                     .enumerate()
@@ -789,7 +814,9 @@ pub(super) fn lower_sig_origin_expression(
                     })
                     .collect::<Vec<_>>();
                 return Ok(match members.as_slice() {
-                    [] => SigOrigin::Infer,
+                    [] => SigOrigin::Bound(crate::origin::Origin::Param(
+                        crate::origin::OriginParamId(origin_param_index as u32),
+                    )),
                     [single] => single.clone(),
                     _ => SigOrigin::union(members),
                 });

@@ -6,6 +6,32 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Added
+
+- Mapping invalidation and borrowed-iteration safety (core). The Dict,
+  HashDict, and StringDict key iterator (`_DictKeyIter`) now borrows the
+  entries list through a parametric-mut struct origin and yields key
+  references, replacing the snapshot copy, and every bundled borrowed
+  iterator declares its yielded reference at
+  `_get_owned_interior["element"]` granularity — the checker derives each
+  borrowed source loan's granularity from that declared projection, retiring
+  the List/Set/Dict collection-name whitelist from the production path (an
+  unregistered-collection shim remains for the focused checker). Mapping
+  mutation during iteration is now a defined, lazily rejected error across
+  all three mappings — previously HashDict/StringDict were unprotected —
+  while `d[key]` value reads stay legal through the sibling `value`
+  generation and `keys`/`values`/`items` views remain eager snapshots by
+  design. Signature lowering gained the two pieces the derivation needed: an
+  uncarried origin parameter lowers to its checked semantic binder rather
+  than an inferred union, and an interior projection off a parametric-mut
+  origin parameter carries that parameter's declared mutability. New coverage
+  pins the mapping rejections (statement and comprehension), value reads and
+  coexisting shared iterations, the lazy-discard model, and the sound
+  reference-escape rejections (returning a loop reference or a loan-carrying
+  closure, mutating a source under a manually held borrowing iterator).
+  Deferred to their own roadmap items: generic-bound reference iteration and
+  store-outward escape analysis.
+
 ### Changed
 
 - Developer infrastructure: the whole-corpus fixture sweeps are now one
@@ -554,6 +580,7 @@ to evolve under the `0.x` compatibility rules.
   conversions and `abs()`/`round()` through their dunders, matching the paths
   opaque generic parameters already used. Result types and execution are
   unchanged for existing programs; scalar execution stays primitive.
+
 
 ## [0.2.0] - 2026-07-19
 

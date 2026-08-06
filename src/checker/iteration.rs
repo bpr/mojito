@@ -116,12 +116,13 @@ impl Checker {
     }
 
     /// Attach the borrowed-source origin fact shared by `for` statements and
-    /// comprehensions: an `element` interior origin for a borrowed concrete
-    /// List/Set/Dict place, or the whole source place for a named user-struct
-    /// iterable with a non-empty `__iter__` prepare chain (borrowed rather than
-    /// copied; the loan keeps the source live while rejecting mutation during
-    /// iteration). A temporary source has no place (`origin_place` errs) and
-    /// keeps the owned value copy.
+    /// comprehensions: the source place, at the granularity the selected
+    /// iterator's declared yielded origin proves (its `_get_owned_interior`
+    /// projection, or the whole place without one), for any registered
+    /// conformer with a non-empty `__iter__` prepare chain (borrowed rather
+    /// than copied; the loan keeps the source live while rejecting mutation
+    /// during iteration). A temporary source has no place (`origin_place`
+    /// errs) and keeps the owned value copy.
     pub(super) fn attach_borrowed_iteration_origin(
         &self,
         iter: &Expr,
@@ -132,9 +133,15 @@ impl Checker {
         if source_mode != crate::checked::IterationMode::Borrowed {
             return;
         }
-        if (list_element(iter_ty).is_some()
-            || set_element(iter_ty).is_some()
-            || dict_elements(iter_ty).is_some())
+        // Focused-checker compatibility shim, matching the prelude-omitted
+        // intrinsic protocol above: an unregistered bundled collection keeps
+        // the historical `element` interior loan. Linked production programs
+        // register the collections and never take this branch.
+        if let Ty::Struct(name, _) = iter_ty
+            && !self.structs.contains_key(name)
+            && (list_element(iter_ty).is_some()
+                || set_element(iter_ty).is_some()
+                || dict_elements(iter_ty).is_some())
             && let Ok(mut origin) = self.origin_place(iter)
         {
             origin
@@ -146,8 +153,12 @@ impl Checker {
         if protocol.borrowed_origin.is_none()
             && !protocol.prepare.is_empty()
             && matches!(iter_ty, Ty::Struct(..))
-            && let Ok(origin) = self.origin_place(iter)
+            && let Ok(mut origin) = self.origin_place(iter)
         {
+            // Loan granularity is the iterator's declared yielded-origin
+            // interior projection; an iterator without one borrows the whole
+            // source place.
+            origin.path.extend(protocol.yield_interior.iter().cloned());
             protocol.borrowed_origin = Some(origin);
         }
     }
@@ -230,6 +241,7 @@ impl Checker {
                     mode,
                     binding: None,
                     borrowed_origin: None,
+                    yield_interior: Vec::new(),
                     prepare: Vec::new(),
                     has_next: None,
                     next: None,
@@ -290,6 +302,7 @@ impl Checker {
                         mode,
                         binding: None,
                         borrowed_origin: None,
+                        yield_interior: Vec::new(),
                         prepare: vec![crate::symbol::iterator_dispatch_symbol(match mode {
                             IterationMode::Borrowed => crate::ast::ArgConvention::Read,
                             IterationMode::Owned => crate::ast::ArgConvention::Var,
@@ -448,6 +461,25 @@ impl Checker {
             raises: next_error.clone(),
             result_adapter: None,
         };
+        // The declared interior projection of the yielded reference. It is
+        // retained only while the instantiated origin is still the abstract
+        // origin parameter (the loop site resolves that to the source place
+        // and appends this granularity); a projection applied onto a concrete
+        // origin already carries its segments.
+        let yield_interior = match (&next_sig.ref_return, reference_result) {
+            (Some(signature), Some(reference))
+                if matches!(
+                    reference.origin,
+                    crate::origin::Origin::Param(_) | crate::origin::Origin::SelfParam
+                ) =>
+            {
+                match &signature.origin {
+                    crate::origin::SigOrigin::Projected(_, path) => path.clone(),
+                    _ => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        };
         if next_sig.raises {
             let exhaustion = next_error.clone().unwrap_or(Ty::Error);
             let is_stop_iteration = matches!(
@@ -469,6 +501,7 @@ impl Checker {
                     mode,
                     binding: None,
                     borrowed_origin: None,
+                    yield_interior: yield_interior.clone(),
                     prepare: vec![prepare_symbol],
                     has_next: None,
                     next: Some(Box::new(checked_next)),
@@ -506,6 +539,7 @@ impl Checker {
                 mode,
                 binding: None,
                 borrowed_origin: None,
+                yield_interior,
                 prepare: vec![prepare_symbol],
                 has_next: Some(
                     if iinfo

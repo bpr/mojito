@@ -321,6 +321,7 @@ impl Flatten<'_> {
                         },
                         binding: None,
                         borrowed_origin: None,
+                        yield_interior: Vec::new(),
                         prepare: Vec::new(),
                         has_next: None,
                         next: None,

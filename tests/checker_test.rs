@@ -887,6 +887,27 @@ fn abstract_bound_for_ref_is_rejected() {
 }
 
 #[test]
+fn projected_origin_iterator_contract_carries_parametric_mutability() {
+    // A yielded reference declared as a projection off a parametric-mut
+    // struct origin (`ref[o._get_owned_interior["element"]] T`) lowers with
+    // the origin parameter's declared mutability: a mutable source permits
+    // `for ref` write-through, while a read-parameter source rejects it.
+    let header = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct ProjIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[o._get_owned_interior[\"element\"]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [4, 5, 6]\n\n    def __iter__(ref self) -> ProjIter:\n        ref items = self.items\n        return ProjIter(items, 0)\n\n";
+    let mutable = format!(
+        "{header}def main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n"
+    );
+    ok(&mutable);
+    let immutable =
+        format!("{header}def bump(nums: Numbers):\n    for ref x in nums:\n        x += 1\n");
+    let error = err(&immutable);
+    assert!(
+        matches!(&error, TypeError::ImmutableBinding(name) if name == "x")
+            || matches!(&error, TypeError::Unsupported(_)),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn fixed_immutable_origin_iterator_still_binds_immutably() {
     // Loop-site resolution touches only parametric mutability: a declared
     // `Origin[mut=False]` iterator yields immutable references even over a

@@ -19,9 +19,9 @@ struct _ListIter[
     def __len__(self) -> Int:
         return len(self.src) - self.index
 
-    def __next__(mut self) raises StopIteration -> ref[iterable_origin] Self.T where conforms_to(
-        Self.T, Copyable
-    ):
+    def __next__(mut self) raises StopIteration -> ref[
+        iterable_origin._get_owned_interior["element"]
+    ] Self.T where conforms_to(Self.T, Copyable):
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index

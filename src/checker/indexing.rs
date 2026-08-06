@@ -130,6 +130,13 @@ impl Checker {
                                 context: "dictionary key".to_string(),
                             });
                         }
+                        // A mapping setitem invalidates the receiver's interior
+                        // generations in the focused builtin path too, matching
+                        // the registered `mut self` contract: mapping mutation
+                        // during iteration is rejected, not snapshot-tolerated.
+                        // Recorded at the written place's site, where the
+                        // assignment lowering consumes invalidation facts.
+                        self.record_interior_invalidation(place.source_span(), object);
                         return Ok(match value.clone() {
                             Ty::Ref(reference) => *reference.referent,
                             value => value,

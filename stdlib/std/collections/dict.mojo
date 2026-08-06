@@ -1,5 +1,7 @@
-# Dense insertion-ordered dictionary.  Views remain eager value-semantic
-# snapshots; the collection itself is nominal and protocol-driven.
+# Dense insertion-ordered dictionary.  The key iterator borrows the entries
+# list and yields key references at `element` interior granularity, so
+# mutation during iteration is lazily rejected; `keys`/`values`/`items` views
+# remain eager value-semantic snapshots by design.
 
 from std.collections.list import List
 from std.iterable import Iterable, Iterator, StopIteration
@@ -17,27 +19,30 @@ struct DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](
         self.key = key
         self.value = value
 
+@fieldwise_init
 struct _DictKeyIter[
+    iterable_mut: Bool, //,
     K: Equatable & Copyable & Movable,
     V: Copyable & Movable,
+    iterable_origin: Origin[mut=iterable_mut],
 ](Iterator):
     comptime Element = Self.K
-    var entries: List[DictEntry[Self.K, Self.V]]
+
+    var src: ref[iterable_origin] List[DictEntry[Self.K, Self.V]]
     var index: Int
 
-    def __init__(out self, entries: List[DictEntry[Self.K, Self.V]]):
-        self.entries = entries
-        self.index = 0
-
+    # Optimization hint / compatibility API; exhaustion is StopIteration.
     def __len__(self) -> Int:
-        return len(self.entries) - self.index
+        return len(self.src) - self.index
 
-    def __next__(mut self) raises StopIteration -> Self.K:
-        if self.index >= len(self.entries):
+    def __next__(mut self) raises StopIteration -> ref[
+        iterable_origin._get_owned_interior["element"]
+    ] Self.K:
+        if self.index >= len(self.src):
             raise StopIteration()
-        var result = self.entries._get_copy(self.index).key
+        var r = self.index
         self.index += 1
-        return result^
+        return self.src[r].key
 
 struct Dict[
     K: Equatable & Copyable & Movable,
@@ -148,7 +153,8 @@ struct Dict[
         return self.entries
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        return _DictKeyIter[Self.K, Self.V](self.entries)
+        ref source = self.entries
+        return _DictKeyIter[Self.K, Self.V](source, 0)
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.K, Writable

@@ -68,10 +68,28 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Mapping invalidation and borrowed-iteration safety** — define mapping
-  mutation during iteration, remove the remaining collection-specific bridges,
-  and cover shared/mutable origins, generic bounds, element replacement,
-  structural invalidation, comprehension parity, and reference-escape rejection.
+- [ ] **Generic-bound reference iteration** — an abstract `Iterable`-bound
+  `for ref` target is still rejected: `__iterator_dispatch.__next__` yields
+  lifecycle copies through the checked `CopyIteratorReference` adapter. Add a
+  non-copying reference-result adapter through checked HIR, `mir::verify`, and
+  the VM; instantiate yielded-reference and interior-projection facts for
+  `Ty::Param` receivers in `iteration_protocol`; and relax
+  `attach_borrowed_iteration_origin`'s `Ty::Struct` guard so a generic-bound
+  source place carries a borrowed origin and loan. The raw
+  link/elaborate/check test boundary also skips the whole-program handoff that
+  makes mapping-iteration invalidation executable — rejection pins use the
+  authoritative `Compiler`; close that gap or document it as a permanent
+  non-authoritative seam.
+- [ ] **Reference-escape analysis beyond returns** — return boundaries reject
+  reference escapes, but storing a reference or a reference-bearing value (a
+  manually held borrowing iterator, a closure that captured a loop reference)
+  into longer-lived storage *without* returning it is unchecked, as is calling
+  a closure that stored a captured reference after its referent died. Define
+  and enforce the store-outward rule at the phase that owns it; eager
+  whole-loan exclusivity remains explicitly not promised. A `for ref` key
+  binding over a mutable mapping also yields a mutable key reference
+  (invariant-corrupting but memory-safe) — decide whether mapping key yields
+  should force immutability.
 - [ ] **Owned iteration of linear elements** — in the owned path, permit a List
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a

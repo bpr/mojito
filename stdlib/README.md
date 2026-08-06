@@ -56,11 +56,11 @@ only from their authoritative `std` modules.
   `Iterable` uses Mojo's origin-parameterized `IteratorType[iterable_mut: Bool,
   //, iterable_origin: Origin[mut=iterable_mut]]` with
   `__iter__(ref self) -> Self.IteratorType[origin_of(self)]`; the bundled
-  member templates stay origin-erased; the List/Set iterator carries its origin
-  as an erased struct parameter, borrows its source, and yields element
-  references resolved to the source's mutability at each loop site, while the
-  mapping iterators still snapshot entries and yield copies (tracked under
-  mapping invalidation).
+  member templates stay origin-erased; every bundled borrowed iterator carries
+  its origin as an erased struct parameter, borrows its source, and yields
+  element references declared at `_get_owned_interior["element"]` granularity,
+  resolved to the source's mutability at each loop site. Mapping mutation
+  during iteration is lazily rejected; views remain eager snapshots.
 - `std/collections/set.mojo` — a generic, list-backed `Set[T]` for `Equatable & Copyable & Movable`
   elements. It supports `add`, membership through `in`/`__contains__`, `len`, and
   borrowed reference-yielding iteration through the backing list's borrowed
@@ -101,10 +101,9 @@ only from their authoritative `std` modules.
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is
 public, matching Mojo's item-view element. Mapping views are eager snapshots
-rather than reference views until the mapping iterators become
-origin-parameterized and live view APIs are implemented.
+rather than reference views until live view APIs are implemented.
 
 The register VM executes the ordinary MIR produced for these declarations;
 `tests/self_host_test.rs` links and runs them. Public List/Tuple runtime variants
-have already been retired. The remaining private storage and mapping-iterator
-bridges are documented in the architecture and roadmap.
+have already been retired. The remaining private storage bridges are
+documented in the architecture and roadmap.

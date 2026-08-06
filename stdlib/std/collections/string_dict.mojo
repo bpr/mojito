@@ -131,4 +131,5 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
         return self.entries
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        return _DictKeyIter[String, Self.V](self.entries)
+        ref source = self.entries
+        return _DictKeyIter[String, Self.V](source, 0)

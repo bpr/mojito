@@ -1,8 +1,9 @@
 # A hash-backed, insertion-ordered dictionary implemented in mojito.
 #
 # Dense entries preserve insertion order; a nested-list index maps each hash
-# bucket to entry positions. Views are eager value-semantic snapshots until
-# origins and reference iterators are implemented.
+# bucket to entry positions. The key iterator borrows the entries list (so
+# mutation during iteration is lazily rejected); `keys`/`values`/`items`
+# views remain eager value-semantic snapshots by design.
 
 from std.collections.dict import DictEntry, _DictKeyIter
 from std.collections.list import List
@@ -130,4 +131,5 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
         return self.entries
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        return _DictKeyIter[Self.K, Self.V](self.entries)
+        ref source = self.entries
+        return _DictKeyIter[Self.K, Self.V](source, 0)

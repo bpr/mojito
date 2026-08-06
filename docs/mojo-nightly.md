@@ -31,9 +31,12 @@ declares the origin- and mutability-parameterized `IteratorType[...]` and
 returns `Self.IteratorType[origin_of(self)]`, and the bundled List/Set iterator
 borrows its source through a parametric-mut struct origin and yields element
 references — `for ref` write-through runs the ordinary protocol with no
-List-only desugaring. Remaining subset boundaries: mapping iterators snapshot
-and copy, and a `ref` loop target over an abstract generic `Iterable` bound is
-rejected (the abstract `__next__` contract yields values).
+List-only desugaring. Remaining subset boundaries: a `ref` loop target over an abstract generic
+`Iterable` bound is rejected (the abstract `__next__` contract yields values),
+and `keys`/`values`/`items` remain eager snapshots rather than live views.
+Mapping iterators now borrow their entries and yield key references; mapping
+mutation during iteration is a lazily rejected error, matching Mojo's
+documented programmer-error contract with a static/runtime diagnostic.
 The interior-origin run/rejection cases also match: overlapping List element
 references and direct element writes remain valid, while a structural mutation
 or a user-declared interior-return contract makes an older generation stale.

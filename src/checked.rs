@@ -244,6 +244,13 @@ pub struct IterationProtocol {
     /// `__iterator_dispatch` contract yields `Element` values, so a `ref`
     /// loop target over a generic bound is rejected outright.
     pub borrowed_origin: Option<crate::origin::OriginPlace>,
+    /// The declared interior projection of the yielded reference relative to
+    /// the source origin (`__next__ -> ref[o._get_owned_interior["element"]]`
+    /// leaves `[Interior("element")]`). Appended to the attached borrowed
+    /// origin so the source loan carries the iterator's declared granularity;
+    /// empty when the iterator declares no projection (whole-place loan) or
+    /// the projection already resolved onto a concrete origin.
+    pub yield_interior: Vec<crate::origin::OriginSeg>,
     pub prepare: Vec<String>,
     pub has_next: Option<String>,
     pub next: Option<Box<CheckedIteratorCall>>,

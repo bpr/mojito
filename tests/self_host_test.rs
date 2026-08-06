@@ -4,7 +4,7 @@
 //! a small entry program that imports through the bundled `stdlib/std/...` search
 //! root and runs on the VM.
 
-use mojito::{BackendKind, elaborate, link};
+use mojito::{BackendKind, Compiler, elaborate, link};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -44,6 +44,20 @@ fn run(entry: &Path) -> Result<String, String> {
         .run(&checked)
         .map_err(|e| format!("runtime error: {e:?}"))?;
     Ok(backend.output())
+}
+
+/// Run through the authoritative whole-program `Compiler` pipeline
+/// (discovery/specialization plus the ownership phase the raw boundary above
+/// intentionally skips); rejection pins use this runner.
+fn run_compiled(entry: &Path) -> Result<String, String> {
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_path(entry)
+        .map_err(|error| error.to_string())?;
+    let execution = compiler
+        .execute(&program)
+        .map_err(|error| error.to_string())?;
+    Ok(execution.output)
 }
 
 #[test]
@@ -96,6 +110,53 @@ fn self_hosted_generic_dict_sets_gets_updates_iterates() {
         "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 10\n    d[\"b\"] = 20\n    d[\"a\"] = 15\n    print(len(d))\n    print(\"a\" in d, \"z\" in d)\n    print(d[\"a\"], d.get(\"z\", -1))\n    var total: Int = 0\n    for key in d:\n        total = total + d[key]\n    print(total)\n",
     );
     assert_eq!(run(&main).unwrap(), "2\nTrue False\n15 -1\n35\n");
+}
+
+#[test]
+fn hashdict_mutation_during_iteration_is_rejected() {
+    // HashDict iteration now retains the derived interior "element" loan, so
+    // a during-loop setitem lazily invalidates the borrowed key iterator.
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        "from std.collections.hashdict import HashDict\n\ndef main():\n    var mapping = HashDict[Int, String]()\n    mapping[1] = \"one\"\n    mapping[2] = \"two\"\n    for key in mapping:\n        mapping[3] = \"three\"\n        print(key)\n",
+    );
+    let error =
+        run_compiled(&main).expect_err("hashdict mutation during iteration must be rejected");
+    assert!(
+        error.contains("invalidated interior reference") && error.contains("[\"element\"]"),
+        "got {error}"
+    );
+}
+
+#[test]
+fn kwargs_mutation_during_iteration_is_rejected() {
+    // The callee owns its **kwargs StringDict, but the borrowed key iterator
+    // still loans its "element" generation: mutating during the loop is
+    // rejected while mutation after the loop stays legal (pinned elsewhere).
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        "def tally(**options: Int) -> Int:\n    var count = 0\n    for key in options:\n        options[\"extra\"] = 1\n        count += 1\n    return count\n\ndef main():\n    print(tally(alpha=1, beta=2))\n",
+    );
+    let error = run_compiled(&main).expect_err("kwargs mutation during iteration must be rejected");
+    assert!(
+        error.contains("invalidated interior reference") && error.contains("[\"element\"]"),
+        "got {error}"
+    );
+}
+
+#[test]
+fn dict_iteration_reads_live_values_and_comprehensions_share_the_loan() {
+    // The borrowing key iterator observes values as they are at read time
+    // (updated before the loop), and the comprehension path shares the same
+    // derived loan and sibling "value"-generation rules.
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        "from std.collections.dict import Dict\nfrom std.collections.hashdict import HashDict\n\ndef main() raises:\n    var mapping = Dict[String, Int]()\n    mapping[\"a\"] = 1\n    mapping[\"b\"] = 2\n    mapping[\"a\"] = 10\n    var total = 0\n    for key in mapping:\n        total += mapping[key]\n    print(total)\n    var keys = [key for key in mapping]\n    print(len(keys))\n    var hashed = HashDict[Int, Int]()\n    hashed[1] = 5\n    hashed[2] = 6\n    var values = [hashed[key] for key in hashed]\n    print(values[0] + values[1])\n",
+    );
+    assert_eq!(run(&main).unwrap(), "12\n2\n11\n");
 }
 
 #[test]
