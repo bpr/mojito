@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Reference-carrier lowering fixes. A bare struct name as an explicit
+  compile-time type argument (`List[RefBox]()`) no longer emits a
+  phantom runtime value register, so locals binding collections of
+  origin-erased carrier structs construct and execute instead of failing
+  MIR invariants. Assignment through a `ref`-typed field behind an
+  aliased root now writes through the stored handle into the referent
+  (cross-frame scalar write-through executes), and returned aggregates,
+  `mut` writebacks, and cross-frame stores re-root their interior
+  reference handles before the owning frame dies. Capturing closures no
+  longer erase their environment into plain `def(...)` storage: fields
+  and collection elements reject the coercion (with the environment
+  shown in the diagnostic) while `capturing[...]`-annotated storage and
+  call-position downward funargs are unchanged. The remaining
+  call-boundary loan/lifecycle residue is consolidated into one roadmap
+  item.
+
 - Reference-escape analysis beyond returns. Stores into storage that
   outlives the frame — fields of `self`, parameter-rooted places, and
   `ref`-field rebinds — now reject frame-locally rooted loans at check

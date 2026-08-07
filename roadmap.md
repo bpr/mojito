@@ -68,22 +68,27 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Reference-carrier lowering gaps** — the store-outward escape rule
-  now rejects frame-locally rooted loans at outliving stores (fields of
-  `self`, parameter-rooted places, `ref`-field rebinds), and mapping key
-  yields are declaration-level immutable; three adjacent latent gaps
-  surfaced by the probe matrix remain. (1) Moving a reference-bearing
-  struct into a `List` (`sink.append(box^)`) produces an
-  invalid-checked-program invariant explosion (untyped registers) instead
-  of either working or rejecting cleanly. (2) A legally rebound `ref`
-  field (parameter-rooted source) stores correctly but a later interior
-  read through the rebound handle fails at runtime ("checked nominal
-  subscript receiver is None"). (3) A capturing closure silently coerces
-  into a plain `def(...)` storage type through constructor arguments and
-  list literals, erasing its capture-origin environment — inert today
-  because field and element invocation are unsupported, but the coercion
-  must be rejected (or the environment retained) before either invocation
-  channel lands.
+- [ ] **Cross-call reference lifecycle and loan transfer** — the
+  reference-carrier lowering gaps closed (bare type-argument identifiers
+  are erased from runtime param-arg emission; ref-typed field assignment
+  writes through the stored handle with a second dereference behind
+  aliased roots; values that outlive a frame re-root their interior
+  handles; capturing closures no longer erase their environment into
+  plain callable storage), leaving one coherent residue: effects that
+  cross a call boundary are invisible to the caller's per-function
+  analyses. Concretely: (1) a callee's store of a loan-carrying value
+  into a `mut` receiver or parameter installs no caller-side loan, so
+  the loan's root can be mutated or dropped while the stored alias
+  lives; (2) write-through of a heap-backed value through a `ref` field
+  shares the source's allocation instead of running the copy lifecycle;
+  (3) reading an element's referent through chained subscripts
+  (`sink[0].value[0]`) trips a subscript-receiver place-type verify
+  error; (4) a capturing closure's environment must be retained (not
+  just guarded) in storage types before callable field/element
+  invocation can land. Define the call-boundary loan/lifecycle contract
+  at the phase that owns it — likely checker-recorded transfer effects
+  consumed by the ownership and drops layers — rather than patching the
+  VM per shape.
 - [ ] **Owned iteration of linear elements** — in the owned path, permit a List
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a
