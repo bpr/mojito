@@ -1483,7 +1483,7 @@ impl Checker {
                             self.infer_reference_value(argument)
                                 .map(|reference| vec![reference.origin])
                                 .unwrap_or_default()
-                        } else if self.type_carries_loans(&field_ty) {
+                        } else if self.type_may_carry_loans(&field_ty) {
                             self.aggregate_origins(argument)
                         } else {
                             Vec::new()
@@ -1593,6 +1593,48 @@ impl Checker {
     /// leaves, or pointers whose provenance designates checked storage.
     pub(super) fn type_carries_loans(&self, ty: &Ty) -> bool {
         self.type_storage_contains(ty, true)
+    }
+
+    /// Whether a type MAY carry loans once populated: it carries loans
+    /// already, or it contains a capturing callable whose declared
+    /// environment has not yet been narrowed to a concrete capture set
+    /// (`capturing[_]` / `capturing[origins]` storage). Origin bookkeeping
+    /// for such storage must record the populating value's concrete capture
+    /// origins even though the declared type alone is loan-blind.
+    pub(super) fn type_may_carry_loans(&self, ty: &Ty) -> bool {
+        fn contains_open_captures(ty: &Ty) -> bool {
+            use crate::origin::{CallableEnvironment, CaptureOriginSet};
+            match ty {
+                // An abstract type parameter may be instantiated with a
+                // loan-carrying type: origin bookkeeping stays conservative
+                // so generic bodies record transfer effects.
+                Ty::Param { .. } => true,
+                Ty::Func { environment, .. } => matches!(
+                    environment,
+                    CallableEnvironment::Capturing(
+                        CaptureOriginSet::Infer | CaptureOriginSet::Param(_)
+                    )
+                ),
+                Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+                    crate::types::TyArg::Ty(ty) => contains_open_captures(ty),
+                    _ => false,
+                }),
+                Ty::Ref(reference) => contains_open_captures(&reference.referent),
+                Ty::Tuple(elements) => elements.iter().any(contains_open_captures),
+                _ => false,
+            }
+        }
+        self.type_carries_loans(ty) || contains_open_captures(ty) || {
+            // A struct's declared fields may hold open-capture callables.
+            match ty {
+                Ty::Struct(name, _) => self.structs.get(name).is_some_and(|info| {
+                    info.fields
+                        .iter()
+                        .any(|(_, field)| contains_open_captures(field))
+                }),
+                _ => false,
+            }
+        }
     }
 
     pub(super) fn capture_origins_in_type(&self, ty: &Ty) -> Vec<crate::origin::CaptureOrigin> {

@@ -971,7 +971,7 @@ impl Checker {
                 );
             }
             if !matches!(pty, Ty::Ref(_))
-                && self.type_carries_loans(&pty)
+                && self.type_may_carry_loans(&pty)
                 && let Some(owner) = self.lookup_owner(&p.name)
             {
                 self.set_aggregate_origins(

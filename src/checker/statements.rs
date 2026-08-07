@@ -344,7 +344,7 @@ impl Checker {
                         .insert(value.source_span());
                 }
                 let (aggregate_origins, aggregate_field_origins) =
-                    if !matches!(declared, Ty::Ref(_)) && self.type_carries_loans(&declared) {
+                    if !matches!(declared, Ty::Ref(_)) && self.type_may_carry_loans(&declared) {
                         (
                             self.aggregate_origins(value),
                             self.aggregate_field_origins(value),
@@ -436,7 +436,7 @@ impl Checker {
                             }
                         }
                         let (aggregate_origins, aggregate_field_origins) =
-                            if !matches!(target, Ty::Ref(_)) && self.type_carries_loans(&target) {
+                            if !matches!(target, Ty::Ref(_)) && self.type_may_carry_loans(&target) {
                                 (
                                     self.aggregate_origins(value),
                                     self.aggregate_field_origins(value),
@@ -1848,7 +1848,7 @@ impl Checker {
                 };
                 if let Some(expression) = expr
                     && !matches!(expected, Ty::Ref(_))
-                    && (self.type_carries_loans(expected) || self.type_carries_loans(&found))
+                    && (self.type_may_carry_loans(expected) || self.type_may_carry_loans(&found))
                     && self
                         .aggregate_origins(expression)
                         .iter()
