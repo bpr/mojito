@@ -544,6 +544,40 @@ impl Flatten<'_> {
                 self.comprehension_clauses(clauses, bindings, index + 1, plan);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = exit;
+                if let Some(finish) = &protocol.finish {
+                    // A linear-element owned comprehension source always
+                    // exhausts (comprehensions cannot break or return), so the
+                    // exit consumes the iterator through its named destructor,
+                    // mirroring the statement loop's exhaustion edge.
+                    let span = iter.source_span();
+                    let recv = match self.var_types.get(&iterator).cloned() {
+                        Some(ty) => self.fresh_typed(span.clone(), Some(iterator), ty),
+                        None => self.fresh(span.clone(), Some(iterator)),
+                    };
+                    self.emit(MirInstr::UseVar {
+                        dest: recv,
+                        var: iterator,
+                        mode: crate::mir::ir::UseMode::Move,
+                    });
+                    let dest = self.fresh_typed(span, None, finish.result_ty.clone());
+                    self.emit(MirInstr::MethodCall {
+                        dest,
+                        recv,
+                        method: "_finish".to_string(),
+                        resolved: Some(finish.target.clone()),
+                        raises: finish.raises.clone(),
+                        reference_result: finish.reference_result.clone(),
+                        result_adapter: finish.result_adapter,
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                        recv_place: None,
+                        arg_places: Vec::new(),
+                        kwarg_places: Vec::new(),
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: Vec::new(),
+                        param_decls: Vec::new(),
+                    });
+                }
                 if split_source && !borrowed {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so a liveness anchor at the exit keeps it live

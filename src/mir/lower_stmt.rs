@@ -147,6 +147,40 @@ impl Flatten<'_> {
             HirInstr::KeepAlive(var) => {
                 self.emit(MirInstr::KeepAlive { var: *var });
             }
+            HirInstr::FinishIter { iter, call } => {
+                // Consume the exhausted linear iterator through its named
+                // destructor: an ordinary method call whose moved receiver is
+                // the iterator slot's value, so drop elaboration sees the slot
+                // consumed rather than needing drop glue it cannot have.
+                let span = SourceSpan::new(None, DUMMY_SPAN);
+                let recv = match self.var_types.get(iter).cloned() {
+                    Some(ty) => self.fresh_typed(span.clone(), Some(*iter), ty),
+                    None => self.fresh(span.clone(), Some(*iter)),
+                };
+                self.emit(MirInstr::UseVar {
+                    dest: recv,
+                    var: *iter,
+                    mode: UseMode::Move,
+                });
+                let dest = self.fresh_typed(span, None, call.result_ty.clone());
+                self.emit(MirInstr::MethodCall {
+                    dest,
+                    recv,
+                    method: "_finish".to_string(),
+                    resolved: Some(call.target.clone()),
+                    raises: call.raises.clone(),
+                    reference_result: call.reference_result.clone(),
+                    result_adapter: call.result_adapter,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    recv_place: None,
+                    arg_places: Vec::new(),
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    param_decls: Vec::new(),
+                });
+            }
             // Iterator protocol: compute into a register, then store to the target
             // variable (so the header's branch can read `has_next` as a `UseVar`,
             // and the body binds the loop variable).
