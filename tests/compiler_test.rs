@@ -455,3 +455,57 @@ fn linear_owned_iteration_requires_a_finishable_iterator() {
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "close 1\nclose 0\n");
 }
+
+#[test]
+fn nested_def_captured_self_store_bypasses_the_escape_guard() {
+    // Graduation baseline for the diagnosed nested-def routing gap: a nested
+    // `def` capturing `mut self` stores a frame-local loan into a field of
+    // the enclosing receiver, and the checker accepts it — the nested Def
+    // frame's allowed-owner set omits captured outer owners, so the
+    // store-outward guard never fires and the VM later dies on a stale
+    // reference. Widening the nested frame's escape context flips this to
+    // the StoredReferenceEscapesOrigin rejection.
+    let compiler = Compiler::default();
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_local(mut self):\n        def install() {mut self}:\n            var local = [7]\n            ref alias = local\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n    print(holder.slot.value[0])\n";
+    compiler
+        .compile_unlinked(source)
+        .expect("currently accepted: the nested-def store bypasses the guard");
+}
+
+#[test]
+fn method_declaration_order_gates_transfer_effect_visibility() {
+    // Graduation baseline for the two-phase effects pass: an earlier method
+    // calling a LATER same-struct storing method carries no transfer effect
+    // (the callee's body is unchecked when the call site is checked), so the
+    // return-escape is missed; the reordered control rejects. The fixpoint
+    // makes both orders reject.
+    let compiler = Compiler::default();
+    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def via(mut self, var box: RefBox):\n        self.stash(box^)\n\n    def stash(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
+    compiler
+        .compile_unlinked(late)
+        .expect("currently accepted: the later method's effect is invisible");
+    let early = late.replace(
+        "    def via(mut self, var box: RefBox):\n        self.stash(box^)\n\n    def stash(mut self, var box: RefBox):\n        self.slot = box^",
+        "    def stash(mut self, var box: RefBox):\n        self.slot = box^\n\n    def via(mut self, var box: RefBox):\n        self.stash(box^)",
+    );
+    let error = compiler.compile_unlinked(&early).expect_err("early order");
+    assert!(matches!(
+        error,
+        CompilerError::Type(mojito::TypeError::ReturnsReferenceToLocal)
+    ));
+}
+
+#[test]
+fn augmented_assignment_replays_the_dunders_transfer_effects() {
+    // The in-place dunder goes through ordinary method selection, so a user
+    // `__iadd__` that stashes its loan-carrying argument into `self` already
+    // installs the transfer at the `sink += carrier` site: returning the
+    // receiver with a local-rooted transferred loan rejects.
+    let compiler = Compiler::default();
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def __iadd__(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink += RefBox(alias)\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
+    let error = compiler.compile_unlinked(source).expect_err("augassign");
+    assert!(matches!(
+        error,
+        CompilerError::Type(mojito::TypeError::ReturnsReferenceToLocal)
+    ));
+}
