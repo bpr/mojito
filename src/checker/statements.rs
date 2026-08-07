@@ -917,6 +917,38 @@ impl Checker {
                 self.record_place_write_invalidation(place.source_span(), place);
                 let storage = self.place_storage_ty(place);
                 let found = self.infer(value)?;
+                // A store into storage that outlives this frame (a parameter
+                // or `self` root) must not smuggle a frame-local loan outward
+                // — the symmetric twin of the Return escape check. Rebinding a
+                // `ref` field counts even when the value type carries no loan:
+                // the destination handle itself becomes the loan. Nominal
+                // subscript assignment (early-returned above) needs no twin:
+                // a `List[ref T]` subscript reaches the referent only
+                // (augmented writes), and handle replacement or ref-append is
+                // not offered by any overload, so no collection store can
+                // install a frame-local handle.
+                if let Some((_, allowed)) = self.aggregate_escape_contexts.last()
+                    && place_root_name(place)
+                        .and_then(|root| self.lookup_owner(root))
+                        .is_some_and(|owner| allowed.contains(&owner))
+                    && (self.type_carries_loans(&found) || matches!(&storage, Some(Ty::Ref(_))))
+                {
+                    let mut origins = self.aggregate_origins(value);
+                    // A rebinding store's loan roots at the right-hand place
+                    // itself, which a plain value expression does not surface
+                    // as an aggregate origin.
+                    if matches!(&storage, Some(Ty::Ref(_)))
+                        && let Ok(rhs_place) = self.origin_place(value)
+                    {
+                        origins.push(crate::origin::Origin::Place(rhs_place));
+                    }
+                    if origins
+                        .iter()
+                        .any(|origin| self.aggregate_origin_escapes(origin))
+                    {
+                        return Err(TypeError::StoredReferenceEscapesOrigin);
+                    }
+                }
                 if let Some(Ty::Ref(expected_reference)) = &storage {
                     let initializes_reference =
                         self.self_initializing && place_root_name(place) == Some("self");
@@ -1418,8 +1450,17 @@ impl Checker {
                         .function_bases
                         .last()
                         .expect("function scope is active");
-                    self.aggregate_escape_contexts
-                        .push((base, owners.iter().copied().collect()));
+                    let mut allowed: std::collections::HashSet<_> =
+                        owners.iter().copied().collect();
+                    // Variadic collectors are parameters too (see the method
+                    // twin in declarations.rs).
+                    allowed.extend(
+                        params
+                            .iter()
+                            .filter(|param| param.kind != crate::ast::ParamKind::Regular)
+                            .filter_map(|param| self.lookup_owner(&param.name)),
+                    );
+                    self.aggregate_escape_contexts.push((base, allowed));
                     self.return_ref_contracts.push(
                         ref_return
                             .clone()

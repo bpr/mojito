@@ -1004,6 +1004,16 @@ impl Checker {
         let self_owner = self.lookup_owner("self");
         let mut allowed: HashSet<_> = owners.iter().copied().collect();
         allowed.extend(self_owner);
+        // Variadic collectors are parameters too: a loan rooted at the
+        // callee-owned pack moves outward with the stored value (the
+        // generated Tuple constructor stores its `*args` collector into
+        // `self.storage`).
+        allowed.extend(
+            m.params
+                .iter()
+                .filter(|param| param.kind != crate::ast::ParamKind::Regular)
+                .filter_map(|param| self.lookup_owner(&param.name)),
+        );
         self.aggregate_escape_contexts
             .push((self.scopes.len().saturating_sub(1), allowed));
         self.return_ref_contracts.push(ref_return.map(|signature| {

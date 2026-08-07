@@ -504,11 +504,63 @@ pub(super) fn interior_origin_syntax(expr: &Expr) -> Option<(&Expr, &str)> {
     (field == "_get_owned_interior").then_some((base, name.as_str()))
 }
 
+/// The declaration-level immutable-origin cast `Origin[mut=False].cast_from[o]`
+/// — current Mojo's spelling for pinning a reference result's capability to
+/// read-only independent of the origin parameter's own `mut=`. Returns the
+/// inner origin expression; the upgrade direction (`mut=True`) is rejected.
+pub(super) fn immutable_origin_cast(expression: &Expr) -> Option<Result<&Expr, TypeError>> {
+    let ExprKind::Index { object, index } = &expression.kind else {
+        return None;
+    };
+    let ExprKind::Member {
+        object: applied,
+        field,
+    } = &object.kind
+    else {
+        return None;
+    };
+    if field != "cast_from" {
+        return None;
+    }
+    let ExprKind::TypeApply { name, args } = &applied.kind else {
+        return None;
+    };
+    if name != "Origin" {
+        return None;
+    }
+    let [
+        crate::ast::ParamArg::Named {
+            name: keyword,
+            value,
+        },
+    ] = args.as_slice()
+    else {
+        return None;
+    };
+    if keyword != "mut" {
+        return None;
+    }
+    let crate::ast::ParamArg::Value(flag) = value.as_ref() else {
+        return None;
+    };
+    match &flag.kind {
+        ExprKind::Bool(false) => Some(Ok(index)),
+        ExprKind::Bool(true) => Some(Err(TypeError::Unsupported(
+            "an origin cast cannot upgrade capability: 'Origin[mut=True].cast_from' is rejected"
+                .to_string(),
+        ))),
+        _ => None,
+    }
+}
+
 pub(super) fn validate_origin_expr(
     expr: &Expr,
     origin_params: &HashSet<&str>,
     value_params: &HashSet<&str>,
 ) -> Result<(), TypeError> {
+    if let Some(inner) = immutable_origin_cast(expr) {
+        return validate_origin_expr(inner?, origin_params, value_params);
+    }
     if let Some((base, _)) = interior_origin_syntax(expr) {
         return validate_origin_expr(base, origin_params, value_params);
     }
@@ -639,7 +691,17 @@ pub(super) fn lower_ref_sig(
     use crate::origin::{RefSig, SigMutability, SigOrigin};
     let mut members = Vec::new();
     let mut mutability = SigMutability::Infer;
+    let mut cast_immutable = false;
     for expression in spec {
+        // The immutable-origin cast wraps one member; unwrap it and pin the
+        // whole signature's capability after the member lowers normally.
+        let expression = match immutable_origin_cast(expression) {
+            Some(inner) => {
+                cast_immutable = true;
+                inner?
+            }
+            None => expression,
+        };
         if let Some((base_expression, name)) = interior_origin_syntax(expression) {
             let base = lower_sig_origin_expression(base_expression, type_params, params)?;
             // A projection off a named origin parameter carries that
@@ -750,6 +812,9 @@ pub(super) fn lower_ref_sig(
         [single] => single.clone(),
         _ => SigOrigin::union(members),
     };
+    if cast_immutable {
+        mutability = SigMutability::Immutable;
+    }
     Ok(RefSig { origin, mutability })
 }
 

@@ -244,9 +244,12 @@ A `convention` word is only a convention when a parameter name follows it, so `i
 Int)`). Ordering is parsed leniently. The **`ref` convention** (parametric-mutability
 reference) may carry an **origin specifier** — `ref[origin] x` — whose contents (an
 arbitrary expression treated as `origin_of(...)`, a named origin, or `_` for an unbound
-origin) are retained in the AST for checked resolution. Named `Origin[mut=...]`
-parameters and the `//` infer-only marker are likewise retained; signature-level
-origin inference and substitution remain deferred.
+origin) are retained in the AST for checked resolution. A member may be wrapped in
+the declaration-level immutable-origin cast `Origin[mut=False].cast_from[origin]`,
+which pins the reference's capability to read-only independent of the inner
+origin parameter's own `mut=` (the upgrade direction is rejected). Named
+`Origin[mut=...]` parameters and the `//` infer-only marker are likewise
+retained; signature-level origin inference and substitution remain deferred.
 An optional `params_decl` list (see **Parameterization** below) makes the
 function generic: its type/value parameters are in scope as bare `NAME`s in the
 signature and body (e.g. `def first[T: Copyable & Movable](p: Pair[T]) -> T`, or

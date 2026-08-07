@@ -68,16 +68,22 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Reference-escape analysis beyond returns** — return boundaries reject
-  reference escapes, but storing a reference or a reference-bearing value (a
-  manually held borrowing iterator, a closure that captured a loop reference)
-  into longer-lived storage *without* returning it is unchecked, as is calling
-  a closure that stored a captured reference after its referent died. Define
-  and enforce the store-outward rule at the phase that owns it; eager
-  whole-loan exclusivity remains explicitly not promised. A `for ref` key
-  binding over a mutable mapping also yields a mutable key reference
-  (invariant-corrupting but memory-safe) — decide whether mapping key yields
-  should force immutability.
+- [ ] **Reference-carrier lowering gaps** — the store-outward escape rule
+  now rejects frame-locally rooted loans at outliving stores (fields of
+  `self`, parameter-rooted places, `ref`-field rebinds), and mapping key
+  yields are declaration-level immutable; three adjacent latent gaps
+  surfaced by the probe matrix remain. (1) Moving a reference-bearing
+  struct into a `List` (`sink.append(box^)`) produces an
+  invalid-checked-program invariant explosion (untyped registers) instead
+  of either working or rejecting cleanly. (2) A legally rebound `ref`
+  field (parameter-rooted source) stores correctly but a later interior
+  read through the rebound handle fails at runtime ("checked nominal
+  subscript receiver is None"). (3) A capturing closure silently coerces
+  into a plain `def(...)` storage type through constructor arguments and
+  list literals, erasing its capture-origin environment — inert today
+  because field and element invocation are unsupported, but the coercion
+  must be rejected (or the environment retained) before either invocation
+  channel lands.
 - [ ] **Owned iteration of linear elements** — in the owned path, permit a List
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a

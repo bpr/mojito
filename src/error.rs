@@ -126,6 +126,9 @@ pub enum TypeError {
     ImmutableBinding(String),
     /// A reference return is rooted in storage not named by its declared origin.
     ReturnsReferenceToLocal,
+    /// A store into storage that outlives the frame carries a loan rooted in
+    /// frame-local storage — the store-outward twin of the return escape.
+    StoredReferenceEscapesOrigin,
     /// An origin-bearing pointer would outlive the checked storage it
     /// designates, e.g. returning `UnsafePointer(to=local)`.
     PointerEscapesOrigin,
@@ -431,6 +434,12 @@ impl fmt::Display for TypeError {
                 write!(
                     f,
                     "returned reference escapes storage outside its declared origin"
+                )
+            }
+            TypeError::StoredReferenceEscapesOrigin => {
+                write!(
+                    f,
+                    "stored reference escapes storage outside its declared origin"
                 )
             }
             TypeError::PointerEscapesOrigin => {

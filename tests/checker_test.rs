@@ -4574,3 +4574,51 @@ fn variadic_struct_template_cannot_be_checked_raw() {
         TypeError::Unsupported(message) if message.contains("variadic struct 'Pair' is compiled by compile-time specialization")
     ));
 }
+
+#[test]
+fn stores_into_outliving_storage_reject_frame_local_loans() {
+    // The store-outward twin of the return escape: a reference-bearing value
+    // rooted at a method-local cannot be stored into `self`, and a `ref`
+    // field cannot be rebound to a frame-local place.
+    let carrier = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def swap(mut self):\n        var local = [9]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.swap()\n";
+    assert!(matches!(
+        err(carrier),
+        TypeError::StoredReferenceEscapesOrigin
+    ));
+
+    let rebind = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n    def refresh(mut self):\n        var local = [9]\n        self.value = local\n\ndef main():\n    var values = [1, 2]\n    ref whole = values\n    var box = RefBox(whole)\n    box.refresh()\n";
+    assert!(matches!(
+        err(rebind),
+        TypeError::StoredReferenceEscapesOrigin
+    ));
+}
+
+#[test]
+fn stores_of_parameter_rooted_loans_into_self_stay_accepted() {
+    // An origin that outlives the frame (a caller-owned parameter place) may
+    // be stored outward; only frame-local roots escape.
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other = [5]\n    holder.rebind_to(other)\n";
+    assert!(check(&parse(src).expect("parse")).is_ok());
+}
+
+#[test]
+fn immutable_origin_cast_pins_reference_results_read_only() {
+    // `Origin[mut=False].cast_from[o]` in a reference result signature pins
+    // the yielded capability to read-only regardless of the origin
+    // parameter's own parametric `mut=` — the loop site never upgrades a
+    // declared-immutable yield from the source's mutability.
+    let template = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[o]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n";
+    let write = format!("{template}    for ref x in nums:\n        x += 10\n");
+    assert!(matches!(
+        err(&write),
+        TypeError::ImmutableBinding(_) | TypeError::TypeMismatch { .. }
+    ));
+    let read = format!("{template}    var total = 0\n    for ref x in nums:\n        total += x\n");
+    assert!(check(&parse(&read).expect("parse")).is_ok());
+}
+
+#[test]
+fn origin_cast_cannot_upgrade_capability() {
+    let src = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[Origin[mut=True].cast_from[o]] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
+    assert!(matches!(err(src), TypeError::Unsupported(_)));
+}

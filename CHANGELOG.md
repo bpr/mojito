@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Reference-escape analysis beyond returns. Stores into storage that
+  outlives the frame — fields of `self`, parameter-rooted places, and
+  `ref`-field rebinds — now reject frame-locally rooted loans at check
+  time ("stored reference escapes storage outside its declared origin"),
+  closing a checker-accepted use-after-free; parameter-rooted loans store
+  outward freely, and both escape-context builders now include variadic
+  collector parameters. The collection-store and closure edges are pinned:
+  `List[ref T]` offers no handle-installing channel, and a stored closure
+  can never be invoked after its captured referent dies. Reference result
+  signatures accept the declaration-level immutable-origin cast
+  (`ref[Origin[mut=False].cast_from[o]] T`, upgrade direction rejected),
+  and mapping key iteration over Dict, HashDict, and StringDict now
+  yields immutable key references (Mojo parity; writes through a `for
+  ref` key binding reject, reads stay live borrowed references).
+
 - Bound-generic monomorphization, Stage E: erased-dispatch retirement
   confirmed and the residue re-pinned through the authoritative pipeline.
   New Compiler-driven witnesses assert that a `comptime for`-conflict-

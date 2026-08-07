@@ -1605,6 +1605,24 @@ not storage a returned reference may designate. Substitution and nominal
 callable conformance preserve the environment contract, and origin escape
 checking recursively visits concrete environment dependencies.
 
+Escape enforcement is a checker origin rule at *both* frame boundaries. The
+return boundary checks a returned value's aggregate origins and a `ref[o]`
+contract's actual origin; the store boundary applies the same predicate at
+place writes whose destination root outlives the frame (a parameter or
+`self` owner from the per-body escape context, including variadic collector
+parameters): a store fires only when the stored value carries loans — or the
+destination is `ref`-typed storage, whose rebound handle becomes the loan —
+and some origin is rooted at frame-local storage. Parameter-rooted loans
+store outward freely, so origin-parameter-bound flows such as
+`self.field = make_iter(self.data)` stay accepted. Ownership analysis remains
+the lazy within-frame layer (interior origins are invalidation generations,
+not exclusive loans; eager whole-loan exclusivity is not promised). Mapping
+key yields are declaration-level immutable via the `ref` signature's
+immutable-origin cast (`Origin[mut=False].cast_from[...]`), which
+`lower_ref_sig` unwraps and pins to `SigMutability::Immutable` so the loop
+site's parametric-mutability upgrade never applies; the upgrade direction is
+rejected.
+
 Nested functions are lifted with explicit closure environments. Current source
 capture lists appear directly as `{...}` after effects; Mojito normalizes the
 removed `unified {...}` spelling only as a compatibility extension. `imm`, `mut`,

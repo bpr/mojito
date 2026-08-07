@@ -35,8 +35,10 @@ struct _DictKeyIter[
     def __len__(self) -> Int:
         return len(self.src) - self.index
 
+    # Key yields are read-only regardless of the mapping's mutability:
+    # writing through a key reference would corrupt the hash invariant.
     def __next__(mut self) raises StopIteration -> ref[
-        iterable_origin._get_owned_interior["element"]
+        Origin[mut=False].cast_from[iterable_origin._get_owned_interior["element"]]
     ] Self.K:
         if self.index >= len(self.src):
             raise StopIteration()

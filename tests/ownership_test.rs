@@ -739,3 +739,13 @@ fn use_after_move_through_a_method_call() {
     let src = "@fieldwise_init\nstruct Thing:\n    var x: Int\n    def get(self) -> Int:\n        return self.x\n\ndef main():\n    var a: Thing = Thing(1)\n    var b: Thing = a^\n    print(a.get())\n";
     assert!(matches!(own(src), Err(OwnershipError::UseAfterMove { .. })));
 }
+
+#[test]
+fn immutable_yield_iteration_still_conflicts_with_source_mutation() {
+    // The immutable-origin cast changes only the yielded capability; the
+    // iterator's source loan is unchanged, so structural mutation during
+    // iteration still conflicts (generation protection is loan-based, not
+    // mutability-based).
+    let src = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[o]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        nums.items.append(7)\n        print(x)\n";
+    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+}
