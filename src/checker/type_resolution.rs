@@ -1062,10 +1062,21 @@ impl Checker {
             ParamDecl::Type { name, bounds, .. } => {
                 let ty = match arg {
                     ParamArg::Type(t) => self.ty_from_anno(t)?,
-                    ParamArg::Value(Expr {
-                        kind: ExprKind::Identifier(id),
-                        ..
-                    }) => self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?,
+                    ParamArg::Value(
+                        expression @ Expr {
+                            kind: ExprKind::Identifier(id),
+                            ..
+                        },
+                    ) => {
+                        // The parser encodes a bare type-argument identifier
+                        // as a value expression; once it resolves as a type,
+                        // MIR must not emit it as a runtime value register.
+                        self.operation_adjustments.borrow_mut().insert(
+                            expression.source_span(),
+                            crate::checked::SemanticAdjustment::EraseCompileTimeArgument,
+                        );
+                        self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?
+                    }
                     ParamArg::Value(_) => {
                         return Err(TypeError::TypeMismatch {
                             expected: "a type".to_string(),
