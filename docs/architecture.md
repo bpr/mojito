@@ -1892,11 +1892,31 @@ store, the body records a `TransferEffect { dest, src, src_is_place, mutable }`
 in signature-origin terms (`Self_`/`Param(k)`) on the current callable's frame;
 the bundled `List.append`/`insert`/`__setitem__` are seeded directly because
 their pointer-mediated stores never reach that acceptance point. Effects live in
-a name-keyed side map (`"name"` / `"Struct.method"`) with single-pass
-declaration-order visibility — the stdlib is checked first, so its effects reach
-user code — a deliberate simplification over routing them through
-`DeclarationEffect` (a two-phase pass for method order and recursion is the
-recorded follow-up).
+a name-keyed side map (`"name"` / `"Struct.method"`), and visibility is
+declaration-order independent: `check_program` reruns the whole check — a
+fresh checker seeded with the prior round's committed map merged over the
+bundled seeds — until no call site has observed a stale callee entry.
+Staleness is exact rather than structural: `apply_transfer_effects` records
+the first-seen effects per queried callee (including "none"), and a round
+converges when every observation matches the final committed map, so a
+program whose effects were all committed before any call site consulted them
+— every stdlib-only compile included — finishes in one round. Effects grow
+monotonically over a finite per-callable lattice; a four-round cap surfaces
+`TransferEffectDivergence`, which indicates a checker defect, not a user
+error.
+
+The store-outward acceptance point itself is shared: the SetPlace guard
+(escape check plus transfer recording) is the `check_outward_store` helper,
+which unpack-into-place targets also run (per tuple-display element, or
+conservatively with the whole right-hand side's origins). Nested `def`s
+extend their escape context with the enclosing context's owners — the
+capture-reachable outliving storage — so a store through captured `self`
+inside a closure faces the escape rule with the nested frame deciding source
+locality; recording an effect for such a store stays out (it is not
+signature-relative to the nested def), the capture-channel residue recorded
+on the roadmap. Augmented assignment needs no dedicated guard: the in-place
+dunder rides ordinary method selection, so its callee effects replay at the
+`+=` site.
 
 Each call site with a matching effect substitutes the source actual's caller
 origins (its carried aggregate/reference origins, plus — only when

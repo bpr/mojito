@@ -68,23 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Cross-call transfer residues** — cross-call loan transfer landed
-  as checker-recorded transfer effects replayed at call sites (see the
-  `docs/features.md` Borrowing row and `docs/architecture.md`); v1 is
-  permissive-only where it lacks facts, and these are the recorded gaps:
-  effects use single-pass declaration-order visibility, so later
-  same-struct methods and recursion cycles carry no effects (fix is a
-  two-phase effects pass); indirect/function-value calls and abstract
-  dispatch without a concrete body carry no effects; destinations are
-  root-granular (interior-precise dests would tighten sibling-field
-  coexistence); invocation of a stored capturing-closure field/element
-  remains out of scope (storage types now retain the concrete
-  capture-origin set, so only the call-path plumbing is missing); the
-  chained-subscript verify fix peels the loaded register's `Ty::Ref` at
-  the check rather than retyping the register (retype only if a consumer
-  needs it); and one routing mystery — a method store adjacent to a
-  nested `def` can bypass the SetPlace acceptance guard — is unexplained
-  and deserves a probe.
 - [ ] **Self-hosted Unicode String** — define storage; current explicit
   `s[byte=i]`, `s[codepoint=i]`, and `s[grapheme=i]` indexing plus Unicode
   slicing; comparison, hashing, and formatting without VM-only semantics;
@@ -98,6 +81,22 @@ schema.
 - [ ] **CPU Layout and LayoutTensor semantics** — implement the target-independent
   type, indexing, and memory-view contracts required by CPU programs while
   leaving observable ABI layout and GPU memory spaces to later milestones.
+- [ ] **Cross-call transfer residues** — the transfer-effect system is
+  hardened (two-phase order-independent visibility; nested-def, unpack,
+  and augmented-assignment guard coverage; see `docs/features.md` and
+  `docs/architecture.md`); the remaining permissive gaps:
+  indirect/function-value calls and abstract dispatch without a concrete
+  body carry no effects (checked function types would need to carry
+  them); destinations are root-granular (interior-precise dests would
+  tighten sibling-field coexistence); the capture channel records no
+  effects — a store through captured `self` inside a nested def is
+  escape-checked but not transfer-recorded, invocation of a stored
+  capturing-closure field/element remains unplumbed, and reading a
+  capture-installed reference dies in the VM ("checked nominal subscript
+  receiver is None", pre-existing) — one coherent capture-effects work
+  item; and the chained-subscript verify fix still peels the loaded
+  register's `Ty::Ref` at the check rather than retyping the register
+  (retype only if a consumer needs it).
 
 ### 2. Stabilize Textual MIR/VM Assembly
 

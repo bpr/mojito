@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Cross-call transfer hardening. Transfer-effect visibility is now
+  declaration-order independent: the checker reruns with the prior
+  round's committed effects whenever a call site observed a stale callee
+  entry, so a method calling a later-declared (or mutually recursive)
+  storing method carries its effect to every caller, converging in one
+  round for programs without order-sensitive effects. The store-outward
+  escape rule now also covers stores inside nested `def`s through
+  captured `self`/parameters (previously a diagnosed bypass that reached
+  a stale-frame crash at runtime), unpack-into-place targets (the
+  transferred-tuple shape now rejects with the escape diagnostic), and —
+  through ordinary method selection — user in-place dunders
+  (`sink += carrier` replays `__iadd__`'s transfer effects). Remaining
+  residues (indirect-call effects, interior-precise destinations, the
+  capture-effect channel) are recorded on the roadmap.
+
 - Owned iteration of linear elements. `for var item in xs^` and owned
   comprehensions now accept a `List` of non-`ImplicitlyDeletable` elements
   when every element is transferred by guaranteed exhaustion: the bundled
