@@ -68,37 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Bound-generic monomorphization** — converge on real Mojo's model:
-  each generic instantiation clones and re-checks the body with the concrete
-  type substituted, so generic-bound `for`/`for ref` iteration, copyability,
-  and member access get Mojo-identical static answers with no runtime
-  adapter. Landed: the raw `backend.run` test seam enforces ownership;
-  `Ty::Assoc` copyability derives from declared member bounds; the checker
-  records every resolved generic instantiation
-  (`CheckedProgram::generic_instantiations`); comptime-class specialization
-  bakes concrete type arguments into each clone and drops them from the
-  residual signature and calls, enforcing trait bounds at the requesting
-  call (`ComptimeError::GenericBound`); and plain trait-bound generics with
-  a unique top-level name monomorphize per explicit concrete application
-  with soft resolution — unresolvable references stay on the retained
-  template's abstract erased-dispatch path, and a dead template keeps its
-  Mojo-style abstract pre-check. Inferred calls now monomorphize too: the
-  compiler iterates discover→elaborate→check to a fixpoint, replaying each
-  closed recorded instantiation at its exact occurrence (a request can only
-  upgrade a call — every mismatch, conflict, or non-closed argument keeps
-  the abstract path), with a hard round cap surfacing inferred polymorphic
-  recursion as a dedicated divergence diagnostic; `comptime for`-duplicated
-  occurrences with conflicting instantiations stay abstract, and a retained
-  template precedes its clones so an inferred recursive clone can reference
-  it. Remaining: (E) retire erased
-  `__trait_dispatch`/`__iterator_dispatch` use at monomorphized sites and
-  re-pin its coverage through the function-value fallback — after E,
-  re-confirm the remaining abstract-dispatch witnesses before freezing the
-  MIR schema. Residue that stays erased: function values/indirect calls,
-  overloaded generic names, generic methods, comptime-class inferred calls
-  (round-one elaboration errors before any table exists), open
-  instantiations, and abstract-body-invalid templates (round one checks the
-  retained template, Mojo's pre-check parity).
 - [ ] **Reference-escape analysis beyond returns** — return boundaries reject
   reference escapes, but storing a reference or a reference-bearing value (a
   manually held borrowing iterator, a closure that captured a loop reference)
@@ -134,7 +103,19 @@ schema.
   before freezing a serialized schema. Retain any final verification witnesses
   needed to validate abstract trait-dispatch signatures and checker-selected
   `ref`-to-`read` convention narrowing without trusting an unavailable source
-  declaration or source binding-mutability fact, and retain declared
+  declaration or source binding-mutability fact. With bound-generic
+  monomorphization complete, the abstract-dispatch surface is reachable only
+  through the documented erased residue, and the concrete witness set to
+  re-confirm is: `verify_iterator_result_adapter` (abstract `Next`/`TryNext`
+  require the `CopyIteratorReference` adapter, concrete targets forbid it),
+  the `GetIter` undeclared-prepare tolerance (only the
+  `iterator_dispatch_symbol` spellings), the subscript abstract-target
+  tolerance (receiver-membership skipped, full contract still verified), the
+  `MethodCall` abstract-`__next__` adapter symmetry, `CallIndirect` abstract
+  `__call__$ov$…` validation against the stored callable contract (the home
+  of ref-to-read narrowing), and the direct-`Call` undeclared-callee
+  tolerance (which also covers builtins and may deserve an allowlist here).
+  Retain declared
   conventions for variadic overflow parameters if the serialized ABI exposes
   those conventions independently of their fixed-parameter prefix. Prove that
   every `MirPlace::through` derives from its exact source capability/loan, check

@@ -294,6 +294,19 @@ emitted before its specializations because a clone may still reference the
 template abstractly (an inferred recursive call) and the checker binds
 top-level names sequentially.
 
+Under the production compiler, the erased-dispatch machinery
+(`__trait_dispatch.*`/`__iterator_dispatch.*` symbols, VM retargeting, and
+the `CopyIteratorReference` result adapter) is therefore reachable only
+through retained-template residue: function values/indirect calls,
+overloaded generic names, generic methods, comptime-class inferred calls,
+open instantiations, conflicting unrolled occurrences, and abstract-body
+pre-checks. Its verification witnesses live in `mir::verify`:
+`verify_iterator_result_adapter`, the `GetIter` undeclared-prepare
+tolerance, the subscript abstract-target tolerance, the `MethodCall`
+abstract-`__next__` adapter symmetry, `CallIndirect`'s callable-contract
+validation, and the direct-`Call` undeclared-callee tolerance — the set the
+backend-ready MIR checkpoint re-confirms before freezing the schema.
+
 The important distinction is that the elaborator still owns compile-time AST
 rewriting, while function-body execution now goes through the MIR/VM path. The
 remaining expression evaluator in `src/comptime.rs` is not a second function

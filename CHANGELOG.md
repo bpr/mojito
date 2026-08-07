@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Bound-generic monomorphization, Stage E: erased-dispatch retirement
+  confirmed and the residue re-pinned through the authoritative pipeline.
+  New Compiler-driven witnesses assert that a `comptime for`-conflict-
+  retained template keeps the `__iterator_dispatch` protocol and its
+  `CopyIteratorReference` adapter in MIR and executes them end to end, and
+  that a bound generic used as a function value retains its template and
+  invokes through runtime retargeting; the deliberate raw-seam machinery
+  pins are annotated so a schema-freeze audit reads them correctly. The
+  roadmap item is closed: erased dispatch survives only for the designed
+  residue (function values/indirect calls, overloaded generic names,
+  generic methods, comptime-class inferred calls, open instantiations,
+  conflicting unrolled occurrences, and abstract-body pre-checks), and the
+  six `mir::verify` abstract-dispatch witnesses to re-confirm at the
+  backend-ready MIR checkpoint are now named on that roadmap item.
+
 - Bound-generic monomorphization, Stage D: inferred applications. The
   compiler's pipeline now iterates discover→elaborate→check to a fixpoint,
   replaying each closed checker-recorded generic instantiation
