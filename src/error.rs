@@ -129,6 +129,14 @@ pub enum TypeError {
     /// A store into storage that outlives the frame carries a loan rooted in
     /// frame-local storage — the store-outward twin of the return escape.
     StoredReferenceEscapesOrigin,
+    /// The two-phase transfer-effect pass kept observing stale callee
+    /// effects after the round cap — effects should grow monotonically to a
+    /// small fixpoint, so this indicates a checker defect rather than a
+    /// user error.
+    TransferEffectDivergence {
+        rounds: usize,
+        callable: String,
+    },
     /// An origin-bearing pointer would outlive the checked storage it
     /// designates, e.g. returning `UnsafePointer(to=local)`.
     PointerEscapesOrigin,
@@ -434,6 +442,12 @@ impl fmt::Display for TypeError {
                 write!(
                     f,
                     "returned reference escapes storage outside its declared origin"
+                )
+            }
+            TypeError::TransferEffectDivergence { rounds, callable } => {
+                write!(
+                    f,
+                    "transfer-effect inference did not stabilize after {rounds} rounds; '{callable}' kept growing its effects"
                 )
             }
             TypeError::StoredReferenceEscapesOrigin => {

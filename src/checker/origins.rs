@@ -326,9 +326,16 @@ impl Checker {
     ) -> Result<(), TypeError> {
         use crate::checked::{CheckedCallTransfer, CheckedTransferDest};
         use crate::origin::SigOrigin;
-        let effects = match self.transfer_effects.borrow().get(callee) {
-            Some(effects) => effects.clone(),
-            None => return Ok(()),
+        let effects = self.transfer_effects.borrow().get(callee).cloned();
+        // First-seen observation (including "none"): the two-phase pass
+        // reruns the check when this callee's final effects differ from what
+        // the stalest query here saw.
+        self.effect_observations
+            .borrow_mut()
+            .entry(callee.to_string())
+            .or_insert_with(|| effects.clone().unwrap_or_default());
+        let Some(effects) = effects else {
+            return Ok(());
         };
         let mut call_transfers = Vec::new();
         for effect in &effects {

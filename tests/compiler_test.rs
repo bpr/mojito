@@ -497,22 +497,41 @@ fn nested_def_captured_self_store_faces_the_escape_guard() {
 }
 
 #[test]
-fn method_declaration_order_gates_transfer_effect_visibility() {
-    // Graduation baseline for the two-phase effects pass: an earlier method
-    // calling a LATER same-struct storing method carries no transfer effect
-    // (the callee's body is unchecked when the call site is checked), so the
-    // return-escape is missed; the reordered control rejects. The fixpoint
-    // makes both orders reject.
+fn transfer_effect_visibility_is_declaration_order_independent() {
+    // The two-phase effects pass: an earlier method calling a LATER
+    // same-struct storing method now carries the callee's transfer effect —
+    // the check reruns, seeded with the first round's committed effects,
+    // whenever a call site observed a stale callee entry — so both
+    // declaration orders reject identically.
     let compiler = Compiler::default();
     let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def via(mut self, var box: RefBox):\n        self.stash(box^)\n\n    def stash(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
-    compiler
-        .compile_unlinked(late)
-        .expect("currently accepted: the later method's effect is invisible");
+    let error = compiler.compile_unlinked(late).expect_err("late order");
+    assert!(matches!(
+        error,
+        CompilerError::Type(mojito::TypeError::ReturnsReferenceToLocal)
+    ));
     let early = late.replace(
         "    def via(mut self, var box: RefBox):\n        self.stash(box^)\n\n    def stash(mut self, var box: RefBox):\n        self.slot = box^",
         "    def stash(mut self, var box: RefBox):\n        self.slot = box^\n\n    def via(mut self, var box: RefBox):\n        self.stash(box^)",
     );
     let error = compiler.compile_unlinked(&early).expect_err("early order");
+    assert!(matches!(
+        error,
+        CompilerError::Type(mojito::TypeError::ReturnsReferenceToLocal)
+    ));
+}
+
+#[test]
+fn recursion_only_transfer_effects_reach_the_fixpoint() {
+    // Mutually recursive methods where the store is reachable only through
+    // the recursive partner: round one leaves the earlier method effect-free
+    // (its callee's body is uncommitted at the call site), the rerun closes
+    // the cycle, and the caller's return-escape rejects.
+    let compiler = Compiler::default();
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def ping(mut self, var box: RefBox, n: Int):\n        if n > 0:\n            self.pong(box^, n - 1)\n        else:\n            self.slot = box^\n\n    def pong(mut self, var box: RefBox, n: Int):\n        self.ping(box^, n)\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink.pong(RefBox(alias), 1)\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
+    let error = compiler
+        .compile_unlinked(source)
+        .expect_err("mutual recursion");
     assert!(matches!(
         error,
         CompilerError::Type(mojito::TypeError::ReturnsReferenceToLocal)

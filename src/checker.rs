@@ -189,9 +189,45 @@ pub(crate) fn check_program_with_materialized_callables(
     // semantic occurrences. Re-key the final checked tree after the last
     // checker-side cloning transform, before any fact table is populated.
     crate::ast::rekey_syntax(&mut expanded);
-    let mut checker = Checker::new_with_materialized_callables(materialized_callables);
-    checker.check_program(&expanded)?;
-    checker.check_reference_result_reads()?;
+    // Two-phase transfer effects: a call site checked before its callee's
+    // body only sees effects already committed, so the check reruns — seeded
+    // with the prior round's committed map — whenever some call site
+    // observed a stale (since-grown) callee entry. Effects grow
+    // monotonically over a finite lattice, so the fixpoint is small; the cap
+    // guards checker defects, not user programs.
+    const TRANSFER_EFFECT_ROUNDS: usize = 4;
+    let mut transfer_seed: HashMap<String, Vec<crate::checked::TransferEffect>> = HashMap::new();
+    let mut rounds = 0;
+    let checker = loop {
+        let mut checker = Checker::new_with_materialized_callables(
+            materialized_callables.clone(),
+            std::mem::take(&mut transfer_seed),
+        );
+        checker.check_program(&expanded)?;
+        checker.check_reference_result_reads()?;
+        let stale = {
+            let committed = checker.transfer_effects.borrow();
+            let observations = checker.effect_observations.borrow();
+            observations
+                .iter()
+                .find(|(name, seen)| {
+                    let now = committed.get(*name).cloned().unwrap_or_default();
+                    now.len() != seen.len() || now.iter().any(|effect| !seen.contains(effect))
+                })
+                .map(|(name, _)| name.clone())
+        };
+        let Some(callable) = stale else {
+            break checker;
+        };
+        rounds += 1;
+        if rounds > TRANSFER_EFFECT_ROUNDS {
+            return Err(TypeError::TransferEffectDivergence {
+                rounds: TRANSFER_EFFECT_ROUNDS,
+                callable,
+            });
+        }
+        transfer_seed = checker.transfer_effects.borrow().clone();
+    };
     let explicit_destroy_types = checker
         .structs
         .iter()
@@ -542,6 +578,10 @@ pub struct Checker {
     transfer_effects: RefCell<HashMap<String, Vec<crate::checked::TransferEffect>>>,
     /// Caller-substituted transfers per call occurrence, handed to MIR.
     call_transfers: RefCell<HashMap<SourceSpan, Vec<crate::checked::CheckedCallTransfer>>>,
+    /// First-seen callee effects per `apply_transfer_effects` lookup. The
+    /// two-phase pass reruns the check when a callee's final committed
+    /// effects differ from what its stalest call-site query observed.
+    effect_observations: RefCell<HashMap<String, Vec<crate::checked::TransferEffect>>>,
     /// Origins transferred into a binding by a callee's store (keyed by the
     /// binding's owner) — an interior-mutability overlay over the
     /// aggregate-origin scopes, merged on lookup.
@@ -645,10 +685,24 @@ pub struct Checker {
 
 impl Checker {
     pub fn new() -> Self {
-        Self::new_with_materialized_callables(HashMap::new())
+        Self::new_with_materialized_callables(HashMap::new(), HashMap::new())
     }
 
-    fn new_with_materialized_callables(materialized_callables: HashMap<String, Ty>) -> Self {
+    fn new_with_materialized_callables(
+        materialized_callables: HashMap<String, Ty>,
+        transfer_seed: HashMap<String, Vec<crate::checked::TransferEffect>>,
+    ) -> Self {
+        // The bundled seeds are never inferred from bodies, so a prior
+        // round's committed map overlays them rather than replacing them.
+        let mut transfer_effects = seeded_transfer_effects();
+        for (callable, effects) in transfer_seed {
+            let entry = transfer_effects.entry(callable).or_default();
+            for effect in effects {
+                if !entry.contains(&effect) {
+                    entry.push(effect);
+                }
+            }
+        }
         Self {
             scopes: vec![HashMap::new()],
             mutable_scopes: vec![HashMap::new()],
@@ -681,8 +735,9 @@ impl Checker {
             overload_targets: RefCell::new(HashMap::new()),
             generic_instantiations: RefCell::new(HashMap::new()),
             transfer_frames: RefCell::new(Vec::new()),
-            transfer_effects: RefCell::new(seeded_transfer_effects()),
+            transfer_effects: RefCell::new(transfer_effects),
             call_transfers: RefCell::new(HashMap::new()),
+            effect_observations: RefCell::new(HashMap::new()),
             transferred_origins: RefCell::new(HashMap::new()),
             raise_observation_frames: RefCell::new(Vec::new()),
             implicit_conversions: RefCell::new(HashMap::new()),
