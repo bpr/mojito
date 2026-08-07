@@ -518,6 +518,8 @@ fn checked_hir_reference_yielding_try_next_retains_a_reference_result() {
     );
 }
 
+// Pins the erased machinery via the raw check seam; under the authoritative
+// Compiler this program's closed applications monomorphize.
 #[test]
 fn checked_hir_retains_the_abstract_iterator_copy_adapter() {
     let source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");

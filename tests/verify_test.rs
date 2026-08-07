@@ -1463,6 +1463,9 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
     expect_finding(&prog, "TryNext result contract does not match");
 }
 
+// Pins the abstract-dispatch verify witness via the raw seam (schema-freeze
+// survivor); under the authoritative Compiler this shape is retained-template
+// residue.
 #[test]
 fn verifier_rejects_missing_or_concrete_iterator_result_adapters() {
     let source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
@@ -1515,6 +1518,9 @@ fn verifier_rejects_missing_or_concrete_iterator_result_adapters() {
     );
 }
 
+// Pins the abstract-dispatch verify witness via the raw seam (schema-freeze
+// survivor); under the authoritative Compiler this shape is retained-template
+// residue.
 #[test]
 fn verifier_rejects_a_missing_abstract_next_method_adapter() {
     let source = include_str!("../conformance/fixtures/copyable_iterator_refinement.mojo");
@@ -1544,6 +1550,9 @@ fn verifier_rejects_a_missing_abstract_next_method_adapter() {
     );
 }
 
+// Pins the abstract-dispatch verify witness via the raw seam (schema-freeze
+// survivor); under the authoritative Compiler this shape is retained-template
+// residue.
 #[test]
 fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
     let result_ty = reference_ty(Ty::Int, mojito::Mutability::Immutable);

@@ -1504,3 +1504,20 @@ fn raw_seam_executes_inferred_polymorphic_recursion_abstractly() {
     let src = "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n";
     assert_eq!(run(src).expect("abstract execution"), "0\n");
 }
+
+#[test]
+fn retained_template_executes_erased_dispatch_under_the_compiler() {
+    // The runtime half of the erased-dispatch residue witness: the retained
+    // abstract template's `__iterator_dispatch` protocol and copy adapter
+    // execute end to end through the authoritative pipeline.
+    let src = "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item\n    return default\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i, i], i))\n";
+    assert_eq!(run_compiled(src).expect("erased path runs"), "1\ns\n");
+}
+
+#[test]
+fn bound_generic_function_value_invokes_through_the_compiler() {
+    // The function-value fallback executes under the authoritative pipeline:
+    // the template stays abstract and the indirect call retargets at runtime.
+    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    var callback: def(Int) -> Int = ident\n    print(callback(41))\n";
+    assert_eq!(run_compiled(src).expect("function value runs"), "41\n");
+}

@@ -614,6 +614,9 @@ fn reference_yielding_try_next_retains_a_typed_reference_destination() {
     );
 }
 
+// Pins the erased machinery via the raw check_program seam; under the
+// authoritative Compiler this program's closed applications monomorphize
+// and the adapter appears only in retained-template residue.
 #[test]
 fn abstract_next_calls_retain_the_copyable_reference_adapter() {
     let source = include_str!("../conformance/fixtures/copyable_iterator_refinement.mojo");
@@ -2929,6 +2932,50 @@ fn conflicting_unrolled_occurrences_stay_on_the_abstract_path() {
     // both calls keep the retained template's erased path.
     let mir = compiled_mir(
         "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n",
+    );
+    let names = function_names(&mir);
+    assert!(names.contains(&"ident"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("ident$")),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
+    // The erased-dispatch residue witness for the authoritative pipeline: the
+    // `comptime for` unrolling records conflicting closed instantiations at
+    // one source occurrence, so discovery drops the occurrence and the
+    // retained abstract template keeps the `__iterator_dispatch` protocol and
+    // its `CopyIteratorReference` adapter. If the fixpoint ever
+    // over-monomorphizes or abstract checking of retained templates breaks,
+    // this pin notices.
+    let mir = compiled_mir(
+        "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item\n    return default\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i, i], i))\n",
+    );
+    let names = function_names(&mir);
+    assert!(names.contains(&"first"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("first$")),
+        "{names:?}"
+    );
+    let template = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "first")
+        .expect("retained template")
+        .1;
+    let rendered = format!("{template:?}");
+    assert!(rendered.contains("__iterator_dispatch"), "{rendered}");
+    assert!(rendered.contains("CopyIteratorReference"), "{rendered}");
+}
+
+#[test]
+fn function_value_reference_retains_the_bound_generic_template() {
+    // A function-value use has no application to monomorphize against, so it
+    // pins the abstract template — the designed erased-dispatch fallback.
+    let mir = compiled_mir(
+        "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    var callback: def(Int) -> Int = ident\n    print(callback(41))\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"ident"), "{names:?}");
