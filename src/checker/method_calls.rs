@@ -576,6 +576,15 @@ impl Checker {
                 .borrow_mut()
                 .insert(span.clone(), target.clone());
         }
+        // Replay the callee's loan-transfer effects against the actuals.
+        if let Ty::Struct(struct_name, _) = &obj_ty {
+            self.apply_transfer_effects(
+                &format!("{struct_name}.{method}"),
+                Some(object),
+                args,
+                &span,
+            )?;
+        }
         // A `mut self` method mutates its receiver, so the receiver must be a
         // writable place (the mutation is written back to it): a variable, a
         // field/index chain, or `self` in a `mut self` method.

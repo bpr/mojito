@@ -312,6 +312,274 @@ impl Checker {
         }
     }
 
+    /// Replay a callee's transfer effects against a call's actuals: enforce
+    /// the store-outward rule across the boundary, merge the transferred
+    /// origins into the destination binding's bookkeeping, derive the
+    /// enclosing callable's transitive effect, and record the substituted
+    /// transfer for MIR loan installation.
+    pub(super) fn apply_transfer_effects(
+        &self,
+        callee: &str,
+        receiver: Option<&Expr>,
+        args: &[Expr],
+        span: &SourceSpan,
+    ) -> Result<(), TypeError> {
+        use crate::checked::{CheckedCallTransfer, CheckedTransferDest};
+        use crate::origin::SigOrigin;
+        let effects = match self.transfer_effects.borrow().get(callee) {
+            Some(effects) => effects.clone(),
+            None => return Ok(()),
+        };
+        let mut call_transfers = Vec::new();
+        for effect in &effects {
+            let actual = |origin: &SigOrigin| match origin {
+                SigOrigin::Self_ => receiver,
+                SigOrigin::Param(index) => args.get(*index),
+                _ => None,
+            };
+            let (Some(dest_expr), Some(src_expr)) = (actual(&effect.dest), actual(&effect.src))
+            else {
+                continue;
+            };
+            // The caller-side origins of the source ACTUAL EXPRESSION — this
+            // covers moved temporaries (`RefBox(alias)`), whose loans root at
+            // the places their construction borrowed.
+            let mut sources = self.aggregate_origins(src_expr);
+            // A reference-valued source contributes its referent's origin; a
+            // plain moved value transfers ownership and adds no loan of its
+            // own storage.
+            if let Some(reference) = self.infer_reference_value(src_expr)
+                && !sources.contains(&reference.origin)
+            {
+                sources.push(reference.origin);
+            }
+            // A borrowed-parameter source loans the actual's own storage.
+            if effect.src_is_place
+                && let Ok(place) = self.origin_place(src_expr)
+            {
+                let origin = crate::origin::Origin::Place(place);
+                if !sources.contains(&origin) {
+                    sources.push(origin);
+                }
+            }
+            sources.retain(|origin| {
+                !matches!(
+                    origin,
+                    crate::origin::Origin::Static | crate::origin::Origin::Untracked { .. }
+                )
+            });
+            if sources.is_empty() {
+                continue;
+            }
+            let dest_root_owner =
+                place_root_name(dest_expr).and_then(|root| self.lookup_owner(root));
+            // The store-outward rule, across the call: a destination rooted
+            // at an outliving owner must not receive an escaping loan.
+            if let (Some((_, allowed)), Some(owner)) =
+                (self.aggregate_escape_contexts.last(), dest_root_owner)
+                && allowed.contains(&owner)
+                && sources
+                    .iter()
+                    .any(|origin| self.aggregate_origin_escapes(origin))
+            {
+                return Err(TypeError::StoredReferenceEscapesOrigin);
+            }
+            // Merge into the destination binding's origin bookkeeping so the
+            // checker's own return-escape rule sees callee-installed loans.
+            if let Some(owner) = dest_root_owner {
+                let mut overlay = self.transferred_origins.borrow_mut();
+                let merged = overlay.entry(owner).or_default();
+                for origin in &sources {
+                    if !merged.contains(origin) {
+                        merged.push(origin.clone());
+                    }
+                }
+            }
+            // Transitive derivation: a destination rooted at the enclosing
+            // callable's parameter or `self` re-abstracts, so wrappers carry
+            // their callees' effects outward.
+            if let Some(owner) = dest_root_owner {
+                let (dest_sig, param_owners, self_owner) = {
+                    let frames = self.transfer_frames.borrow();
+                    match frames.last() {
+                        Some(frame) => {
+                            let dest_sig = if Some(owner) == frame.self_owner {
+                                Some(SigOrigin::Self_)
+                            } else {
+                                frame
+                                    .param_owners
+                                    .iter()
+                                    .position(|candidate| *candidate == owner)
+                                    .map(SigOrigin::Param)
+                            };
+                            (dest_sig, frame.param_owners.clone(), frame.self_owner)
+                        }
+                        None => (None, Vec::new(), None),
+                    }
+                };
+                if let Some(dest_sig) = dest_sig {
+                    for origin in &sources {
+                        if let Some(src_sig) =
+                            self.abstract_body_origin(origin, &param_owners, self_owner)
+                            && src_sig != dest_sig
+                        {
+                            let src_is_place = {
+                                let frames = self.transfer_frames.borrow();
+                                match (&src_sig, frames.last()) {
+                                    (SigOrigin::Param(index), Some(frame)) => {
+                                        frame.param_borrowed.get(*index).copied().unwrap_or(false)
+                                    }
+                                    (SigOrigin::Self_, _) => true,
+                                    _ => false,
+                                }
+                            };
+                            let derived = crate::checked::TransferEffect {
+                                dest: dest_sig.clone(),
+                                src: src_sig,
+                                src_is_place,
+                                mutable: effect.mutable,
+                            };
+                            let mut frames = self.transfer_frames.borrow_mut();
+                            if let Some(frame) = frames.last_mut()
+                                && !frame.effects.contains(&derived)
+                            {
+                                frame.effects.push(derived);
+                            }
+                        }
+                    }
+                }
+            }
+            let dest = match &effect.dest {
+                SigOrigin::Self_ => CheckedTransferDest::Receiver,
+                SigOrigin::Param(index) => CheckedTransferDest::Argument(*index),
+                _ => continue,
+            };
+            call_transfers.push(CheckedCallTransfer {
+                dest,
+                sources,
+                mutable: effect.mutable,
+            });
+        }
+        if !call_transfers.is_empty() {
+            self.call_transfers
+                .borrow_mut()
+                .insert(span.clone(), call_transfers);
+        }
+        Ok(())
+    }
+
+    /// Record an accepted outliving store as a transfer effect on the
+    /// enclosing callable's accumulation frame. Constructor bodies record
+    /// nothing (their arguments are caller-visible; the local aggregate path
+    /// installs those loans), and self-to-self transfers are skipped so
+    /// internal reshuffles do not self-loan every call.
+    pub(super) fn record_transfer_effect(
+        &self,
+        place: &Expr,
+        origins: &[crate::origin::Origin],
+        storage: &Option<Ty>,
+    ) {
+        use crate::origin::SigOrigin;
+        if self.self_initializing {
+            return;
+        }
+        let mut frames = self.transfer_frames.borrow_mut();
+        let Some(frame) = frames.last_mut() else {
+            return;
+        };
+        let Some(root) = place_root_name(place) else {
+            return;
+        };
+        let Some(owner) = self.lookup_owner(root) else {
+            return;
+        };
+        let dest = if Some(owner) == frame.self_owner {
+            SigOrigin::Self_
+        } else if let Some(index) = frame
+            .param_owners
+            .iter()
+            .position(|candidate| *candidate == owner)
+        {
+            SigOrigin::Param(index)
+        } else {
+            return;
+        };
+        let mutable = match storage {
+            Some(Ty::Ref(reference)) => reference.mutability == crate::origin::Mutability::Mutable,
+            _ => true,
+        };
+        let (param_owners, param_borrowed, self_owner) = (
+            frame.param_owners.clone(),
+            frame.param_borrowed.clone(),
+            frame.self_owner,
+        );
+        for origin in origins {
+            let Some(src) = self.abstract_body_origin(origin, &param_owners, self_owner) else {
+                continue;
+            };
+            if src == dest {
+                continue;
+            }
+            // A loan rooted at a borrowed (`mut`/`ref`) parameter's own
+            // place is a loan on the CALLER's storage bound to that slot; an
+            // owned parameter only forwards loans its moved value carries.
+            let src_is_place = match &src {
+                SigOrigin::Param(index) => param_borrowed.get(*index).copied().unwrap_or(false),
+                SigOrigin::Self_ => true,
+                _ => false,
+            };
+            let effect = crate::checked::TransferEffect {
+                dest: dest.clone(),
+                src,
+                src_is_place,
+                mutable,
+            };
+            if !frame.effects.contains(&effect) {
+                frame.effects.push(effect);
+            }
+        }
+    }
+
+    /// Abstract a body-level origin to a signature-relative origin for a
+    /// transfer effect. `None` means no caller-side loan is needed
+    /// (static/untracked storage) or the origin is not signature-expressible.
+    /// Interior paths abstract to their root — a coarser, sound
+    /// over-approximation of the transferred loan.
+    pub(super) fn abstract_body_origin(
+        &self,
+        origin: &crate::origin::Origin,
+        param_owners: &[crate::origin::OwnerId],
+        self_owner: Option<crate::origin::OwnerId>,
+    ) -> Option<crate::origin::SigOrigin> {
+        use crate::origin::{Origin, SigOrigin};
+        match origin {
+            Origin::Place(place) => {
+                if Some(place.root) == self_owner {
+                    return Some(SigOrigin::Self_);
+                }
+                param_owners
+                    .iter()
+                    .position(|owner| *owner == place.root)
+                    .map(SigOrigin::Param)
+            }
+            Origin::SelfParam => Some(SigOrigin::Self_),
+            Origin::Union(origins) => {
+                let members: Vec<_> = origins
+                    .iter()
+                    .filter_map(|origin| {
+                        self.abstract_body_origin(origin, param_owners, self_owner)
+                    })
+                    .collect();
+                match members.len() {
+                    0 => None,
+                    1 => members.into_iter().next(),
+                    _ => Some(SigOrigin::union(members)),
+                }
+            }
+            Origin::Param(_) | Origin::Static | Origin::Untracked { .. } => None,
+        }
+    }
+
     pub(super) fn aggregate_origin_escapes(&self, origin: &crate::origin::Origin) -> bool {
         use crate::origin::Origin;
         let Some((base, allowed)) = self.aggregate_escape_contexts.last() else {
@@ -1386,6 +1654,21 @@ impl Checker {
     }
 
     pub(super) fn lookup_aggregate_origins(&self, name: &str) -> Vec<crate::origin::Origin> {
+        let mut origins = self.lookup_scoped_aggregate_origins(name);
+        // Merge origins a callee's store transferred into this binding.
+        if let Some(owner) = self.lookup_owner(name)
+            && let Some(transferred) = self.transferred_origins.borrow().get(&owner)
+        {
+            for origin in transferred {
+                if !origins.contains(origin) {
+                    origins.push(origin.clone());
+                }
+            }
+        }
+        origins
+    }
+
+    fn lookup_scoped_aggregate_origins(&self, name: &str) -> Vec<crate::origin::Origin> {
         self.aggregate_origin_scopes
             .iter()
             .rev()

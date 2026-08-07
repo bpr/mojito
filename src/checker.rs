@@ -237,6 +237,7 @@ pub(crate) fn check_program_with_materialized_callables(
         expanded,
         checker.overload_targets.into_inner(),
         checker.generic_instantiations.into_inner(),
+        checker.call_transfers.into_inner(),
         checker.implicit_conversions.into_inner(),
         checker.declaration_types.into_inner(),
         checker.generic_parameters.into_inner(),
@@ -534,6 +535,17 @@ pub struct Checker {
     /// The resolved generic application per bound-generic call site (callee +
     /// exact compile-time arguments), retained for instantiation discovery.
     generic_instantiations: RefCell<HashMap<SourceSpan, crate::checked::GenericInstantiation>>,
+    /// Per-body accumulation frames for inferred loan-transfer effects.
+    transfer_frames: RefCell<Vec<TransferFrame>>,
+    /// Inferred per-callable transfer effects, keyed by callable name
+    /// (`name` / `Struct.method`); consulted at later call sites.
+    transfer_effects: RefCell<HashMap<String, Vec<crate::checked::TransferEffect>>>,
+    /// Caller-substituted transfers per call occurrence, handed to MIR.
+    call_transfers: RefCell<HashMap<SourceSpan, Vec<crate::checked::CheckedCallTransfer>>>,
+    /// Origins transferred into a binding by a callee's store (keyed by the
+    /// binding's owner) — an interior-mutability overlay over the
+    /// aggregate-origin scopes, merged on lookup.
+    transferred_origins: RefCell<HashMap<crate::origin::OwnerId, Vec<crate::origin::Origin>>>,
     implicit_conversions: RefCell<HashMap<SourceSpan, String>>,
     simd_constructions: RefCell<HashMap<SourceSpan, (Dtype, i64)>>,
     /// Checked operation decisions — `Variant` construction/tag/projection/
@@ -657,6 +669,10 @@ impl Checker {
             self_initializing: false,
             overload_targets: RefCell::new(HashMap::new()),
             generic_instantiations: RefCell::new(HashMap::new()),
+            transfer_frames: RefCell::new(Vec::new()),
+            transfer_effects: RefCell::new(seeded_transfer_effects()),
+            call_transfers: RefCell::new(HashMap::new()),
+            transferred_origins: RefCell::new(HashMap::new()),
             implicit_conversions: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
@@ -1904,6 +1920,42 @@ fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)>
 
 /// A concrete method candidate after receiver-type substitution and argument
 /// scoring. Named fields keep overload resolution readable as it evolves.
+/// One body's transfer-effect accumulation frame: the callable's key and
+/// its ordered parameter owners, so accepted outliving stores abstract to
+/// signature-relative effects.
+struct TransferFrame {
+    callable: String,
+    param_owners: Vec<crate::origin::OwnerId>,
+    /// Whether each parameter's convention borrows caller storage
+    /// (`mut`/`ref`) rather than owning a moved value.
+    param_borrowed: Vec<bool>,
+    self_owner: Option<crate::origin::OwnerId>,
+    effects: Vec<crate::checked::TransferEffect>,
+}
+
+/// Bundled collection mutators store an argument into `self` through
+/// pointer intrinsics the body-level store rule cannot see; their transfer
+/// effects are seeded here (the declared-metadata pattern used for interior
+/// projections) instead of inferred from bodies.
+fn seeded_transfer_effects() -> HashMap<String, Vec<crate::checked::TransferEffect>> {
+    use crate::origin::SigOrigin;
+    let effect = |src: usize| {
+        vec![crate::checked::TransferEffect {
+            dest: SigOrigin::Self_,
+            src: SigOrigin::Param(src),
+            // `var` element parameters own a moved value: only carried
+            // loans transfer, never the parameter slot's own storage.
+            src_is_place: false,
+            mutable: true,
+        }]
+    };
+    HashMap::from([
+        ("List.append".to_string(), effect(0)),
+        ("List.insert".to_string(), effect(1)),
+        ("List.__setitem__".to_string(), effect(1)),
+    ])
+}
+
 struct MethodCallResolution {
     conversion_score: usize,
     slots: Vec<ArgSlot>,

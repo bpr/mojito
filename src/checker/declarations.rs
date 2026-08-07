@@ -1016,6 +1016,27 @@ impl Checker {
         );
         self.aggregate_escape_contexts
             .push((self.scopes.len().saturating_sub(1), allowed));
+        let method_key = match self_ty {
+            Ty::Struct(struct_name, _) => format!("{struct_name}.{}", m.name),
+            _ => m.name.clone(),
+        };
+        self.transfer_frames.borrow_mut().push(TransferFrame {
+            callable: method_key,
+            param_owners: owners.clone(),
+            param_borrowed: m
+                .params
+                .iter()
+                .filter(|param| param.kind == crate::ast::ParamKind::Regular)
+                .map(|param| {
+                    matches!(
+                        param.convention,
+                        Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
+                    )
+                })
+                .collect(),
+            self_owner,
+            effects: Vec::new(),
+        });
         self.return_ref_contracts.push(ref_return.map(|signature| {
             (
                 signature,
@@ -1033,6 +1054,13 @@ impl Checker {
         let result = self.check_block(&m.body, Some(ret_ty), false);
         self.function_bases.pop();
         self.return_ref_contracts.pop();
+        if let Some(frame) = self.transfer_frames.borrow_mut().pop()
+            && !frame.effects.is_empty()
+        {
+            self.transfer_effects
+                .borrow_mut()
+                .insert(frame.callable, frame.effects);
+        }
         self.aggregate_escape_contexts.pop();
         self.self_mutable = saved;
         self.self_initializing = saved_initializing;

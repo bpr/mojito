@@ -365,3 +365,30 @@ fn inferred_polymorphic_recursion_reports_specialization_divergence() {
     assert!(message.contains("'wrap'"), "{message}");
     assert!(message.contains("did not converge"), "{message}");
 }
+
+#[test]
+fn callee_stores_transfer_loans_to_caller_bookkeeping() {
+    // A callee's accepted store of a loan-carrying value into a `mut`
+    // receiver or parameter records a transfer effect; call sites replay it,
+    // so returning the destination while a transferred loan roots at a local
+    // rejects at the return boundary. Runs through the compiler so the
+    // linked stdlib's seeded `List.append` effect participates.
+    let compiler = Compiler::default();
+    for source in [
+        // via the seeded stdlib effect
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef make() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var got = make()\n",
+        // via a transitively derived free-function effect
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef collect() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n",
+        // via a body-inferred user-method effect
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef steal() -> Holder:\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var local = [5]\n    holder.rebind_to(local)\n    return holder^\n\ndef main():\n    var got = steal()\n",
+    ] {
+        let error = compiler
+            .compile_unlinked(source)
+            .expect_err("transferred local-rooted loan must not escape");
+        assert!(
+            matches!(error, CompilerError::Type(_))
+                && error.to_string().contains("escapes storage"),
+            "{error}"
+        );
+    }
+}

@@ -4622,3 +4622,9 @@ fn origin_cast_cannot_upgrade_capability() {
     let src = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[Origin[mut=True].cast_from[o]] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
     assert!(matches!(err(src), TypeError::Unsupported(_)));
 }
+
+#[test]
+fn parameter_rooted_transfers_stay_accepted() {
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep = [4]\n    var got = fill(keep)\n";
+    assert!(check(&parse(src).expect("parse")).is_ok());
+}

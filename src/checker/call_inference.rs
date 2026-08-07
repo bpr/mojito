@@ -280,6 +280,8 @@ impl Checker {
         }
         let (ret, _, error) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
+        // Replay the callee's loan-transfer effects against the actuals.
+        self.apply_transfer_effects(name, None, args, &span)?;
         self.record_call_environment_effects(
             span.clone(),
             &ty,

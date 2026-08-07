@@ -435,15 +435,19 @@ impl Checker {
                                 }
                             }
                         }
-                        let (aggregate_origins, aggregate_field_origins) =
-                            if !matches!(target, Ty::Ref(_)) && self.type_may_carry_loans(&target) {
-                                (
-                                    self.aggregate_origins(value),
-                                    self.aggregate_field_origins(value),
-                                )
-                            } else {
-                                (Vec::new(), HashMap::new())
-                            };
+                        let (aggregate_origins, aggregate_field_origins) = if !matches!(
+                            target,
+                            Ty::Ref(_)
+                        ) && self
+                            .type_may_carry_loans(&target)
+                        {
+                            (
+                                self.aggregate_origins(value),
+                                self.aggregate_field_origins(value),
+                            )
+                        } else {
+                            (Vec::new(), HashMap::new())
+                        };
                         let target = match target {
                             Ty::Ref(reference) => *reference.referent,
                             other => other,
@@ -948,6 +952,10 @@ impl Checker {
                     {
                         return Err(TypeError::StoredReferenceEscapesOrigin);
                     }
+                    // Accepted: every origin is caller-visible. Record the
+                    // transfer so later call sites install the caller-side
+                    // loan this store implies.
+                    self.record_transfer_effect(place, &origins, &storage);
                 }
                 if let Some(Ty::Ref(expected_reference)) = &storage {
                     let initializes_reference =
@@ -1469,6 +1477,24 @@ impl Checker {
                             .filter_map(|param| self.lookup_owner(&param.name)),
                     );
                     self.aggregate_escape_contexts.push((base, allowed));
+                    self.transfer_frames.borrow_mut().push(TransferFrame {
+                        callable: name.clone(),
+                        param_owners: owners.clone(),
+                        param_borrowed: caller_regular
+                            .iter()
+                            .map(|param| {
+                                matches!(
+                                    param.convention,
+                                    Some(
+                                        crate::ast::ArgConvention::Mut
+                                            | crate::ast::ArgConvention::Ref
+                                    )
+                                )
+                            })
+                            .collect(),
+                        self_owner: None,
+                        effects: Vec::new(),
+                    });
                     self.return_ref_contracts.push(
                         ref_return
                             .clone()
@@ -1478,6 +1504,13 @@ impl Checker {
                     result = self.check_block(body, Some(&ret_ty), false);
                     self.named_result_context.pop();
                     self.return_ref_contracts.pop();
+                    if let Some(frame) = self.transfer_frames.borrow_mut().pop()
+                        && !frame.effects.is_empty()
+                    {
+                        self.transfer_effects
+                            .borrow_mut()
+                            .insert(frame.callable, frame.effects);
+                    }
                     self.aggregate_escape_contexts.pop();
                 }
                 // A function with a non-`None` return type must return on every

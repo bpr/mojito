@@ -567,6 +567,9 @@ pub struct CheckedProgram {
     statements: Vec<Stmt>,
     compatibility_overload_targets: HashMap<SourceSpan, String>,
     generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
+    /// Caller-substituted loan transfers per call occurrence, keyed by the
+    /// call expression's span; MIR lowering installs the implied loans.
+    call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
     compatibility_implicit_conversions: HashMap<SourceSpan, String>,
     checked_types: HashMap<AnnotationSite, Ty>,
     generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
@@ -654,6 +657,36 @@ pub(crate) enum GenericSite {
 }
 
 /// Checked declaration-level control facts: the raising contract and whether
+/// A loan-transfer effect inferred from a callable's body: an accepted store
+/// into an outliving destination (`self` or a parameter) whose loan roots at
+/// another parameter or `self`. Call sites replay the effect against their
+/// actuals, installing the caller-side loan the callee's store implies.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TransferEffect {
+    pub dest: crate::origin::SigOrigin,
+    pub src: crate::origin::SigOrigin,
+    /// Whether the loan roots at the source parameter's own (borrowed)
+    /// storage — a `mut`/`ref` actual's place is loaned at the call — as
+    /// opposed to loans merely carried by an owned value moving through.
+    pub src_is_place: bool,
+    pub mutable: bool,
+}
+
+/// One caller-substituted transfer at a call site: which actual receives
+/// loans rooted at which caller origins. MIR lowering installs the loans.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CheckedCallTransfer {
+    pub dest: CheckedTransferDest,
+    pub sources: Vec<crate::origin::Origin>,
+    pub mutable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CheckedTransferDest {
+    Receiver,
+    Argument(usize),
+}
+
 /// the declaration returns a reference. Recorded per callable so lowering
 /// never re-reads source `raises`/return annotations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -700,6 +733,7 @@ impl CheckedProgram {
         statements: Vec<Stmt>,
         overload_targets: HashMap<SourceSpan, String>,
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
+        call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
         checked_types: HashMap<AnnotationSite, Ty>,
         generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
@@ -762,6 +796,7 @@ impl CheckedProgram {
             statements,
             compatibility_overload_targets: overload_targets,
             generic_instantiations,
+            call_transfers,
             compatibility_implicit_conversions: implicit_conversions,
             checked_types,
             generic_parameters,
@@ -790,6 +825,11 @@ impl CheckedProgram {
     /// elaborator cannot re-infer on its own.
     pub fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
         &self.generic_instantiations
+    }
+
+    /// The caller-substituted loan transfers per call occurrence.
+    pub(crate) fn call_transfers(&self) -> &HashMap<SourceSpan, Vec<CheckedCallTransfer>> {
+        &self.call_transfers
     }
 
     /// Checker-selected converting constructor for an expression used in a
