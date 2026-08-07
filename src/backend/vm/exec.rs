@@ -1152,13 +1152,32 @@ impl VmBackend {
                 regs[dest.0 as usize] = simd_from_values(*dtype, *width, &vals)?;
             }
             MirInstr::Store { place, src } => {
-                let v = regs[src.0 as usize].clone();
+                let mut v = regs[src.0 as usize].clone();
                 if let Some(reference) =
                     self.extend_reference(&vars[place.root as usize], &place.proj, regs)?
                 {
-                    self.write_reference(&reference, frame_id, vars, v)?;
+                    // A `ref`-typed field behind an aliased root holds another
+                    // handle; the assignment writes through it into the
+                    // referent — the store twin of LoadPlace's second
+                    // dereference — never over the handle slot itself.
+                    let target = if matches!(place.ty, Some(Ty::Ref(_))) {
+                        match self.read_reference(&reference, frame_id, vars)? {
+                            handle @ Value::Ref { .. } => handle,
+                            _ => reference,
+                        }
+                    } else {
+                        reference
+                    };
+                    // The write lands through an alias in another frame's
+                    // storage; handles inside the written value that root in
+                    // this frame (a reference-bearing aggregate) must be
+                    // re-rooted at the storage they project through first, or
+                    // they dangle when this frame is disposed.
+                    self.canonicalize_value_references(frame_id, vars, &mut v);
+                    self.write_reference(&target, frame_id, vars, v)?;
                 } else if matches!(place.ty, Some(Ty::Ref(_))) {
                     let reference = load_place(vars, regs, place)?.clone();
+                    self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&reference, frame_id, vars, v)?;
                 } else {
                     self.store_at_place(prog, place, v, regs, vars)?;

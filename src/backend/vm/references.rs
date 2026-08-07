@@ -56,6 +56,67 @@ impl VmBackend {
     /// resolution against that surviving root. When nothing along the path is a
     /// stored handle, the result is the original `(frame, slot, projection)` — so a
     /// directly-returned handle and an ordinary local reference are unchanged.
+    /// Re-root every reference handle inside a value that is about to outlive
+    /// this frame — a returned value or a `mut` writeback — while the frame's
+    /// variables are still live. A handle rooted at borrowed storage outside
+    /// the frame is unchanged; one rooted here is re-rooted at the storage it
+    /// projects through, exactly like a directly returned handle.
+    pub(super) fn canonicalize_value_references(
+        &self,
+        current: FrameId,
+        current_variables: &[Value],
+        value: &mut Value,
+    ) {
+        match value {
+            Value::Ref {
+                frame,
+                slot,
+                projection,
+            } => {
+                let (new_frame, new_slot, new_projection) = self.canonical_reference_parts(
+                    current,
+                    current_variables,
+                    *frame,
+                    *slot,
+                    std::mem::take(projection),
+                );
+                *frame = new_frame;
+                *slot = new_slot;
+                *projection = new_projection;
+            }
+            Value::Struct {
+                fields,
+                value_params,
+                ..
+            } => {
+                for (_, field) in fields {
+                    self.canonicalize_value_references(current, current_variables, field);
+                }
+                for (_, parameter) in value_params {
+                    self.canonicalize_value_references(current, current_variables, parameter);
+                }
+            }
+            Value::ComptimeList(values) | Value::Tuple(values) => {
+                for element in values {
+                    self.canonicalize_value_references(current, current_variables, element);
+                }
+            }
+            Value::Variant { value, .. } => {
+                self.canonicalize_value_references(current, current_variables, value);
+            }
+            Value::Closure { captures, .. } => {
+                for capture in captures {
+                    self.canonicalize_value_references(
+                        current,
+                        current_variables,
+                        &mut capture.value,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn canonical_reference_parts(
         &self,
         current: FrameId,

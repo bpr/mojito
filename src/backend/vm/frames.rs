@@ -217,28 +217,13 @@ impl VmBackend {
                 MirTerm::FallOff | MirTerm::EscapeJump { .. } => Value::None,
             };
             // A reference returned by projecting through a stored handle (a
-            // `ref[origin]` field's element) is still rooted at this frame; re-root
-            // it at the borrowed storage while this frame's variables are live, so
-            // it survives the frame's disposal.
-            let returned = if let Value::Ref {
-                frame: reference_frame,
-                slot,
-                projection,
-            } = returned
-            {
-                let (reference_frame, slot, projection) = self.canonical_reference_parts(
-                    frame.id,
-                    &frame.variables,
-                    reference_frame,
-                    slot,
-                    projection,
-                );
-                Value::Ref {
-                    frame: reference_frame,
-                    slot,
-                    projection,
-                }
-            } else {
+            // `ref[origin]` field's element) — or buried inside a returned
+            // aggregate's reference fields — is still rooted at this frame;
+            // re-root it at the borrowed storage while this frame's variables
+            // are live, so it survives the frame's disposal.
+            let returned = {
+                let mut returned = returned;
+                self.canonicalize_value_references(frame.id, &frame.variables, &mut returned);
                 returned
             };
             if let Some(done) = self.finish_frame(prog, target, frame, returned)? {
@@ -267,13 +252,25 @@ impl VmBackend {
                 .and_then(|(_, function)| function.reg_types.get(&continuation.dest.0))
         });
         let value = self.materialize_checked_result(prog, value, target_ty)?;
+        // A written-back aggregate may carry reference handles rooted at this
+        // frame (a `ref` field rebound inside the callee); re-root them at the
+        // borrowed storage they project through before the frame is disposed,
+        // exactly like the returned-value path above.
+        let writebacks: Vec<_> = continuation
+            .writebacks
+            .into_iter()
+            .map(|(parameter, place)| {
+                let mut written = frame.variables[parameter].clone();
+                self.canonicalize_value_references(frame.id, &frame.variables, &mut written);
+                (place, written)
+            })
+            .collect();
         let caller = self.frames.last_mut().ok_or_else(|| {
             RuntimeError::Unsupported("vm: returning child has no caller frame".to_string())
         })?;
         caller.registers[continuation.dest.0 as usize] = value;
-        for (parameter, place) in continuation.writebacks {
-            *nav_mut(&mut caller.variables, &caller.registers, &place)? =
-                frame.variables[parameter].clone();
+        for (place, written) in writebacks {
+            *nav_mut(&mut caller.variables, &caller.registers, &place)? = written;
         }
         Ok(None)
     }
