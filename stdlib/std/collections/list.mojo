@@ -30,7 +30,7 @@ struct _ListIter[
 
 struct _ListOwnedIter[T: Movable](
     ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
-    Iterator where conforms_to(T, ImplicitlyDeletable),
+    Iterator,
     Movable,
 ):
     comptime Element = Self.T
@@ -47,9 +47,7 @@ struct _ListOwnedIter[T: Movable](
     def __len__(self) -> Int:
         return self.size - self.index
 
-    def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
-        Self.T, ImplicitlyDeletable
-    ):
+    def __next__(mut self) raises StopIteration -> Self.T:
         if self.index >= self.size:
             raise StopIteration()
         var result = self.data.take(self.index)
@@ -63,11 +61,17 @@ struct _ListOwnedIter[T: Movable](
             i += 1
         self.data.free()
 
+    def _finish(deinit self):
+        # Named destructor for the linear-element instantiation, which has no
+        # `__del__`: the compiler calls it on the loop's exhaustion edge, when
+        # every element has been moved out, so only the buffer remains.
+        self.data.free()
+
 struct List[T: Movable](
     Copyable where conforms_to(T, Copyable),
     ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
     Iterable where conforms_to(T, Copyable),
-    IterableOwned where conforms_to(T, ImplicitlyDeletable),
+    IterableOwned,
     Movable,
     Writable where conforms_to(T, Writable),
 ):
@@ -263,9 +267,7 @@ struct List[T: Movable](
         ref source = self
         return _ListIter[Self.T](source, 0)
 
-    def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
-        Self.T, ImplicitlyDeletable
-    ):
+    def __iter__(var self) -> _ListOwnedIter[Self.T]:
         var result = _ListOwnedIter[Self.T](self.data, self.size)
         self.data = UnsafePointer[Self.T].alloc(0)
         self.size = 0

@@ -51,7 +51,12 @@ struct Set[T: Equatable & Copyable & Movable](
         return len(self.items)
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        return self.items.__iter__()
+        # Construct the borrowed iterator directly: an explicit
+        # `self.items.__iter__()` call is ambiguous between the borrowed and
+        # owned overloads now that owned iteration is not gated on
+        # `ImplicitlyDeletable` elements.
+        ref source = self.items
+        return _ListIter[Self.T](source, 0)
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.T, Writable

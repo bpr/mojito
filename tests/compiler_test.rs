@@ -394,24 +394,26 @@ fn callee_stores_transfer_loans_to_caller_bookkeeping() {
 }
 
 #[test]
-fn owned_iteration_of_linear_elements_is_rejected_at_iterator_selection() {
-    // Baseline for the "Owned iteration of linear elements" roadmap item:
-    // through the linked stdlib, a linear (non-ImplicitlyDeletable) List is
-    // rejected before the checker's residual-escape guard because the bundled
-    // owned iterator's ImplicitlyDeletable gates filter out
-    // `__iter__(var self)`. Both the fully exhausting loop (which the guard
-    // itself would accept) and the escaping twin land on the same
-    // selection error today; lifting the gates graduates the first shape to
-    // acceptance and moves the second onto the guard's "residual elements"
-    // rejection.
+fn owned_iteration_of_linear_elements_requires_guaranteed_exhaustion() {
+    // "Owned iteration of linear elements": with the bundled owned iterator's
+    // `ImplicitlyDeletable` gates lifted, a linear List reaches the checker's
+    // residual-escape guard — the fully exhausting loop is accepted and
+    // executes (each element consumed by its named destructor), while the
+    // escaping twin rejects with the residual-obligation diagnostic instead
+    // of the old iterator-selection mismatch.
     let compiler = Compiler::default();
     let exhaustive = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, ImplicitlyDeletable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n";
     let escaping = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, ImplicitlyDeletable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n        break\n";
-    for source in [exhaustive, escaping] {
-        let error = compiler.compile_unlinked(source).expect_err("linear owned");
-        let CompilerError::Type(mojito::TypeError::TypeMismatch { context, .. }) = error else {
-            panic!("expected iterator-selection mismatch, got {error:?}");
-        };
-        assert_eq!(context, "for-loop iterator selection");
-    }
+    let program = compiler
+        .compile_unlinked(exhaustive)
+        .expect("linear exhaustive");
+    let execution = compiler.execute(&program).expect("execute");
+    assert_eq!(execution.output, "close 1\nclose 2\n");
+    let error = compiler
+        .compile_unlinked(escaping)
+        .expect_err("linear escaping");
+    let CompilerError::Type(mojito::TypeError::Unsupported(message)) = error else {
+        panic!("expected the residual-escape guard, got {error:?}");
+    };
+    assert!(message.contains("residual elements"));
 }
