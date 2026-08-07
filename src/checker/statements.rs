@@ -978,6 +978,14 @@ impl Checker {
                         return Err(TypeError::ImmutableBinding(
                             "immutable reference field".to_string(),
                         ));
+                    } else {
+                        // A write-through replaces the referent's value: run
+                        // the referent's consuming/copy analysis, which
+                        // out-self initialization deliberately skips — a `^`
+                        // transfer stays a move, and a Copyable place read
+                        // records its copy so the lowering runs the lifecycle
+                        // instead of sharing the source's storage.
+                        self.check_consuming(value, &found, "assignment target")?;
                     }
                 }
                 let ok = self.record_implicit_conversion(value, &found, &target)?;

@@ -1898,6 +1898,22 @@ impl Flatten<'_> {
                         reference: src,
                     });
                 } else {
+                    // A checked Copyable write-through runs the referent's
+                    // copy lifecycle before the store, so the written value
+                    // owns its storage instead of sharing the source's.
+                    let src = if matches!(p.ty, Some(Ty::Ref(_)))
+                        && self.checked_adjustments(value).iter().any(|adjustment| {
+                            matches!(adjustment, crate::SemanticAdjustment::CopyPlaceValue)
+                        }) {
+                        let copied = self.fresh(span(place), None);
+                        self.emit(MirInstr::CopyValue {
+                            dest: copied,
+                            value: src,
+                        });
+                        copied
+                    } else {
+                        src
+                    };
                     self.emit(MirInstr::Store { place: p, src });
                 }
             }
