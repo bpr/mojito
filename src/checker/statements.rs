@@ -217,6 +217,49 @@ impl Checker {
         selection
     }
 
+    /// The store-outward escape rule shared by ordinary place assignment and
+    /// unpack-into-place: a store whose destination roots at outliving
+    /// storage (a parameter or `self`) must not smuggle a frame-local loan
+    /// outward — the symmetric twin of the Return escape check. Rebinding a
+    /// `ref` destination counts even when the value type carries no loan:
+    /// the destination handle itself becomes the loan. An accepted store
+    /// records its transfer effect for call-site replay.
+    pub(super) fn check_outward_store(
+        &self,
+        place: &Expr,
+        value: &Expr,
+        found: &Ty,
+        storage: &Option<Ty>,
+    ) -> Result<(), TypeError> {
+        if let Some((_, allowed)) = self.aggregate_escape_contexts.last()
+            && place_root_name(place)
+                .and_then(|root| self.lookup_owner(root))
+                .is_some_and(|owner| allowed.contains(&owner))
+            && (self.type_carries_loans(found) || matches!(storage, Some(Ty::Ref(_))))
+        {
+            let mut origins = self.aggregate_origins(value);
+            // A rebinding store's loan roots at the right-hand place
+            // itself, which a plain value expression does not surface
+            // as an aggregate origin.
+            if matches!(storage, Some(Ty::Ref(_)))
+                && let Ok(rhs_place) = self.origin_place(value)
+            {
+                origins.push(crate::origin::Origin::Place(rhs_place));
+            }
+            if origins
+                .iter()
+                .any(|origin| self.aggregate_origin_escapes(origin))
+            {
+                return Err(TypeError::StoredReferenceEscapesOrigin);
+            }
+            // Accepted: every origin is caller-visible. Record the
+            // transfer so later call sites install the caller-side
+            // loan this store implies.
+            self.record_transfer_effect(place, &origins, storage);
+        }
+        Ok(())
+    }
+
     pub(super) fn check_stmt(
         &mut self,
         stmt: &Stmt,
@@ -810,7 +853,7 @@ impl Checker {
                 self.tuple_unpack_plans
                     .borrow_mut()
                     .insert(value.source_span(), unpack_plan);
-                for (target, elem) in targets.iter().zip(&elems) {
+                for (index, (target, elem)) in targets.iter().zip(&elems).enumerate() {
                     match &target.kind {
                         // `_` discards its element (no binding, no declaration).
                         ExprKind::Identifier(name) if name == "_" => {}
@@ -861,6 +904,20 @@ impl Checker {
                                     context: "unpacking into a place".to_string(),
                                 });
                             }
+                            // Store-outward twin for unpack-into-place. A
+                            // loan-carrying element cannot currently reach
+                            // here (rvalue unpack demands implicitly copyable
+                            // elements and place targets type-match exactly),
+                            // so this is defensive coverage that keeps the
+                            // boundary closed if those restrictions loosen.
+                            let element_value = match &value.kind {
+                                ExprKind::TupleLit(items) if items.len() == targets.len() => {
+                                    &items[index]
+                                }
+                                _ => value,
+                            };
+                            let storage = Some(target_ty.clone());
+                            self.check_outward_store(target, element_value, elem, &storage)?;
                         }
                     }
                     if let ExprKind::Identifier(name) = &target.kind
@@ -931,32 +988,7 @@ impl Checker {
                 // (augmented writes), and handle replacement or ref-append is
                 // not offered by any overload, so no collection store can
                 // install a frame-local handle.
-                if let Some((_, allowed)) = self.aggregate_escape_contexts.last()
-                    && place_root_name(place)
-                        .and_then(|root| self.lookup_owner(root))
-                        .is_some_and(|owner| allowed.contains(&owner))
-                    && (self.type_carries_loans(&found) || matches!(&storage, Some(Ty::Ref(_))))
-                {
-                    let mut origins = self.aggregate_origins(value);
-                    // A rebinding store's loan roots at the right-hand place
-                    // itself, which a plain value expression does not surface
-                    // as an aggregate origin.
-                    if matches!(&storage, Some(Ty::Ref(_)))
-                        && let Ok(rhs_place) = self.origin_place(value)
-                    {
-                        origins.push(crate::origin::Origin::Place(rhs_place));
-                    }
-                    if origins
-                        .iter()
-                        .any(|origin| self.aggregate_origin_escapes(origin))
-                    {
-                        return Err(TypeError::StoredReferenceEscapesOrigin);
-                    }
-                    // Accepted: every origin is caller-visible. Record the
-                    // transfer so later call sites install the caller-side
-                    // loan this store implies.
-                    self.record_transfer_effect(place, &origins, &storage);
-                }
+                self.check_outward_store(place, value, &found, &storage)?;
                 if let Some(Ty::Ref(expected_reference)) = &storage {
                     let initializes_reference =
                         self.self_initializing && place_root_name(place) == Some("self");

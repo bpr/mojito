@@ -533,3 +533,33 @@ fn augmented_assignment_replays_the_dunders_transfer_effects() {
         CompilerError::Type(mojito::TypeError::ReturnsReferenceToLocal)
     ));
 }
+
+#[test]
+fn unpack_into_place_faces_the_store_outward_guard() {
+    // Unpacking into fields of `self` runs the same store-outward rule as
+    // ordinary place assignment: a tuple element carrying a frame-local loan
+    // rejects with the escape diagnostic (previously this shape surfaced an
+    // incidental non-Copyable unpack error), while the parameter-rooted twin
+    // passes the guard and still lands on the pre-existing
+    // implicitly-copyable rvalue-unpack requirement.
+    let compiler = Compiler::default();
+    let escaping = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Pair:\n    var a: RefBox\n    var b: Int\n\n    def fill(mut self):\n        var local = [9]\n        ref alias = local\n        var pack = (RefBox(alias), 5)\n        self.a, self.b = pack^\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var pair = Pair(RefBox(whole), 0)\n    pair.fill()\n";
+    let error = compiler
+        .compile_unlinked(escaping)
+        .expect_err("escaping unpack");
+    assert!(matches!(
+        error,
+        CompilerError::Type(mojito::TypeError::StoredReferenceEscapesOrigin)
+    ));
+
+    let param_rooted = escaping.replace(
+        "    def fill(mut self):\n        var local = [9]\n        ref alias = local\n",
+        "    def fill(mut self, mut source: List[Int]):\n        ref alias = source\n",
+    );
+    let param_rooted = param_rooted.replace("pair.fill()", "var src = [9]\n    pair.fill(src)");
+    let error = compiler
+        .compile_unlinked(&param_rooted)
+        .expect_err("copyable wall");
+    let message = format!("{error}");
+    assert!(message.contains("implicitly copyable"), "{message}");
+}
