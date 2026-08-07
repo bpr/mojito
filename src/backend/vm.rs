@@ -781,7 +781,12 @@ impl VmBackend {
                         let Some(root) = returned.get(*slot) else {
                             return Err(error);
                         };
-                        self.read_reference_projection(root, projection)?
+                        self.read_reference_projection(
+                            current,
+                            current_variables,
+                            root,
+                            projection,
+                        )?
                     }
                 };
                 if self.has_copyinit {

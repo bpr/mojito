@@ -227,7 +227,12 @@ impl VmBackend {
         } = reference
             && *frame == current.0
         {
-            return self.read_reference_projection(&current_variables[*slot], projection);
+            return self.read_reference_projection(
+                current,
+                current_variables,
+                &current_variables[*slot],
+                projection,
+            );
         }
         let Value::Ref {
             frame,
@@ -246,7 +251,12 @@ impl VmBackend {
             .ok_or_else(|| {
                 RuntimeError::TypeError(format!("vm: stale reference to frame {frame}"))
             })?;
-        self.read_reference_projection(&owner.variables[*slot], projection)
+        self.read_reference_projection(
+            current,
+            current_variables,
+            &owner.variables[*slot],
+            projection,
+        )
     }
 
     pub(super) fn write_reference(
@@ -324,11 +334,19 @@ impl VmBackend {
     /// typed MIR pointer-index projection its heap semantics.
     pub(super) fn read_reference_projection(
         &self,
+        current: FrameId,
+        current_variables: &[Value],
         root: &Value,
         projection: &[RefProjection],
     ) -> Result<Value, RuntimeError> {
         let mut value = root.clone();
         for segment in projection {
+            // A `ref`-typed field mid-projection stores another handle; the
+            // remaining segments address its referent — chase the handle
+            // exactly like reference canonicalization does.
+            if let Value::Ref { .. } = &value {
+                value = self.read_reference(&value, current, current_variables)?;
+            }
             value = match (segment, value) {
                 (RefProjection::Field(name), Value::Struct { fields, .. }) => fields
                     .into_iter()

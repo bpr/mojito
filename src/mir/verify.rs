@@ -875,6 +875,14 @@ fn verify_subscript_receiver_place(
         Ty::Ref(reference) => reference.referent.as_ref(),
         other => other,
     };
+    // The loaded base register may legitimately stay reference-typed one
+    // level above its place (the VM's LoadPlace second dereference resolves
+    // it at runtime); peel exactly one level, symmetric with the storage
+    // peel above, so genuine mismatches still fail.
+    let found = match found {
+        Ty::Ref(reference) => reference.referent.as_ref(),
+        other => other,
+    };
     if !types_compatible(found, receiver) {
         errors.push(format!(
             "{prefix}: subscript receiver place type {receiver} does not match base value type {found}"

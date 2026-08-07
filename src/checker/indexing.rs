@@ -891,6 +891,15 @@ impl Checker {
         index: &Expr,
     ) -> Result<Ty, TypeError> {
         let obj_ty = self.infer(object)?;
+        // A reference-typed base (a `ref` field projected off a collection
+        // element, or reached through a binding) indexes its referent:
+        // select the subscript on the referent type; the VM reads through
+        // the handle at dispatch (the read twin of the ref-field store's
+        // second dereference).
+        let obj_ty = match obj_ty {
+            Ty::Ref(reference) => (*reference.referent).clone(),
+            other => other,
+        };
         self.prepare_index_argument(&obj_ty, index, "__getitem__", 0)?;
         // A generated Tuple declaration may occur later than the generic body
         // currently being checked (the bundled List slice overload is one such

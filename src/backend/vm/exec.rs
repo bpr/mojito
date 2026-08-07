@@ -628,6 +628,14 @@ impl VmBackend {
             }
             MirInstr::GetField { dest, base, field } => {
                 let base = regs[base.0 as usize].clone();
+                // A ref-typed base register holds a handle; field access
+                // addresses its referent (another read twin of the ref-field
+                // second dereference).
+                let base = if matches!(base, Value::Ref { .. }) {
+                    self.read_reference(&base, frame_id, vars)?
+                } else {
+                    base
+                };
                 regs[dest.0 as usize] = match &base {
                     Value::Slice {
                         start, end, step, ..
@@ -657,6 +665,14 @@ impl VmBackend {
                 intrinsic,
             } => {
                 let base_value = regs[base.0 as usize].clone();
+                // A ref-typed subscript base register holds a handle; the
+                // checked receiver is its referent (the read twin of the
+                // ref-field store's second dereference).
+                let base_value = if matches!(base_value, Value::Ref { .. }) {
+                    self.read_reference(&base_value, frame_id, vars)?
+                } else {
+                    base_value
+                };
                 if let Some(call) = call {
                     // A user struct with `__getitem__` is subscriptable: `c[i]` →
                     // `c.__getitem__(i)` (index passed as-is, not coerced to Int).
@@ -1215,11 +1231,41 @@ impl VmBackend {
                     match self.load_index_dunder(prog, place, regs, vars)? {
                         Some(v) => v,
                         None => {
-                            let value = load_place(vars, regs, place)?;
-                            if matches!(place.ty, Some(Ty::Ref(_))) {
-                                self.read_reference(&value, frame_id, vars)?
+                            // A projection crossing an INTERMEDIATE ref-typed
+                            // segment (`self.value.items` through a `ref`
+                            // field) cannot walk raw storage — route it
+                            // through the reference walk, which chases stored
+                            // handles mid-projection.
+                            let crosses_reference = place
+                                .projection_tys
+                                .iter()
+                                .rev()
+                                .skip(1)
+                                .any(|ty| matches!(ty, Ty::Ref(_)));
+                            if crosses_reference {
+                                let composed = Value::Ref {
+                                    frame: frame_id.0,
+                                    slot: place.root as usize,
+                                    projection: Vec::new(),
+                                };
+                                let composed = self
+                                    .extend_reference(&composed, &place.proj, regs)?
+                                    .expect("a composed root handle extends");
+                                let value = self.read_reference(&composed, frame_id, vars)?;
+                                if matches!(value, Value::Ref { .. })
+                                    && matches!(place.ty, Some(Ty::Ref(_)))
+                                {
+                                    self.read_reference(&value, frame_id, vars)?
+                                } else {
+                                    value
+                                }
                             } else {
-                                value.clone()
+                                let value = load_place(vars, regs, place)?;
+                                if matches!(place.ty, Some(Ty::Ref(_))) {
+                                    self.read_reference(&value, frame_id, vars)?
+                                } else {
+                                    value.clone()
+                                }
                             }
                         }
                     }
