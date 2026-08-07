@@ -457,19 +457,43 @@ fn linear_owned_iteration_requires_a_finishable_iterator() {
 }
 
 #[test]
-fn nested_def_captured_self_store_bypasses_the_escape_guard() {
-    // Graduation baseline for the diagnosed nested-def routing gap: a nested
-    // `def` capturing `mut self` stores a frame-local loan into a field of
-    // the enclosing receiver, and the checker accepts it — the nested Def
-    // frame's allowed-owner set omits captured outer owners, so the
-    // store-outward guard never fires and the VM later dies on a stale
-    // reference. Widening the nested frame's escape context flips this to
-    // the StoredReferenceEscapesOrigin rejection.
+fn nested_def_captured_self_store_faces_the_escape_guard() {
+    // The diagnosed nested-def routing gap, closed: a nested `def` capturing
+    // `mut self` stores a frame-local loan into a field of the enclosing
+    // receiver. The nested Def frame's allowed-owner set now includes the
+    // capture-reachable outer owners, so the store-outward guard fires and
+    // rejects what previously slipped through to a stale-reference crash at
+    // runtime.
     let compiler = Compiler::default();
     let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_local(mut self):\n        def install() {mut self}:\n            var local = [7]\n            ref alias = local\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n    print(holder.slot.value[0])\n";
-    compiler
+    let error = compiler
         .compile_unlinked(source)
-        .expect("currently accepted: the nested-def store bypasses the guard");
+        .expect_err("nested-def store");
+    assert!(matches!(
+        error,
+        CompilerError::Type(mojito::TypeError::StoredReferenceEscapesOrigin)
+    ));
+
+    // The parameter-rooted twin stays accepted: the loan the nested def
+    // installs roots at the enclosing method's `mut` parameter, which is
+    // caller-visible storage. (End-to-end execution of capture-installed
+    // reference reads is a recorded capture-channel residue.)
+    let param_rooted = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_param(mut self, mut source: List[Int]):\n        def install() {mut self, ref source}:\n            ref alias = source\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other = [5]\n    holder.stash_param(other)\n";
+    compiler
+        .compile_unlinked(param_rooted)
+        .expect("param-rooted nested-def store stays accepted");
+
+    // Frame balance: a store BESIDE (after) a nested def, in the method's own
+    // body, still faces the guard — the nested frame pushes and pops without
+    // disturbing the method's escape context.
+    let adjacent = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_local(mut self):\n        def helper(x: Int) -> Int:\n            return x\n        var local = [helper(7)]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n";
+    let error = compiler
+        .compile_unlinked(adjacent)
+        .expect_err("adjacent store");
+    assert!(matches!(
+        error,
+        CompilerError::Type(mojito::TypeError::StoredReferenceEscapesOrigin)
+    ));
 }
 
 #[test]

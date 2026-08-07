@@ -1476,6 +1476,13 @@ impl Checker {
                             .filter(|param| param.kind != crate::ast::ParamKind::Regular)
                             .filter_map(|param| self.lookup_owner(&param.name)),
                     );
+                    // A nested def can reach the enclosing callable's outliving
+                    // storage (`self`, parameters) through captures; stores
+                    // into those owners face the same store-outward rule, with
+                    // this def's own frame deciding source locality.
+                    if let Some((_, enclosing)) = self.aggregate_escape_contexts.last() {
+                        allowed.extend(enclosing.iter().copied());
+                    }
                     self.aggregate_escape_contexts.push((base, allowed));
                     self.transfer_frames.borrow_mut().push(TransferFrame {
                         callable: name.clone(),
