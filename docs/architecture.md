@@ -1883,6 +1883,39 @@ Writing requires an explicit `ref[origin]` whose `Origin` is mutable (or the
 ordinary `mut` convention). Call solving rejects any attempt to pass an
 immutable reference to that mutable contract, so capability cannot be escalated.
 
+### Cross-call transfer effects
+
+A callee that stores a loan-carrying value into `self` or a `mut`/`ref`
+parameter changes the caller's loan picture, so the checker owns that fact and
+replays it at every call. When the store-outward escape rule accepts such a
+store, the body records a `TransferEffect { dest, src, src_is_place, mutable }`
+in signature-origin terms (`Self_`/`Param(k)`) on the current callable's frame;
+the bundled `List.append`/`insert`/`__setitem__` are seeded directly because
+their pointer-mediated stores never reach that acceptance point. Effects live in
+a name-keyed side map (`"name"` / `"Struct.method"`) with single-pass
+declaration-order visibility — the stdlib is checked first, so its effects reach
+user code — a deliberate simplification over routing them through
+`DeclarationEffect` (a two-phase pass for method order and recursion is the
+recorded follow-up).
+
+Each call site with a matching effect substitutes the source actual's caller
+origins (its carried aggregate/reference origins, plus — only when
+`src_is_place`, i.e. the callee parameter is borrowed rather than owned — the
+actual's own place), enforces the store-outward escape rule across the boundary,
+merges the result into the destination actual's aggregate-origin bookkeeping so
+the checker's own return-escape analysis sees callee-installed loans, derives a
+transitive effect onto the enclosing callable when the destination roots at its
+parameter or receiver, and records a span-keyed
+`CheckedCallTransfer { dest, sources, mutable }` on `CheckedProgram` for MIR.
+Lowering installs a merged `EstablishLoans` on the destination actual's root
+variable after the call — union with existing loans, never replacement, so a
+second `append` extends the generation — skipping destinations rooted at the
+current function's own parameters, which the derived effect covers at the
+caller where the storage lives. Ownership and drop analysis then reject
+mutating or dropping the loan root while the stored alias lives and keep
+borrowed sources alive under carrier collections with no transfer-specific
+analysis code.
+
 ### Collection-owned interior origins
 
 An origin path may contain `Interior("tag")`, distinct from an unknown runtime

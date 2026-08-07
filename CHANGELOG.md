@@ -8,6 +8,29 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Cross-call reference lifecycle and loan transfer. A callee's accepted
+  store of a loan-carrying value into `self` or a `mut`/`ref` parameter
+  is now a checker-recorded transfer effect replayed at every call:
+  the store-outward escape rule fires across the call boundary, the
+  caller's own escape analysis sees callee-installed loans, wrapper
+  callables carry effects transitively outward, and MIR installs the
+  transferred loans on the destination actual so ownership analysis
+  rejects mutating or dropping the loan root while the stored alias
+  lives (naming both variables) and keeps a borrowed source alive while
+  a carrier collection holds a reference to it. Borrowed (`mut`/`ref`)
+  parameter sources loan the actual's own storage; owned parameters only
+  forward loans their moved values carry. The bundled
+  `List.append`/`insert`/`__setitem__` are seeded, so appending a
+  reference-carrying struct to a `List` is fully tracked. Alongside:
+  value writes through a `ref`-typed field run the referent's copy
+  lifecycle (non-`Copyable` writes reject, explicit `^` transfer stays
+  raw), chained element-referent subscripts (`sink[0].value[0]`) verify
+  and execute, and `capturing[_]` fields/elements retain the stored
+  closure's concrete capture-origin set so escaping captured locals
+  reject. v1 limits (permissive, recorded on the roadmap): effects use
+  declaration-order visibility, indirect calls and abstract dispatch
+  carry no effects, and destinations are tracked at root granularity.
+
 - Reference-carrier lowering fixes. A bare struct name as an explicit
   compile-time type argument (`List[RefBox]()`) no longer emits a
   phantom runtime value register, so locals binding collections of

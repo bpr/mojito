@@ -68,27 +68,23 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Cross-call reference lifecycle and loan transfer** — the
-  reference-carrier lowering gaps closed (bare type-argument identifiers
-  are erased from runtime param-arg emission; ref-typed field assignment
-  writes through the stored handle with a second dereference behind
-  aliased roots; values that outlive a frame re-root their interior
-  handles; capturing closures no longer erase their environment into
-  plain callable storage), leaving one coherent residue: effects that
-  cross a call boundary are invisible to the caller's per-function
-  analyses. Concretely: (1) a callee's store of a loan-carrying value
-  into a `mut` receiver or parameter installs no caller-side loan, so
-  the loan's root can be mutated or dropped while the stored alias
-  lives; (2) write-through of a heap-backed value through a `ref` field
-  shares the source's allocation instead of running the copy lifecycle;
-  (3) reading an element's referent through chained subscripts
-  (`sink[0].value[0]`) trips a subscript-receiver place-type verify
-  error; (4) a capturing closure's environment must be retained (not
-  just guarded) in storage types before callable field/element
-  invocation can land. Define the call-boundary loan/lifecycle contract
-  at the phase that owns it — likely checker-recorded transfer effects
-  consumed by the ownership and drops layers — rather than patching the
-  VM per shape.
+- [ ] **Cross-call transfer residues** — cross-call loan transfer landed
+  as checker-recorded transfer effects replayed at call sites (see the
+  `docs/features.md` Borrowing row and `docs/architecture.md`); v1 is
+  permissive-only where it lacks facts, and these are the recorded gaps:
+  effects use single-pass declaration-order visibility, so later
+  same-struct methods and recursion cycles carry no effects (fix is a
+  two-phase effects pass); indirect/function-value calls and abstract
+  dispatch without a concrete body carry no effects; destinations are
+  root-granular (interior-precise dests would tighten sibling-field
+  coexistence); invocation of a stored capturing-closure field/element
+  remains out of scope (storage types now retain the concrete
+  capture-origin set, so only the call-path plumbing is missing); the
+  chained-subscript verify fix peels the loaded register's `Ty::Ref` at
+  the check rather than retyping the register (retype only if a consumer
+  needs it); and one routing mystery — a method store adjacent to a
+  nested `def` can bypass the SetPlace acceptance guard — is unexplained
+  and deserves a probe.
 - [ ] **Owned iteration of linear elements** — in the owned path, permit a List
   of non-`ImplicitlyDeletable`/linear elements when every element is transferred
   by guaranteed exhaustion; reject only control-flow paths that can abandon a
