@@ -421,6 +421,7 @@ impl Flatten<'_> {
                         prepare: Vec::new(),
                         has_next: None,
                         next: None,
+                        finish: None,
                         exhaustion: None,
                     });
                 if let Some(origin) = &protocol.borrowed_origin {

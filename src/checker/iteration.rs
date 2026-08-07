@@ -245,6 +245,7 @@ impl Checker {
                     prepare: Vec::new(),
                     has_next: None,
                     next: None,
+                    finish: None,
                     exhaustion: None,
                 },
             )
@@ -317,6 +318,7 @@ impl Checker {
                                 crate::checked::CheckedResultAdapter::CopyIteratorReference,
                             ),
                         })),
+                        finish: None,
                         exhaustion: None,
                     },
                 ))
@@ -495,6 +497,7 @@ impl Checker {
                     context: "iterator '__next__' exhaustion contract".to_string(),
                 });
             }
+            let finish = self.owned_iteration_finisher(mode, element, it_ty, iname, iinfo)?;
             return Ok((
                 element.clone(),
                 crate::checked::IterationProtocol {
@@ -505,6 +508,7 @@ impl Checker {
                     prepare: vec![prepare_symbol],
                     has_next: None,
                     next: Some(Box::new(checked_next)),
+                    finish,
                     exhaustion: Some(exhaustion),
                 },
             ));
@@ -533,6 +537,7 @@ impl Checker {
                 context: "return type of iterator '__len__'".to_string(),
             });
         }
+        let finish = self.owned_iteration_finisher(mode, element, it_ty, iname, iinfo)?;
         Ok((
             element.clone(),
             crate::checked::IterationProtocol {
@@ -541,6 +546,7 @@ impl Checker {
                 borrowed_origin: None,
                 yield_interior,
                 prepare: vec![prepare_symbol],
+                finish,
                 has_next: Some(
                     if iinfo
                         .methods
@@ -556,6 +562,60 @@ impl Checker {
                 exhaustion: None,
             },
         ))
+    }
+
+    /// Select the named destructor consuming an exhausted owned iterator
+    /// whose element type is not implicitly deletable. Such an iterator is
+    /// itself linear — its `__del__`, which would destroy residual elements,
+    /// is exactly the capability linearity withholds — so the loop's
+    /// exhaustion edge must consume it explicitly through a
+    /// `_finish(deinit self)` named destructor. `None` when an implicit drop
+    /// is correct: borrowed mode, a deletable element, or an iterator with
+    /// its own unconditional destructor.
+    fn owned_iteration_finisher(
+        &self,
+        mode: crate::checked::IterationMode,
+        element: &Ty,
+        it_ty: &Ty,
+        iname: &str,
+        iinfo: &StructInfo,
+    ) -> Result<Option<Box<crate::checked::CheckedIteratorCall>>, TypeError> {
+        if !matches!(mode, crate::checked::IterationMode::Owned)
+            || self.is_implicitly_deletable(element)
+            || self.is_implicitly_deletable(it_ty)
+        {
+            return Ok(None);
+        }
+        let candidates = iinfo.methods.get("_finish");
+        let finisher = candidates.into_iter().flatten().find(|signature| {
+            signature.has_self
+                && matches!(
+                    signature.self_convention,
+                    Some(crate::ast::ArgConvention::Deinit)
+                )
+                && signature.params.is_empty()
+                && !signature.raises
+        });
+        let Some(signature) = finisher else {
+            return Err(TypeError::Unsupported(format!(
+                "owned iteration over non-ImplicitlyDeletable '{element}' needs an explicitly \
+                 finishable iterator: '{iname}' has no implicit destructor for this element \
+                 and no '_finish(deinit self)' named destructor to consume the exhausted \
+                 iterator"
+            )));
+        };
+        let target = if candidates.is_some_and(|methods| methods.len() > 1) {
+            method_lowered_name(iname, "_finish", signature)
+        } else {
+            format!("{iname}._finish")
+        };
+        Ok(Some(Box::new(crate::checked::CheckedIteratorCall {
+            target,
+            result_ty: Ty::None,
+            reference_result: None,
+            raises: None,
+            result_adapter: None,
+        })))
     }
 
     /// Instantiate one nullary iterator-protocol method exactly as an ordinary

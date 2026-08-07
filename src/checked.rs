@@ -263,6 +263,13 @@ pub struct IterationProtocol {
     pub prepare: Vec<String>,
     pub has_next: Option<String>,
     pub next: Option<Box<CheckedIteratorCall>>,
+    /// Named destructor consuming the exhausted iterator when the element
+    /// type is not implicitly deletable: such an iterator is itself linear
+    /// (its `__del__` would destroy residual elements), so the loop's
+    /// exhaustion edge calls this `_finish(deinit self)` target instead of
+    /// dropping the iterator slot. `None` whenever an implicit drop is
+    /// correct.
+    pub finish: Option<Box<CheckedIteratorCall>>,
     pub exhaustion: Option<Ty>,
 }
 

@@ -409,11 +409,49 @@ fn owned_iteration_of_linear_elements_requires_guaranteed_exhaustion() {
         .expect("linear exhaustive");
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "close 1\nclose 2\n");
+    let returning = escaping.replace("        break\n", "        return\n");
+    let raising = escaping.replace("        break\n", "        raise Exception()\n");
+    for source in [escaping.to_string(), returning, raising] {
+        let error = compiler
+            .compile_unlinked(&source)
+            .expect_err("linear escaping");
+        let CompilerError::Type(mojito::TypeError::Unsupported(message)) = error else {
+            panic!("expected the residual-escape guard, got {error:?}");
+        };
+        assert!(message.contains("residual elements"));
+        // The rejection names the element's declared obligation.
+        assert!(message.contains("(close Conn)"), "{message}");
+    }
+}
+
+#[test]
+fn linear_owned_iteration_requires_a_finishable_iterator() {
+    // A user-defined owned iterator that is itself linear (no implicit
+    // destructor) and yields linear elements must offer the
+    // `_finish(deinit self)` named destructor so the loop's exhaustion edge
+    // can consume it; without one the protocol rejects contextually. The
+    // deletable-iterator twin needs no finisher: its plain drop is correct.
+    let compiler = Compiler::default();
+    let unfinishable = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, ImplicitlyDeletable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\nstruct Drain(Iterator, ImplicitlyDeletable where False, Movable):\n    comptime Element = Conn\n    var remaining: Int\n\n    def __init__(out self, remaining: Int):\n        self.remaining = remaining\n\n    def __next__(mut self) raises StopIteration -> Conn:\n        if self.remaining == 0:\n            raise StopIteration()\n        self.remaining -= 1\n        return Conn(self.remaining)\n\nstruct Bucket(Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def __iter__(var self) -> Drain:\n        return Drain(self.count)\n\ndef main():\n    var bucket = Bucket(2)\n    for var item in bucket^:\n        item^.close()\n";
     let error = compiler
-        .compile_unlinked(escaping)
-        .expect_err("linear escaping");
+        .compile_unlinked(unfinishable)
+        .expect_err("unfinishable");
     let CompilerError::Type(mojito::TypeError::Unsupported(message)) = error else {
-        panic!("expected the residual-escape guard, got {error:?}");
+        panic!("expected the finisher requirement, got {error:?}");
     };
-    assert!(message.contains("residual elements"));
+    assert!(
+        message.contains("explicitly finishable iterator"),
+        "{message}"
+    );
+    assert!(message.contains("'Drain'"), "{message}");
+
+    let deletable_iterator = unfinishable.replace(
+        "struct Drain(Iterator, ImplicitlyDeletable where False, Movable):",
+        "struct Drain(Iterator, Movable):",
+    );
+    let program = compiler
+        .compile_unlinked(&deletable_iterator)
+        .expect("deletable iterator");
+    let execution = compiler.execute(&program).expect("execute");
+    assert_eq!(execution.output, "close 1\nclose 0\n");
 }

@@ -1817,8 +1817,19 @@ impl Checker {
                     && !self.is_implicitly_deletable(&binding_plan.binding_ty)
                     && block_can_escape_owned_iteration(body, 0)
                 {
+                    // Name the element's declared obligation so the rejection
+                    // says what each residual element still requires.
+                    let obligation = match &binding_plan.binding_ty {
+                        Ty::Struct(name, _) => self
+                            .structs
+                            .get(name)
+                            .and_then(|info| info.explicit_destroy_message.clone())
+                            .map(|message| format!(" ({message})"))
+                            .unwrap_or_default(),
+                        _ => String::new(),
+                    };
                     return Err(TypeError::Unsupported(format!(
-                        "owned iteration over non-ImplicitlyDeletable '{}' cannot exit early; its residual elements would require explicit destruction",
+                        "owned iteration over non-ImplicitlyDeletable '{}' cannot exit early; its residual elements would require explicit destruction{obligation}",
                         binding_plan.binding_ty
                     )));
                 }
