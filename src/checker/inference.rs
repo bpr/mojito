@@ -588,6 +588,21 @@ impl Checker {
                     list_element(expected).expect("list element"),
                 )
             }
+            // A capturing closure must not erase its environment into plain
+            // `def(...)` storage (a field or collection element): the stored
+            // value's capture origins would silently leave loan tracking.
+            // Call-position downward funargs deliberately keep the erasing
+            // coercion; only storage rejects it.
+            (
+                Ty::Func {
+                    environment: crate::origin::CallableEnvironment::Capturing(_),
+                    ..
+                },
+                Ty::Func {
+                    environment: crate::origin::CallableEnvironment::Default,
+                    ..
+                },
+            ) => false,
             _ => coerces(from, to),
         }
     }
@@ -1278,6 +1293,31 @@ impl Checker {
                 self.mark_reference_storage_uses(expression, expected);
             }
             return Ok(actual);
+        }
+        // A list literal bound to callable-element storage checks each
+        // element with the storage rule: a capturing closure must not erase
+        // its environment into plain `def(...)` element storage.
+        if let ExprKind::ListLit(values) = &expression.kind
+            && let Some(element) = list_element(expected)
+            && matches!(element, Ty::Func { .. } | Ty::GenericFunc { .. })
+        {
+            for (index, value) in values.iter().enumerate() {
+                let actual = self.infer_with_expected(value, element, record)?;
+                if !Self::storage_value_coerces(&actual, element) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: element.to_string(),
+                        found: actual.to_string(),
+                        context: format!("element {} of List", index + 1),
+                    });
+                }
+            }
+            if record {
+                self.record_collection_construction(expression.source_span(), expected);
+                self.expression_types
+                    .borrow_mut()
+                    .insert(expression.source_span(), expected.clone());
+            }
+            return Ok(expected.clone());
         }
         // Current Mojo solves direct collection-annotation holes from the
         // literal initializer (`List[_]`, bare `List`, `Dict[String, _]`). The
