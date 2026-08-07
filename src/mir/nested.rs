@@ -79,6 +79,7 @@ pub(super) fn lower_fn_nested(
         returns_reference,
         &ref_params,
         &[],
+        checked.call_transfers(),
     );
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
@@ -501,6 +502,7 @@ fn lower_nested_node(
                 .iter()
                 .map(|capture| capture.binding)
                 .collect::<Vec<_>>(),
+            checked.call_transfers(),
         );
         nf.n_params = ptys.len();
         for (slot, ty) in ptys.iter().enumerate() {

@@ -1462,6 +1462,7 @@ impl Flatten<'_> {
         region_var_types.extend(self.var_types.clone());
         {
             let mut fl = Flatten {
+                call_transfers: self.call_transfers.clone(),
                 f: &mut region,
                 cur: 0,
                 next_reg: self.next_reg,

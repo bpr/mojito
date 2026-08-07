@@ -50,6 +50,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         false,
         &[],
         &[],
+        &HashMap::new(),
     )
 }
 
@@ -624,6 +625,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
         false,
         &[],
         &[],
+        checked.call_transfers(),
     );
     // The synthetic module initializer returns nothing and never raises.
     toplevel_fn.ret_ty = Some(Ty::None);
@@ -758,6 +760,9 @@ struct Flatten<'a> {
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
     aggregate_loans: HashMap<VarId, Vec<MirLoan>>,
+    /// Checker-substituted loan transfers per call occurrence: after the
+    /// call, the destination actual's root receives the sources' loans.
+    call_transfers: HashMap<SourceSpan, Vec<crate::checked::CheckedCallTransfer>>,
     /// Names rebound more than once, or captured by a nested `def`. A pointer
     /// variable outside this set keeps one statically known loan place for its
     /// whole live range, so deref sites may substitute the owner place.
@@ -1414,6 +1419,7 @@ fn lower_cfg_nested(
     returns_reference: bool,
     reference_parameters: &[bool],
     capture_bindings: &[crate::origin::OwnerId],
+    call_transfers: &HashMap<SourceSpan, Vec<crate::checked::CheckedCallTransfer>>,
 ) -> MirFunction {
     let mut mir = MirFunction {
         blocks: Vec::new(),
@@ -1462,6 +1468,7 @@ fn lower_cfg_nested(
             overloads: overloads.clone(),
             checked_expressions: cfg.checked_expressions.clone(),
             checked_declarations: cfg.checked_declarations.clone(),
+            call_transfers: call_transfers.clone(),
             active_semantics: Vec::new(),
             aliases: HashMap::new(),
             runtime_aliases: reference_parameters

@@ -749,3 +749,28 @@ fn immutable_yield_iteration_still_conflicts_with_source_mutation() {
     let src = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[o]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        nums.items.append(7)\n        print(x)\n";
     assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
 }
+
+#[test]
+fn callee_installed_loans_conflict_with_source_mutation() {
+    // `rebind_to` stores a loan on its `mut source` parameter's storage into
+    // `self`; the call replays that effect, so mutating the source while the
+    // carrier lives conflicts, and the same program with the carrier's last
+    // use before the mutation stays accepted.
+    let conflicting = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other = [5]\n    holder.rebind_to(other)\n    other.append(6)\n    print(holder.slot.value[0])\n";
+    assert!(matches!(
+        own(conflicting),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
+
+    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other = [5]\n    holder.rebind_to(other)\n    print(holder.slot.value[0])\n    other.append(6)\n    print(other[1])\n";
+    assert!(own(after_last_use).is_ok());
+}
+
+#[test]
+fn transferred_carrier_loans_keep_the_source_alive() {
+    // The appended carrier's loan lands on the collection, so the drops pass
+    // keeps the borrowed source alive while the collection lives — the
+    // chained read executes without explicit source liveness.
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    print(sink[0].value[0])\n";
+    assert!(own(src).is_ok());
+}

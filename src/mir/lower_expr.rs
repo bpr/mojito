@@ -173,6 +173,102 @@ impl Flatten<'_> {
             })
     }
 
+    /// Install the caller-side loans a callee's transfer effects imply at
+    /// this call. The checker recorded the substituted sources per
+    /// occurrence; the destination actual's root var receives the merged
+    /// `EstablishLoans`, so ownership analysis sees mutation conflicts and
+    /// the drops pass keeps the loan roots alive while the carrier lives.
+    pub(super) fn install_call_transfers(
+        &mut self,
+        e: &Expr,
+        recv_place: Option<&MirPlace>,
+        arg_places: &[Option<MirPlace>],
+    ) {
+        let Some(transfers) = self.call_transfers.get(&e.source_span()).cloned() else {
+            return;
+        };
+        fn flatten(origin: &crate::origin::Origin, out: &mut Vec<crate::origin::OriginPlace>) {
+            match origin {
+                crate::origin::Origin::Place(place) => out.push(place.clone()),
+                crate::origin::Origin::Union(origins) => {
+                    for origin in origins {
+                        flatten(origin, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for transfer in transfers {
+            let dest_place = match transfer.dest {
+                crate::checked::CheckedTransferDest::Receiver => recv_place,
+                crate::checked::CheckedTransferDest::Argument(index) => {
+                    arg_places.get(index).and_then(|place| place.as_ref())
+                }
+            };
+            let Some(dest_root) = dest_place.map(|place| place.root) else {
+                continue;
+            };
+            // A destination rooted at one of THIS function's parameters is
+            // covered transitively: the enclosing callable's derived effect
+            // installs the loan at ITS caller, where the storage actually
+            // lives. Installing here would also read source vars the callee
+            // may already have moved.
+            if (dest_root as usize) < self.f.n_params {
+                continue;
+            }
+            let mut places = Vec::new();
+            for origin in &transfer.sources {
+                flatten(origin, &mut places);
+            }
+            // Merge with the destination's existing loans: a second transfer
+            // (a loop iteration, another append) extends the generation's
+            // loan set rather than replacing it.
+            let mut loans = self
+                .aggregate_loans
+                .get(&dest_root)
+                .cloned()
+                .unwrap_or_default();
+            let before = loans.len();
+            for origin in places {
+                let Some(canonical) = self.mir_interior_origin(&origin, None) else {
+                    continue;
+                };
+                if loans.iter().any(|loan| {
+                    loan.place.root == canonical.root
+                        && loan.interior.as_ref().map(|interior| &interior.path)
+                            == Some(&canonical.path)
+                }) || loans
+                    .iter()
+                    .any(|loan| loan.place.root == canonical.root && loan.interior.is_none())
+                {
+                    continue;
+                }
+                let place =
+                    MirPlace::root(canonical.root, self.var_types.get(&canonical.root).cloned());
+                let interior = canonical
+                    .path
+                    .iter()
+                    .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
+                    .then_some(canonical);
+                loans.push(MirLoan {
+                    place,
+                    mutable: transfer.mutable,
+                    interior,
+                });
+            }
+            if loans.is_empty() || loans.len() == before {
+                continue;
+            }
+            let marker = self.fresh_typed(e.source_span(), Some(dest_root), Ty::None);
+            self.aggregate_loans.insert(dest_root, loans.clone());
+            self.emit(MirInstr::EstablishLoans {
+                reference: dest_root,
+                loans,
+                marker,
+            });
+        }
+    }
+
     /// Construct an empty nominal collection and bind it to a synthetic slot so
     /// each checked mutating insertion can use the ordinary method-call ABI.
     pub(super) fn begin_nominal_collection(&mut self, expression: &Expr, target: &Ty) -> VarId {
@@ -984,6 +1080,7 @@ impl Flatten<'_> {
                 let d = self.fresh(span(e), None);
                 self.emit_call_invalidations(e, args, kwargs);
                 let capture_accesses = self.checked_call_capture_accesses(e);
+                let transfer_arg_places = arg_places.clone();
                 self.emit(MirInstr::Call {
                     dest: d,
                     func: FuncRef::named(&target),
@@ -996,6 +1093,7 @@ impl Flatten<'_> {
                     param_arg_regs,
                 });
                 self.emit_nested_closure_argument_keepalives(args, kwargs);
+                self.install_call_transfers(e, None, &transfer_arg_places);
                 d
             }
             ExprKind::Invoke {
@@ -1313,6 +1411,8 @@ impl Flatten<'_> {
                     .checked_call_contract(e)
                     .map(|contract| contract.param_decls)
                     .unwrap_or_default();
+                let transfer_recv_place = recv_place.clone();
+                let transfer_arg_places = arg_places.clone();
                 self.emit(MirInstr::MethodCall {
                     dest: d,
                     recv,
@@ -1339,6 +1439,7 @@ impl Flatten<'_> {
                     param_decls,
                 });
                 self.emit_nested_closure_argument_keepalives(args, kwargs);
+                self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
                 if explicit_destroy
                     && !implicitly_copied_receiver
                     && let Some(place) = self.try_place(receiver_expr)
