@@ -524,15 +524,22 @@ impl VmBackend {
                 })?;
                 bound[parameter - 1] = self.reference_to_place(caller, place)?;
             }
-            let receiver = if definition.ref_params.first().copied().unwrap_or(false) {
-                let place = recv_place.as_ref().ok_or_else(|| {
-                    RuntimeError::Unsupported(format!(
+            // A ref-returning method's result handle roots in its receiver's
+            // storage, so the receiver passes as a reference to the caller's
+            // live slot — including a read (immutable) receiver, whose frame
+            // value copy would otherwise root the handle in this dying frame.
+            // A receiver without a place (an rvalue chain) still passes by
+            // value for a read convention.
+            let receiver = match recv_place.as_ref() {
+                Some(place) => self.reference_to_place(caller, place)?,
+                None if !definition.ref_params.first().copied().unwrap_or(false) => {
+                    caller.registers[recv.0 as usize].clone()
+                }
+                None => {
+                    return Err(RuntimeError::Unsupported(format!(
                         "vm: mutable receiver for '{function_name}' must be a place"
-                    ))
-                })?;
-                self.reference_to_place(caller, place)?
-            } else {
-                caller.registers[recv.0 as usize].clone()
+                    )));
+                }
             };
             let mut call_args = Vec::with_capacity(bound.len() + 1);
             call_args.push(receiver);

@@ -8,6 +8,32 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Bound-generic monomorphization, Stage D: inferred applications. The
+  compiler's pipeline now iterates discover→elaborate→check to a fixpoint,
+  replaying each closed checker-recorded generic instantiation
+  (`DefSpecializationRequest`) at its exact call occurrence, so inferred
+  calls like `first_or(range(3, 7), -1)` run through concrete clones with
+  no erased dispatch at the call site. A request can only upgrade a call:
+  misaligned or non-closed arguments, occurrence conflicts from `comptime
+  for` unrolling, and drifted spans all keep the abstract path, and a hard
+  round cap reports inferred polymorphic recursion as the new
+  `CompilerError::SpecializationDivergence` diagnostic. A retained
+  bound-generic template now precedes its clones so an inferred recursive
+  clone can reference it under sequential name binding. The stage-composed
+  test seam stays request-free (Compiler-only machinery). Landing this
+  surfaced and fixed three latent concrete-path bugs that erased dispatch
+  had been masking: the drops pass now retains a direct ref-returning
+  method call's receiver storage until the handle's last register use (a
+  use-after-free reachable in plain concrete code); a ref-returning
+  method's receiver — including a read receiver — passes as a reference so
+  the returned handle roots in the caller's live slot; concrete scalar
+  receivers resolve the rounding dunders (`__floor__`/`__ceil__`/
+  `__trunc__`/`__ceildiv__`) to the same VM intrinsic the abstract
+  Floorable-family dispatch uses; and type-binding substitution now
+  rewrites the parser's bare-identifier (`Tuple[T, T]`) value-encoded
+  arguments in annotations, fixing explicit applications of generics with
+  parameterized signature types.
+
 - Bound-generic monomorphization, Stages A-C. Explicit concrete generic
   applications now clone and re-check the body with the concrete type
   substituted, matching real Mojo's per-instantiation model. Every comptime

@@ -1473,3 +1473,34 @@ fn explicit_bound_generic_application_iterates_concrete_collections() {
     let src = "def total[C: Iterable](c: C) -> Int:\n    var acc = 0\n    for item in c:\n        acc += item\n    return acc\n\ndef main():\n    var xs = [3, 4, 5]\n    print(total[List[Int]](xs))\n    var s: Set[Int] = Set[Int]()\n    s.add(30)\n    print(total[Set[Int]](s))\n";
     assert_eq!(run_compiled(src).unwrap(), "12\n30\n");
 }
+
+#[test]
+fn inferred_bound_generic_applications_monomorphize_end_to_end() {
+    // The checker-discovered instantiation replays through the compiler's
+    // discovery fixpoint: inferred stdlib and local calls run through concrete
+    // clones with unchanged results.
+    assert_eq!(
+        run_compiled(
+            "from std.algorithms import first_or\n\ndef main() raises:\n    print(first_or(range(3, 7), -1))\n"
+        )
+        .expect("inferred stdlib generic runs"),
+        "3\n"
+    );
+    assert_eq!(
+        run_compiled(
+            "def inner[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef outer[T: Copyable & Movable](x: T) -> T:\n    return inner(x)\n\ndef main():\n    print(outer(7))\n"
+        )
+        .expect("round-two inferred instantiation runs"),
+        "7\n"
+    );
+}
+
+#[test]
+fn raw_seam_executes_inferred_polymorphic_recursion_abstractly() {
+    // Only the authoritative `Compiler` owns the discovery fixpoint (and its
+    // divergence cap); the stage-composed seam stays request-free, so the
+    // program the compiler rejects as divergent executes here on the erased
+    // path.
+    let src = "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n";
+    assert_eq!(run(src).expect("abstract execution"), "0\n");
+}

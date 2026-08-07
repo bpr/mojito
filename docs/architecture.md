@@ -277,6 +277,23 @@ through the conformance oracle. Type packs, callable-value bindings, and
 types that do not round-trip to source syntax remain symbolic on the residual
 signature.
 
+Inferred applications reach the same clones through the compiler's discovery
+fixpoint: `Compiler::compile_linked` iterates elaborate→check, deriving
+`DefSpecializationRequest`s from the checker's recorded generic
+instantiations (closed arguments only, keyed by occurrence span with the
+phase-local syntax id stripped) and re-elaborating the original linked
+program with the accumulated monotone request set until a round discovers
+nothing new; a hard round cap reports inferred polymorphic recursion as a
+dedicated divergence diagnostic. Request seeding records each occurrence's
+target without queuing work; the clone job queues lazily when the soft
+resolution path fails on source arguments and consults the request — so a
+request can only upgrade a call from the abstract path, and a drifted or
+conflicting request (a `comptime for` unrolling duplicates one source
+occurrence) leaves the call abstract. A retained bound-generic template is
+emitted before its specializations because a clone may still reference the
+template abstractly (an inferred recursive call) and the checker binds
+top-level names sequentially.
+
 The important distinction is that the elaborator still owns compile-time AST
 rewriting, while function-body execution now goes through the MIR/VM path. The
 remaining expression evaluator in `src/comptime.rs` is not a second function

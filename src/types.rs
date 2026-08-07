@@ -406,6 +406,18 @@ pub enum TyArg {
     Origin(crate::origin::Origin),
 }
 
+impl TyArg {
+    /// The compile-time value this argument binds in a CTFE/elaboration
+    /// scope. Origins erase from runtime state and bind no value.
+    pub(crate) fn ct_value(&self) -> Option<CtValue> {
+        match self {
+            TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
+            TyArg::Val(value) => Some(value.clone()),
+            TyArg::Origin(_) => None,
+        }
+    }
+}
+
 impl fmt::Display for TyArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

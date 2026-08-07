@@ -2828,3 +2828,112 @@ fn specialized_runtime_pack_is_abi_only_and_binds_as_a_tuple() {
         "verified body types must not leak the ABI-only RuntimePack marker"
     );
 }
+
+/// The authoritative compiler pipeline's MIR — includes the iterated
+/// discover→elaborate→check fixpoint that monomorphizes inferred
+/// bound-generic applications, which the raw `check_program` seam skips.
+fn compiled_mir(src: &str) -> mojito::mir::MirProgram {
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let program = compiler
+        .compile_source(src, Path::new("mir_test.mojo"))
+        .expect("compile");
+    mojito::mir::lower_checked_program(program.checked())
+}
+
+fn function_names(mir: &mojito::mir::MirProgram) -> Vec<&str> {
+    mir.functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect()
+}
+
+#[test]
+fn inferred_bound_generic_call_monomorphizes_and_drops_the_template() {
+    let mir = compiled_mir(
+        "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident(2))\n",
+    );
+    let names = function_names(&mir);
+    assert!(
+        names.iter().any(|name| name.starts_with("ident$")),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"ident"), "{names:?}");
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main MIR")
+        .1;
+    let rendered = format!("{main:?}");
+    assert!(rendered.contains("ident$"), "{rendered}");
+}
+
+#[test]
+fn inferred_iteration_clone_uses_no_erased_iterator_dispatch() {
+    // The monomorphized clone of an inferred `first(xs, -1)` iterates
+    // `List[Int]` through the ordinary concrete borrowed protocol; no
+    // `__iterator_dispatch` shim remains at that call site. (The template body
+    // must also be abstractly valid — round one checks the retained template —
+    // so this uses the stdlib `first_or` shape.) This is the Stage-E
+    // retirement baseline for inferred applications.
+    let mir = compiled_mir(
+        "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item\n    return default\n\ndef main():\n    var xs = [3, 4, 5]\n    print(first(xs, -1))\n",
+    );
+    let names = function_names(&mir);
+    let clone = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("first$"))
+        .unwrap_or_else(|| panic!("first clone exists: {names:?}"));
+    let rendered = format!("{:?}", clone.1);
+    assert!(
+        !rendered.contains("__iterator_dispatch"),
+        "clone still dispatches abstractly: {rendered}"
+    );
+    assert!(!names.contains(&"first"), "{names:?}");
+}
+
+#[test]
+fn clone_interior_inferred_calls_reach_a_second_discovery_round() {
+    // `outer`'s request is discovered in round one; `inner`'s instantiation is
+    // recorded only inside the generated `outer$…` clone (a stamped source),
+    // so its request is discovered in round two — pinning clone-span
+    // stability across re-elaborations.
+    let mir = compiled_mir(
+        "def inner[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef outer[T: Copyable & Movable](x: T) -> T:\n    return inner(x)\n\ndef main():\n    print(outer(7))\n",
+    );
+    let names = function_names(&mir);
+    assert!(
+        names.iter().any(|name| name.starts_with("outer$")),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name.starts_with("inner$")),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"outer"), "{names:?}");
+    let outer_clone = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("outer$"))
+        .expect("outer clone")
+        .1;
+    let rendered = format!("{outer_clone:?}");
+    assert!(rendered.contains("inner$"), "{rendered}");
+}
+
+#[test]
+fn conflicting_unrolled_occurrences_stay_on_the_abstract_path() {
+    // `comptime for` unrolling duplicates one source occurrence with two
+    // incompatible instantiations; the discovery loop drops the occurrence and
+    // both calls keep the retained template's erased path.
+    let mir = compiled_mir(
+        "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n",
+    );
+    let names = function_names(&mir);
+    assert!(names.contains(&"ident"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("ident$")),
+        "{names:?}"
+    );
+}

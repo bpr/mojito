@@ -82,15 +82,23 @@ schema.
   a unique top-level name monomorphize per explicit concrete application
   with soft resolution — unresolvable references stay on the retained
   template's abstract erased-dispatch path, and a dead template keeps its
-  Mojo-style abstract pre-check. Remaining, in order: (D) monomorphize
-  inferred calls by feeding the recorded instantiation table through an
-  iterated discover→elaborate→check fixpoint (closed arguments only;
-  per-round fuel plus a hard round cap with a divergence diagnostic);
-  (E) retire erased `__trait_dispatch`/`__iterator_dispatch` use at
-  monomorphized sites and re-pin its coverage through the function-value
-  fallback — after E, re-confirm the remaining abstract-dispatch witnesses
-  before freezing the MIR schema. Residue that stays erased: function
-  values/indirect calls, overloaded generic names, and generic methods.
+  Mojo-style abstract pre-check. Inferred calls now monomorphize too: the
+  compiler iterates discover→elaborate→check to a fixpoint, replaying each
+  closed recorded instantiation at its exact occurrence (a request can only
+  upgrade a call — every mismatch, conflict, or non-closed argument keeps
+  the abstract path), with a hard round cap surfacing inferred polymorphic
+  recursion as a dedicated divergence diagnostic; `comptime for`-duplicated
+  occurrences with conflicting instantiations stay abstract, and a retained
+  template precedes its clones so an inferred recursive clone can reference
+  it. Remaining: (E) retire erased
+  `__trait_dispatch`/`__iterator_dispatch` use at monomorphized sites and
+  re-pin its coverage through the function-value fallback — after E,
+  re-confirm the remaining abstract-dispatch witnesses before freezing the
+  MIR schema. Residue that stays erased: function values/indirect calls,
+  overloaded generic names, generic methods, comptime-class inferred calls
+  (round-one elaboration errors before any table exists), open
+  instantiations, and abstract-body-invalid templates (round one checks the
+  retained template, Mojo's pre-check parity).
 - [ ] **Reference-escape analysis beyond returns** — return boundaries reject
   reference escapes, but storing a reference or a reference-bearing value (a
   manually held borrowing iterator, a closure that captured a loop reference)

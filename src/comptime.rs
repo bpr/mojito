@@ -109,6 +109,43 @@ impl TupleSpecializationRequest {
     }
 }
 
+/// One checker-discovered inferred application of a bound-generic `def`
+/// template. The pre-check elaborator cannot infer types, so the compiler's
+/// discovery loop replays the checker's resolved instantiation at the exact
+/// call occurrence. A request can only upgrade a call from the abstract
+/// erased-dispatch path to a concrete clone; any mismatch, misalignment, or
+/// collision is skipped and the call stays abstract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DefSpecializationRequest {
+    /// The call occurrence, stored without its phase-local syntax id.
+    occurrence: SourceSpan,
+    callee: String,
+    /// The checker's declaration-order argument list from `resolve_use_params`.
+    arguments: Vec<TyArg>,
+}
+
+impl DefSpecializationRequest {
+    pub(crate) fn new(occurrence: SourceSpan, callee: String, arguments: Vec<TyArg>) -> Self {
+        Self {
+            occurrence: occurrence.without_syntax(),
+            callee,
+            arguments,
+        }
+    }
+
+    pub(crate) fn occurrence(&self) -> &SourceSpan {
+        &self.occurrence
+    }
+
+    pub(crate) fn callee(&self) -> &str {
+        &self.callee
+    }
+
+    pub(crate) fn arguments(&self) -> &[TyArg] {
+        &self.arguments
+    }
+}
+
 /// Exact callable types which a generated public-Tuple declaration references
 /// through opaque compiler-only AST ids. Source `def(...)` annotations cannot
 /// encode all of this metadata, so the compiler passes this map directly to the
@@ -304,15 +341,24 @@ impl std::fmt::Display for ComptimeError {
 
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    elaborate_with_tuple_requests(program, &[])
+    elaborate_with_requests(program, &[], &[])
+}
+
+/// The top-level bound-generic template names of a linked program, as the
+/// elaborator will classify them. The compiler's discovery loop filters
+/// checker-recorded instantiations to these callees.
+pub(crate) fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> {
+    collect_bound_generic_templates(program)
 }
 
 /// Elaborate a program while materializing checker-discovered public `Tuple`
-/// specializations.  This is a crate-internal staging seam: ordinary callers use
-/// [`elaborate`], and the compiler's discovery loop supplies requests here.
-pub(crate) fn elaborate_with_tuple_requests(
+/// specializations and inferred bound-generic applications.  This is a
+/// crate-internal staging seam: ordinary callers use [`elaborate`], and the
+/// compiler's discovery loop supplies requests here.
+pub(crate) fn elaborate_with_requests(
     program: Vec<Stmt>,
     tuple_requests: &[TupleSpecializationRequest],
+    def_requests: &[DefSpecializationRequest],
 ) -> Result<Vec<Stmt>, ComptimeError> {
     let conformance =
         crate::checker::ConformanceOracle::from_program(&program).map_err(|error| {
@@ -366,7 +412,7 @@ pub(crate) fn elaborate_with_tuple_requests(
     let consts = elab.top_consts.borrow().clone();
     let materialized = materialize_block(elaborated, &consts);
     // Monomorphize comptime-dependent generic templates against their call sites.
-    let mut result = elab.monomorphize(materialized, tuple_requests)?;
+    let mut result = elab.monomorphize(materialized, tuple_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             crate::ast::stamp_source(std::slice::from_mut(statement), &source);
@@ -1765,7 +1811,13 @@ fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, r
         ParamArg::Named { value, .. } => {
             substitute_source_param_arg_binding(value, binding, replacement);
         }
-        ParamArg::Value(_) => {}
+        // The parser encodes a bare identifier argument (`Tuple[T, T]`) as a
+        // value expression; once the binding is concrete it is a type argument.
+        ParamArg::Value(expr) => {
+            if matches!(&expr.kind, ExprKind::Identifier(name) if name == binding) {
+                *argument = ParamArg::Type(replacement.clone());
+            }
+        }
     }
 }
 
@@ -1845,6 +1897,12 @@ fn runtime_pack_call_argument_indices(
     Ok(matched.positional_overflow)
 }
 
+/// The concrete clone a checker-discovered inferred application selects.
+struct DefCallTarget {
+    template: String,
+    vals: Vec<CtValue>,
+}
+
 /// The monomorphization worklist and its results.
 #[derive(Default)]
 struct Mono {
@@ -1871,6 +1929,9 @@ struct Mono {
     /// abstract path (an unresolvable call or a function-value use). The
     /// program rebuild keeps these templates alongside their specializations.
     retained: HashSet<String>,
+    /// Checker-discovered inferred bound-generic applications: call occurrence
+    /// (without its syntax id) → the concrete clone that call selects.
+    def_call_targets: HashMap<SourceSpan, DefCallTarget>,
 }
 
 impl Mono {
@@ -2774,9 +2835,7 @@ mod vm_bridge_tests {
 
 #[cfg(test)]
 mod tuple_request_tests {
-    use super::{
-        TupleSpecializationRequest, elaborate_with_tuple_requests, tuple_specialization_symbol,
-    };
+    use super::{TupleSpecializationRequest, elaborate_with_requests, tuple_specialization_symbol};
     use crate::ast::{ExprKind, StmtKind};
     use crate::types::tuple_type;
     use crate::{Ty, parse};
@@ -2821,9 +2880,10 @@ mod tuple_request_tests {
         let elements = vec![Ty::Int, Ty::String];
         let expected = tuple_specialization_symbol(&elements);
 
-        let elaborated = elaborate_with_tuple_requests(
+        let elaborated = elaborate_with_requests(
             parsed,
             &[TupleSpecializationRequest::bare_call(elements, occurrence)],
+            &[],
         )
         .expect("materialize checked Tuple specialization");
 
@@ -2853,9 +2913,10 @@ mod tuple_request_tests {
         let elements = vec![Ty::Int, Ty::Int];
         let expected = tuple_specialization_symbol(&elements);
 
-        let elaborated = elaborate_with_tuple_requests(
+        let elaborated = elaborate_with_requests(
             parsed,
             &[TupleSpecializationRequest::declaration(elements)],
+            &[],
         )
         .expect("materialize contextual Tuple declaration");
 
@@ -2878,14 +2939,178 @@ mod tuple_request_tests {
         let inner_symbol = tuple_specialization_symbol(&[Ty::Int]);
         let outer_symbol = tuple_specialization_symbol(&outer_elements);
 
-        let elaborated = elaborate_with_tuple_requests(
+        let elaborated = elaborate_with_requests(
             parsed,
             &[TupleSpecializationRequest::declaration(outer_elements)],
+            &[],
         )
         .expect("materialize nested Tuple specializations");
         let names = struct_names(&elaborated);
 
         assert!(names.contains(&inner_symbol.as_str()), "{names:?}");
         assert!(names.contains(&outer_symbol.as_str()), "{names:?}");
+    }
+}
+
+#[cfg(test)]
+mod def_request_tests {
+    use super::{DefSpecializationRequest, elaborate_with_requests};
+    use crate::ast::{ExprKind, StmtKind};
+    use crate::ct::CtValue;
+    use crate::types::TyArg;
+    use crate::{Ty, parse};
+
+    const TEMPLATE: &str = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\n";
+
+    /// The span of the one inferred (argument-less `[...]`) call to `callee`
+    /// inside `main`.
+    fn inferred_call_span(program: &[crate::Stmt], callee: &str) -> crate::token::SourceSpan {
+        fn find(expr: &crate::Expr, callee: &str) -> Option<crate::token::SourceSpan> {
+            let ExprKind::Call {
+                name,
+                param_args,
+                args,
+                ..
+            } = &expr.kind
+            else {
+                return None;
+            };
+            if name == callee && param_args.is_empty() {
+                return Some(expr.source_span());
+            }
+            args.iter().find_map(|argument| find(argument, callee))
+        }
+        program
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                StmtKind::Def { name, body, .. } if name == "main" => {
+                    body.iter().find_map(|statement| match &statement.kind {
+                        StmtKind::Expr(value) => find(value, callee),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .expect("test program contains the inferred call")
+    }
+
+    fn def_names(program: &[crate::Stmt]) -> Vec<&str> {
+        program
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Def { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn main_call_names(program: &[crate::Stmt]) -> Vec<String> {
+        fn collect(expr: &crate::Expr, out: &mut Vec<String>) {
+            if let ExprKind::Call { name, args, .. } = &expr.kind {
+                out.push(name.clone());
+                for argument in args {
+                    collect(argument, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for statement in program {
+            if let StmtKind::Def { name, body, .. } = &statement.kind
+                && name == "main"
+            {
+                for statement in body {
+                    if let StmtKind::Expr(value) = &statement.kind {
+                        collect(value, &mut out);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn closed_request_rewrites_the_inferred_call_and_drops_the_template() {
+        let source = format!("{TEMPLATE}def main():\n    print(ident(2))\n");
+        let parsed = parse(&source).expect("parse");
+        let occurrence = inferred_call_span(&parsed, "ident");
+        let request = DefSpecializationRequest::new(
+            occurrence,
+            "ident".to_string(),
+            vec![TyArg::Ty(Ty::Int)],
+        );
+
+        let elaborated = elaborate_with_requests(parsed, &[], &[request])
+            .expect("materialize the requested specialization");
+
+        let defs = def_names(&elaborated);
+        assert!(
+            defs.iter().any(|name| name.starts_with("ident$")),
+            "{defs:?}"
+        );
+        assert!(!defs.contains(&"ident"), "{defs:?}");
+        let calls = main_call_names(&elaborated);
+        assert!(
+            calls.iter().any(|name| name.starts_with("ident$")),
+            "{calls:?}"
+        );
+    }
+
+    #[test]
+    fn misaligned_request_is_skipped_and_the_template_retained() {
+        let source = format!("{TEMPLATE}def main():\n    print(ident(2))\n");
+        let parsed = parse(&source).expect("parse");
+        let occurrence = inferred_call_span(&parsed, "ident");
+        // A value argument cannot bind the type parameter `T`.
+        let request = DefSpecializationRequest::new(
+            occurrence,
+            "ident".to_string(),
+            vec![TyArg::Val(CtValue::Int(1))],
+        );
+
+        let elaborated = elaborate_with_requests(parsed, &[], &[request])
+            .expect("a skipped request must not fail elaboration");
+
+        let defs = def_names(&elaborated);
+        assert!(defs.contains(&"ident"), "{defs:?}");
+        assert!(
+            !defs.iter().any(|name| name.starts_with("ident$")),
+            "{defs:?}"
+        );
+        assert!(main_call_names(&elaborated).contains(&"ident".to_string()));
+    }
+
+    #[test]
+    fn requested_and_explicit_applications_share_one_clone() {
+        let source =
+            format!("{TEMPLATE}def main():\n    print(ident[Int](1))\n    print(ident(2))\n");
+        let parsed = parse(&source).expect("parse");
+        let occurrence = inferred_call_span(&parsed, "ident");
+        let request = DefSpecializationRequest::new(
+            occurrence,
+            "ident".to_string(),
+            vec![TyArg::Ty(Ty::Int)],
+        );
+
+        let elaborated = elaborate_with_requests(parsed, &[], &[request])
+            .expect("materialize the requested specialization");
+
+        let defs = def_names(&elaborated);
+        assert_eq!(
+            defs.iter()
+                .filter(|name| name.starts_with("ident$"))
+                .count(),
+            1,
+            "{defs:?}"
+        );
+        assert!(!defs.contains(&"ident"), "{defs:?}");
+        let calls = main_call_names(&elaborated);
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|name| name.starts_with("ident$"))
+                .count(),
+            2,
+            "{calls:?}"
+        );
     }
 }

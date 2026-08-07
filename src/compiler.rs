@@ -4,9 +4,10 @@ use crate::ast::ExprKind;
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
 use crate::comptime::{
-    ComptimeError, TupleSpecializationRequest, TupleTransformRequest, elaborate,
-    elaborate_with_tuple_requests, tuple_materialized_callables,
+    ComptimeError, DefSpecializationRequest, TupleSpecializationRequest, TupleTransformRequest,
+    bound_generic_template_names, elaborate, elaborate_with_requests, tuple_materialized_callables,
 };
+use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, RuntimeError, TypeError};
 use crate::module::{
     LinkOptions, ModuleError, inject_prelude, link_source_with_options, link_with_options,
@@ -49,6 +50,13 @@ pub enum CompilerError {
     /// violations, never user errors: the checker accepted the program, so an
     /// entry here means lowering produced metadata the backend must refuse.
     Verify(Vec<String>),
+    /// The iterated generic-instantiation discovery loop kept finding new
+    /// closed instantiations after the round cap — e.g. inferred polymorphic
+    /// recursion, where each clone requests one deeper instantiation.
+    SpecializationDivergence {
+        rounds: usize,
+        callee: String,
+    },
     Runtime(RuntimeError),
 }
 impl fmt::Display for CompilerError {
@@ -62,6 +70,12 @@ impl fmt::Display for CompilerError {
             Self::Verify(findings) => {
                 write!(f, "invalid checked program: {}", findings.join("; "))
             }
+            Self::SpecializationDivergence { rounds, callee } => write!(
+                f,
+                "generic specialization did not converge after {rounds} discovery rounds; \
+                 '{callee}' keeps requesting new instantiations (likely inferred polymorphic \
+                 recursion) — supply explicit compile-time arguments or bound the recursion"
+            ),
             Self::Runtime(error) => error.fmt(f),
         }
     }
@@ -156,30 +170,83 @@ impl Compiler {
     // backend does not lower a second time (touches the `Backend` contract).
     pub fn compile_linked(&self, linked: Vec<Stmt>) -> Result<CompiledProgram, CompilerError> {
         // Public `Tuple[*Ts]` is a nominal variadic struct, but the element
-        // types of a bare `Tuple(exprs...)` or tuple display are semantic facts:
-        // pre-check elaboration cannot infer arbitrary expression types. Run a
-        // discovery check first, then materialize exactly the requested tuple
-        // specializations and check the resulting ordinary structs/calls.
-        let discovery = elaborate(linked.clone()).map_err(CompilerError::Comptime)?;
-        if !self.allow_executable_module_scope {
-            validate_module_scope(&discovery).map_err(CompilerError::Type)?;
-        }
-        let discovered = check_program(&discovery).map_err(CompilerError::Type)?;
-        let tuple_requests = tuple_specialization_requests(&discovered);
-        let checked = if tuple_requests.is_empty() {
-            discovered
-        } else {
-            let elaborated = elaborate_with_tuple_requests(linked, &tuple_requests)
-                .map_err(CompilerError::Comptime)?;
+        // types of a bare `Tuple(exprs...)` or tuple display are semantic
+        // facts, and an inferred bound-generic call's instantiation is
+        // likewise resolved only by the checker: pre-check elaboration cannot
+        // infer arbitrary expression types. Iterate discovery to a fixpoint:
+        // each check pass may record new closed instantiations (a requested
+        // clone's body can itself contain inferred calls), so requests
+        // accumulate monotonically and each round re-elaborates the original
+        // linked program with the full set. Programs without generics converge
+        // after the first pass with no re-elaboration, and tuple-only programs
+        // keep their single re-elaboration; ownership and MIR verification run
+        // exactly once, on the fixpoint program.
+        const SPECIALIZATION_ROUNDS: usize = 5;
+        let templates = bound_generic_template_names(&linked);
+        let mut tuple_requests: Vec<TupleSpecializationRequest> = Vec::new();
+        let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
+        // Occurrences whose recordings conflicted across rounds; determinism
+        // should preclude this, but a poisoned key must stay abstract rather
+        // than oscillate.
+        let mut conflicted = std::collections::HashSet::new();
+        let mut last_new_callee = String::from("Tuple");
+        let mut checked = {
+            let discovery = elaborate(linked.clone()).map_err(CompilerError::Comptime)?;
+            if !self.allow_executable_module_scope {
+                validate_module_scope(&discovery).map_err(CompilerError::Type)?;
+            }
+            check_program(&discovery).map_err(CompilerError::Type)?
+        };
+        let mut converged = false;
+        for _round in 0..=SPECIALIZATION_ROUNDS {
+            let mut grew = false;
+            for request in tuple_specialization_requests(&checked) {
+                if !tuple_requests.contains(&request) {
+                    tuple_requests.push(request);
+                    grew = true;
+                }
+            }
+            for request in def_specialization_requests(&checked, &templates) {
+                if conflicted.contains(request.occurrence()) {
+                    continue;
+                }
+                match def_requests
+                    .iter()
+                    .position(|existing| existing.occurrence() == request.occurrence())
+                {
+                    None => {
+                        last_new_callee = request.callee().to_string();
+                        def_requests.push(request);
+                        grew = true;
+                    }
+                    Some(index) if def_requests[index] != request => {
+                        conflicted.insert(def_requests.remove(index).occurrence().clone());
+                    }
+                    Some(_) => {}
+                }
+            }
+            if !grew {
+                converged = true;
+                break;
+            }
+            let elaborated =
+                elaborate_with_requests(linked.clone(), &tuple_requests, &def_requests)
+                    .map_err(CompilerError::Comptime)?;
             if !self.allow_executable_module_scope {
                 validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
             }
-            crate::checker::check_program_with_materialized_callables(
+            checked = crate::checker::check_program_with_materialized_callables(
                 &elaborated,
                 tuple_materialized_callables(&tuple_requests),
             )
-            .map_err(CompilerError::Type)?
-        };
+            .map_err(CompilerError::Type)?;
+        }
+        if !converged {
+            return Err(CompilerError::SpecializationDivergence {
+                rounds: SPECIALIZATION_ROUNDS,
+                callee: last_new_callee,
+            });
+        }
         let mir = crate::mir::lower_checked_program(&checked);
         if !mir.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(mir.invariant_errors));
@@ -287,6 +354,78 @@ fn tuple_specialization_requests(checked: &CheckedProgram) -> Vec<TupleSpecializ
         }),
     );
     requests
+}
+
+/// The checker-recorded inferred bound-generic instantiations that are closed
+/// (fully concrete) and therefore replayable by elaboration. Conflicting
+/// recordings for one source occurrence — `comptime for` unrolling duplicates
+/// source spans across copies — drop the occurrence: those calls keep the
+/// abstract erased path, which is always correct. The result is sorted so
+/// request seeding, and therefore specialization order, is deterministic.
+fn def_specialization_requests(
+    checked: &CheckedProgram,
+    templates: &std::collections::HashSet<String>,
+) -> Vec<DefSpecializationRequest> {
+    use std::collections::hash_map::Entry;
+    let mut by_occurrence = std::collections::HashMap::new();
+    let mut conflicted = std::collections::HashSet::new();
+    for (span, instantiation) in checked.generic_instantiations() {
+        if !templates.contains(&instantiation.callee)
+            || !instantiation.arguments.iter().all(closed_generic_argument)
+        {
+            continue;
+        }
+        let request = DefSpecializationRequest::new(
+            span.clone(),
+            instantiation.callee.clone(),
+            instantiation.arguments.clone(),
+        );
+        let key = request.occurrence().clone();
+        if conflicted.contains(&key) {
+            continue;
+        }
+        match by_occurrence.entry(key) {
+            Entry::Occupied(existing) if *existing.get() != request => {
+                let (key, _) = existing.remove_entry();
+                conflicted.insert(key);
+            }
+            Entry::Occupied(_) => {}
+            Entry::Vacant(slot) => {
+                slot.insert(request);
+            }
+        }
+    }
+    let mut requests: Vec<DefSpecializationRequest> = by_occurrence.into_values().collect();
+    requests.sort_by(|a, b| {
+        let key = |request: &DefSpecializationRequest| {
+            (
+                request.occurrence().source.clone(),
+                request.occurrence().span.0,
+                request.occurrence().span.1,
+                request.callee().to_string(),
+            )
+        };
+        key(a).cmp(&key(b))
+    });
+    requests
+}
+
+/// Whether a recorded instantiation argument is concrete enough to replay.
+/// A top-level bare `CtValue::Param` is admitted: it is the checker's
+/// callable-value placeholder, which the elaborator's alignment walk consumes
+/// and drops (or rejects) — rejecting it here would wrongly exclude every
+/// call to a generic with a callable-value parameter. Origins erase from the
+/// runtime ABI and never gate replay.
+fn closed_generic_argument(argument: &TyArg) -> bool {
+    static EMPTY: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    let empty = EMPTY.get_or_init(std::collections::HashSet::new);
+    match argument {
+        TyArg::Ty(ty) => tuple_specialization_type_is_closed(ty),
+        TyArg::Val(CtValue::Param(_)) => true,
+        TyArg::Val(value) => tuple_specialization_value_is_closed_in(value, empty, empty),
+        TyArg::Origin(_) => true,
+    }
 }
 
 fn public_tuple_elements(ty: &Ty) -> Option<Vec<Ty>> {

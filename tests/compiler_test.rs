@@ -345,3 +345,23 @@ fn pipeline_verifies_typed_mir_before_execution() {
     assert!(rendered.contains("invalid checked program"));
     assert!(rendered.contains("register r1"));
 }
+
+#[test]
+fn inferred_polymorphic_recursion_reports_specialization_divergence() {
+    // Each discovery round's clone records one deeper `List[…]` instantiation,
+    // so the request set never stops growing; the round cap converts that into
+    // a dedicated diagnostic instead of an endless compile.
+    let compiler = Compiler::default();
+    let error = compiler
+        .compile_unlinked(
+            "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n",
+        )
+        .expect_err("inferred polymorphic recursion cannot converge");
+    assert!(
+        matches!(error, CompilerError::SpecializationDivergence { .. }),
+        "{error}"
+    );
+    let message = error.to_string();
+    assert!(message.contains("'wrap'"), "{message}");
+    assert!(message.contains("did not converge"), "{message}");
+}

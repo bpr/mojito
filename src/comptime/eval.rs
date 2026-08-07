@@ -228,11 +228,9 @@ impl<'a> Elab<'a> {
             "field_types" => {
                 let mut scope = outer_scope.clone();
                 for (decl, argument) in info.decls.iter().zip(arguments) {
-                    let value = match argument {
-                        TyArg::Ty(ty) => CtValue::Type(Box::new(ty.clone())),
-                        TyArg::Val(value) => value.clone(),
-                        // Origins erase from runtime state; they bind no CTFE value.
-                        TyArg::Origin(_) => continue,
+                    // Origins erase from runtime state; they bind no CTFE value.
+                    let Some(value) = argument.ct_value() else {
+                        continue;
                     };
                     scope.insert(decl.name().trim_start_matches('*').to_string(), value);
                 }
@@ -389,11 +387,9 @@ impl<'a> Elab<'a> {
 
         let mut type_scope = scope.clone();
         for (decl, argument) in info.decls.iter().zip(arguments) {
-            let value = match argument {
-                TyArg::Ty(ty) => CtValue::Type(Box::new(ty.clone())),
-                TyArg::Val(value) => value.clone(),
-                // Origins erase from runtime state; they bind no CTFE value.
-                TyArg::Origin(_) => continue,
+            // Origins erase from runtime state; they bind no CTFE value.
+            let Some(value) = argument.ct_value() else {
+                continue;
             };
             type_scope.insert(decl.name().trim_start_matches('*').to_string(), value);
         }

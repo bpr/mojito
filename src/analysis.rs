@@ -835,6 +835,16 @@ fn transfer_register_loans(
             object_place: Some(place),
             ..
         } if matches!(register_types.get(&dest.0), Some(crate::types::Ty::Ref(_))) => Some(place),
+        // A direct method call returning `ref T` (no adapter) is the same
+        // callee-produced transient handle as a reference subscript: the
+        // result register borrows the receiver's storage, which must outlive
+        // every consumer of the handle — not just the call instruction.
+        MirInstr::MethodCall {
+            reference_result: Some(_),
+            result_adapter: None,
+            recv_place: Some(place),
+            ..
+        } => Some(place),
         _ => None,
     };
     if let Some(place) = reference_subscript_place {

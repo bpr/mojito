@@ -504,9 +504,19 @@ impl<'a> Elab<'a> {
                         ) {
                             Ok((values, kept)) => (values, kept, false),
                             Err(error @ ComptimeError::GenericBound(_)) => return Err(error),
+                            // Source arguments could not resolve (an inferred
+                            // call or symbolic arguments): consult the
+                            // checker-discovered request for this occurrence
+                            // before falling back to the abstract path.
                             Err(_) => {
-                                mono.retained.insert(name.clone());
-                                return Ok(());
+                                match self.def_request_target(name, &source_span, param_args, mono)
+                                {
+                                    Some((values, kept)) => (values, kept, false),
+                                    None => {
+                                        mono.retained.insert(name.clone());
+                                        return Ok(());
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -748,6 +758,152 @@ impl<'a> Elab<'a> {
     /// supplies the element sequence when a specialized runtime pack is being
     /// forwarded into another heterogeneous collector; ordinary calls infer the
     /// sequence from their source expressions as before.
+    /// The `vals` a checker-recorded instantiation selects for a
+    /// bound-generic template, aligned with `resolve_spec_args_for`'s shape:
+    /// one value per elaborator-classified parameter, in declaration order —
+    /// so `mangle` and `mono.done` collide correctly with explicit
+    /// applications. The checker's declaration-order `TyArg` list is a strict
+    /// superset of that shape (it keeps callable-value parameters the
+    /// elaborator retains symbolically, and omits Origin/OriginSet binders).
+    /// `None` skips the request: a request can only upgrade a call from the
+    /// abstract path, never introduce a new error.
+    pub(super) fn def_request_values(
+        &self,
+        template: &Stmt,
+        arguments: &[TyArg],
+    ) -> Option<Vec<CtValue>> {
+        let StmtKind::Def { type_params, .. } = &template.kind else {
+            return None;
+        };
+        let mut vals = Vec::new();
+        let mut cursor = arguments.iter();
+        for parameter in type_params {
+            // Origin/OriginSet binders have no checker declaration slot.
+            if matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+                || parameter.is_origin_mutability_binder(type_params)
+            {
+                continue;
+            }
+            let argument = cursor.next()?;
+            if retained_specialization_param(parameter, type_params) {
+                // A thin/capturing callable-value parameter keeps a checker
+                // slot (a symbolic placeholder) but stays symbolic here.
+                match argument {
+                    TyArg::Val(CtValue::Param(_)) => continue,
+                    _ => return None,
+                }
+            }
+            let decl = classify_ct_param(parameter, type_params)?;
+            let value = match (&decl, argument) {
+                (
+                    ParamDecl::Type {
+                        variadic: false, ..
+                    },
+                    TyArg::Ty(ty),
+                ) => CtValue::Type(Box::new(ty.clone())),
+                (
+                    ParamDecl::Value {
+                        variadic: false,
+                        ty,
+                        ..
+                    },
+                    TyArg::Val(value),
+                ) => {
+                    if matches!(value, CtValue::Param(_)) || !ct_value_has_type(value, ty) {
+                        return None;
+                    }
+                    value.clone()
+                }
+                // Packs never reach here (they classify as comptime-class
+                // templates), and any other pairing is a drift signal.
+                _ => return None,
+            };
+            // Drift guard between the checker's conformance and this oracle:
+            // a dropped parameter's bounds are never re-validated later, so a
+            // disagreement must keep the call abstract rather than bake an
+            // unproven type into a clone.
+            if let ParamDecl::Type { bounds, .. } = &decl
+                && spec_type_param_substitution(&decl, &value).is_some()
+            {
+                let CtValue::Type(ty) = &value else {
+                    return None;
+                };
+                if bounds
+                    .iter()
+                    .any(|bound| self.conformance.require(ty, bound).is_err())
+                {
+                    return None;
+                }
+            }
+            vals.push(value);
+        }
+        if cursor.next().is_some() {
+            return None;
+        }
+        Some(vals)
+    }
+
+    /// The checker-requested clone for an inferred bound-generic call whose
+    /// source arguments could not resolve, plus the source arguments the
+    /// rewritten call keeps. `None` leaves the call on the abstract path.
+    fn def_request_target(
+        &self,
+        name: &str,
+        source_span: &SourceSpan,
+        param_args: &[ParamArg],
+        mono: &Mono,
+    ) -> Option<(Vec<CtValue>, Vec<ParamArg>)> {
+        let target = mono
+            .def_call_targets
+            .get(&source_span.clone().without_syntax())?;
+        if target.template != name {
+            // A span collision with a different callee (duplicated source
+            // provenance): stay abstract.
+            return None;
+        }
+        let template = self.specializable.get(name)?;
+        let kept = self.request_kept_param_args(template, name, param_args, &target.vals)?;
+        Some((target.vals.clone(), kept))
+    }
+
+    /// The source arguments a request-rewritten call retains: arguments bound
+    /// to symbolically retained parameters and to residual kept type
+    /// parameters. Dropped parameters' arguments are baked into the clone; a
+    /// kept parameter with no source argument contributes nothing (the
+    /// checker re-infers it against the clone's residual signature, and the
+    /// mangle already discriminates the identity).
+    fn request_kept_param_args(
+        &self,
+        template: &Stmt,
+        display_name: &str,
+        param_args: &[ParamArg],
+        vals: &[CtValue],
+    ) -> Option<Vec<ParamArg>> {
+        let StmtKind::Def { type_params, .. } = &template.kind else {
+            return None;
+        };
+        let bound = bind_spec_param_args(type_params, param_args, display_name).ok()?;
+        let mut kept = Vec::new();
+        let mut values = vals.iter();
+        for (parameter, arguments) in type_params.iter().zip(bound) {
+            if retained_specialization_param(parameter, type_params) {
+                kept.extend(arguments.into_iter().cloned());
+                continue;
+            }
+            let decl = classify_ct_param(parameter, type_params)?;
+            let value = values.next()?;
+            if matches!(decl, ParamDecl::Type { .. })
+                && spec_type_param_substitution(&decl, value).is_none()
+            {
+                kept.extend(arguments.into_iter().cloned());
+            }
+        }
+        if values.next().is_some() {
+            return None;
+        }
+        Some(kept)
+    }
+
     pub(super) fn resolve_spec_args_for(
         &self,
         template: &Stmt,
@@ -768,71 +924,7 @@ impl<'a> Elab<'a> {
             )));
         };
 
-        // Bind the source argument list before classifying anything away.  In
-        // particular, an infer-only Origin consumes no positional slot, and a
-        // pack consumes only the overflow left after required suffix binders.
-        // This is the source-layout invariant used again by
-        // `generate_def_spec`.
-        let mut bound: Vec<Vec<&ParamArg>> = vec![Vec::new(); type_params.len()];
-        let mut positional = Vec::new();
-        for argument in param_args {
-            if let ParamArg::Named { name, .. } = argument {
-                let Some(index) = type_params
-                    .iter()
-                    .position(|parameter| parameter.name.trim_start_matches('*') == name)
-                else {
-                    return Err(ComptimeError::Arity(format!(
-                        "generic '{display_name}' has no compile-time parameter named '{name}'"
-                    )));
-                };
-                if !bound[index].is_empty() {
-                    return Err(ComptimeError::Arity(format!(
-                        "generic '{display_name}' received compile-time parameter '{name}' more than once"
-                    )));
-                }
-                bound[index].push(argument);
-            } else {
-                positional.push(argument);
-            }
-        }
-
-        let required_suffix = |start: usize, bound: &[Vec<&ParamArg>]| {
-            type_params[start..]
-                .iter()
-                .zip(&bound[start..])
-                .filter(|(parameter, arguments)| {
-                    arguments.is_empty()
-                        && !parameter.infer_only
-                        && !parameter.name.starts_with('*')
-                        && parameter.default.is_none()
-                })
-                .count()
-        };
-        let mut next_positional = 0;
-        for index in 0..type_params.len() {
-            let parameter = &type_params[index];
-            if !bound[index].is_empty() || parameter.infer_only {
-                continue;
-            }
-            let remaining = positional.len() - next_positional;
-            let suffix = required_suffix(index + 1, &bound);
-            if parameter.name.starts_with('*') {
-                let take = remaining.saturating_sub(suffix);
-                bound[index].extend_from_slice(
-                    &positional[next_positional..next_positional.saturating_add(take)],
-                );
-                next_positional += take;
-            } else if remaining > suffix {
-                bound[index].push(positional[next_positional]);
-                next_positional += 1;
-            }
-        }
-        if next_positional != positional.len() {
-            return Err(ComptimeError::Arity(format!(
-                "generic '{display_name}' received {} unmatched compile-time argument(s)",
-                positional.len() - next_positional
-            )));
-        }
+        let bound = bind_spec_param_args(type_params, param_args, display_name)?;
 
         let mut vals = Vec::new();
         let mut kept_type_args = Vec::new();
@@ -984,4 +1076,77 @@ impl<'a> Elab<'a> {
         }
         Ok((vals, kept_type_args))
     }
+}
+
+/// Bind a call's source compile-time argument list to the template's
+/// parameters before classifying anything away. In particular, an infer-only
+/// Origin consumes no positional slot, and a pack consumes only the overflow
+/// left after required suffix binders. This is the source-layout invariant
+/// used again by `generate_def_spec`.
+fn bind_spec_param_args<'t>(
+    type_params: &[TypeParam],
+    param_args: &'t [ParamArg],
+    display_name: &str,
+) -> Result<Vec<Vec<&'t ParamArg>>, ComptimeError> {
+    let mut bound: Vec<Vec<&ParamArg>> = vec![Vec::new(); type_params.len()];
+    let mut positional = Vec::new();
+    for argument in param_args {
+        if let ParamArg::Named { name, .. } = argument {
+            let Some(index) = type_params
+                .iter()
+                .position(|parameter| parameter.name.trim_start_matches('*') == name)
+            else {
+                return Err(ComptimeError::Arity(format!(
+                    "generic '{display_name}' has no compile-time parameter named '{name}'"
+                )));
+            };
+            if !bound[index].is_empty() {
+                return Err(ComptimeError::Arity(format!(
+                    "generic '{display_name}' received compile-time parameter '{name}' more than once"
+                )));
+            }
+            bound[index].push(argument);
+        } else {
+            positional.push(argument);
+        }
+    }
+
+    let required_suffix = |start: usize, bound: &[Vec<&ParamArg>]| {
+        type_params[start..]
+            .iter()
+            .zip(&bound[start..])
+            .filter(|(parameter, arguments)| {
+                arguments.is_empty()
+                    && !parameter.infer_only
+                    && !parameter.name.starts_with('*')
+                    && parameter.default.is_none()
+            })
+            .count()
+    };
+    let mut next_positional = 0;
+    for index in 0..type_params.len() {
+        let parameter = &type_params[index];
+        if !bound[index].is_empty() || parameter.infer_only {
+            continue;
+        }
+        let remaining = positional.len() - next_positional;
+        let suffix = required_suffix(index + 1, &bound);
+        if parameter.name.starts_with('*') {
+            let take = remaining.saturating_sub(suffix);
+            bound[index].extend_from_slice(
+                &positional[next_positional..next_positional.saturating_add(take)],
+            );
+            next_positional += take;
+        } else if remaining > suffix {
+            bound[index].push(positional[next_positional]);
+            next_positional += 1;
+        }
+    }
+    if next_positional != positional.len() {
+        return Err(ComptimeError::Arity(format!(
+            "generic '{display_name}' received {} unmatched compile-time argument(s)",
+            positional.len() - next_positional
+        )));
+    }
+    Ok(bound)
 }

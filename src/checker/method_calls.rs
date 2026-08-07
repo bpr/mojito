@@ -477,6 +477,54 @@ impl Checker {
                     param_decls: vec![],
                 }))
             }
+            // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
+            // conforming to the granting rounding trait is the same VM
+            // intrinsic the abstract Floorable/Ceilable/Truncable/CeilDivable
+            // dispatch uses; a monomorphized clone of the self-hosted `math`
+            // generics resolves it directly (roadmap milestone 7).
+            _ if math_dunder_bound(method, args.len())
+                .iter()
+                .any(|bound| self.conforms_to(&obj_ty, bound)) =>
+            {
+                let slots = if args.is_empty() {
+                    vec![]
+                } else {
+                    let tys = self.builtin_args(method, 1, args)?;
+                    if tys[0] != obj_ty {
+                        return Err(TypeError::TypeMismatch {
+                            expected: obj_ty.to_string(),
+                            found: tys[0].to_string(),
+                            context: format!("argument to '{method}'"),
+                        });
+                    }
+                    vec![crate::call::ArgSlot::Positional(0)]
+                };
+                Ok(Some(MethodCallResolution {
+                    conversion_score: 0,
+                    conventions: vec![None; slots.len()],
+                    param_types: if args.is_empty() {
+                        vec![]
+                    } else {
+                        vec![obj_ty.clone()]
+                    },
+                    slots,
+                    positional_overflow: vec![],
+                    keyword_overflow: vec![],
+                    variadic_element: None,
+                    keyword_element: None,
+                    self_convention: None,
+                    return_type: obj_ty.clone(),
+                    result_adapter: None,
+                    raises: false,
+                    error: None,
+                    mutates_receiver: false,
+                    consumes_receiver: false,
+                    lowered_name: None,
+                    ref_params: vec![],
+                    ref_return: None,
+                    param_decls: vec![],
+                }))
+            }
             _ => Ok(None),
         };
         let resolved = match resolved {

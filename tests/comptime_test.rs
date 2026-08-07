@@ -881,3 +881,12 @@ fn bound_generic_template_survives_for_inferred_calls() {
     let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident[Int](1))\n    print(ident(2))\n";
     assert_eq!(run(src).unwrap(), "1\n2\n");
 }
+
+#[test]
+fn conflicting_unrolled_inferred_calls_keep_the_abstract_path() {
+    // Two `comptime for` copies share one source occurrence with different
+    // inferred instantiations; both stay on the retained template's erased
+    // dispatch and still run.
+    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n";
+    assert_eq!(run(src).unwrap(), "1\ns\n");
+}

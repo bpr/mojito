@@ -12,6 +12,7 @@ impl<'a> Elab<'a> {
         &self,
         program: Vec<Stmt>,
         tuple_requests: &[TupleSpecializationRequest],
+        def_requests: &[DefSpecializationRequest],
     ) -> Result<Vec<Stmt>, ComptimeError> {
         if self.specializable.is_empty() && tuple_requests.is_empty() {
             return Ok(program);
@@ -68,6 +69,30 @@ impl<'a> Elab<'a> {
                     whole_pack_abi: false,
                 });
             }
+        }
+        // Checker-discovered inferred bound-generic applications. Seeding only
+        // records each occurrence's target; the Job queues lazily at the
+        // consult hit in `mono_expr`, so a drifted request produces no dead
+        // clone and a never-matched request leaves its template correctly
+        // retained. The compiler already resolved occurrence conflicts, so a
+        // duplicate here keeps the first target (defensive).
+        for request in def_requests {
+            let callee = request.callee();
+            if !self.bound_generics.contains(callee) {
+                continue;
+            }
+            let Some(template) = self.specializable.get(callee) else {
+                continue;
+            };
+            let Some(vals) = self.def_request_values(template, request.arguments()) else {
+                continue;
+            };
+            mono.def_call_targets
+                .entry(request.occurrence().clone())
+                .or_insert_with(|| DefCallTarget {
+                    template: callee.to_string(),
+                    vals,
+                });
         }
         // Rewrite call sites in every non-template statement, seeding the
         // worklist. A bound-generic template's body is live code whether the
@@ -138,22 +163,25 @@ impl<'a> Elab<'a> {
             };
             let generated = mono.generated.remove(&template_name);
             let monomorphized = generated.is_some();
+            // A comptime-class template either specialized or is a dead
+            // generic, dropped either way. A bound-generic template survives
+            // while any reference stays on its abstract path — and when it has
+            // no references at all, keeping the uninstantiated body's
+            // Mojo-style pre-check. A retained template precedes its
+            // specializations: a clone may still reference the template
+            // abstractly (an inferred recursive call), and the checker binds
+            // top-level names sequentially.
+            if self.bound_generics.contains(&template_name)
+                && (mono.retained.contains(&template_name) || !monomorphized)
+            {
+                out.push(stmt);
+            }
             if let Some(mut specs) = generated {
                 specs.reverse();
                 if template_name == "Tuple" {
                     specs = self.order_tuple_specializations(specs)?;
                 }
                 out.extend(specs);
-            }
-            // A comptime-class template either specialized or is a dead
-            // generic, dropped either way. A bound-generic template survives
-            // while any reference stays on its abstract path — and when it has
-            // no references at all, keeping the uninstantiated body's
-            // Mojo-style pre-check.
-            if self.bound_generics.contains(&template_name)
-                && (mono.retained.contains(&template_name) || !monomorphized)
-            {
-                out.push(stmt);
             }
         }
         Ok(out)
