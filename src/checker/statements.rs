@@ -1495,6 +1495,9 @@ impl Checker {
                         self_owner: None,
                         effects: Vec::new(),
                     });
+                    self.raise_observation_frames
+                        .borrow_mut()
+                        .push((self.handled_raise_depth, false));
                     self.return_ref_contracts.push(
                         ref_return
                             .clone()
@@ -1504,6 +1507,7 @@ impl Checker {
                     result = self.check_block(body, Some(&ret_ty), false);
                     self.named_result_context.pop();
                     self.return_ref_contracts.pop();
+                    self.raise_observation_frames.borrow_mut().pop();
                     if let Some(frame) = self.transfer_frames.borrow_mut().pop()
                         && !frame.effects.is_empty()
                     {
@@ -1819,20 +1823,21 @@ impl Checker {
                 {
                     // Name the element's declared obligation so the rejection
                     // says what each residual element still requires.
-                    let obligation = match &binding_plan.binding_ty {
-                        Ty::Struct(name, _) => self
-                            .structs
-                            .get(name)
-                            .and_then(|info| info.explicit_destroy_message.clone())
-                            .map(|message| format!(" ({message})"))
-                            .unwrap_or_default(),
-                        _ => String::new(),
-                    };
+                    let obligation = self.residual_obligation_suffix(&binding_plan.binding_ty);
                     return Err(TypeError::Unsupported(format!(
                         "owned iteration over non-ImplicitlyDeletable '{}' cannot exit early; its residual elements would require explicit destruction{obligation}",
                         binding_plan.binding_ty
                     )));
                 }
+                // A linear-element body must also be free of unhandled raising
+                // calls: the syntactic walk above sees only `raise` statements,
+                // while a propagating call error abandons the residuals just
+                // the same. Observed while the body checks (a `try`-handled
+                // call is contained and does not mark).
+                let linear_element = (source_mode == crate::checked::IterationMode::Owned
+                    && binding_plan.action == crate::checked::IterationBindingAction::MoveValue
+                    && !self.is_implicitly_deletable(&binding_plan.binding_ty))
+                .then(|| binding_plan.binding_ty.clone());
                 let binding_ty = binding_plan.binding_ty.clone();
                 protocol.binding = Some(Box::new(binding_plan.clone()));
                 self.iteration_protocols
@@ -1848,13 +1853,31 @@ impl Checker {
                         .bindings
                         .insert(stmt.source_span());
                 }
+                if linear_element.is_some() {
+                    let baseline = self.handled_raise_depth;
+                    self.raise_observation_frames
+                        .borrow_mut()
+                        .push((baseline, false));
+                }
                 let result = (|| {
                     self.declare_with_mutability(var, binding_ty, binding_plan.mutable)?;
                     self.record_statement_binding(stmt, var);
                     self.check_block(body, ret, true)
                 })();
                 self.pop_scope();
+                let raised = linear_element.is_some()
+                    && self
+                        .raise_observation_frames
+                        .borrow_mut()
+                        .pop()
+                        .is_some_and(|(_, flag)| flag);
                 result?;
+                if raised && let Some(element) = linear_element {
+                    let obligation = self.residual_obligation_suffix(&element);
+                    return Err(TypeError::Unsupported(format!(
+                        "owned iteration over non-ImplicitlyDeletable '{element}' cannot contain an unhandled raising call; a propagating error would abandon its residual elements{obligation}",
+                    )));
+                }
                 if let Some(body) = orelse {
                     self.check_scoped_block(body, ret, in_loop)?;
                 }

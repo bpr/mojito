@@ -564,6 +564,21 @@ impl Checker {
         ))
     }
 
+    /// The parenthesized `@explicit_destroy` obligation of an element type,
+    /// appended to residual-abandonment diagnostics so the rejection names
+    /// what each abandoned element still requires; empty when undeclared.
+    pub(super) fn residual_obligation_suffix(&self, ty: &Ty) -> String {
+        match ty {
+            Ty::Struct(name, _) => self
+                .structs
+                .get(name)
+                .and_then(|info| info.explicit_destroy_message.clone())
+                .map(|message| format!(" ({message})"))
+                .unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
     /// Select the named destructor consuming an exhausted owned iterator
     /// whose element type is not implicitly deletable. Such an iterator is
     /// itself linear — its `__del__`, which would destroy residual elements,

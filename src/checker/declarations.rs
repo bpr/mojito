@@ -1037,6 +1037,9 @@ impl Checker {
             self_owner,
             effects: Vec::new(),
         });
+        self.raise_observation_frames
+            .borrow_mut()
+            .push((self.handled_raise_depth, false));
         self.return_ref_contracts.push(ref_return.map(|signature| {
             (
                 signature,
@@ -1054,6 +1057,7 @@ impl Checker {
         let result = self.check_block(&m.body, Some(ret_ty), false);
         self.function_bases.pop();
         self.return_ref_contracts.pop();
+        self.raise_observation_frames.borrow_mut().pop();
         if let Some(frame) = self.transfer_frames.borrow_mut().pop()
             && !frame.effects.is_empty()
         {

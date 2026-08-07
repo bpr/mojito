@@ -23,6 +23,9 @@ impl Checker {
 
         let scope_base = self.scopes.len();
         let mut bindings = Vec::new();
+        self.raise_observation_frames
+            .borrow_mut()
+            .push((self.handled_raise_depth, false));
         let result = (|| {
             for clause in clauses {
                 match clause {
@@ -84,6 +87,22 @@ impl Checker {
                     crate::ast::ComprehensionClause::If(condition) => {
                         self.register_named_bindings(condition)?;
                         self.expect_bool(condition, "comprehension filter")?;
+                        // A filter creates a non-consuming path: an element the
+                        // condition skips is dropped without its explicit
+                        // destructor, which a linear binder cannot permit.
+                        if let Some(linear) = bindings.iter().find(|binding| {
+                            !binding.implicitly_deletable
+                                && matches!(
+                                    binding.plan.action,
+                                    crate::checked::IterationBindingAction::MoveValue
+                                )
+                        }) {
+                            let obligation = self.residual_obligation_suffix(&linear.ty);
+                            return Err(TypeError::Unsupported(format!(
+                                "a comprehension filter would abandon skipped non-ImplicitlyDeletable '{}' elements without explicit destruction{obligation}",
+                                linear.ty
+                            )));
+                        }
                     }
                 }
             }
@@ -133,6 +152,29 @@ impl Checker {
         })();
         while self.scopes.len() > scope_base {
             self.pop_scope();
+        }
+        let raised = self
+            .raise_observation_frames
+            .borrow_mut()
+            .pop()
+            .is_some_and(|(_, flag)| flag);
+        if result.is_ok()
+            && raised
+            && let Some(linear) = bindings.iter().find(|binding| {
+                !binding.implicitly_deletable
+                    && matches!(
+                        binding.plan.action,
+                        crate::checked::IterationBindingAction::MoveValue
+                    )
+            })
+        {
+            // A propagating error aborts the comprehension mid-iteration,
+            // abandoning residual elements exactly like a loop's raise.
+            let obligation = self.residual_obligation_suffix(&linear.ty);
+            return Err(TypeError::Unsupported(format!(
+                "a raising call in a comprehension would abandon non-ImplicitlyDeletable '{}' elements without explicit destruction{obligation}",
+                linear.ty
+            )));
         }
         result
     }

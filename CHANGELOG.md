@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Owned iteration of linear elements. `for var item in xs^` and owned
+  comprehensions now accept a `List` of non-`ImplicitlyDeletable` elements
+  when every element is transferred by guaranteed exhaustion: the bundled
+  owned iterator's `ImplicitlyDeletable` gates are lifted, and only
+  abandoning control-flow paths are rejected — `break`/`return`/`raise`, a
+  raising call whose handler sits outside the loop (a `try` inside the body
+  contains its error), and comprehension filters over a linear binder — each
+  naming the element's `@explicit_destroy` obligation. With linear elements
+  the iterator itself is linear (no `__del__`), so the exhaustion edge
+  consumes it through the checker-selected `_finish(deinit self)` named
+  destructor, an ordinary method call that frees the buffer as visible
+  library code; a user-defined linear owned iterator without a finisher or
+  unconditional destructor is rejected contextually. Deletable-element
+  behavior is unchanged, including residual drops on early exit.
+
 - Cross-call reference lifecycle and loan transfer. A callee's accepted
   store of a loan-carrying value into `self` or a `mut`/`ref` parameter
   is now a checker-recorded transfer effect replayed at every call:

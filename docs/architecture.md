@@ -2045,7 +2045,24 @@ residual iterator state have disjoint ownership. Normal exhaustion leaves no
 residual elements; return, raise, and `break` paths run the ordinary edge
 cleanup. The checker rejects an early exit when the element type is not
 `ImplicitlyDeletable`, because the residual state would otherwise conceal
-undischarged explicit-destroy obligations.
+undischarged explicit-destroy obligations. That rejection covers every
+abandoning path: the syntactic body walk (break/return/raise), an observation
+frame that flags any raising call whose `try` handler sits outside the loop
+(callable bodies push barrier frames so nested `def`s never mark an enclosing
+loop; the frame records the `handled_raise_depth` at loop entry, so a `try`
+inside the body contains its error), and — in comprehensions — filter clauses
+over a linear binder, since a skipped element would be abandoned. Each
+diagnostic names the element's `@explicit_destroy` obligation.
+
+A linear-element owned iterator is itself linear: its `__del__`, which
+destroys residual elements, is conditional on element deletability. Protocol
+selection therefore records the iterator's `_finish(deinit self)` named
+destructor in `IterationProtocol.finish` (a linear iterator without one is
+rejected; an iterator with an unconditional destructor keeps the drop path),
+and the loop or comprehension exit emits `HirInstr::FinishIter` in place of
+the exit `Drop`, lowered to an ordinary moved-receiver `MethodCall` — the
+slot's move is the consumption drop elaboration sees, so a type with no drop
+glue needs none, and the buffer free runs as checked library code.
 
 ### Partial Move Tree
 

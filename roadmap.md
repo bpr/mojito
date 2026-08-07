@@ -85,10 +85,6 @@ schema.
   needs it); and one routing mystery — a method store adjacent to a
   nested `def` can bypass the SetPlace acceptance guard — is unexplained
   and deserves a probe.
-- [ ] **Owned iteration of linear elements** — in the owned path, permit a List
-  of non-`ImplicitlyDeletable`/linear elements when every element is transferred
-  by guaranteed exhaustion; reject only control-flow paths that can abandon a
-  residual linear iterator, with its remaining obligations reported explicitly.
 - [ ] **Self-hosted Unicode String** — define storage; current explicit
   `s[byte=i]`, `s[codepoint=i]`, and `s[grapheme=i]` indexing plus Unicode
   slicing; comparison, hashing, and formatting without VM-only semantics;

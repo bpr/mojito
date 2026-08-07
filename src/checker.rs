@@ -546,6 +546,17 @@ pub struct Checker {
     /// binding's owner) — an interior-mutability overlay over the
     /// aggregate-origin scopes, merged on lookup.
     transferred_origins: RefCell<HashMap<crate::origin::OwnerId, Vec<crate::origin::Origin>>>,
+    /// Innermost-last observation frames recording whether a raising
+    /// operation that escapes the bracketed region was checked inside it.
+    /// Owned iteration over linear elements pushes one around its body —
+    /// such a call aborts the loop and abandons residual explicit-destroy
+    /// obligations — and every callable body pushes a barrier frame so a
+    /// nested `def`'s raising calls never mark an enclosing loop. The
+    /// `usize` is the `handled_raise_depth` at region entry: a call under a
+    /// deeper depth is contained by a `try` inside the region and does not
+    /// escape it, while a handler outside the region still lets the error
+    /// abort the region itself.
+    raise_observation_frames: RefCell<Vec<(usize, bool)>>,
     implicit_conversions: RefCell<HashMap<SourceSpan, String>>,
     simd_constructions: RefCell<HashMap<SourceSpan, (Dtype, i64)>>,
     /// Checked operation decisions — `Variant` construction/tag/projection/
@@ -673,6 +684,7 @@ impl Checker {
             transfer_effects: RefCell::new(seeded_transfer_effects()),
             call_transfers: RefCell::new(HashMap::new()),
             transferred_origins: RefCell::new(HashMap::new()),
+            raise_observation_frames: RefCell::new(Vec::new()),
             implicit_conversions: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
@@ -720,6 +732,14 @@ impl Checker {
     }
 
     fn require_error(&self, operation: impl Into<String>, error: Ty) -> Result<(), TypeError> {
+        // A raising operation escapes the innermost observed region (a
+        // linear owned-iteration body) unless a `try` INSIDE that region
+        // contains it — a handler outside the region still aborts the region.
+        if let Some((baseline, flag)) = self.raise_observation_frames.borrow_mut().last_mut()
+            && self.handled_raise_depth <= *baseline
+        {
+            *flag = true;
+        }
         if self.handled_raise_depth > 0 {
             if let Some(types) = self.handled_raise_types.borrow_mut().last_mut() {
                 types.push(error);
