@@ -674,8 +674,8 @@ it into state. The bundled IncrementalHasher exposes `__init__`, `update`, and
 contract in the current target-independent VM.
 
 Examples of syntax that may parse before it is fully implemented include richer
-trait features, `with`, t-strings, and advanced expression/declaration forms that
-the VM does not yet execute.
+trait features, `with`, and advanced expression/declaration forms that the VM
+does not yet execute.
 
 ### Overload Resolution
 

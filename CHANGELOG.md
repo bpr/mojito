@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Lazy captured t-strings. A `t"…"` now produces the self-hosted prelude
+  `TString[*Ts: Movable & Writable]` (stdlib `std.format.tstring`) instead
+  of an eagerly concatenated builtin `String`: the whole-program compiler's
+  discovery fixpoint types each occurrence, materializes the concrete
+  variadic specialization, and rewrites the expression into its
+  construction, whose interleaved pack captures literal segments and
+  interpolation snapshots at creation. Formatting defers to Writable
+  `write_to`, so `print(t"…")` and explicit `String(t"…")` flow through
+  the ordinary machinery, and t-strings nest. Capture is by typed value
+  snapshot — copyable interpolations copy in, non-Copyable places
+  snapshot as creation-time formatted strings — a documented deviation
+  from real Mojo's borrow-holding `TString` (its exclusivity rejects
+  mutating a captured value before use; Mojito prints the snapshot).
+  Assigning a t-string to a `String` annotation is now a type error, and
+  `TString` values reject copy/concatenation/equality. The raw
+  parse-then-check seam and retained abstract generic bodies keep an
+  output-identical eager-concatenation fallback, and generic applications
+  inside interpolations now monomorphize (previously a latent gap).
+
 - Grapheme segmentation and a `Codepoint` result type for the
   self-hosted String. `s[codepoint=i]` now yields a prelude-exported
   `Codepoint` carrying the decoded scalar plus the character's text

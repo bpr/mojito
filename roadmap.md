@@ -71,12 +71,12 @@ schema.
 - [ ] **String follow-ups** — the self-hosted core landed (nominal UTF-8
   `String`, keyword subscripts, `byte=`/`codepoint=`/`grapheme=` access
   with a `Codepoint` result type, boundary-checked slicing,
-  compare/hash/format; see `docs/features.md`).
-  Remaining: lazy captured `TString` self-hosting; migrating the builtin
-  literal operations onto the struct and splitting `StringLiteral` from
-  `String` at the type level (annotation takeover, conversion
-  retargeting, ordering on literals); and String result APIs
-  (`find`/`split`/`startswith`/...) growing demand-first.
+  compare/hash/format, lazy captured `TString`; see `docs/features.md`).
+  Remaining: migrating the builtin literal operations onto the struct
+  and splitting `StringLiteral` from `String` at the type level
+  (annotation takeover, conversion retargeting, ordering on literals);
+  and String result APIs (`find`/`split`/`startswith`/...) growing
+  demand-first.
 - [ ] **SIMD semantic completion** — finish dtype/literal conversions, masks,
   reductions, shuffles, and other CPU-visible VM semantics; migrate the brief
   `SIMDSize` spelling to current `SIMDLength` while retaining only an explicit

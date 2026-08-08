@@ -1908,10 +1908,12 @@ impl Flatten<'_> {
                 });
                 dest
             }
-            // These are flagged `Unsupported`/rejected by the *checker*, so a checked
-            // program never reaches MIR lowering with them. A bare `TypeApply` is a
-            // type used as a value (only valid as a static-method receiver, handled
-            // in the `MethodCall` arm above).
+            // The production discovery path rewrites every concrete `t"…"`
+            // occurrence into its lazy `TString` specialization's construction
+            // before MIR, so this arm is the output-identical eager fallback:
+            // the stage-composed seam (which skips discovery by design) and
+            // t-strings inside retained abstract bound-generic bodies lower to
+            // `"" + String(part) + …` concatenation here.
             ExprKind::TString { parts, .. } => {
                 let mut result = self.fresh(span(e), None);
                 self.emit(MirInstr::Const {

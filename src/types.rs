@@ -186,6 +186,8 @@ pub const DICT_TYPE_NAME: &str = "Dict";
 
 pub const TUPLE_TYPE_NAME: &str = "Tuple";
 
+pub const TSTRING_TYPE_NAME: &str = "TString";
+
 pub const RANGE_TYPE_NAME: &str = "Range";
 
 /// Construct a nominal standard-library type from ordinary type arguments.
@@ -245,6 +247,33 @@ pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
         && !name.ends_with(&format!("${TUPLE_TYPE_NAME}"))
         && !name.starts_with(&format!("{TUPLE_TYPE_NAME}$"))
         && !name.contains(&format!("${TUPLE_TYPE_NAME}$"))
+    {
+        return None;
+    }
+    arguments
+        .iter()
+        .map(|argument| match argument {
+            TyArg::Ty(ty) => Some(ty),
+            TyArg::Val(_) | TyArg::Origin(_) => None,
+        })
+        .collect()
+}
+
+pub fn tstring_type(elements: Vec<Ty>) -> Ty {
+    nominal_type(TSTRING_TYPE_NAME, elements)
+}
+
+/// The interleaved element types of a lazy template string, accepting both the
+/// public `TString` spelling and the concrete symbols emitted for its variadic
+/// specializations (the same acceptance rule as [`tuple_elements`]).
+pub fn tstring_elements(ty: &Ty) -> Option<Vec<&Ty>> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    if name != TSTRING_TYPE_NAME
+        && !name.ends_with(&format!("${TSTRING_TYPE_NAME}"))
+        && !name.starts_with(&format!("{TSTRING_TYPE_NAME}$"))
+        && !name.contains(&format!("${TSTRING_TYPE_NAME}$"))
     {
         return None;
     }

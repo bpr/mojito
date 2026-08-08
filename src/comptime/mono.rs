@@ -389,8 +389,79 @@ impl<'a> Elab<'a> {
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
-            | ExprKind::None
-            | ExprKind::TString { .. } => Ok(()),
+            | ExprKind::None => Ok(()),
+            ExprKind::TString { parts, .. } => {
+                for part in parts.iter_mut() {
+                    if let TStringPart::Expr(value) = part {
+                        self.mono_expr(value, consts, mono)?;
+                    }
+                }
+                // Rewrite a checker-selected occurrence into the concrete
+                // `TString` specialization's construction: literal segments
+                // become string constants, and an interpolation whose
+                // interleaved element type is the builtin string arrives
+                // pre-formatted through a synthesized `String(...)`
+                // conversion (identity for string-typed interpolations, the
+                // creation-time snapshot for non-Copyable places).  An
+                // occurrence without a target — the discovery round or a
+                // retained abstract template body — deliberately survives
+                // for the eager MIR fallback.
+                let Some(target) = mono
+                    .tstring_call_targets
+                    .get(&source_span.clone().without_syntax())
+                else {
+                    return Ok(());
+                };
+                if parts.len() != target.elements.len() {
+                    return Ok(());
+                }
+                let span = e.span;
+                let source = e.source.clone();
+                let ExprKind::TString { parts, .. } =
+                    std::mem::replace(&mut e.kind, ExprKind::None)
+                else {
+                    unreachable!("the enclosing match arm established a t-string");
+                };
+                let mut args = Vec::with_capacity(parts.len());
+                for (part, element) in parts.into_iter().zip(&target.elements) {
+                    match part {
+                        TStringPart::Literal(text) => {
+                            let mut literal = Expr::new(ExprKind::Str(text), span);
+                            literal.source = source.clone();
+                            args.push(literal);
+                        }
+                        TStringPart::Expr(value) => {
+                            if matches!(element, Ty::String) {
+                                let mut conversion = Expr::new(
+                                    ExprKind::Call {
+                                        name: "String".to_string(),
+                                        param_args: Vec::new(),
+                                        args: Vec::new(),
+                                        kwargs: Vec::new(),
+                                    },
+                                    value.span,
+                                );
+                                conversion.source = value.source.clone();
+                                let ExprKind::Call { args: inner, .. } = &mut conversion.kind
+                                else {
+                                    unreachable!("the conversion was just built as a call");
+                                };
+                                inner.push(*value);
+                                args.push(conversion);
+                            } else {
+                                args.push(*value);
+                            }
+                        }
+                    }
+                }
+                e.kind = ExprKind::Call {
+                    name: target.symbol.clone(),
+                    param_args: Vec::new(),
+                    args,
+                    kwargs: Vec::new(),
+                };
+                Ok(())
+            }
             ExprKind::Identifier(name) => {
                 // The template is dropped after monomorphization, so a bare
                 // (argument-less) use of a variadic struct can never resolve.

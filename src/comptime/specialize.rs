@@ -12,14 +12,22 @@ impl<'a> Elab<'a> {
         &self,
         program: Vec<Stmt>,
         tuple_requests: &[TupleSpecializationRequest],
+        tstring_requests: &[TStringSpecializationRequest],
         def_requests: &[DefSpecializationRequest],
     ) -> Result<Vec<Stmt>, ComptimeError> {
-        if self.specializable.is_empty() && tuple_requests.is_empty() {
+        if self.specializable.is_empty() && tuple_requests.is_empty() && tstring_requests.is_empty()
+        {
             return Ok(program);
         }
         if !tuple_requests.is_empty() && !self.struct_template("Tuple") {
             return Err(ComptimeError::NotComptime(
                 "checked Tuple specialization requests require a public variadic `Tuple[*Ts]` template"
+                    .to_string(),
+            ));
+        }
+        if !tstring_requests.is_empty() && !self.struct_template("TString") {
+            return Err(ComptimeError::NotComptime(
+                "checked TString specialization requests require the prelude's variadic `TString[*Ts]` template"
                     .to_string(),
             ));
         }
@@ -65,6 +73,50 @@ impl<'a> Elab<'a> {
                             None => format!("bytes {}..{}", span.span.0, span.span.1),
                         })
                         .unwrap_or_else(|| "a checked Tuple type".to_string()),
+                    output_name,
+                    whole_pack_abi: false,
+                });
+            }
+        }
+        // Checker-discovered t-string occurrences: each one materializes the
+        // concrete `TString` specialization and records the occurrence target
+        // consumed by `mono_expr`'s rewrite of the `t"…"` node into that
+        // specialization's construction.
+        for request in tstring_requests {
+            let vals = tuple_specialization_values(request.elements());
+            let output_name = tstring_specialization_symbol(request.elements());
+            let target = TStringTarget {
+                symbol: output_name.clone(),
+                elements: request.elements().to_vec(),
+            };
+            if let Some(existing) = mono
+                .tstring_call_targets
+                .insert(request.occurrence().clone().without_syntax(), target)
+                && existing.symbol != output_name
+            {
+                return Err(ComptimeError::NotComptime(format!(
+                    "one t-string occurrence was assigned incompatible specializations '{}' and '{output_name}'",
+                    existing.symbol
+                )));
+            }
+            if mono.done.insert(output_name.clone()) {
+                mono.queue.push_back(Job {
+                    orig: "TString".to_string(),
+                    vals,
+                    site: match &request.occurrence().source {
+                        Some(source) => {
+                            format!(
+                                "{source}:{}..{}",
+                                request.occurrence().span.0,
+                                request.occurrence().span.1
+                            )
+                        }
+                        None => format!(
+                            "bytes {}..{}",
+                            request.occurrence().span.0,
+                            request.occurrence().span.1
+                        ),
+                    },
                     output_name,
                     whole_pack_abi: false,
                 });

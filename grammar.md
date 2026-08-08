@@ -980,7 +980,9 @@ TSTRING:                                             # interpolation; parsed int
 t_prefix: case_insensitive('t' | 'rt' | 'tr')
     # raw/interpolated prefixes may appear in either order/case. Interpolation
     # boundary scanning respects braces inside nested strings, comments, and
-    # nested t-strings; Writable-checked values execute through MIR/VM.
+    # nested t-strings; Writable-checked values construct the self-hosted lazy
+    # `TString` (literal segments plus interpolation snapshots, formatted at
+    # write time).
 ```
 
 Reserved keywords (cannot be an unquoted `NAME`):

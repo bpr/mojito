@@ -1289,15 +1289,27 @@ impl Checker {
                 "Movable" => self.is_movable(ty),
                 "ImplicitlyDeletable" => self.is_implicitly_deletable(ty),
                 "Hashable" => self.is_hashable(ty),
-                "Writable" => match ty {
-                    Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    Ty::Variant(alternatives) => alternatives
-                        .iter()
-                        .all(|alternative| self.conforms_to(alternative, tr)),
-                    Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
-                    Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => false,
-                    _ => true,
-                },
+                "Writable" => {
+                    // The discovery check runs before a `t"…"` occurrence's
+                    // variadic `TString` specialization exists.  Preserve the
+                    // template's Writable contract structurally across that
+                    // staging seam, exactly like unmaterialized public Tuple
+                    // in `is_comparable`.
+                    if let Some(elements) = crate::types::tstring_elements(ty) {
+                        return elements
+                            .into_iter()
+                            .all(|element| self.conforms_to(element, tr));
+                    }
+                    match ty {
+                        Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+                        Ty::Variant(alternatives) => alternatives
+                            .iter()
+                            .all(|alternative| self.conforms_to(alternative, tr)),
+                        Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
+                        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => false,
+                        _ => true,
+                    }
+                }
                 "Writer" | "Hasher" => match ty {
                     Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
                     Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
@@ -1520,6 +1532,13 @@ impl Checker {
         {
             return true;
         }
+        // A lazy TString is declared Movable + Writable only.  Answer
+        // structurally so a not-yet-materialized specialization (a nested
+        // t-string element during discovery) never falls back to the
+        // permissive unregistered-struct default below.
+        if crate::types::tstring_elements(ty).is_some() {
+            return false;
+        }
         match ty {
             Ty::ComptimeList(element) => self.is_copyable(element),
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
@@ -1559,6 +1578,10 @@ impl Checker {
     pub(super) fn is_implicitly_copyable(&self, ty: &Ty) -> bool {
         if self.has_assumed_conformance(ty, "ImplicitlyCopyable") {
             return true;
+        }
+        // Structural, like `is_copyable`: a lazy TString never copies.
+        if crate::types::tstring_elements(ty).is_some() {
+            return false;
         }
         match ty {
             Ty::ComptimeList(element) => self.is_implicitly_copyable(element),

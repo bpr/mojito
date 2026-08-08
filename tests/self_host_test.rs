@@ -538,6 +538,18 @@ fn self_hosted_string_codepoint_type() {
 }
 
 #[test]
+fn self_hosted_tstring_explicit_construction() {
+    // The prelude-exported lazy TString constructs explicitly from an
+    // interleaved pack and defers formatting to Writable write_to.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "def main():\n    var t = TString[String, Int](\"x=\", 42)\n    print(t)\n    var s: String = String(t)\n    print(s, len(s))\n",
+    );
+    assert_eq!(run_compiled(&main).unwrap(), "x=42\nx=42 4\n");
+}
+
+#[test]
 fn self_hosted_string_grapheme_segmentation() {
     // The documented UAX #29 subset: combining marks join (GB9), decomposed
     // Hangul jamo compose (GB6-GB8), regional indicators pair (GB12/GB13),

@@ -6,6 +6,7 @@
 # same declarations rather than creating a second collection universe.
 
 from std.collections.list import List
+from std.format.tstring import TString
 from std.string import Codepoint, String
 from std.collections.set import Set
 from std.collections.dict import Dict

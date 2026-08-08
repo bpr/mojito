@@ -300,6 +300,17 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
             let to = tuple_elements(to).expect("guard established Tuple elements");
             from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
         }
+        // The same public-vs-specialized bridge for the lazy TString.
+        (from, to)
+            if crate::types::tstring_elements(from).is_some()
+                && crate::types::tstring_elements(to).is_some() =>
+        {
+            let from =
+                crate::types::tstring_elements(from).expect("guard established TString elements");
+            let to =
+                crate::types::tstring_elements(to).expect("guard established TString elements");
+            from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
+        }
         (Ty::Param { name: a, .. }, Ty::Param { name: b, .. }) => a == b,
         (Ty::Struct(an, aargs), Ty::Struct(bn, bargs)) => {
             an == bn

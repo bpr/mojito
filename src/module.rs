@@ -1117,6 +1117,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "range",
     "String",
     "Codepoint",
+    "TString",
 ];
 
 fn bundled_path(relative: &str) -> Option<PathBuf> {
@@ -1401,6 +1402,7 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.collections.set", "Set") => Some("Set"),
         ("std.collections.dict", "Dict") => Some("Dict"),
         ("std.collections.tuple", "Tuple") => Some("Tuple"),
+        ("std.format.tstring", "TString") => Some("TString"),
         ("std.range", "Range") => Some("Range"),
         ("std.range", "range") => Some("range"),
         ("std.collections.string_dict", "StringDict") => Some("StringDict"),

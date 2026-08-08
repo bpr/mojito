@@ -4,8 +4,9 @@ use crate::ast::ExprKind;
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
 use crate::comptime::{
-    ComptimeError, DefSpecializationRequest, TupleSpecializationRequest, TupleTransformRequest,
-    bound_generic_template_names, elaborate, elaborate_with_requests, tuple_materialized_callables,
+    ComptimeError, DefSpecializationRequest, TStringSpecializationRequest,
+    TupleSpecializationRequest, TupleTransformRequest, bound_generic_template_names, elaborate,
+    elaborate_with_requests, tuple_materialized_callables,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, RuntimeError, TypeError};
@@ -184,6 +185,7 @@ impl Compiler {
         const SPECIALIZATION_ROUNDS: usize = 5;
         let templates = bound_generic_template_names(&linked);
         let mut tuple_requests: Vec<TupleSpecializationRequest> = Vec::new();
+        let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
         // Occurrences whose recordings conflicted across rounds; determinism
         // should preclude this, but a poisoned key must stay abstract rather
@@ -203,6 +205,13 @@ impl Compiler {
             for request in tuple_specialization_requests(&checked) {
                 if !tuple_requests.contains(&request) {
                     tuple_requests.push(request);
+                    grew = true;
+                }
+            }
+            for request in tstring_specialization_requests(&checked) {
+                if !tstring_requests.contains(&request) {
+                    last_new_callee = String::from("TString");
+                    tstring_requests.push(request);
                     grew = true;
                 }
             }
@@ -229,9 +238,13 @@ impl Compiler {
                 converged = true;
                 break;
             }
-            let elaborated =
-                elaborate_with_requests(linked.clone(), &tuple_requests, &def_requests)
-                    .map_err(CompilerError::Comptime)?;
+            let elaborated = elaborate_with_requests(
+                linked.clone(),
+                &tuple_requests,
+                &tstring_requests,
+                &def_requests,
+            )
+            .map_err(CompilerError::Comptime)?;
             if !self.allow_executable_module_scope {
                 validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
             }
@@ -454,6 +467,41 @@ fn public_tuple_elements(ty: &Ty) -> Option<Vec<Ty>> {
             TyArg::Val(_) | TyArg::Origin(_) => None,
         })
         .collect()
+}
+
+/// The checker-typed `t"…"` occurrences whose interleaved element lists are
+/// fully concrete and therefore materializable as `TString` specializations.
+/// Open occurrences (a t-string inside a still-abstract generic template body)
+/// produce no request this round; when the enclosing template is specialized,
+/// the cloned body's t-string checks concretely and the fixpoint collects it.
+fn tstring_specialization_requests(checked: &CheckedProgram) -> Vec<TStringSpecializationRequest> {
+    let mut requests = Vec::new();
+    for expression in checked.expressions() {
+        if matches!(&expression.syntax.kind, ExprKind::TString { .. })
+            && let Some(ty) = &expression.ty
+            && let Some(elements) = closed_tstring_elements(ty)
+        {
+            let request = TStringSpecializationRequest::new(
+                elements,
+                expression.syntax.source_span().without_syntax(),
+            );
+            if !requests.contains(&request) {
+                requests.push(request);
+            }
+        }
+    }
+    requests
+}
+
+fn closed_tstring_elements(ty: &Ty) -> Option<Vec<Ty>> {
+    let elements = crate::types::tstring_elements(ty)?
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    elements
+        .iter()
+        .all(tuple_specialization_type_is_closed)
+        .then_some(elements)
 }
 
 /// A public Tuple implementation is a concrete nominal declaration, so a

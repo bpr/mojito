@@ -2879,7 +2879,13 @@ fn plain_signatures_are_unaffected() {
 
 #[test]
 fn expression_surface_type_checks() {
-    ok("var s: String = t\"x{1}\"\n");
+    // A t-string is a lazy TString value, not a builtin String.
+    let error = err("var s: String = t\"x{1}\"\n");
+    assert!(
+        format!("{error:?}").contains("TString"),
+        "expected a TString mismatch, got {error:?}"
+    );
+    ok("print(t\"x{1}\")\n");
     ok("var one: Int = (n := 1)\nprint(n)\n");
     // Ternary, chained comparison, and slices are implemented too.
     ok("var m: Int = 1 if True else 2\nprint(m)\n");
@@ -3167,7 +3173,14 @@ fn accepts_numeric_bases_and_string_forms_and_tstrings() {
     ok(
         "var a: Int = 0xFF\nvar b: Int = 1_000_000\nvar c: String = 'single'\nvar d: String = \"\"\"triple\"\"\"\n",
     );
-    ok("var y: Int = 1\nvar s: String = t\"x={y}\"\n");
+    // A t-string types as the lazy TString; explicit `String(...)`
+    // materializes it into the builtin string.
+    ok("var y: Int = 1\nvar s: String = String(t\"x={y}\")\n");
+    let error = err("var y: Int = 1\nvar s: String = t\"x={y}\"\n");
+    assert!(
+        format!("{error:?}").contains("TString"),
+        "expected a TString mismatch, got {error:?}"
+    );
 }
 
 #[test]

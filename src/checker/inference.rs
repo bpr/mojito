@@ -985,20 +985,36 @@ impl Checker {
                 self.infer_multi_subscript(expr.source_span(), object, args)
             }
             ExprKind::TString { parts, .. } => {
+                // A t-string is a lazy `TString` value over an interleaved
+                // element pack: literal segments as compile-time strings and
+                // interpolation snapshots at their checked types.  A
+                // non-Copyable place snapshots as a creation-time formatted
+                // string instead — the specialized pack constructor consumes
+                // its arguments, and the place must stay usable afterward.
+                let mut elements = Vec::with_capacity(parts.len());
                 for part in parts {
-                    if let TStringPart::Expr(value) = part {
-                        let ty = self.infer(value)?;
-                        if !self.conforms_to(&ty, "Writable") {
-                            return Err(TypeError::TraitNotSatisfied {
-                                param: "interpolation".to_string(),
-                                ty: ty.to_string(),
-                                trait_name: "Writable".to_string(),
-                                reason: self.trait_failure_reason(&ty, "Writable"),
-                            });
+                    match part {
+                        TStringPart::Literal(_) => elements.push(Ty::String),
+                        TStringPart::Expr(value) => {
+                            let ty = self.infer(value)?;
+                            if !self.conforms_to(&ty, "Writable") {
+                                return Err(TypeError::TraitNotSatisfied {
+                                    param: "interpolation".to_string(),
+                                    ty: ty.to_string(),
+                                    trait_name: "Writable".to_string(),
+                                    reason: self.trait_failure_reason(&ty, "Writable"),
+                                });
+                            }
+                            let ty = default_literal(&ty);
+                            if is_place_expr(value) && !self.is_copyable(&ty) {
+                                elements.push(Ty::String);
+                            } else {
+                                elements.push(ty);
+                            }
                         }
                     }
                 }
-                Ok(Ty::String)
+                Ok(self.public_tstring_type(elements))
             }
             // A parameterized type is not a runtime value; it is only valid as a
             // static-method receiver (`UnsafePointer[T].alloc(…)`), typed in
@@ -1664,6 +1680,21 @@ impl Checker {
     /// discovery pass has materialized it. During discovery no such declaration
     /// exists yet, so the canonical `Tuple[T0, ...]` type remains available for
     /// collecting the exact specialization request.
+    /// The checked type of a t-string occurrence: the concrete `TString`
+    /// specialization when the compiler's discovery pass has materialized it,
+    /// and the public nominal `TString[...]` spelling before that.
+    pub(super) fn public_tstring_type(&self, elements: Vec<Ty>) -> Ty {
+        let specialized = crate::comptime::tstring_specialization_symbol(&elements);
+        let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();
+        match self.structs.get(&specialized) {
+            Some(info) if info.fixed_arguments.as_ref() == Some(&arguments) => {
+                Ty::Struct(specialized, arguments)
+            }
+            _ if self.declared_structs.contains(&specialized) => Ty::Struct(specialized, arguments),
+            _ => crate::types::tstring_type(elements),
+        }
+    }
+
     pub(super) fn public_tuple_type(&self, elements: Vec<Ty>) -> Ty {
         let specialized = crate::comptime::tuple_specialization_symbol(&elements);
         let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();

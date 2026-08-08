@@ -34,7 +34,7 @@
 
 use crate::ast::{
     ArgConvention, Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
-    StructComptime, Type, TypeParam, WithItem,
+    StructComptime, TStringPart, Type, TypeParam, WithItem,
 };
 use crate::backend::VmBackend;
 use crate::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
@@ -106,6 +106,34 @@ impl TupleSpecializationRequest {
 
     pub(crate) fn requested_transform(&self) -> Option<&TupleTransformRequest> {
         self.transform.as_ref()
+    }
+}
+
+/// One checker-discovered lazy template-string occurrence: the interleaved
+/// element types of a `t"…"` expression (literal segments as `String`,
+/// interpolation snapshots at their checked types) and the source occurrence
+/// whose AST node monomorphization rewrites into a construction of the
+/// concrete `TString` specialization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TStringSpecializationRequest {
+    elements: Vec<Ty>,
+    occurrence: SourceSpan,
+}
+
+impl TStringSpecializationRequest {
+    pub(crate) fn new(elements: Vec<Ty>, occurrence: SourceSpan) -> Self {
+        Self {
+            elements,
+            occurrence: occurrence.without_syntax(),
+        }
+    }
+
+    pub(crate) fn elements(&self) -> &[Ty] {
+        &self.elements
+    }
+
+    pub(crate) fn occurrence(&self) -> &SourceSpan {
+        &self.occurrence
     }
 }
 
@@ -206,6 +234,10 @@ pub(crate) fn tuple_materialized_callables(
 /// Canonical concrete symbol selected for public `Tuple[*Ts]` element types.
 pub(crate) fn tuple_specialization_symbol(elements: &[Ty]) -> String {
     mangle("Tuple", &tuple_specialization_values(elements))
+}
+
+pub(crate) fn tstring_specialization_symbol(elements: &[Ty]) -> String {
+    mangle("TString", &tuple_specialization_values(elements))
 }
 
 /// Comptime-specific accessors on the shared [`CtValue`], reporting a
@@ -341,7 +373,7 @@ impl std::fmt::Display for ComptimeError {
 
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    elaborate_with_requests(program, &[], &[])
+    elaborate_with_requests(program, &[], &[], &[])
 }
 
 /// The top-level bound-generic template names of a linked program, as the
@@ -352,12 +384,13 @@ pub(crate) fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> 
 }
 
 /// Elaborate a program while materializing checker-discovered public `Tuple`
-/// specializations and inferred bound-generic applications.  This is a
-/// crate-internal staging seam: ordinary callers use [`elaborate`], and the
-/// compiler's discovery loop supplies requests here.
+/// and `TString` specializations and inferred bound-generic applications.
+/// This is a crate-internal staging seam: ordinary callers use [`elaborate`],
+/// and the compiler's discovery loop supplies requests here.
 pub(crate) fn elaborate_with_requests(
     program: Vec<Stmt>,
     tuple_requests: &[TupleSpecializationRequest],
+    tstring_requests: &[TStringSpecializationRequest],
     def_requests: &[DefSpecializationRequest],
 ) -> Result<Vec<Stmt>, ComptimeError> {
     let conformance =
@@ -412,7 +445,8 @@ pub(crate) fn elaborate_with_requests(
     let consts = elab.top_consts.borrow().clone();
     let materialized = materialize_block(elaborated, &consts);
     // Monomorphize comptime-dependent generic templates against their call sites.
-    let mut result = elab.monomorphize(materialized, tuple_requests, def_requests)?;
+    let mut result =
+        elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             crate::ast::stamp_source(std::slice::from_mut(statement), &source);
@@ -1904,6 +1938,14 @@ struct DefCallTarget {
     vals: Vec<CtValue>,
 }
 
+/// The concrete `TString` specialization a checked `t"…"` occurrence
+/// constructs, with the interleaved element types directing the argument
+/// rewrite.
+struct TStringTarget {
+    symbol: String,
+    elements: Vec<Ty>,
+}
+
 /// The monomorphization worklist and its results.
 #[derive(Default)]
 struct Mono {
@@ -1926,6 +1968,12 @@ struct Mono {
     /// Exact bare public `Tuple(...)` occurrences selected by the checker and
     /// the concrete variadic-struct symbol each one constructs.
     tuple_call_targets: HashMap<SourceSpan, String>,
+    /// Exact `t"…"` occurrences selected by the checker: the concrete
+    /// `TString` specialization symbol each one constructs plus the
+    /// interleaved element types (an element typed `String` where the source
+    /// part is an interpolation directs the rewrite to wrap that argument in
+    /// a `String(...)` conversion — the snapshot for non-Copyable places).
+    tstring_call_targets: HashMap<SourceSpan, TStringTarget>,
     /// Bound-generic templates with at least one reference left on the
     /// abstract path (an unresolvable call or a function-value use). The
     /// program rebuild keeps these templates alongside their specializations.
@@ -2893,6 +2941,7 @@ mod tuple_request_tests {
             parsed,
             &[TupleSpecializationRequest::bare_call(elements, occurrence)],
             &[],
+            &[],
         )
         .expect("materialize checked Tuple specialization");
 
@@ -2926,6 +2975,7 @@ mod tuple_request_tests {
             parsed,
             &[TupleSpecializationRequest::declaration(elements)],
             &[],
+            &[],
         )
         .expect("materialize contextual Tuple declaration");
 
@@ -2951,6 +3001,7 @@ mod tuple_request_tests {
         let elaborated = elaborate_with_requests(
             parsed,
             &[TupleSpecializationRequest::declaration(outer_elements)],
+            &[],
             &[],
         )
         .expect("materialize nested Tuple specializations");
@@ -3048,7 +3099,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[request])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request])
             .expect("materialize the requested specialization");
 
         let defs = def_names(&elaborated);
@@ -3076,7 +3127,7 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[request])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request])
             .expect("a skipped request must not fail elaboration");
 
         let defs = def_names(&elaborated);
@@ -3100,7 +3151,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[request])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request])
             .expect("materialize the requested specialization");
 
         let defs = def_names(&elaborated);

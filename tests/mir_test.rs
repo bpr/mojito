@@ -1126,7 +1126,52 @@ fn literal_materialization_is_explicit_in_typed_mir() {
 }
 
 #[test]
-fn interpolated_string_conversion_results_are_typed_in_mir() {
+fn production_tstrings_construct_the_lazy_specialization() {
+    // Through the whole-program Compiler, a `t"…"` desugars into the concrete
+    // `TString` specialization's construction — no eager `""+String(x)+…`
+    // concatenation chain remains in the lowered main.
+    let source = "def main():\n    var value: Int = 42\n    print(t\"answer={value}\")\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile the t-string program");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let instrs = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    assert!(
+        instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Call { func, .. } if func.0.starts_with("TString$")
+        )),
+        "expected a TString specialization construction in main"
+    );
+    assert!(
+        !instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Call { func, .. } if func.0 == "String"
+        )),
+        "the interpolation must be captured, not eagerly stringified"
+    );
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
+fn seam_tstrings_keep_the_eager_conversion_fallback() {
+    // The stage-composed seam (raw parse -> check, no discovery pass) retains
+    // the output-identical eager concatenation lowering for t-strings.
     let program = parse("def main():\n    var value: Int = 42\n    print(t\"answer={value}\")\n")
         .expect("parse");
     let checked = mojito::check_program(&program).expect("check");

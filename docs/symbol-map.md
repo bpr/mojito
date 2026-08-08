@@ -64,8 +64,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it.
 - `checker/statements.rs` owns `check_program`, block scoping, and the
   `check_stmt` statement dispatcher.
-- `checker/inference.rs` owns expression inference (`infer`/`infer_impl`) and
-  list/tuple/variant construction.
+- `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
+  list/tuple/variant construction, and t-string typing (the lazy `TString`
+  element list and its snapshot capture policy).
 - `checker/indexing.rs` owns place validation, subscript/index inference and
   assignment, pointer offset/write checks, and member access.
 - `checker/method_calls.rs` owns method-call inference, overload scoring, and
@@ -139,9 +140,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `comptime/ctfe.rs` owns VM-driven compile-time function evaluation and the
   VM-CTFE program rewrite and safety analysis.
 - `comptime/specialize.rs` owns monomorphization and `def`/`struct`
-  specialization synthesis (`generate_struct_spec`, tuple-spec ordering).
+  specialization synthesis (`generate_struct_spec`, tuple-spec ordering, and
+  Tuple/TString request seeding).
 - `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
-  friends) and struct-specialization argument resolution.
+  friends), struct-specialization argument resolution, and the t-string
+  desugar into its `TString` specialization's construction.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
 
 ## Change Routing
