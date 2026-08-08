@@ -44,8 +44,8 @@ Work proceeds in dependency order through the numbered sections below:
 1. **Finish MIR-schema-prerequisite CPU semantics.** Anything that can still
    change MIR value, constant, or instruction schemas lands first.
    Current in-place operator dispatch, parameterized associated types and
-   borrowed iterator origins, Unicode strings, SIMD, and CPU layout/tensor
-   contracts are the remaining seams.
+   borrowed iterator origins, SIMD, and CPU layout/tensor contracts are the
+   remaining seams.
 2. **Freeze a textual MIR/VM assembly** once the checked-declaration + verified
    MIR contract is confirmed sufficient, giving backend-independent artifacts,
    snapshots, and a disassembler/assembler pair.
@@ -68,14 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **String follow-ups** — the self-hosted core, keyword-indexed
-  access with `Codepoint`, lazy captured `TString`, and the
-  `StringLiteral`/`String` type split (annotation takeover, `@implicit`
-  literal conversion, retargeted `String(x)`/`input`/`repr`/`format`)
-  are complete; see `docs/features.md`. Remaining: default un-annotated
-  string bindings (`var s = "lit"`) to the nominal `String` once
-  non-raising slicing parity and result APIs land, and String result
-  APIs (`find`/`split`/`startswith`/...) growing demand-first.
 - [ ] **SIMD semantic completion** — finish dtype/literal conversions, masks,
   reductions, shuffles, and other CPU-visible VM semantics; migrate the brief
   `SIMDSize` spelling to current `SIMDLength` while retaining only an explicit
@@ -146,7 +138,8 @@ schema.
 ### 3. Grow The CPU Standard Library
 
 - [ ] **Collection API parity** — grow List, Dict, HashDict, Set, HashSet, tuple,
-  slice, and optional/variant APIs demand-first from conformance cases. For
+  slice, optional/variant, and String result APIs
+  (`replace`/`join`/`strip`/...) demand-first from conformance cases. For
   `Variant`, finish `destroy_with`, representation writing, and fully generic
   TypeList-driven conditional protocol synthesis rather than adding compiler
   special cases for every standard-library method.

@@ -2,16 +2,16 @@
 # `cap`-byte allocation.  Construction from a literal is the compiler's
 # literal-to-struct bridge (the byte buffer is filled from the literal's
 # UTF-8 bytes at the call); every other operation is ordinary library code
-# over the byte buffer.  The compile-time literal type (`StringLiteral`)
-# and its builtin operations are unchanged; `String(...)` with a
-# non-literal argument keeps the builtin Writable stringification until
-# the type-split migration.
+# over the byte buffer.  Slicing and the result APIs (`find`/`rfind`/
+# `startswith`/`endswith`/`split`) work in byte offsets, like `len`.
 #
 # `s[codepoint=i]` yields a `Codepoint` value carrying both the decoded
 # scalar and the character's text.  `s[grapheme=i]` and `grapheme_count()`
 # segment extended grapheme clusters with a documented UAX #29 subset: a
 # hand-maintained essentials classifier plus arithmetic Hangul, with GB11
 # simplified to "never break after ZWJ" and GB9b (Prepend) omitted.
+
+from std.collections.list import List
 
 struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
     var data: UnsafePointer[Byte]
@@ -121,20 +121,68 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
         self.cap = self.size
 
     def __contains__(self, sub: Self) -> Bool:
-        # Naive byte search, matching the builtin literal membership test.
-        if sub.size == 0:
-            return True
+        return self._find_from(sub, 0) >= 0
+
+    # Result APIs use byte offsets, like `len` and the byte-wise slice.  An
+    # empty needle matches everywhere (Python semantics): `find` reports the
+    # search start, `rfind` the end, the affix tests True.
+
+    def find(self, substr: Self) -> Int:
+        return self._find_from(substr, 0)
+
+    def rfind(self, substr: Self) -> Int:
+        var start = self.size - substr.size
+        while start >= 0:
+            if self._matches_at(substr, start):
+                return start
+            start -= 1
+        return -1
+
+    def startswith(self, prefix: Self) -> Bool:
+        if prefix.size > self.size:
+            return False
+        return self._matches_at(prefix, 0)
+
+    def endswith(self, suffix: Self) -> Bool:
+        if suffix.size > self.size:
+            return False
+        return self._matches_at(suffix, self.size - suffix.size)
+
+    # Eager owned pieces rather than current Mojo's borrowed StringSlice
+    # views (the recorded eager-result divergence).  Splitting on the empty
+    # separator raises, as in Mojo and Python.
+    def split(self, sep: Self) raises -> List[String]:
+        if sep.size == 0:
+            raise Error("String split separator is empty")
+        var parts = List[String]()
         var start = 0
-        while start + sub.size <= self.size:
-            var i = 0
-            while i < sub.size:
-                if Int(self.data[start + i]) != Int(sub.data[i]):
-                    break
-                i += 1
-            if i == sub.size:
-                return True
-            start += 1
-        return False
+        var at = self._find_from(sep, start)
+        while at >= 0:
+            parts.append(self[start:at])
+            start = at + sep.size
+            at = self._find_from(sep, start)
+        parts.append(self[start:self.size])
+        return parts^
+
+    # Naive forward byte search from byte offset `start`: the offset of the
+    # first match at or after it, or -1.
+    def _find_from(self, sub: Self, start: Int) -> Int:
+        var at = start
+        while at + sub.size <= self.size:
+            if self._matches_at(sub, at):
+                return at
+            at += 1
+        return -1
+
+    # Whether `sub`'s bytes appear verbatim at byte offset `at`; the caller
+    # keeps `at + sub.size` within the buffer.
+    def _matches_at(self, sub: Self, at: Int) -> Bool:
+        var i = 0
+        while i < sub.size:
+            if Int(self.data[at + i]) != Int(sub.data[i]):
+                return False
+            i += 1
+        return True
 
     def __hash__(self) -> UInt:
         # DJB2 over the UTF-8 bytes — the bundled IncrementalHasher recipe.
@@ -420,32 +468,38 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
             return 12
         return 0
 
-    def __getitem__(self, slice: Slice) raises -> Self:
+    # Byte-wise, non-raising, like the builtin literal slice: `indices()`
+    # normalizes Python-style bounds (clamping, negative wrap, stride,
+    # reversal).  A cut inside a multibyte sequence keeps the raw bytes;
+    # codepoint/grapheme operations still validate lazily, and the literal
+    # read-back renders invalid sequences lossily.
+    def __getitem__(self, slice: Slice) -> Self:
         var bounds = slice.indices(self.size)
         var start = bounds[0]
         var stop = bounds[1]
         var step = bounds[2]
-        if step != 1:
-            raise Error("String slicing is contiguous; a stride is not supported")
-        if stop < start:
-            stop = start
-        if not self._is_boundary(start):
-            raise Error("String slice start splits a UTF-8 sequence")
-        if not self._is_boundary(stop):
-            raise Error("String slice end splits a UTF-8 sequence")
-        return self._with_bytes(start, stop - start)
-
-    # Whether `index` lands between UTF-8 sequences (never inside one): the
-    # buffer edges, or any non-continuation byte.
-    def _is_boundary(self, index: Int) -> Bool:
-        if index <= 0:
-            return True
-        if index >= self.size:
-            return True
-        var lead = Int(self.data[index])
-        if lead < 128:
-            return True
-        return lead >= 192
+        var count = 0
+        var probe = start
+        if step > 0:
+            while probe < stop:
+                count += 1
+                probe += step
+        else:
+            while probe > stop:
+                count += 1
+                probe += step
+        var result = String("")
+        result.data.free()
+        result.data = UnsafePointer[Byte].alloc(count)
+        result.size = count
+        result.cap = count
+        var source = start
+        var filled = 0
+        while filled < count:
+            result.data[filled] = self.data[source]
+            source += step
+            filled += 1
+        return result^
 
     def _with_bytes(self, start: Int, count: Int) -> Self:
         var result = String("")

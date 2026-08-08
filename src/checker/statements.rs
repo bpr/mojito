@@ -372,6 +372,13 @@ impl Checker {
                         // inferred function/closure values remain non-escaping.
                         found.clone()
                     }
+                    // An un-annotated string binding materializes the nominal
+                    // `String`, like the other literal defaults; the wrap
+                    // falls back to the compile-time string on seams without
+                    // the linked stdlib struct.
+                    None if found == Ty::StringLiteral => {
+                        self.nominal_string_wrap(value.source_span())?
+                    }
                     None => self.inferred_binding_ty(&found, name)?,
                 };
                 if ty.is_none() {

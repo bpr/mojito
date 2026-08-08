@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- String result APIs, non-raising slicing, and the un-annotated binding
+  default. The nominal String's slice is now non-raising byte-wise library
+  code with Python-normalized bounds and strides, matching the builtin
+  literal slice — a cut inside a multibyte UTF-8 sequence keeps the raw
+  bytes and the struct-to-literal read-back renders them lossily instead
+  of erroring. New byte-offset result APIs: `find`/`rfind` (`-1` when
+  absent; the empty needle matches at the search start/end),
+  `startswith`/`endswith`, and `split(sep)` returning eager owned
+  `List[String]` pieces (raising on an empty separator, and the first
+  stdlib use of `List[String]`). With slicing and result parity in place,
+  an un-annotated `var s = "lit"` binding now materializes the nominal
+  String through the `@implicit` literal constructor, as in current Mojo;
+  aggregate elements, `comptime` bindings, and bare literal expressions
+  stay `StringLiteral`, and seams without the linked stdlib struct keep
+  the literal default.
+
 - The StringLiteral/String type split. Source `String` annotations now
   resolve to the self-hosted nominal String struct through the ordinary
   prelude/linker path (the parser no longer treats `String` as a builtin

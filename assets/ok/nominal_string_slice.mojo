@@ -1,6 +1,6 @@
-# Boundary-checked contiguous slicing on the nominal String: library code
-# that raises on out-of-boundary cuts, unlike the byte-wise literal slice.
-def main() raises:
+# Contiguous slicing on the nominal String: non-raising byte-wise library
+# code with Python-normalized bounds, matching the builtin literal slice.
+def main():
     var s: String = "hello"
     print(s[1:4])
     print(s[-2:])

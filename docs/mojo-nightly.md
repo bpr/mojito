@@ -1,16 +1,323 @@
-# Mojo Nightly Target
+# Mojo Dev-Branch Tracking
 
-Mojito tracks **Mojo 1.0.0b3.dev2026072505 (2026-07-25)** as its language
-comparison target. The version is taken from the official cumulative nightly
-release page:
+Mojito tracks the latest dev branch of Mojo.
 
-- <https://mojolang.org/releases/nightly/>
+The comparison target rolls with upstream `main`; reproducible audits name an
+exact upstream commit, Mojo build, audit date, and Mojito baseline. The
+differential runner must likewise report its actual `mojo --version`. Advancing
+the audit boundary records work to do—it does not claim that Mojito already
+implements every change at that boundary.
 
-The differential runner must still report the actual locally installed
-`mojo --version`; updating this document or the parity-manifest header does not
-claim that every nightly change has already been implemented.
+## Current Audit — `ae386d1b204` (2026-08-08)
 
-## July 25 Differential Audit
+| Role | Immutable revision |
+|---|---|
+| Audited Mojo dev head | [`ae386d1b20434e126aea8a32a2b625ed1343eaf5`](https://github.com/modular/modular/commit/ae386d1b20434e126aea8a32a2b625ed1343eaf5), whose lockfiles pin `Mojo 1.1.0.dev2026080805` |
+| Previous upstream audit boundary | [`609afcd0735054872ba028f27531b7abec947ddc`](https://github.com/modular/modular/commit/609afcd0735054872ba028f27531b7abec947ddc), `Mojo 1.0.0b3.dev2026072505` |
+| Stable Mojito implementation audited | `9118482492edc70b8d3b1d929900f8505ac10a80` from `/home/bpr/src/rust/projects/stable/mojito` |
+| Source delta | [Upstream comparison `609afcd073…ae386d1b204`](https://github.com/modular/modular/compare/609afcd0735054872ba028f27531b7abec947ddc...ae386d1b20434e126aea8a32a2b625ed1343eaf5) |
+
+Upstream cut the accumulated nightly record over to the staged
+[`v1.0.0` release notes](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/releases/v1.0.0.md)
+on August 6. That document is dated August 11, after this audit, so it is source
+evidence rather than a claim that the final release had already occurred. The
+short [post-cutover nightly changelog](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/nightly-changelog.md)
+must be read together with it. The rendered
+[nightly release page](https://mojolang.org/releases/nightly/) can lag `main`;
+the commit and lockfile version above are authoritative for this audit.
+
+The largest CPU-facing movement is not in MLIR or GPU support. Mojo has
+consolidated lifecycle names and defaults, added lambda expressions, changed the
+default meaning of list expressions to fixed-size `Array`, unified the pointer
+and allocation model, tightened source and import rules, and changed standard
+collection slicing and view contracts. These affect ordinary systems programs
+and current standard-library source, so they take precedence over expanding the
+existing proof-subset library breadth.
+
+## Prioritized Changeset
+
+The order below is the recommended implementation order; dependencies and
+independent quick fixes are called out explicitly. Compatibility aliases may be
+retained deliberately, but Mojito's own diagnostics, fixtures, and bundled
+sources should use current canonical spellings.
+
+### 0. Retarget the lifecycle foundation
+
+Canonicalize `Deinitable` and `__deinit__` through syntax, checked traits, MIR
+drop metadata, VM dispatch, the proof standard library, and documentation.
+`ImplicitlyDeletable` and `__del__` still exist upstream as deprecated
+compatibility spellings; they must not remain Mojito's internal vocabulary.
+Mojito already treats every initialized type as movable, matching the new
+default for ordinary structs, but it ignores `Movable where False` and other
+conditional opt-outs. Make those constraints effective. Add the current
+`TriviallyMovable[T]`, `TriviallyCopyable[T]`, and
+`TriviallyDeinitable[T]` comptime predicates after the canonical trait facts
+exist. Move explicit bundled imports to the canonical `std.traits` home; move
+`Origin` imports to `std.origin`. Prelude re-exports may remain compatibility
+bridges. The module moves are recorded by
+[`84bc36ac`](https://github.com/modular/modular/commit/84bc36aceb0f4c93efefd9fda1a6e9cdd5d56782)
+and [`f23369d8`](https://github.com/modular/modular/commit/f23369d8a33fcbd606667dce318daa0b56f0111c).
+Relevant lifecycle changes are
+[`1beff2ac`](https://github.com/modular/modular/commit/1beff2ac41123ee873c4d95ced27636300458d0e),
+[`f8678b34`](https://github.com/modular/modular/commit/f8678b34ddfcac0b0123fb1ce32a44111c4ee1dd),
+[`1b7a909f`](https://github.com/modular/modular/commit/1b7a909f90331b961e830cc7cd19155359af4adc),
+and [`8eb24855`](https://github.com/modular/modular/commit/8eb248550e5ae2bf9c1558f46b2b7b3f6beec3e0).
+
+### 1. Close small accepted-source and diagnostic gaps
+
+Land these independent corrections before a larger library port:
+
+- Parse `var **kwargs` in declarations and reject bare `**kwargs`. Forwarding
+  with `**kwargs^` and `StringDict` storage already work. Function types also
+  require the current spelling, but that is not only a parser tweak: extend the
+  function-type parameter representation and callable ABI identity to retain a
+  keyword-variadic role.
+- Reject a second same-named function imported from another module instead of
+  silently replacing the first binding. Explicit intra-package imports are
+  already enforced.
+- Diagnose a standalone module importing its own name instead of relying on the
+  linker's cycle deduplication.
+- Keep the existing rejection of overloads that differ only by `imm` versus
+  `mut`, and pin it with the current differential case.
+- Make `range(..., step=0)` empty in both compile-time evaluators. Nominal
+  runtime `Range` already does this, but the CTFE and VM intrinsic paths still
+  report an error.
+- Interpret `where (condition, "message")` as a constraint plus a retained
+  diagnostic message in functions, structs, conditional conformances, and
+  `comptime` declarations.
+- Reject current reserved/predefined words such as `class`, `match`, and
+  `yield` as free-function names at declaration checking. Do not pre-tokenize
+  them as active syntax; preserving them as parser-level future extension
+  points will make eventual class, pattern-matching, and generator work easier.
+
+The principal upstream changes are
+[`6e6392f1`](https://github.com/modular/modular/commit/6e6392f1e65a7c67c56c2422ddedc26b8c702284),
+[`c924834b`](https://github.com/modular/modular/commit/c924834b9e1061cc5e2b2c8a40c99ed60016fa17),
+[`c12f26a4`](https://github.com/modular/modular/commit/c12f26a49196f319f87132fc53d183fcd55e2ff1),
+[`fe9829a7`](https://github.com/modular/modular/commit/fe9829a703e140bb613f8ac66e6d117bd2cb2a51),
+[`04d7cc58`](https://github.com/modular/modular/commit/04d7cc582f11917dbe1186ca8562b33db3ea1acd),
+and [`e73bb67c`](https://github.com/modular/modular/commit/e73bb67c4604d4849dfba218cd2f95c4c7f244a2).
+
+### 2. Add lambda expressions through the existing callable pipeline
+
+Implement single-expression lambdas such as
+`lambda (x: Int) {} -> Int: x + 1`. The capture list and return type may each
+be omitted: an omitted capture list imm-captures free variables and is thin when
+there are none; an omitted return type is fixed to `None`, not inferred. A thin
+lambda behaves like a named function value and comptime parameter, while a
+capturing or still-generic lambda is a runtime closure instance. Add an explicit
+AST/HIR node, then lower it into Mojito's existing nested-definition, capture,
+callable-contract, specialization, and indirect-call machinery—do not add a
+second callable representation. Current standard-library sources already use
+lambdas, making this a source-porting prerequisite. See the
+[lambda manual](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/manual/functions/lambda.mdx)
+and commits
+[`dfede0f2`](https://github.com/modular/modular/commit/dfede0f2a99c6976ecdb3da7fddc16ac7a19a4d6),
+[`4123acca`](https://github.com/modular/modular/commit/4123accaaa5eb3e91b1d5226de74e135a99b5ab3),
+[`9a6c037e`](https://github.com/modular/modular/commit/9a6c037ea84525b750b8e322774944027a51d513),
+and [`6dfb27c9`](https://github.com/modular/modular/commit/6dfb27c95886662765f2b164561dba0349869111).
+
+### 3. Implement `Array` and retarget list-expression inference
+
+Add fixed-size nominal `Array[T, length]`, whose element parameter may be any
+type and whose `Copyable`, `Movable`, and `Deinitable` conformances are
+conditional. List-literal/move construction requires a `Movable` element;
+by-reference indexing and iteration do not, and destruction is conditional on
+`Deinitable`. Array itself is neither `ImplicitlyCopyable` nor `Defaultable`.
+An uncontextualized `[1, 2, 3]` must become `Array[Int, 3]`; an expected type
+that defines a list-literal constructor—notably `List[T]`—still controls
+contextual materialization. Stable Mojito currently hard-codes the
+uncontextualized result as `List`, so this is a language-semantic change, not an
+`InlineArray` rename. Preserve nominal constructor lowering if it is sufficient;
+only reopen the MIR/text schema if the implementation proves that Array needs a
+new MIR form. The temporary `InlineArray` alias is already removed on the
+audited dev head. See the current
+[`Array` source](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/stdlib/std/collections/array.mojo)
+and commits
+[`7657e0f0`](https://github.com/modular/modular/commit/7657e0f0dc8a8f4c81f6435962644faaa19527c3),
+[`9dfc95aa`](https://github.com/modular/modular/commit/9dfc95aa2f69688aa840e981d399de2cb3a1da52),
+and [`8d4fd368`](https://github.com/modular/modular/commit/8d4fd368cd95e57302610de09d3bbbf4d8747999).
+The upstream implementation uses `Pointer` internally. Mojito can land Array's
+semantics first over its private aggregate storage; reverse items 3 and 4 if the
+chosen slice is a direct source port instead.
+
+### 4. Move directly to the current pointer/allocation model
+
+Do not stop at the July plan's free `alloc[T](count)` API. Canonical source now
+uses `Pointer`, `MutPointer`, `ImmPointer`, `ptr[]`, and explicitly unsafe
+operations such as `unsafe_offset`, `unsafe_write`, `unsafe_take_pointee`, and
+`unsafe_deinit_pointee`. Heap allocation is layout-based:
+
+```mojo
+var allocation = alloc(Layout[Int](count=4))
+var ptr = allocation.unsafe_ptr()
+ptr.unsafe_offset(0).unsafe_write(42)
+dealloc(allocation^)
+```
+
+`Allocation[T]` is explicitly destroyed, owns its heap storage through a
+`ThinAllocation[T]`, and retains the `Layout[T]` used to allocate it. The
+deprecated layout-less `alloc[T](count)` returns a raw Pointer; its temporary
+migration spelling is `unsafe_alloc`, not another Allocation constructor.
+`UnsafePointer` remains a deprecated alias of `Pointer` at this audit hash.
+Reuse Mojito's typed pointer MIR, stable allocation identities, provenance, and
+explicit-destroy machinery rather than inventing another heap representation.
+The canonical source is in upstream
+[`pointer.mojo`](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/stdlib/std/memory/pointer.mojo)
+and [`alloc.mojo`](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/stdlib/std/memory/alloc.mojo);
+the current contract is summarized in the
+[pointer manual](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/manual/pointers/using-pointers.mdx).
+Grow `UnsafeMaybeUninit` afterward around the current `unsafe_write`, overloaded
+`unsafe_assume_init`, `unsafe_deinit`, and `unsafe_forget` vocabulary from
+[`b324feea`](https://github.com/modular/modular/commit/b324feeaa16bc13a12c0200164d1878fcfa64a87).
+
+### 5. Replace copied/clamped slices with current views and bounds
+
+Introduce `Span` and canonical `StringSpan` views (with `Imm`/`Mut` aliases).
+Contiguous List and Span slices, String `byte=`/`codepoint=` slices, and
+StringSpan `byte=`/`codepoint=`/`grapheme=` slices reject negative,
+out-of-range, or reversed bounds instead of normalizing or clamping them. Byte
+slice endpoints must also fall on UTF-8 codepoint boundaries. Preserve omitted
+bounds; current String has grapheme indexing but no grapheme contiguous-slice
+overload. Do not globally ban negative bounds in user-defined slice descriptors
+or `StridedSlice`: strided List slicing still normalizes through
+`StridedSlice.indices()` and returns a copied List. On the CPU-default assertion
+configuration, invalid contiguous bounds abort. String, StringSpan, and
+StringLiteral ordinary iteration should yield borrowed grapheme-cluster
+StringSpan views. `StringSlice` remains an upstream compatibility alias, but
+Mojito should emit `StringSpan`. See
+[`017f9f82`](https://github.com/modular/modular/commit/017f9f82cb334c510ba1a3e8aeadfc05488d734e),
+[`914dad70`](https://github.com/modular/modular/commit/914dad7031211669a45eb93451207fea54e53e36),
+and [`3e1a67e8`](https://github.com/modular/modular/commit/3e1a67e85ff445774155c57ab8c1f169286cf5f9).
+
+### 6. Align linear containers and owning APIs
+
+Lifecycle is the prerequisite here; the Optional and Variant work can land
+independently of Array and Pointer. Loosen both `Optional[T]` and
+`Variant[*Ts]` to `AnyType`, add their `init_with=` placement constructors,
+conditional lifecycle contracts, and `deinit_with` operations without a
+`Movable` requirement. `Variant.set(init_with=...)` performs in-place
+replacement. Optional is `Iterable`, not itself an `Iterator`; align its
+borrowed and owned iteration bounds, `deinit_assert_empty`, and linear-capable
+`map`/`and_then`.
+
+Migrate `Variant.take`/`unsafe_take` to `unwrap`/`unsafe_unwrap` and
+`OwnedPointer.take` to `into_inner`, retaining old names only under the
+compatibility policy; Optional's current `take` is unchanged. Grow APIs by their
+actual families: `deinit_with` on Array/List/Deque/LinkedList/Dict/Set/Tuple/
+Optional/Variant/StringDict; `clear_with` on Dict and Set;
+displacement-returning `insert` on Dict, Set, and StringDict; and consuming
+iteration on the collections that
+declare `IterableOwned` (not Tuple, which uses `consume_elements`). Quarantine
+or remove Mojito's owned-iteration extension for non-`Deinitable` elements where
+current Mojo requires `Movable & Deinitable`.
+
+### 7. Add subtree-origin safety and temporary-origin inference
+
+Keep Mojito's existing named interior generations; they model precise
+collection-owned storage. Add the audited dev branch's experimental
+`Origin._subtree` as a separate conservative origin form. It can designate the
+root or any descendant, so mutation anywhere below the root invalidates the
+loan, a write through a mutable subtree reference invalidates that reference
+after its first write, and consuming an aggregate containing an interior origin
+requires that origin to remain live. Also allow an origin-bearing `@implicit`
+conversion result to refine its origin from a register temporary. Carry the new
+fact explicitly through checked HIR and verified MIR. The audited stdlib does
+not yet depend on this experimental surface, so it follows the public container
+work. See the current
+[origin design](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/proposals/origin-design.md)
+and commits
+[`fae2eef7`](https://github.com/modular/modular/commit/fae2eef7cab68c8af9ca51f391184c32de4038d5),
+[`f3958309`](https://github.com/modular/modular/commit/f3958309415ab40094c2d49c620d5655c9b0bafd),
+[`12441229`](https://github.com/modular/modular/commit/12441229e2bf98bb2e37a26c85ddbc7e05ab54b3),
+and [`7852cfb1`](https://github.com/modular/modular/commit/7852cfb102d2444ef472b5d7749b530a068ccfc3).
+
+### 8. Finish scalar, SIMD, range, and generic vocabulary
+
+Continue the existing SIMD roadmap item, but use `SIMDLength` and `length`, not
+the transitional `SIMDSize`/`size`. Generalize the Int-only Range proof subset
+to the current Int/Scalar family; add integer-Scalar construction from any
+`Intable`; migrate `TypeList.size` to `length` and variadic
+`any_satisfies`/`all_satisfies` to `any`/`all`. Tuple already uses `*Ts`, so its
+new public parameter name needs only a compatibility probe. Reject invalid SIMD
+lengths during checked elaboration, not at a late VM operation.
+
+## Confirmed Alignment And Audit-Only Work
+
+Do not create duplicate implementation tasks for changes the stable baseline
+already covers:
+
+- Ordinary initialized values are movable by default. Only conditional
+  `Movable` opt-out is missing.
+- Fresh local names already require explicit `var`, which is stricter than
+  upstream's current warning. Package members already require explicit imports.
+- Callable structs already need nominal callable-trait conformance;
+  shape-compatible `__call__` alone is insufficient.
+- Candidate implicit conversion already filters to `@implicit` constructors
+  before selection; upstream's latest change is a compile-time performance win,
+  not a semantic gap for Mojito.
+- Custom method receiver types are already rejected; Mojito's parser admits
+  only the ordinary `Self` receiver forms.
+- Int and `Scalar[DType.int]`, current reflection field handles, `StringDict`
+  kwargs storage/forwarding, origin-parameterized borrowed `Iterable`, and
+  monomorphic `IterableOwned.IteratorOwnedType` are present.
+- The stable compiler passes the new two-root namespace-directory example:
+  `foo.bar` and `foo.baz` can be imported from distinct `-I` roots and share the
+  `foo` prefix. Add that exact case permanently; keep source-package precedence
+  and package `__init__.mojo` boundaries unchanged.
+- Runtime nominal `range(..., step=0)` is empty; only the two compile-time paths
+  need correction.
+- `Error` is treated as implicitly copyable by the current checked type facts.
+  Add a caught-error `raise e` differential case before opening implementation
+  work.
+
+## Monitored Or Deferred Movement
+
+These changes should remain visible without displacing the CPU language work:
+
+- `Atomic[T]` now takes a value type instead of a `DType`. Atomics and
+  concurrency remain outside first-pass parity.
+- Experimental FP6 encodings are packed storage formats without general
+  arithmetic or conversions. Revisit them after ordinary scalar/SIMD parity.
+- `external_call(..., num_fixed_args=N)`, platform C ABI forwarding, and dynamic
+  library lifetime improvements are CPU-relevant but depend on a real FFI/native
+  boundary. Record them with native backend and ABI work.
+- `size_of` now includes alignment padding. Implement it with observable CPU
+  layout/ABI semantics, not by inventing VM-only sizes.
+- Address-space expansion, GPU/MAX package moves, GPU APIs, and Python
+  interoperability remain outside the first-pass subset.
+- `__generator_type` and coroutine internals are useful signals for possible
+  future generators/coroutines, but are not yet a public parity gate. Keep HIR
+  and MIR extension points general rather than implementing this internal
+  spelling.
+
+## Review Policy
+
+Before closing a language-parity milestone:
+
+1. Fetch upstream `main` and record its full commit, commit date, and the Mojo
+   version pinned by its current lockfiles. The rendered nightly page is a
+   discovery aid, not the reproducible audit identity.
+2. Diff from the preceding audit hash. Review every intervening language,
+   library, removal, and fixed-behavior entry across both the active nightly
+   changelog and any release document created by a changelog cutover.
+3. Inspect the changed manual and standard-library declarations. Renames,
+   conditional conformances, and compiler/stdlib handoffs are not always
+   repeated in the condensed changelog.
+4. Update `conformance/parity.tsv` first. A newly introduced mismatch becomes a
+   documented subset/divergence until implementation and differential evidence
+   justify `implemented`/`match`.
+5. Update `roadmap.md`, grammar and architecture documentation, fixtures, and
+   bundled Mojo sources affected by removed or renamed syntax.
+6. Run differential conformance with a Pixi environment containing the exact
+   audited build. Retain `mojo --version`, the upstream hash, and the Mojito hash
+   with the results.
+
+## Historical Stable-Baseline Audit — `609afcd0735` (2026-07-25)
+
+The remainder of this section records the evidence used to establish the stable
+Mojito baseline. References to “the pinned nightly” below mean this historical
+hash, not the rolling dev-branch target.
 
 The focused cases pass against `Mojo 1.0.0b3.dev2026072505`: heterogeneous
 pack-bound rejection, homogeneous tuple-valued variadics, private runtime-pack
@@ -148,24 +455,10 @@ identity, Tuple destruction, or interior origins. Until a fresh complete run is
 recorded, a passing `scripts/check` establishes the local compiler contract,
 while the full differential harness remains intentionally reported as non-green.
 
-## Review Policy
+## Historical `609afcd0735` Capability Ledger
 
-Before closing a language-parity milestone:
-
-1. Compare the target above with the version at the top of the nightly page.
-2. Review every intervening **Language enhancements** and **Language changes**
-   entry, not only the stable manual.
-3. Update `conformance/parity.tsv` first. A newly introduced mismatch becomes a
-   documented subset/divergence until implementation and differential evidence
-   justify `implemented`/`match`.
-4. Update `roadmap.md`, grammar and architecture documentation, fixtures, and
-   bundled Mojo sources affected by removed or renamed syntax.
-5. Run differential conformance with a Pixi environment containing the exact
-   target build and retain the reported version with the results.
-
-## 1.0.0b3 Nightly Drift From Mojito's Previous Baseline
-
-The following CPU-language changes affect Mojito directly.
+The following table is preserved from the 2026-07-25 audit. “Current nightly”
+inside this historical ledger means `609afcd0735`, not the rolling dev head.
 
 | Area | Current nightly | Mojito consequence |
 |---|---|---|
@@ -175,7 +468,7 @@ The following CPU-language changes affect Mojito directly.
 | Immutable convention | `imm` is the preferred spelling for the argument and closure-capture convention. `read` remains a synonym but is headed for deprecation. | Accept and emit `imm`; retain `read` only as a compatibility spelling. The linked commit `323dfd974e2f6fc83ce82a476d8fa5d51529eadf` documents this transition. |
 | Linear-value trait | `ImplicitlyDestructible` was renamed to `ImplicitlyDeletable`; `is_trivially_destructible` likewise became `is_trivially_deletable`. | Reverse Mojito's previous vocabulary migration and update constraints, diagnostics, tests, and bundled sources. |
 | String indexing | Current Mojo's String exposes byte/codepoint access through iterator and method APIs; the exact keyword-subscript spelling is not settled stable syntax. `Codepoint` constructs from `UInt32` scalars (`from_u32`, `to_u32`) and prints as its character; grapheme segmentation has no settled stable String API. | Mojito implements the roadmap's explicit keyword-indexed forms `s[byte=i]`/`s[codepoint=i]`/`s[grapheme=i]` over the self-hosted String (positional `s[i]` rejected as ambiguous). `codepoint=` yields a subset `Codepoint`: `Int`-based via `Intable` instead of `to_u32`/`UInt32`, Writable as its character, scalar-ordered; direct construction is rejected until runtime scalar conversions land (`Byte(Int)` encoding, under the SIMD-conversion roadmap item). `grapheme=`/`grapheme_count()` are Mojito-explicit spellings implementing a pinned UAX #29 subset (hand-maintained essentials classifier plus arithmetic Hangul; GB11 simplified to "never break after ZWJ"; GB9b Prepend omitted). Keyword subscripts themselves are a general Mojito feature documented in `grammar.md`. |
-| String type split | `String` is the standard runtime string; a `StringLiteral` implicitly converts and materializes to `String`, including for un-annotated bindings (`var s = "lit"` is a `String`). String slicing is a supported non-raising API surface. | Mojito's `: String` annotations resolve to the self-hosted nominal struct with implicit literal conversion, but un-annotated string bindings deliberately stay `StringLiteral` until nominal slicing/result-API parity lands (a recorded follow-up). Nominal `String` slicing is boundary-checked library code that `raises` and rejects strides, unlike the byte-wise literal slice. Literal `hash(...)` uses the VM's FNV path while nominal keys hash through the struct's DJB2 `__hash__` — containers are internally consistent per key type. Overloads differing only in `StringLiteral`-vs-`String` are rejected (both mangle to the stable `String` symbol spelling). |
+| String type split | `String` is the standard runtime string; a `StringLiteral` implicitly converts and materializes to `String`, including for un-annotated bindings (`var s = "lit"` is a `String`). String slicing is a supported non-raising API surface. | Mojito matches the binding default: `: String` annotations resolve to the self-hosted nominal struct, a literal converts through the `@implicit` constructor, and an un-annotated `var s = "lit"` binding materializes the nominal String — narrower than Mojo's universal materialization, since aggregate elements, `comptime` bindings, and bare literal expressions stay `StringLiteral`. Nominal slicing is non-raising byte-wise library code with Python-normalized bounds and strides, matching the builtin literal slice; a cut inside a multibyte sequence keeps the raw bytes and renders lossily at the literal read-back. Result APIs are eager: `find`/`rfind`/`startswith`/`endswith` and `split(sep) raises -> List[String]` (empty separator raises) return owned values where current Mojo returns `StringSlice` views, without the `start`/`end`/`maxsplit` parameters; further APIs (`replace`/`join`/`strip`/…) grow demand-first. Literal `hash(...)` uses the VM's FNV path while nominal keys hash through the struct's DJB2 `__hash__` — containers are internally consistent per key type. Overloads differing only in `StringLiteral`-vs-`String` are rejected (both mangle to the stable `String` symbol spelling). |
 | Lazy template strings | Current Mojo's `TString` (std.format.tstring) is origin-parameterized — `TString[origins, //, format_string, *Ts]` holds a borrowed `VariadicPack` of interpolation references, so exclusivity rejects mutating a captured value before the template is used. | Mojito's self-hosted prelude `TString[*Ts: Movable & Writable]` captures typed value snapshots at creation instead (an origin-parameterized reference pack is not yet expressible): copyable interpolations copy in, non-Copyable places snapshot as creation-time formatted strings, and mutating a captured variable afterward prints the snapshot rather than being rejected. Formatting defers to Writable `write_to` in both. `TString[...]` annotations are not spellable in Mojito. |
 | Explicit destruction | `@explicit_destroy` no longer opts a type out of implicit deletion. A type narrows or removes `ImplicitlyDeletable` through conditional conformance, commonly `ImplicitlyDeletable where False`. The decorator is optional and only supplies an explanatory diagnostic; using it without a message is an error. | Separate the linearity fact from the diagnostic decorator and derive automatic deletion from conformance. |
 | Move initialization | The consuming unified initializer is `__init__(out self, *, deinit move: Self)`; a bare `move:` parameter is rejected with a migration diagnostic. | Use the `deinit` argument convention in current fixtures and documentation while retaining bare `move:` only as an explicit Mojito compatibility spelling. |

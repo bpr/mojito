@@ -597,12 +597,11 @@ impl VmBackend {
                 }
             }
         }
-        match std::string::String::from_utf8(bytes) {
-            Ok(text) => Ok(Value::Str(text)),
-            Err(_) => Err(RuntimeError::TypeError(
-                "vm: nominal String buffer is not valid UTF-8".to_string(),
-            )),
-        }
+        // Lossy, matching the builtin literal slice: byte-wise slicing may
+        // leave a split multibyte sequence in the buffer.
+        Ok(Value::Str(
+            std::string::String::from_utf8_lossy(&bytes).into_owned(),
+        ))
     }
 
     /// Materialize a builtin string as a nominal stdlib `String` value,

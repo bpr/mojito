@@ -1486,7 +1486,8 @@ fn inferred_var_takes_the_values_natural_type() {
     let e = run("var i = 5\nvar f = 3.5\nvar s = \"hi\"\nvar b = True\nvar g = 1 + 2\n");
     assert_eq!(binding(&e, "i"), Value::Int(5));
     assert_eq!(binding(&e, "f"), Value::Float64(3.5));
-    assert_eq!(binding(&e, "s"), Value::Str("hi".into()));
+    // An un-annotated string binding materializes the nominal String.
+    assert_nominal(&binding(&e, "s"), "String");
     assert_eq!(binding(&e, "b"), Value::Bool(true));
     assert_eq!(binding(&e, "g"), Value::Int(3));
 }
