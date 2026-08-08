@@ -521,3 +521,35 @@ fn self_hosted_pack_tuple_preserves_tuple_restrictions() {
     let err = run(&runtime_index).unwrap_err();
     assert!(err.contains("compile-time Int index"), "got: {err}");
 }
+
+#[test]
+fn self_hosted_string_codepoint_type() {
+    // `s[codepoint=i]` yields a prelude-exported `Codepoint`: Writable as the
+    // character it decoded, `Intable` for the scalar, scalar-ordered.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "def main():\n    var s = String(\"h\\u00e9llo\\U0001f642\")\n    try:\n        var first: Codepoint = s[codepoint=0]\n        var accent = s[codepoint=1]\n        var face = s[codepoint=5]\n        print(first, accent, face)\n        print(Int(first), Int(accent), Int(face))\n        print(first.is_ascii(), accent.is_ascii())\n        print(first.utf8_byte_length(), accent.utf8_byte_length(), face.utf8_byte_length())\n        print(first < accent, accent == accent, face > accent)\n    except:\n        print(\"unexpected\")\n",
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "h é 🙂\n104 233 128578\nTrue False\n1 2 4\nTrue True True\n"
+    );
+}
+
+#[test]
+fn self_hosted_string_grapheme_segmentation() {
+    // The documented UAX #29 subset: combining marks join (GB9), decomposed
+    // Hangul jamo compose (GB6-GB8), regional indicators pair (GB12/GB13),
+    // ZWJ sequences and skin tones join (simplified GB11, GB9), CR LF stays
+    // one cluster (GB3), and controls break (GB4/GB5).
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "def main() raises:\n    var accent = String(\"e\\u0301\")\n    print(accent.codepoint_count(), accent.grapheme_count(), accent[grapheme=0])\n    var jamo = String(\"\\u1112\\u1161\\u11ab\")\n    print(jamo.codepoint_count(), jamo.grapheme_count(), jamo[grapheme=0])\n    var flags = String(\"\\U0001f1fa\\U0001f1f8\\U0001f1eb\\U0001f1f7\")\n    print(flags.grapheme_count(), flags[grapheme=1])\n    var family = String(\"\\U0001f468\\u200d\\U0001f469\\u200d\\U0001f467\")\n    print(family.grapheme_count(), family[grapheme=0])\n    var thumb = String(\"\\U0001f44d\\U0001f3fd\")\n    print(thumb.grapheme_count())\n    var crlf = String(\"a\\r\\nb\")\n    print(crlf.grapheme_count())\n    print(String(\"\").grapheme_count())\n",
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "2 1 e\u{301}\n3 1 \u{1112}\u{1161}\u{11ab}\n2 🇫🇷\n1 👨\u{200d}👩\u{200d}👧\n1\n3\n0\n"
+    );
+}

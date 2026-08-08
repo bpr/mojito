@@ -1,0 +1,21 @@
+def main():
+    try:
+        var accent = String("é")
+        print(accent.codepoint_count(), accent.grapheme_count(), accent[grapheme=0])
+        var jamo = String("한")
+        print(jamo.codepoint_count(), jamo.grapheme_count(), jamo[grapheme=0])
+        var mixed = String("한 x")
+        print(mixed.grapheme_count(), mixed[grapheme=0], mixed[grapheme=2])
+        var flags = String("\U0001f1fa\U0001f1f8\U0001f1eb\U0001f1f7")
+        print(flags.grapheme_count(), flags[grapheme=1])
+        var family = String("\U0001f468‍\U0001f469‍\U0001f467")
+        print(family.grapheme_count(), family[grapheme=0])
+        var thumb = String("\U0001f44d\U0001f3fd")
+        print(thumb.grapheme_count(), thumb[grapheme=0])
+        var crlf = String("a\r\nb")
+        print(crlf.grapheme_count())
+        var empty = String("")
+        print(empty.grapheme_count())
+    except:
+        print("unexpected")
+    print("done")

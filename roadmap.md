@@ -69,20 +69,20 @@ growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
 - [ ] **String follow-ups** — the self-hosted core landed (nominal UTF-8
-  `String`, keyword subscripts, `byte=`/`codepoint=` access,
-  boundary-checked slicing, compare/hash/format; see `docs/features.md`).
-  Remaining: `s[grapheme=i]` segmentation (decide the UAX #29 data
-  strategy — generated tables module vs documented simplified rule) with a
-  `Codepoint` wrapper type replacing the `Int` scalar result; lazy
-  captured `TString` self-hosting; migrating the builtin literal
-  operations onto the struct and splitting `StringLiteral` from `String`
-  at the type level (annotation takeover, conversion retargeting,
-  ordering on literals); and String result APIs
+  `String`, keyword subscripts, `byte=`/`codepoint=`/`grapheme=` access
+  with a `Codepoint` result type, boundary-checked slicing,
+  compare/hash/format; see `docs/features.md`).
+  Remaining: lazy captured `TString` self-hosting; migrating the builtin
+  literal operations onto the struct and splitting `StringLiteral` from
+  `String` at the type level (annotation takeover, conversion
+  retargeting, ordering on literals); and String result APIs
   (`find`/`split`/`startswith`/...) growing demand-first.
 - [ ] **SIMD semantic completion** — finish dtype/literal conversions, masks,
   reductions, shuffles, and other CPU-visible VM semantics; migrate the brief
   `SIMDSize` spelling to current `SIMDLength` while retaining only an explicit
-  compatibility policy for the deprecated alias.
+  compatibility policy for the deprecated alias. Runtime `Byte(Int)`/dtype
+  scalar conversions also unlock direct `Codepoint` construction
+  (`from_u32`-style) and UTF-8 encoding in library code.
 - [ ] **CPU Layout and LayoutTensor semantics** — implement the target-independent
   type, indexing, and memory-view contracts required by CPU programs while
   leaving observable ABI layout and GPU memory spaces to later milestones.

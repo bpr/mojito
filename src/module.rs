@@ -1108,7 +1108,16 @@ fn module_path_under(mut base: PathBuf, path: &[String]) -> PathBuf {
 
 const PRELUDE_MODULE: &str = "std.prelude";
 
-const PRELUDE_EXPORTS: &[&str] = &["List", "Set", "Dict", "Tuple", "Range", "range", "String"];
+const PRELUDE_EXPORTS: &[&str] = &[
+    "List",
+    "Set",
+    "Dict",
+    "Tuple",
+    "Range",
+    "range",
+    "String",
+    "Codepoint",
+];
 
 fn bundled_path(relative: &str) -> Option<PathBuf> {
     option_env!("CARGO_MANIFEST_DIR").map(|root| Path::new(root).join(relative))

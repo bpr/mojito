@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Grapheme segmentation and a `Codepoint` result type for the
+  self-hosted String. `s[codepoint=i]` now yields a prelude-exported
+  `Codepoint` carrying the decoded scalar plus the character's text
+  (captured through the struct-to-literal bridge): `Int(cp)` via
+  `Intable`, scalar-ordered comparison and equality, Writable printing
+  as the character, `is_ascii()`, and `utf8_byte_length()`; direct
+  construction is rejected until runtime scalar conversions land.
+  `s[grapheme=i]` returns the extended grapheme cluster as a `String`
+  substring and `grapheme_count()` walks the whole buffer, both raising
+  on out-of-range indexes and truncated UTF-8. Segmentation implements
+  a documented UAX #29 subset — hand-maintained Control/Extend/
+  SpacingMark essentials ranges, regional-indicator pairing, and fully
+  arithmetic Hangul — with GB11 simplified to "never break after ZWJ"
+  (common emoji ZWJ sequences join) and GB9b (Prepend) omitted.
+
 - Self-hosted String core. The stdlib gains a nominal UTF-8 `String`
   (byte buffer over `UnsafePointer[Byte]`), constructed explicitly from
   a literal (`String("...")`); annotations and non-literal `String(x)`

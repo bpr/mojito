@@ -6,6 +6,12 @@
 # and its builtin operations are unchanged; `String(...)` with a
 # non-literal argument keeps the builtin Writable stringification until
 # the type-split migration.
+#
+# `s[codepoint=i]` yields a `Codepoint` value carrying both the decoded
+# scalar and the character's text.  `s[grapheme=i]` and `grapheme_count()`
+# segment extended grapheme clusters with a documented UAX #29 subset: a
+# hand-maintained essentials classifier plus arithmetic Hangul, with GB11
+# simplified to "never break after ZWJ" and GB9b (Prepend) omitted.
 
 struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
     var data: UnsafePointer[Byte]
@@ -97,7 +103,7 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
             raise Error("String byte index out of range")
         return self.data[byte]
 
-    def __getitem__(self, *, codepoint: Int) raises -> Int:
+    def __getitem__(self, *, codepoint: Int) raises -> Codepoint:
         if codepoint < 0:
             raise Error("String codepoint index out of range")
         var index = 0
@@ -107,7 +113,8 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
             var width = self._sequence_width(lead)
             var value = self._decode_at(index, width)
             if seen == codepoint:
-                return value
+                var text = self._with_bytes(index, width)
+                return Codepoint(value, text: text._as_string_literal())
             seen += 1
             index += width
         raise Error("String codepoint index out of range")
@@ -121,6 +128,27 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
             count += 1
         if index != self.size:
             raise Error("String buffer ends inside a UTF-8 sequence")
+        return count
+
+    def __getitem__(self, *, grapheme: Int) raises -> Self:
+        if grapheme < 0:
+            raise Error("String grapheme index out of range")
+        var index = 0
+        var seen = 0
+        while index < self.size:
+            var end = self._next_grapheme_end(index)
+            if seen == grapheme:
+                return self._with_bytes(index, end - index)
+            seen += 1
+            index = end
+        raise Error("String grapheme index out of range")
+
+    def grapheme_count(self) raises -> Int:
+        var index = 0
+        var count = 0
+        while index < self.size:
+            index = self._next_grapheme_end(index)
+            count += 1
         return count
 
     # UTF-8 leading-byte arithmetic: the sequence width a lead byte declares.
@@ -159,6 +187,189 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
             value = value * 64 + (continuation - 128)
             i += 1
         return value
+
+    # The byte offset one past the extended grapheme cluster starting at
+    # `start`: decode the first codepoint, then extend while the pair rules
+    # join, tracking the run of consecutive regional indicators (class 7).
+    def _next_grapheme_end(self, start: Int) raises -> Int:
+        var index = start
+        var lead = Int(self.data[index])
+        var width = self._sequence_width(lead)
+        var prev_class = self._grapheme_class(self._decode_at(index, width))
+        index += width
+        var ri_run = 0
+        if prev_class == 7:
+            ri_run = 1
+        while index < self.size:
+            lead = Int(self.data[index])
+            width = self._sequence_width(lead)
+            var next_class = self._grapheme_class(self._decode_at(index, width))
+            if not self._grapheme_joins(prev_class, next_class, ri_run):
+                return index
+            if next_class == 7:
+                ri_run += 1
+            else:
+                ri_run = 0
+            prev_class = next_class
+            index += width
+        return index
+
+    # Whether UAX #29 keeps `next_class` in the cluster after `prev_class`,
+    # using the `_grapheme_class` codes.  `ri_run` is the count of consecutive
+    # regional indicators ending at the previous codepoint.  GB11 is
+    # simplified to "never break after ZWJ" (no Extended_Pictographic data);
+    # GB9b (Prepend) is omitted.
+    def _grapheme_joins(self, prev_class: Int, next_class: Int, ri_run: Int) -> Bool:
+        # GB3: CR x LF.
+        if prev_class == 1 and next_class == 2:
+            return True
+        # GB4/GB5: otherwise break around Control, CR, and LF.
+        if prev_class == 3 or prev_class == 1 or prev_class == 2:
+            return False
+        if next_class == 3 or next_class == 1 or next_class == 2:
+            return False
+        # GB6: L x (L | V | LV | LVT).
+        if prev_class == 8:
+            if next_class == 8 or next_class == 9:
+                return True
+            if next_class == 11 or next_class == 12:
+                return True
+        # GB7: (LV | V) x (V | T).
+        if prev_class == 11 or prev_class == 9:
+            if next_class == 9 or next_class == 10:
+                return True
+        # GB8: (LVT | T) x T.
+        if prev_class == 12 or prev_class == 10:
+            if next_class == 10:
+                return True
+        # GB9/GB9a: x (Extend | ZWJ | SpacingMark).
+        if next_class == 4 or next_class == 5 or next_class == 6:
+            return True
+        # GB11 simplified: ZWJ x anything.
+        if prev_class == 5:
+            return True
+        # GB12/GB13: regional indicators join in pairs.
+        if prev_class == 7 and next_class == 7:
+            return ri_run % 2 == 1
+        # GB999.
+        return False
+
+    # Grapheme_Cluster_Break class of `cp`: the documented essentials subset —
+    # hand-maintained Control/Extend/SpacingMark ranges, regional indicators,
+    # and fully arithmetic Hangul.  Class codes (comptime constants would echo
+    # in the CLI's final-bindings listing, so the codes stay literal):
+    #   0 Other, 1 CR, 2 LF, 3 Control, 4 Extend, 5 ZWJ, 6 SpacingMark,
+    #   7 Regional_Indicator, 8 L, 9 V, 10 T, 11 LV, 12 LVT.
+    # Unlisted codepoints are 0 (Other).
+    def _grapheme_class(self, cp: Int) -> Int:
+        if cp == 0x0D:
+            return 1
+        if cp == 0x0A:
+            return 2
+        # Control essentials (non-exhaustive): C0/C1, soft hyphen, zero-width
+        # space, line/paragraph separators and directional formatting, word
+        # joiner and invisible operators, byte-order mark.
+        if cp < 0x20:
+            return 3
+        if cp >= 0x7F and cp <= 0x9F:
+            return 3
+        if cp == 0xAD or cp == 0x200B or cp == 0xFEFF:
+            return 3
+        if cp >= 0x2028 and cp <= 0x202E:
+            return 3
+        if cp >= 0x2060 and cp <= 0x2064:
+            return 3
+        if cp == 0x200D:
+            return 5
+        # Extend essentials (non-exhaustive): ZWNJ, combining-mark blocks for
+        # Latin/Cyrillic/Hebrew/Arabic/Devanagari/Thai, combining diacritical
+        # extensions/supplement, combining marks for symbols, variation
+        # selectors (plus supplement), emoji skin-tone modifiers, and tags.
+        if cp == 0x200C:
+            return 4
+        if cp >= 0x0300 and cp <= 0x036F:
+            return 4
+        if cp >= 0x0483 and cp <= 0x0489:
+            return 4
+        if cp >= 0x0591 and cp <= 0x05BD:
+            return 4
+        if cp == 0x05BF or cp == 0x05C7:
+            return 4
+        if cp >= 0x05C1 and cp <= 0x05C2:
+            return 4
+        if cp >= 0x05C4 and cp <= 0x05C5:
+            return 4
+        if cp >= 0x0610 and cp <= 0x061A:
+            return 4
+        if cp >= 0x064B and cp <= 0x065F:
+            return 4
+        if cp == 0x0670:
+            return 4
+        if cp >= 0x06D6 and cp <= 0x06DC:
+            return 4
+        if cp >= 0x0900 and cp <= 0x0902:
+            return 4
+        if cp == 0x093C or cp == 0x094D:
+            return 4
+        if cp >= 0x0941 and cp <= 0x0948:
+            return 4
+        if cp >= 0x0951 and cp <= 0x0957:
+            return 4
+        if cp == 0x0E31:
+            return 4
+        if cp >= 0x0E34 and cp <= 0x0E3A:
+            return 4
+        if cp >= 0x0E47 and cp <= 0x0E4E:
+            return 4
+        if cp >= 0x1AB0 and cp <= 0x1AFF:
+            return 4
+        if cp >= 0x1DC0 and cp <= 0x1DFF:
+            return 4
+        if cp >= 0x20D0 and cp <= 0x20FF:
+            return 4
+        if cp >= 0xFE00 and cp <= 0xFE0F:
+            return 4
+        if cp >= 0xFE20 and cp <= 0xFE2F:
+            return 4
+        if cp >= 0x1F3FB and cp <= 0x1F3FF:
+            return 4
+        if cp >= 0xE0020 and cp <= 0xE007F:
+            return 4
+        if cp >= 0xE0100 and cp <= 0xE01EF:
+            return 4
+        # SpacingMark essentials (non-exhaustive): Devanagari and Thai/Lao
+        # spacing vowel signs.
+        if cp == 0x0903 or cp == 0x093B:
+            return 6
+        if cp >= 0x093E and cp <= 0x0940:
+            return 6
+        if cp >= 0x0949 and cp <= 0x094C:
+            return 6
+        if cp >= 0x094E and cp <= 0x094F:
+            return 6
+        if cp == 0x0E33 or cp == 0x0EB3:
+            return 6
+        if cp >= 0x1F1E6 and cp <= 0x1F1FF:
+            return 7
+        # Hangul is fully arithmetic: conjoining jamo blocks and the
+        # precomposed-syllable block, where LV syllables sit every 28 steps.
+        if cp >= 0x1100 and cp <= 0x115F:
+            return 8
+        if cp >= 0xA960 and cp <= 0xA97C:
+            return 8
+        if cp >= 0x1160 and cp <= 0x11A7:
+            return 9
+        if cp >= 0xD7B0 and cp <= 0xD7C6:
+            return 9
+        if cp >= 0x11A8 and cp <= 0x11FF:
+            return 10
+        if cp >= 0xD7CB and cp <= 0xD7FB:
+            return 10
+        if cp >= 0xAC00 and cp <= 0xD7A3:
+            if (cp - 0xAC00) % 28 == 0:
+                return 11
+            return 12
+        return 0
 
     def __getitem__(self, slice: Slice) raises -> Self:
         var bounds = slice.indices(self.size)
@@ -212,3 +423,54 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
         writer.write("\"")
         writer.write(self._as_string_literal())
         writer.write("\"")
+
+# A decoded Unicode scalar together with its character text.  Produced by
+# `String.__getitem__(*, codepoint=...)`, which owns the bytes and derives
+# `text` through the struct-to-literal bridge; a scalar-only constructor
+# would need runtime Int-to-Byte encoding, which the subset does not have
+# yet, so direct construction is not offered.
+struct Codepoint(
+    Comparable, Copyable, Equatable, ImplicitlyDeletable, Intable, Movable, Writable
+):
+    var _scalar: Int
+    var _text: String
+
+    def __init__(out self, scalar: Int, *, text: String):
+        self._scalar = scalar
+        self._text = text
+
+    def __int__(self) -> Int:
+        return self._scalar
+
+    def is_ascii(self) -> Bool:
+        return self._scalar < 128
+
+    def utf8_byte_length(self) -> Int:
+        if self._scalar < 0x80:
+            return 1
+        if self._scalar < 0x800:
+            return 2
+        if self._scalar < 0x10000:
+            return 3
+        return 4
+
+    def __eq__(self, other: Self) -> Bool:
+        return self._scalar == other._scalar
+
+    def __ne__(self, other: Self) -> Bool:
+        return self._scalar != other._scalar
+
+    def __lt__(self, other: Self) -> Bool:
+        return self._scalar < other._scalar
+
+    def __le__(self, other: Self) -> Bool:
+        return self._scalar <= other._scalar
+
+    def __gt__(self, other: Self) -> Bool:
+        return self._scalar > other._scalar
+
+    def __ge__(self, other: Self) -> Bool:
+        return self._scalar >= other._scalar
+
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write(self._text)
