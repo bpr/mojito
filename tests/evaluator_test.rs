@@ -107,9 +107,15 @@ fn evaluates_unary_and_boolean_logic() {
 
 #[test]
 fn string_concatenation_and_equality() {
-    let e = run("var s: String = \"foo\" + \"bar\"\nvar eq: Bool = s == \"foobar\"\n");
-    assert_eq!(binding(&e, "s"), Value::Str("foobar".into()));
+    // Literal `+` stays on StringLiteral; the annotated binding materializes
+    // the nominal String through the @implicit literal constructor, and the
+    // mixed comparison dispatches the struct's `__eq__`.
+    let e = run(
+        "var s: String = \"foo\" + \"bar\"\nvar eq: Bool = s == \"foobar\"\nvar lit: StringLiteral = \"foo\" + \"bar\"\n",
+    );
+    assert!(matches!(binding(&e, "s"), Value::Struct { .. }));
     assert_eq!(binding(&e, "eq"), Value::Bool(true));
+    assert_eq!(binding(&e, "lit"), Value::Str("foobar".into()));
 }
 
 #[test]
@@ -160,7 +166,7 @@ fn generic_function_value_runs_through_a_monomorphic_callable_view() {
 fn overloaded_function_value_uses_its_contextual_signature() {
     assert_eq!(
         output(
-            "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: String) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) -> Int = choose\n    print(callback(41))\n"
+            "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) -> Int = choose\n    print(callback(41))\n"
         ),
         "42\n"
     );
@@ -330,7 +336,7 @@ fn handwritten_constructor_shares_default_and_keyword_call_binding() {
 #[test]
 fn trait_default_method_is_materialized_and_can_be_overridden() {
     let actual = output(
-        "trait Named:\n    def name(self) -> String: ...\n    def describe(self) -> String:\n        return self.name() + \"!\"\n\n@fieldwise_init\nstruct Defaulted(Named):\n    var label: String\n    def name(self) -> String:\n        return self.label\n\n@fieldwise_init\nstruct Overridden(Named):\n    var label: String\n    def name(self) -> String:\n        return self.label\n    def describe(self) -> String:\n        return \"override \" + self.label\n\ndef main():\n    var a = Defaulted(\"default\")\n    var b = Overridden(\"custom\")\n    print(a.describe())\n    print(b.describe())\n",
+        "trait Named:\n    def name(self) -> StringLiteral: ...\n    def describe(self) -> StringLiteral:\n        return self.name() + \"!\"\n\n@fieldwise_init\nstruct Defaulted(Named):\n    var label: StringLiteral\n    def name(self) -> StringLiteral:\n        return self.label\n\n@fieldwise_init\nstruct Overridden(Named):\n    var label: StringLiteral\n    def name(self) -> StringLiteral:\n        return self.label\n    def describe(self) -> StringLiteral:\n        return \"override \" + self.label\n\ndef main():\n    var a = Defaulted(\"default\")\n    var b = Overridden(\"custom\")\n    print(a.describe())\n    print(b.describe())\n",
     );
     assert_eq!(actual, "default!\noverride custom\n");
 }
@@ -413,7 +419,7 @@ fn hashable_contributes_to_a_caller_provided_hasher() {
 #[test]
 fn buffer_writer_receives_multiple_writable_values() {
     let actual = output(
-        "@fieldwise_init\nstruct BufferWriter(Writer):\n    var buffer: String\n    def write_string(mut self, value: String):\n        self.buffer = self.buffer + value\n\ndef main():\n    var writer = BufferWriter(\"\")\n    writer.write(\"count=\", 3, \" ok=\", True)\n    print(writer.buffer)\n",
+        "@fieldwise_init\nstruct BufferWriter(Writer):\n    var buffer: StringLiteral\n    def write_string(mut self, value: StringLiteral):\n        self.buffer = self.buffer + value\n\ndef main():\n    var writer = BufferWriter(\"\")\n    writer.write(\"count=\", 3, \" ok=\", True)\n    print(writer.buffer)\n",
     );
     assert_eq!(actual, "count=3 ok=True\n");
 }
@@ -732,7 +738,7 @@ fn generic_target_implicit_conversion_runs_selected_constructor() {
 #[test]
 fn generic_function_identity_runs_type_erased() {
     let e = run(
-        "def id[T: Copyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: String = id(\"hi\")\n",
+        "def id[T: Copyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: StringLiteral = id(\"hi\")\n",
     );
     assert_eq!(binding(&e, "n"), Value::Int(5));
     assert_eq!(binding(&e, "s"), Value::Str("hi".into()));
@@ -756,12 +762,12 @@ fn generic_struct_method_dispatches() {
 
 // --- Traits (Phase 1b): type-erased; dispatch is on the conforming struct ---
 
-const QUACK: &str = "trait Quackable:\n    def quack(self) -> String:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: String\n\n    def quack(self) -> String:\n        return \"Quack\"\n\ndef make_it_quack[T: Quackable](x: T) -> String:\n    return x.quack()\n";
+const QUACK: &str = "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: StringLiteral\n\n    def quack(self) -> StringLiteral:\n        return \"Quack\"\n\ndef make_it_quack[T: Quackable](x: T) -> StringLiteral:\n    return x.quack()\n";
 
 #[test]
 fn bounded_generic_dispatches_to_conforming_struct_method() {
     let e = run(&format!(
-        "{QUACK}var s: String = make_it_quack(Duck(\"Donald\"))\n"
+        "{QUACK}var s: StringLiteral = make_it_quack(Duck(\"Donald\"))\n"
     ));
     assert_eq!(binding(&e, "s"), Value::Str("Quack".into()));
 }
@@ -903,7 +909,7 @@ fn simd_lane_index_out_of_range_is_runtime_error() {
 #[test]
 fn try_catches_a_raised_error() {
     let e = run(
-        "var out: String = \"none\"\ntry:\n    raise Error(\"boom\")\nexcept e:\n    out = \"caught\"\n",
+        "var out: StringLiteral = \"none\"\ntry:\n    raise Error(\"boom\")\nexcept e:\n    out = \"caught\"\n",
     );
     assert_eq!(binding(&e, "out"), Value::Str("caught".into()));
 }
@@ -911,11 +917,11 @@ fn try_catches_a_raised_error() {
 #[test]
 fn else_runs_only_without_error_and_finally_always() {
     let ok = run(
-        "var log: String = \"\"\ntry:\n    log = log + \"T\"\nexcept e:\n    log = log + \"C\"\nelse:\n    log = log + \"E\"\nfinally:\n    log = log + \"F\"\n",
+        "var log: StringLiteral = \"\"\ntry:\n    log = log + \"T\"\nexcept e:\n    log = log + \"C\"\nelse:\n    log = log + \"E\"\nfinally:\n    log = log + \"F\"\n",
     );
     assert_eq!(binding(&ok, "log"), Value::Str("TEF".into())); // try, else, finally
     let caught = run(
-        "var log: String = \"\"\ntry:\n    raise \"x\"\nexcept e:\n    log = log + \"C\"\nelse:\n    log = log + \"E\"\nfinally:\n    log = log + \"F\"\n",
+        "var log: StringLiteral = \"\"\ntry:\n    raise \"x\"\nexcept e:\n    log = log + \"C\"\nelse:\n    log = log + \"E\"\nfinally:\n    log = log + \"F\"\n",
     );
     assert_eq!(binding(&caught, "log"), Value::Str("CF".into())); // except, finally (no else)
 }
@@ -923,7 +929,7 @@ fn else_runs_only_without_error_and_finally_always() {
 #[test]
 fn raise_propagates_across_a_function_call() {
     let e = run(
-        "def boom() raises -> Int:\n    raise \"deep\"\n    return 0\n\nvar out: String = \"none\"\ntry:\n    var y: Int = boom()\nexcept e:\n    out = \"propagated\"\n",
+        "def boom() raises -> Int:\n    raise \"deep\"\n    return 0\n\nvar out: StringLiteral = \"none\"\ntry:\n    var y: Int = boom()\nexcept e:\n    out = \"propagated\"\n",
     );
     assert_eq!(binding(&e, "out"), Value::Str("propagated".into()));
 }
@@ -939,7 +945,7 @@ fn raising_method_is_caught_at_runtime() {
 #[test]
 fn typed_error_value_is_preserved_and_bound_by_except() {
     let actual = output(
-        "@fieldwise_init\nstruct ValidationError:\n    var field: String\n    var reason: String\n\ndef validate() raises ValidationError -> Int:\n    raise ValidationError(\"name\", \"empty\")\n\ndef main():\n    try:\n        var ignored = validate()\n    except error:\n        print(error.field, error.reason)\n",
+        "@fieldwise_init\nstruct ValidationError:\n    var field: StringLiteral\n    var reason: StringLiteral\n\ndef validate() raises ValidationError -> Int:\n    raise ValidationError(\"name\", \"empty\")\n\ndef main():\n    try:\n        var ignored = validate()\n    except error:\n        print(error.field, error.reason)\n",
     );
     assert_eq!(actual, "name empty\n");
 }
@@ -955,7 +961,7 @@ fn parametric_error_effect_erases_to_never_for_nonraising_callback() {
 #[test]
 fn reraise_with_transfer_sigil() {
     let e = run(
-        "var out: String = \"none\"\ntry:\n    try:\n        raise \"inner\"\n    except e:\n        raise e^\nexcept e2:\n    out = \"reraised\"\n",
+        "var out: StringLiteral = \"none\"\ntry:\n    try:\n        raise \"inner\"\n    except e:\n        raise e^\nexcept e2:\n    out = \"reraised\"\n",
     );
     assert_eq!(binding(&e, "out"), Value::Str("reraised".into()));
 }
@@ -1008,13 +1014,17 @@ fn print_displays_structs_and_simd() {
     assert_eq!(e, "P(1, 2)\n[1, 2, 3, 4]\n");
 }
 
-// --- Builtins: String / abs / min / max / round / len ---
+// --- Builtins: StringLiteral / abs / min / max / round / len ---
 
 #[test]
 fn string_builtin_stringifies_and_concatenates() {
-    let e = run("var msg: String = \"n = \" + String(42)\nvar f: String = String(3.5)\n");
-    assert_eq!(binding(&e, "msg"), Value::Str("n = 42".into()));
-    assert_eq!(binding(&e, "f"), Value::Str("3.5".into()));
+    // `String(x)` materializes the nominal struct; the literal-lhs concat
+    // converts and dispatches the struct's `__add__`. Observable text is
+    // pinned through print (the Writable path).
+    let printed = output(
+        "var msg: String = \"n = \" + String(42)\nvar f: String = String(3.5)\nprint(msg)\nprint(f)\n",
+    );
+    assert_eq!(printed, "n = 42\n3.5\n");
 }
 
 #[test]
@@ -1214,7 +1224,7 @@ fn list_membership_and_not_in() {
 #[test]
 fn string_substring_membership() {
     let e = run(
-        "var s: String = \"hello\"\nvar a: Bool = \"ell\" in s\nvar b: Bool = \"z\" not in s\n",
+        "var s: StringLiteral = \"hello\"\nvar a: Bool = \"ell\" in s\nvar b: Bool = \"z\" not in s\n",
     );
     assert_eq!(binding(&e, "a"), Value::Bool(true));
     assert_eq!(binding(&e, "b"), Value::Bool(true));
@@ -1325,7 +1335,7 @@ fn list_method_through_a_field() {
 fn augmented_assignment_arithmetic() {
     let e = run("var i: Int = 10\ni += 5\ni -= 2\ni *= 3\ni //= 4\ni %= 7\ni **= 2\n");
     assert_eq!(binding(&e, "i"), Value::Int(4));
-    let s = run("var s: String = \"a\"\ns += \"bc\"\n");
+    let s = run("var s: StringLiteral = \"a\"\ns += \"bc\"\n");
     assert_eq!(binding(&s, "s"), Value::Str("abc".into()));
 }
 
@@ -1493,7 +1503,7 @@ fn inferred_var_list_is_mutable_and_reassignable() {
 #[test]
 fn tuple_construction_indexing_and_value_semantics() {
     let e = run_compiled(
-        "var t: Tuple[Int, Float64, String] = (1, 2.5, \"hi\")\nvar a: Int = t[0]\nvar b: Float64 = t[1]\nvar c: String = t[2]\n",
+        "var t: Tuple[Int, Float64, StringLiteral] = (1, 2.5, \"hi\")\nvar a: Int = t[0]\nvar b: Float64 = t[1]\nvar c: StringLiteral = t[2]\n",
     );
     assert_eq!(binding(&e, "a"), Value::Int(1));
     assert_eq!(binding(&e, "b"), Value::Float64(2.5));
@@ -1582,7 +1592,7 @@ fn heterogeneous_variadic_pack_preserves_all_runtime_values() {
 #[test]
 fn variadic_args_after_regular_params() {
     let e = output(
-        "def tag(label: String, *nums: Int) -> Int:\n    return len(nums)\n\ndef main():\n    print(tag(\"a\"))\n    print(tag(\"a\", 1, 2, 3))\n",
+        "def tag(label: StringLiteral, *nums: Int) -> Int:\n    return len(nums)\n\ndef main():\n    print(tag(\"a\"))\n    print(tag(\"a\", 1, 2, 3))\n",
     );
     assert_eq!(e, "0\n3\n");
 }

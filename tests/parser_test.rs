@@ -652,7 +652,7 @@ fn parses_trait_with_method_requirements() {
                     keyword_only: None,
                     raises: false,
                     raises_type: None,
-                    ret: Some(Type::String),
+                    ret: Some(Type::Named("String".into(), vec![])),
                     default_body: None,
                 },
                 TraitMethod {
@@ -1992,7 +1992,7 @@ fn parses_origin_unions_parameters_and_reference_bindings() {
     assert!(matches!(
         ret,
         Some(Type::Ref { referent, origin: Some(origins) })
-            if **referent == Type::String && origins.len() == 2
+            if **referent == Type::Named("String".into(), vec![]) && origins.len() == 2
     ));
     assert!(matches!(
         &body[0].kind,
@@ -2345,7 +2345,7 @@ fn parses_function_type_annotations() {
                 function_type_param(Type::Int),
                 function_type_param(Type::Bool),
             ],
-            ret: Box::new(Type::String),
+            ret: Box::new(Type::Named("String".into(), vec![])),
             thin: true,
             capturing: None,
             raises: false,

@@ -184,7 +184,7 @@ impl Checker {
             // Short-circuiting boolean logic requires `Bool` operands.
             And | Or if lt == Ty::Bool && rt == Ty::Bool => Some(Ty::Bool),
             // `+` concatenates String, or adds numbers (result = common type).
-            Add if lt == Ty::String && rt == Ty::String => Some(Ty::String),
+            Add if lt == Ty::StringLiteral && rt == Ty::StringLiteral => Some(Ty::StringLiteral),
             // `**` between equal opaque type parameters bounded by `Powable`
             // (`__pow__(self, Self) -> Self`); the concrete impl runs after
             // erasure. Checked before the numeric arm since a `Param` isn't
@@ -235,6 +235,30 @@ impl Checker {
         if let Some(ty) = result {
             return Ok(ty);
         }
+        // Mixed literal/nominal String operands normalize onto the nominal
+        // struct: the literal side converts through the `@implicit` literal
+        // constructor and the operator dispatches the struct's dunder, so
+        // `s + "x"`, `"x" + s`, and mixed comparisons all run library code.
+        let nominal_string = |ty: &Ty| {
+            matches!(ty, Ty::Struct(name, args)
+                if args.is_empty()
+                    && crate::symbol::is_stdlib_string_struct(name)
+                    && self.structs.contains_key(name))
+        };
+        let mixed_string = if nominal_string(&lt) && rt == Ty::StringLiteral {
+            Some((right, lt.clone()))
+        } else if nominal_string(&rt) && lt == Ty::StringLiteral {
+            Some((left, rt.clone()))
+        } else {
+            None
+        };
+        if let Some((literal_operand, nominal_ty)) = mixed_string
+            && let Some(dunder) = op.dunder()
+            && self.record_implicit_conversion(literal_operand, &Ty::StringLiteral, &nominal_ty)?
+            && let Some(r) = self.struct_dunder(&nominal_ty, dunder, &[&nominal_ty])
+        {
+            return r;
+        }
         // Operator overloading: `a OP b` on a user struct dispatches to the left
         // operand's dunder method (`a.__add__(b)`, `a.__eq__(b)`, …).
         if let Some(dunder) = op.dunder()
@@ -281,7 +305,7 @@ impl Checker {
                     Ty::Tuple(elements) => tuple_elements_equatable(elements),
                     other => is_list_equatable(other),
                 },
-                Ty::String => *lt == Ty::String,
+                Ty::StringLiteral => *lt == Ty::StringLiteral,
                 _ => false,
             };
         if ok {
@@ -433,7 +457,9 @@ impl Checker {
             });
         }
         let aty = self.infer(&args[0])?;
-        if aty != Ty::String {
+        let nominal_string = matches!(&aty, Ty::Struct(name, args)
+            if args.is_empty() && crate::symbol::is_stdlib_string_struct(name));
+        if aty != Ty::StringLiteral && !nominal_string {
             return Err(TypeError::TypeMismatch {
                 expected: "String".to_string(),
                 found: aty.to_string(),

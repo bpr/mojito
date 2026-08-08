@@ -31,7 +31,7 @@ pub(super) fn default_literal(ty: &Ty) -> Ty {
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases (handled by `common_numeric`) are out of the way.
 pub(super) fn is_scalar(ty: &Ty) -> bool {
-    matches!(ty, Ty::Bool | Ty::String | Ty::None)
+    matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None)
 }
 
 /// Whether an opaque type parameter carries a bound that promises equality.
@@ -192,7 +192,10 @@ pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static
 /// set the VM can hash directly (`Int`/`UInt`/`Bool`/`String`/`Float64`). This
 /// lets a user key struct combine `self.field.__hash__()` values.
 pub(super) fn builtin_hashable_ty(ty: &Ty) -> bool {
-    matches!(ty, Ty::Int | Ty::UInt | Ty::Bool | Ty::String | Ty::Float64)
+    matches!(
+        ty,
+        Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64
+    )
 }
 
 pub(super) fn is_numeric_like(ty: &Ty) -> bool {
@@ -217,7 +220,9 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 /// Whether list elements of type `ty` can be compared for equality (needed by
 /// `List.remove`/`count`/`index`) — the same scalar set `==`/`!=` accept.
 pub(super) fn is_list_equatable(ty: &Ty) -> bool {
-    is_numeric(ty) || matches!(ty, Ty::Bool | Ty::String | Ty::None) || has_equality_bound(ty)
+    is_numeric(ty)
+        || matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None)
+        || has_equality_bound(ty)
 }
 
 /// Whether every element in a tuple supports equality. Tuples recurse so nested
@@ -248,7 +253,7 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         Ty::Int
         | Ty::UInt
         | Ty::Bool
-        | Ty::String
+        | Ty::StringLiteral
         | Ty::Float64
         | Ty::None
         | Ty::IntLiteral
@@ -542,12 +547,15 @@ impl Checker {
         Ok(Ty::None)
     }
 
-    /// Type the built-in `input(prompt)`: prompt must be a `String`, result is the
-    /// line read from standard input as a `String`.
-    pub(super) fn infer_input(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+    /// Type the built-in `input(prompt)`: the prompt is a compile-time or
+    /// nominal `String`, and the line read from standard input materializes
+    /// as the nominal `String`.
+    pub(super) fn infer_input(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("input", 1, args)?;
-        if tys[0] == Ty::String {
-            Ok(Ty::String)
+        let nominal_prompt = matches!(&tys[0], Ty::Struct(name, args)
+            if args.is_empty() && crate::symbol::is_stdlib_string_struct(name));
+        if tys[0] == Ty::StringLiteral || nominal_prompt {
+            self.nominal_string_wrap(span)
         } else {
             Err(TypeError::TypeMismatch {
                 expected: "String".to_string(),
@@ -578,12 +586,12 @@ impl Checker {
     /// Type `String(x)`: stringify a numeric, `Bool`, or `String` value.
     pub(super) fn infer_stringify(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("String", 1, args)?;
-        if is_numeric(&tys[0]) || tys[0] == Ty::Bool || tys[0] == Ty::String {
+        if is_numeric(&tys[0]) || tys[0] == Ty::Bool || tys[0] == Ty::StringLiteral {
             let runtime_ty = default_literal(&tys[0]);
             if runtime_ty != tys[0] {
                 self.record_literal_materializations(&args[0], &tys[0], &runtime_ty)?;
             }
-            return Ok(Ty::String);
+            return Ok(Ty::StringLiteral);
         }
         if self.conforms_to(&tys[0], "Writable") {
             // Like `print`, nominal String conversion formats through a
@@ -592,7 +600,7 @@ impl Checker {
             self.call_place_uses
                 .borrow_mut()
                 .insert(args[0].source_span());
-            return Ok(Ty::String);
+            return Ok(Ty::StringLiteral);
         }
         Err(TypeError::TypeMismatch {
             expected: "Writable".to_string(),
@@ -663,7 +671,7 @@ impl Checker {
         }
         if matches!(
             ty,
-            Ty::String
+            Ty::StringLiteral
                 | Ty::ComptimeList(_)
                 | Ty::Tuple(_)
                 | Ty::RuntimePack(_)
@@ -817,7 +825,7 @@ fn tuple_elements_comparable(elements: &[Ty]) -> bool {
 fn tuple_element_comparable(ty: &Ty) -> bool {
     match ty {
         Ty::Tuple(nested) => tuple_elements_comparable(nested),
-        Ty::String => true,
+        Ty::StringLiteral => true,
         other => is_numeric(other) || has_order_bound(other),
     }
 }
@@ -827,7 +835,7 @@ fn tuple_order_pair_compatible(left: &Ty, right: &Ty) -> bool {
         return true;
     }
     match (left, right) {
-        (Ty::String, Ty::String) => true,
+        (Ty::StringLiteral, Ty::StringLiteral) => true,
         (Ty::Tuple(left), Ty::Tuple(right)) => tuple_order_compatible(left, right),
         _ => left == right && has_order_bound(left),
     }

@@ -618,7 +618,7 @@ fn tuple_specialization_type_is_closed_in(
         Ty::Int
         | Ty::UInt
         | Ty::Bool
-        | Ty::String
+        | Ty::StringLiteral
         | Ty::Float64
         | Ty::None
         | Ty::Never

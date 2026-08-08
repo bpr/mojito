@@ -197,9 +197,9 @@ fn verifier_rejects_corrupt_projected_reference_handle_metadata() {
         .iter()
         .position(|projection| matches!(projection, Proj::Field(name) if name == "value"))
         .expect("value projection");
-    place.projection_tys[field] = Ty::String;
+    place.projection_tys[field] = Ty::StringLiteral;
     expect_finding(&wrong_field_type, "field 'value'");
-    expect_finding(&wrong_field_type, "typed String, declared Int");
+    expect_finding(&wrong_field_type, "typed StringLiteral, declared Int");
 }
 
 #[test]
@@ -231,11 +231,14 @@ fn verifier_checks_make_ref_capability_types() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, reference_ty(Ty::String, mojito::Mutability::Mutable))],
+        &[(
+            0,
+            reference_ty(Ty::StringLiteral, mojito::Mutability::Mutable),
+        )],
     );
     expect_finding(
         &program(wrong_referent),
-        "MakeRef destination targets String, incompatible with place storage Int",
+        "MakeRef destination targets StringLiteral, incompatible with place storage Int",
     );
 
     let raw_pointer = function(
@@ -302,13 +305,13 @@ fn verifier_checks_read_and_write_reference_capabilities() {
         )],
         2,
         &[
-            (0, Ty::String),
+            (0, Ty::StringLiteral),
             (1, reference_ty(Ty::Int, mojito::Mutability::Immutable)),
         ],
     );
     expect_finding(
         &program(read_wrong_referent),
-        "ReadRef result type String is incompatible with referent Int",
+        "ReadRef result type StringLiteral is incompatible with referent Int",
     );
 
     let write_immutable_reference = function(
@@ -352,11 +355,14 @@ fn verifier_checks_read_and_write_reference_capabilities() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, tracked_pointer_ty(Ty::Int, true)), (1, Ty::String)],
+        &[
+            (0, tracked_pointer_ty(Ty::Int, true)),
+            (1, Ty::StringLiteral),
+        ],
     );
     expect_finding(
         &program(write_wrong_referent),
-        "WriteRef value type String is incompatible with referent Int",
+        "WriteRef value type StringLiteral is incompatible with referent Int",
     );
 
     let read_pointer = function(
@@ -397,8 +403,11 @@ fn verifier_checks_store_ref_source_type_and_permission() {
         "StoreRef source has non-reference type Int",
     );
     expect_finding(
-        &program(store(reference_ty(Ty::String, mojito::Mutability::Mutable))),
-        "StoreRef source referent String is incompatible with storage referent Int",
+        &program(store(reference_ty(
+            Ty::StringLiteral,
+            mojito::Mutability::Mutable,
+        ))),
+        "StoreRef source referent StringLiteral is incompatible with storage referent Int",
     );
     expect_finding(
         &program(store(immutable_int)),
@@ -447,7 +456,7 @@ fn dependent_generic_callable(index: &str) -> Ty {
         environment: mojito::CallableEnvironment::Thin,
         decls: vec![value_parameter("index", Ty::Int)],
         params: vec![Ty::Dependent(DependentType::Indexed {
-            elements: vec![Ty::Int, Ty::String],
+            elements: vec![Ty::Int, Ty::StringLiteral],
             index: CtExpr::Param(index.to_string()),
         })],
         names: vec!["element".to_string()],
@@ -517,7 +526,7 @@ fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
                     dest: Reg(2),
                     base: Reg(0),
                     index: Reg(1),
-                    base_place: Some(MirPlace::root(0, Some(Ty::String))),
+                    base_place: Some(MirPlace::root(0, Some(Ty::StringLiteral))),
                     index_place: None,
                     call: None,
                     intrinsic: Some(MirIntrinsicSubscript::Pointer),
@@ -528,7 +537,7 @@ fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
         3,
         &[(0, Ty::Int), (1, Ty::Int), (2, Ty::Int)],
     );
-    expect_finding(&program(f), "subscript receiver place type String");
+    expect_finding(&program(f), "subscript receiver place type StringLiteral");
 }
 
 #[test]
@@ -559,7 +568,7 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
     );
 
     let mut wrong_type = lower_source(SOURCE);
-    first_index_call(&mut wrong_type).arguments[0].parameter_ty = Ty::String;
+    first_index_call(&mut wrong_type).arguments[0].parameter_ty = Ty::StringLiteral;
     expect_finding(&wrong_type, "subscript source has type Int");
     expect_finding(
         &wrong_type,
@@ -567,11 +576,11 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
     );
 
     let mut wrong_result = lower_source(SOURCE);
-    first_index_call(&mut wrong_result).result_ty = Ty::String;
+    first_index_call(&mut wrong_result).result_ty = Ty::StringLiteral;
     expect_finding(&wrong_result, "subscript result has type Int");
     expect_finding(
         &wrong_result,
-        "selected result type String does not match 'Box.__getitem__' declaration Int",
+        "selected result type StringLiteral does not match 'Box.__getitem__' declaration Int",
     );
 
     let mut missing_receiver_place_requirement = lower_source(SOURCE);
@@ -699,10 +708,10 @@ fn verifier_rejects_cross_receiver_and_fabricated_reference_subscript_contracts(
         .reference_result
         .as_mut()
         .expect("reference-returning contract")
-        .referent = Ty::String;
+        .referent = Ty::StringLiteral;
     expect_finding(
         &wrong_referent,
-        "reference-result referent String does not match 'Box.__getitem__' declaration Item",
+        "reference-result referent StringLiteral does not match 'Box.__getitem__' declaration Item",
     );
 
     let mut missing_reference_abi = lower_source(source);
@@ -748,7 +757,7 @@ fn verifier_classifies_every_raising_subscript_instruction() {
 
 #[test]
 fn verifier_rejects_an_invalid_constant_tuple_projection() {
-    let mut place = MirPlace::root(0, Some(Ty::Tuple(vec![Ty::Int, Ty::String])));
+    let mut place = MirPlace::root(0, Some(Ty::Tuple(vec![Ty::Int, Ty::StringLiteral])));
     place.project(Proj::ConstIndex(2), Ty::Int);
     let f = function(
         vec![block(
@@ -772,7 +781,7 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
     };
 
     let mut wrong_element = MirPlace::root(0, Some(pointer.clone()));
-    wrong_element.project(Proj::Index(Reg(0)), Ty::String);
+    wrong_element.project(Proj::Index(Reg(0)), Ty::StringLiteral);
     let wrong_element = function(
         vec![block(
             vec![MirInstr::LoadPlace {
@@ -782,11 +791,11 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::Int), (1, Ty::String)],
+        &[(0, Ty::Int), (1, Ty::StringLiteral)],
     );
     expect_finding(
         &program(wrong_element),
-        "place dynamic element typed String",
+        "place dynamic element typed StringLiteral",
     );
 
     let mut wrong_index = MirPlace::root(0, Some(pointer));
@@ -800,9 +809,9 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::String), (1, Ty::Int)],
+        &[(0, Ty::StringLiteral), (1, Ty::Int)],
     );
-    expect_finding(&program(wrong_index), "has non-Indexer type String");
+    expect_finding(&program(wrong_index), "has non-Indexer type StringLiteral");
 
     let mut non_indexed = MirPlace::root(0, Some(Ty::Int));
     non_indexed.project(Proj::Index(Reg(0)), Ty::Int);
@@ -957,11 +966,11 @@ fn verifier_rejects_return_type_mismatches() {
             MirTerm::Return(Some(Reg(0))),
         )],
         1,
-        &[(0, Ty::String)],
+        &[(0, Ty::StringLiteral)],
     );
     expect_finding(
         &program(f),
-        "return of String from a function returning Int",
+        "return of StringLiteral from a function returning Int",
     );
 }
 
@@ -969,9 +978,9 @@ fn verifier_rejects_return_type_mismatches() {
 fn verifier_rejects_runtime_pack_types_in_function_body_slots() {
     let mut f = function(vec![block(Vec::new(), MirTerm::Return(None))], 0, &[]);
     f.n_params = 1;
-    f.param_types = vec![Ty::RuntimePack(vec![Ty::Int, Ty::String])];
+    f.param_types = vec![Ty::RuntimePack(vec![Ty::Int, Ty::StringLiteral])];
     f.var_tys
-        .insert(0, Ty::RuntimePack(vec![Ty::Int, Ty::String]));
+        .insert(0, Ty::RuntimePack(vec![Ty::Int, Ty::StringLiteral]));
     expect_finding(&program(f), "retains ABI-only RuntimePack type");
 }
 
@@ -989,7 +998,7 @@ fn verifier_rejects_unprotected_raises_in_nonraising_functions() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::String)],
+        &[(0, Ty::StringLiteral)],
     );
     expect_finding(&program(f), "unprotected raise in nonraising function");
 }
@@ -1019,7 +1028,7 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::String), (1, Ty::Int)],
+        &[(0, Ty::StringLiteral), (1, Ty::Int)],
     );
     let mut prog = program(f);
     prog.declarations.functions.push(MirFunctionDeclaration {
@@ -1046,7 +1055,7 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
     });
     expect_finding(
         &prog,
-        "argument 0 of 'callee' has type String, declared Int",
+        "argument 0 of 'callee' has type StringLiteral, declared Int",
     );
     prog.declarations.functions[0].param_conventions.clear();
     expect_finding(&prog, "has 0 parameter conventions, expected 1");
@@ -1075,7 +1084,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::String), (1, Ty::Int)],
+        &[(0, Ty::StringLiteral), (1, Ty::Int)],
     );
     let mut prog = program(f);
     prog.declarations.functions.push(MirFunctionDeclaration {
@@ -1100,7 +1109,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
         error_ty: None,
         ref_params: Vec::new(),
     });
-    expect_finding(&prog, "register type String, declared Int");
+    expect_finding(&prog, "register type StringLiteral, declared Int");
 
     let MirInstr::Call { param_arg_regs, .. } = &mut prog.functions[0].1.blocks[0].instrs[0] else {
         unreachable!()
@@ -1140,10 +1149,10 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
             MirTerm::Return(None),
         )],
         3,
-        &[(0, callable), (1, Ty::String), (2, Ty::Int)],
+        &[(0, callable), (1, Ty::StringLiteral), (2, Ty::Int)],
     );
     let mut prog = program(f);
-    expect_finding(&prog, "register type String, declared Int");
+    expect_finding(&prog, "register type StringLiteral, declared Int");
 
     let MirInstr::CallIndirect {
         param_arg_regs,
@@ -1272,7 +1281,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
         positional_only: None,
         keyword_only: None,
         raises: true,
-        error: Some(Box::new(Ty::String)),
+        error: Some(Box::new(Ty::StringLiteral)),
         conventions: Vec::new(),
         ref_params: Box::new(Vec::new()),
         ref_return: Some(Box::new(mojito::origin::RefSig {

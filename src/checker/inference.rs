@@ -567,7 +567,19 @@ impl Checker {
                 }
                 self.infer(expr)
             }
-            _ => self.infer(expr),
+            _ => {
+                let actual = self.infer(expr)?;
+                // A storage element that does not coerce may still convert
+                // implicitly (a string literal stored where the nominal
+                // String is expected); the recorded constructor wrap makes
+                // the element the stored type.
+                if !Self::storage_value_coerces(&actual, expected)
+                    && self.record_constructor_conversion(expr, &actual, expected)?
+                {
+                    return Ok(expected.clone());
+                }
+                Ok(actual)
+            }
         }
     }
 
@@ -703,7 +715,7 @@ impl Checker {
             ExprKind::Int(_) => Ok(Ty::IntLiteral),
             ExprKind::Float(_) => Ok(Ty::FloatLiteral),
             ExprKind::Bool(_) => Ok(Ty::Bool),
-            ExprKind::Str(_) => Ok(Ty::String),
+            ExprKind::Str(_) => Ok(Ty::StringLiteral),
             ExprKind::None => Ok(Ty::None),
             ExprKind::Uninitialized => Err(TypeError::InvariantViolation(
                 "uninitialized marker reached expression inference".to_string(),
@@ -873,6 +885,42 @@ impl Checker {
                 MethodCallArguments::ordinary(args, kwargs),
             ),
             ExprKind::Index { object, index } => {
+                // A variant projection whose alternative is spelled with a
+                // struct name (`v[String]`): the name no longer parses as a
+                // type token, so it arrives as an ordinary index identifier;
+                // reinterpret it as the projection's type argument, mirroring
+                // the `TypeApply` arm below.
+                if let ExprKind::Identifier(vname) = &object.kind
+                    && let ExprKind::Identifier(tname) = &index.kind
+                    && self.structs.contains_key(tname)
+                    && let Some(Ty::Variant(alternatives)) = self.lookup(vname).cloned()
+                {
+                    self.check_capture_access(vname, false)?;
+                    let arg = crate::ast::ParamArg::Value((**index).clone());
+                    let (index, result) =
+                        self.variant_alternative(&alternatives, std::slice::from_ref(&arg))?;
+                    if let Some(owner) = self.lookup_owner(vname) {
+                        self.expression_bindings
+                            .borrow_mut()
+                            .insert(expr.source_span(), owner);
+                    }
+                    self.operation_adjustments.borrow_mut().insert(
+                        expr.source_span(),
+                        crate::checked::SemanticAdjustment::VariantProject {
+                            alternatives,
+                            index,
+                        },
+                    );
+                    self.record_interior_reference(expr.source_span(), expr, "value");
+                    // A projection value read copies a Copyable payload out of
+                    // the variant's storage rather than aliasing it.
+                    if self.is_copyable(&result) {
+                        self.copy_place_value_uses
+                            .borrow_mut()
+                            .insert(expr.source_span());
+                    }
+                    return Ok(result);
+                }
                 self.infer_index(expr.source_span(), object, index)
             }
             // A dynamic/indexed expression does not designate independently
@@ -994,7 +1042,7 @@ impl Checker {
                 let mut elements = Vec::with_capacity(parts.len());
                 for part in parts {
                     match part {
-                        TStringPart::Literal(_) => elements.push(Ty::String),
+                        TStringPart::Literal(_) => elements.push(Ty::StringLiteral),
                         TStringPart::Expr(value) => {
                             let ty = self.infer(value)?;
                             if !self.conforms_to(&ty, "Writable") {
@@ -1007,7 +1055,7 @@ impl Checker {
                             }
                             let ty = default_literal(&ty);
                             if is_place_expr(value) && !self.is_copyable(&ty) {
-                                elements.push(Ty::String);
+                                elements.push(Ty::StringLiteral);
                             } else {
                                 elements.push(ty);
                             }
@@ -1044,6 +1092,13 @@ impl Checker {
                         },
                     );
                     self.record_interior_reference(expr.source_span(), expr, "value");
+                    // A projection value read copies a Copyable payload out of
+                    // the variant's storage rather than aliasing it.
+                    if self.is_copyable(&result) {
+                        self.copy_place_value_uses
+                            .borrow_mut()
+                            .insert(expr.source_span());
+                    }
                     Ok(result)
                 } else {
                     Err(TypeError::TypeMismatch {
@@ -1446,6 +1501,45 @@ impl Checker {
             _ => None,
         };
         let expected = solved_expected.as_ref().unwrap_or(expected);
+
+        // A tuple display against a tuple-typed context checks each element
+        // contextually, so an element may convert implicitly (a string
+        // literal where the nominal String element is expected).
+        if let (ExprKind::TupleLit(values), Some(expected_elements)) =
+            (&expression.kind, tuple_elements(expected))
+        {
+            if values.len() != expected_elements.len() {
+                return Err(TypeError::ArityMismatch {
+                    name: "Tuple".to_string(),
+                    expected: expected_elements.len(),
+                    got: values.len(),
+                });
+            }
+            for (value, element) in values.iter().zip(expected_elements) {
+                let actual = self.infer_with_expected(value, element, record)?;
+                let compatible = if record {
+                    self.record_implicit_conversion(value, &actual, element)?
+                } else {
+                    self.value_coerces(&actual, element)
+                        || self.implicit_conversion_target(&actual, element)?.is_some()
+                };
+                if !compatible {
+                    return Err(TypeError::TypeMismatch {
+                        expected: element.to_string(),
+                        found: actual.to_string(),
+                        context: "Tuple display element".to_string(),
+                    });
+                }
+                self.check_consuming(value, &actual, "Tuple display element")?;
+            }
+            if record {
+                self.record_collection_construction(expression.source_span(), expected);
+                self.expression_types
+                    .borrow_mut()
+                    .insert(expression.source_span(), expected.clone());
+            }
+            return Ok(expected.clone());
+        }
 
         let elements: Option<Vec<(&Expr, &Ty, &'static str)>> =
             if let (ExprKind::ListLit(values), Some(element)) =

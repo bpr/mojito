@@ -141,7 +141,7 @@ fn rejects_duplicate_differing_only_in_parameter_names() {
 #[test]
 fn rejects_duplicate_added_to_an_existing_overload_set() {
     assert_redeclaration(
-        "def f(x: Int) -> Int:\n    return 0\n\ndef f(x: String) -> Int:\n    return 1\n\ndef f(x: Int) -> Int:\n    return 2\n",
+        "def f(x: Int) -> Int:\n    return 0\n\ndef f(x: StringLiteral) -> Int:\n    return 1\n\ndef f(x: Int) -> Int:\n    return 2\n",
         "f",
     );
 }
@@ -195,7 +195,7 @@ fn rejects_exact_duplicate_generic_signature() {
 #[test]
 fn rejects_duplicate_method_differing_only_in_return_type() {
     assert_redeclaration(
-        "@fieldwise_init\nstruct C:\n    var n: Int\n    def m(self) -> Int:\n        return self.n\n    def m(self) -> String:\n        return \"x\"\n",
+        "@fieldwise_init\nstruct C:\n    var n: Int\n    def m(self) -> Int:\n        return self.n\n    def m(self) -> StringLiteral:\n        return \"x\"\n",
         "m",
     );
 }
@@ -394,7 +394,7 @@ fn constructor_literal_uses_its_default_type() {
 #[test]
 fn rejects_call_matching_no_overload() {
     match err(
-        "def f(x: Int) -> Int:\n    return x\n\ndef f(x: String) -> Int:\n    return 1\n\nvar r: Int = f(True)\n",
+        "def f(x: Int) -> Int:\n    return x\n\ndef f(x: StringLiteral) -> Int:\n    return 1\n\nvar r: Int = f(True)\n",
     ) {
         TypeError::BadCall { func, reason } => {
             assert_eq!(func, "f");
@@ -407,7 +407,7 @@ fn rejects_call_matching_no_overload() {
 #[test]
 fn rejects_arity_matching_no_overload() {
     match err(
-        "def f(x: Int) -> Int:\n    return x\n\ndef f(x: String) -> Int:\n    return 1\n\nvar r: Int = f()\n",
+        "def f(x: Int) -> Int:\n    return x\n\ndef f(x: StringLiteral) -> Int:\n    return 1\n\nvar r: Int = f()\n",
     ) {
         TypeError::BadCall { func, reason } => {
             assert_eq!(func, "f");
@@ -445,10 +445,10 @@ fn method_literal_uses_its_default_type() {
 
 #[test]
 fn reports_substitution_induced_method_ambiguity_as_ambiguous() {
-    // On `Pair[String]`, `m(Self.T)` and `m(String)` substitute to the same
+    // On `Pair[StringLiteral]`, `m(Self.T)` and `m(String)` substitute to the same
     // signature; the tie must be reported as ambiguity, not "no method".
     match err(
-        "@fieldwise_init\nstruct Pair[T: Copyable & Movable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: String) -> Int:\n        return 1\n\nvar p: Pair[String] = Pair(\"hi\")\nvar r: Int = p.m(\"x\")\n",
+        "@fieldwise_init\nstruct Pair[T: Copyable & Movable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: StringLiteral) -> Int:\n        return 1\n\nvar p: Pair[StringLiteral] = Pair(\"hi\")\nvar r: Int = p.m(\"x\")\n",
     ) {
         TypeError::BadCall { reason, .. } => {
             assert!(reason.contains("ambiguous"), "got: {reason}")
@@ -460,7 +460,7 @@ fn reports_substitution_induced_method_ambiguity_as_ambiguous() {
 #[test]
 fn reports_no_match_method_call_as_bad_call() {
     match err(
-        "@fieldwise_init\nstruct Box:\n    var n: Int\n    def m(self, x: Int) -> Int:\n        return x\n    def m(self, s: String) -> Int:\n        return 1\n\nvar b: Box = Box(1)\nvar r: Int = b.m(1, 2)\n",
+        "@fieldwise_init\nstruct Box:\n    var n: Int\n    def m(self, x: Int) -> Int:\n        return x\n    def m(self, s: StringLiteral) -> Int:\n        return 1\n\nvar b: Box = Box(1)\nvar r: Int = b.m(1, 2)\n",
     ) {
         TypeError::BadCall { reason, .. } => {
             assert!(reason.contains("no overload"), "got: {reason}")
@@ -472,7 +472,7 @@ fn reports_no_match_method_call_as_bad_call() {
 #[test]
 fn reports_constructor_no_match_as_bad_call() {
     match err(
-        "@fieldwise_init\nstruct P:\n    var n: Int\n\nstruct Box:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __init__(out self, s: String):\n        self.n = 0\n\nvar p: P = P(3)\nvar b: Box = Box(p)\n",
+        "@fieldwise_init\nstruct P:\n    var n: Int\n\nstruct Box:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __init__(out self, s: StringLiteral):\n        self.n = 0\n\nvar p: P = P(3)\nvar b: Box = Box(p)\n",
     ) {
         TypeError::BadCall { func, reason } => {
             assert_eq!(func, "Box");
@@ -506,7 +506,7 @@ fn nested_def_overloads_dispatch_correctly_or_are_rejected() {
     // Both nested `g`s lift to `outer$g`, so every call runs the first body.
     // Acceptable outcomes: correct dispatch, or a clean check-time rejection —
     // never a wrong answer.
-    let src = "def outer() -> Int:\n    def g(x: Int) -> Int:\n        return x + 100\n    def g(x: String) -> Int:\n        return len(x)\n    return g(7) + g(\"abcd\")\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    def g(x: Int) -> Int:\n        return x + 100\n    def g(x: StringLiteral) -> Int:\n        return len(x)\n    return g(7) + g(\"abcd\")\n\ndef main():\n    print(outer())\n";
     match check_source(src) {
         Err(_) => {} // clean rejection is fine
         Ok(()) => assert_eq!(vm(src), "111\n"),
@@ -545,7 +545,7 @@ fn bool_argument_resolves_exactly_and_never_coerces() {
 #[test]
 fn keyword_call_with_exact_argument_resolves() {
     let out = vm(
-        "def f(x: Int) -> Int:\n    return 1\n\ndef f(x: String) -> Int:\n    return 2\n\ndef main():\n    var i: Int = 3\n    print(f(x=i))\n",
+        "def f(x: Int) -> Int:\n    return 1\n\ndef f(x: StringLiteral) -> Int:\n    return 2\n\ndef main():\n    var i: Int = 3\n    print(f(x=i))\n",
     );
     assert_eq!(out, "1\n");
 }
@@ -595,7 +595,7 @@ fn importing_a_name_extends_the_local_overload_set() {
     d.write("lib.mojo", "def f(x: Int) -> Int:\n    return 10\n");
     let entry = d.write(
         "main.mojo",
-        "from lib import f\n\ndef f(x: String) -> Int:\n    return 20\n\ndef main():\n    var i: Int = 1\n    print(f(i), f(\"abc\"))\n",
+        "from lib import f\n\ndef f(x: StringLiteral) -> Int:\n    return 20\n\ndef main():\n    var i: Int = 1\n    print(f(i), f(\"abc\"))\n",
     );
     let compiler = Compiler::default();
     let program = compiler.compile_path(&entry).expect("compile error");

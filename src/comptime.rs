@@ -774,7 +774,7 @@ fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Ty
         Type::Int
         | Type::UInt
         | Type::Bool
-        | Type::String
+        | Type::StringLiteral
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
@@ -788,14 +788,14 @@ fn infer_pack_argument_type(expr: &Expr) -> Result<Ty, ComptimeError> {
         ExprKind::Int(_) => Ok(Ty::Int),
         ExprKind::Float(_) => Ok(Ty::Float64),
         ExprKind::Bool(_) => Ok(Ty::Bool),
-        ExprKind::Str(_) => Ok(Ty::String),
+        ExprKind::Str(_) => Ok(Ty::StringLiteral),
         ExprKind::None => Ok(Ty::None),
         ExprKind::Call { name, .. } => Ok(match name.as_str() {
             "Int" => Ty::Int,
             "UInt" => Ty::UInt,
             "Float64" => Ty::Float64,
             "Bool" => Ty::Bool,
-            "String" => Ty::String,
+            "String" => Ty::StringLiteral,
             other => Ty::Struct(other.to_string(), Vec::new()),
         }),
         ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => infer_pack_argument_type(value),
@@ -906,7 +906,7 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
         Type::Int => Some(Ty::Int),
         Type::UInt => Some(Ty::UInt),
         Type::Bool => Some(Ty::Bool),
-        Type::String => Some(Ty::String),
+        Type::StringLiteral => Some(Ty::StringLiteral),
         Type::Float64 => Some(Ty::Float64),
         Type::None => Some(Ty::None),
         Type::Named(name, args) if name == "List" && args.len() == 1 => {
@@ -936,7 +936,7 @@ fn source_type_from_ty_with_origins(
         Ty::Int | Ty::IntLiteral => Type::Int,
         Ty::UInt => Type::UInt,
         Ty::Bool => Type::Bool,
-        Ty::String => Type::String,
+        Ty::StringLiteral => Type::StringLiteral,
         Ty::Float64 | Ty::FloatLiteral => Type::Float64,
         Ty::None => Type::None,
         callable @ (Ty::Func { .. } | Ty::GenericFunc { .. }) => {
@@ -1635,7 +1635,7 @@ impl<'a> Elab<'a> {
             Type::Int => Ok(Ty::Int),
             Type::UInt => Ok(Ty::UInt),
             Type::Bool => Ok(Ty::Bool),
-            Type::String => Ok(Ty::String),
+            Type::StringLiteral => Ok(Ty::StringLiteral),
             Type::Float64 => Ok(Ty::Float64),
             Type::None => Ok(Ty::None),
             Type::Named(name, args) => self.type_from_name(name, args, scope),
@@ -2090,13 +2090,13 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         "Int" => Some(Ty::Int),
         "UInt" => Some(Ty::UInt),
         "Bool" => Some(Ty::Bool),
-        "String" => Some(Ty::String),
+        "StringLiteral" => Some(Ty::StringLiteral),
         "Float64" => Some(Ty::Float64),
         "None" => Some(Ty::None),
-        // The prelude rewrite qualifies `String` bounds like any other name;
-        // a `[text: String]` value parameter keeps the compile-time string
-        // type regardless of the nominal stdlib struct.
-        _ if crate::symbol::is_stdlib_string_struct(name) => Some(Ty::String),
+        // The (qualified) `String` spelling deliberately falls through to
+        // ordinary struct resolution: in type-argument and type-value
+        // positions it denotes the nominal stdlib struct. Value-parameter
+        // classification keeps the literal type via `ct_value_param_type`.
         _ => None,
     }
 }
@@ -2523,13 +2523,14 @@ fn ct_value_param_type(name: &str) -> Option<Ty> {
     Some(match name {
         "Int" => Ty::Int,
         "Bool" => Ty::Bool,
-        "String" => Ty::String,
+        "String" => Ty::StringLiteral,
+        "StringLiteral" => Ty::StringLiteral,
         "UInt" => Ty::UInt,
         "Float64" => Ty::Float64,
         // The prelude rewrite qualifies `String` bounds like any other name;
         // a `[text: String]` value parameter keeps the compile-time string
         // type regardless of the nominal stdlib struct.
-        _ if crate::symbol::is_stdlib_string_struct(name) => Ty::String,
+        _ if crate::symbol::is_stdlib_string_struct(name) => Ty::StringLiteral,
         _ => return None,
     })
 }
@@ -2934,7 +2935,7 @@ mod tuple_request_tests {
         let source = format!("{TEMPLATE}def main():\n    var value = Tuple(1, \"two\")\n");
         let parsed = parse(&source).expect("parse Tuple request fixture");
         let occurrence = bare_call(&parsed).source_span();
-        let elements = vec![Ty::Int, Ty::String];
+        let elements = vec![Ty::Int, Ty::StringLiteral];
         let expected = tuple_specialization_symbol(&elements);
 
         let elaborated = elaborate_with_requests(
@@ -2994,7 +2995,7 @@ mod tuple_request_tests {
     fn nested_tuple_request_seeds_inner_and_outer_specializations() {
         let parsed = parse(TEMPLATE).expect("parse Tuple template");
         let inner = tuple_type(vec![Ty::Int]);
-        let outer_elements = vec![inner, Ty::String];
+        let outer_elements = vec![inner, Ty::StringLiteral];
         let inner_symbol = tuple_specialization_symbol(&[Ty::Int]);
         let outer_symbol = tuple_specialization_symbol(&outer_elements);
 

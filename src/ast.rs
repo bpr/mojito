@@ -19,7 +19,10 @@ pub enum Type {
     Int,
     UInt,
     Bool,
-    String,
+    /// The compile-time string literal type, spelled `StringLiteral` in
+    /// source. A bare `String` annotation parses as `Named("String")` and
+    /// resolves to the prelude's nominal self-hosted struct.
+    StringLiteral,
     Float64,
     None,
     /// A name that resolves to a `struct` type, optionally applied to parameter
@@ -1370,7 +1373,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                 Type::Int
                 | Type::UInt
                 | Type::Bool
-                | Type::String
+                | Type::StringLiteral
                 | Type::Float64
                 | Type::None
                 | Type::SelfParam(_)
@@ -1834,7 +1837,7 @@ fn stamp_type(ty: &mut Type, source: &str) {
         Type::Int
         | Type::UInt
         | Type::Bool
-        | Type::String
+        | Type::StringLiteral
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)

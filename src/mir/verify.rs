@@ -3008,14 +3008,14 @@ fn verify_intrinsic_slice(
         return;
     }
     if let Some(base) = base
-        && !types_compatible(base, &Ty::String)
+        && !types_compatible(base, &Ty::StringLiteral)
     {
         errors.push(format!(
             "{prefix}: String slice intrinsic has checked base type {base}"
         ));
     }
     if let Some(dest) = dest
-        && !types_compatible(dest, &Ty::String)
+        && !types_compatible(dest, &Ty::StringLiteral)
     {
         errors.push(format!(
             "{prefix}: String slice intrinsic has result type {dest}"

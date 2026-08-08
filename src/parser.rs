@@ -1830,7 +1830,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 "Int" => Ok(Type::Int),
                 "UInt" => Ok(Type::UInt),
                 "Bool" => Ok(Type::Bool),
-                "String" => Ok(Type::String),
+                "StringLiteral" => Ok(Type::StringLiteral),
                 "Float64" => Ok(Type::Float64),
                 // `Self.T` references one of the enclosing struct's type
                 // parameters; bare `Self` is the enclosing struct/trait type.
@@ -2116,7 +2116,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     Type::Int => Some("Int"),
                     Type::UInt => Some("UInt"),
                     Type::Bool => Some("Bool"),
-                    Type::String => Some("String"),
+                    Type::StringLiteral => Some("StringLiteral"),
                     Type::Float64 => Some("Float64"),
                     _ => None,
                 };
@@ -2186,7 +2186,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Some(Token::Identifier(id)) => {
                 matches!(
                     id.as_str(),
-                    "Int" | "UInt" | "Bool" | "String" | "Float64" | "Self" | "ref"
+                    "Int" | "UInt" | "Bool" | "StringLiteral" | "Float64" | "Self" | "ref"
                 ) || crate::ast::Dtype::from_scalar_alias(id).is_some()
             }
             _ => false,

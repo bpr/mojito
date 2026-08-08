@@ -25,7 +25,7 @@ fn free_function_overloads_get_signature_qualified_names() {
     let names = lowered_names(
         "def pick() -> Int:\n    return 0\n\
          def pick(x: Int) -> Int:\n    return x\n\
-         def pick(s: String) -> String:\n    return s\n",
+         def pick(s: StringLiteral) -> StringLiteral:\n    return s\n",
     );
     assert!(names.contains("pick$ov$"), "zero-arg overload: {names:?}");
     assert!(names.contains("pick$ov$Int"), "{names:?}");

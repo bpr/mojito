@@ -105,7 +105,7 @@ fn nested_reference_aggregate_preserves_every_element_loan() {
 fn variant_payload_reference_is_invalidated_when_the_tag_changes() {
     // The ownership unit runs the unlinked checker, so a local declaration makes
     // the compiler-provided Variant name visible without involving module I/O.
-    let src = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[Int, String](7)\n    ref payload = value[Int]\n    value.set[String](\"changed\")\n    print(payload)\n";
+    let src = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[Int, StringLiteral](7)\n    ref payload = value[Int]\n    value.set[StringLiteral](\"changed\")\n    print(payload)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { origin, .. })
@@ -201,7 +201,7 @@ fn indexed_and_variant_payload_replacement_invalidate_nested_interiors() {
         Err(OwnershipError::InvalidatedInteriorReference { .. })
     ));
 
-    let variant = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[List[Int], String]([1, 2])\n    ref first = value[List[Int]][0]\n    value[List[Int]] = [3, 4]\n    print(first)\n";
+    let variant = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[List[Int], StringLiteral]([1, 2])\n    ref first = value[List[Int]][0]\n    value[List[Int]] = [3, 4]\n    print(first)\n";
     assert!(matches!(
         own(variant),
         Err(OwnershipError::InvalidatedInteriorReference { .. })

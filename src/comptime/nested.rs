@@ -505,7 +505,7 @@ impl NestedMono {
             Type::Int
             | Type::UInt
             | Type::Bool
-            | Type::String
+            | Type::StringLiteral
             | Type::Float64
             | Type::None
             | Type::SelfParam(_)

@@ -994,8 +994,13 @@ impl VmBackend {
                 let selected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError("Variant construction has an invalid tag".to_string())
                 })?;
-                let payload =
-                    crate::runtime::coerce_checked(regs[value.0 as usize].clone(), selected);
+                // The variant owns an independent payload: a lifecycle
+                // struct (a nominal String) deep-copies so the argument
+                // temporary's drop cannot free the stored buffer.
+                let payload = self.clone_value(
+                    prog,
+                    &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), selected),
+                )?;
                 regs[dest.0 as usize] = Value::Variant {
                     alternatives: alternatives.clone(),
                     index: *index,
@@ -1106,13 +1111,14 @@ impl VmBackend {
                 let selected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError("Variant.set has an invalid checked tag".to_string())
                 })?;
+                let payload = self.clone_value(
+                    prog,
+                    &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), selected),
+                )?;
                 let replacement = Value::Variant {
                     alternatives: alternatives.clone(),
                     index: *index,
-                    value: Box::new(crate::runtime::coerce_checked(
-                        regs[value.0 as usize].clone(),
-                        selected,
-                    )),
+                    value: Box::new(payload),
                 };
                 self.store_at_place(prog, place, replacement, regs, vars)?;
                 self.drop_value(prog, old)?;
@@ -1153,13 +1159,14 @@ impl VmBackend {
                         "Variant holds '{found}', not '{output}'"
                     )));
                 }
+                let payload = self.clone_value(
+                    prog,
+                    &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), &input),
+                )?;
                 let replacement = Value::Variant {
                     alternatives,
                     index: *input_index,
-                    value: Box::new(crate::runtime::coerce_checked(
-                        regs[value.0 as usize].clone(),
-                        &input,
-                    )),
+                    value: Box::new(payload),
                 };
                 self.store_at_place(prog, place, replacement, regs, vars)?;
                 regs[dest.0 as usize] = *old_payload;
@@ -1649,6 +1656,16 @@ impl VmBackend {
                 // `Try` (if any) intercepts it; otherwise it unwinds the frame.
                 let error = match &regs[src.0 as usize] {
                     Value::Str(message) => Value::Error(message.clone()),
+                    // A raised nominal String reads its buffer back through
+                    // the struct-to-literal bridge.
+                    value @ Value::Struct { name, .. }
+                        if crate::symbol::is_stdlib_string_struct(name) =>
+                    {
+                        match self.string_struct_literal(value)? {
+                            Value::Str(message) => Value::Error(message),
+                            other => other,
+                        }
+                    }
                     other => other.clone(),
                 };
                 return Err(RuntimeError::Raised(error));

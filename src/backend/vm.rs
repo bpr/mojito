@@ -605,6 +605,26 @@ impl VmBackend {
         }
     }
 
+    /// Materialize a builtin string as a nominal stdlib `String` value,
+    /// falling back to the literal value when the struct is not linked (a
+    /// seam program without the prelude).
+    fn nominal_string_value(&mut self, prog: &Prog, text: &str) -> Result<Value, RuntimeError> {
+        let Some(def) = prog.structs.get(crate::symbol::STDLIB_STRING_STRUCT) else {
+            return Ok(Value::Str(text.to_string()));
+        };
+        let fields = def
+            .fields
+            .iter()
+            .map(|(field, _)| (field.clone(), Value::None))
+            .collect();
+        let skeleton = Value::Struct {
+            name: crate::symbol::STDLIB_STRING_STRUCT.to_string(),
+            fields,
+            value_params: Vec::new(),
+        };
+        self.materialize_string_struct(skeleton, text)
+    }
+
     /// Fill a nominal `String` skeleton from a literal's UTF-8 bytes: one
     /// heap allocation holding width-1 `UInt8` scalars, sized exactly.
     fn materialize_string_struct(
@@ -1379,6 +1399,18 @@ impl VmBackend {
         {
             return self.string_struct_literal(&recv);
         }
+        // `format` on a nominal String receiver reads the template back
+        // through the bridge and runs the builtin template formatter; the
+        // checker's recorded wrap materializes the literal result.
+        if method == "format"
+            && let Value::Struct { name, .. } = &recv
+            && crate::symbol::is_stdlib_string_struct(name)
+        {
+            let Value::Str(template) = self.string_struct_literal(&recv)? else {
+                unreachable!("the string bridge reads back a literal");
+            };
+            return self.format_template(prog, &template, &args).map(Value::Str);
+        }
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         // Intrinsic dunders on a built-in numeric/hashable value; a struct with
         // its own implementation still dispatches to its method below.
@@ -1467,10 +1499,25 @@ impl VmBackend {
                 let index = prog
                     .index_of(&format!("{name}.write_string"))
                     .expect("guard established Writer.write_string");
+                // A `write_string` declaring the nominal String receives a
+                // materialized struct; the literal spelling keeps `Value::Str`.
+                let nominal_payload = prog
+                    .sigs
+                    .get(&format!("{name}.write_string"))
+                    .and_then(|signature| signature.param_types.first())
+                    .is_some_and(|ty| {
+                        matches!(ty, Ty::Struct(payload, args)
+                        if args.is_empty() && crate::symbol::is_stdlib_string_struct(payload))
+                    });
                 for argument in args {
                     let text = self.format_value(prog, argument, false)?;
+                    let payload = if nominal_payload {
+                        self.nominal_string_value(prog, &text)?
+                    } else {
+                        Value::Str(text)
+                    };
                     let (_, variables) =
-                        self.call_frame(prog, index, vec![writer, Value::Str(text)], &[])?;
+                        self.call_frame(prog, index, vec![writer, payload], &[])?;
                     writer = variables.into_iter().next().unwrap_or(Value::None);
                 }
                 self.store_at_call_place(prog, frame_id, place, writer, regs, vars)?;
@@ -1921,7 +1968,16 @@ impl VmBackend {
                 }
                 builtin_round(value)
             }
-            "input" => builtin_input(arg1(name, args)?),
+            "input" => {
+                let mut prompt = arg1(name, args)?;
+                // A nominal String prompt reads back through the bridge.
+                if matches!(&prompt, Value::Struct { name, .. }
+                    if crate::symbol::is_stdlib_string_struct(name))
+                {
+                    prompt = self.string_struct_literal(&prompt)?;
+                }
+                builtin_input(prompt)
+            }
             "Int" | "Float64" | "Bool" => {
                 let value = arg1(name, args)?;
                 if let Value::Struct { name: sname, .. } = &value {
@@ -1940,7 +1996,17 @@ impl VmBackend {
                 let (a, b) = arg2(name, args)?;
                 builtin_divmod(a, b)
             }
-            "Error" => builtin_error(arg1(name, args)?),
+            "Error" => {
+                let mut argument = arg1(name, args)?;
+                // A nominal String message reads back through the
+                // struct-to-literal bridge before wrapping.
+                if matches!(&argument, Value::Struct { name, .. }
+                    if crate::symbol::is_stdlib_string_struct(name))
+                {
+                    argument = self.string_struct_literal(&argument)?;
+                }
+                builtin_error(argument)
+            }
             // A struct constructor. A hand-written `def __init__(out self, …)`
             // takes precedence over the fieldwise constructor: build an uninitialized
             // `self` skeleton, run `__init__`, and return the initialized value.
@@ -2338,7 +2404,7 @@ fn vm_type_is_symbolic(ty: &Ty) -> bool {
         Ty::Int
         | Ty::UInt
         | Ty::Bool
-        | Ty::String
+        | Ty::StringLiteral
         | Ty::Float64
         | Ty::None
         | Ty::Never

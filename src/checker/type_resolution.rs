@@ -17,7 +17,7 @@ impl Checker {
             SourceType::Int => Ty::Int,
             SourceType::UInt => Ty::UInt,
             SourceType::Bool => Ty::Bool,
-            SourceType::String => Ty::String,
+            SourceType::StringLiteral => Ty::StringLiteral,
             SourceType::Float64 => Ty::Float64,
             SourceType::None => Ty::None,
             SourceType::Func {
@@ -206,7 +206,7 @@ impl Checker {
                 // materializes string literals directly as runtime strings, so
                 // it is represented by the existing string type.
                 if name == "StringLiteral" && args.is_empty() {
-                    return Ok(Ty::String);
+                    return Ok(Ty::StringLiteral);
                 }
                 if args.is_empty()
                     && let Some(parameter) = self.lookup_tparam(name)

@@ -222,7 +222,7 @@ impl CtValue {
             | (value @ CtValue::IntLiteral(_), Ty::IntLiteral)
             | (value @ CtValue::FloatLiteral(_), Ty::FloatLiteral)
             | (value @ CtValue::Bool(_), Ty::Bool)
-            | (value @ CtValue::Str(_), Ty::String) => Some(value),
+            | (value @ CtValue::Str(_), Ty::StringLiteral) => Some(value),
             (CtValue::IntLiteral(value), Ty::Int) => value.wrapping_signed(64).map(CtValue::Int),
             (CtValue::IntLiteral(value), Ty::UInt) => {
                 value.wrapping_unsigned(64).map(CtValue::UInt)

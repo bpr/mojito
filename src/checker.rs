@@ -1302,6 +1302,26 @@ impl Checker {
         }
     }
 
+    /// Record only a constructor-based implicit conversion (the `@implicit`
+    /// single-parameter constructor), never a plain value coercion. The
+    /// construction/storage checks use this so a failure of the stricter
+    /// storage rule cannot be masked by a permissive value coercion (for
+    /// example a capturing closure erasing into a plain `def` field).
+    fn record_constructor_conversion(
+        &self,
+        expression: &Expr,
+        from: &Ty,
+        to: &Ty,
+    ) -> Result<bool, TypeError> {
+        let Some(target) = self.implicit_conversion_target(from, to)? else {
+            return Ok(false);
+        };
+        self.implicit_conversions
+            .borrow_mut()
+            .insert(expression.source_span(), target);
+        Ok(true)
+    }
+
     fn record_implicit_conversion(
         &self,
         expression: &Expr,
@@ -1875,6 +1895,28 @@ fn guaranteed_conformance_atoms(
     }
 }
 
+/// Overload identity works at the mangled-symbol level: the compile-time
+/// `StringLiteral` and the nominal stdlib `String` deliberately share the
+/// stable `String` symbol spelling, so two overloads differing only in that
+/// pair collide and are rejected as redeclarations.
+fn symbol_identity_ty(ty: &Ty) -> std::borrow::Cow<'_, Ty> {
+    match ty {
+        Ty::Struct(name, args)
+            if args.is_empty() && crate::symbol::is_stdlib_string_struct(name) =>
+        {
+            std::borrow::Cow::Owned(Ty::StringLiteral)
+        }
+        other => std::borrow::Cow::Borrowed(other),
+    }
+}
+
+fn symbol_equivalent_params(a: &[Ty], b: &[Ty]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(a, b)| symbol_identity_ty(a) == symbol_identity_ty(b))
+}
+
 fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
         (
@@ -1890,7 +1932,7 @@ fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
                 kw_variadic: bkw,
                 ..
             },
-        ) => ap == bp && av == bv && akw == bkw,
+        ) => symbol_equivalent_params(ap, bp) && av == bv && akw == bkw,
         (
             Ty::GenericFunc {
                 decls: ad,
@@ -2531,7 +2573,7 @@ fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
         None => Vec::new(),
     };
     method_arity_range(a) == method_arity_range(b)
-        && a.params == b.params
+        && symbol_equivalent_params(&a.params, &b.params)
         && a.variadic == b.variadic
         && a.kw_variadic == b.kw_variadic
         && keyword_names(a) == keyword_names(b)
@@ -2843,7 +2885,7 @@ mod dependent_callable_signature_tests {
                 constraints: Vec::new(),
             }],
             params: vec![Ty::Dependent(DependentType::Indexed {
-                elements: vec![Ty::Int, Ty::String],
+                elements: vec![Ty::Int, Ty::StringLiteral],
                 index,
             })],
             names: vec!["element".to_string()],

@@ -1756,7 +1756,10 @@ impl Checker {
             StmtKind::Raise(expr) => {
                 self.register_named_bindings(expr)?;
                 let ty = self.infer(expr)?;
-                let error = if ty == Ty::String { Ty::Error } else { ty };
+                let stringish = ty == Ty::StringLiteral
+                    || matches!(&ty, Ty::Struct(name, args)
+                        if args.is_empty() && crate::symbol::is_stdlib_string_struct(name));
+                let error = if stringish { Ty::Error } else { ty };
                 self.require_error("'raise'", error)?;
                 Ok(())
             }

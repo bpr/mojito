@@ -859,6 +859,28 @@ impl Flatten<'_> {
                         var,
                         mode: UseMode::Copy,
                     });
+                    return d;
+                }
+                // A checked value-copy of an alias-bound variable (a borrowed
+                // loop binding consumed by a `var` argument) must run the
+                // referent's `__copyinit__` rather than alias its owning
+                // storage — the alias slot's referent stays live in its
+                // collection. Ordinary variables keep the `UseVar` path above:
+                // their copy/move lifecycle is drop-elaborated.
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(adjustment, crate::SemanticAdjustment::CopyPlaceValue)
+                }) && !matches!(self.checked_ty(e), Some(Ty::Ref(_)))
+                {
+                    let copied = self.fresh_typed(
+                        span(e),
+                        Some(var),
+                        self.checked_ty(e).unwrap_or(Ty::Error),
+                    );
+                    self.emit(MirInstr::CopyValue {
+                        dest: copied,
+                        value: d,
+                    });
+                    return copied;
                 }
                 d
             }
@@ -1113,15 +1135,32 @@ impl Flatten<'_> {
                 // the builtin Writable conversion the checker typed as the
                 // compile-time string; route those back to the VM's
                 // conversion builtin instead of the nominal constructor.
-                let target = if crate::symbol::is_stdlib_string_struct(name)
-                    && self.checked_ty(e) == Some(Ty::String)
-                {
+                // A retargeted `String(x)` stringify carries a
+                // `ResolveCallable("String")` adjustment (production path) or
+                // keeps the compile-time string checked type (the unlinked
+                // seam): both route to the VM's `"String"` conversion builtin
+                // with an explicitly literal-typed result — the surrounding
+                // implicit-conversion wrap materializes the nominal struct.
+                let stringify = crate::symbol::is_stdlib_string_struct(name)
+                    && (self.resolved_callable(e).as_deref() == Some("String")
+                        || self.checked_ty(e) == Some(Ty::StringLiteral));
+                // Builtin string producers wrapped by the nominal-String
+                // conversion keep their own callee but type their register
+                // as the compile-time string the wrap consumes.
+                let literal_result = stringify
+                    || (matches!(name.as_str(), "input" | "repr")
+                        && self.implicit_conversion(e).is_some());
+                let target = if stringify {
                     "String".to_string()
                 } else {
                     self.resolved_callable(e)
                         .unwrap_or_else(|| self.overloaded_name(name, args.len()))
                 };
-                let d = self.fresh(span(e), None);
+                let d = if literal_result {
+                    self.fresh_typed(span(e), None, Ty::StringLiteral)
+                } else {
+                    self.fresh(span(e), None)
+                };
                 self.emit_call_invalidations(e, args, kwargs);
                 let capture_accesses = self.checked_call_capture_accesses(e);
                 let transfer_arg_places = arg_places.clone();
@@ -1443,7 +1482,14 @@ impl Flatten<'_> {
                 // mirroring a free-function `Call`.
                 let (regs, arg_places) = self.lower_call_arguments(args);
                 let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
-                let d = self.fresh(span(e), None);
+                // A wrapped `.format(...)` keeps its own callee but types its
+                // register as the compile-time string the nominal-String
+                // conversion consumes (mirroring the free-call builtins).
+                let d = if method == "format" && self.implicit_conversion(e).is_some() {
+                    self.fresh_typed(span(e), None, Ty::StringLiteral)
+                } else {
+                    self.fresh(span(e), None)
+                };
                 self.emit_interior_invalidations(receiver_expr, None);
                 self.emit_call_invalidations(e, args, kwargs);
                 let capture_accesses = self.checked_call_capture_accesses(e);
@@ -1572,6 +1618,71 @@ impl Flatten<'_> {
                     });
                     d
                 }
+            }
+            // A variant projection spelled with a struct-name index
+            // (`v[String]`) carries the same checked adjustment as the
+            // type-token spelling below and lowers identically.
+            ExprKind::Index { object, .. }
+                if matches!(&object.kind, ExprKind::Identifier(_))
+                    && self.checked_adjustments(e).iter().any(|adjustment| {
+                        matches!(adjustment, crate::SemanticAdjustment::VariantProject { .. })
+                    }) =>
+            {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    unreachable!("the guard established an identifier receiver");
+                };
+                let index = self
+                    .checked_adjustments(e)
+                    .into_iter()
+                    .find_map(|adjustment| match adjustment {
+                        crate::SemanticAdjustment::VariantProject { index, .. } => Some(index),
+                        _ => None,
+                    })
+                    .expect("checked Variant projection carries a tag");
+                let mut place = self.resolved_place(name);
+                if place.root_ty.is_none() {
+                    place.root_ty = Some(Ty::Variant(
+                        self.checked_adjustments(e)
+                            .into_iter()
+                            .find_map(|adjustment| match adjustment {
+                                crate::SemanticAdjustment::VariantProject {
+                                    alternatives, ..
+                                } => Some(alternatives),
+                                _ => None,
+                            })
+                            .unwrap_or_default(),
+                    ));
+                }
+                let ty = self
+                    .checked_place_ty(e)
+                    .or_else(|| self.checked_ty(e))
+                    .expect("checked Variant projection has a payload type");
+                place.project(Proj::Variant(index), ty);
+                let root = place.root;
+                let dest = self.fresh(span(e), Some(root));
+                self.emit(MirInstr::LoadPlace { dest, place });
+                // The checked value-copy boundary: a Copyable payload runs its
+                // `__copyinit__` out of the variant's storage instead of
+                // aliasing it past the owner's lifetime.
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(adjustment, crate::SemanticAdjustment::CopyPlaceValue)
+                }) {
+                    let copied = self.fresh_typed(
+                        span(e),
+                        Some(root),
+                        self.checked_ty(e).unwrap_or(Ty::Error),
+                    );
+                    self.emit(MirInstr::CopyValue {
+                        dest: copied,
+                        value: dest,
+                    });
+                    // Keep the owning variant alive through the copy: the
+                    // loaded register aliases its storage until `__copyinit__`
+                    // has produced the independent value.
+                    self.emit(MirInstr::KeepAlive { var: root });
+                    return copied;
+                }
+                dest
             }
             ExprKind::Index { object, index } => {
                 // An indexed reference-bearing aggregate element is a storage
@@ -1937,7 +2048,7 @@ impl Flatten<'_> {
                             // synthetic result its checked intrinsic type here
                             // instead of asking declaration-based MIR closure to
                             // rediscover the return type of the builtin.
-                            let register = self.fresh_typed(span(value), None, Ty::String);
+                            let register = self.fresh_typed(span(value), None, Ty::StringLiteral);
                             self.emit(MirInstr::Call {
                                 dest: register,
                                 func: FuncRef::named("String"),
@@ -1996,8 +2107,30 @@ impl Flatten<'_> {
                     .or_else(|| self.checked_ty(e))
                     .expect("checked Variant projection has a payload type");
                 place.project(Proj::Variant(index), ty);
-                let dest = self.fresh(span(e), Some(place.root));
+                let root = place.root;
+                let dest = self.fresh(span(e), Some(root));
                 self.emit(MirInstr::LoadPlace { dest, place });
+                // The checked value-copy boundary: a Copyable payload runs its
+                // `__copyinit__` out of the variant's storage instead of
+                // aliasing it past the owner's lifetime.
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(adjustment, crate::SemanticAdjustment::CopyPlaceValue)
+                }) {
+                    let copied = self.fresh_typed(
+                        span(e),
+                        Some(root),
+                        self.checked_ty(e).unwrap_or(Ty::Error),
+                    );
+                    self.emit(MirInstr::CopyValue {
+                        dest: copied,
+                        value: dest,
+                    });
+                    // Keep the owning variant alive through the copy: the
+                    // loaded register aliases its storage until `__copyinit__`
+                    // has produced the independent value.
+                    self.emit(MirInstr::KeepAlive { var: root });
+                    return copied;
+                }
                 dest
             }
             ExprKind::TypeApply { name, .. } if self.nested_info(e).is_some() => {
@@ -2312,7 +2445,7 @@ impl Flatten<'_> {
             Const::IntLiteral(_) => Some(Ty::IntLiteral),
             Const::FloatLiteral(_) => Some(Ty::FloatLiteral),
             Const::Bool(_) => Some(Ty::Bool),
-            Const::Str(_) => Some(Ty::String),
+            Const::Str(_) => Some(Ty::StringLiteral),
             Const::None => Some(Ty::None),
             Const::Function(_) => self.checked_ty(e),
         };

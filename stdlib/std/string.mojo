@@ -18,10 +18,12 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
     var size: Int
     var cap: Int
 
+    @implicit
     def __init__(out self, literal: StringLiteral):
         # The compiler replaces this call: `data`/`size`/`cap` are filled
         # from the literal's UTF-8 bytes.  The body only establishes the
-        # field contract and never executes.
+        # field contract and never executes.  `@implicit` lets a literal
+        # convert wherever the nominal String is expected.
         self.size = 0
         self.cap = 1
         self.data = UnsafePointer[Byte].alloc(self.cap)
@@ -86,6 +88,53 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
 
     def __ge__(self, other: Self) -> Bool:
         return not (self < other)
+
+    def __add__(self, other: Self) -> Self:
+        var result = String("")
+        result.data.free()
+        result.data = UnsafePointer[Byte].alloc(self.size + other.size)
+        result.size = self.size + other.size
+        result.cap = result.size
+        var i = 0
+        while i < self.size:
+            result.data[i] = self.data[i]
+            i += 1
+        var j = 0
+        while j < other.size:
+            result.data[self.size + j] = other.data[j]
+            j += 1
+        return result^
+
+    def __iadd__(mut self, other: Self):
+        var data = UnsafePointer[Byte].alloc(self.size + other.size)
+        var i = 0
+        while i < self.size:
+            data[i] = self.data[i]
+            i += 1
+        var j = 0
+        while j < other.size:
+            data[self.size + j] = other.data[j]
+            j += 1
+        self.data.free()
+        self.data = data
+        self.size = self.size + other.size
+        self.cap = self.size
+
+    def __contains__(self, sub: Self) -> Bool:
+        # Naive byte search, matching the builtin literal membership test.
+        if sub.size == 0:
+            return True
+        var start = 0
+        while start + sub.size <= self.size:
+            var i = 0
+            while i < sub.size:
+                if Int(self.data[start + i]) != Int(sub.data[i]):
+                    break
+                i += 1
+            if i == sub.size:
+                return True
+            start += 1
+        return False
 
     def __hash__(self) -> UInt:
         # DJB2 over the UTF-8 bytes — the bundled IncrementalHasher recipe.
@@ -433,9 +482,9 @@ struct Codepoint(
     Comparable, Copyable, Equatable, ImplicitlyDeletable, Intable, Movable, Writable
 ):
     var _scalar: Int
-    var _text: String
+    var _text: StringLiteral
 
-    def __init__(out self, scalar: Int, *, text: String):
+    def __init__(out self, scalar: Int, *, text: StringLiteral):
         self._scalar = scalar
         self._text = text
 

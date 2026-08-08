@@ -5,6 +5,42 @@
 use super::*;
 
 impl Checker {
+    /// Record the conversion plumbing that makes a builtin string-producing
+    /// call yield the nominal `String` struct: route the call itself to the
+    /// `"String"` conversion builtin (a `ResolveCallable` adjustment) and
+    /// wrap its buffered result through the `@implicit` literal constructor.
+    /// Falls back to the compile-time string result when the literal
+    /// constructor is unavailable (a replaced stdlib root).
+    pub(super) fn retarget_string_result(
+        &self,
+        span: SourceSpan,
+        name: &str,
+    ) -> Result<Ty, TypeError> {
+        let nominal = Ty::Struct(name.to_string(), Vec::new());
+        let Some(target) = self.implicit_conversion_target(&Ty::StringLiteral, &nominal)? else {
+            return Ok(Ty::StringLiteral);
+        };
+        self.overload_targets
+            .borrow_mut()
+            .insert(span.clone(), "String".to_string());
+        self.implicit_conversions.borrow_mut().insert(span, target);
+        Ok(nominal)
+    }
+
+    /// The wrap-only sibling of [`Self::retarget_string_result`] for builtin
+    /// string producers whose callee stays itself (`input`, `repr`,
+    /// `.format`): record the literal-constructor wrap at `span` and report
+    /// the nominal `String`, falling back to the compile-time string when the
+    /// stdlib constructor is unavailable (an unlinked seam).
+    pub(super) fn nominal_string_wrap(&self, span: SourceSpan) -> Result<Ty, TypeError> {
+        let nominal = Ty::Struct(crate::symbol::STDLIB_STRING_STRUCT.to_string(), Vec::new());
+        let Some(target) = self.implicit_conversion_target(&Ty::StringLiteral, &nominal)? else {
+            return Ok(Ty::StringLiteral);
+        };
+        self.implicit_conversions.borrow_mut().insert(span, target);
+        Ok(nominal)
+    }
+
     pub(super) fn infer_call(
         &self,
         span: SourceSpan,
@@ -25,19 +61,21 @@ impl Checker {
             // isn't shadowed by a binding.
             None => match name {
                 _ if self.structs.contains_key(name) => {
-                    // The stdlib's nominal String coexists with the builtin
-                    // `String(x)` Writable stringification until the
-                    // type-split migration: a single string-literal argument
-                    // (or a keyword construction such as `String(copy: s)`)
-                    // materializes the struct; every other argument shape
-                    // keeps the builtin conversion, which still yields the
-                    // compile-time string type.
+                    // `String(x)` on a non-literal argument stringifies through
+                    // the builtin conversion and materializes the result as the
+                    // nominal struct: the call routes to the `"String"` builtin
+                    // (a `ResolveCallable` adjustment) and the recorded
+                    // implicit literal-constructor wrap builds the struct from
+                    // the buffered text. A single string-literal argument (or a
+                    // keyword construction such as `String(copy: s)`) is the
+                    // ordinary constructor path.
                     if crate::symbol::is_stdlib_string_struct(name)
                         && kwargs.is_empty()
                         && param_args.is_empty()
-                        && !(args.len() == 1 && matches!(self.infer(&args[0])?, Ty::String))
+                        && !(args.len() == 1 && matches!(self.infer(&args[0])?, Ty::StringLiteral))
                     {
-                        return self.infer_stringify(args);
+                        self.infer_stringify(args)?;
+                        return self.retarget_string_result(span, name);
                     }
                     return self.infer_construction(span, name, param_args, args, kwargs);
                 }
@@ -92,7 +130,7 @@ impl Checker {
                         self.call_place_uses
                             .borrow_mut()
                             .insert(args[0].source_span());
-                        return Ok(Ty::String);
+                        return self.nominal_string_wrap(span);
                     }
                     return Err(TypeError::TypeMismatch {
                         expected: "Writable".to_string(),
@@ -115,7 +153,7 @@ impl Checker {
                 "abs" => return self.infer_abs(args),
                 "min" | "max" => return self.infer_min_max(name, args),
                 "round" => return self.infer_round(args),
-                "input" => return self.infer_input(args),
+                "input" => return self.infer_input(span, args),
                 "len" => return self.infer_len(args),
                 "range" => return self.infer_range(args),
                 "Slice" | "slice" => return self.infer_slice_construction(name, args),

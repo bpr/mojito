@@ -78,12 +78,13 @@ pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
         "SIMDSize" => Some(Ty::Int),
         "UInt" => Some(Ty::UInt),
         "Bool" => Some(Ty::Bool),
-        "String" => Some(Ty::String),
+        "String" => Some(Ty::StringLiteral),
+        "StringLiteral" => Some(Ty::StringLiteral),
         "Float64" => Some(Ty::Float64),
         // The prelude rewrite qualifies `String` bounds like any other name;
         // a `[text: String]` value parameter keeps the compile-time string
         // type regardless of the nominal stdlib struct.
-        _ if crate::symbol::is_stdlib_string_struct(name) => Some(Ty::String),
+        _ if crate::symbol::is_stdlib_string_struct(name) => Some(Ty::StringLiteral),
         _ => None,
     }
 }

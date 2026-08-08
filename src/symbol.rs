@@ -374,7 +374,7 @@ fn ty_raw(ty: &Ty) -> String {
         Ty::UInt => "UInt".to_string(),
         Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
         Ty::Bool => "Bool".to_string(),
-        Ty::String => "String".to_string(),
+        Ty::StringLiteral => "String".to_string(),
         Ty::None => "None".to_string(),
         Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw(elem)),
         Ty::Tuple(elems) => format!(
@@ -394,6 +394,13 @@ fn ty_raw(ty: &Ty) -> String {
                 .collect::<Vec<_>>()
                 .join("$")
         ),
+        // The nominal stdlib String keeps the historical `String` symbol
+        // spelling, so overload identities do not churn across the
+        // StringLiteral/String type split. Consequence: an overload set
+        // differing only in StringLiteral-vs-String collides and is rejected.
+        Ty::Struct(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
+            "String".to_string()
+        }
         // A struct type spells as its annotation does (`Point`, `Pair$Int`) —
         // no `Struct$` marker, so the MIR definition name matches.
         Ty::Struct(name, args) => {
@@ -478,9 +485,14 @@ fn ast_raw(
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
-        Type::String => "String".to_string(),
+        Type::StringLiteral => "String".to_string(),
         Type::Float64 => "Float64".to_string(),
         Type::None => "None".to_string(),
+        Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
+            // Mirror `ty_raw`: the nominal String annotation mangles as the
+            // stable `String` spelling.
+            "String".to_string()
+        }
         Type::Named(name, args) => {
             let mut s = parameter_raw(name, type_bounds);
             for arg in args {

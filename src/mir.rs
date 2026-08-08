@@ -994,7 +994,8 @@ impl Flatten<'_> {
     }
 
     fn intrinsic_slice_dispatch(&self, object: &Expr) -> Option<MirIntrinsicSubscript> {
-        matches!(self.checked_ty(object), Some(Ty::String)).then_some(MirIntrinsicSubscript::String)
+        matches!(self.checked_ty(object), Some(Ty::StringLiteral))
+            .then_some(MirIntrinsicSubscript::String)
     }
 
     /// Peel container slots that themselves store reference handles until one
@@ -1875,7 +1876,7 @@ fn close_register_types(
                             Const::IntLiteral(_) => Some(Ty::IntLiteral),
                             Const::FloatLiteral(_) => Some(Ty::FloatLiteral),
                             Const::Bool(_) => Some(Ty::Bool),
-                            Const::Str(_) => Some(Ty::String),
+                            Const::Str(_) => Some(Ty::StringLiteral),
                             Const::None => Some(Ty::None),
                             // A callable constant's type needs the checked
                             // expression; report rather than reconstruct.

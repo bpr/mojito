@@ -23,7 +23,7 @@ fn err(source: &str) -> TypeError {
 #[test]
 fn accepts_well_typed_declarations() {
     ok(
-        "var a: Int = 1 + 2 * 3\nvar ok: Bool = 1 < 2 and not False\nvar s: String = \"a\" + \"b\"\n",
+        "var a: Int = 1 + 2 * 3\nvar ok: Bool = 1 < 2 and not False\nvar s: StringLiteral = \"a\" + \"b\"\n",
     );
 }
 
@@ -153,7 +153,7 @@ fn checked_boundary_rekeys_cloned_source_provenance_by_occurrence() {
 #[test]
 fn occurrence_keys_preserve_public_lookup_from_unique_input_syntax() {
     let program = parse(
-        "def pick(value: Int) -> Int:\n    return value\ndef pick(value: String) -> String:\n    return value\ndef main():\n    print(pick(1))\n",
+        "def pick(value: Int) -> Int:\n    return value\ndef pick(value: StringLiteral) -> StringLiteral:\n    return value\ndef main():\n    print(pick(1))\n",
     )
     .expect("parse");
     let call = match &program[2].kind {
@@ -226,7 +226,7 @@ fn nominal_callable_selects_the_contract_matching_same_arity_overload() {
 #[test]
 fn nominal_callable_rejects_when_no_same_arity_overload_matches_the_contract() {
     let error = err(
-        "struct Bad(def(String) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value\n",
+        "struct Bad(def(StringLiteral) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 }
@@ -672,7 +672,7 @@ fn collection_displays_use_parameter_and_return_context() {
         "def consume(values: Set[Float64]):\n    pass\n\ndef empty() -> Set[Float64]:\n    return {}\n\ndef numbers() -> Set[Float64]:\n    return {1, 2}\n\ndef main():\n    consume({})\n    consume({1, 2})\n    print(empty(), numbers())\n",
     );
     ok(
-        "def consume(values: Dict[String, Float64]):\n    pass\n\ndef main():\n    consume({})\n    consume({\"one\": 1, \"two\": 2})\n",
+        "def consume(values: Dict[StringLiteral, Float64]):\n    pass\n\ndef main():\n    consume({})\n    consume({\"one\": 1, \"two\": 2})\n",
     );
 }
 
@@ -774,7 +774,7 @@ fn infers_struct_type_argument_from_construction() {
 #[test]
 fn accepts_generic_function_identity() {
     ok(
-        "def id[T: Copyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: String = id(\"hi\")\n",
+        "def id[T: Copyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: StringLiteral = id(\"hi\")\n",
     );
 }
 
@@ -1044,12 +1044,12 @@ fn rejects_duplicate_type_parameter_names() {
 // --- Traits (Phase 1b) ---
 
 /// A `Quackable` trait, a conforming `Duck`, and a bounded generic function.
-const QUACK: &str = "trait Quackable:\n    def quack(self) -> String:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: String\n\n    def quack(self) -> String:\n        return \"Quack\"\n\ndef make_it_quack[T: Quackable](x: T) -> String:\n    return x.quack()\n";
+const QUACK: &str = "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: StringLiteral\n\n    def quack(self) -> StringLiteral:\n        return \"Quack\"\n\ndef make_it_quack[T: Quackable](x: T) -> StringLiteral:\n    return x.quack()\n";
 
 #[test]
 fn accepts_trait_conformance_and_bounded_call() {
     ok(&format!(
-        "{QUACK}var d: Duck = Duck(\"Donald\")\nvar s: String = make_it_quack(d)\n"
+        "{QUACK}var d: Duck = Duck(\"Donald\")\nvar s: StringLiteral = make_it_quack(d)\n"
     ));
 }
 
@@ -1099,7 +1099,7 @@ fn rejects_trait_receiver_convention_mismatch() {
 #[test]
 fn rejects_argument_not_conforming_to_bound() {
     let e = err(&format!(
-        "{QUACK}@fieldwise_init\nstruct Cat:\n    var n: Int\n\nvar s: String = make_it_quack(Cat(1))\n"
+        "{QUACK}@fieldwise_init\nstruct Cat:\n    var n: Int\n\nvar s: StringLiteral = make_it_quack(Cat(1))\n"
     ));
     assert!(
         matches!(&e, TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Quackable"),
@@ -1111,7 +1111,7 @@ fn rejects_argument_not_conforming_to_bound() {
 #[test]
 fn rejects_struct_missing_a_required_trait_method() {
     let e = err(
-        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: String\n",
+        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: StringLiteral\n",
     );
     assert!(
         matches!(&e, TypeError::MissingTraitMethod { method, .. } if method == "quack"),
@@ -1124,7 +1124,7 @@ fn rejects_struct_missing_a_required_trait_method() {
 fn rejects_struct_with_mismatched_trait_method_signature() {
     // `quack` returns Int, but the trait requires it to return String.
     let e = err(
-        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: String\n\n    def quack(self) -> Int:\n        return 1\n",
+        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: StringLiteral\n\n    def quack(self) -> Int:\n        return 1\n",
     );
     assert!(
         matches!(e, TypeError::TraitMethodMismatch { .. }),
@@ -1229,7 +1229,7 @@ fn trait_method_requirements_preserve_and_enforce_raises_effects() {
 
 #[test]
 fn bounded_trait_overloads_select_the_matching_effect_contract() {
-    let declarations = "trait Picks:\n    def pick(self, value: Int) -> Int: ...\n    def pick(self, value: String) raises -> Int: ...\n";
+    let declarations = "trait Picks:\n    def pick(self, value: Int) -> Int: ...\n    def pick(self, value: StringLiteral) raises -> Int: ...\n";
 
     ok(&format!(
         "{declarations}\ndef safe[T: Picks](value: T) -> Int:\n    return value.pick(7)\n\ndef fallible[T: Picks](value: T) raises -> Int:\n    return value.pick(\"boom\")\n"
@@ -1257,23 +1257,23 @@ fn trait_method_conformance_may_narrow_but_not_widen_effects() {
 #[test]
 fn typed_trait_method_effects_reject_a_wider_error_family() {
     ok(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
     );
 
     let error = err(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises -> Int:\n        raise \"bad\"\n        return self.value\n",
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises -> Int:\n        raise \"bad\"\n        return self.value\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 
     let error = err(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ntrait Fallible:\n    def run(self) raises -> Int: ...\n\n@fieldwise_init\nstruct Typed(Fallible):\n    var value: Int\n    def run(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ntrait Fallible:\n    def run(self) raises -> Int: ...\n\n@fieldwise_init\nstruct Typed(Fallible):\n    var value: Int\n    def run(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 }
 
 #[test]
 fn typed_call_effects_require_the_same_enclosing_error_type() {
-    let declarations = "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef validate() raises ValidationError -> Int:\n    raise ValidationError(\"bad\")\n    return 0\n";
+    let declarations = "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ndef validate() raises ValidationError -> Int:\n    raise ValidationError(\"bad\")\n    return 0\n";
     ok(&format!(
         "{declarations}\ndef caller() raises ValidationError -> Int:\n    return validate()\n"
     ));
@@ -1409,7 +1409,7 @@ fn conditional_conformance_accepts_value_predicates() {
 fn rejects_method_not_required_by_any_bound() {
     // `waddle` is not required by `Quackable`, so it can't be called on a `T`.
     let e = err(
-        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\ndef f[T: Quackable](x: T) -> String:\n    return x.waddle()\n",
+        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\ndef f[T: Quackable](x: T) -> StringLiteral:\n    return x.waddle()\n",
     );
     assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {:?}", e);
 }
@@ -1424,7 +1424,7 @@ fn rejects_unknown_trait_in_conformance_list() {
 fn rejects_bounded_type_parameter_forwarded_to_stronger_bound() {
     // `T: AnyType` cannot be passed where `Quackable` is required.
     let e = err(
-        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\ndef needs[U: Quackable](x: U) -> String:\n    return x.quack()\n\ndef weak[T: AnyType](x: T) -> String:\n    return needs(x)\n",
+        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\ndef needs[U: Quackable](x: U) -> StringLiteral:\n    return x.quack()\n\ndef weak[T: AnyType](x: T) -> StringLiteral:\n    return needs(x)\n",
     );
     assert!(
         matches!(e, TypeError::TraitNotSatisfied { .. }),
@@ -1437,7 +1437,7 @@ fn rejects_bounded_type_parameter_forwarded_to_stronger_bound() {
 fn accepts_forwarding_a_bounded_type_parameter() {
     // `T: Quackable` may be forwarded to a `[U: Quackable]` parameter.
     ok(
-        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\ndef needs[U: Quackable](x: U) -> String:\n    return x.quack()\n\ndef fwd[T: Quackable](x: T) -> String:\n    return needs(x)\n",
+        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\ndef needs[U: Quackable](x: U) -> StringLiteral:\n    return x.quack()\n\ndef fwd[T: Quackable](x: T) -> StringLiteral:\n    return needs(x)\n",
     );
 }
 
@@ -1760,7 +1760,7 @@ fn enforces_raises_effect_at_instance_and_static_method_calls() {
 
 #[test]
 fn enforces_effects_after_free_overload_and_callable_selection() {
-    let overloads = "def select(value: Int) -> Int:\n    return value\n\ndef select(value: String) raises -> Int:\n    raise value\n    return 0\n";
+    let overloads = "def select(value: Int) -> Int:\n    return value\n\ndef select(value: StringLiteral) raises -> Int:\n    raise value\n    return 0\n";
     ok(&format!(
         "{overloads}\ndef safe() -> Int:\n    return select(7)\n"
     ));
@@ -1794,14 +1794,14 @@ fn accepts_transfer_sigil_as_identity() {
 #[test]
 fn accepts_typed_errors_and_infers_the_except_binding() {
     ok(
-        "@fieldwise_init\nstruct ValidationError:\n    var field: String\n    var reason: String\n\ndef validate(name: String) raises ValidationError -> Int:\n    if name == \"\":\n        raise ValidationError(\"name\", \"empty\")\n    return 1\n\ndef main():\n    try:\n        var ignored = validate(\"\")\n    except error:\n        var field: String = error.field\n",
+        "@fieldwise_init\nstruct ValidationError:\n    var field: StringLiteral\n    var reason: StringLiteral\n\ndef validate(name: StringLiteral) raises ValidationError -> Int:\n    if name == \"\":\n        raise ValidationError(\"name\", \"empty\")\n    return 1\n\ndef main():\n    try:\n        var ignored = validate(\"\")\n    except error:\n        var field: StringLiteral = error.field\n",
     );
 }
 
 #[test]
 fn rejects_an_error_that_differs_from_the_declared_type() {
     let e = err(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef bad() raises ValidationError:\n    raise Error(\"wrong family\")\n",
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ndef bad() raises ValidationError:\n    raise Error(\"wrong family\")\n",
     );
     assert!(
         matches!(e, TypeError::RaiseTypeMismatch { .. }),
@@ -1819,7 +1819,7 @@ fn never_is_a_bottom_type_and_raises_never_is_nonraising() {
 #[test]
 fn infers_parametric_error_types_from_callable_arguments() {
     ok(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef run_action[E: AnyType](action: def() raises E -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 7\n\ndef fail() raises ValidationError -> Int:\n    raise ValidationError(\"failed\")\n\ndef safe_caller() -> Int:\n    return run_action(safe)\n\ndef typed_caller() raises ValidationError -> Int:\n    return run_action(fail)\n",
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ndef run_action[E: AnyType](action: def() raises E -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 7\n\ndef fail() raises ValidationError -> Int:\n    raise ValidationError(\"failed\")\n\ndef safe_caller() -> Int:\n    return run_action(safe)\n\ndef typed_caller() raises ValidationError -> Int:\n    return run_action(fail)\n",
     );
 }
 
@@ -1866,12 +1866,12 @@ fn rejects_printing_a_function() {
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
 }
 
-// --- Builtins: String / abs / min / max / round / len ---
+// --- Builtins: StringLiteral / abs / min / max / round / len ---
 
 #[test]
 fn accepts_string_and_numeric_builtins() {
     ok(
-        "var s: String = \"n=\" + String(42)\nvar a: Int = abs(-7)\nvar f: Float64 = abs(-2.5)\nvar lo: Int = min(3, 8)\nvar hi: Float64 = max(1.0, 2.0)\nvar r: Float64 = round(3.7)\nvar n: Int = len(\"hello\")\n",
+        "var s: StringLiteral = \"n=\" + String(42)\nvar a: Int = abs(-7)\nvar f: Float64 = abs(-2.5)\nvar lo: Int = min(3, 8)\nvar hi: Float64 = max(1.0, 2.0)\nvar r: Float64 = round(3.7)\nvar n: Int = len(\"hello\")\n",
     );
 }
 
@@ -1885,7 +1885,7 @@ fn abs_preserves_the_numeric_type() {
 
 #[test]
 fn rejects_stringify_of_non_stringable() {
-    let e = err("def f() -> Int:\n    return 1\n\nvar s: String = String(f)\n");
+    let e = err("def f() -> Int:\n    return 1\n\nvar s: StringLiteral = String(f)\n");
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
 }
 
@@ -1930,13 +1930,13 @@ fn accepts_list_construction_forms() {
 
 #[test]
 fn infers_list_element_type_with_widening() {
-    ok("var xs: List[Float64] = [1, 2.0, 3]\nvar ys: List[String] = [\"a\", \"b\"]\n");
+    ok("var xs: List[Float64] = [1, 2.0, 3]\nvar ys: List[StringLiteral] = [\"a\", \"b\"]\n");
 }
 
 #[test]
 fn collection_literal_annotations_solve_only_direct_type_holes() {
     ok(
-        "var inferred_list: List[_] = [1, 2]\nvar bare_list: List = [3, 4]\nvar inferred_set: Set[_] = {1, 2}\nvar inferred_dict: Dict[_, _] = {\"one\": 1}\nvar value_hole: Dict[String, _] = {\"two\": 2}\n",
+        "var inferred_list: List[_] = [1, 2]\nvar bare_list: List = [3, 4]\nvar inferred_set: Set[_] = {1, 2}\nvar inferred_dict: Dict[_, _] = {\"one\": 1}\nvar value_hole: Dict[StringLiteral, _] = {\"two\": 2}\n",
     );
 
     assert!(matches!(
@@ -2059,7 +2059,7 @@ fn rejects_unknown_list_method() {
 
 #[test]
 fn pop_returns_the_element_type() {
-    ok("var xs: List[String] = [\"a\", \"b\"]\nvar s: String = xs.pop()\n");
+    ok("var xs: List[StringLiteral] = [\"a\", \"b\"]\nvar s: StringLiteral = xs.pop()\n");
 }
 
 // --- List (more methods: insert/remove/pop(i)/clear/reverse/extend/count/index) ---
@@ -2090,7 +2090,7 @@ fn rejects_remove_on_non_equatable_elements() {
 
 #[test]
 fn rejects_extend_with_wrong_element_type() {
-    let e = err("var a: List[Int] = [1]\nvar b: List[String] = [\"x\"]\na.extend(b)\n");
+    let e = err("var a: List[Int] = [1]\nvar b: List[StringLiteral] = [\"x\"]\na.extend(b)\n");
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
 }
 
@@ -2112,7 +2112,7 @@ fn rejects_count_on_a_non_variable_when_temporary_is_not_equatable() {
 #[test]
 fn accepts_membership_on_list_and_string() {
     ok(
-        "var xs: List[Int] = [1, 2, 3]\nvar a: Bool = 2 in xs\nvar b: Bool = 5 not in xs\nvar s: String = \"hello\"\nvar c: Bool = \"ell\" in s\n",
+        "var xs: List[Int] = [1, 2, 3]\nvar a: Bool = 2 in xs\nvar b: Bool = 5 not in xs\nvar s: StringLiteral = \"hello\"\nvar c: Bool = \"ell\" in s\n",
     );
 }
 
@@ -2222,7 +2222,7 @@ fn rejects_write_to_a_call_result() {
 #[test]
 fn accepts_augmented_assignment_forms() {
     ok("var i: Int = 0\ni += 1\ni -= 1\ni *= 2\ni //= 2\ni %= 3\ni **= 2\n");
-    ok("var s: String = \"a\"\ns += \"b\"\n");
+    ok("var s: StringLiteral = \"a\"\ns += \"b\"\n");
     ok(
         "@fieldwise_init\nstruct C:\n    var n: Int\n\n    def bump(mut self):\n        self.n += 1\n\nvar c: C = C(0)\nc.n += 5\n",
     );
@@ -2294,7 +2294,7 @@ fn rejects_float64_vector_dtype_mismatch() {
 fn accepts_inferred_var_and_uses_its_type() {
     // The inferred type flows to later uses (Int arithmetic, String concat, List).
     ok("var n = 40\nvar m: Int = n + 2\n");
-    ok("var s = \"hi\"\nvar t: String = s + \"!\"\n");
+    ok("var s = \"hi\"\nvar t: StringLiteral = s + \"!\"\n");
     ok("var xs = [1, 2, 3]\nxs.append(4)\nvar k: Int = xs[0]\n");
     ok("var f = 3.5\nvar g: Float64 = f * 2.0\n");
 }
@@ -2322,7 +2322,7 @@ fn accepts_inferred_nominal_range() {
 #[test]
 fn accepts_tuple_annotated_inferred_and_indexed() {
     ok(
-        "var t: Tuple[Int, Float64, String] = (1, 2.5, \"hi\")\nvar a: Int = t[0]\nvar b: Float64 = t[1]\nvar c: String = t[2]\n",
+        "var t: Tuple[Int, Float64, StringLiteral] = (1, 2.5, \"hi\")\nvar a: Int = t[0]\nvar b: Float64 = t[1]\nvar c: StringLiteral = t[2]\n",
     );
     ok("var u = (10, 20)\nvar first: Int = u[0]\n");
     ok(
@@ -2338,7 +2338,7 @@ fn tuple_element_coercion_materializes_literals() {
 
 #[test]
 fn accepts_tuple_constructors_and_structural_operations() {
-    ok("var inferred = Tuple(1, \"one\")\nvar typed = Tuple[Float64, String](2, \"two\")\n");
+    ok("var inferred = Tuple(1, \"one\")\nvar typed = Tuple[Float64, StringLiteral](2, \"two\")\n");
     ok(
         "var pair = 1, \"one\"\nvar n: Int = len(pair)\nvar has: Bool = 1 in pair\nvar lacks: Bool = 9 not in pair\n",
     );
@@ -2346,7 +2346,7 @@ fn accepts_tuple_constructors_and_structural_operations() {
         "var a = Tuple(1, 2)\nvar b = Tuple(1, 3)\nvar eq: Bool = a == b\nvar lt: Bool = a < b\nvar ge: Bool = b >= a\n",
     );
     ok(
-        "var pair = Tuple(1, \"one\")\nvar reversed: Tuple[String, Int] = pair.reverse()\nvar joined: Tuple[Int, String, Bool] = pair.concat(Tuple(True))\n",
+        "var pair = Tuple(1, \"one\")\nvar reversed: Tuple[StringLiteral, Int] = pair.reverse()\nvar joined: Tuple[Int, StringLiteral, Bool] = pair.concat(Tuple(True))\n",
     );
 }
 
@@ -2420,7 +2420,7 @@ fn tuple_comparison_requires_the_same_tuple_self_type() {
 #[test]
 fn rejects_bad_typed_tuple_construction() {
     assert!(matches!(
-        err("var t = Tuple[Int, String](1)\n"),
+        err("var t = Tuple[Int, StringLiteral](1)\n"),
         TypeError::ArityMismatch { .. }
     ));
     assert!(matches!(
@@ -2437,7 +2437,7 @@ fn rejects_tuple_wrong_element_type() {
 
 #[test]
 fn rejects_runtime_tuple_index() {
-    let e = err("var t: Tuple[Int, String] = (1, \"x\")\nvar i: Int = 0\nvar y = t[i]\n");
+    let e = err("var t: Tuple[Int, StringLiteral] = (1, \"x\")\nvar i: Int = 0\nvar y = t[i]\n");
     assert!(
         matches!(&e, TypeError::TypeMismatch { context, .. } if context == "tuple index"),
         "got {:?}",
@@ -2500,7 +2500,7 @@ fn transferred_string_dict_can_forward_keyword_arguments() {
     );
     assert!(matches!(
         err(
-            "def target(**options: String):\n    pass\n\ndef relay(**options: Int):\n    target(**options^)\n"
+            "def target(**options: StringLiteral):\n    pass\n\ndef relay(**options: Int):\n    target(**options^)\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -2519,7 +2519,7 @@ fn generic_and_method_kwargs_share_collection_and_forwarding_checks() {
     ));
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size(self, **options: String) -> Int:\n        return self.bias\n\nvar counter = Counter(0)\nvar value = counter.size(first=1)\n"
+            "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size(self, **options: StringLiteral) -> Int:\n        return self.bias\n\nvar counter = Counter(0)\nvar value = counter.size(first=1)\n"
         ),
         TypeError::BadCall { .. } | TypeError::TypeMismatch { .. }
     ));
@@ -2615,7 +2615,7 @@ fn accepts_variadic_args() {
     );
     // Regular params before the variadic.
     ok(
-        "def tag(label: String, *nums: Int) -> Int:\n    return len(nums)\n\nvar a: Int = tag(\"x\", 1, 2)\n",
+        "def tag(label: StringLiteral, *nums: Int) -> Int:\n    return len(nums)\n\nvar a: Int = tag(\"x\", 1, 2)\n",
     );
     // Each overflow argument must match the element type.
     assert!(matches!(
@@ -2624,7 +2624,9 @@ fn accepts_variadic_args() {
     ));
     // A required regular parameter is still enforced.
     assert!(matches!(
-        err("def tag(label: String, *nums: Int) -> Int:\n    return 0\n\nvar z: Int = tag()\n"),
+        err(
+            "def tag(label: StringLiteral, *nums: Int) -> Int:\n    return 0\n\nvar z: Int = tag()\n"
+        ),
         TypeError::BadCall { .. }
     ));
     ok("def f[T: AnyType](*a: T) -> Int:\n    return len(a)\n\nvar n: Int = f(1, 2, 3)\n");
@@ -2640,7 +2642,7 @@ fn accepts_a_heterogeneous_variadic_type_pack() {
 #[test]
 fn accepts_string_compile_time_value_parameters() {
     ok(
-        "@fieldwise_init\nstruct Named[label: String]:\n    var value: Int\n\nvar item: Named[\"answer\"] = Named[\"answer\"](42)\n",
+        "@fieldwise_init\nstruct Named[label: StringLiteral]:\n    var value: Int\n\nvar item: Named[\"answer\"] = Named[\"answer\"](42)\n",
     );
 }
 
@@ -2693,7 +2695,7 @@ fn rejects_explicit_infer_only_compile_time_parameters() {
 #[test]
 fn infers_generic_static_and_instance_method_parameters() {
     ok(
-        "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value\n    def echo[T: Copyable](self, value: T) -> T:\n        return value\n\nvar factory = Factory(0)\nvar a: Int = Factory.make(1)\nvar b: String = factory.echo(\"ok\")\n",
+        "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value\n    def echo[T: Copyable](self, value: T) -> T:\n        return value\n\nvar factory = Factory(0)\nvar a: Int = Factory.make(1)\nvar b: StringLiteral = factory.echo(\"ok\")\n",
     );
 }
 
@@ -2728,7 +2730,7 @@ fn gates_methods_with_parent_parameter_where_constraints() {
     );
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Wrapper[T: Copyable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return False\n\nvar wrapped = Wrapper[String](\"x\")\nvar same = wrapped.compare(\"x\")\n"
+            "@fieldwise_init\nstruct Wrapper[T: Copyable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return False\n\nvar wrapped = Wrapper[StringLiteral](\"x\")\nvar same = wrapped.compare(\"x\")\n"
         ),
         TypeError::NoSuchMethod { .. } | TypeError::BadCall { .. }
     ));
@@ -2878,9 +2880,21 @@ fn plain_signatures_are_unaffected() {
 // --- Expression syntax parsed but semantics deferred (syntax-first phase) ---
 
 #[test]
+fn unlinked_string_annotation_fails_explicitly() {
+    // Without the prelude, `String` is not a declared type: the raw seam
+    // rejects the annotation instead of silently diverging from the linked
+    // build's nominal-String takeover. Focused tests spell `StringLiteral`.
+    let error = err("var s: String = \"x\"\n");
+    assert!(
+        format!("{error:?}").contains("String"),
+        "expected an unknown-type error naming String, got {error:?}"
+    );
+}
+
+#[test]
 fn expression_surface_type_checks() {
     // A t-string is a lazy TString value, not a builtin String.
-    let error = err("var s: String = t\"x{1}\"\n");
+    let error = err("var s: StringLiteral = t\"x{1}\"\n");
     assert!(
         format!("{error:?}").contains("TString"),
         "expected a TString mismatch, got {error:?}"
@@ -2906,7 +2920,9 @@ fn ternary_chained_comparison_and_unpacking_type_check() {
     // Chained comparison → Bool.
     ok("def g(i: Int, n: Int) -> Bool:\n    return 0 <= i < n\n");
     // Tuple unpacking: arity + element types.
-    ok("var t: Tuple[Int, String] = (1, \"a\")\nvar x: Int = 0\nvar s: String = \"\"\nx, s = t\n");
+    ok(
+        "var t: Tuple[Int, StringLiteral] = (1, \"a\")\nvar x: Int = 0\nvar s: StringLiteral = \"\"\nx, s = t\n",
+    );
     assert!(matches!(
         err(
             "var t: Tuple[Int, Int] = (1, 2)\nvar a: Int = 0\nvar b: Int = 0\nvar c: Int = 0\na, b, c = t\n"
@@ -2996,11 +3012,11 @@ fn lifecycle_initialization_is_required_on_every_value_producing_path() {
 #[test]
 fn trait_refinement_inherits_requirements_and_capabilities() {
     ok(
-        "trait Named:\n    def name(self) -> String: ...\n\ntrait Described(Named):\n    def description(self) -> String: ...\n\n@fieldwise_init\nstruct Item(Described):\n    var label: String\n    def name(self) -> String:\n        return self.label\n    def description(self) -> String:\n        return self.label\n\ndef require_named[T: Named](value: T) -> String:\n    return value.name()\n\ndef main():\n    var item = Item(\"x\")\n    print(require_named(item))\n",
+        "trait Named:\n    def name(self) -> StringLiteral: ...\n\ntrait Described(Named):\n    def description(self) -> StringLiteral: ...\n\n@fieldwise_init\nstruct Item(Described):\n    var label: StringLiteral\n    def name(self) -> StringLiteral:\n        return self.label\n    def description(self) -> StringLiteral:\n        return self.label\n\ndef require_named[T: Named](value: T) -> StringLiteral:\n    return value.name()\n\ndef main():\n    var item = Item(\"x\")\n    print(require_named(item))\n",
     );
     assert!(matches!(
         err(
-            "trait Named:\n    def name(self) -> String: ...\n\ntrait Described(Named):\n    def description(self) -> String: ...\n\n@fieldwise_init\nstruct Bad(Described):\n    var label: String\n    def description(self) -> String:\n        return self.label\n"
+            "trait Named:\n    def name(self) -> StringLiteral: ...\n\ntrait Described(Named):\n    def description(self) -> StringLiteral: ...\n\n@fieldwise_init\nstruct Bad(Described):\n    var label: StringLiteral\n    def description(self) -> StringLiteral:\n        return self.label\n"
         ),
         TypeError::MissingTraitMethod { method, .. } if method == "name"
     ));
@@ -3013,7 +3029,7 @@ fn checks_callable_parameters_and_indirect_invocation() {
     );
     assert!(matches!(
         err(
-            "def wrong(x: String) -> Int:\n    return 0\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    print(apply(wrong, 41))\n"
+            "def wrong(x: StringLiteral) -> Int:\n    return 0\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    print(apply(wrong, 41))\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -3090,7 +3106,7 @@ fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effect
     assert!(matches!(generic, TypeError::TraitNotSatisfied { .. }));
 
     let overloaded = err(
-        "def choose(value: Int) -> Int:\n    return value\n\ndef choose(value: String) -> Int:\n    return len(value)\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(choose))\n",
+        "def choose(value: Int) -> Int:\n    return value\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(choose))\n",
     );
     assert!(matches!(overloaded, TypeError::TraitNotSatisfied { .. }));
 }
@@ -3162,7 +3178,7 @@ fn contextual_type_selects_an_origin_specialized_overload_value() {
 #[test]
 fn contextually_selects_an_overloaded_callable_value() {
     ok(
-        "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: String) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) -> Int = choose\n    var result: Int = callback(41)\n",
+        "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) -> Int = choose\n    var result: Int = callback(41)\n",
     );
 }
 
@@ -3171,12 +3187,12 @@ fn accepts_numeric_bases_and_string_forms_and_tstrings() {
     // Based integers, digit separators, and single/triple-quoted strings are fully
     // supported (they are ordinary Int/String values).
     ok(
-        "var a: Int = 0xFF\nvar b: Int = 1_000_000\nvar c: String = 'single'\nvar d: String = \"\"\"triple\"\"\"\n",
+        "var a: Int = 0xFF\nvar b: Int = 1_000_000\nvar c: StringLiteral = 'single'\nvar d: StringLiteral = \"\"\"triple\"\"\"\n",
     );
     // A t-string types as the lazy TString; explicit `String(...)`
     // materializes it into the builtin string.
-    ok("var y: Int = 1\nvar s: String = String(t\"x={y}\")\n");
-    let error = err("var y: Int = 1\nvar s: String = t\"x={y}\"\n");
+    ok("var y: Int = 1\nvar s: StringLiteral = String(t\"x={y}\")\n");
+    let error = err("var y: Int = 1\nvar s: StringLiteral = t\"x={y}\"\n");
     assert!(
         format!("{error:?}").contains("TString"),
         "expected a TString mismatch, got {error:?}"
@@ -3680,7 +3696,7 @@ fn dunder_dispatch_type_checks_operators_and_builtins() {
     // A struct with the right dunders participates in `+`, `==`, subscript, `len`,
     // `String`, and `in` — each typed by the dunder's signature.
     ok(&format!(
-        "{VEC2}def main():\n    var a: Vec2 = Vec2(1)\n    var b: Vec2 = a + a\n    var e: Bool = a == b\n    var i: Int = a[0]\n    var n: Int = len(a)\n    var s: String = String(a)\n    var m: Bool = 3 in a\n"
+        "{VEC2}def main():\n    var a: Vec2 = Vec2(1)\n    var b: Vec2 = a + a\n    var e: Bool = a == b\n    var i: Int = a[0]\n    var n: Int = len(a)\n    var s: StringLiteral = String(a)\n    var m: Bool = 3 in a\n"
     ));
 }
 
@@ -3702,7 +3718,7 @@ fn operator_without_dunder_is_rejected() {
 fn len_dunder_must_return_int() {
     // `len(x)` requires `__len__ -> Int`; a wrong return type is a type error.
     let e = err(
-        "@fieldwise_init\nstruct Bad:\n    var x: Int\n    def __len__(self) -> String:\n        return \"nope\"\n\ndef main():\n    var n: Int = len(Bad(1))\n",
+        "@fieldwise_init\nstruct Bad:\n    var x: Int\n    def __len__(self) -> StringLiteral:\n        return \"nope\"\n\ndef main():\n    var n: Int = len(Bad(1))\n",
     );
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
@@ -4280,7 +4296,7 @@ fn hashable_bound_permits_hash() {
     // and on concrete hashable built-ins (so a key struct can combine fields).
     ok("def h[K: Hashable](k: K) -> UInt:\n    return k.__hash__()\n");
     ok("def hi(n: Int) -> UInt:\n    return n.__hash__()\n");
-    ok("def hs(s: String) -> UInt:\n    return s.__hash__()\n");
+    ok("def hs(s: StringLiteral) -> UInt:\n    return s.__hash__()\n");
 }
 
 #[test]

@@ -1020,9 +1020,19 @@ impl Checker {
             "Writer" => self.structs.get(name).is_some_and(|info| {
                 info.methods.get("write_string").is_some_and(|methods| {
                     methods.iter().any(|method| {
+                        // The payload parameter may be spelled as the
+                        // compile-time literal or the nominal String; the VM
+                        // write bridge materializes for the nominal spelling.
+                        let payload = match method.params.as_slice() {
+                            [Ty::StringLiteral] => true,
+                            [Ty::Struct(name, args)] => {
+                                args.is_empty() && crate::symbol::is_stdlib_string_struct(name)
+                            }
+                            _ => false,
+                        };
                         method.has_self
                             && method.self_convention == Some(ArgConvention::Mut)
-                            && method.params == [Ty::String]
+                            && payload
                             && method.ret == Ty::None
                     })
                 })
@@ -1235,7 +1245,7 @@ impl Checker {
             CtValue::IntLiteral(_) => Some(Ty::IntLiteral),
             CtValue::FloatLiteral(_) => Some(Ty::FloatLiteral),
             CtValue::Bool(_) => Some(Ty::Bool),
-            CtValue::Str(_) => Some(Ty::String),
+            CtValue::Str(_) => Some(Ty::StringLiteral),
             CtValue::Tuple(values) => values
                 .iter()
                 .map(|v| self.ct_value_ty(v, self_ty))

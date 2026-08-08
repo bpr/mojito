@@ -51,7 +51,11 @@ pub enum Ty {
     Int,
     UInt,
     Bool,
-    String,
+    /// The compile-time string literal type (Mojo's `StringLiteral`). The
+    /// nominal runtime `String` is the self-hosted stdlib struct; until the
+    /// annotation takeover lands, source `String` annotations still resolve
+    /// here.
+    StringLiteral,
     Float64,
     None,
     /// Bottom type: no runtime value can inhabit it.
@@ -463,7 +467,7 @@ impl fmt::Display for Ty {
             Ty::Int | Ty::IntLiteral => write!(f, "Int"),
             Ty::UInt => write!(f, "UInt"),
             Ty::Bool => write!(f, "Bool"),
-            Ty::String => write!(f, "String"),
+            Ty::StringLiteral => write!(f, "StringLiteral"),
             Ty::Float64 | Ty::FloatLiteral => write!(f, "Float64"),
             Ty::Infer => write!(f, "_"),
             Ty::None => write!(f, "None"),
@@ -642,6 +646,11 @@ impl fmt::Display for Ty {
                 write!(f, "]")
             }
             Ty::Struct(name, args) => {
+                // The prelude-qualified nominal String prints its public
+                // spelling rather than leaking the module-qualified symbol.
+                if args.is_empty() && crate::symbol::is_stdlib_string_struct(name) {
+                    return write!(f, "String");
+                }
                 write!(f, "{}", name)?;
                 if !args.is_empty() {
                     write!(f, "[")?;
@@ -688,7 +697,7 @@ mod collection_representation_tests {
         for ty in [
             runtime_list.clone(),
             set_type(Ty::Int),
-            dict_type(Ty::String, Ty::Int),
+            dict_type(Ty::StringLiteral, Ty::Int),
             range_type(),
         ] {
             assert!(matches!(ty, Ty::Struct(..)), "got {ty:?}");

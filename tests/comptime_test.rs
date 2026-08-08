@@ -106,7 +106,7 @@ fn comptime_for_over_a_tuple_of_strings() {
 fn heterogeneous_type_pack_round_trips_through_tuple_spread() {
     // Mirrors current Mojo: a heterogeneous variadic pack can be transferred
     // into `Tuple[*Ts]`; this is not general fixed-arity call spreading.
-    let src = "def repack[*Ts: Movable](var *args: *Ts) -> Tuple[*Ts]:\n    return Tuple[*Ts](*args^)\n\ndef main():\n    var values: Tuple[Int, String, Bool] = repack(3, \"seven\", True)\n    print(values)\n";
+    let src = "def repack[*Ts: Movable](var *args: *Ts) -> Tuple[*Ts]:\n    return Tuple[*Ts](*args^)\n\ndef main():\n    var values: Tuple[Int, StringLiteral, Bool] = repack(3, \"seven\", True)\n    print(values)\n";
     assert_eq!(run(src).unwrap(), "(3, seven, True)\n");
 }
 
@@ -538,7 +538,7 @@ fn heterogeneous_pack_bound_failure_names_the_call_element() {
         "got: {error}"
     );
     assert!(
-        error.contains("element 2 of type pack 'ArgTypes' has type 'String'"),
+        error.contains("element 2 of type pack 'ArgTypes' has type 'StringLiteral'"),
         "got: {error}"
     );
     assert!(error.contains("'Intable'"), "got: {error}");

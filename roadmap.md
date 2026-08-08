@@ -68,15 +68,14 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **String follow-ups** — the self-hosted core landed (nominal UTF-8
-  `String`, keyword subscripts, `byte=`/`codepoint=`/`grapheme=` access
-  with a `Codepoint` result type, boundary-checked slicing,
-  compare/hash/format, lazy captured `TString`; see `docs/features.md`).
-  Remaining: migrating the builtin literal operations onto the struct
-  and splitting `StringLiteral` from `String` at the type level
-  (annotation takeover, conversion retargeting, ordering on literals);
-  and String result APIs (`find`/`split`/`startswith`/...) growing
-  demand-first.
+- [ ] **String follow-ups** — the self-hosted core, keyword-indexed
+  access with `Codepoint`, lazy captured `TString`, and the
+  `StringLiteral`/`String` type split (annotation takeover, `@implicit`
+  literal conversion, retargeted `String(x)`/`input`/`repr`/`format`)
+  are complete; see `docs/features.md`. Remaining: default un-annotated
+  string bindings (`var s = "lit"`) to the nominal `String` once
+  non-raising slicing parity and result APIs land, and String result
+  APIs (`find`/`split`/`startswith`/...) growing demand-first.
 - [ ] **SIMD semantic completion** — finish dtype/literal conversions, masks,
   reductions, shuffles, and other CPU-visible VM semantics; migrate the brief
   `SIMDSize` spelling to current `SIMDLength` while retaining only an explicit

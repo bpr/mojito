@@ -168,7 +168,7 @@ fn borrowed_set_and_dict_iterators_retain_their_collection_owners() {
     let directory = TempDir::new();
     let main = directory.write(
         "main.mojo",
-        "from std.collections.set import Set\nfrom std.collections.dict import Dict\n\ndef main():\n    var values = Set[Int]()\n    values.add(3)\n    values.add(5)\n    var total = 0\n    for value in values:\n        total += value\n    print(total)\n    var mapping = Dict[String, Int]()\n    mapping[\"first\"] = 1\n    mapping[\"second\"] = 2\n    var keys = \"\"\n    for key in mapping:\n        keys += key\n    print(keys)\n",
+        "from std.collections.set import Set\nfrom std.collections.dict import Dict\n\ndef main():\n    var values = Set[Int]()\n    values.add(3)\n    values.add(5)\n    var total = 0\n    for value in values:\n        total += value\n    print(total)\n    var mapping = Dict[String, Int]()\n    mapping[\"first\"] = 1\n    mapping[\"second\"] = 2\n    var keys: String = \"\"\n    for key in mapping:\n        keys += key\n    print(keys)\n",
     );
     assert_eq!(run(&main).unwrap(), "8\nfirstsecond\n");
 }

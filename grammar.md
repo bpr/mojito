@@ -682,7 +682,7 @@ Notes:
 
 ```
 type:
-    | 'Int' | 'UInt' | 'Bool' | 'String' | 'Float64' | 'None'
+    | 'Int' | 'UInt' | 'Bool' | 'Float64' | 'None'
     | 'Self' '.' NAME              # a struct's own type parameter, inside its body
     | 'Self'                       # the enclosing struct/trait type
     | function_type               # a checked function/closure contract or value type
@@ -693,8 +693,11 @@ function_type_param: [convention] [NAME ':'] type
 fn_effect: 'capturing' ['[' ... ']'] | 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
-`None` is a reserved keyword; `Int`, `UInt`, `Bool`, `String`, `Float64` are ordinary `NAME`s recognized
-here by spelling (they are **not** reserved). Any other `NAME` is a **struct type**
+`None` is a reserved keyword; `Int`, `UInt`, `Bool`, `Float64` are ordinary `NAME`s recognized
+here by spelling (they are **not** reserved). `String` is an ordinary `NAME` resolving to
+the prelude's nominal self-hosted `String` struct; `StringLiteral` names the compile-time
+string literal type. A string literal implicitly converts wherever the nominal `String`
+is expected (the struct's `@implicit` literal constructor). Any other `NAME` is a **struct type**
 (`Point`), a **type parameter** in scope (a bare `T` inside a generic `def`), or a
 **parameterized struct type** with arguments (`Pair[Int]`, `Pair[T]`, or the value form
 `FixedBuffer[8]` / `Pair[2 + 3]`); the checker resolves which. A `param_args` entry is a

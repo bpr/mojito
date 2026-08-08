@@ -279,7 +279,7 @@ fn rewrite_type(ty: &mut Type, subs: Subs) {
         Type::Int
         | Type::UInt
         | Type::Bool
-        | Type::String
+        | Type::StringLiteral
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
@@ -461,7 +461,7 @@ impl PackRewriter {
             Type::Int
             | Type::UInt
             | Type::Bool
-            | Type::String
+            | Type::StringLiteral
             | Type::Float64
             | Type::None
             | Type::SelfParam(_)
@@ -1473,7 +1473,7 @@ fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
         Type::Int => ("Int".to_string(), Vec::new()),
         Type::UInt => ("UInt".to_string(), Vec::new()),
         Type::Bool => ("Bool".to_string(), Vec::new()),
-        Type::String => ("String".to_string(), Vec::new()),
+        Type::StringLiteral => ("String".to_string(), Vec::new()),
         Type::Float64 => ("Float64".to_string(), Vec::new()),
         // No source constructor head exists (function types, references);
         // leave the call for the checker to report against the clone.

@@ -1941,18 +1941,37 @@ analysis code.
 The self-hosted `String` (stdlib/std/string.mojo) is an ordinary struct — a
 UTF-8 byte buffer over `UnsafePointer[Byte]` in the List storage pattern —
 with exactly two deliberate intrinsic crossings, both keyed on the linked
-declaration identity (`symbol::is_stdlib_string_struct`): the literal
-constructor (`String("...")`) never executes its declared body — the VM fills
-the byte buffer from the literal's UTF-8 bytes — and
+declaration identity (`symbol::is_stdlib_string_struct`): the `@implicit`
+literal constructor (`String("...")`) never executes its declared body — the
+VM fills the byte buffer from the literal's UTF-8 bytes — and
 `_as_string_literal(self) -> StringLiteral` reads the buffer back into a
 builtin string value for the Writer path. Everything else (comparison,
-hashing, decoding, slicing) is pure library code. The name coexists with the
-builtin: annotations (`: String`, a dedicated source type) and non-literal
-`String(x)` conversions keep the compile-time string type — construction
-routing is shape-directed at the registered-struct arm, and MIR routes
-stringify-typed calls back to the VM's conversion builtin. Collapsing the two
-into Mojo's real `StringLiteral`-vs-`String` split is the recorded migration
-item.
+concatenation, membership, hashing, decoding, slicing) is pure library code.
+
+The `StringLiteral`-vs-`String` split is realized at the type level. The
+compile-time literal type is `Ty::StringLiteral` (spelled `StringLiteral` in
+source, mirroring `Ty::IntLiteral`); string literals and literal-only
+operations stay on it, as do comptime strings, `[text: String]` value
+parameters, kwargs keys, and Writer payloads inside the stdlib. A source
+`String` annotation is not a builtin type keyword: it parses as an ordinary
+name, the prelude rewrite qualifies it, and ordinary struct lookup resolves
+the nominal struct — no dedicated checker path. A literal converts wherever
+the nominal String is expected through the ordinary implicit-conversion
+engine (the `@implicit` literal constructor), including operator operands
+(mixed literal/nominal comparisons and concatenation normalize onto the
+struct's dunders), tuple-display and fieldwise-construction elements, and
+specialized-pack constructor arguments. Builtin string producers retarget:
+`String(x)` stringify, `input()`, `repr(x)`, and `.format(...)` type as the
+nominal String by routing the underlying call to the VM's conversion builtin
+(a `ResolveCallable` adjustment where needed) and wrapping the buffered
+result through the literal constructor. `Error(msg)`/`raise` and the Writer
+`write_string` contract accept either spelling; the VM bridges read a
+nominal message back and materialize a nominal payload for a
+nominally-declared `write_string`. Overload symbols keep the stable
+`String` spelling for both types, so an overload set differing only in
+StringLiteral-vs-String collides and is rejected at declaration. In unlinked
+seam programs (no prelude) a bare `String` annotation fails explicitly as an
+unknown type, and the bare `String(...)` builtin keeps the literal result.
 
 Keyword subscripts are the general feature the String's explicit index forms
 ride on: a named bracket argument over a lowercase (value) base parses as a

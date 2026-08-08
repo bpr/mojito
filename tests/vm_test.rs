@@ -1169,7 +1169,7 @@ fn tuple_comparable_conformance_survives_discovery_and_specialization() {
 #[test]
 fn slice_subscript_runs() {
     // List + String slicing with optional bounds, steps, negative indices, reversal.
-    let src = "def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4, 5]\n    print(xs[1:4])\n    print(xs[::2])\n    print(xs[::-1])\n    print(xs[-2:])\n    var s: String = \"hello\"\n    print(s[1:4])\n    print(s[::-1])\n";
+    let src = "def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4, 5]\n    print(xs[1:4])\n    print(xs[::2])\n    print(xs[::-1])\n    print(xs[-2:])\n    var s: StringLiteral = \"hello\"\n    print(s[1:4])\n    print(s[::-1])\n";
     assert_eq!(
         run_compiled(src).expect("compile nominal List slice overloads"),
         "[1, 2, 3]\n[0, 2, 4]\n[5, 4, 3, 2, 1, 0]\n[4, 5]\nell\nolleh\n"

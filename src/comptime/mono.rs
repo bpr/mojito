@@ -351,7 +351,7 @@ impl<'a> Elab<'a> {
             Type::Int
             | Type::UInt
             | Type::Bool
-            | Type::String
+            | Type::StringLiteral
             | Type::Float64
             | Type::None
             | Type::SelfParam(_)
@@ -431,7 +431,7 @@ impl<'a> Elab<'a> {
                             args.push(literal);
                         }
                         TStringPart::Expr(value) => {
-                            if matches!(element, Ty::String) {
+                            if matches!(element, Ty::StringLiteral) {
                                 let mut conversion = Expr::new(
                                     ExprKind::Call {
                                         name: "String".to_string(),

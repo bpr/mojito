@@ -1191,7 +1191,10 @@ fn seam_tstrings_keep_the_eager_conversion_fallback() {
             _ => None,
         })
         .expect("interpolation conversion");
-    assert_eq!(main.reg_types.get(&conversion.0), Some(&mojito::Ty::String));
+    assert_eq!(
+        main.reg_types.get(&conversion.0),
+        Some(&mojito::Ty::StringLiteral)
+    );
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -2853,7 +2856,7 @@ fn specialized_runtime_pack_is_abi_only_and_binds_as_a_tuple() {
         .expect("specialized declaration retains the heterogeneous ABI marker");
     assert!(matches!(
         declaration.variadic,
-        Some(Ty::RuntimePack(ref elements)) if elements == &[Ty::Int, Ty::String]
+        Some(Ty::RuntimePack(ref elements)) if elements == &[Ty::Int, Ty::StringLiteral]
     ));
 
     let function = mir
@@ -2864,12 +2867,12 @@ fn specialized_runtime_pack_is_abi_only_and_binds_as_a_tuple() {
         .expect("specialized body lowered");
     assert_eq!(
         function.param_types,
-        [Ty::Tuple(vec![Ty::Int, Ty::String])],
+        [Ty::Tuple(vec![Ty::Int, Ty::StringLiteral])],
         "the runtime frame exposes an ordinary Tuple collector to the body"
     );
     assert_eq!(
         function.var_tys.get(&0),
-        Some(&Ty::Tuple(vec![Ty::Int, Ty::String]))
+        Some(&Ty::Tuple(vec![Ty::Int, Ty::StringLiteral]))
     );
     assert!(
         mojito::mir::verify::verify(&mir).is_empty(),

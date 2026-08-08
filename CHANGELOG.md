@@ -8,6 +8,50 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The StringLiteral/String type split. Source `String` annotations now
+  resolve to the self-hosted nominal String struct through the ordinary
+  prelude/linker path (the parser no longer treats `String` as a builtin
+  type keyword), while string literals and literal-only operations stay
+  on the compile-time `StringLiteral` type — spellable in annotations,
+  mirroring `IntLiteral`, with `Ty::StringLiteral` as the renamed checker
+  variant. A literal converts wherever the nominal String is expected via
+  the struct's new `@implicit` literal constructor: bindings, arguments,
+  returns, tuple-display and collection elements, fieldwise and
+  specialized-pack constructor fields, and mixed operator operands
+  (`"a" + s` and `s == "b"` normalize onto the struct's migrated
+  `__add__`/`__iadd__`/`__contains__`/comparison dunders). Conversion
+  retargeting makes `String(x)` stringify, `input()`, `repr(x)`, and
+  `.format(...)` produce nominal String values through the VM's
+  materialize bridge; `Error(msg)`/`raise` and the Writer `write_string`
+  contract accept either spelling (a nominally-declared `write_string`
+  receives a materialized payload). StringDict kwargs keys and other
+  literal-typed internals are respelled `StringLiteral` with an unchanged
+  VM ABI. Overload symbols keep the stable `String` spelling for both
+  types, so overloads differing only in that pair are rejected as
+  redeclarations. Un-annotated `var s = "lit"` bindings deliberately stay
+  `StringLiteral` (a recorded divergence and follow-up); unlinked seam
+  programs reject bare `String` annotations explicitly.
+
+### Fixed
+
+- Consuming a borrowed loop binding (a `var`-convention argument such as
+  `list.append(element)` inside `for element in source`) now runs the
+  referent's `__copyinit__` instead of aliasing its owning storage — a
+  pre-existing double free for any pointer-owning Copyable struct,
+  exposed by nominal String keys flowing through dict iteration.
+
+- Variant projections spelled with a struct-typed alternative
+  (`v[String]`) resolve and lower like the type-token spelling, and
+  implicit conversions now participate in constructor overload scoring
+  (ranked below direct coercions) and in specialized heterogeneous pack
+  argument binding.
+
+- Variant payloads own independent values: construction, `set`, and
+  `replace` deep-copy a lifecycle payload into the variant, and a
+  projection value read copies a Copyable payload out of the variant's
+  storage (keeping the owner alive through the copy) instead of
+  aliasing a buffer the owner's drop then frees.
+
 - Lazy captured t-strings. A `t"…"` now produces the self-hosted prelude
   `TString[*Ts: Movable & Writable]` (stdlib `std.format.tstring`) instead
   of an eagerly concatenated builtin `String`: the whole-program compiler's

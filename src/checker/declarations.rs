@@ -364,7 +364,7 @@ impl Checker {
             {
                 if !matches!(
                     vty,
-                    Ty::Int | Ty::UInt | Ty::Bool | Ty::String | Ty::Float64
+                    Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64
                 ) {
                     return Err(TypeError::BadValueParamType {
                         name: tp.name.clone(),
@@ -1225,7 +1225,9 @@ impl Checker {
                     self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)?;
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
                     let expected = substitute(pty, &subst);
-                    if !coerces(aty, &expected) {
+                    if !coerces(aty, &expected)
+                        && !self.record_constructor_conversion(&args[i], aty, &expected)?
+                    {
                         return Err(TypeError::TypeMismatch {
                             expected: expected.to_string(),
                             found: aty.to_string(),
@@ -1271,18 +1273,25 @@ impl Checker {
                 {
                     let mut score = 0;
                     let mut ok = true;
-                    for (aty, pty) in arg_tys.iter().zip(&params) {
+                    let mut conversions = Vec::new();
+                    for (index, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
                         let expected = substitute(pty, &subst);
-                        if !coerces(aty, &expected) {
+                        if coerces(aty, &expected) {
+                            if *aty != expected {
+                                score += 1;
+                            }
+                        } else if self.implicit_conversion_target(aty, &expected)?.is_some() {
+                            // An implicit conversion ranks below any direct
+                            // coercion so exact overloads keep winning.
+                            score += 2;
+                            conversions.push((index, expected));
+                        } else {
                             ok = false;
                             break;
                         }
-                        if *aty != expected {
-                            score += 1;
-                        }
                     }
                     if ok {
-                        matches.push((score, sig.clone(), tyargs));
+                        matches.push((score, sig.clone(), tyargs, conversions));
                     }
                 }
             }
@@ -1298,7 +1307,10 @@ impl Checker {
                         reason: "ambiguous overloaded constructor call".to_string(),
                     });
                 }
-                let (_, sig, tyargs) = best_matches.remove(0);
+                let (_, sig, tyargs, conversions) = best_matches.remove(0);
+                for (index, expected) in &conversions {
+                    self.record_implicit_conversion(&args[*index], &arg_tys[*index], expected)?;
+                }
                 for (i, aty) in arg_tys.iter().enumerate() {
                     if matches!(
                         sig.conventions.get(i),
@@ -1362,8 +1374,18 @@ impl Checker {
             .map(|(argument, field)| {
                 if self.type_contains_reference(field) {
                     self.infer_storage_value(argument, field)
-                } else {
+                } else if matches!(field, Ty::Func { .. } | Ty::GenericFunc { .. }) {
+                    // Callable fields keep uncontextualized inference: the
+                    // storage rule below must still see a capturing closure's
+                    // full environment rather than an adapted contract.
                     self.infer(argument)
+                } else {
+                    // Contextual: a display argument checks its elements
+                    // against the field's element types, so a string literal
+                    // converts where a nominal String element is expected.
+                    // Generic (parameter-typed) fields fall through to plain
+                    // inference inside `infer_with_expected`.
+                    self.infer_with_expected(argument, field, true)
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1371,7 +1393,9 @@ impl Checker {
             self.resolve_use_params(name, &decls, param_args, &field_tys, &arg_tys)?;
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
             let expected = substitute(fty, &subst);
-            if !Self::storage_value_coerces(aty, &expected) {
+            if !Self::storage_value_coerces(aty, &expected)
+                && !self.record_constructor_conversion(&args[i], aty, &expected)?
+            {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
                     found: aty.to_string(),

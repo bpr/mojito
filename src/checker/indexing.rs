@@ -674,7 +674,7 @@ impl Checker {
         };
         let object_type = self.infer(object)?;
         let result = match &object_type {
-            Ty::String => Ty::String,
+            Ty::StringLiteral => Ty::StringLiteral,
             Ty::Struct(name, _)
                 if !self.structs.contains_key(name) && list_element(&object_type).is_some() =>
             {

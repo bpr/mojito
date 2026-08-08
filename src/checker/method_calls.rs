@@ -229,10 +229,16 @@ impl Checker {
             }
             return Ok(Ty::None);
         }
-        if obj_ty == Ty::String && method == "format" {
+        if method == "format"
+            && (obj_ty == Ty::StringLiteral
+                || matches!(&obj_ty, Ty::Struct(name, args)
+                    if args.is_empty() && crate::symbol::is_stdlib_string_struct(name)))
+        {
+            // A template receiver may be the compile-time literal or the
+            // nominal String; the formatted result materializes nominally.
             reject_kwargs(kwargs)?;
             self.infer_print(args)?;
-            return Ok(Ty::String);
+            return self.nominal_string_wrap(span);
         }
         if let Ty::Tuple(elements) = &obj_ty {
             reject_kwargs(kwargs)?;
@@ -952,6 +958,26 @@ impl Checker {
                 }
             }
         }
+        if let Some(element) = &resolved.variadic_element {
+            // A specialized heterogeneous pack records each overflow argument
+            // against its per-index element (mirroring the scoring pass), so
+            // a literal converts where a nominal String element is expected.
+            for (pack_index, &position) in resolved.positional_overflow.iter().enumerate() {
+                let expected = match element {
+                    Ty::RuntimePack(elements) => elements.get(pack_index).unwrap_or(element),
+                    _ => element,
+                };
+                let expression = &args[position];
+                let actual = self.infer_with_expected(expression, expected, true)?;
+                if !self.record_implicit_conversion(expression, &actual, expected)? {
+                    return Err(TypeError::TypeMismatch {
+                        expected: expected.to_string(),
+                        found: actual.to_string(),
+                        context: format!("variadic argument to method '{method}'"),
+                    });
+                }
+            }
+        }
         if let Some(expected) = &resolved.keyword_element {
             for &position in &resolved.keyword_overflow {
                 let expression = &kwargs[position].value;
@@ -1253,7 +1279,11 @@ impl Checker {
                     _ => element,
                 };
                 let actual = self.infer_with_expected(&args[position], expected, false)?;
-                if !coerces(&actual, expected) {
+                if !coerces(&actual, expected)
+                    && self
+                        .implicit_conversion_target(&actual, expected)?
+                        .is_none()
+                {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: actual.to_string(),

@@ -286,7 +286,7 @@ impl<'a> Elab<'a> {
             ] if parameter == "name" => match self.resolve_ct_arg(
                 &ParamDecl::Value {
                     name: "name".to_string(),
-                    ty: Box::new(Ty::String),
+                    ty: Box::new(Ty::StringLiteral),
                     default: None,
                     callable_default: None,
                     infer_only: false,
