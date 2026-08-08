@@ -336,7 +336,8 @@ impl<'a> Elab<'a> {
                 self.rewrite_vm_ctfe_expr(object, scope)?;
                 for argument in args {
                     match argument {
-                        crate::ast::SubscriptArg::Index(value) => {
+                        crate::ast::SubscriptArg::Index(value)
+                        | crate::ast::SubscriptArg::Keyword { value, .. } => {
                             self.rewrite_vm_ctfe_expr(value, scope)?
                         }
                         crate::ast::SubscriptArg::Slice {
@@ -577,7 +578,8 @@ impl<'a> Elab<'a> {
             ExprKind::MultiIndex { object, args } => {
                 self.vm_ctfe_safe_expr(object, visiting, needed)
                     && args.iter().all(|argument| match argument {
-                        crate::ast::SubscriptArg::Index(value) => {
+                        crate::ast::SubscriptArg::Index(value)
+                        | crate::ast::SubscriptArg::Keyword { value, .. } => {
                             self.vm_ctfe_safe_expr(value, visiting, needed)
                         }
                         crate::ast::SubscriptArg::Slice {

@@ -360,6 +360,14 @@ pub struct KwArg {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SubscriptArg {
     Index(Expr),
+    /// `name=value` — a keyword subscript argument (`s[byte=i]`), dispatched
+    /// to a keyword-only `__getitem__`/`__setitem__` parameter. Only value
+    /// bases produce this form; named brackets over a type name remain
+    /// compile-time parameter application.
+    Keyword {
+        name: String,
+        value: Expr,
+    },
     Slice {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
@@ -1253,7 +1261,9 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     self.expr(object);
                     for argument in args {
                         match argument {
-                            SubscriptArg::Index(value) => self.expr(value),
+                            SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
+                                self.expr(value)
+                            }
                             SubscriptArg::Slice {
                                 lower, upper, step, ..
                             } => {
@@ -1719,7 +1729,9 @@ fn stamp_expr(expr: &mut Expr, source: &str) {
             stamp_expr(object, source);
             for argument in args {
                 match argument {
-                    SubscriptArg::Index(value) => stamp_expr(value, source),
+                    SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
+                        stamp_expr(value, source)
+                    }
                     SubscriptArg::Slice {
                         lower, upper, step, ..
                     } => {

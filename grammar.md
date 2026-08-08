@@ -591,6 +591,7 @@ tuple_or_group:
     | '(' expression ')'                            # grouping (e)
 
 subscript_arg:
+    | NAME '=' expression         # keyword subscript (`s[byte=i]`); value bases only
     | expression
     | [expression] ':' [expression] [':' [expression]]
 args: ','.arg+ [',']              # positional args/spread, then keyword args/forwarding
@@ -633,6 +634,12 @@ Notes:
   to a function; an origin-generic function can therefore be materialized as
   `borrow[origin_of(value)]` and invoked later through its origin-specialized
   callable type.
+  A **named** bracket argument follows the same lowercase-name convention as
+  mixed runtime subscripts: over a lowercase (value) base, `s[byte=i]` is a
+  keyword subscript dispatching to a keyword-only `__getitem__`/`__setitem__`
+  overload; over a capitalized type name (`Origin[mut=True]`,
+  `SIMD[width=4]`), named brackets remain compile-time parameter
+  application.
   A slice preserves omitted bounds and whether a stride was written, selecting
   `ContiguousSlice` or `StridedSlice`; mixed/multiple arguments dispatch through
   variadic `__getitem__`/`__setitem__`. Nominal List slicing receives the same

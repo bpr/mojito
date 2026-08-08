@@ -568,7 +568,8 @@ fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<String>) {
             collect_vm_ctfe_expr_calls(object, calls);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value) => {
+                    crate::ast::SubscriptArg::Index(value)
+                    | crate::ast::SubscriptArg::Keyword { value, .. } => {
                         collect_vm_ctfe_expr_calls(value, calls)
                     }
                     crate::ast::SubscriptArg::Slice {
@@ -2044,6 +2045,10 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         "String" => Some(Ty::String),
         "Float64" => Some(Ty::Float64),
         "None" => Some(Ty::None),
+        // The prelude rewrite qualifies `String` bounds like any other name;
+        // a `[text: String]` value parameter keeps the compile-time string
+        // type regardless of the nominal stdlib struct.
+        _ if crate::symbol::is_stdlib_string_struct(name) => Some(Ty::String),
         _ => None,
     }
 }
@@ -2473,6 +2478,10 @@ fn ct_value_param_type(name: &str) -> Option<Ty> {
         "String" => Ty::String,
         "UInt" => Ty::UInt,
         "Float64" => Ty::Float64,
+        // The prelude rewrite qualifies `String` bounds like any other name;
+        // a `[text: String]` value parameter keeps the compile-time string
+        // type regardless of the nominal stdlib struct.
+        _ if crate::symbol::is_stdlib_string_struct(name) => Ty::String,
         _ => return None,
     })
 }

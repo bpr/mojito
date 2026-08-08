@@ -545,7 +545,10 @@ impl Checker {
                         ExprKind::MultiIndex { args, .. } => args
                             .iter()
                             .filter_map(|argument| match argument {
-                                SubscriptArg::Index(index) => Some(index.source_span()),
+                                SubscriptArg::Index(index)
+                                | SubscriptArg::Keyword { value: index, .. } => {
+                                    Some(index.source_span())
+                                }
                                 SubscriptArg::Slice { .. } => None,
                             })
                             .collect(),

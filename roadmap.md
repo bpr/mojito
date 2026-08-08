@@ -68,12 +68,17 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **Self-hosted Unicode String** — define storage; current explicit
-  `s[byte=i]`, `s[codepoint=i]`, and `s[grapheme=i]` indexing plus Unicode
-  slicing; comparison, hashing, and formatting without VM-only semantics;
-  distinguish compile-time `StringLiteral`, lazy captured `TString`, and
-  explicit runtime `String` materialization. Bare positional `s[i]` remains
-  rejected because a UTF-8 offset is ambiguous.
+- [ ] **String follow-ups** — the self-hosted core landed (nominal UTF-8
+  `String`, keyword subscripts, `byte=`/`codepoint=` access,
+  boundary-checked slicing, compare/hash/format; see `docs/features.md`).
+  Remaining: `s[grapheme=i]` segmentation (decide the UAX #29 data
+  strategy — generated tables module vs documented simplified rule) with a
+  `Codepoint` wrapper type replacing the `Int` scalar result; lazy
+  captured `TString` self-hosting; migrating the builtin literal
+  operations onto the struct and splitting `StringLiteral` from `String`
+  at the type level (annotation takeover, conversion retargeting,
+  ordering on literals); and String result APIs
+  (`find`/`split`/`startswith`/...) growing demand-first.
 - [ ] **SIMD semantic completion** — finish dtype/literal conversions, masks,
   reductions, shuffles, and other CPU-visible VM semantics; migrate the brief
   `SIMDSize` spelling to current `SIMDLength` while retaining only an explicit

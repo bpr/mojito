@@ -837,6 +837,17 @@ pub(crate) fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeErro
         Value::UInt(n) => (n as i64, n, n as f64, n != 0),
         Value::Float64(x) => (x as i64, x as u64, x, x != 0.0),
         Value::Bool(b) => (b as i64, b as u64, if b { 1.0 } else { 0.0 }, b),
+        // A width-1 SIMD value is a scalar alias (`UInt8`, `Byte`, ...).
+        Value::Simd { ref lanes, .. } if lanes.width() == 1 => match lanes {
+            SimdLanes::Int(v) => (v[0] as i64, v[0] as u64, v[0] as f64, v[0] != 0),
+            SimdLanes::Float(v) => (v[0] as i64, v[0] as u64, v[0], v[0] != 0.0),
+            SimdLanes::Bool(v) => (
+                i64::from(v[0]),
+                u64::from(v[0]),
+                if v[0] { 1.0 } else { 0.0 },
+                v[0],
+            ),
+        },
         other => {
             return Err(RuntimeError::TypeError(format!(
                 "{}() expects a numeric or Bool value, got {}",

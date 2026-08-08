@@ -360,6 +360,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             &source,
                             type_params,
                             &m.params,
+                            m.keyword_only,
                             m.self_convention,
                             &overloads,
                         );
@@ -417,6 +418,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         &source_mangled,
                         type_params,
                         &m.params,
+                        m.keyword_only,
                         m.self_convention,
                         &overloads,
                     );
@@ -1674,7 +1676,8 @@ fn expression_children(expression: &Expr) -> Vec<&Expr> {
             let mut children = vec![object.as_ref()];
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value) => children.push(value),
+                    crate::ast::SubscriptArg::Index(value)
+                    | crate::ast::SubscriptArg::Keyword { value, .. } => children.push(value),
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
                     } => {

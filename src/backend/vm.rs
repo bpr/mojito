@@ -547,11 +547,109 @@ impl VmBackend {
             }
             None => args,
         };
+        // Literal-to-struct bridge: the nominal stdlib String's literal
+        // constructor never executes its body — the byte buffer is filled
+        // from the literal's UTF-8 bytes here instead.
+        if crate::symbol::is_stdlib_string_struct(name)
+            && let [Value::Str(literal)] = user_args.as_slice()
+        {
+            let literal = literal.clone();
+            return self.materialize_string_struct(skeleton, &literal);
+        }
         let mut bound = Vec::with_capacity(user_args.len() + 1);
         bound.push(skeleton);
         bound.extend(user_args);
         let (_, frame_vars) = self.call_frame(prog, fidx, bound, &[])?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
+    }
+
+    /// Read a nominal `String` value's byte buffer back into a builtin
+    /// string value — the reverse of [`Self::materialize_string_struct`].
+    fn string_struct_literal(&self, value: &Value) -> Result<Value, RuntimeError> {
+        let Value::Struct { fields, .. } = value else {
+            unreachable!("string bridge receiver is a struct");
+        };
+        let field = |name: &str| {
+            fields
+                .iter()
+                .find(|(field, _)| field == name)
+                .map(|(_, value)| value)
+        };
+        let (Some(Value::Pointer { allocation, offset }), Some(Value::Int(size))) =
+            (field("data"), field("size"))
+        else {
+            return Err(RuntimeError::TypeError(
+                "vm: nominal String value is missing its byte buffer".to_string(),
+            ));
+        };
+        let mut bytes = Vec::with_capacity(*size as usize);
+        for index in 0..*size {
+            let (arena, slot) = self.heap_index(*allocation, *offset, index)?;
+            match self.heap[arena].slots.get(slot) {
+                Some(Value::Simd {
+                    lanes: crate::runtime::SimdLanes::Int(lanes),
+                    ..
+                }) if lanes.len() == 1 => bytes.push(lanes[0] as u8),
+                other => {
+                    return Err(RuntimeError::TypeError(format!(
+                        "vm: nominal String buffer slot is {other:?}, not a byte"
+                    )));
+                }
+            }
+        }
+        match std::string::String::from_utf8(bytes) {
+            Ok(text) => Ok(Value::Str(text)),
+            Err(_) => Err(RuntimeError::TypeError(
+                "vm: nominal String buffer is not valid UTF-8".to_string(),
+            )),
+        }
+    }
+
+    /// Fill a nominal `String` skeleton from a literal's UTF-8 bytes: one
+    /// heap allocation holding width-1 `UInt8` scalars, sized exactly.
+    fn materialize_string_struct(
+        &mut self,
+        skeleton: Value,
+        literal: &str,
+    ) -> Result<Value, RuntimeError> {
+        let bytes = literal.as_bytes();
+        let pointer = self.heap_alloc(bytes.len() as i64, 1)?;
+        let Value::Pointer { allocation, .. } = pointer else {
+            unreachable!("heap_alloc returns a pointer");
+        };
+        {
+            let slots = &mut self.heap[(allocation - 1) as usize].slots;
+            for (index, byte) in bytes.iter().enumerate() {
+                slots[index] = Value::Simd {
+                    dtype: crate::ast::Dtype::UInt8,
+                    lanes: crate::runtime::SimdLanes::Int(vec![i128::from(*byte)]),
+                };
+            }
+        }
+        let Value::Struct {
+            name,
+            mut fields,
+            value_params,
+        } = skeleton
+        else {
+            unreachable!("string construction starts from a struct skeleton");
+        };
+        for (field, slot) in &mut fields {
+            *slot = match field.as_str() {
+                "data" => Value::Pointer {
+                    allocation,
+                    offset: 0,
+                },
+                "size" => Value::Int(bytes.len() as i64),
+                "cap" => Value::Int(bytes.len() as i64),
+                other => unreachable!("unexpected String field '{other}'"),
+            };
+        }
+        Ok(Value::Struct {
+            name,
+            fields,
+            value_params,
+        })
     }
 
     fn construct_via_copy(
@@ -1272,6 +1370,15 @@ impl VmBackend {
             registers: regs,
             variables: vars,
         } = frame;
+        // Struct-to-literal bridge: the nominal String's `_as_string_literal`
+        // reads the byte buffer back into a compile-time string value; the
+        // declared body never executes.
+        if method == "_as_string_literal"
+            && let Value::Struct { name, .. } = &recv
+            && crate::symbol::is_stdlib_string_struct(name)
+        {
+            return self.string_struct_literal(&recv);
+        }
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         // Intrinsic dunders on a built-in numeric/hashable value; a struct with
         // its own implementation still dispatches to its method below.

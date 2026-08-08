@@ -599,7 +599,8 @@ impl<'a> Elab<'a> {
                 self.mono_expr(object, consts, mono)?;
                 for argument in args {
                     match argument {
-                        crate::ast::SubscriptArg::Index(value) => {
+                        crate::ast::SubscriptArg::Index(value)
+                        | crate::ast::SubscriptArg::Keyword { value, .. } => {
                             self.mono_expr(value, consts, mono)?
                         }
                         crate::ast::SubscriptArg::Slice {

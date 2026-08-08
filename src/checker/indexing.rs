@@ -233,6 +233,11 @@ impl Checker {
                 let mut descriptors = Vec::with_capacity(args.len());
                 for (position, argument) in args.iter().enumerate() {
                     match argument {
+                        SubscriptArg::Keyword { name, .. } => {
+                            return Err(TypeError::Unsupported(format!(
+                                "keyword subscript assignment ('[{name}=…] = value') is not supported; keyword subscripts are read-only"
+                            )));
+                        }
                         SubscriptArg::Index(value) => {
                             self.prepare_index_argument(
                                 &object_type,
@@ -416,6 +421,11 @@ impl Checker {
                 let mut descriptors = Vec::with_capacity(source.len());
                 for (position, argument) in source.iter().enumerate() {
                     match argument {
+                        SubscriptArg::Keyword { name, .. } => {
+                            return Err(TypeError::Unsupported(format!(
+                                "keyword subscript assignment ('[{name}=…] = value') is not supported; keyword subscripts are read-only"
+                            )));
+                        }
                         SubscriptArg::Index(index) => {
                             self.prepare_index_argument(
                                 &object_ty,
@@ -698,6 +708,7 @@ impl Checker {
             return Err(TypeError::NotIndexable(object_type.to_string()));
         }
         let mut actual_arguments = Vec::with_capacity(arguments.len());
+        let mut keyword_arguments = Vec::new();
         let mut descriptors = Vec::with_capacity(arguments.len());
         for (position, argument) in arguments.iter().enumerate() {
             match argument {
@@ -705,6 +716,17 @@ impl Checker {
                     self.prepare_index_argument(&object_type, value, "__getitem__", position)?;
                     self.infer(value)?;
                     actual_arguments.push(value.clone());
+                    descriptors.push(None);
+                }
+                SubscriptArg::Keyword { name, value } => {
+                    // A keyword subscript binds a keyword-only `__getitem__`
+                    // parameter through ordinary structural call binding; the
+                    // index-normalization coercion stays positional-only.
+                    self.infer(value)?;
+                    keyword_arguments.push(crate::ast::KwArg {
+                        name: name.clone(),
+                        value: value.clone(),
+                    });
                     descriptors.push(None);
                 }
                 SubscriptArg::Slice {
@@ -728,7 +750,7 @@ impl Checker {
             span.clone(),
             object,
             "__getitem__",
-            MethodCallArguments::ordinary(&actual_arguments, &[]),
+            MethodCallArguments::ordinary(&actual_arguments, &keyword_arguments),
         )?;
         self.subscript_descriptors
             .borrow_mut()

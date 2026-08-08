@@ -843,6 +843,8 @@ impl VmBackend {
                 args,
                 object_place,
                 arg_places,
+                kwargs,
+                kwarg_places,
                 call,
             } => {
                 let bound = |bound: &Option<Reg>| -> Result<Option<i64>, RuntimeError> {
@@ -872,6 +874,10 @@ impl VmBackend {
                         "vm: nominal multi-index lacks a checked call contract".to_string(),
                     )
                 })?;
+                let keyword_arguments = kwargs
+                    .iter()
+                    .map(|(name, register)| (name.clone(), regs[register.0 as usize].clone()))
+                    .collect();
                 let result = self.method_call(
                     prog,
                     MethodInvocation {
@@ -880,10 +886,10 @@ impl VmBackend {
                         resolved_name: Some(&call.target),
                         result_adapter: None,
                         arguments,
-                        keyword_arguments: Vec::new(),
+                        keyword_arguments,
                         receiver_place: object_place,
                         argument_places: arg_places,
-                        keyword_argument_places: &[],
+                        keyword_argument_places: kwarg_places,
                         parameter_arguments: &call.param_arg_regs,
                         parameter_declarations: &call.param_decls,
                     },

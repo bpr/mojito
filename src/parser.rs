@@ -2187,7 +2187,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 matches!(
                     id.as_str(),
                     "Int" | "UInt" | "Bool" | "String" | "Float64" | "Self" | "ref"
-                )
+                ) || crate::ast::Dtype::from_scalar_alias(id).is_some()
             }
             _ => false,
         })
@@ -2935,6 +2935,43 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             ));
         }
 
+        // A named bracket argument over a lowercase (value) base is a keyword
+        // subscript (`s[byte=i]`); over a capitalized type name
+        // (`Origin[mut=True]`) it stays compile-time parameter application
+        // via the TypeApply fallback below.
+        if param_args
+            .iter()
+            .any(|argument| matches!(argument, crate::ast::ParamArg::Named { .. }))
+            && param_args.iter().all(|argument| match argument {
+                crate::ast::ParamArg::Named { value, .. } => {
+                    matches!(value.as_ref(), crate::ast::ParamArg::Value(_))
+                }
+                crate::ast::ParamArg::Value(_) => true,
+                crate::ast::ParamArg::Type(_) => false,
+            })
+            && expression_name_starts_lowercase(&object)
+        {
+            let args = param_args
+                .into_iter()
+                .map(|argument| match argument {
+                    crate::ast::ParamArg::Named { name, value } => {
+                        let crate::ast::ParamArg::Value(value) = *value else {
+                            unreachable!("guard admits only value keyword arguments");
+                        };
+                        SubscriptArg::Keyword { name, value }
+                    }
+                    crate::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
+                    _ => unreachable!(),
+                })
+                .collect();
+            return Ok(self.node(
+                ExprKind::MultiIndex {
+                    object: Box::new(object),
+                    args,
+                },
+                start,
+            ));
+        }
         match <[_; 1]>::try_from(param_args) {
             // A bare value argument normally means runtime indexing, but
             // `origin_of(place)` is itself a compile-time Origin value.  Mojo

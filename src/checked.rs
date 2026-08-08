@@ -1096,7 +1096,8 @@ fn build_checked_expressions(
                     add(self, object);
                     for argument in args {
                         match argument {
-                            crate::ast::SubscriptArg::Index(value) => add(self, value),
+                            crate::ast::SubscriptArg::Index(value)
+                            | crate::ast::SubscriptArg::Keyword { value, .. } => add(self, value),
                             crate::ast::SubscriptArg::Slice {
                                 lower, upper, step, ..
                             } => {

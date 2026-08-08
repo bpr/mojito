@@ -538,6 +538,11 @@ pub enum MirInstr {
         args: Vec<MirSubscriptArg>,
         object_place: Option<MirPlace>,
         arg_places: Vec<Option<MirPlace>>,
+        /// Keyword subscript actuals (`s[byte=i]`), bound to keyword-only
+        /// `__getitem__` parameters through the checked contract's keyword
+        /// sources, parallel to `kwarg_places`.
+        kwargs: Vec<(String, Reg)>,
+        kwarg_places: Vec<Option<MirPlace>>,
         call: Option<MirSubscriptCall>,
     },
     /// `object[a, b:c] = value`: checked `__setitem__` dispatch. The receiver

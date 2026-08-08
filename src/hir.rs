@@ -565,7 +565,10 @@ fn collect_named_expr(expression: &Expr, names: &mut HashSet<String>) {
             collect_named_expr(object, names);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value) => collect_named_expr(value, names),
+                    crate::ast::SubscriptArg::Index(value)
+                    | crate::ast::SubscriptArg::Keyword { value, .. } => {
+                        collect_named_expr(value, names)
+                    }
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
                     } => {
@@ -666,7 +669,10 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
             rename_expr(object, resolve);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value) => rename_expr(value, resolve),
+                    crate::ast::SubscriptArg::Index(value)
+                    | crate::ast::SubscriptArg::Keyword { value, .. } => {
+                        rename_expr(value, resolve)
+                    }
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
                     } => {

@@ -275,7 +275,8 @@ impl Checker {
                 self.register_named_bindings(object)?;
                 for argument in args {
                     match argument {
-                        crate::ast::SubscriptArg::Index(value) => {
+                        crate::ast::SubscriptArg::Index(value)
+                        | crate::ast::SubscriptArg::Keyword { value, .. } => {
                             self.register_named_bindings(value)?
                         }
                         crate::ast::SubscriptArg::Slice {

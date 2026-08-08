@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Self-hosted String core. The stdlib gains a nominal UTF-8 `String`
+  (byte buffer over `UnsafePointer[Byte]`), constructed explicitly from
+  a literal (`String("...")`); annotations and non-literal `String(x)`
+  conversions keep the builtin compile-time string until the type-split
+  migration. The struct supports byte-length `len`, copy/move/drop,
+  byte-wise equality and ordering, DJB2 hashing (Dict/HashDict keys),
+  `print`/`repr` through Writable, explicit `s[byte=i]` and
+  `s[codepoint=i]` access (pure UTF-8 leading-byte decode, raising
+  bounds and validity errors; positional `s[i]` stays rejected), and
+  boundary-checked contiguous slicing that raises on mid-sequence
+  splits. En route, three general features landed: keyword subscripts
+  (`x[name=i]` over value bases, dispatching keyword-only `__getitem__`
+  overloads; named brackets over type names remain parameter
+  application), keyword-only parameter names as part of overload
+  identity, and scalar conversions (`Int`/`UInt`/`Bool`) accepting
+  width-1 SIMD scalar aliases like `Byte`. Graphemes, a `Codepoint`
+  type, lazy TString, and the literal-operations migration are recorded
+  follow-ups.
+
 - Cross-call transfer hardening. Transfer-effect visibility is now
   declaration-order independent: the checker reruns with the prior
   round's committed effects whenever a call site observed a stale callee

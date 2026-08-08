@@ -2346,11 +2346,12 @@ fn verify_instruction(
             args,
             object_place,
             arg_places,
+            kwargs,
+            kwarg_places,
             call,
-            ..
         } => {
             verify_subscript_receiver_place(&prefix, reg_ty(object), object_place.as_ref(), errors);
-            if arg_places.len() != args.len() {
+            if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
                 errors.push(format!(
                     "{prefix}: multi-subscript place metadata is not aligned with its arguments"
                 ));
@@ -2358,6 +2359,10 @@ fn verify_instruction(
             let positional_types = args
                 .iter()
                 .map(|argument| subscript_argument_ty(function, argument))
+                .collect::<Vec<_>>();
+            let keyword_types = kwargs
+                .iter()
+                .map(|(_, register)| function.reg_types.get(&register.0).cloned())
                 .collect::<Vec<_>>();
             if let Some(call) = call {
                 verify_subscript_call(
@@ -2370,9 +2375,9 @@ fn verify_instruction(
                         method: "__getitem__",
                         receiver_place: object_place.as_ref(),
                         positional_places: arg_places,
-                        keyword_places: &[],
+                        keyword_places: kwarg_places,
                         positional_types: &positional_types,
-                        keyword_types: &[],
+                        keyword_types: &keyword_types,
                         dest: Some(*dest),
                     },
                     errors,

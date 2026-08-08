@@ -270,7 +270,8 @@ fn rewrite_expr(
             rewrite_expr(object, names, namespaces);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value) => {
+                    crate::ast::SubscriptArg::Index(value)
+                    | crate::ast::SubscriptArg::Keyword { value, .. } => {
                         rewrite_expr(value, names, namespaces)
                     }
                     crate::ast::SubscriptArg::Slice {
@@ -1107,7 +1108,7 @@ fn module_path_under(mut base: PathBuf, path: &[String]) -> PathBuf {
 
 const PRELUDE_MODULE: &str = "std.prelude";
 
-const PRELUDE_EXPORTS: &[&str] = &["List", "Set", "Dict", "Tuple", "Range", "range"];
+const PRELUDE_EXPORTS: &[&str] = &["List", "Set", "Dict", "Tuple", "Range", "range", "String"];
 
 fn bundled_path(relative: &str) -> Option<PathBuf> {
     option_env!("CARGO_MANIFEST_DIR").map(|root| Path::new(root).join(relative))

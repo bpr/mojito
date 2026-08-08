@@ -171,7 +171,8 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
             rewrite_expr(object, subs);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value) => rewrite_expr(value, subs),
+                    crate::ast::SubscriptArg::Index(value)
+                    | crate::ast::SubscriptArg::Keyword { value, .. } => rewrite_expr(value, subs),
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
                     } => {
@@ -890,7 +891,10 @@ impl PackRewriter {
                 self.expand_expression(object);
                 for argument in args {
                     match argument {
-                        crate::ast::SubscriptArg::Index(value) => self.expand_expression(value),
+                        crate::ast::SubscriptArg::Index(value)
+                        | crate::ast::SubscriptArg::Keyword { value, .. } => {
+                            self.expand_expression(value)
+                        }
                         crate::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
                         } => {
@@ -1365,7 +1369,8 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
             retype_expr(object, subs);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value) => retype_expr(value, subs),
+                    crate::ast::SubscriptArg::Index(value)
+                    | crate::ast::SubscriptArg::Keyword { value, .. } => retype_expr(value, subs),
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
                     } => {

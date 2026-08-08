@@ -2638,3 +2638,31 @@ fn expr_and_stmt_nodes_carry_real_source_spans() {
     );
     assert_ne!(two[1].span, (0, 0));
 }
+
+#[test]
+fn keyword_subscripts_parse_on_value_bases_and_type_applications_stay() {
+    // `s[byte=i]` over a lowercase (value) base is a keyword subscript; a
+    // named bracket over a capitalized type name stays compile-time
+    // parameter application.
+    let program = mojito::parse("x = buf[byte=1]\n").expect("parse");
+    let StmtKind::Assign { value, .. } = &program[0].kind else {
+        panic!("assign");
+    };
+    let ExprKind::MultiIndex { args, .. } = &value.kind else {
+        panic!("expected keyword subscript, got {:?}", value.kind);
+    };
+    assert!(matches!(
+        args.as_slice(),
+        [mojito::ast::SubscriptArg::Keyword { name, .. }] if name == "byte"
+    ));
+
+    let program = mojito::parse("x = Origin[mut=True]\n").expect("parse");
+    let StmtKind::Assign { value, .. } = &program[0].kind else {
+        panic!("assign");
+    };
+    assert!(
+        matches!(&value.kind, ExprKind::TypeApply { name, .. } if name == "Origin"),
+        "named bracket over a type name stays TypeApply: {:?}",
+        value.kind
+    );
+}

@@ -25,6 +25,20 @@ impl Checker {
             // isn't shadowed by a binding.
             None => match name {
                 _ if self.structs.contains_key(name) => {
+                    // The stdlib's nominal String coexists with the builtin
+                    // `String(x)` Writable stringification until the
+                    // type-split migration: a single string-literal argument
+                    // (or a keyword construction such as `String(copy: s)`)
+                    // materializes the struct; every other argument shape
+                    // keeps the builtin conversion, which still yields the
+                    // compile-time string type.
+                    if crate::symbol::is_stdlib_string_struct(name)
+                        && kwargs.is_empty()
+                        && param_args.is_empty()
+                        && !(args.len() == 1 && matches!(self.infer(&args[0])?, Ty::String))
+                    {
+                        return self.infer_stringify(args);
+                    }
                     return self.infer_construction(span, name, param_args, args, kwargs);
                 }
                 // Tuple specializations are predeclared as one closed set before

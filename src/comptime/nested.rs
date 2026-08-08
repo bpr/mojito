@@ -637,7 +637,10 @@ impl NestedMono {
                 self.qualify_expression(object);
                 for argument in args {
                     match argument {
-                        crate::ast::SubscriptArg::Index(value) => self.qualify_expression(value),
+                        crate::ast::SubscriptArg::Index(value)
+                        | crate::ast::SubscriptArg::Keyword { value, .. } => {
+                            self.qualify_expression(value)
+                        }
                         crate::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
                         } => {
@@ -1091,7 +1094,8 @@ impl NestedMono {
                 self.scan_expression(elab, object, runtime_packs)?;
                 for argument in args {
                     match argument {
-                        crate::ast::SubscriptArg::Index(value) => {
+                        crate::ast::SubscriptArg::Index(value)
+                        | crate::ast::SubscriptArg::Keyword { value, .. } => {
                             self.scan_expression(elab, value, runtime_packs)?
                         }
                         crate::ast::SubscriptArg::Slice {

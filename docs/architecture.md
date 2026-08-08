@@ -1936,6 +1936,36 @@ mutating or dropping the loan root while the stored alias lives and keep
 borrowed sources alive under carrier collections with no transfer-specific
 analysis code.
 
+### Nominal String and the literal bridges
+
+The self-hosted `String` (stdlib/std/string.mojo) is an ordinary struct — a
+UTF-8 byte buffer over `UnsafePointer[Byte]` in the List storage pattern —
+with exactly two deliberate intrinsic crossings, both keyed on the linked
+declaration identity (`symbol::is_stdlib_string_struct`): the literal
+constructor (`String("...")`) never executes its declared body — the VM fills
+the byte buffer from the literal's UTF-8 bytes — and
+`_as_string_literal(self) -> StringLiteral` reads the buffer back into a
+builtin string value for the Writer path. Everything else (comparison,
+hashing, decoding, slicing) is pure library code. The name coexists with the
+builtin: annotations (`: String`, a dedicated source type) and non-literal
+`String(x)` conversions keep the compile-time string type — construction
+routing is shape-directed at the registered-struct arm, and MIR routes
+stringify-typed calls back to the VM's conversion builtin. Collapsing the two
+into Mojo's real `StringLiteral`-vs-`String` split is the recorded migration
+item.
+
+Keyword subscripts are the general feature the String's explicit index forms
+ride on: a named bracket argument over a lowercase (value) base parses as a
+`MultiIndex` with `SubscriptArg::Keyword`, selected against keyword-only
+`__getitem__` parameters through ordinary structural call binding and carried
+to the VM through the subscript instruction's keyword channel; a named
+bracket over a capitalized type name stays compile-time parameter
+application. Keyword-only parameter names are part of callable identity —
+`same_method_shape` compares them at declaration and `SignatureKey` appends a
+`$kw$...` suffix (only when keyword-only names exist) in both symbol
+producers, the checker's call-target mangling and MIR's declaration-side
+mangling.
+
 ### Collection-owned interior origins
 
 An origin path may contain `Interior("tag")`, distinct from an unknown runtime

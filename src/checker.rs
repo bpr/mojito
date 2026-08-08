@@ -2121,7 +2121,12 @@ fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String
         .iter()
         .chain(sig.variadic.iter().map(Box::as_ref))
         .chain(sig.kw_variadic.iter().map(Box::as_ref));
-    let signature = crate::symbol::SignatureKey::from_tys(signature_types);
+    let keyword_names = match sig.keyword_only {
+        Some(index) => sig.names[index..].to_vec(),
+        None => Vec::new(),
+    };
+    let signature =
+        crate::symbol::SignatureKey::from_tys(signature_types).with_keyword_names(keyword_names);
     if method == "__iter__" {
         crate::symbol::iterator_method_symbol(type_name, sig.self_convention, &signature)
     } else {
@@ -2518,10 +2523,18 @@ type MethodInstantiation = (
 );
 
 fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
+    // Keyword-only parameter NAMES are part of overload identity: two
+    // signatures with identical types may still be distinct overloads when
+    // their keyword-only selectors differ (`s[byte=i]` vs `s[codepoint=i]`).
+    let keyword_names = |sig: &MethodSig| match sig.keyword_only {
+        Some(index) => sig.names[index..].to_vec(),
+        None => Vec::new(),
+    };
     method_arity_range(a) == method_arity_range(b)
         && a.params == b.params
         && a.variadic == b.variadic
         && a.kw_variadic == b.kw_variadic
+        && keyword_names(a) == keyword_names(b)
 }
 
 /// A conforming method may promise no error where its trait requirement raises,

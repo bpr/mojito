@@ -1019,6 +1019,9 @@ impl Flatten<'_> {
                     .zip(&descriptors)
                     .enumerate()
                     .map(|(position, (argument, descriptor))| match argument {
+                        crate::ast::SubscriptArg::Keyword { .. } => {
+                            unreachable!("keyword subscript assignment is rejected at checking")
+                        }
                         crate::ast::SubscriptArg::Index(index) => {
                             debug_assert!(descriptor.is_none());
                             let argument_source =
@@ -1104,6 +1107,8 @@ impl Flatten<'_> {
                         args: getter_args,
                         object_place: receiver_place,
                         arg_places: getter_places,
+                        kwargs: Vec::new(),
+                        kwarg_places: Vec::new(),
                         call: Some(getter_call),
                     });
                     let handle = self.peel_reference_handle_to(
@@ -1156,6 +1161,8 @@ impl Flatten<'_> {
                     args: getter_args,
                     object_place: receiver_place.clone(),
                     arg_places: getter_places,
+                    kwargs: Vec::new(),
+                    kwarg_places: Vec::new(),
                     call: Some(getter_call),
                 });
                 let result = if let Some(inplace) = &plan.inplace {
@@ -1360,6 +1367,9 @@ impl Flatten<'_> {
                 .iter()
                 .zip(descriptors)
                 .map(|(argument, descriptor)| match argument {
+                    crate::ast::SubscriptArg::Keyword { .. } => {
+                        unreachable!("keyword subscript assignment is rejected at checking")
+                    }
                     crate::ast::SubscriptArg::Index(value) => {
                         debug_assert!(descriptor.is_none());
                         let (register, place) = self.lower_call_argument(value);

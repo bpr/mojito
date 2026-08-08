@@ -223,7 +223,8 @@ fn check_expr(
             check_expr(object, env, comprehension_bindings, types)?;
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value) => {
+                    crate::ast::SubscriptArg::Index(value)
+                    | crate::ast::SubscriptArg::Keyword { value, .. } => {
                         check_expr(value, env, comprehension_bindings, types)?
                     }
                     crate::ast::SubscriptArg::Slice {

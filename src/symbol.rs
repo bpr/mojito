@@ -51,27 +51,51 @@ impl TypeKey {
 /// Format it only through [`function_symbol`]/[`method_symbol`] (or the
 /// `lowered_*` helpers below).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SignatureKey(Vec<TypeKey>);
+pub struct SignatureKey {
+    types: Vec<TypeKey>,
+    /// Keyword-only parameter names. Overloads whose parameter types agree
+    /// may still differ by keyword-only names (`s[byte=i]` vs
+    /// `s[codepoint=i]`), so the names are part of callable identity; the
+    /// suffix stays empty for signatures without keyword-only parameters,
+    /// leaving every existing symbol unchanged.
+    keywords: Vec<String>,
+}
 
 impl SignatureKey {
     /// The signature of a declared `def`/method parameter list.
     pub fn from_ast_params(params: &[FnParam]) -> SignatureKey {
-        SignatureKey(params.iter().map(|p| TypeKey::from_ast(&p.ty)).collect())
+        SignatureKey {
+            types: params.iter().map(|p| TypeKey::from_ast(&p.ty)).collect(),
+            keywords: Vec::new(),
+        }
     }
 
     /// The signature of a checker-resolved parameter-type list.
     pub fn from_tys<'a>(tys: impl IntoIterator<Item = &'a Ty>) -> SignatureKey {
-        SignatureKey(tys.into_iter().map(TypeKey::from_ty).collect())
+        SignatureKey {
+            types: tys.into_iter().map(TypeKey::from_ty).collect(),
+            keywords: Vec::new(),
+        }
+    }
+
+    /// Attach the keyword-only parameter names to this signature's identity.
+    pub fn with_keyword_names(mut self, names: Vec<String>) -> SignatureKey {
+        self.keywords = names;
+        self
     }
 
     fn suffix(&self) -> String {
         let parts = self
-            .0
+            .types
             .iter()
             .map(|k| k.0.as_str())
             .collect::<Vec<_>>()
             .join("$");
-        format!("{OV_SEP}{parts}")
+        if self.keywords.is_empty() {
+            format!("{OV_SEP}{parts}")
+        } else {
+            format!("{OV_SEP}{parts}$kw${}", self.keywords.join("$"))
+        }
     }
 
     fn with_receiver(&self, convention: Option<ArgConvention>) -> SignatureKey {
@@ -84,12 +108,26 @@ impl SignatureKey {
             Some(ArgConvention::Deinit) => "SelfDeinit",
         };
         let mut parts = vec![TypeKey(receiver.to_string())];
-        parts.extend(self.0.iter().cloned());
-        SignatureKey(parts)
+        parts.extend(self.types.iter().cloned());
+        SignatureKey {
+            types: parts,
+            keywords: self.keywords.clone(),
+        }
     }
 }
 
 /// The lowered symbol of an overloaded free function: `pick$ov$Int`.
+/// The bundled stdlib's nominal `String` struct under its linked module
+/// identity. The checker's construction routing and the VM's
+/// literal-to-struct bridge both key on this exact declaration.
+pub(crate) const STDLIB_STRING_STRUCT: &str = "__module$std$string$String";
+
+/// Whether `name` is the bundled nominal `String` struct — the linked
+/// qualified identity, or the bare name in unlinked/focused contexts.
+pub(crate) fn is_stdlib_string_struct(name: &str) -> bool {
+    name == "String" || name == STDLIB_STRING_STRUCT
+}
+
 pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
     format!("{base}{}", sig.suffix())
 }
@@ -119,7 +157,10 @@ pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
     iterator_method_symbol(
         "__trait_dispatch",
         Some(convention),
-        &SignatureKey(Vec::new()),
+        &SignatureKey {
+            types: Vec::new(),
+            keywords: Vec::new(),
+        },
     )
 }
 
@@ -259,11 +300,13 @@ pub fn lowered_method_name(
     source_name: &str,
     type_params: &[TypeParam],
     params: &[FnParam],
+    keyword_only: Option<usize>,
     self_convention: Option<ArgConvention>,
     sets: &OverloadSets,
 ) -> String {
     if sets.method_is_overloaded(source_name, params.len()) {
-        let signature = signature_from_ast(params, type_params, &sets.comptimes);
+        let signature = signature_from_ast(params, type_params, &sets.comptimes)
+            .with_keyword_names(keyword_only_names(params, keyword_only));
         if let Some(type_name) = source_name.strip_suffix(".__iter__") {
             iterator_method_symbol(type_name, self_convention, &signature)
         } else {
@@ -562,12 +605,25 @@ fn signature_from_ast(
         .iter()
         .map(|param| (param.name.clone(), param.bounds.clone()))
         .collect();
-    SignatureKey(
-        params
+    SignatureKey {
+        types: params
             .iter()
             .map(|param| TypeKey(sanitize(&ast_raw(&param.ty, comptimes, &type_bounds))))
             .collect(),
-    )
+        keywords: Vec::new(),
+    }
+}
+
+/// The names of the keyword-only parameters, part of overload identity.
+fn keyword_only_names(params: &[FnParam], keyword_only: Option<usize>) -> Vec<String> {
+    match keyword_only {
+        Some(index) => params
+            .iter()
+            .skip(index)
+            .map(|param| param.name.clone())
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 fn is_mojo_move_constructor(m: &Method) -> bool {

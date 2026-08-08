@@ -1109,9 +1109,18 @@ impl Flatten<'_> {
                 // ASAP destruction after its value has been evaluated.
                 let (regs, arg_places) = self.lower_call_arguments(args);
                 let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
-                let target = self
-                    .resolved_callable(e)
-                    .unwrap_or_else(|| self.overloaded_name(name, args.len()));
+                // The prelude rewrite renames every use of `String`, including
+                // the builtin Writable conversion the checker typed as the
+                // compile-time string; route those back to the VM's
+                // conversion builtin instead of the nominal constructor.
+                let target = if crate::symbol::is_stdlib_string_struct(name)
+                    && self.checked_ty(e) == Some(Ty::String)
+                {
+                    "String".to_string()
+                } else {
+                    self.resolved_callable(e)
+                        .unwrap_or_else(|| self.overloaded_name(name, args.len()))
+                };
                 let d = self.fresh(span(e), None);
                 self.emit_call_invalidations(e, args, kwargs);
                 let capture_accesses = self.checked_call_capture_accesses(e);
@@ -1844,28 +1853,38 @@ impl Flatten<'_> {
                     })
                     .expect("checked multi-subscript has descriptor metadata");
                 let mut arg_places = Vec::with_capacity(args.len());
+                let mut kwargs = Vec::new();
+                let mut kwarg_places = Vec::new();
                 let mut parameter_sources = Vec::new();
-                let lowered_args = args
+                let lowered_args: Vec<_> = args
                     .iter()
                     .zip(descriptors)
-                    .map(|(argument, descriptor)| match argument {
+                    .filter_map(|(argument, descriptor)| match argument {
+                        crate::ast::SubscriptArg::Keyword { name, value } => {
+                            debug_assert!(descriptor.is_none());
+                            let (register, place) = self.lower_call_argument(value);
+                            kwarg_places.push(place);
+                            parameter_sources.push((value.source_span(), register));
+                            kwargs.push((name.clone(), register));
+                            None
+                        }
                         crate::ast::SubscriptArg::Index(value) => {
                             debug_assert!(descriptor.is_none());
                             let (register, place) = self.lower_call_argument(value);
                             arg_places.push(place);
                             parameter_sources.push((value.source_span(), register));
-                            MirSubscriptArg::Index(register)
+                            Some(MirSubscriptArg::Index(register))
                         }
                         crate::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
                         } => {
                             arg_places.push(None);
-                            MirSubscriptArg::Slice {
+                            Some(MirSubscriptArg::Slice {
                                 kind: descriptor.expect("slice argument has descriptor kind"),
                                 lower: lower.as_ref().map(|value| self.expr(value)),
                                 upper: upper.as_ref().map(|value| self.expr(value)),
                                 step: step.as_ref().map(|value| self.expr(value)),
-                            }
+                            })
                         }
                     })
                     .collect();
@@ -1883,6 +1902,8 @@ impl Flatten<'_> {
                     args: lowered_args,
                     object_place,
                     arg_places,
+                    kwargs,
+                    kwarg_places,
                     call,
                 });
                 dest

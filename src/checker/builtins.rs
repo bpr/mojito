@@ -768,7 +768,10 @@ impl Checker {
             Ty::Bool => param_has_bound(&arg_ty, "Boolable"),
             _ => false,
         };
-        if !(is_numeric(&arg_ty) || arg_ty == Ty::Bool || bounded) {
+        // A width-1 SIMD value is a scalar alias (`UInt8`, `Byte`, ...);
+        // Mojo's scalar conversions accept it.
+        let simd_scalar = matches!(&arg_ty, Ty::Simd { width: 1, .. });
+        if !(is_numeric(&arg_ty) || arg_ty == Ty::Bool || bounded || simd_scalar) {
             return Err(TypeError::TypeMismatch {
                 expected: "a numeric or Bool value".to_string(),
                 found: arg_ty.to_string(),
