@@ -762,6 +762,10 @@ struct Flatten<'a> {
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
     aggregate_loans: HashMap<VarId, Vec<MirLoan>>,
+    /// Accumulated transferred loans per interior destination domain
+    /// (`(root, path)`), so repeated transfers into one domain merge while
+    /// sibling domains keep independent generations.
+    transfer_domain_loans: HashMap<(VarId, Vec<crate::origin::OriginSeg>), Vec<MirLoan>>,
     /// Checker-substituted loan transfers per call occurrence: after the
     /// call, the destination actual's root receives the sources' loans.
     call_transfers: HashMap<SourceSpan, Vec<crate::checked::CheckedCallTransfer>>,
@@ -1481,6 +1485,7 @@ fn lower_cfg_nested(
                 .filter_map(|(slot, reference)| reference.then_some(slot as VarId))
                 .collect(),
             aggregate_loans: HashMap::new(),
+            transfer_domain_loans: HashMap::new(),
             reassigned_names: reassigned_names(cfg, nested),
             returns_reference,
         };

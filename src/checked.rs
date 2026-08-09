@@ -321,6 +321,14 @@ pub enum SemanticAdjustment {
     ParameterizedMethodCall {
         param_decls: Vec<crate::types::ParamDecl>,
     },
+    /// A method-call-shaped expression (`holder.callback(1)`) dispatching
+    /// through a callable-typed FIELD rather than a declared method. MIR
+    /// loads the field value and emits an indirect call whose callee place
+    /// is the field's, so a stored closure environment stays reachable.
+    FieldInvocation {
+        /// The field's checked callable type.
+        callable: Ty,
+    },
     /// Monomorphic callable contract selected after applying explicit
     /// compile-time arguments to a generic callable value. Indirect-call MIR
     /// retains this typed fact so verification never has to recover a value
@@ -681,8 +689,8 @@ pub(crate) enum GenericSite {
 /// into an outliving destination (`self` or a parameter) whose loan roots at
 /// another parameter or `self`. Call sites replay the effect against their
 /// actuals, installing the caller-side loan the callee's store implies.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TransferEffect {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferEffect {
     pub dest: crate::origin::SigOrigin,
     pub src: crate::origin::SigOrigin,
     /// Whether the loan roots at the source parameter's own (borrowed)
@@ -692,11 +700,66 @@ pub(crate) struct TransferEffect {
     pub mutable: bool,
 }
 
+/// Inferred transfer effects riding a checked function type, so a call
+/// through a function-typed VALUE replays the effects of the `def` the value
+/// came from. Transparent to type identity: two otherwise-equal function
+/// types never differ by their inferred effects, and acceptance/coercion
+/// must not consult them — a `def(...)` contract cannot spell effects (Mojo
+/// has no such syntax), so soundness comes from call-site replay off the
+/// value's type, never from acceptance filtering.
+#[derive(Debug, Clone, Default, Eq)]
+pub struct TransferSet(pub(crate) Vec<TransferEffect>);
+
+impl PartialEq for TransferSet {
+    /// Always equal BY DESIGN: the set is metadata on the type, not part of
+    /// its identity. See the type-level comment before relying on `==`.
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+/// A higher-order transfer residue: the callable's body calls through one of
+/// its own callable parameters, whose transfer effects are unknowable in the
+/// body (a `def(...)` annotation cannot spell effects). Each call site —
+/// which knows the concrete callable — translates that callable's effects
+/// through the recorded argument mapping into effects of THIS callable and
+/// replays them against its own actuals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CallThroughEffect {
+    pub callee: CallThroughCallee,
+    /// Signature abstraction of each inner-call argument slot.
+    pub args: Vec<CallThroughArg>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CallThroughCallee {
+    /// An ordinary runtime parameter with a function type (its slot index).
+    RuntimeParam(usize),
+    /// A compile-time callable value parameter (its declaration name).
+    ValueParam(String),
+}
+
+/// How one inner-call actual maps to the enclosing signature.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct CallThroughArg {
+    /// The actual's own place, when rooted at the enclosing signature.
+    pub place: Option<crate::origin::SigOrigin>,
+    /// Origins carried by the actual that abstract to the signature.
+    pub carried: Vec<crate::origin::SigOrigin>,
+    /// Whether the actual's place or carried loans root at frame-local
+    /// storage — an escape if the inner callee stores them outward.
+    pub local: bool,
+}
+
 /// One caller-substituted transfer at a call site: which actual receives
 /// loans rooted at which caller origins. MIR lowering installs the loans.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CheckedCallTransfer {
     pub dest: CheckedTransferDest,
+    /// Interior path below the destination actual's root that receives the
+    /// loans (empty = the whole root). Lowering turns a non-empty path into
+    /// the `EstablishLoans` destination domain.
+    pub dest_path: Vec<crate::origin::OriginSeg>,
     pub sources: Vec<crate::origin::Origin>,
     pub mutable: bool,
 }
@@ -705,6 +768,11 @@ pub(crate) struct CheckedCallTransfer {
 pub(crate) enum CheckedTransferDest {
     Receiver,
     Argument(usize),
+    /// A concrete captured owner (a `Bound` destination): lowering resolves
+    /// it through its owner-variable map, skipping owners that live in an
+    /// ancestor frame — the verbatim-propagated effect installs those where
+    /// the storage lives.
+    Owner(crate::origin::OwnerId),
 }
 
 /// the declaration returns a reference. Recorded per callable so lowering
@@ -1612,4 +1680,22 @@ fn build_checked_declarations(
         binding_types,
     );
     declarations
+}
+
+#[cfg(test)]
+mod transfer_set_tests {
+    use super::*;
+
+    #[test]
+    fn transfer_sets_are_transparent_to_type_identity() {
+        // Two otherwise-equal function types must never differ by their
+        // inferred effects; acceptance and coercion do not consult them.
+        let effect = TransferEffect {
+            dest: crate::origin::SigOrigin::Self_,
+            src: crate::origin::SigOrigin::Param(0),
+            src_is_place: false,
+            mutable: true,
+        };
+        assert_eq!(TransferSet(vec![effect]), TransferSet(Vec::new()));
+    }
 }

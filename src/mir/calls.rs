@@ -416,6 +416,7 @@ impl Flatten<'_> {
                 reference: variable,
                 loans: loans.clone(),
                 marker,
+                dest_interior: None,
             });
             self.aggregate_loans.insert(variable, loans);
         }

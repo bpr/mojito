@@ -448,6 +448,7 @@ fn generic_callable(decls: Vec<ParamDecl>) -> Ty {
         conventions: Vec::new(),
         ref_params: Box::new(Vec::new()),
         ref_return: None,
+        transfers: Default::default(),
     }
 }
 
@@ -471,6 +472,7 @@ fn dependent_generic_callable(index: &str) -> Ty {
         conventions: vec![None],
         ref_params: Box::new(vec![None]),
         ref_return: None,
+        transfers: Default::default(),
     }
 }
 
@@ -490,6 +492,7 @@ fn concrete_callable(parameter: Ty) -> Ty {
         conventions: vec![None],
         ref_params: Box::new(vec![None]),
         ref_return: None,
+        transfers: Default::default(),
     }
 }
 
@@ -840,6 +843,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
                 reference: 0,
                 loans: Vec::new(),
                 marker: Reg(0),
+                dest_interior: None,
             }],
             MirTerm::Return(None),
         )],
@@ -861,6 +865,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
                     }),
                 }],
                 marker: Reg(0),
+                dest_interior: None,
             }],
             MirTerm::Return(None),
         )],
@@ -1288,6 +1293,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
             origin: mojito::origin::SigOrigin::Static,
             mutability: mojito::origin::SigMutability::Mutable,
         })),
+        transfers: Default::default(),
     };
     let result = Ty::Ref(mojito::RefTy {
         referent: Box::new(Ty::Int),
@@ -1657,4 +1663,31 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
         &fabricated,
         "method-call result ABI does not match 'Box.get'",
     );
+}
+
+#[test]
+fn verifier_rejects_a_loan_destination_domain_with_a_foreign_root() {
+    // The destination domain of a transferred-loan generation must root at
+    // the generation's own reference slot.
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier:\n    var slot: RefBox\n\n@fieldwise_init\nstruct Two:\n    var a: Carrier\n    var b: List[Int]\n\ndef stash_into_a(mut t: Two, box: RefBox):\n    t.a.slot = box^\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var t = Two(Carrier(RefBox(whole)), [1])\n    var local = [9]\n    ref alias = local\n    stash_into_a(t, RefBox(alias))\n    print(1)\n";
+    let mut prog = lower_source(source);
+    let domain = prog
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.instrs.iter_mut())
+        .find_map(|instruction| match instruction {
+            MirInstr::EstablishLoans {
+                dest_interior: Some(domain),
+                ..
+            } => Some(domain),
+            _ => None,
+        })
+        .expect("interior-destination generation");
+    domain.root += 1;
+    expect_finding(&prog, "loan destination domain roots at slot");
 }

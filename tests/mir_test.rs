@@ -1663,6 +1663,198 @@ fn reference_iteration_binding_reestablishes_the_source_loans() {
 }
 
 #[test]
+fn nested_call_transfer_installs_loans_on_the_carrier() {
+    // A nested `def` storing its owned parameter into a `mut` carrier lowers
+    // its direct call through `CallIndirect`; the call site still installs
+    // the transferred loan on the carrier's root after the call, exactly
+    // like the direct free-call path.
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    def stash(mut s: List[RefBox], box: RefBox):\n        s.append(box^)\n    stash(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile nested transfer call");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let sink = main
+        .var_names
+        .iter()
+        .position(|name| name == "sink")
+        .expect("sink slot") as u32;
+    let local = main
+        .var_names
+        .iter()
+        .position(|name| name == "local")
+        .expect("local slot") as u32;
+    let instructions = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    let call = instructions
+        .iter()
+        .position(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
+        .expect("nested call lowers to CallIndirect");
+    let install = instructions
+        .iter()
+        .position(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference, loans, .. }
+                    if *reference == sink && loans.iter().any(|loan| loan.place.root == local)
+            )
+        })
+        .expect("nested call installs the transferred loan on the carrier");
+    assert!(install > call, "the loan is installed after the call");
+}
+
+#[test]
+fn captured_owner_transfer_installs_loans_in_the_owning_frame() {
+    // A closure storing into a CAPTURED owner records a `Bound`-destination
+    // effect; invoking it in the frame that owns the storage resolves the
+    // owner through the lowering's owner-variable map and installs the
+    // transferred loan there.
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier:\n    var slot: RefBox\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var sink = Carrier(RefBox(whole))\n    var local = [9]\n    def push() {mut sink, mut local}:\n        ref alias = local\n        sink.slot = RefBox(alias)\n    push()\n    print(len(keep))\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile captured-owner transfer");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let sink = main
+        .var_names
+        .iter()
+        .position(|name| name == "sink")
+        .expect("sink slot") as u32;
+    let local = main
+        .var_names
+        .iter()
+        .position(|name| name == "local")
+        .expect("local slot") as u32;
+    assert!(
+        main.blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference, loans, .. }
+                    if *reference == sink && loans.iter().any(|loan| loan.place.root == local)
+            )),
+        "the captured owner's frame installs the transferred loan"
+    );
+}
+
+#[test]
+fn interior_destination_transfers_carry_their_domain() {
+    // A transfer whose destination projects below the actual's root records
+    // the interior path; lowering installs the generation with that domain,
+    // so rebinding the exact field later releases it (sibling domains and
+    // the root generation stay).
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Two:\n    var a: List[RefBox]\n    var b: List[Int]\n\ndef main():\n    var a: List[RefBox] = List[RefBox]()\n    var t = Two(a^, [1])\n    var local = [9]\n    ref alias = local\n    t.a.append(RefBox(alias))\n    print(t.b[0])\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile interior-destination transfer");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let t = main
+        .var_names
+        .iter()
+        .position(|name| name == "t")
+        .expect("t slot") as u32;
+    assert!(
+        main.blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| matches!(
+                instruction,
+                MirInstr::EstablishLoans {
+                    reference,
+                    dest_interior: Some(domain),
+                    ..
+                } if *reference == t
+                    && domain.root == t
+                    && matches!(
+                        domain.path.as_slice(),
+                        [mojito::OriginSeg::Field(field)] if field == "a"
+                    )
+            )),
+        "the transferred generation carries its interior destination domain"
+    );
+}
+
+#[test]
+fn nested_call_transfer_to_an_enclosing_parameter_defers_to_the_caller() {
+    // A transfer destination rooted at the enclosing function's own parameter
+    // is not installed locally — the derived transitive effect installs it at
+    // the caller, where the storage actually lives.
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef outer(mut sink: List[RefBox], box: RefBox):\n    def stash(mut s: List[RefBox], b: RefBox):\n        s.append(b^)\n    stash(sink, box)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    outer(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile enclosing-parameter transfer");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, outer) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "outer")
+        .expect("outer lowered");
+    let outer_sink = outer
+        .var_names
+        .iter()
+        .position(|name| name == "sink")
+        .expect("outer sink slot") as u32;
+    assert!(
+        !outer
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference, .. } if *reference == outer_sink
+            )),
+        "a parameter-rooted destination installs nothing locally"
+    );
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let sink = main
+        .var_names
+        .iter()
+        .position(|name| name == "sink")
+        .expect("sink slot") as u32;
+    let local = main
+        .var_names
+        .iter()
+        .position(|name| name == "local")
+        .expect("local slot") as u32;
+    assert!(
+        main.blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference, loans, .. }
+                    if *reference == sink && loans.iter().any(|loan| loan.place.root == local)
+            )),
+        "the derived transitive effect installs the loan at the caller"
+    );
+}
+
+#[test]
 fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
     use mojito::OriginSeg;
 

@@ -394,6 +394,168 @@ fn callee_stores_transfer_loans_to_caller_bookkeeping() {
 }
 
 #[test]
+fn call_through_residues_resolve_at_call_sites() {
+    // A body calling through its own callable parameter records a
+    // higher-order call-through residue; each call site translates the
+    // CONCRETE callable's effects through the recorded argument mapping and
+    // replays them. Covers the compile-time value-param spelling, the
+    // runtime `def(...)` parameter, and the two-level composed forwarding
+    // chain — all through the seeded `List.append` effect, so the linked
+    // compiler is required.
+    let compiler = Compiler::default();
+    let prologue = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], box: RefBox):\n    sink.append(box^)\n\n";
+    let value_param = format!(
+        "{prologue}def feed[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    callback(sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    feed[stash](sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
+    );
+    let runtime_param = format!(
+        "{prologue}def feed(f: def(mut List[RefBox], RefBox), mut sink: List[RefBox], box: RefBox):\n    f(sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    feed(stash, sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
+    );
+    let composed = format!(
+        "{prologue}def feed[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    callback(sink, box^)\n\ndef outer[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    feed[callback](sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    outer[stash](sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
+    );
+    for source in [&value_param, &runtime_param, &composed] {
+        let error = compiler
+            .compile_unlinked(source)
+            .expect_err("mutating the transferred loan's source must conflict");
+        assert!(
+            matches!(error, CompilerError::Ownership(_))
+                && error
+                    .to_string()
+                    .contains("conflicts with live reference 'sink'"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn call_through_visibility_is_declaration_order_independent() {
+    // The call-through map shares the two-phase pass: an earlier method
+    // calling a LATER same-struct method that forwards through a callable
+    // value parameter still resolves the residue, in both orders.
+    let compiler = Compiler::default();
+    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: Sink, box: RefBox):\n    sink.slot = box^\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)\n\n    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
+    let early = late.replace(
+        "    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)\n\n    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)",
+        "    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)\n\n    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)",
+    );
+    for source in [late, early.as_str()] {
+        let error = compiler
+            .compile_unlinked(source)
+            .expect_err("transferred local-rooted loan must not escape at the return");
+        assert!(
+            matches!(
+                error,
+                CompilerError::Type(
+                    mojito::TypeError::ReturnsReferenceToLocal
+                        | mojito::TypeError::StoredReferenceEscapesOrigin
+                )
+            ),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn captured_store_effects_replay_at_closure_invocations() {
+    // A store through a CAPTURED enclosing owner inside a nested def records
+    // a concrete `Bound`-destination effect (the capture-channel residue is
+    // closed): the invocation replays it — a local-rooted actual escapes —
+    // and the enclosing method re-abstracts it so ITS callers replay too.
+    // The seeded `List.append` chain requires the linked compiler.
+    let compiler = Compiler::default();
+    let escape = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Keeper:\n    var items: List[RefBox]\n\n    def add_local(mut self):\n        var local = [9]\n        ref alias = local\n        def push(var box: RefBox) {mut self}:\n            self.items.append(box^)\n        push(RefBox(alias))\n\ndef main():\n    var items: List[RefBox] = List[RefBox]()\n    var k = Keeper(items^)\n    k.add_local()\n";
+    let error = compiler
+        .compile_unlinked(escape)
+        .expect_err("local-rooted loan through the captured store must escape");
+    assert!(
+        matches!(error, CompilerError::Type(_)) && error.to_string().contains("escapes storage"),
+        "{error}"
+    );
+
+    let transitive = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Keeper:\n    var items: List[RefBox]\n\n    def add_param(mut self, var box: RefBox):\n        def push(var b: RefBox) {mut self}:\n            self.items.append(b^)\n        push(box^)\n\ndef main():\n    var items: List[RefBox] = List[RefBox]()\n    var k = Keeper(items^)\n    var local = [9]\n    ref alias = local\n    k.add_param(RefBox(alias))\n    local.append(1)\n    print(k.items[0].value[0])\n";
+    let error = compiler
+        .compile_unlinked(transitive)
+        .expect_err("the re-abstracted effect must reach the method's caller");
+    assert!(
+        matches!(error, CompilerError::Ownership(_))
+            && error
+                .to_string()
+                .contains("conflicts with live reference 'k'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn abstract_dispatch_replays_the_conformer_effect_union() {
+    // A trait-method call on a bounded type parameter has no concrete body;
+    // the checker replays the union of transfer effects over every
+    // conforming implementation (the whole-program dispatch set). The
+    // overloaded sibling keeps `feed` on the abstract erased-dispatch path.
+    // Both conformer declaration orders converge through the two-phase pass.
+    let compiler = Compiler::default();
+    let conformer_first = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ntrait Sink:\n    def put(mut self, var box: RefBox): ...\n\n@fieldwise_init\nstruct Bag(Sink):\n    var slot: RefBox\n\n    def put(mut self, var box: RefBox):\n        self.slot = box^\n\ndef feed[T: Sink](mut sink: T, var box: RefBox):\n    sink.put(box^)\n\ndef feed(x: Int):\n    print(x)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var bag = Bag(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    feed(bag, RefBox(alias))\n    local.append(1)\n    print(bag.slot.value[0])\n";
+    let conformer_last = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ntrait Sink:\n    def put(mut self, var box: RefBox): ...\n\ndef feed[T: Sink](mut sink: T, var box: RefBox):\n    sink.put(box^)\n\ndef feed(x: Int):\n    print(x)\n\n@fieldwise_init\nstruct Bag(Sink):\n    var slot: RefBox\n\n    def put(mut self, var box: RefBox):\n        self.slot = box^\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var bag = Bag(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    feed(bag, RefBox(alias))\n    local.append(1)\n    print(bag.slot.value[0])\n";
+    for source in [conformer_first, conformer_last] {
+        let error = compiler
+            .compile_unlinked(source)
+            .expect_err("mutating the transferred loan's source must conflict");
+        assert!(
+            matches!(error, CompilerError::Ownership(_))
+                && error
+                    .to_string()
+                    .contains("conflicts with live reference 'bag'"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn overloaded_call_sites_replay_the_shared_effect_entry() {
+    // Overloaded free functions share the bare-name effect entry; selecting
+    // an overload replays it exactly like the single-callable path (this
+    // was a silent pre-existing gap: the overload branch skipped effect
+    // replay entirely). The seeded `List.append` chain requires the linked
+    // compiler.
+    let compiler = Compiler::default();
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef stash(x: Int):\n    print(x)\n\ndef collect() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n";
+    let error = compiler
+        .compile_unlinked(source)
+        .expect_err("transferred local-rooted loan must not escape");
+    assert!(
+        matches!(error, CompilerError::Type(_)) && error.to_string().contains("escapes storage"),
+        "{error}"
+    );
+}
+
+#[test]
+fn callable_struct_call_replays_transfer_effects() {
+    // An indirect call through a callable-struct value replays the
+    // `Struct.__call__` transfer effects: the seeded `List.append` inside
+    // the body transfers the argument's loans onto the `mut` sink actual,
+    // so mutating the loan source while the sink lives conflicts. Runs
+    // through the compiler so the seeded stdlib effect participates.
+    let compiler = Compiler::default();
+    let conflict = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox], RefBox)):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox], box: RefBox):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
+    let error = compiler
+        .compile_unlinked(conflict)
+        .expect_err("mutating the transferred loan's source must conflict");
+    assert!(
+        matches!(error, CompilerError::Ownership(_))
+            && error
+                .to_string()
+                .contains("conflicts with live reference 'sink'"),
+        "{error}"
+    );
+
+    // The same program with the sink's last use before the mutation stays
+    // accepted — no spurious rejection from the indirect replay.
+    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox], RefBox)):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox], box: RefBox):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    print(sink[0].value[0])\n    local.append(1)\n    print(local[1])\n";
+    compiler
+        .compile_unlinked(after_last_use)
+        .expect("carrier released before the mutation compiles");
+}
+
+#[test]
 fn owned_iteration_of_linear_elements_requires_guaranteed_exhaustion() {
     // "Owned iteration of linear elements": with the bundled owned iterator's
     // `ImplicitlyDeletable` gates lifted, a linear List reaches the checker's

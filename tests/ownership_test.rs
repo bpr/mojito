@@ -767,6 +767,17 @@ fn callee_installed_loans_conflict_with_source_mutation() {
 }
 
 #[test]
+fn nested_call_transferred_loans_conflict_with_source_mutation() {
+    // A nested `def` lowers its direct call through `CallIndirect`; the
+    // call site still installs the callee's transferred loan on the carrier,
+    // so mutating the loan source afterward conflicts exactly like the
+    // free-call path. (The unlinked seam records through the user-struct
+    // store; the seeded `List.append` chain is covered by the linked tests.)
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier:\n    var slot: RefBox\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var carrier = Carrier(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    def stash(mut c: Carrier, box: RefBox):\n        c.slot = box^\n    stash(carrier, RefBox(alias))\n    local.append(1)\n    print(carrier.slot.value[0])\n";
+    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+}
+
+#[test]
 fn transferred_carrier_loans_keep_the_source_alive() {
     // The appended carrier's loan lands on the collection, so the drops pass
     // keeps the borrowed source alive while the collection lives — the

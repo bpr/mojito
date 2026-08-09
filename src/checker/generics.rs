@@ -153,6 +153,7 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             conventions,
             ref_params,
             ref_return,
+            transfers,
         } => Ty::Func {
             environment: environment.clone(),
             params: params.iter().map(|p| substitute(p, subst)).collect(),
@@ -170,6 +171,7 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
+            transfers: transfers.clone(),
         },
         Ty::GenericFunc {
             environment,
@@ -187,6 +189,7 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             conventions,
             ref_params,
             ref_return,
+            transfers,
         } => {
             // An anonymous callable's own binders shadow names from the
             // surrounding substitution. Outer parameters may still occur in
@@ -264,6 +267,7 @@ pub(super) fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
                 conventions: conventions.clone(),
                 ref_params: ref_params.clone(),
                 ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
             }
         }
         Ty::Overload(candidates) => Ty::Overload(
@@ -360,6 +364,7 @@ pub(super) fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, Strin
             conventions,
             ref_params,
             ref_return,
+            transfers,
         } => Ty::Func {
             environment: environment.clone(),
             params: params
@@ -384,6 +389,7 @@ pub(super) fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, Strin
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
+            transfers: transfers.clone(),
         },
         Ty::GenericFunc {
             environment,
@@ -401,6 +407,7 @@ pub(super) fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, Strin
             conventions,
             ref_params,
             ref_return,
+            transfers,
         } => {
             let mut free_names = names.clone();
             for declaration in decls {
@@ -476,6 +483,7 @@ pub(super) fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, Strin
                 conventions: conventions.clone(),
                 ref_params: ref_params.clone(),
                 ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
             }
         }
         Ty::Overload(candidates) => Ty::Overload(
@@ -563,6 +571,7 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             conventions,
             ref_params,
             ref_return,
+            transfers,
         } => Ty::Func {
             environment: environment.clone(),
             params: params
@@ -587,6 +596,7 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
+            transfers: transfers.clone(),
         },
         Ty::Overload(candidates) => Ty::Overload(
             candidates
@@ -876,6 +886,7 @@ impl Checker {
             conventions,
             ref_params,
             ref_return,
+            transfers,
         } = callable
         else {
             return Ok((callable, Vec::new()));
@@ -910,6 +921,7 @@ impl Checker {
             conventions,
             ref_params,
             ref_return,
+            transfers,
         };
         Ok((contract, tyargs))
     }

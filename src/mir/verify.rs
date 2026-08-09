@@ -672,6 +672,7 @@ fn instantiate_checked_type(
             conventions,
             ref_params,
             ref_return,
+            transfers,
         } => Ty::Func {
             environment: environment.clone(),
             params: params
@@ -715,6 +716,7 @@ fn instantiate_checked_type(
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
+            transfers: transfers.clone(),
         },
         // Nested generic callable contracts own their own binder scope. The
         // outer verifier validates that scope recursively; retaining it is
@@ -1866,7 +1868,10 @@ fn verify_instruction(
             }
         }
         MirInstr::EstablishLoans {
-            reference, loans, ..
+            reference,
+            loans,
+            dest_interior,
+            ..
         } => {
             if *reference as usize >= function.n_vars {
                 errors.push(format!(
@@ -1875,6 +1880,20 @@ fn verify_instruction(
             }
             if loans.is_empty() {
                 errors.push(format!("{prefix}: loan generation has no owner loans"));
+            }
+            if let Some(domain) = dest_interior {
+                if domain.root != *reference {
+                    errors.push(format!(
+                        "{prefix}: loan destination domain roots at slot {} instead of the \
+                         generation's reference slot {reference}",
+                        domain.root
+                    ));
+                }
+                if domain.path.is_empty() {
+                    errors.push(format!(
+                        "{prefix}: loan destination domain has an empty interior path"
+                    ));
+                }
             }
             for loan in loans {
                 let Some(origin) = &loan.interior else {
@@ -3072,6 +3091,7 @@ fn instantiate_generic_callable_contract(contract: &Ty, arguments: &[TyArg]) -> 
         conventions,
         ref_params,
         ref_return,
+        transfers,
     } = contract
     else {
         return Err("retained contract is not generic".to_string());
@@ -3114,6 +3134,7 @@ fn instantiate_generic_callable_contract(contract: &Ty, arguments: &[TyArg]) -> 
         conventions: conventions.clone(),
         ref_params: ref_params.clone(),
         ref_return: ref_return.clone(),
+        transfers: transfers.clone(),
     };
     validate_dependent_bindings(&instantiated)?;
     Ok(instantiated)

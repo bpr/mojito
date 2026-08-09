@@ -19,7 +19,7 @@ framework whose LLVM dialect emits LLVM IR. Because it is MLIR-inspired and pure
 Rust, Pliron is the likely best fit for an in-tree native target — a closer match
 to the MLIR end goal than Cranelift or eBPF, which are lower-priority later
 options. Do not treat MLIR as a *required internal* compiler layer; it is a
-backend below the MIR waist. See `roadmap.md` section 5 for the ordering.
+backend below the MIR waist. See `roadmap.md` section 6 for the ordering.
 
 Read these documents before changing behavior:
 

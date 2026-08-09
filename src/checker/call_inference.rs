@@ -291,6 +291,23 @@ impl Checker {
                             args,
                             kwargs,
                         )?;
+                        // Overloads share the bare-name effect entry (a
+                        // conservative union); replay it and any call-through
+                        // residues exactly like the single-callable path.
+                        self.apply_transfer_effects(name, None, args, &span)?;
+                        self.record_call_through(name, &prepared, args);
+                        let callee_decls = match &prepared {
+                            Ty::GenericFunc { decls, .. } => decls.as_slice(),
+                            _ => &[],
+                        };
+                        self.apply_call_through_effects(
+                            name,
+                            callee_decls,
+                            None,
+                            param_args,
+                            args,
+                            &span,
+                        )?;
                     }
                     if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
                         self.record_call_effect(span.clone(), error.clone());
@@ -334,6 +351,39 @@ impl Checker {
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
         // Replay the callee's loan-transfer effects against the actuals.
         self.apply_transfer_effects(name, None, args, &span)?;
+        // A call through one of the current body's own callable parameters
+        // records a higher-order residue for this body's callers to resolve;
+        // a call to a callee WITH such residues resolves them against the
+        // concrete callables this call supplies.
+        self.record_call_through(name, &ty, args);
+        let callee_decls = match &ty {
+            Ty::GenericFunc { decls, .. } => decls.as_slice(),
+            _ => &[],
+        };
+        self.apply_call_through_effects(name, callee_decls, None, param_args, args, &span)?;
+        // A function-typed VALUE carries its origin def's effects on the
+        // type; replay those too (the name-keyed entry above covers direct
+        // and nested calls by declaration name).
+        let carried = contract_transfer_effects(&ty);
+        if !carried.is_empty() {
+            self.replay_transfer_effects(carried, None, args, &span)?;
+        }
+        // A callable struct value dispatches `Struct.__call__`; replay its
+        // effects with the callee binding as the receiver actual.
+        if let Ty::Struct(struct_name, _) = &ty {
+            let callee_value = Expr {
+                kind: ExprKind::Identifier(name.to_string()),
+                span: span.span,
+                source: span.source.clone(),
+                syntax_id: crate::token::SyntaxId::fresh(),
+            };
+            self.apply_transfer_effects(
+                &format!("{struct_name}.__call__"),
+                Some(&callee_value),
+                args,
+                &span,
+            )?;
+        }
         self.record_call_environment_effects(
             span.clone(),
             &ty,

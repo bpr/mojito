@@ -96,6 +96,7 @@ impl Checker {
                         self.lower_callable_ref_param_sigs(type_params, &regular)?,
                     ),
                     ref_return,
+                    transfers: Default::default(),
                 }
             }
             SourceType::MaterializedCallable(key) => {
@@ -708,6 +709,7 @@ impl Checker {
                 conventions,
                 ref_params,
                 ref_return,
+                transfers,
             } => Ty::Func {
                 environment: environment.clone(),
                 params: params
@@ -741,6 +743,7 @@ impl Checker {
                 conventions: conventions.clone(),
                 ref_params: ref_params.clone(),
                 ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
             },
             Ty::Overload(candidates) => Ty::Overload(
                 candidates
@@ -977,6 +980,7 @@ impl Checker {
                 conventions,
                 ref_params,
                 ref_return,
+                transfers,
             } => Ty::Func {
                 environment: environment.clone(),
                 params: params.iter().map(|p| self.resolve_assoc_ty(p)).collect(),
@@ -998,6 +1002,7 @@ impl Checker {
                 conventions: conventions.clone(),
                 ref_params: ref_params.clone(),
                 ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
             },
             Ty::GenericFunc {
                 environment,
@@ -1015,6 +1020,7 @@ impl Checker {
                 conventions,
                 ref_params,
                 ref_return,
+                transfers,
             } => Ty::GenericFunc {
                 environment: environment.clone(),
                 decls: decls.clone(),
@@ -1037,6 +1043,7 @@ impl Checker {
                 conventions: conventions.clone(),
                 ref_params: ref_params.clone(),
                 ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
             },
             Ty::Overload(candidates) => Ty::Overload(
                 candidates

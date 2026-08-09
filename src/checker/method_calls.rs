@@ -649,6 +649,21 @@ impl Checker {
         let resolved = match resolved {
             Ok(Some(resolved)) => resolved,
             Ok(None) => {
+                // A callable-typed FIELD dispatches indirectly:
+                // `holder.callback(1)` loads the stored value and calls
+                // through it (thin or capturing) — the field-invocation
+                // channel.
+                if !parameterized_syntax
+                    && let Ty::Struct(sname, targs) = &obj_ty
+                    && let Some(info) = self.structs.get(sname)
+                    && let Some((_, field_ty)) =
+                        info.fields.iter().find(|(fname, _)| fname == method)
+                {
+                    let field_ty = substitute(field_ty, &struct_subst(&info.decls, targs));
+                    if callable_contract_ty(&field_ty).is_some() {
+                        return self.infer_field_invocation(span, object, field_ty, args, kwargs);
+                    }
+                }
                 return Err(TypeError::NoSuchMethod {
                     object_type: obj_ty.to_string(),
                     method: method.to_string(),
@@ -695,14 +710,54 @@ impl Checker {
                 .borrow_mut()
                 .insert(span.clone(), target.clone());
         }
-        // Replay the callee's loan-transfer effects against the actuals.
+        // Replay the callee's loan-transfer effects against the actuals,
+        // and resolve any higher-order call-through residues against the
+        // concrete callables this call supplies.
         if let Ty::Struct(struct_name, _) = &obj_ty {
-            self.apply_transfer_effects(
-                &format!("{struct_name}.{method}"),
+            let method_key = format!("{struct_name}.{method}");
+            self.apply_transfer_effects(&method_key, Some(object), args, &span)?;
+            self.apply_call_through_effects(
+                &method_key,
+                &resolved.param_decls,
                 Some(object),
+                param_args,
                 args,
                 &span,
             )?;
+        } else if let Ty::Param { bounds, .. } = &obj_ty {
+            // Abstract trait dispatch has no concrete body: replay the union
+            // of effects over every conforming implementation of the method
+            // — the whole-program dispatch set. The method-name pre-filter is
+            // syntactic (round-stable), and one observation per conformer
+            // key keeps the two-phase pass exact even for conformers whose
+            // effects commit in a later round.
+            let mut conformers: Vec<String> = self
+                .structs
+                .iter()
+                .filter(|(_, info)| info.methods.contains_key(method))
+                .filter(|(name, info)| {
+                    let implementation = Ty::Struct(
+                        (*name).clone(),
+                        info.decls.iter().map(param_as_arg).collect(),
+                    );
+                    bounds
+                        .iter()
+                        .all(|bound| self.conforms_to(&implementation, bound))
+                })
+                .map(|(name, _)| format!("{name}.{method}"))
+                .collect();
+            conformers.sort();
+            for key in conformers {
+                self.apply_transfer_effects(&key, Some(object), args, &span)?;
+                self.apply_call_through_effects(
+                    &key,
+                    &resolved.param_decls,
+                    Some(object),
+                    param_args,
+                    args,
+                    &span,
+                )?;
+            }
         }
         // A `mut self` method mutates its receiver, so the receiver must be a
         // writable place (the mutation is written back to it): a variable, a
@@ -1888,6 +1943,7 @@ impl Checker {
                     conventions: vec![Some(ArgConvention::Var)],
                     ref_params: Box::new(vec![None]),
                     ref_return: None,
+                    transfers: Default::default(),
                 };
                 let method_decls = vec![ParamDecl::Value {
                     name: "elt_handler".to_string(),
@@ -1920,5 +1976,41 @@ impl Checker {
                 method: method.to_string(),
             }),
         }
+    }
+
+    /// Type a call through a callable-typed struct field: validate the
+    /// arguments against the stored contract, replay any value-carried
+    /// transfer effects, and mark the expression for indirect lowering.
+    fn infer_field_invocation(
+        &self,
+        span: SourceSpan,
+        _object: &Expr,
+        callable: Ty,
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        let (ret, _, error) =
+            self.infer_callable_ty(&span, "<callable>", callable.clone(), &[], args, kwargs)?;
+        self.record_call_environment_effects(span.clone(), &callable, &[], args, kwargs)?;
+        let carried = contract_transfer_effects(&callable);
+        if !carried.is_empty() {
+            self.replay_transfer_effects(carried, None, args, &span)?;
+        }
+        if let Some(target) = self.indirect_callable_target(&callable) {
+            self.overload_targets
+                .borrow_mut()
+                .insert(span.clone(), target);
+        }
+        self.operation_adjustments.borrow_mut().insert(
+            span.clone(),
+            crate::checked::SemanticAdjustment::FieldInvocation {
+                callable: callable.clone(),
+            },
+        );
+        if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
+            self.record_call_effect(span.clone(), error.clone());
+            self.require_error("call through a stored callable field", error)?;
+        }
+        Ok(ret)
     }
 }

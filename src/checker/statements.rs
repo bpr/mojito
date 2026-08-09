@@ -231,12 +231,21 @@ impl Checker {
         found: &Ty,
         storage: &Option<Ty>,
     ) -> Result<(), TypeError> {
-        if let Some((_, allowed)) = self.aggregate_escape_contexts.last()
-            && place_root_name(place)
-                .and_then(|root| self.lookup_owner(root))
-                .is_some_and(|owner| allowed.contains(&owner))
-            && (self.type_carries_loans(found) || matches!(storage, Some(Ty::Ref(_))))
-        {
+        // Outward storage: the frame's outliving owners (`self`, `mut`/`ref`
+        // parameters, capture-reachable extensions), or ANY enclosing-frame
+        // binding a nested def reaches through captures — a store into either
+        // outlives this frame, so a frame-locally rooted loan dangles.
+        let outward = self
+            .aggregate_escape_contexts
+            .last()
+            .is_some_and(|(_, allowed)| {
+                place_root_name(place)
+                    .and_then(|root| self.lookup_owner(root))
+                    .is_some_and(|owner| {
+                        allowed.contains(&owner) || self.owner_in_enclosing_scope(owner)
+                    })
+            });
+        if outward && (self.type_carries_loans(found) || matches!(storage, Some(Ty::Ref(_)))) {
             let mut origins = self.aggregate_origins(value);
             // A rebinding store's loan roots at the right-hand place
             // itself, which a plain value expression does not surface
@@ -1285,6 +1294,7 @@ impl Checker {
                         conventions: caller_regular.iter().map(|p| p.convention).collect(),
                         ref_params: Box::new(ref_params.clone()),
                         ref_return: ref_return.clone().map(Box::new),
+                        transfers: Default::default(),
                     }
                 } else {
                     let regular_tys: Vec<Ty> = params
@@ -1313,6 +1323,7 @@ impl Checker {
                         conventions: caller_regular.iter().map(|p| p.convention).collect(),
                         ref_params: Box::new(ref_params.clone()),
                         ref_return: ref_return.clone().map(Box::new),
+                        transfers: Default::default(),
                     }
                 };
                 self.declaration_types.borrow_mut().insert(
@@ -1542,7 +1553,19 @@ impl Checker {
                             })
                             .collect(),
                         self_owner: None,
+                        value_callables: decls
+                            .iter()
+                            .filter_map(|decl| match decl {
+                                ParamDecl::Value { name, ty, .. }
+                                    if matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }) =>
+                                {
+                                    Some(name.trim_start_matches('*').to_string())
+                                }
+                                _ => None,
+                            })
+                            .collect(),
                         effects: Vec::new(),
+                        call_throughs: Vec::new(),
                     });
                     self.raise_observation_frames
                         .borrow_mut()
@@ -1557,12 +1580,17 @@ impl Checker {
                     self.named_result_context.pop();
                     self.return_ref_contracts.pop();
                     self.raise_observation_frames.borrow_mut().pop();
-                    if let Some(frame) = self.transfer_frames.borrow_mut().pop()
-                        && !frame.effects.is_empty()
-                    {
-                        self.transfer_effects
-                            .borrow_mut()
-                            .insert(frame.callable, frame.effects);
+                    if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
+                        if !frame.effects.is_empty() {
+                            self.transfer_effects
+                                .borrow_mut()
+                                .insert(frame.callable.clone(), frame.effects);
+                        }
+                        if !frame.call_throughs.is_empty() {
+                            self.call_through_effects
+                                .borrow_mut()
+                                .insert(frame.callable, frame.call_throughs);
+                        }
                     }
                     self.aggregate_escape_contexts.pop();
                 }

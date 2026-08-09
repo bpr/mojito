@@ -41,18 +41,22 @@ runtime-pack carrier retain compiler-owned aggregate representations.
 
 Work proceeds in dependency order through the numbered sections below:
 
-1. **Finish MIR-schema-prerequisite CPU semantics.** Anything that can still
-   change MIR value, constant, or instruction schemas lands first.
-   Current in-place operator dispatch, parameterized associated types and
-   borrowed iterator origins, and CPU layout/tensor contracts are the
-   remaining seams.
-2. **Freeze a textual MIR/VM assembly** once the checked-declaration + verified
+1. **Finish MIR-schema-prerequisite CPU semantics.** Complete — anything that
+   could still change MIR value, constant, or instruction schemas has landed,
+   ending with the cross-call transfer residues (type-carried and
+   higher-order effects, conformer unions, the capture channel, and
+   interior-precise destination domains).
+2. **Catch up to current Mojo.** Mojo is a moving target: re-pin the nightly,
+   re-probe the parity claims, and close the recorded divergences before
+   freezing artifacts against a stale picture of the language. This is a
+   recurring task — it reopens at every re-pin.
+3. **Freeze a textual MIR/VM assembly** once the checked-declaration + verified
    MIR contract is confirmed sufficient, giving backend-independent artifacts,
    snapshots, and a disassembler/assembler pair.
-3. **Grow the CPU standard library** demand-first against that stable contract.
-4. **Packaging, artifacts, and developer tooling**, including compiled package
+4. **Grow the CPU standard library** demand-first against that stable contract.
+5. **Packaging, artifacts, and developer tooling**, including compiled package
    artifacts and a reproducibility gate.
-5. **Native backends** — LLVM first, then the MLIR-family targets (MLIR and the
+6. **Native backends** — LLVM first, then the MLIR-family targets (MLIR and the
    Rust-native, MLIR-inspired Pliron), with Cranelift and eBPF following —
    validated differentially against the VM corpus.
 
@@ -63,29 +67,36 @@ default next task.
 
 ### 1. Complete MIR-Schema-Prerequisite CPU Semantics
 
-These tasks may change MIR value, constant, or instruction schemas. Complete
-them before freezing the textual format; later library/API and source-syntax
-growth must lower to the frozen operations unless it deliberately reopens the
-schema.
+Complete: the MIR value, constant, and instruction schemas are settled
+(cross-call transfer residues closed the last seam; see the "Cross-call loan
+transfer" row in `docs/features.md` and the transfer-effects section of
+`docs/architecture.md` for the frozen contract and its deliberate
+residues). Later library/API and source-syntax growth must lower to the
+frozen operations unless it deliberately reopens the schema.
 
-- [ ] **Cross-call transfer residues** — the transfer-effect system is
-  hardened (two-phase order-independent visibility; nested-def, unpack,
-  and augmented-assignment guard coverage; see `docs/features.md` and
-  `docs/architecture.md`); the remaining permissive gaps:
-  indirect/function-value calls and abstract dispatch without a concrete
-  body carry no effects (checked function types would need to carry
-  them); destinations are root-granular (interior-precise dests would
-  tighten sibling-field coexistence); the capture channel records no
-  effects — a store through captured `self` inside a nested def is
-  escape-checked but not transfer-recorded, invocation of a stored
-  capturing-closure field/element remains unplumbed, and reading a
-  capture-installed reference dies in the VM ("checked nominal subscript
-  receiver is None", pre-existing) — one coherent capture-effects work
-  item; and the chained-subscript verify fix still peels the loaded
-  register's `Ty::Ref` at the check rather than retyping the register
-  (retype only if a consumer needs it).
+### 2. Catch Up To Current Mojo (Recurring)
 
-### 2. Stabilize Textual MIR/VM Assembly
+Mojo keeps changing under Mojito, so parity work recurs: whenever the pinned
+nightly moves, re-pin [`docs/mojo-nightly.md`](docs/mojo-nightly.md), re-probe
+the [`conformance/parity.tsv`](conformance/parity.tsv) claims against the new
+compiler, and burn down the recorded divergences. Completing one pass deletes
+the checkbox as usual; the next re-pin recreates it with the fresh divergence
+list. Doing a pass before the textual-format freeze keeps artifacts from
+encoding a stale picture of the language.
+
+- [ ] **Mojo parity catch-up pass** — work the current divergence list in
+  [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (accepted-source and
+  diagnostic gaps, lambda expressions through the existing callable pipeline,
+  and the library-port prerequisites recorded there), plus the
+  divergence-column entries in `conformance/parity.tsv` — most recently:
+  `def(...)`-typed field/element storage is a Mojito-only extension (current
+  Mojo treats a bare `def(...)` type position as a trait), and the bare
+  `objs[0](args)` element-call spelling parses as parameter application
+  where current Mojo dispatches. For each item, either match current Mojo or
+  record the deliberate extension/rejection in the parity records with a
+  pinning fixture.
+
+### 3. Stabilize Textual MIR/VM Assembly
 
 - [ ] **Backend-ready MIR checkpoint** — confirm that checked declarations plus
   typed verified MIR are sufficient inputs, with no source-AST reconstruction,
@@ -126,7 +137,7 @@ schema.
 - [ ] **Compiler/test integration** — expose dumps and use assembly snapshots and
   conformance artifacts as backend-independent contracts.
 
-### 3. Grow The CPU Standard Library
+### 4. Grow The CPU Standard Library
 
 - [ ] **Collection API parity** — grow List, Dict, HashDict, Set, HashSet, tuple,
   slice, optional/variant, and String result APIs
@@ -164,7 +175,7 @@ schema.
 - [ ] **Time, random, and testing slices** — add deterministic testable cores and
   isolate host-dependent behavior behind runtime services.
 
-### 4. Packaging, Artifacts, And Developer Tooling
+### 5. Packaging, Artifacts, And Developer Tooling
 
 - [ ] **Feature and target options** — expose checked CLI/build configuration and
   record it in artifacts and diagnostics.
@@ -180,7 +191,7 @@ schema.
   test, document, and reproduce conformance results using only the crates.io
   archive contents.
 
-### 5. Native Backends And Native-Only Semantics
+### 6. Native Backends And Native-Only Semantics
 
 The prioritized native targets are LLVM and the MLIR-family frameworks; Cranelift
 and eBPF are later, lower-priority options. Every backend consumes the verified

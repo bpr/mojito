@@ -80,9 +80,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/origins.rs` owns origin/reference-handle derivation, interior and
   aggregate-origin tracking, capture-origin collection, origin-signature
   lowering, and cross-call transfer effects (`abstract_body_origin`,
-  `record_transfer_effect`, `apply_transfer_effects` — recording at the
-  store-outward acceptance point, replay/enforcement at call sites, and the
-  span-keyed `CheckedCallTransfer` handoff to MIR).
+  `record_transfer_effect`, the `apply_transfer_effects` name-keyed wrapper
+  over the `replay_transfer_effects` core, value-position effect baking
+  (`bake_value_transfer_effects`), the higher-order call-through channel
+  (`record_call_through`, `apply_call_through_effects`,
+  `translate_call_through`), and the span-keyed `CheckedCallTransfer`
+  handoff to MIR, destination interior paths included).
 - `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
   nested-def capture-access checks.
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
@@ -112,9 +115,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `mir/calls.rs` owns call-site lowering (arguments, keywords, receiver,
   reference results, checked-call boundaries, interior-origin invalidations).
 - `mir/lower_expr.rs` owns expression lowering (the `expr_unconverted`
-  dispatcher, collections/comprehensions, nested closures), and installs
-  merged caller-side `EstablishLoans` for checked call-transfer records
-  (`install_call_transfers`) after free and method calls.
+  dispatcher, collections/comprehensions, nested closures, the
+  field-invocation indirect-call branch), and installs merged caller-side
+  `EstablishLoans` — domain-keyed for interior-precise destinations — for
+  checked call-transfer records (`install_call_transfers`) after free,
+  method, indirect, and nested calls.
 - `mir/lower_stmt.rs` owns statement, place, subscript-assignment, `try`-region,
   and terminator lowering, plus the borrowed-iteration source binding and loan
   re-establishment helpers shared with comprehension lowering.

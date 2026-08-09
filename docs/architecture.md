@@ -1401,6 +1401,13 @@ List first produces a handle to the element slot, whose stored value is itself a
 reference handle. Lowering peels that outer slot handle before an augmented
 write or chained method receiver is formed. The operation therefore reaches the
 ultimate referent and never replaces the reference stored in the List element.
+Relatedly, a chained subscript's loaded base register may legitimately stay
+reference-typed one level above its place — the VM's `LoadPlace` second
+dereference resolves it at runtime — so the verifier peels exactly one
+`Ty::Ref` level on both the storage and the loaded register when checking a
+subscript receiver, symmetric by design. No consumer needs the register
+retyped (analysis and drops read place types, not the loaded base register),
+so this one-level tolerance is the sanctioned contract rather than a gap.
 
 Augmented nominal subscripts cross the checked boundary with call-local
 adaptation and invalidation snapshots. For a value result this includes both
@@ -1921,15 +1928,43 @@ error.
 The store-outward acceptance point itself is shared: the SetPlace guard
 (escape check plus transfer recording) is the `check_outward_store` helper,
 which unpack-into-place targets also run (per tuple-display element, or
-conservatively with the whole right-hand side's origins). Nested `def`s
-extend their escape context with the enclosing context's owners — the
-capture-reachable outliving storage — so a store through captured `self`
-inside a closure faces the escape rule with the nested frame deciding source
-locality; recording an effect for such a store stays out (it is not
-signature-relative to the nested def), the capture-channel residue recorded
-on the roadmap. Augmented assignment needs no dedicated guard: the in-place
-dunder rides ordinary method selection, so its callee effects replay at the
-`+=` site.
+conservatively with the whole right-hand side's origins). Outward storage
+covers both the frame's outliving owners (`self`, `mut`/`ref` parameters and
+the capture-reachable extensions of the escape context) and ANY
+enclosing-frame binding a nested def reaches through captures — storing a
+closure-locally rooted loan into a captured enclosing local dangles just as
+surely once the closure returns. A store through a captured owner records a
+concrete `SigOrigin::Bound` destination (owner ids are checker-global):
+invocation sites ground it directly, intermediate frames propagate it
+verbatim, and the frame whose signature covers the owner re-abstracts it, so
+a method whose closure stores into captured `self` carries the effect to the
+method's own callers. Augmented assignment needs no dedicated guard: the
+in-place dunder rides ordinary method selection, so its callee effects
+replay at the `+=` site.
+
+Effects also ride checked function types. A `def` name in value position
+bakes its committed effects into the produced `Ty::Func`/`Ty::GenericFunc`
+as an identity-transparent `TransferSet` (never part of type equality or
+acceptance — a `def(...)` contract cannot spell effects, so soundness comes
+from call-site replay, not acceptance filtering), with a fixpoint
+observation so a later-grown entry re-bakes. Indirect calls replay from the
+value's type; a callable-struct call replays its `Struct.__call__` entry
+with the callee binding as the receiver; overloaded call sites replay the
+shared bare-name entry; and a trait-method call on a bounded receiver —
+which has no concrete body — replays the union of effects over every
+conforming implementation of the method, one observation per conformer key.
+The one genuinely higher-order shape is a body calling through its own
+callable parameter (a runtime `def(...)` param or a compile-time callable
+value param, which specialization retains symbolically): the body records a
+`CallThroughEffect` carrying the signature abstraction of every actual, and
+each call site — which knows the concrete callable — translates that
+callable's effects through the recorded mapping into effects of the callee
+and replays them, rejecting a frame-local source flowing into a signature
+destination; when the supplied callable is itself a callable parameter of
+the calling frame, a composed residue is derived instead, so two-level
+forwarding chains resolve at the outermost concrete call. Call-through
+visibility shares the two-phase pass through its own seed and observation
+channel.
 
 Each call site with a matching effect substitutes the source actual's caller
 origins (its carried aggregate/reference origins, plus — only when
@@ -1939,15 +1974,43 @@ merges the result into the destination actual's aggregate-origin bookkeeping so
 the checker's own return-escape analysis sees callee-installed loans, derives a
 transitive effect onto the enclosing callable when the destination roots at its
 parameter or receiver, and records a span-keyed
-`CheckedCallTransfer { dest, sources, mutable }` on `CheckedProgram` for MIR.
-Lowering installs a merged `EstablishLoans` on the destination actual's root
-variable after the call — union with existing loans, never replacement, so a
-second `append` extends the generation — skipping destinations rooted at the
-current function's own parameters, which the derived effect covers at the
-caller where the storage lives. Ownership and drop analysis then reject
-mutating or dropping the loan root while the stored alias lives and keep
-borrowed sources alive under carrier collections with no transfer-specific
-analysis code.
+`CheckedCallTransfer { dest, dest_path, sources, mutable }` on
+`CheckedProgram` for MIR. Destinations are interior-precise: the store's
+path below the destination root survives on the effect
+(`SigOrigin::Projected`), composes with the actual's own projection at each
+call site, and lowers as the generation's destination domain —
+`EstablishLoans { reference, loans, marker, dest_interior }`, where `None`
+means the whole root. A root-domain generation replaces every prior
+generation; an interior-domain generation replaces only overlapping interior
+domains, so sibling fields keep independent generations, and a `Store`
+through a concrete field prefix releases the domains it covers — rebinding
+`t.a` frees `t.a`-rooted transferred loans while `t.b`'s and the root's
+survive. Repeated transfers into one domain still merge (union, never
+replacement), so a second `append` extends that generation. Lowering skips
+destinations rooted at the current function's own parameters, which the
+derived effect covers at the caller where the storage lives; a `Bound`
+destination resolves through the owner-variable map only in the frame that
+owns the storage. Ownership and drop analysis then reject mutating or
+dropping the loan root while the stored alias lives and keep borrowed
+sources alive under carrier collections with no transfer-specific analysis
+code. A closure value flowing into storage additionally loans its REFERENCE
+captures' owners (`imm` immutably, `mut`/`ref` mutably) — the stored
+environment retains their frame slots — while direct nested calls keep the
+loan-free declaration-to-call capture model; stored callables invoke through
+the field-invocation channel (`holder.callback(1)` marks a
+`FieldInvocation` adjustment and lowers as an indirect call whose callee
+place is the field's, so a closure environment rehydrates from stable
+storage).
+
+The deliberate residues, frozen with the schema: effects erase when an
+effectful callable value is stored into explicitly annotated `def(...)`
+storage (a plain function value carries no loans of its own, so this stays
+permissive rather than unsound); a call through a bare `callable_bound` with
+no value provenance carries nothing; a call-through destination that is
+frame-local to the higher-order body is invisible to that body's own
+return-escape analysis; transfer via a returned `self` belongs to the
+return-origin path; and source loans stay root-abstracted — only
+destinations carry interior paths.
 
 ### Nominal String and the literal bridges
 

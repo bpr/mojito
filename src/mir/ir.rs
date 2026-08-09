@@ -262,6 +262,10 @@ pub enum MirInstr {
         reference: VarId,
         loans: Vec<MirLoan>,
         marker: Reg,
+        /// Interior destination domain within `reference` that holds the
+        /// loans (`None` ≡ the whole root). Rebinding a place that covers
+        /// this domain releases the generation; sibling domains coexist.
+        dest_interior: Option<MirInteriorOrigin>,
     },
     /// Invalidate established interior generations rooted below `base`.
     /// `include_base_generation` also replaces the exact named generation at

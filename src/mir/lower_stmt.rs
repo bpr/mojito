@@ -80,6 +80,7 @@ impl Flatten<'_> {
                             reference: *dest,
                             loans: aggregate_loans.clone(),
                             marker,
+                            dest_interior: None,
                         });
                     }
                     if aggregate_loans.is_empty() {
@@ -435,6 +436,7 @@ impl Flatten<'_> {
             reference: dest,
             loans: loans.clone(),
             marker,
+            dest_interior: None,
         });
         self.aggregate_loans.insert(dest, loans);
     }
@@ -456,6 +458,7 @@ impl Flatten<'_> {
                 reference: iterator,
                 loans: loans.clone(),
                 marker,
+                dest_interior: None,
             });
             self.aggregate_loans.insert(iterator, loans);
         }
@@ -1521,6 +1524,7 @@ impl Flatten<'_> {
                 aliases: self.aliases.clone(),
                 runtime_aliases: self.runtime_aliases.clone(),
                 aggregate_loans: self.aggregate_loans.clone(),
+                transfer_domain_loans: self.transfer_domain_loans.clone(),
                 reassigned_names: self.reassigned_names.clone(),
                 returns_reference: self.returns_reference,
             };
@@ -1835,6 +1839,7 @@ impl Flatten<'_> {
                             reference,
                             loans,
                             marker,
+                            dest_interior: None,
                         });
                     }
                     return;
@@ -1901,6 +1906,7 @@ impl Flatten<'_> {
                     reference,
                     loans,
                     marker,
+                    dest_interior: None,
                 });
             }
             // --- Writes through a place (any nesting) --------------------------

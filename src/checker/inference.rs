@@ -769,6 +769,21 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
+                // Replay the effects the callable VALUE's type carries, and
+                // a callable struct's `Struct.__call__` entry with the
+                // callee expression as the receiver actual.
+                let carried = contract_transfer_effects(&callable);
+                if !carried.is_empty() {
+                    self.replay_transfer_effects(carried, None, args, &expr.source_span())?;
+                }
+                if let Ty::Struct(struct_name, _) = &callable {
+                    self.apply_transfer_effects(
+                        &format!("{struct_name}.__call__"),
+                        Some(callee),
+                        args,
+                        &expr.source_span(),
+                    )?;
+                }
                 self.record_call_environment_effects(
                     expr.source_span(),
                     &callable,
@@ -865,6 +880,7 @@ impl Checker {
                         Ty::Ref(reference) => (*reference.referent).clone(),
                         other => other.clone(),
                     })
+                    .map(|ty| self.bake_value_transfer_effects(name, ty))
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
             }
             ExprKind::Prefix(op, operand) => self.infer_prefix(*op, operand),

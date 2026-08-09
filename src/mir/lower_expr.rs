@@ -199,13 +199,19 @@ impl Flatten<'_> {
             }
         }
         for transfer in transfers {
-            let dest_place = match transfer.dest {
-                crate::checked::CheckedTransferDest::Receiver => recv_place,
-                crate::checked::CheckedTransferDest::Argument(index) => {
-                    arg_places.get(index).and_then(|place| place.as_ref())
+            let dest_root = match transfer.dest {
+                crate::checked::CheckedTransferDest::Receiver => recv_place.map(|place| place.root),
+                crate::checked::CheckedTransferDest::Argument(index) => arg_places
+                    .get(index)
+                    .and_then(|place| place.as_ref())
+                    .map(|place| place.root),
+                // A captured owner resolves only in the frame that owns the
+                // storage; elsewhere the verbatim-propagated effect covers it.
+                crate::checked::CheckedTransferDest::Owner(owner) => {
+                    self.owner_vars.get(&owner).copied()
                 }
             };
-            let Some(dest_root) = dest_place.map(|place| place.root) else {
+            let Some(dest_root) = dest_root else {
                 continue;
             };
             // A destination rooted at one of THIS function's parameters is
@@ -220,14 +226,26 @@ impl Flatten<'_> {
             for origin in &transfer.sources {
                 flatten(origin, &mut places);
             }
-            // Merge with the destination's existing loans: a second transfer
-            // (a loop iteration, another append) extends the generation's
-            // loan set rather than replacing it.
-            let mut loans = self
-                .aggregate_loans
-                .get(&dest_root)
-                .cloned()
-                .unwrap_or_default();
+            // Merge with the destination DOMAIN's existing loans: a second
+            // transfer (a loop iteration, another append) extends that
+            // generation's loan set rather than replacing it, while sibling
+            // interior domains keep independent generations.
+            let dest_interior = (!transfer.dest_path.is_empty()).then(|| MirInteriorOrigin {
+                root: dest_root,
+                path: transfer.dest_path.clone(),
+            });
+            let mut loans = match &dest_interior {
+                Some(domain) => self
+                    .transfer_domain_loans
+                    .get(&(dest_root, domain.path.clone()))
+                    .cloned()
+                    .unwrap_or_default(),
+                None => self
+                    .aggregate_loans
+                    .get(&dest_root)
+                    .cloned()
+                    .unwrap_or_default(),
+            };
             let before = loans.len();
             for origin in places {
                 let Some(canonical) = self.mir_interior_origin(&origin, None) else {
@@ -260,11 +278,20 @@ impl Flatten<'_> {
                 continue;
             }
             let marker = self.fresh_typed(e.source_span(), Some(dest_root), Ty::None);
-            self.aggregate_loans.insert(dest_root, loans.clone());
+            match &dest_interior {
+                Some(domain) => {
+                    self.transfer_domain_loans
+                        .insert((dest_root, domain.path.clone()), loans.clone());
+                }
+                None => {
+                    self.aggregate_loans.insert(dest_root, loans.clone());
+                }
+            }
             self.emit(MirInstr::EstablishLoans {
                 reference: dest_root,
                 loans,
                 marker,
+                dest_interior,
             });
         }
     }
@@ -1083,6 +1110,10 @@ impl Flatten<'_> {
                         .map_or((None, Vec::new()), |(contract, arguments)| {
                             (Some(contract), arguments)
                         });
+                    let transfer_arg_places = arg_places.clone();
+                    // A callable-struct value is the receiver of its own
+                    // `__call__` transfer effects; its place is the callee's.
+                    let transfer_recv_place = callee_place.clone();
                     self.emit(MirInstr::CallIndirect {
                         dest,
                         callee,
@@ -1099,6 +1130,11 @@ impl Flatten<'_> {
                         instantiated_contract,
                         instantiated_args,
                     });
+                    self.install_call_transfers(
+                        e,
+                        transfer_recv_place.as_ref(),
+                        &transfer_arg_places,
+                    );
                     return dest;
                 }
                 // `__RuntimeTuple` is the compiler-private heterogeneous pack
@@ -1391,6 +1427,8 @@ impl Flatten<'_> {
                     .map_or((None, Vec::new()), |(contract, arguments)| {
                         (Some(contract), arguments)
                     });
+                let transfer_arg_places = arg_places.clone();
+                let transfer_recv_place = callee_place.clone();
                 self.emit(MirInstr::CallIndirect {
                     dest,
                     callee,
@@ -1408,6 +1446,7 @@ impl Flatten<'_> {
                     instantiated_args,
                 });
                 self.emit_nested_closure_argument_keepalives(args, kwargs);
+                self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
                 dest
             }
             ExprKind::MethodCall {
@@ -1416,6 +1455,61 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                // A callable-typed FIELD invocation (`holder.callback(1)`)
+                // loads the stored value and calls indirectly; the callee
+                // place is the field's, so a closure environment stays
+                // reachable through stable storage.
+                if let Some(crate::SemanticAdjustment::FieldInvocation { callable }) =
+                    self.checked_adjustments(e).into_iter().find(|adjustment| {
+                        matches!(
+                            adjustment,
+                            crate::SemanticAdjustment::FieldInvocation { .. }
+                        )
+                    })
+                {
+                    let (recv, recv_place) = self.lower_call_receiver(object);
+                    let callee = self.fresh_typed(span(e), None, callable.clone());
+                    self.emit(MirInstr::GetField {
+                        dest: callee,
+                        base: recv,
+                        field: method.clone(),
+                    });
+                    let callee_place = recv_place.map(|mut place| {
+                        place.project(Proj::Field(method.clone()), callable.clone());
+                        place
+                    });
+                    let param_decls = generic_callable_param_decls(&callable);
+                    let (arg_regs, arg_places) = self.lower_call_arguments(args);
+                    let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
+                    let dest = self.fresh(span(e), None);
+                    self.emit_call_invalidations(e, args, kwargs);
+                    let capture_accesses = self.checked_call_capture_accesses(e);
+                    let transfer_arg_places = arg_places.clone();
+                    let transfer_recv_place = callee_place.clone();
+                    self.emit(MirInstr::CallIndirect {
+                        dest,
+                        callee,
+                        resolved: self.resolved_callable(e),
+                        raises: self.checked_raises(e),
+                        args: arg_regs,
+                        kwargs: kw_regs,
+                        callee_place,
+                        arg_places,
+                        kwarg_places,
+                        capture_accesses,
+                        param_arg_regs: Vec::new(),
+                        param_decls,
+                        instantiated_contract: None,
+                        instantiated_args: Vec::new(),
+                    });
+                    self.emit_nested_closure_argument_keepalives(args, kwargs);
+                    self.install_call_transfers(
+                        e,
+                        transfer_recv_place.as_ref(),
+                        &transfer_arg_places,
+                    );
+                    return dest;
+                }
                 let pointer_storage = self.checked_adjustments(e).into_iter().find_map(
                     |adjustment| match adjustment {
                         crate::SemanticAdjustment::PointerStorageTake { element } => {
@@ -2262,6 +2356,7 @@ impl Flatten<'_> {
         let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
         let d = self.fresh(span(e), None);
         self.emit_call_invalidations(e, args, kwargs);
+        let transfer_arg_places = arg_places.clone();
         let callee_place = self
             .owner_vars
             .contains_key(&info.binding)
@@ -2293,6 +2388,7 @@ impl Flatten<'_> {
             instantiated_args,
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.install_call_transfers(e, None, &transfer_arg_places);
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
         for capture in &info.captures {

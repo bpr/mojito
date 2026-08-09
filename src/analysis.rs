@@ -374,6 +374,7 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
     let nb = f.blocks.len();
     let loan_roots = drop_loan_generations(f);
     let generation_entries = loan_generation_block_entries(f);
+    let generation_dests = loan_generation_dests(f);
     let register_loan_uses = register_loan_uses(f, &generation_entries, &loan_roots);
     let generation_exits: Vec<LoanGenerationState> = f
         .blocks
@@ -382,7 +383,7 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
         .map(|(block, entry)| {
             let mut state = entry.clone();
             for instruction in &block.instrs {
-                transfer_loan_generation(&mut state, instruction);
+                transfer_loan_generation(&mut state, instruction, &generation_dests);
             }
             state
         })
@@ -438,7 +439,7 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
         let mut generation_after = Vec::with_capacity(instrs.len());
         for instr in instrs {
             generation_before.push(generation_state.clone());
-            transfer_loan_generation(&mut generation_state, instr);
+            transfer_loan_generation(&mut generation_state, instr, &generation_dests);
             generation_after.push(generation_state.clone());
         }
 
@@ -662,6 +663,7 @@ fn drop_loan_generations(f: &MirFunction) -> BTreeMap<u32, DropLoanGeneration> {
             reference,
             loans,
             marker,
+            ..
         } = instr
         {
             let direct = matches!(
@@ -871,6 +873,7 @@ fn register_loan_uses(
     generation_entries: &[LoanGenerationState],
     loan_roots: &BTreeMap<u32, DropLoanGeneration>,
 ) -> Vec<Vec<Vec<VarId>>> {
+    let generation_dests = loan_generation_dests(f);
     let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); f.blocks.len()];
     for (block, body) in f.blocks.iter().enumerate() {
         for successor in successors(&body.term) {
@@ -907,7 +910,7 @@ fn register_loan_uses(
                     loan_roots,
                     &f.reg_types,
                 );
-                transfer_loan_generation(&mut generations, instruction);
+                transfer_loan_generation(&mut generations, instruction, &generation_dests);
             }
             if incoming[block].as_ref() != Some(&new_in)
                 || outgoing[block].as_ref() != Some(&new_out)
@@ -935,7 +938,7 @@ fn register_loan_uses(
                         loan_roots,
                         &f.reg_types,
                     );
-                    transfer_loan_generation(&mut generations, instruction);
+                    transfer_loan_generation(&mut generations, instruction, &generation_dests);
                     uses
                 })
                 .collect()
@@ -2035,12 +2038,56 @@ fn join_loan_generation_states(
     left
 }
 
-fn transfer_loan_generation(state: &mut LoanGenerationState, instruction: &MirInstr) {
+fn transfer_loan_generation(
+    state: &mut LoanGenerationState,
+    instruction: &MirInstr,
+    generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
+) {
     match instruction {
         MirInstr::EstablishLoans {
-            reference, marker, ..
+            reference,
+            marker,
+            dest_interior,
+            ..
         } => {
-            state.active.insert(*reference, BTreeSet::from([marker.0]));
+            let markers = state.active.entry(*reference).or_default();
+            match dest_interior {
+                // A root-domain generation replaces every prior generation:
+                // rebinding the whole value resets its loan picture.
+                None => *markers = BTreeSet::from([marker.0]),
+                // An interior-domain generation replaces overlapping
+                // interior domains; the root domain and disjoint sibling
+                // domains keep their own generations.
+                Some(domain) => {
+                    markers.retain(|existing| {
+                        match generation_dests
+                            .get(existing)
+                            .and_then(|dest| dest.as_ref())
+                        {
+                            Some(other) => !origin_paths_overlap(&domain.path, &other.path),
+                            None => true,
+                        }
+                    });
+                    markers.insert(marker.0);
+                }
+            }
+        }
+        // Writing through a place releases the interior-domain generations
+        // it covers: the overwrite destroyed the stored aliases.
+        MirInstr::Store { place, .. } | MirInstr::StoreRef { place, .. } => {
+            if !place.proj.is_empty()
+                && let Some(markers) = state.active.get_mut(&place.root)
+            {
+                markers.retain(|existing| {
+                    match generation_dests
+                        .get(existing)
+                        .and_then(|dest| dest.as_ref())
+                    {
+                        Some(domain) => !projection_covers_domain(&place.proj, &domain.path),
+                        None => true,
+                    }
+                });
+            }
         }
         // A definition with no following `EstablishLoans` replaces a
         // reference-bearing value with one carrying no owner dependency.
@@ -2051,7 +2098,46 @@ fn transfer_loan_generation(state: &mut LoanGenerationState, instruction: &MirIn
     }
 }
 
+/// Destination domain per loan generation marker, for domain-aware
+/// generation replacement and release.
+fn loan_generation_dests(f: &MirFunction) -> BTreeMap<u32, Option<MirInteriorOrigin>> {
+    f.blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            MirInstr::EstablishLoans {
+                marker,
+                dest_interior,
+                ..
+            } => Some((marker.0, dest_interior.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Two interior paths overlap when one is a prefix of the other.
+fn origin_paths_overlap(
+    left: &[crate::origin::OriginSeg],
+    right: &[crate::origin::OriginSeg],
+) -> bool {
+    left.iter().zip(right.iter()).all(|(a, b)| a == b)
+}
+
+/// A store's concrete field prefix covers a loan domain when it is a prefix
+/// of the domain path (`t.a = ...` covers `[a]` and everything below it).
+/// Non-field projections stay conservative (no release).
+fn projection_covers_domain(proj: &[Proj], domain: &[crate::origin::OriginSeg]) -> bool {
+    proj.len() <= domain.len()
+        && proj.iter().zip(domain.iter()).all(|(step, segment)| {
+            matches!(
+                (step, segment),
+                (Proj::Field(field), crate::origin::OriginSeg::Field(name)) if field == name
+            )
+        })
+}
+
 fn loan_generation_block_entries(f: &MirFunction) -> Vec<LoanGenerationState> {
+    let generation_dests = loan_generation_dests(f);
     let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); f.blocks.len()];
     for (block, body) in f.blocks.iter().enumerate() {
         for successor in successors(&body.term) {
@@ -2079,7 +2165,7 @@ fn loan_generation_block_entries(f: &MirFunction) -> Vec<LoanGenerationState> {
             };
             let mut new_out = new_in.clone();
             for instruction in &f.blocks[block].instrs {
-                transfer_loan_generation(&mut new_out, instruction);
+                transfer_loan_generation(&mut new_out, instruction, &generation_dests);
             }
             if incoming[block].as_ref() != Some(&new_in)
                 || outgoing[block].as_ref() != Some(&new_out)
@@ -2149,6 +2235,7 @@ fn analyze_loans(f: &MirFunction) -> Result<(), OwnershipError> {
     }
 
     let nb = f.blocks.len();
+    let generation_dests = loan_generation_dests(f);
     let generation_entries = loan_generation_block_entries(f);
     let mut live_in = vec![HashSet::new(); nb];
     let mut changed = true;
@@ -2185,6 +2272,7 @@ fn analyze_loans(f: &MirFunction) -> Result<(), OwnershipError> {
                 reference,
                 loans: established,
                 marker,
+                ..
             } = instr
             {
                 for loan in established.iter().filter(|loan| loan.interior.is_none()) {
@@ -2234,7 +2322,7 @@ fn analyze_loans(f: &MirFunction) -> Result<(), OwnershipError> {
                         }
                     }
                 }
-                transfer_loan_generation(&mut generation_state, instr);
+                transfer_loan_generation(&mut generation_state, instr, &generation_dests);
                 continue;
             }
             for (place, access, span) in loan_accesses(f, instr) {
@@ -2261,7 +2349,7 @@ fn analyze_loans(f: &MirFunction) -> Result<(), OwnershipError> {
                     }
                 }
             }
-            transfer_loan_generation(&mut generation_state, instr);
+            transfer_loan_generation(&mut generation_state, instr, &generation_dests);
         }
     }
     Ok(())
@@ -3183,6 +3271,7 @@ mod interior_origin_tests {
             reference,
             loans: vec![loan(interior)],
             marker: Reg(marker),
+            dest_interior: None,
         }
     }
 

@@ -968,6 +968,7 @@ mod tuple_callable_closedness_tests {
             conventions: vec![None],
             ref_params: Box::new(vec![None]),
             ref_return: None,
+            transfers: Default::default(),
         }
     }
 

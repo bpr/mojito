@@ -8,6 +8,29 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Cross-call transfer residues closed — every call shape now replays
+  loan-transfer effects, ending the MIR-schema-prerequisite work. Checked
+  function types carry identity-transparent inferred effects, replayed when
+  a `def` value is called indirectly; callable-struct calls replay
+  `Struct.__call__`; overloaded call sites replay the shared entry (a
+  previously silent gap); abstract trait dispatch replays the union over
+  conforming implementations; and higher-order bodies calling through their
+  own callable parameters record call-through residues that each call site
+  resolves against the concrete callable, composing through forwarding
+  chains. The capture channel records concrete `Bound`-destination effects
+  for stores through captured owners (including enclosing locals, closing a
+  soundness hole where a closure-local reference stored into a captured
+  local crashed the VM at runtime), stored closures loan their reference
+  captures' owners while the storage lives, and stored callables invoke
+  through the new field-invocation channel (`holder.callback(1)`, capturing
+  environments included) — which also fixed the pre-existing
+  "checked nominal subscript receiver is None" crash and a phantom-variable
+  lowering bug that made a `def` name unusable as a value after appearing
+  in a list display. Transfer destinations are interior-precise:
+  `EstablishLoans` carries a destination domain, sibling fields keep
+  independent generations, and rebinding the exact interior place releases
+  its transferred loans.
+
 - CPU Layout and LayoutTensor semantics. A new bundled `layout` package
   (import-only, never prelude) self-hosts the CPU layout core: a flat
   rank-≤4 `IntTuple`, `Layout` with `row_major`/`col_major` factories,

@@ -197,17 +197,21 @@ pub(crate) fn check_program_with_materialized_callables(
     // guards checker defects, not user programs.
     const TRANSFER_EFFECT_ROUNDS: usize = 4;
     let mut transfer_seed: HashMap<String, Vec<crate::checked::TransferEffect>> = HashMap::new();
+    let mut call_through_seed: HashMap<String, Vec<crate::checked::CallThroughEffect>> =
+        HashMap::new();
     let mut rounds = 0;
     let checker = loop {
         let mut checker = Checker::new_with_materialized_callables(
             materialized_callables.clone(),
             std::mem::take(&mut transfer_seed),
+            std::mem::take(&mut call_through_seed),
         );
         checker.check_program(&expanded)?;
         checker.check_reference_result_reads()?;
-        let stale = {
-            let committed = checker.transfer_effects.borrow();
-            let observations = checker.effect_observations.borrow();
+        fn first_stale<E: PartialEq + Clone>(
+            committed: &HashMap<String, Vec<E>>,
+            observations: &HashMap<String, Vec<E>>,
+        ) -> Option<String> {
             observations
                 .iter()
                 .find(|(name, seen)| {
@@ -215,7 +219,17 @@ pub(crate) fn check_program_with_materialized_callables(
                     now.len() != seen.len() || now.iter().any(|effect| !seen.contains(effect))
                 })
                 .map(|(name, _)| name.clone())
-        };
+        }
+        let stale = first_stale(
+            &checker.transfer_effects.borrow(),
+            &checker.effect_observations.borrow(),
+        )
+        .or_else(|| {
+            first_stale(
+                &checker.call_through_effects.borrow(),
+                &checker.call_through_observations.borrow(),
+            )
+        });
         let Some(callable) = stale else {
             break checker;
         };
@@ -227,6 +241,7 @@ pub(crate) fn check_program_with_materialized_callables(
             });
         }
         transfer_seed = checker.transfer_effects.borrow().clone();
+        call_through_seed = checker.call_through_effects.borrow().clone();
     };
     let explicit_destroy_types = checker
         .structs
@@ -584,6 +599,12 @@ pub struct Checker {
     /// two-phase pass reruns the check when a callee's final committed
     /// effects differ from what its stalest call-site query observed.
     effect_observations: RefCell<HashMap<String, Vec<crate::checked::TransferEffect>>>,
+    /// Inferred higher-order call-through residues per callable, keyed like
+    /// `transfer_effects`; each call site resolves them against the concrete
+    /// callable it supplies.
+    call_through_effects: RefCell<HashMap<String, Vec<crate::checked::CallThroughEffect>>>,
+    /// First-seen call-through observations, mirroring `effect_observations`.
+    call_through_observations: RefCell<HashMap<String, Vec<crate::checked::CallThroughEffect>>>,
     /// Origins transferred into a binding by a callee's store (keyed by the
     /// binding's owner) — an interior-mutability overlay over the
     /// aggregate-origin scopes, merged on lookup.
@@ -687,12 +708,13 @@ pub struct Checker {
 
 impl Checker {
     pub fn new() -> Self {
-        Self::new_with_materialized_callables(HashMap::new(), HashMap::new())
+        Self::new_with_materialized_callables(HashMap::new(), HashMap::new(), HashMap::new())
     }
 
     fn new_with_materialized_callables(
         materialized_callables: HashMap<String, Ty>,
         transfer_seed: HashMap<String, Vec<crate::checked::TransferEffect>>,
+        call_through_seed: HashMap<String, Vec<crate::checked::CallThroughEffect>>,
     ) -> Self {
         // The bundled seeds are never inferred from bodies, so a prior
         // round's committed map overlays them rather than replacing them.
@@ -740,6 +762,8 @@ impl Checker {
             transfer_effects: RefCell::new(transfer_effects),
             call_transfers: RefCell::new(HashMap::new()),
             effect_observations: RefCell::new(HashMap::new()),
+            call_through_effects: RefCell::new(call_through_seed),
+            call_through_observations: RefCell::new(HashMap::new()),
             transferred_origins: RefCell::new(HashMap::new()),
             raise_observation_frames: RefCell::new(Vec::new()),
             implicit_conversions: RefCell::new(HashMap::new()),
@@ -1176,6 +1200,7 @@ impl Checker {
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
+            transfers: Default::default(),
         };
         coerces(&instantiated, to)
     }
@@ -1991,6 +2016,7 @@ fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)>
         conventions,
         ref_params,
         ref_return,
+        transfers,
     } = callable
     else {
         return None;
@@ -2033,6 +2059,7 @@ fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)>
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
+            transfers: transfers.clone(),
         },
     ))
 }
@@ -2049,7 +2076,11 @@ struct TransferFrame {
     /// (`mut`/`ref`) rather than owning a moved value.
     param_borrowed: Vec<bool>,
     self_owner: Option<crate::origin::OwnerId>,
+    /// Compile-time callable value parameters (decl names) in scope in this
+    /// body — call-through recording keys on them.
+    value_callables: Vec<String>,
     effects: Vec<crate::checked::TransferEffect>,
+    call_throughs: Vec<crate::checked::CallThroughEffect>,
 }
 
 /// Bundled collection mutators store an argument into `self` through
@@ -2621,6 +2652,33 @@ fn method_callable_ty(method: &MethodSig) -> Ty {
         conventions: method.conventions.clone(),
         ref_params: Box::new(method.ref_params.clone()),
         ref_return: method.ref_return.clone().map(Box::new),
+        transfers: Default::default(),
+    }
+}
+
+/// Merge a callable's committed transfer effects into a function type taken
+/// as a value, so an indirect call replays them from the type itself. Union,
+/// never replacement: a rebake after the entry grew keeps earlier effects.
+fn with_transfer_effects(mut callable: Ty, effects: &[crate::checked::TransferEffect]) -> Ty {
+    match &mut callable {
+        Ty::Func { transfers, .. } | Ty::GenericFunc { transfers, .. } => {
+            for effect in effects {
+                if !transfers.0.contains(effect) {
+                    transfers.0.push(effect.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+    callable
+}
+
+/// The transfer effects carried by a callable value's checked type (empty
+/// for non-callables and for contracts that never had effects baked).
+fn contract_transfer_effects(ty: &Ty) -> &[crate::checked::TransferEffect] {
+    match callable_contract_ty(ty) {
+        Some(Ty::Func { transfers, .. }) | Some(Ty::GenericFunc { transfers, .. }) => &transfers.0,
+        _ => &[],
     }
 }
 
@@ -2902,6 +2960,7 @@ mod dependent_callable_signature_tests {
             conventions: vec![Some(ArgConvention::Var)],
             ref_params: Box::new(vec![None]),
             ref_return: None,
+            transfers: Default::default(),
         }
     }
 

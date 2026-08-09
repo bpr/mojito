@@ -574,6 +574,7 @@ impl Checker {
             conventions,
             ref_params,
             ref_return,
+            transfers,
         } = checked
         else {
             return Err(TypeError::InvariantViolation(
@@ -596,6 +597,7 @@ impl Checker {
             conventions,
             ref_params,
             ref_return,
+            transfers,
         })
     }
 
@@ -1061,7 +1063,19 @@ impl Checker {
                 })
                 .collect(),
             self_owner,
+            value_callables: method_decls
+                .iter()
+                .filter_map(|decl| match decl {
+                    ParamDecl::Value { name, ty, .. }
+                        if matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }) =>
+                    {
+                        Some(name.trim_start_matches('*').to_string())
+                    }
+                    _ => None,
+                })
+                .collect(),
             effects: Vec::new(),
+            call_throughs: Vec::new(),
         });
         self.raise_observation_frames
             .borrow_mut()
@@ -1084,12 +1098,17 @@ impl Checker {
         self.function_bases.pop();
         self.return_ref_contracts.pop();
         self.raise_observation_frames.borrow_mut().pop();
-        if let Some(frame) = self.transfer_frames.borrow_mut().pop()
-            && !frame.effects.is_empty()
-        {
-            self.transfer_effects
-                .borrow_mut()
-                .insert(frame.callable, frame.effects);
+        if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
+            if !frame.effects.is_empty() {
+                self.transfer_effects
+                    .borrow_mut()
+                    .insert(frame.callable.clone(), frame.effects);
+            }
+            if !frame.call_throughs.is_empty() {
+                self.call_through_effects
+                    .borrow_mut()
+                    .insert(frame.callable, frame.call_throughs);
+            }
         }
         self.aggregate_escape_contexts.pop();
         self.self_mutable = saved;

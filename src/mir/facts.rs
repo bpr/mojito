@@ -51,6 +51,23 @@ impl Flatten<'_> {
         self.var(name)
     }
 
+    /// Lookup-only twin of [`Self::expression_var`] for fact probes: a name
+    /// with no checked owner and no existing slot (a top-level `def`
+    /// referenced as a value) must NOT allocate a phantom variable — a later
+    /// occurrence of the same name would then lower as a read of the
+    /// never-defined slot instead of materializing the function value.
+    pub(super) fn existing_expression_var(&self, name: &str, expression: &Expr) -> Option<VarId> {
+        if let Some(owner) = self.checked_owner(expression)
+            && let Some(var) = self.owner_vars.get(&owner).copied()
+        {
+            return Some(var);
+        }
+        self.vars
+            .iter()
+            .position(|candidate| candidate == name)
+            .map(|index| index as VarId)
+    }
+
     pub(super) fn nested_info(&self, expression: &Expr) -> Option<NestedInfo> {
         self.checked_owner(expression)
             .and_then(|binding| self.nested.get(&binding))
@@ -70,8 +87,8 @@ impl Flatten<'_> {
             });
         if let Some(mutable) = borrow
             && let ExprKind::Identifier(name) = &expression.kind
+            && let Some(var) = self.existing_expression_var(name, expression)
         {
-            let var = self.expression_var(name, expression);
             if let Some(loans) = self.aggregate_loans.get(&var) {
                 return loans
                     .iter()
@@ -120,9 +137,24 @@ impl Flatten<'_> {
                 .collect();
         }
         if let ExprKind::Identifier(name) = &expression.kind {
-            let var = self.expression_var(name, expression);
-            if let Some(loans) = self.aggregate_loans.get(&var) {
+            if let Some(var) = self.existing_expression_var(name, expression)
+                && let Some(loans) = self.aggregate_loans.get(&var)
+            {
                 return loans.clone();
+            }
+            // A capturing closure flowing into storage loans its REFERENCE
+            // captures' owners: the stored value retains their frame slots,
+            // so the owners must stay alive (and, for `imm`, unmutated)
+            // while the storage lives. Direct nested calls never consult
+            // this path, so the loan-free declaration-to-call capture model
+            // is preserved; owned copy/move captures are self-contained.
+            if let Some(info) = self.nested_info(expression) {
+                let mut loans = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for capture in &info.captures {
+                    self.collect_capture_loans(capture, &mut loans, &mut seen);
+                }
+                return loans;
             }
         }
         match &expression.kind {
@@ -160,6 +192,38 @@ impl Flatten<'_> {
                 .flat_map(|value| self.aggregate_borrows(value))
                 .collect(),
             _ => Vec::new(),
+        }
+    }
+
+    /// One loan per reference capture (transitively through captured closure
+    /// slots), rooted at the captured owner's variable. `imm` loans
+    /// immutably; `mut`/`ref` loan mutably; copy/move environments are
+    /// self-contained and stop the walk.
+    fn collect_capture_loans(
+        &self,
+        capture: &crate::mir::NestedCapture,
+        loans: &mut Vec<MirLoan>,
+        seen: &mut std::collections::HashSet<crate::origin::OwnerId>,
+    ) {
+        use crate::ast::CaptureKind;
+        if matches!(capture.kind, CaptureKind::Copy | CaptureKind::Move)
+            || !seen.insert(capture.binding)
+        {
+            return;
+        }
+        if let Some(var) = self.owner_vars.get(&capture.binding).copied()
+            && !loans.iter().any(|loan| loan.place.root == var)
+        {
+            loans.push(MirLoan {
+                place: MirPlace::root(var, self.var_types.get(&var).cloned()),
+                mutable: matches!(capture.kind, CaptureKind::Mut | CaptureKind::Ref),
+                interior: None,
+            });
+        }
+        if let Some(callable) = self.nested.get(&capture.binding).cloned() {
+            for nested in &callable.captures {
+                self.collect_capture_loans(nested, loans, seen);
+            }
         }
     }
 

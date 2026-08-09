@@ -95,6 +95,9 @@ pub enum Ty {
         conventions: Vec<Option<ArgConvention>>,
         ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
         ref_return: Option<Box<crate::origin::RefSig>>,
+        /// Identity-transparent inferred transfer effects; see
+        /// [`crate::checked::TransferSet`].
+        transfers: crate::checked::TransferSet,
     },
     /// A generic function synthesized from a `def` with a `[params]` list.
     GenericFunc {
@@ -114,6 +117,9 @@ pub enum Ty {
         conventions: Vec<Option<ArgConvention>>,
         ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
         ref_return: Option<Box<crate::origin::RefSig>>,
+        /// Identity-transparent inferred transfer effects; see
+        /// [`crate::checked::TransferSet`].
+        transfers: crate::checked::TransferSet,
     },
     /// A source name that denotes multiple callable signatures. The checker
     /// resolves an overload set at each call site. The first implementation
