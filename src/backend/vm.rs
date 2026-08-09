@@ -2406,7 +2406,8 @@ fn vm_type_is_symbolic(ty: &Ty) -> bool {
             vm_type_is_symbolic(element)
         }
         Ty::Ref(reference) => vm_type_is_symbolic(&reference.referent),
-        Ty::Int
+        Ty::Dtype
+        | Ty::Int
         | Ty::UInt
         | Ty::Bool
         | Ty::StringLiteral
@@ -2572,7 +2573,11 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
                 .map(ct_value_as_runtime)
                 .collect::<Option<Vec<_>>>()?,
         ),
-        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => return None,
+        CtValue::Dtype(_)
+        | CtValue::Struct { .. }
+        | CtValue::Type(_)
+        | CtValue::Reflected(_)
+        | CtValue::Param(_) => return None,
     })
 }
 
@@ -2671,12 +2676,16 @@ fn vm_ct_value_is_symbolic(value: &CtValue) -> bool {
             values.iter().any(vm_ct_value_is_symbolic)
         }
         CtValue::Type(ty) | CtValue::Reflected(ty) => vm_type_is_symbolic(ty),
+        CtValue::Struct { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| vm_ct_value_is_symbolic(value)),
         CtValue::Int(_)
         | CtValue::UInt(_)
         | CtValue::Float(_)
         | CtValue::IntLiteral(_)
         | CtValue::FloatLiteral(_)
         | CtValue::Bool(_)
+        | CtValue::Dtype(_)
         | CtValue::Str(_) => false,
     }
 }

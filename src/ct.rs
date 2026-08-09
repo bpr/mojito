@@ -39,6 +39,19 @@ pub enum CtValue {
     Str(String),
     Tuple(Vec<CtValue>),
     List(Vec<CtValue>),
+    /// A `DType.<dt>` compile-time value — the binding of a `[dtype: DType]`
+    /// value parameter. Materializes as the member spelling, which type
+    /// resolution already accepts inside `SIMD[...]`/`Scalar[...]` brackets.
+    Dtype(crate::ast::Dtype),
+    /// A frozen struct instance (declaration-ordered fields) — the binding of
+    /// a struct-typed value parameter such as `[layout: Layout]`. Freezing is
+    /// restricted to structs constructible fieldwise from recursively
+    /// freezable fields, so materialization is always the fieldwise
+    /// construction call.
+    Struct {
+        name: String,
+        fields: Vec<(String, CtValue)>,
+    },
     Type(Box<Ty>),
     /// The zero-sized compile-time handle produced by current Mojo's
     /// `reflect[T]` API. Field selection returns another handle, allowing
@@ -223,6 +236,13 @@ impl CtValue {
             | (value @ CtValue::FloatLiteral(_), Ty::FloatLiteral)
             | (value @ CtValue::Bool(_), Ty::Bool)
             | (value @ CtValue::Str(_), Ty::StringLiteral) => Some(value),
+            (value @ CtValue::Dtype(_), Ty::Dtype) => Some(value),
+            (value @ CtValue::Struct { .. }, Ty::Struct(target, _)) => {
+                let CtValue::Struct { name, .. } = &value else {
+                    unreachable!("guard established a struct value");
+                };
+                (name == target).then_some(value)
+            }
             (CtValue::IntLiteral(value), Ty::Int) => value.wrapping_signed(64).map(CtValue::Int),
             (CtValue::IntLiteral(value), Ty::UInt) => {
                 value.wrapping_unsigned(64).map(CtValue::UInt)
@@ -279,6 +299,26 @@ impl CtValue {
             CtValue::Str(s) => ExprKind::Str(s.clone()),
             CtValue::Tuple(vs) => ExprKind::TupleLit(materialize_all(vs, span)?),
             CtValue::List(vs) => ExprKind::ListLit(materialize_all(vs, span)?),
+            CtValue::Dtype(dtype) => ExprKind::Member {
+                object: Box::new(Expr {
+                    kind: ExprKind::Identifier("DType".to_string()),
+                    span,
+                    source: None,
+                    syntax_id: crate::token::SyntaxId::fresh(),
+                }),
+                field: dtype.name().to_string(),
+            },
+            // The fieldwise construction call; freezing guaranteed a matching
+            // constructor exists.
+            CtValue::Struct { name, fields } => ExprKind::Call {
+                name: name.clone(),
+                param_args: Vec::new(),
+                args: fields
+                    .iter()
+                    .map(|(_, value)| value.materialize(span))
+                    .collect::<Option<Vec<_>>>()?,
+                kwargs: Vec::new(),
+            },
             CtValue::Type(_) | CtValue::Reflected(_) => return None,
             CtValue::Param(_) => return None,
         };
@@ -305,6 +345,17 @@ impl fmt::Display for CtValue {
             CtValue::FloatLiteral(value) => write!(f, "{value}"),
             CtValue::Bool(b) => write!(f, "{b}"),
             CtValue::Str(s) => write!(f, "{s:?}"),
+            CtValue::Dtype(dtype) => write!(f, "DType.{}", dtype.name()),
+            CtValue::Struct { name, fields } => {
+                write!(f, "{name}(")?;
+                for (index, (_, value)) in fields.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{value}")?;
+                }
+                write!(f, ")")
+            }
             CtValue::Type(ty) => write!(f, "{ty}"),
             CtValue::Reflected(ty) => write!(f, "reflect[{ty}]"),
             CtValue::Param(name) => write!(f, "{name}"),

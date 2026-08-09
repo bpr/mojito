@@ -170,6 +170,13 @@ impl<'a> Elab<'a> {
                 ))
             })?;
             let mut spec = match &self.specializable[&job.orig].kind {
+                StmtKind::Struct { type_params, .. }
+                    if !classify_ct_params(type_params)
+                        .iter()
+                        .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. })) =>
+                {
+                    self.generate_value_struct_spec(&job.orig, &job.vals)?
+                }
                 StmtKind::Struct { .. } => self.generate_struct_spec(&job.orig, &job.vals)?,
                 _ => self.generate_def_spec(
                     self.specializable[&job.orig],
@@ -587,6 +594,134 @@ impl<'a> Elab<'a> {
     /// types, expand pack-typed member annotations (`Tuple[*Ts]`) to the concrete
     /// list, and emit a fully concrete (parameter-free) struct under the mangled
     /// name. Unlike a def specialization, nothing stays symbolic.
+    /// Emit a concrete struct for a template whose compile-time parameters
+    /// are scalar/`DType`/struct **values** (no type packs): fold each value
+    /// into method bodies, defaults, and field/signature type positions,
+    /// retain Origin/`mut` binders as TypeParams (the specialization stays
+    /// origin-generic, like `_ListIter`), and name the result by the
+    /// specialization mangle.
+    pub(super) fn generate_value_struct_spec(
+        &self,
+        orig: &str,
+        vals: &[CtValue],
+    ) -> Result<Stmt, ComptimeError> {
+        let template = self.specializable[orig];
+        let StmtKind::Struct {
+            decorators,
+            type_params,
+            conforms,
+            callable_conformance,
+            conformance_conditions,
+            fields,
+            associated,
+            methods,
+            fieldwise_init,
+            ..
+        } = &template.kind
+        else {
+            return Err(ComptimeError::NotComptime(format!(
+                "specialization registry entry '{orig}' is not a struct"
+            )));
+        };
+        let mut kept_type_params = Vec::new();
+        let mut env = self.top_consts.borrow().clone();
+        let mut subs = self.top_consts.borrow().clone();
+        let mut values = vals.iter();
+        for parameter in type_params {
+            if retained_specialization_param(parameter, type_params) {
+                kept_type_params.push(parameter.clone());
+                continue;
+            }
+            let value = values.next().ok_or_else(|| {
+                ComptimeError::Arity(format!(
+                    "'{orig}' expects a compile-time argument for parameter '{}'",
+                    parameter.name
+                ))
+            })?;
+            let binding = parameter.name.trim_start_matches('*').to_string();
+            env.insert(binding.clone(), value.clone());
+            subs.insert(binding, value.clone());
+        }
+        if values.next().is_some() {
+            return Err(ComptimeError::Arity(format!(
+                "'{orig}' received more compile-time arguments than parameters"
+            )));
+        }
+        let value_subs: Subs = &|name| subs.get(name).cloned();
+        let mut specialized_fields = fields.clone();
+        for field in &mut specialized_fields {
+            rewrite_type(&mut field.ty, value_subs);
+        }
+        let mut specialized_associated = associated.clone();
+        for member in &mut specialized_associated {
+            member.value = materialize_expression(&member.value, &subs);
+        }
+        let mut specialized_methods = Vec::with_capacity(methods.len());
+        for method in methods {
+            let mut method = method.clone();
+            // A regular runtime parameter shadows a same-named compile-time
+            // binding inside its own body.
+            let mut method_env = env.clone();
+            let mut method_subs = subs.clone();
+            method_subs.remove("self");
+            for parameter in &method.params {
+                method_subs.remove(&parameter.name);
+                method_env.remove(&parameter.name);
+            }
+            let elaborated = self
+                .block(&method.body, &mut method_env.clone(), true)
+                .map_err(|error| {
+                    ComptimeError::NotComptime(format!(
+                        "while specializing {orig}.{}: {error}",
+                        method.name
+                    ))
+                })?;
+            method.body = materialize_block(elaborated, &method_subs);
+            let method_value_subs: Subs = &|name| method_subs.get(name).cloned();
+            for parameter in &mut method.params {
+                rewrite_type(&mut parameter.ty, method_value_subs);
+                if let Some(default) = &mut parameter.default {
+                    *default = materialize_expression(default, &method_subs);
+                }
+            }
+            if let Some(ret) = &mut method.ret {
+                rewrite_type(ret, method_value_subs);
+            }
+            if let Some(error) = &mut method.raises_type {
+                rewrite_type(error, method_value_subs);
+            }
+            if let Some(condition) = method.where_clause.take() {
+                method.where_clause = Some(materialize_expression(&condition, &method_subs));
+            }
+            specialized_methods.push(method);
+        }
+        let mangled = mangle(orig, vals);
+        let mut spec = mk(
+            StmtKind::Struct {
+                name: mangled.clone(),
+                decorators: decorators.clone(),
+                type_params: kept_type_params,
+                conforms: conforms.clone(),
+                callable_conformance: callable_conformance.clone(),
+                conformance_conditions: conformance_conditions.clone(),
+                fields: specialized_fields,
+                associated: specialized_associated,
+                methods: specialized_methods,
+                fieldwise_init: *fieldwise_init,
+            },
+            template.span,
+        );
+        // Same provenance discipline as the pack path: specializations reuse
+        // template spans, so each subtree gets a unique source tag.
+        let tag = match &template.module {
+            Some(module) => format!("{module}${mangled}"),
+            None => mangled,
+        };
+        crate::ast::stamp_source(std::slice::from_mut(&mut spec), &tag);
+        spec.module = None;
+        Ok(spec)
+    }
+
     pub(super) fn generate_struct_spec(
         &self,
         orig: &str,

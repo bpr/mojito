@@ -4,7 +4,16 @@
 
 use super::*;
 
+/// The synthesized root of a struct-construction/static-method CTFE run.
+const CTFE_STRUCT_ENTRY: &str = "$ctfe$struct$entry";
+
 impl<'a> Elab<'a> {
+    /// Registry-aware specializability: recognizes struct-typed value
+    /// parameters through the collected struct set.
+    pub(super) fn is_specializable(&self, statement: &Stmt) -> bool {
+        is_specializable_declaration_in(statement, &|name| self.structs.contains_key(name))
+    }
+
     pub(super) fn ctfe_call(
         &self,
         name: &str,
@@ -65,7 +74,7 @@ impl<'a> Elab<'a> {
             .program
             .iter()
             .filter_map(|statement| match &statement.kind {
-                StmtKind::Def { name, .. } if !is_specializable_declaration(statement) => {
+                StmtKind::Def { name, .. } if !self.is_specializable(statement) => {
                     Some(name.clone())
                 }
                 _ => None,
@@ -79,7 +88,7 @@ impl<'a> Elab<'a> {
         for statement in self.program {
             if matches!(&statement.kind, StmtKind::Trait { .. })
                 || matches!(&statement.kind, StmtKind::Struct { .. })
-                    && !is_specializable_declaration(statement)
+                    && !self.is_specializable(statement)
             {
                 let mut calls = HashSet::new();
                 collect_vm_ctfe_stmt_calls(statement, &mut calls);
@@ -95,7 +104,7 @@ impl<'a> Elab<'a> {
             let mut calls = HashSet::new();
             for statement in self.program {
                 if matches!(&statement.kind, StmtKind::Def { name: candidate, .. } if candidate == &name)
-                    && !is_specializable_declaration(statement)
+                    && !self.is_specializable(statement)
                 {
                     collect_vm_ctfe_stmt_calls(statement, &mut calls);
                 }
@@ -142,7 +151,7 @@ impl<'a> Elab<'a> {
                 // cross the ordinary checked boundary. Concrete CTFE uses have
                 // already been specialized; an unused public `Tuple[*Ts]`
                 // template must not invalidate an otherwise scalar subprogram.
-                StmtKind::Struct { .. } => !is_specializable_declaration(stmt),
+                StmtKind::Struct { .. } => !self.is_specializable(stmt),
                 StmtKind::Trait { .. } => true,
                 _ => false,
             })
@@ -161,7 +170,213 @@ impl<'a> Elab<'a> {
             .run_function_value(&program, name, args, value_params, self.fuel.get())
             .map_err(|e| ComptimeError::NotComptime(format!("VM CTFE failed for '{name}': {e}")))?;
         self.fuel.set(remaining_fuel);
-        Ok(Some(vm_to_ct(value)?))
+        Ok(Some(self.vm_value_to_ct(value)?))
+    }
+
+    /// Convert a CTFE result back into a compile-time value, freezing a
+    /// fieldwise-constructible struct instance (recursively) where the plain
+    /// scalar/collection conversion cannot.
+    pub(super) fn vm_value_to_ct(&self, value: Value) -> Result<CtValue, ComptimeError> {
+        match value {
+            Value::Struct {
+                name,
+                fields,
+                value_params,
+            } if value_params.is_empty() => {
+                let Some(info) = self.structs.get(&name) else {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "VM CTFE returned an unregistered struct '{name}'"
+                    )));
+                };
+                if !info.fieldwise {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "a compile-time '{name}' value needs fieldwise construction \
+                         (@fieldwise_init or a field-mirroring __init__)"
+                    )));
+                }
+                Ok(CtValue::Struct {
+                    name,
+                    fields: fields
+                        .into_iter()
+                        .map(|(field, value)| Ok((field, self.vm_value_to_ct(value)?)))
+                        .collect::<Result<Vec<_>, ComptimeError>>()?,
+                })
+            }
+            other => vm_to_ct(other),
+        }
+    }
+
+    /// Evaluate a struct construction (`method` = `None`) or a static method
+    /// call on a struct at compile time: run a synthesized entry through VM
+    /// CTFE and freeze the result. The arguments were evaluated by the caller
+    /// and arrive as scope-free literal expressions.
+    pub(super) fn ctfe_struct_entry(
+        &self,
+        struct_name: &str,
+        method: Option<&str>,
+        literal_args: Vec<Expr>,
+        span: Span,
+    ) -> Result<CtValue, ComptimeError> {
+        self.burn()?;
+        let mut visiting = HashSet::new();
+        let mut needed = HashSet::new();
+        if !self.vm_ctfe_safe_struct_entry(struct_name, method, &mut visiting, &mut needed) {
+            let target = method
+                .map(|m| format!("{struct_name}.{m}"))
+                .unwrap_or_else(|| struct_name.to_string());
+            return Err(ComptimeError::NotComptime(format!(
+                "'{target}' is not safe for VM-backed compile-time execution"
+            )));
+        }
+        let ret = match method {
+            None => Type::Named(struct_name.to_string(), Vec::new()),
+            Some(method) => self
+                .struct_static_method_ret(struct_name, method)
+                .ok_or_else(|| {
+                    ComptimeError::NotComptime(format!(
+                        "'{struct_name}.{method}' is not a value-returning static method"
+                    ))
+                })?,
+        };
+        let expr = |kind: ExprKind| Expr {
+            kind,
+            span,
+            source: None,
+            syntax_id: crate::token::SyntaxId::fresh(),
+        };
+        let call = match method {
+            None => expr(ExprKind::Call {
+                name: struct_name.to_string(),
+                param_args: Vec::new(),
+                args: literal_args,
+                kwargs: Vec::new(),
+            }),
+            Some(method) => expr(ExprKind::MethodCall {
+                object: Box::new(expr(ExprKind::Identifier(struct_name.to_string()))),
+                method: method.to_string(),
+                args: literal_args,
+                kwargs: Vec::new(),
+            }),
+        };
+        let entry = mk(
+            StmtKind::Def {
+                name: CTFE_STRUCT_ENTRY.to_string(),
+                decorators: Vec::new(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                positional_only: None,
+                keyword_only: None,
+                captures: None,
+                raises: false,
+                raises_type: None,
+                ret: Some(ret),
+                where_clause: None,
+                body: vec![mk(StmtKind::Return(Some(call)), span)],
+            },
+            span,
+        );
+        let mut vm = VmBackend::new();
+        let declarations = self.vm_ctfe_declaration_closure(&needed);
+        let mut program = self
+            .program
+            .iter()
+            .filter(|stmt| match &stmt.kind {
+                StmtKind::Def { name, .. } => declarations.contains(name),
+                StmtKind::Struct { .. } => !self.is_specializable(stmt),
+                StmtKind::Trait { .. } => true,
+                _ => false,
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        program.push(entry);
+        let (value, remaining_fuel) = vm
+            .run_function_value(
+                &program,
+                CTFE_STRUCT_ENTRY,
+                Vec::new(),
+                &[],
+                self.fuel.get(),
+            )
+            .map_err(|e| {
+                ComptimeError::NotComptime(format!(
+                    "VM CTFE failed for '{struct_name}' construction: {e}"
+                ))
+            })?;
+        self.fuel.set(remaining_fuel);
+        self.vm_value_to_ct(value)
+    }
+
+    /// The declared return type of a `@staticmethod`, with `Self` resolved to
+    /// the owning struct.
+    fn struct_static_method_ret(&self, struct_name: &str, method: &str) -> Option<Type> {
+        self.program.iter().find_map(|stmt| match &stmt.kind {
+            StmtKind::Struct { name, methods, .. } if name == struct_name => methods
+                .iter()
+                .find(|candidate| candidate.name == method && !candidate.has_self)
+                .and_then(|candidate| candidate.ret.clone())
+                .map(|ret| match ret {
+                    Type::SelfType => Type::Named(struct_name.to_string(), Vec::new()),
+                    other => other,
+                }),
+            _ => None,
+        })
+    }
+
+    /// Whether a struct's constructors (and, when named, one of its static
+    /// methods) pass the CTFE purity walk.
+    pub(super) fn vm_ctfe_safe_struct_entry(
+        &self,
+        struct_name: &str,
+        method: Option<&str>,
+        visiting: &mut HashSet<String>,
+        needed: &mut HashSet<String>,
+    ) -> bool {
+        if !self.vm_ctfe_safe_struct_ctors(struct_name, visiting, needed) {
+            return false;
+        }
+        let Some(target) = method else {
+            return true;
+        };
+        self.program.iter().any(|stmt| match &stmt.kind {
+            StmtKind::Struct { name, methods, .. } if name == struct_name => {
+                let overloads: Vec<_> = methods
+                    .iter()
+                    .filter(|candidate| candidate.name == target && !candidate.has_self)
+                    .collect();
+                !overloads.is_empty()
+                    && overloads
+                        .iter()
+                        .all(|candidate| self.vm_ctfe_safe_block(&candidate.body, visiting, needed))
+            }
+            _ => false,
+        })
+    }
+
+    /// Whether every constructor body of a registered, non-specializable
+    /// struct passes the purity walk (a struct construction inside CTFE code).
+    pub(super) fn vm_ctfe_safe_struct_ctors(
+        &self,
+        struct_name: &str,
+        visiting: &mut HashSet<String>,
+        needed: &mut HashSet<String>,
+    ) -> bool {
+        let guard = format!("$struct${struct_name}");
+        if !visiting.insert(guard.clone()) {
+            return true;
+        }
+        let safe = self.program.iter().any(|stmt| match &stmt.kind {
+            StmtKind::Struct { name, methods, .. }
+                if name == struct_name && !self.is_specializable(stmt) =>
+            {
+                methods
+                    .iter()
+                    .filter(|method| method.name == "__init__")
+                    .all(|method| self.vm_ctfe_safe_block(&method.body, visiting, needed))
+            }
+            _ => false,
+        });
+        visiting.remove(&guard);
+        safe
     }
 
     pub(super) fn rewrite_vm_ctfe_program(
@@ -611,7 +826,10 @@ impl<'a> Elab<'a> {
                         .all(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
                     && (name == "is_same_type"
                         || vm_ctfe_safe_builtin(name)
-                        || self.vm_ctfe_safe_fn(name, visiting, needed))
+                        || self.vm_ctfe_safe_fn(name, visiting, needed)
+                        // A struct construction is safe when its constructor
+                        // bodies are.
+                        || self.vm_ctfe_safe_struct_ctors(name, visiting, needed))
             }
             ExprKind::MethodCall { .. }
             | ExprKind::BraceLit(_)

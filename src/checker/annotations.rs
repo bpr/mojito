@@ -101,6 +101,8 @@ pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {
 pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
     match name {
         "Int" => Some(Ty::Int),
+        // A `[dtype: DType]` value parameter; compile-time-only.
+        "DType" => Some(Ty::Dtype),
         "SIMDLength" => Some(Ty::Int),
         // Deprecated transitional spelling of `SIMDLength`; accepted, never
         // emitted.

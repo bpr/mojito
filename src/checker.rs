@@ -411,11 +411,13 @@ impl ConformanceOracle {
                     decl,
                     ParamDecl::Type { variadic: true, .. }
                         | ParamDecl::Value { variadic: true, .. }
-                )
+                ) || matches!(decl, ParamDecl::Value { ty, .. }
+                    if matches!(**ty, Ty::Dtype | Ty::Struct(..)))
             }) {
                 // Pack-dependent fields are expanded into ordinary concrete
-                // fields/types by specialization. The template itself cannot be
-                // resolved as a single erased type.
+                // fields/types by specialization; DType-/struct-valued
+                // templates fold their fields the same way. The template
+                // itself cannot be resolved as a single erased type.
                 continue;
             }
             let self_ty = Ty::Struct(name.clone(), decls.iter().map(param_as_arg).collect());

@@ -786,9 +786,18 @@ impl<'a> Elab<'a> {
         };
         let decls = classify_ct_params(type_params);
         let [ParamDecl::Type { variadic: true, .. }] = decls.as_slice() else {
-            return Err(ComptimeError::NotComptime(format!(
-                "variadic struct '{name}' supports exactly one type-parameter pack and no other compile-time parameters"
-            )));
+            if decls
+                .iter()
+                .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. }))
+            {
+                return Err(ComptimeError::NotComptime(format!(
+                    "variadic struct '{name}' supports exactly one type-parameter pack and no other compile-time parameters"
+                )));
+            }
+            // A value-parameter struct (`Buf[n, dt]`, `Tagged[layout]`)
+            // resolves each declaration in order, retained binders skipped —
+            // mirroring the def path's shape.
+            return self.resolve_value_struct_spec_args(name, type_params, param_args, consts);
         };
         if param_args.is_empty() {
             return Err(ComptimeError::NotComptime(format!(
@@ -803,6 +812,80 @@ impl<'a> Elab<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(vec![CtValue::Tuple(types)])
+    }
+
+    /// Resolve a value-parameter struct application (`DType`, struct-typed,
+    /// and scalar value declarations; Origin/`mut` binders retained).
+    fn resolve_value_struct_spec_args(
+        &self,
+        name: &str,
+        type_params: &[TypeParam],
+        param_args: &[ParamArg],
+        consts: &HashMap<String, CtValue>,
+    ) -> Result<Vec<CtValue>, ComptimeError> {
+        // Retained Origin/`mut` binders take no explicit argument at a struct
+        // application (the checker infers them on the specialization), so the
+        // positional distribution runs against the evaluated parameters only.
+        let evaluated: Vec<TypeParam> = type_params
+            .iter()
+            .filter(|parameter| !retained_specialization_param(parameter, type_params))
+            .cloned()
+            .collect();
+        let bound = bind_spec_param_args(&evaluated, param_args, name)?;
+        let mut vals = Vec::new();
+        let mut environment = consts.clone();
+        for (parameter, arguments) in evaluated.iter().zip(bound) {
+            let decl = classify_ct_param_with(parameter, type_params, &|bound| {
+                self.structs.contains_key(bound)
+            })
+            .ok_or_else(|| {
+                ComptimeError::NotComptime(format!(
+                    "generic '{name}': parameter '{}' has no compile-time classification",
+                    parameter.name
+                ))
+            })?;
+            if matches!(decl, ParamDecl::Type { .. }) {
+                return Err(ComptimeError::NotComptime(format!(
+                    "generic '{name}': mixing type parameters with DType/struct \
+                     value parameters is not supported yet (parameter '{}')",
+                    parameter.name
+                )));
+            }
+            let value = match arguments.first() {
+                Some(argument) => self.resolve_ct_arg(&decl, argument, &environment)?,
+                None => {
+                    let ParamDecl::Value {
+                        default: Some(default),
+                        ty,
+                        ..
+                    } = &decl
+                    else {
+                        return Err(ComptimeError::Arity(format!(
+                            "generic '{name}' requires compile-time parameter '{}'",
+                            parameter.name
+                        )));
+                    };
+                    let evaluated = default.evaluate(&environment).ok_or_else(|| {
+                        ComptimeError::NotComptime(format!(
+                            "cannot evaluate default for parameter '{}'",
+                            parameter.name
+                        ))
+                    })?;
+                    materialize_ct_value(evaluated.clone(), ty).ok_or_else(|| {
+                        ComptimeError::NotComptime(format!(
+                            "default for parameter '{}' expects {ty}, got {evaluated}",
+                            parameter.name
+                        ))
+                    })?
+                }
+            };
+            environment.insert(
+                decl.name().trim_start_matches('*').to_string(),
+                value.clone(),
+            );
+            vals.push(value);
+        }
+        Ok(vals)
     }
 
     /// Resolve a variadic-struct application when it is ready for concrete

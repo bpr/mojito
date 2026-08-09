@@ -8,6 +8,35 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- CPU Layout and LayoutTensor semantics. A new bundled `layout` package
+  (import-only, never prelude) self-hosts the CPU layout core: a flat
+  rank-≤4 `IntTuple`, `Layout` with `row_major`/`col_major` factories,
+  `rank`/`size`/`cosize`, equality, printing, and the callable
+  coordinate-to-linear mapping via `def(IntTuple) -> Int` conformance;
+  and `LayoutTensor[dtype: DType, layout: Layout]`, a layout-aware view
+  over a caller-managed `UnsafePointer[Scalar[dtype]]` buffer with
+  rank-1/rank-2 indexing, `size()`/`dim(i)`, and write-through
+  assignment. Underneath it, two new compile-time parameter forms
+  monomorphize their declarations before checking (no MIR schema
+  change): `[dtype: DType]` value parameters on defs and structs
+  (`Scalar[dtype]`/`SIMD[dtype, w]` positions resolve concretely per
+  application), and struct-typed value parameters on structs
+  (`[layout: Layout]`) whose arguments — constructor or static-method
+  calls like `Layout.row_major(2, 3)` — evaluate through VM-backed CTFE
+  and freeze as `CtValue::Struct` specialization keys (fieldwise
+  construction and recursively pointer-free fields required; frozen
+  field reads fold to constants; `comptime L = Layout.row_major(2, 3)`
+  works as a module constant too). Struct monomorphization generalizes
+  from type packs to mixed scalar/dtype/struct value declarations with
+  retained `mut`/Origin binders, and value parameters now bake into
+  signature/field type positions. Also fixed en route: overloaded
+  methods with `Scalar[DType.x]`/`SIMD[...]`-annotated parameters
+  produced mismatched overload symbols between declaration and call
+  sides (now both use the canonical checked spelling). Deferred and
+  documented: origin-parameterized borrowed tensor views, the GPU
+  surface, tile/slice views, SIMD load/store, the layout algebra, and
+  recursive IntTuple.
+
 - SIMD semantic completion. `SIMDLength` is now the width-parameter
   spelling (`SIMDSize` stays a deprecated, never-emitted compatibility
   alias, and the comptime elaborator now classifies both as value

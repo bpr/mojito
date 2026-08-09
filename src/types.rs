@@ -69,6 +69,10 @@ pub enum Ty {
     /// type application whose constructor participates in literal inference and
     /// must be solved before checked HIR is produced.
     Infer,
+    /// The compile-time-only type of a `[dtype: DType]` value parameter. No
+    /// runtime value inhabits it; specialization folds every use to a
+    /// concrete `DType.<dt>` spelling before checking.
+    Dtype,
     /// A non-generic function. `params`/`names` describe the regular parameters;
     /// `required[i]` is true when regular parameter `i` has no default. The
     /// marker fields are indexes into this regular-parameter list.
@@ -470,6 +474,7 @@ impl fmt::Display for Ty {
             Ty::StringLiteral => write!(f, "StringLiteral"),
             Ty::Float64 | Ty::FloatLiteral => write!(f, "Float64"),
             Ty::Infer => write!(f, "_"),
+            Ty::Dtype => write!(f, "DType"),
             Ty::None => write!(f, "None"),
             Ty::Never => write!(f, "Never"),
             Ty::Func {

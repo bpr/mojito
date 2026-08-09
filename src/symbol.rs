@@ -493,6 +493,25 @@ fn ast_raw(
             // stable `String` spelling.
             "String".to_string()
         }
+        // `Scalar[DType.x]` / `SIMD[DType.x, N]` annotations mangle as their
+        // canonical checked spelling (`Scalar[DType.float32]` is the width-1
+        // `Float32`), matching `ty_raw`'s display of the resolved `Ty::Simd`.
+        Type::Named(name, args)
+            if name == "Scalar" && args.len() == 1 && param_arg_dtype(&args[0]).is_some() =>
+        {
+            let dtype = param_arg_dtype(&args[0]).expect("guard established a dtype");
+            simd_annotation_raw(dtype, 1)
+        }
+        Type::Named(name, args)
+            if name == "SIMD"
+                && args.len() == 2
+                && param_arg_dtype(&args[0]).is_some()
+                && param_arg_width(&args[1], comptimes).is_some() =>
+        {
+            let dtype = param_arg_dtype(&args[0]).expect("guard established a dtype");
+            let width = param_arg_width(&args[1], comptimes).expect("guard established a width");
+            simd_annotation_raw(dtype, width)
+        }
         Type::Named(name, args) => {
             let mut s = parameter_raw(name, type_bounds);
             for arg in args {
@@ -528,6 +547,39 @@ fn ast_raw(
         Type::SelfType => "Self".to_string(),
         Type::MaterializedCallable(key) => key.clone(),
         other => format!("{other:?}"),
+    }
+}
+
+/// The dtype named by a `DType.<dt>` annotation argument, if that is what it is.
+fn param_arg_dtype(argument: &ParamArg) -> Option<crate::ast::Dtype> {
+    let ParamArg::Value(Expr {
+        kind: ExprKind::Member { object, field },
+        ..
+    }) = argument
+    else {
+        return None;
+    };
+    matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
+        .then(|| crate::ast::Dtype::from_name(field))
+        .flatten()
+}
+
+/// A comptime-evaluable SIMD width annotation argument.
+fn param_arg_width(argument: &ParamArg, comptimes: &HashMap<String, i64>) -> Option<i64> {
+    let ParamArg::Value(expr) = argument else {
+        return None;
+    };
+    eval_comptime_int(expr, comptimes)
+}
+
+/// The canonical checked spelling of a scalar/SIMD annotation: width-1
+/// `int`/`float64` canonicalize to the native scalars, everything else uses
+/// the `Ty::Simd` display (the scalar alias where one exists).
+fn simd_annotation_raw(dtype: crate::ast::Dtype, width: i64) -> String {
+    match (dtype, width) {
+        (crate::ast::Dtype::Int, 1) => "Int".to_string(),
+        (crate::ast::Dtype::Float64, 1) => "Float64".to_string(),
+        _ => Ty::Simd { dtype, width }.to_string(),
     }
 }
 

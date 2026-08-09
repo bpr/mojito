@@ -620,6 +620,7 @@ fn tuple_specialization_type_is_closed_in(
         | Ty::Bool
         | Ty::StringLiteral
         | Ty::Float64
+        | Ty::Dtype
         | Ty::None
         | Ty::Never
         | Ty::IntLiteral
@@ -640,6 +641,9 @@ fn tuple_specialization_value_is_closed_in(
         CtValue::Tuple(values) | CtValue::List(values) => values.iter().all(|value| {
             tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
         }),
+        CtValue::Struct { fields, .. } => fields.iter().all(|(_, value)| {
+            tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
+        }),
         CtValue::Type(ty) | CtValue::Reflected(ty) => {
             tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
         }
@@ -649,6 +653,7 @@ fn tuple_specialization_value_is_closed_in(
         | CtValue::IntLiteral(_)
         | CtValue::FloatLiteral(_)
         | CtValue::Bool(_)
+        | CtValue::Dtype(_)
         | CtValue::Str(_) => true,
     }
 }

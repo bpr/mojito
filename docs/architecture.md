@@ -478,6 +478,19 @@ SIMD dtype and width selection is likewise a checked adjustment rather than
 MIR-side syntax evaluation. Span-indexed call/conversion maps remain only as
 public compatibility queries and are not part of lowering.
 
+Specialization value forms include compile-time struct instances and dtypes:
+`CtValue::Dtype` binds a `[dtype: DType]` parameter, and `CtValue::Struct`
+freezes a fieldwise-constructible, recursively pointer-free struct instance
+produced by VM-backed CTFE (a constructor or static-method call runs through a
+synthesized entry against the checked CTFE subprogram). Both monomorphize
+their declarations before checking — the checker never sees a symbolic dtype
+or struct value, no MIR schema is affected, and a frozen instance materializes
+back as its ordinary fieldwise construction wherever the specialized body
+reads the parameter. Freezing and materialization are inverses by
+construction: the freeze precondition (fieldwise constructor, freezable
+fields) is exactly what guarantees the materialized construction re-creates
+the same value.
+
 `SemanticAdjustment::SelectedCall` is the canonical method-like boundary for
 ordinary method calls and method-dispatched nominal subscripts. It records the exact lowered
 target, executable result type, and typed raising effect; declared

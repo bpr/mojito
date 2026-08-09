@@ -1246,6 +1246,8 @@ impl Checker {
             CtValue::FloatLiteral(_) => Some(Ty::FloatLiteral),
             CtValue::Bool(_) => Some(Ty::Bool),
             CtValue::Str(_) => Some(Ty::StringLiteral),
+            CtValue::Dtype(_) => Some(Ty::Dtype),
+            CtValue::Struct { name, .. } => Some(Ty::Struct(name.clone(), Vec::new())),
             CtValue::Tuple(values) => values
                 .iter()
                 .map(|v| self.ct_value_ty(v, self_ty))

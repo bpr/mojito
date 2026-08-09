@@ -68,9 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **CPU Layout and LayoutTensor semantics** — implement the target-independent
-  type, indexing, and memory-view contracts required by CPU programs while
-  leaving observable ABI layout and GPU memory spaces to later milestones.
 - [ ] **Cross-call transfer residues** — the transfer-effect system is
   hardened (two-phase order-independent visibility; nested-def, unpack,
   and augmented-assignment guard coverage; see `docs/features.md` and
@@ -137,6 +134,17 @@ schema.
   `Variant`, finish `destroy_with`, representation writing, and fully generic
   TypeList-driven conditional protocol synthesis rather than adding compiler
   special cases for every standard-library method.
+- [ ] **Layout and LayoutTensor growth** — the CPU core is landed (bundled
+  `layout` package; DType and frozen-struct value parameters; see
+  `docs/features.md`). Grow demand-first: origin-parameterized borrowed
+  tensor views (needs multi-element origin-bearing pointers — today an
+  origin-bearing `UnsafePointer` designates a single place),
+  tile/slice/transpose views, SIMD `load/store[width]` on the landed SIMD
+  machinery, the layout algebra (`composition`/`coalesce`/
+  `blocked_product`/`logical_divide`), `idx2crd`, rank gating via layout
+  `where` predicates (comptime method evaluation on frozen struct values),
+  a public recursive `IntTuple`, and mixing type parameters with
+  DType/struct value parameters on one struct.
 - [ ] **Scalar and generic vocabulary follow-ups (nightly §8)** — generalize the
   Int-only `Range` proof subset to the current Int/Scalar family; adopt the
   `TypeList` `length`/`any`/`all` vocabulary for variadic predicates (Mojito

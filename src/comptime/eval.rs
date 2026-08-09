@@ -43,9 +43,28 @@ impl<'a> Elab<'a> {
                 {
                     return Ok(value.clone());
                 }
+                // `DType.<dt>` is a compile-time dtype value (the binding of
+                // a `[dtype: DType]` parameter).
+                if let ExprKind::Identifier(name) = &object.kind
+                    && name == "DType"
+                    && let Some(dtype) = crate::ast::Dtype::from_name(field)
+                {
+                    return Ok(CtValue::Dtype(dtype));
+                }
                 match self.eval(object, scope)? {
                     CtValue::Type(ty) => self.associated_value(&ty, field),
                     CtValue::Reflected(ty) if field == "T" => Ok(CtValue::Type(ty)),
+                    // A field read on a frozen struct instance folds to the
+                    // frozen field value.
+                    CtValue::Struct { name, fields } => fields
+                        .iter()
+                        .find(|(candidate, _)| candidate == field)
+                        .map(|(_, value)| value.clone())
+                        .ok_or_else(|| {
+                            ComptimeError::NotComptime(format!(
+                                "compile-time '{name}' value has no field '{field}'"
+                            ))
+                        }),
                     _ => Err(ComptimeError::NotComptime(format!(
                         "compile-time member access '.{field}' needs a type value"
                     ))),
@@ -176,6 +195,21 @@ impl<'a> Elab<'a> {
                     .as_sequence("len() of a compile-time collection")?;
                 Ok(CtValue::Int(sequence.len() as i64))
             }
+            // Constructing a struct at compile time → VM CTFE through a
+            // synthesized entry, freezing the resulting instance.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && param_args.is_empty()
+                && !self.fns.contains_key(name.as_str())
+                && self.structs.contains_key(name.as_str()) =>
+            {
+                let literal_args = self.eval_to_literals(args, e.span, scope)?;
+                self.ctfe_struct_entry(name, None, literal_args, e.span)
+            }
             // A call into a pure top-level function → CTFE.
             ExprKind::Call {
                 name,
@@ -186,10 +220,48 @@ impl<'a> Elab<'a> {
                 let argv = self.eval_all(args, scope)?;
                 self.ctfe_call(name, param_args, argv, scope)
             }
+            // A static method on a struct (`Layout.row_major(2, 3)`) → the
+            // same synthesized-entry CTFE.
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && matches!(&object.kind, ExprKind::Identifier(name)
+                    if self.structs.contains_key(name.as_str())) =>
+            {
+                let ExprKind::Identifier(struct_name) = &object.kind else {
+                    unreachable!("guard established an identifier receiver");
+                };
+                let literal_args = self.eval_to_literals(args, e.span, scope)?;
+                self.ctfe_struct_entry(struct_name, Some(method), literal_args, e.span)
+            }
             _ => Err(ComptimeError::NotComptime(
                 "unsupported compile-time expression".to_string(),
             )),
         }
+    }
+
+    /// Evaluate arguments and materialize each back to a scope-free literal
+    /// expression (the body of a synthesized CTFE entry).
+    pub(super) fn eval_to_literals(
+        &self,
+        exprs: &[Expr],
+        span: Span,
+        scope: &HashMap<String, CtValue>,
+    ) -> Result<Vec<Expr>, ComptimeError> {
+        exprs
+            .iter()
+            .map(|argument| {
+                let value = self.eval(argument, scope)?;
+                value.materialize(span).ok_or_else(|| {
+                    ComptimeError::NotComptime(format!(
+                        "compile-time argument {value} has no runtime form"
+                    ))
+                })
+            })
+            .collect()
     }
 
     pub(super) fn eval_all(

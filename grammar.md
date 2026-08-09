@@ -339,7 +339,22 @@ param_arg: [NAME '='] (type | expression)
 A type parameter receives a `type`; a value parameter receives a **comptime value
 expression** — an `Int` expression over literals, `comptime` constants, and the
 arithmetic operators `+ - * // % **` (and unary `-`) — evaluated at compile time
-(`Pair[2 + 3]` is `Pair[5]`). Explicit `param_args` may bind positionally or by
+(`Pair[2 + 3]` is `Pair[5]`). A `def` **or struct** may also declare a
+`[dtype: DType]` value parameter whose argument is a `DType.<dt>` spelling;
+each application monomorphizes, so `Scalar[dtype]`/`SIMD[dtype, w]` positions
+in fields, signatures, and bodies resolve at the concrete dtype (`DType.<dt>`
+remains invalid as a runtime value). A **struct** may further declare a
+**struct-typed value parameter** (`struct LayoutTensor[..., layout: Layout]`):
+the argument expression — a constructor or static-method call such as
+`Layout.row_major(2, 3)` — evaluates through VM-backed compile-time execution
+and **freezes** as a compile-time struct instance that keys the
+specialization (the same frozen value at two sites is one type). Freezing
+requires fieldwise construction (`@fieldwise_init` or a hand-written
+field-mirroring `__init__`) and recursively freezable fields (`Int`s, `Bool`s,
+nested freezable structs — never pointers), and the evaluated bodies must pass
+the compile-time purity walk. Bare parameter reads in method bodies fold to
+the frozen value's construction; field reads on a frozen value fold to
+constants. Explicit `param_args` may bind positionally or by
 name (`Pair[Int]`, `FixedBuffer[8]`, `Foo[Int, 5]`, `borrow[origin=origin_of(x)]`).
 A variadic compile-time pack consumes its available positional segment while a
 required suffix can be named, so packs and semantic-only `Origin` parameters may
@@ -427,8 +442,9 @@ least one member; fields and methods may interleave.
   receivers. A `@staticmethod` (no `self`) checks and executes through the ordinary
   function call ABI. Unsupported receiver combinations are diagnosed by the checker.
 - Type and value **parameters** and trait **conformance** are supported (see
-  **Parameterization** and `conformance`), but not inheritance, operator overloading,
-  `@value`, or value parameters of non-`Int` type. There is no member **write**
+  **Parameterization** and `conformance`; value parameters take `Int`-family
+  scalars, `StringLiteral`s, `DType`s, and frozen struct instances), but not
+  inheritance, operator overloading, or `@value`. There is no member **write**
   (`p.x = e`) yet.
 
 ### Control flow

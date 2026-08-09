@@ -1017,7 +1017,15 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
         CtValue::List(items) => Ok(Value::ComptimeList(
             items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
         )),
-        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => {
+        CtValue::Struct { name, fields } => Ok(Value::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| Ok((field.clone(), ct_to_vm(value)?)))
+                .collect::<Result<Vec<_>, _>>()?,
+            value_params: Vec::new(),
+        }),
+        CtValue::Dtype(_) | CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => {
             Err(ComptimeError::NotComptime(
                 "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
             ))
@@ -1069,6 +1077,11 @@ struct CtStruct<'a> {
     decls: Vec<ParamDecl>,
     associated: &'a [StructComptime],
     fields: &'a [crate::ast::Param],
+    /// Whether instances construct fieldwise (`@fieldwise_init`, or a
+    /// hand-written `__init__` mirroring the fields in declaration order) —
+    /// the precondition for freezing a VM instance into a
+    /// [`CtValue::Struct`] and materializing it back.
+    fieldwise: bool,
 }
 
 /// Whether a declaration must remain a template until a concrete call selects
@@ -1076,6 +1089,16 @@ struct CtStruct<'a> {
 /// the top-level registry: nested generic pack functions need the same delayed
 /// elaboration even though their lexical specialization happens later.
 fn is_specializable_declaration(statement: &Stmt) -> bool {
+    is_specializable_declaration_in(statement, &|_| false)
+}
+
+/// The registry-aware form: `is_value_struct` recognizes a single bound that
+/// names a struct (a struct-typed value parameter such as `[layout: Layout]`),
+/// which — like a `DType` parameter — forces per-application monomorphization.
+fn is_specializable_declaration_in(
+    statement: &Stmt,
+    is_value_struct: &dyn Fn(&str) -> bool,
+) -> bool {
     match &statement.kind {
         StmtKind::Def {
             type_params, body, ..
@@ -1085,11 +1108,25 @@ fn is_specializable_declaration(statement: &Stmt) -> bool {
                     || type_params
                         .iter()
                         .any(|parameter| parameter.name.starts_with('*'))
+                    // A `[dtype: DType]` parameter can only check concretely
+                    // (`Ty::Simd` holds a concrete dtype), so the def
+                    // monomorphizes per call.
+                    || type_params.iter().any(|parameter| {
+                        matches!(parameter.bounds.as_slice(), [only] if only == "DType")
+                    })
                     || def_uses_param_simd_width(statement))
         }
-        StmtKind::Struct { type_params, .. } => type_params
-            .iter()
-            .any(|parameter| parameter.name.starts_with('*')),
+        StmtKind::Struct { type_params, .. } => {
+            type_params
+                .iter()
+                .any(|parameter| parameter.name.starts_with('*'))
+                // DType- and struct-typed value parameters can only check
+                // concretely, so the struct monomorphizes per application.
+                || type_params.iter().any(|parameter| {
+                    matches!(parameter.bounds.as_slice(), [only]
+                        if only == "DType" || is_value_struct(only))
+                })
+        }
         _ => false,
     }
 }
@@ -1320,6 +1357,14 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
     match value {
         CtValue::Int(value) => out.push_str(&format!("i{value};")),
         CtValue::UInt(value) => out.push_str(&format!("u{value};")),
+        CtValue::Dtype(dtype) => out.push_str(&format!("d{};", dtype.name())),
+        CtValue::Struct { name, fields } => {
+            out.push_str(&format!("S{}:{name}{{", name.len()));
+            for (_, value) in fields {
+                encode_specialization_value(value, out);
+            }
+            out.push('}');
+        }
         CtValue::Float(bits) => out.push_str(&format!("f{bits:016x};")),
         CtValue::IntLiteral(value) => {
             let rendered = value.to_string();
@@ -1674,7 +1719,8 @@ impl<'a> Elab<'a> {
             } => {
                 // A variadic struct template's members reference the unbound pack;
                 // keep it verbatim for monomorphization (mirrors def templates).
-                if is_specializable_declaration(stmt) {
+                // DType-/struct-valued parameter templates are kept the same way.
+                if self.is_specializable(stmt) {
                     out.push(stmt.clone());
                     return Ok(());
                 }
@@ -1752,9 +1798,9 @@ impl<'a> Elab<'a> {
                         ))
                     })
                 }
-                ParamArg::Type(_) => {
-                    Err(ComptimeError::NotInt(format!("value parameter '{name}'")))
-                }
+                ParamArg::Type(_) => Err(ComptimeError::NotComptime(format!(
+                    "value parameter '{name}' expects a compile-time {ty}, got a type argument"
+                ))),
                 ParamArg::Named { value, .. } => self.resolve_ct_arg(decl, value, scope),
             },
         }
@@ -2278,6 +2324,8 @@ impl Mono {
 fn scalar_type_name(name: &str) -> Option<Ty> {
     match name {
         "Int" => Some(Ty::Int),
+        // A `[dtype: DType]` value parameter; compile-time-only.
+        "DType" => Some(Ty::Dtype),
         // A SIMD width parameter is a compile-time Int value parameter;
         // `SIMDSize` is the deprecated transitional spelling.
         "SIMDLength" => Some(Ty::Int),
@@ -2338,15 +2386,27 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
             type_params,
             associated,
             fields,
+            methods,
+            fieldwise_init,
             ..
         } = &s.kind
         {
+            let mirrored_init = methods.iter().any(|method| {
+                method.name == "__init__"
+                    && method.params.len() == fields.len()
+                    && method
+                        .params
+                        .iter()
+                        .zip(fields.iter())
+                        .all(|(parameter, field)| parameter.name == field.name)
+            });
             structs.insert(
                 name.clone(),
                 CtStruct {
                     decls: classify_ct_params(type_params),
                     associated,
                     fields,
+                    fieldwise: *fieldwise_init || mirrored_init,
                 },
             );
         }
@@ -2514,10 +2574,18 @@ fn collect_specializable<'a>(
     program: &'a [Stmt],
     bound_generics: &HashSet<String>,
 ) -> HashMap<String, &'a Stmt> {
+    let struct_names: HashSet<&str> = program
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StmtKind::Struct { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration(s) || bound_generics.contains(name))
+            && (is_specializable_declaration_in(s, &|bound| struct_names.contains(bound))
+                || bound_generics.contains(name))
         {
             m.insert(name.clone(), s);
         }
@@ -2647,6 +2715,32 @@ fn spec_type_param_substitution(decl: &ParamDecl, value: &CtValue) -> Option<Typ
     source_type_from_ty(ty)
 }
 
+/// The registry-aware form of [`classify_ct_param`]: a single bound naming a
+/// struct classifies as a struct-typed **value** parameter.
+fn classify_ct_param_with(
+    tp: &TypeParam,
+    siblings: &[TypeParam],
+    is_value_struct: &dyn Fn(&str) -> bool,
+) -> Option<ParamDecl> {
+    if let [only] = tp.bounds.as_slice()
+        && !retained_specialization_param(tp, siblings)
+        && tp.value_type.is_none()
+        && ct_value_param_type(only).is_none()
+        && is_value_struct(only)
+    {
+        return Some(ParamDecl::Value {
+            name: tp.name.clone(),
+            ty: Box::new(Ty::Struct(only.clone(), Vec::new())),
+            default: tp.default.as_ref().and_then(ct_expr_from_ast),
+            callable_default: None,
+            infer_only: tp.infer_only,
+            variadic: tp.name.starts_with('*'),
+            constraints: Vec::new(),
+        });
+    }
+    classify_ct_param(tp, siblings)
+}
+
 fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Option<ParamDecl> {
     if retained_specialization_param(tp, siblings) {
         return None;
@@ -2716,6 +2810,8 @@ fn decode_ct_origin_marker(value: &CtValue) -> Option<crate::origin::RefTy> {
 fn ct_value_param_type(name: &str) -> Option<Ty> {
     Some(match name {
         "Int" => Ty::Int,
+        // A `[dtype: DType]` value parameter; compile-time-only.
+        "DType" => Ty::Dtype,
         // A SIMD width parameter is a compile-time Int value parameter;
         // `SIMDSize` is the deprecated transitional spelling.
         "SIMDLength" => Ty::Int,

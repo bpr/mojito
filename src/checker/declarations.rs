@@ -364,7 +364,7 @@ impl Checker {
             {
                 if !matches!(
                     vty,
-                    Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64
+                    Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64 | Ty::Dtype
                 ) {
                     return Err(TypeError::BadValueParamType {
                         name: tp.name.clone(),
@@ -374,6 +374,32 @@ impl Checker {
                 decls.push(ParamDecl::Value {
                     name: tp.name.clone(),
                     ty: Box::new(vty),
+                    default: tp
+                        .default
+                        .as_ref()
+                        .map(|expr| self.compile_dependent_ct_expr(expr))
+                        .transpose()?,
+                    callable_default: None,
+                    infer_only: tp.infer_only,
+                    variadic: tp.name.starts_with('*'),
+                    constraints: tp
+                        .constraints
+                        .iter()
+                        .map(|condition| self.compile_generic_constraint(condition))
+                        .collect::<Result<_, _>>()?,
+                });
+                continue;
+            }
+            // A lone bound naming a registered struct is a struct-typed
+            // value parameter (`[layout: Layout]`); such declarations are
+            // monomorphized before checking, so the checker only ever sees
+            // this classification, never a symbolic body.
+            if let [only] = tp.bounds.as_slice()
+                && self.structs.contains_key(only)
+            {
+                decls.push(ParamDecl::Value {
+                    name: tp.name.clone(),
+                    ty: Box::new(Ty::Struct(only.clone(), Vec::new())),
                     default: tp
                         .default
                         .as_ref()
