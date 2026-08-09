@@ -88,8 +88,25 @@ pub(super) fn is_move_param(p: &FnParam) -> bool {
     p.name == "move"
         && p.default.is_none()
         && p.kind == crate::ast::ParamKind::Regular
-        && matches!(p.convention, None | Some(ArgConvention::Deinit))
+        && matches!(p.convention, Some(ArgConvention::Deinit))
         && matches!(p.ty, SourceType::SelfType)
+}
+
+/// The removed bare `move: Self` spelling: shaped like the unified move
+/// constructor but missing the required consuming `deinit` convention.
+pub(super) fn is_legacy_bare_move_constructor(m: &Method) -> bool {
+    m.name == "__init__"
+        && m.has_self
+        && matches!(m.self_convention, Some(ArgConvention::Out))
+        && m.positional_only.is_none()
+        && m.keyword_only == Some(0)
+        && m.params.len() == 1
+        && m.params[0].name == "move"
+        && m.params[0].default.is_none()
+        && m.params[0].kind == crate::ast::ParamKind::Regular
+        && m.params[0].convention.is_none()
+        && matches!(m.params[0].ty, SourceType::SelfType)
+        && m.ret.is_none()
 }
 
 pub(super) fn is_mojo_copy_constructor(m: &Method) -> bool {

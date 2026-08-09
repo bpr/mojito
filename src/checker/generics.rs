@@ -935,6 +935,21 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         let (callable, ordinary) =
             self.prepare_callable_specialization(name, arguments, callable, signature)?;
+        // The pinned compiler accepts explicit Origin specialization of a
+        // stateless nested function as a value but rejects materializing one
+        // that has a capture environment.
+        if !arguments.is_empty()
+            && let Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } = &callable
+            && matches!(
+                environment,
+                crate::origin::CallableEnvironment::Capturing(_)
+            )
+        {
+            return Err(TypeError::Unsupported(format!(
+                "cannot materialize an explicit Origin specialization of '{name}': it has a \
+                 capture environment; call it directly or use a capture-free function"
+            )));
+        }
         match callable {
             callable @ Ty::GenericFunc { .. } => self
                 .instantiate_generic_callable_value(name, callable, &ordinary)

@@ -569,7 +569,7 @@ fn callable_capture_effects_conflict_with_live_reference_loans() {
     // The same concrete environment access must cross an indirect downward
     // funarg boundary. Merely checking the ordinary `invoke` argument place
     // would miss the write performed later through `callback()`.
-    let indirect = "def invoke(callback: def()):\n    callback()\n\ndef main():\n    var value = 1\n    def replace() {mut value}:\n        value = 2\n    ref alias = value\n    invoke(replace)\n    print(alias)\n";
+    let indirect = "def invoke(callback: def() capturing[_]):\n    callback()\n\ndef main():\n    var value = 1\n    def replace() {mut value}:\n        value = 2\n    ref alias = value\n    invoke(replace)\n    print(alias)\n";
     assert!(matches!(
         own(indirect),
         Err(OwnershipError::LoanConflict { place, loan, .. })

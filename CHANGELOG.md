@@ -6,6 +6,32 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Changed
+
+- Extension alignment sweep (Mojo parity catch-up, slice A): Mojito now
+  accepts what the audited Mojo head accepts within its subset — extensions
+  remain tolerable only as upstream-tracked deprecation bridges or as cited
+  implementations of features on Mojo's own roadmap/proposals — and every
+  recorded acceptance in neither category became a rejection with a
+  contextual diagnostic plus pinning fixtures. Removed acceptances: the legacy
+  `unified {...}` capture spelling (parse error); the bare `move:`
+  initializer parameter (migration diagnostic naming
+  `__init__(out self, *, deinit move: Self)`); the competing
+  positional/keyword-only `__setitem__` overload pair (declaration-time
+  rejection — lone setters of either shape still work); `def(...)`-typed
+  struct fields and collection elements, including `capturing[...]` storage
+  and display-inferred callable elements (the FieldInvocation machinery
+  remains internal-only); materializing an explicit Origin specialization of
+  a capturing nested function (direct specialized calls still execute); and
+  binding a capturing closure to an unqualified `def(...)` value contract
+  (the checker now hints the `capturing[...]` spelling; comptime callable
+  bounds still ground capturing values, matching upstream). `SIMDSize` stays
+  accepted because the audited head still ships it as a deprecated alias.
+  The bare `objs[0](args)` element-call spelling is recorded as a subset gap
+  with a parenthesization-hint diagnostic; real element-call dispatch is a
+  new roadmap item. `conformance/parity.tsv` rows moved from `divergence`
+  to `match` accordingly.
+
 ### Added
 
 - Cross-call transfer residues closed — every call shape now replays

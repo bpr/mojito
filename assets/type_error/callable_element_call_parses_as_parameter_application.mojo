@@ -1,12 +1,12 @@
-# expect: 'objs' has type List and is not callable
-# A real parity divergence: current Mojo accepts `objs[0](3)` on a List of
+# expect: parenthesize '(objs[…])(…)' to subscript first
+# A recorded subset gap: current Mojo accepts `objs[0](3)` on a List of
 # callable structs, but Mojito parses `name[...](...)` over a value base as
-# compile-time parameter application, so the checker sees a generic
-# application of the non-callable List binding. The parenthesized spelling
-# `(objs[0])(3)` subscripts first and dispatches through the element (see
-# assets/ok/callable_struct_element_invocation.mojo). Disambiguating the
-# bare spelling on lowercase value bases is a parser-altitude question,
-# recorded in docs/features.md.
+# compile-time parameter application and rejects with a parenthesization
+# hint. The parenthesized spelling `(objs[0])(3)` subscripts first and
+# dispatches through the element (see
+# assets/ok/callable_struct_element_invocation.mojo). Real element-call
+# dispatch for the bare spelling is future alignment work, recorded in
+# roadmap.md.
 @fieldwise_init
 struct Doubler(def(Int) -> Int, Copyable):
     var gain: Int

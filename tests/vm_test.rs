@@ -540,11 +540,11 @@ fn value_parameterized_generics_parity() {
 fn nested_def_closures_parity() {
     // Nested `def`s cover a
     // read-capture, a write-capture (reference semantics), and self-recursion.
-    let read = "def adder(n: Int) -> Int:\n    def add_n(x: Int) unified {n} -> Int:\n        return x + n\n    return add_n(100)\n\ndef main():\n    print(adder(42))\n";
+    let read = "def adder(n: Int) -> Int:\n    def add_n(x: Int) {n} -> Int:\n        return x + n\n    return add_n(100)\n\ndef main():\n    print(adder(42))\n";
     assert_eq!(parity(read), "142\n");
-    let write = "def counter() -> Int:\n    var total: Int = 0\n    def add(x: Int) unified {mut total}:\n        total = total + x\n    add(5)\n    add(3)\n    return total\n\ndef main():\n    print(counter())\n";
+    let write = "def counter() -> Int:\n    var total: Int = 0\n    def add(x: Int) {mut total}:\n        total = total + x\n    add(5)\n    add(3)\n    return total\n\ndef main():\n    print(counter())\n";
     assert_eq!(parity(write), "8\n");
-    let rec = "def factorial(base: Int) -> Int:\n    def fact(n: Int) unified {base} -> Int:\n        if n <= 1:\n            return base\n        return n * fact(n - 1)\n    return fact(5)\n\ndef main():\n    print(factorial(1))\n";
+    let rec = "def factorial(base: Int) -> Int:\n    def fact(n: Int) {base} -> Int:\n        if n <= 1:\n            return base\n        return n * fact(n - 1)\n    return fact(5)\n\ndef main():\n    print(factorial(1))\n";
     assert_eq!(parity(rec), "120\n");
 }
 
@@ -566,23 +566,21 @@ fn owned_closure_captures_materialize_at_the_declaration() {
 
 #[test]
 fn first_class_owned_closure_uses_its_stored_snapshot() {
-    // Mojito permits this non-escaping copied-closure pass as an extension.
-    // Current Mojo rejects converting a capture-bearing nested def to this
-    // plain callable parameter; moved stateful closures are therefore covered
-    // only by the direct-call parity case above.
-    let src = "def invoke(callback: def() -> Int) -> Int:\n    return callback()\n\ndef main():\n    var x = 40\n    def snapshot() {var x} -> Int:\n        return x\n    x = 42\n    print(snapshot(), invoke(snapshot), x)\n";
+    // A capture-bearing nested def binds only to a `capturing[...]` contract;
+    // the unqualified `def(...)` binding is rejected (see `checker_test`).
+    let src = "def invoke(callback: def() capturing[_] -> Int) -> Int:\n    return callback()\n\ndef main():\n    var x = 40\n    def snapshot() {var x} -> Int:\n        return x\n    x = 42\n    print(snapshot(), invoke(snapshot), x)\n";
     assert_eq!(parity(src), "40 40 42\n");
 
-    // A permitted non-escaping reference closure keeps its outer frame slot
-    // alive through the indirect consumer call; the handle must not observe an
+    // A non-escaping reference closure keeps its outer frame slot alive
+    // through the indirect consumer call; the handle must not observe an
     // ASAP-dropped `None` slot.
-    let reference = "def invoke(callback: def() -> Int) -> Int:\n    return callback()\n\ndef main():\n    var x = 42\n    def get() {ref x} -> Int:\n        return x\n    print(invoke(get))\n";
+    let reference = "def invoke(callback: def() capturing[_] -> Int) -> Int:\n    return callback()\n\ndef main():\n    var x = 42\n    def get() {ref x} -> Int:\n        return x\n    print(invoke(get))\n";
     assert_eq!(parity(reference), "42\n");
 }
 
 #[test]
 fn nested_def_calling_sibling_forwards_its_closure_environment() {
-    let src = "def outer() -> Int:\n    var b: Int = 10\n    def helper(x: Int) unified {b} -> Int:\n        return x + b\n    def caller(y: Int) unified {helper} -> Int:\n        return helper(y) + 1\n    return caller(5)\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    var b: Int = 10\n    def helper(x: Int) {b} -> Int:\n        return x + b\n    def caller(y: Int) {helper} -> Int:\n        return helper(y) + 1\n    return caller(5)\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "16\n");
 }
 
@@ -627,19 +625,19 @@ fn nested_parameter_shadow_capture_uses_the_nearest_owner() {
 
 #[test]
 fn nested_defs_lift_and_forward_captures_at_arbitrary_depth() {
-    let src = "def outer() -> Int:\n    var value = 40\n    def middle() unified {value} -> Int:\n        def inner() unified {value} -> Int:\n            return value + 2\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    var value = 40\n    def middle() {value} -> Int:\n        def inner() {value} -> Int:\n            return value + 2\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "42\n");
 }
 
 #[test]
 fn deep_mutable_capture_updates_its_lexical_owner() {
-    let src = "def outer() -> Int:\n    var total = 40\n    def middle() unified {mut total}:\n        def inner() unified {mut total}:\n            total += 2\n        inner()\n    middle()\n    return total\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    var total = 40\n    def middle() {mut total}:\n        def inner() {mut total}:\n            total += 2\n        inner()\n    middle()\n    return total\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "42\n");
 }
 
 #[test]
 fn intermediate_default_capture_policy_forwards_descendant_environment() {
-    let src = "def outer() -> Int:\n    var value = 40\n    def middle() {imm} -> Int:\n        def inner() unified {value} -> Int:\n            return value + 2\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    var value = 40\n    def middle() {imm} -> Int:\n        def inner() {value} -> Int:\n            return value + 2\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "42\n");
 }
 
@@ -654,31 +652,31 @@ fn deep_nested_callable_preserves_reference_and_named_result_abis() {
     let references = "def main():\n    var value = 40\n    def middle(mut middle_item: Int):\n        def inner(ref inner_item: Int) -> ref[inner_item] Int:\n            return inner_item\n        ref alias = inner(middle_item)\n        alias += 2\n    middle(value)\n    print(value)\n";
     assert_eq!(parity(references), "42\n");
 
-    let named_result = "def outer() -> Int:\n    var base = 40\n    def middle() unified {base} -> Int:\n        def inner(value: Int, out result: Int) unified {base}:\n            result = base + value\n        return inner(2)\n    return middle()\n\ndef main():\n    print(outer())\n";
+    let named_result = "def outer() -> Int:\n    var base = 40\n    def middle() {base} -> Int:\n        def inner(value: Int, out result: Int) {base}:\n            result = base + value\n        return inner(2)\n    return middle()\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(named_result), "42\n");
 }
 
 #[test]
 fn deep_lexical_callable_registry_prefers_the_nearest_shadow() {
-    let src = "def outer() -> Int:\n    var base = 40\n    def helper() unified {base} -> Int:\n        return base + 1\n    def middle() unified {base} -> Int:\n        def helper() unified {base} -> Int:\n            return base + 2\n        def inner() unified {helper} -> Int:\n            return helper()\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    var base = 40\n    def helper() {base} -> Int:\n        return base + 1\n    def middle() {base} -> Int:\n        def helper() {base} -> Int:\n            return base + 2\n        def inner() {helper} -> Int:\n            return helper()\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "42\n");
 }
 
 #[test]
 fn deep_lexical_callable_registry_forwards_an_ancestor_sibling() {
-    let src = "def outer() -> Int:\n    var base = 40\n    def helper() unified {base} -> Int:\n        return base + 2\n    def middle() unified {helper} -> Int:\n        def inner() unified {helper} -> Int:\n            return helper()\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    var base = 40\n    def helper() {base} -> Int:\n        return base + 2\n    def middle() {helper} -> Int:\n        def inner() {helper} -> Int:\n            return helper()\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "42\n");
 }
 
 #[test]
 fn method_rooted_closure_tree_forwards_self_at_arbitrary_depth() {
-    let src = "@fieldwise_init\nstruct Box:\n    var base: Int\n\n    def answer(self) -> Int:\n        def middle() unified {self} -> Int:\n            def inner() unified {self} -> Int:\n                return self.base + 2\n            return inner()\n        return middle()\n\ndef main():\n    print(Box(40).answer())\n";
+    let src = "@fieldwise_init\nstruct Box:\n    var base: Int\n\n    def answer(self) -> Int:\n        def middle() {self} -> Int:\n            def inner() {self} -> Int:\n                return self.base + 2\n            return inner()\n        return middle()\n\ndef main():\n    print(Box(40).answer())\n";
     assert_eq!(parity(src), "42\n");
 }
 
 #[test]
 fn empty_intermediate_capture_policy_does_not_forward_descendant_environment() {
-    let src = "def outer() -> Int:\n    var value = 42\n    def middle() unified {} -> Int:\n        def inner() unified {value} -> Int:\n            return value\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    var value = 42\n    def middle() {} -> Int:\n        def inner() {value} -> Int:\n            return value\n        return inner()\n    return middle()\n\ndef main():\n    print(outer())\n";
     assert!(!checks_ok(src));
 }
 
@@ -723,7 +721,7 @@ fn structured_reference_call_handwritten_constructors_use_caller_places() {
 
 #[test]
 fn generic_nested_def_is_type_erased_after_checker_inference() {
-    let src = "def outer() -> Int:\n    def identity[T: Copyable & Movable](value: T) unified {} -> T:\n        return value\n    return identity(42)\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    def identity[T: Copyable & Movable](value: T) {} -> T:\n        return value\n    return identity(42)\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "42\n");
 }
 
@@ -792,9 +790,6 @@ fn nested_origin_specialized_function_values_load_their_closure() {
     let stateless =
         include_str!("../conformance/fixtures/nested_origin_specialized_function_value.mojo");
     assert_eq!(vm(stateless), "42\n");
-
-    let captured = "def main():\n    var marker = 2\n    var value = 40\n    def borrow[origin: Origin[mut=True]](ref[origin] item: Int) {imm marker} -> ref[origin] Int:\n        print(marker)\n        return item\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += marker\n    print(value)\n";
-    assert_eq!(vm(captured), "2\n42\n");
 }
 
 #[test]
@@ -1254,14 +1249,6 @@ fn dynamic_intrinsic_index_actual_is_evaluated_once_and_writes_back() {
 fn nominal_setter_evaluates_receiver_then_subscripts_then_rhs() {
     let src = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\n@fieldwise_init\nstruct Outer(Copyable, Movable):\n    var box: Box\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.box)] Box:\n        return self.box\n\ndef rhs() -> Int:\n    print(\"rhs\")\n    return 40\n\ndef receiver_index() -> Int:\n    print(\"receiver\")\n    return 0\n\ndef index() -> Int:\n    print(\"index\")\n    return 2\n\ndef main():\n    var outer = Outer(Box(0))\n    outer[receiver_index()][index()] = rhs()\n    print(outer.box.value)\n";
     assert_eq!(vm(src), "receiver\nindex\nrhs\n42\n");
-}
-
-#[test]
-fn competing_positional_and_keyword_setter_shapes_execute_selected_abis() {
-    // Mojito extension: the pinned nightly currently rejects this focused
-    // positional-only/keyword-only setter-overload pair.
-    let src = include_str!("../conformance/fixtures/setter_overload_extension.mojo");
-    assert_eq!(vm(src), "1\n7\n");
 }
 
 #[test]

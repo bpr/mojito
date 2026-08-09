@@ -5,20 +5,20 @@ def double(x: Int) -> Int:
     return x * 2
 
 def adder(n: Int) -> Int:
-    def add_n(x: Int) unified {imm n} -> Int:
+    def add_n(x: Int) {imm n} -> Int:
         return double(x) + n
     return add_n(100)
 
 def counter() -> Int:
     var total: Int = 0
-    def add(x: Int) unified {mut total}:
+    def add(x: Int) {mut total}:
         total = total + x
     add(5)
     add(3)
     return total
 
 def factorial(base: Int) -> Int:
-    def fact(n: Int) unified {imm base} -> Int:
+    def fact(n: Int) {imm base} -> Int:
         if n <= 1:
             return base
         return n * fact(n - 1)

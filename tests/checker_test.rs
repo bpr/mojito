@@ -55,7 +55,7 @@ fn accepts_recursion() {
 #[test]
 fn accepts_lexical_capture_downward_funarg() {
     ok(
-        "def adder(n: Int) -> Int:\n    def add_n(x: Int) unified {n} -> Int:\n        return x + n\n    return add_n(100)\n\nvar c: Int = adder(42)\n",
+        "def adder(n: Int) -> Int:\n    def add_n(x: Int) {n} -> Int:\n        return x + n\n    return add_n(100)\n\nvar c: Int = adder(42)\n",
     );
 }
 
@@ -3274,8 +3274,17 @@ fn explicitly_specializes_nested_callable_origin_values() {
     ok(include_str!(
         "../conformance/fixtures/nested_origin_specialized_function_value.mojo"
     ));
-    ok(
+
+    // The pinned compiler rejects materializing an Origin specialization of a
+    // nested function that has a capture environment.
+    let TypeError::Unsupported(message) = err(
         "def main():\n    var marker = 2\n    var value = 40\n    def borrow[origin: Origin[mut=True]](ref[origin] item: Int) {imm marker} -> ref[origin] Int:\n        print(marker)\n        return item\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += marker\n",
+    ) else {
+        panic!("expected an unsupported-feature error");
+    };
+    assert!(
+        message.contains("capture environment"),
+        "unexpected diagnostic: {message}"
     );
 }
 
@@ -3913,42 +3922,24 @@ fn slice_literals_do_not_use_user_implicit_conversions() {
 }
 
 #[test]
-fn setitem_assignment_scores_positional_and_keyword_rhs_shapes_together() {
-    // Mojito extension over the pinned nightly, which currently rejects this
-    // focused positional-only/keyword-only setter-overload pair.
+fn rejects_competing_positional_and_keyword_setter_pair() {
+    // Current Mojo rejects this focused positional-only/keyword-only
+    // setter-overload pair; selection would otherwise depend on the
+    // assignment's right-hand side.
     let source = include_str!("../conformance/fixtures/setter_overload_extension.mojo");
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
-    let contracts = checked
-        .expressions()
-        .iter()
-        .filter(|expression| matches!(expression.syntax.kind, mojito::ast::ExprKind::Index { .. }))
-        .filter_map(|expression| {
-            expression
-                .adjustments
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    SemanticAdjustment::SelectedCall(contract) => Some(contract),
-                    _ => None,
-                })
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(contracts.len(), 2);
-    assert!(contracts.iter().any(|contract| {
-        contract.arguments.iter().any(|argument| {
-            argument.source == mojito::checked::CheckedCallArgumentSource::Keyword(0)
-                && argument.parameter_ty == mojito::Ty::Bool
-        })
-    }));
-    assert!(contracts.iter().any(|contract| {
-        contract.arguments.iter().any(|argument| {
-            argument.source == mojito::checked::CheckedCallArgumentSource::Positional(1)
-                && argument.parameter_ty == mojito::Ty::Int
-        })
-    }));
+    let TypeError::Unsupported(message) = err(source) else {
+        panic!("expected an unsupported-feature error");
+    };
+    assert!(
+        message.contains("competing '__setitem__'"),
+        "unexpected diagnostic: {message}"
+    );
 
+    // A mismatched right-hand side against a lone setter stays an ordinary
+    // bad-call rejection.
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __setitem__(mut self, index: Int, value: Int, /):\n        self.value = value\n    def __setitem__(mut self, index: Int, *, value: Bool):\n        pass\n\ndef main():\n    var sink = Sink(0)\n    sink[1] = \"wrong\"\n"
+            "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __setitem__(mut self, index: Int, value: Int, /):\n        self.value = value\n\ndef main():\n    var sink = Sink(0)\n    sink[1] = \"wrong\"\n"
         ),
         TypeError::BadCall { .. }
     ));
@@ -4790,4 +4781,30 @@ fn origin_cast_cannot_upgrade_capability() {
 fn parameter_rooted_transfers_stay_accepted() {
     let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep = [4]\n    var got = fill(keep)\n";
     assert!(check(&parse(src).expect("parse")).is_ok());
+}
+
+#[test]
+fn rejects_bare_move_initializer_parameter() {
+    let TypeError::Unsupported(message) = err(
+        "struct Buf:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __init__(out self, *, move: Self):\n        self.n = move.n\n",
+    ) else {
+        panic!("expected an unsupported-feature error");
+    };
+    assert!(
+        message.contains("deinit move"),
+        "unexpected diagnostic: {message}"
+    );
+}
+
+#[test]
+fn rejects_a_capturing_closure_bound_to_an_unqualified_def_parameter() {
+    let TypeError::Unsupported(message) = err(
+        "def apply_twice(callback: def(Int) -> None):\n    callback(2)\n    callback(3)\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n",
+    ) else {
+        panic!("expected an unsupported-feature error");
+    };
+    assert!(
+        message.contains("must spell 'capturing[...]'"),
+        "unexpected diagnostic: {message}"
+    );
 }

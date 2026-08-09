@@ -84,7 +84,7 @@ fn struct_and_generic_parameter_types_mangle_from_their_annotations() {
 fn nested_defs_lift_to_dollar_joined_names() {
     let names = lowered_names(
         "def outer(x: Int) -> Int:\n\
-         \x20   def inner(y: Int) unified {imm x} -> Int:\n\
+         \x20   def inner(y: Int) {imm x} -> Int:\n\
          \x20       return y + x\n\
          \x20   return inner(1)\n",
     );
@@ -95,8 +95,8 @@ fn nested_defs_lift_to_dollar_joined_names() {
 fn deeply_nested_defs_use_the_full_lexical_symbol_path() {
     let names = lowered_names(
         "def outer(x: Int) -> Int:\n\
-         \x20   def middle() unified {x} -> Int:\n\
-         \x20       def inner() unified {x} -> Int:\n\
+         \x20   def middle() {x} -> Int:\n\
+         \x20       def inner() {x} -> Int:\n\
          \x20           return x\n\
          \x20       return inner()\n\
          \x20   return middle()\n",

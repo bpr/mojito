@@ -5,6 +5,19 @@
 
 use super::*;
 
+/// Current Mojo treats a bare `def(...)` in a general type position (struct
+/// field, collection element) as a trait, not a storable callable-value type;
+/// callable values are limited to parameters and local bindings.
+pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(), TypeError> {
+    if matches!(ty, Ty::Func { .. } | Ty::GenericFunc { .. }) {
+        return Err(TypeError::Unsupported(format!(
+            "a 'def(...)' type names a trait in {position} in current Mojo, not a storable \
+             callable value; callable values are limited to parameters and local bindings"
+        )));
+    }
+    Ok(())
+}
+
 impl Checker {
     /// The type denoted by a source annotation; resolves type parameters and
     /// validates struct names and type-argument counts.
@@ -1173,26 +1186,7 @@ impl Checker {
                 got: args.len(),
             });
         }
-        match &args[0] {
-            crate::ast::ParamArg::Type(t) => Ok(list_type(self.ty_from_anno(t)?)),
-            // A bare-identifier arg is reinterpreted as a type (as elsewhere).
-            crate::ast::ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(id),
-                ..
-            }) => Ok(list_type(
-                self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?,
-            )),
-            crate::ast::ParamArg::Value(_) => Err(TypeError::TypeMismatch {
-                expected: "a type".to_string(),
-                found: "a value".to_string(),
-                context: "List element type".to_string(),
-            }),
-            crate::ast::ParamArg::Named { .. } => Err(TypeError::TypeMismatch {
-                expected: "a positional type argument".to_string(),
-                found: "a named argument".to_string(),
-                context: "List element type".to_string(),
-            }),
-        }
+        Ok(list_type(self.collection_type_argument("List", &args[0])?))
     }
 
     pub(super) fn collection_type_argument(
@@ -1200,7 +1194,7 @@ impl Checker {
         collection: &str,
         argument: &crate::ast::ParamArg,
     ) -> Result<Ty, TypeError> {
-        match argument {
+        let resolved = match argument {
             crate::ast::ParamArg::Type(ty) => self.ty_from_anno(ty),
             crate::ast::ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(name),
@@ -1216,7 +1210,9 @@ impl Checker {
                 found: "a named argument".to_string(),
                 context: format!("{collection} type argument"),
             }),
-        }
+        }?;
+        reject_stored_callable_type(&resolved, &format!("the '{collection}' element type"))?;
+        Ok(resolved)
     }
 
     pub(super) fn set_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
@@ -1374,8 +1370,11 @@ impl Checker {
     }
 
     pub(super) fn tuple_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
-        self.tuple_element_types(args)
-            .map(|elements| self.public_tuple_type(elements))
+        let elements = self.tuple_element_types(args)?;
+        for element in &elements {
+            reject_stored_callable_type(element, "the 'Tuple' element type")?;
+        }
+        Ok(self.public_tuple_type(elements))
     }
 
     /// Recover the concrete public-Tuple arguments deliberately materialized by
@@ -1437,6 +1436,7 @@ impl Checker {
         let mut alternatives = Vec::with_capacity(args.len());
         for arg in args {
             let alternative = self.type_param_argument(arg, "Variant alternative")?;
+            reject_stored_callable_type(&alternative, "a 'Variant' alternative type")?;
             if alternatives.contains(&alternative) {
                 return Err(TypeError::Unsupported(format!(
                     "Variant contains duplicate alternative '{alternative}'"

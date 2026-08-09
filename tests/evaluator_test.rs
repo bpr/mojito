@@ -272,16 +272,18 @@ fn returned_index_reference_captures_the_selected_element() {
 #[test]
 fn closure_captures_enclosing_local_downward() {
     let e = run(
-        "def adder(n: Int) -> Int:\n    def add_n(x: Int) unified {n} -> Int:\n        return x + n\n    return add_n(100)\n\nvar c: Int = adder(42)\n",
+        "def adder(n: Int) -> Int:\n    def add_n(x: Int) {n} -> Int:\n        return x + n\n    return add_n(100)\n\nvar c: Int = adder(42)\n",
     );
     assert_eq!(binding(&e, "c"), Value::Int(142));
 }
 
 #[test]
-fn unified_closure_value_carries_read_and_mutable_environments() {
+fn closure_value_carries_its_mutable_environment_through_a_capturing_contract() {
+    // The parameter must spell `capturing[...]`: a capturing closure no longer
+    // binds to an unqualified `def(...)` value (see `checker_test`).
     assert_eq!(
         output(
-            "def apply_twice(callback: def(Int) -> None):\n    callback(2)\n    callback(3)\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) unified {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n\ndef main():\n    print(total())\n"
+            "def apply_twice(callback: def(Int) capturing[_] -> None):\n    callback(2)\n    callback(3)\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n\ndef main():\n    print(total())\n"
         ),
         "5\n"
     );

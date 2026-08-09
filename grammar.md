@@ -274,11 +274,9 @@ name may carry `^`, and at most one default convention is allowed. `{}` is an
 explicit empty environment. A reference capture stores a live handle but does
 not hold a persistent loan from declaration until invocation: intervening outer
 access remains legal, and an `imm` closure observes the then-current value when
-called. The call is still checked under the capture's access convention. Mojito
-also accepts the removed
-`unified {capture-list}` position as a source-compatibility extension; it is
-normalized to the current representation and is intentionally recorded as a
-Mojito-only conformance case.
+called. The call is still checked under the capture's access convention. The removed
+`unified {capture-list}` spelling is rejected with a contextual parse error
+pointing at the current post-effects `{...}` position.
 
 ### Parameterization (generics)
 

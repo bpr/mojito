@@ -813,6 +813,14 @@ impl Checker {
             &m.params,
             m.self_origin.as_ref(),
         )?;
+        if is_legacy_bare_move_constructor(m) {
+            return Err(TypeError::Unsupported(
+                "the move initializer requires the consuming 'deinit' convention: write \
+                 '__init__(out self, *, deinit move: Self)'; a bare 'move:' parameter is \
+                 not accepted"
+                    .to_string(),
+            ));
+        }
         if !is_mojo_copy_constructor(m)
             && !is_mojo_move_constructor(m)
             && let Some(feature) = Self::advanced_param_feature(

@@ -436,6 +436,22 @@ impl Checker {
             Ty::Struct(struct_name, arguments) => {
                 let actual = Ty::Struct(struct_name.clone(), arguments);
                 let callable = self.declared_callable_contract(&actual).ok_or_else(|| {
+                    // `objs[0](args)` over an indexable runtime value parses as
+                    // compile-time parameter application; current Mojo instead
+                    // dispatches the element call (a recorded subset gap).
+                    if !param_args.is_empty()
+                        && self
+                            .structs
+                            .get(&struct_name)
+                            .is_some_and(|info| info.methods.contains_key("__getitem__"))
+                    {
+                        return TypeError::Unsupported(format!(
+                            "'{name}' is a runtime value of type '{struct_name}', so \
+                             '{name}[…](…)' reads as compile-time parameter application; \
+                             parenthesize '({name}[…])(…)' to subscript first and call the \
+                             element"
+                        ));
+                    }
                     TypeError::NotCallable {
                         name: name.to_string(),
                         ty: struct_name.clone(),
@@ -541,6 +557,14 @@ impl Checker {
             };
             let arg_ty = self.infer_with_expected(arg, &params[i], true)?;
             if !self.record_implicit_conversion(arg, &arg_ty, &params[i])? {
+                if super::builtins::callable_mismatch_is_environment_only(&arg_ty, &params[i]) {
+                    return Err(TypeError::Unsupported(format!(
+                        "a capturing closure cannot bind to the unqualified 'def(...)' \
+                         parameter '{}' of '{}' in current Mojo; the contract must spell \
+                         'capturing[...]'",
+                        names[i], name
+                    )));
+                }
                 return Err(TypeError::TypeMismatch {
                     expected: params[i].to_string(),
                     found: arg_ty.to_string(),

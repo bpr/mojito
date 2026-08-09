@@ -578,22 +578,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } = self.parse_params()?;
         self.expect(Token::RParen, "Expected ')' after parameters")?;
 
-        // Mojito historically accepted `unified {...}` before effects. Keep it
-        // as an explicit compatibility spelling, but normalize it to the same
-        // AST as current Mojo's bare capture list below.
-        let legacy_captures = self.parse_capture_list(true)?;
+        // Current Mojo removed the `unified` keyword; the capture list is a
+        // bare `{...}` after the effects clause.
+        if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "unified") {
+            return Err(ParseError::UnexpectedToken(
+                Token::Identifier("unified".to_string()),
+                "the removed 'unified {...}' capture spelling is not accepted; \
+                 write the capture list after the effects clause, e.g. 'def f() {mut x}:'"
+                    .to_string(),
+            ));
+        }
         let (raises, raises_type) = self.parse_callable_effects()?;
-        let current_captures = self.parse_capture_list(false)?;
-        let captures = match (legacy_captures, current_captures) {
-            (Some(_), Some(_)) => {
-                return Err(ParseError::UnexpectedToken(
-                    Token::LBrace,
-                    "a function may have only one capture list".to_string(),
-                ));
-            }
-            (legacy @ Some(_), None) => legacy,
-            (None, current) => current,
-        };
+        let captures = self.parse_capture_list()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?; // consume '->'
             Some(self.parse_type()?)
@@ -636,17 +632,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         })
     }
 
-    /// Parse a closure capture list. Current Mojo spells this as bare `{...}`
-    /// after effects; `legacy=true` additionally consumes Mojito's old
-    /// `unified {...}` prefix before effects.
-    fn parse_capture_list(&mut self, legacy: bool) -> Result<Option<CaptureList>, ParseError> {
-        if legacy {
-            if !matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "unified") {
-                return Ok(None);
-            }
-            self.next_token()?;
-            self.expect(Token::LBrace, "Expected '{' after 'unified'")?;
-        } else if matches!(self.peek_token()?, Some(Token::LBrace)) {
+    /// Parse a closure capture list, spelled as a bare `{...}` after effects.
+    fn parse_capture_list(&mut self) -> Result<Option<CaptureList>, ParseError> {
+        if matches!(self.peek_token()?, Some(Token::LBrace)) {
             self.next_token()?;
         } else {
             return Ok(None);

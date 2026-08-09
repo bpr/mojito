@@ -1682,6 +1682,10 @@ impl Checker {
             let actual = self.infer(value)?;
             self.record_literal_materializations(value, &actual, &materialized)?;
         }
+        super::type_resolution::reject_stored_callable_type(
+            &materialized,
+            "a collection display element",
+        )?;
         Ok(materialized)
     }
 

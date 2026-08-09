@@ -438,6 +438,10 @@ impl Checker {
                     f.name
                 )));
             }
+            super::type_resolution::reject_stored_callable_type(
+                &ty,
+                &format!("the type of struct field '{}'", f.name),
+            )?;
             self.declaration_types.borrow_mut().insert(
                 crate::checked::AnnotationSite::StructField {
                     module: declaration.module.clone(),
@@ -555,6 +559,18 @@ impl Checker {
                         || existing.self_convention == sig.self_convention)
             }) {
                 return Err(TypeError::Redeclaration(method_name.to_string()));
+            }
+            if method_name == "__setitem__"
+                && overloads
+                    .iter()
+                    .any(|existing| competing_setitem_value_shapes(existing, &sig))
+            {
+                return Err(TypeError::Unsupported(
+                    "competing '__setitem__' overloads for the same indices: one takes the \
+                     assignment value positionally and the other as keyword-only '*, value:'; \
+                     declare a single setter shape"
+                        .to_string(),
+                ));
             }
             overloads.push(sig);
         }

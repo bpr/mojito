@@ -700,10 +700,9 @@ fn is_mojo_move_constructor(m: &Method) -> bool {
         && m.params[0].name == "move"
         && m.params[0].default.is_none()
         && m.params[0].kind == ParamKind::Regular
-        // Current Mojo requires the consuming `deinit move: Self`
-        // convention. Keep the earlier bare `move: Self` shape as the
-        // documented source-compatibility spelling.
-        && matches!(m.params[0].convention, None | Some(ArgConvention::Deinit))
+        // Current Mojo requires the consuming `deinit move: Self` convention;
+        // the bare `move: Self` shape is rejected by the checker.
+        && matches!(m.params[0].convention, Some(ArgConvention::Deinit))
         && matches!(m.params[0].ty, Type::SelfType)
         && m.ret.is_none()
 }

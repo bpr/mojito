@@ -291,6 +291,14 @@ These changes should remain visible without displacing the CPU language work:
   and MIR extension points general rather than implementing this internal
   spelling.
 
+## Open Questions And Probes
+
+Open questions, ambiguities, and known mismatches each get a minimal program
+in [`conformance/probes/`](../conformance/probes/) runnable against both
+compilers, with the question and the follow-up actions documented in the
+file's header. Run the probes (and the re-probe list in that directory's
+README) against the exact audited build at every re-pin.
+
 ## Review Policy
 
 Before closing a language-parity milestone:

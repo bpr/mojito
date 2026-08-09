@@ -172,7 +172,7 @@ fn nested_pack_can_forward_to_an_earlier_pack_sibling() {
 
 #[test]
 fn captured_outer_pack_forwarding_infers_only_the_variadic_overflow() {
-    let src = "def outer[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n    def score[*Us: Movable & ImplicitlyDeletable](head: Int, var *values: *Us) -> Int:\n        return head + len(values)\n    def relay() unified {args^} -> Int:\n        return score(40, *args^)\n    return relay()\n\ndef main():\n    print(outer(1, True))\n";
+    let src = "def outer[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:\n    def score[*Us: Movable & ImplicitlyDeletable](head: Int, var *values: *Us) -> Int:\n        return head + len(values)\n    def relay() {args^} -> Int:\n        return score(40, *args^)\n    return relay()\n\ndef main():\n    print(outer(1, True))\n";
     assert_eq!(run(src).unwrap(), "42\n");
 }
 
@@ -263,7 +263,7 @@ fn nested_pack_forwarding_rejects_multiple_or_mixed_segments() {
 
 #[test]
 fn method_local_nested_pack_preserves_self_capture() {
-    let src = "@fieldwise_init\nstruct Box:\n    var base: Int\n    def run(self) -> Int:\n        def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) unified {self} -> Int:\n            return self.base + len(args)\n        return count(1, True)\n\ndef main():\n    print(Box(40).run())\n";
+    let src = "@fieldwise_init\nstruct Box:\n    var base: Int\n    def run(self) -> Int:\n        def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) {self} -> Int:\n            return self.base + len(args)\n        return count(1, True)\n\ndef main():\n    print(Box(40).run())\n";
     assert_eq!(run(src).unwrap(), "42\n");
 }
 
@@ -332,7 +332,7 @@ fn nested_pack_identity_includes_the_outer_specialization() {
 
 #[test]
 fn nested_pack_specialization_preserves_explicit_captures() {
-    let src = "def outer() -> Int:\n    var base = 40\n    def nested[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) unified {base} -> Int:\n        return base + len(args)\n    return nested(1, True)\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    var base = 40\n    def nested[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) {base} -> Int:\n        return base + len(args)\n    return nested(1, True)\n\ndef main():\n    print(outer())\n";
     assert_eq!(run(src).unwrap(), "42\n");
 }
 

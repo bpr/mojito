@@ -7,12 +7,12 @@ overloaded-callable-values	run	conformance/fixtures/overloaded_callable_values.m
 thin-function-value	run	conformance/fixtures/thin_function_value.mojo
 current-capture-lists	run	conformance/fixtures/current_capture_lists.mojo
 move-capture	run	conformance/fixtures/move_capture.mojo
-unified-capture-lists	mojito-only	conformance/fixtures/unified_capture_lists.mojo
+unified-capture-lists	reject	conformance/fixtures/unified_capture_lists.mojo
 non-escaping-closures	run	conformance/fixtures/non_escaping_closures.mojo
 recursive-nested-callables	run	conformance/fixtures/recursive_nested_callables.mojo
 origin-specialized-function-value	run	conformance/fixtures/origin_specialized_function_value.mojo
 nested-origin-specialized-function-value	run	conformance/fixtures/nested_origin_specialized_function_value.mojo
-captured-nested-origin-specialization	mojito-only	conformance/fixtures/captured_nested_origin_specialization.mojo
+captured-nested-origin-specialization	reject	conformance/fixtures/captured_nested_origin_specialization.mojo
 nominal-reference-callable	run	conformance/fixtures/nominal_reference_callable.mojo
 callable-effect-order	run	conformance/fixtures/callable_effect_order.mojo
 generic-callable-bounds	run	conformance/fixtures/generic_callable_bounds.mojo
@@ -130,7 +130,7 @@ augmented-mutating-index	run	conformance/fixtures/augmented_mutating_index.mojo
 augmented-reference-getter	run	conformance/fixtures/augmented_reference_getter.mojo
 projected-subscript-reference	run	conformance/fixtures/projected_subscript_reference.mojo
 projected-pointer-subscript	mojito-only	conformance/fixtures/projected_pointer_subscript.mojo
-setter-overload-extension	mojito-only	conformance/fixtures/setter_overload_extension.mojo
+setter-overload-extension	reject	conformance/fixtures/setter_overload_extension.mojo
 owned-nominal-element-copy	run	conformance/fixtures/owned_nominal_element_copy.mojo
 index-implicit-conversion	run	conformance/fixtures/index_implicit_conversion.mojo
 slice-implicit-conversion-rejected	reject	conformance/fixtures/slice_implicit_conversion_rejected.mojo

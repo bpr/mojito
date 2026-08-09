@@ -1643,9 +1643,9 @@ immutable-origin cast (`Origin[mut=False].cast_from[...]`), which
 site's parametric-mutability upgrade never applies; the upgrade direction is
 rejected.
 
-Nested functions are lifted with explicit closure environments. Current source
-capture lists appear directly as `{...}` after effects; Mojito normalizes the
-removed `unified {...}` spelling only as a compatibility extension. `imm`, `mut`,
+Nested functions are lifted with explicit closure environments. Capture lists
+appear directly as `{...}` after effects; the removed `unified {...}` spelling
+is rejected with a contextual parse error. `imm`, `mut`,
 and `ref` captures become stable frame/slot handles with their checked
 permissions, `var` clones the value when the declaration executes, and move
 capture transfers the value at that same point. Direct nested calls use the same
@@ -1702,9 +1702,10 @@ their source arguments remain on the rewritten call. A scalar-controlled branch
 can therefore select code that later invokes a captured callback without asking
 the compile-time universe to own that callback. `CtValue` intentionally has no
 function or closure variant: this residualization is not arbitrary callable
-CTFE, and it does not make closures escaping. An unqualified `def(...)`
-accepting a materialized stateful downward funarg is a Mojito extension over the
-pinned nightly; portable code states `capturing[origins]` explicitly.
+CTFE, and it does not make closures escaping. A capturing closure binds only
+to a contract that states `capturing[...]`: unqualified `def(...)` value
+positions reject it (matching current Mojo), while comptime callable bounds
+still ground capturing values.
 
 Runtime `for`, tuple-unpack, and `except` targets likewise retain checked owner
 identity and storage type across HIR and structured-region lowering. Unpack uses
@@ -1996,11 +1997,13 @@ sources alive under carrier collections with no transfer-specific analysis
 code. A closure value flowing into storage additionally loans its REFERENCE
 captures' owners (`imm` immutably, `mut`/`ref` mutably) — the stored
 environment retains their frame slots — while direct nested calls keep the
-loan-free declaration-to-call capture model; stored callables invoke through
-the field-invocation channel (`holder.callback(1)` marks a
-`FieldInvocation` adjustment and lowers as an indirect call whose callee
-place is the field's, so a closure environment rehydrates from stable
-storage).
+loan-free declaration-to-call capture model. The `FieldInvocation`
+adjustment (an indirect call whose callee place is the storage's, so a
+closure environment rehydrates from stable storage) is retained internal
+machinery: `def(...)`-typed fields and elements are rejected at declaration
+to match current Mojo, so no production path reaches it from a field today,
+and it stays only as the invocation shape for supported callable storage
+channels.
 
 The deliberate residues, frozen with the schema: effects erase when an
 effectful callable value is stored into explicitly annotated `def(...)`

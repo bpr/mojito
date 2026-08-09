@@ -22,7 +22,7 @@ struct Buf:
             self.data[i] = copy.data[i]
             i = i + 1
 
-    def __init__(out self, *, move: Self):
+    def __init__(out self, *, deinit move: Self):
         self.n = move.n
         self.data = move.data
 

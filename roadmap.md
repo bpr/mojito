@@ -88,13 +88,19 @@ encoding a stale picture of the language.
   [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (accepted-source and
   diagnostic gaps, lambda expressions through the existing callable pipeline,
   and the library-port prerequisites recorded there), plus the
-  divergence-column entries in `conformance/parity.tsv` — most recently:
-  `def(...)`-typed field/element storage is a Mojito-only extension (current
-  Mojo treats a bare `def(...)` type position as a trait), and the bare
-  `objs[0](args)` element-call spelling parses as parameter application
-  where current Mojo dispatches. For each item, either match current Mojo or
-  record the deliberate extension/rejection in the parity records with a
-  pinning fixture.
+  divergence-column entries in `conformance/parity.tsv`. Governing rule:
+  Mojito matches or subsets Mojo — it accepts what the audited head accepts,
+  with extensions tolerable only as (a) temporary bridges tracking upstream's
+  own deprecation state or (b) implementations of features on Mojo's own
+  roadmap/proposals, citing the upstream evidence in the parity records and
+  re-probed at every re-pin (e.g. the `_finish` named-destructor convention
+  models the linear-types proposal; expected struct extensions would also
+  qualify). The extension alignment sweep is done
+  (see the changelog: `unified {...}`, bare `move:`, the competing
+  `__setitem__` pair, `def(...)`-typed storage, captured-Origin
+  specialization values, and unqualified stateful downward funargs now
+  reject; `objs[0](args)` is recorded as a subset gap). Remaining: the
+  prioritized changeset sections 0–8 in `docs/mojo-nightly.md`.
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
@@ -162,6 +168,13 @@ encoding a stale picture of the language.
   currently spells pack-wide predicates via `conforms_to`); probe Tuple's new
   public `*Ts` parameter name for compatibility. See
   `docs/mojo-nightly.md` §8 — the SIMD half of that section is complete.
+- [ ] **Element-call dispatch for `value[i](args)`** — current Mojo dispatches
+  the bare spelling as subscript-then-call on an indexable runtime value;
+  Mojito parses it as compile-time parameter application and rejects with a
+  parenthesization hint (a recorded subset gap pinned by
+  `assets/type_error/callable_element_call_parses_as_parameter_application.mojo`).
+  Closing it needs checker re-dispatch of the non-callable-base shape plus a
+  subscript-then-indirect-call MIR lowering channel for `ExprKind::Call`.
 - [ ] **HashSet growth and rehashing** — add load-factor growth while preserving
   deterministic behavior and value semantics.
 - [ ] **Current memory and pointer API** — replace the legacy static

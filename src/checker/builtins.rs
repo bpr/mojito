@@ -365,7 +365,7 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
                 ..
             },
         ) => {
-            callable_environment_coerces(from_environment, to_environment)
+            callable_environment_value_coerces(from_environment, to_environment)
                 && required == to_required
                 && variadic.is_none()
                 && to_variadic.is_none()
@@ -419,6 +419,57 @@ pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
     }
 }
 
+/// The value-coercion policy for callable environments: current Mojo rejects
+/// binding a capturing closure to an unqualified `def(...)` value position —
+/// the contract must spell `capturing[...]` — while a thin function value
+/// still binds. Comptime callable *bounds* stay on the permissive
+/// `callable_environment_coerces` below.
+pub(crate) fn callable_environment_value_coerces(
+    from: &crate::origin::CallableEnvironment,
+    to: &crate::origin::CallableEnvironment,
+) -> bool {
+    use crate::origin::CallableEnvironment;
+    if matches!(
+        (from, to),
+        (
+            CallableEnvironment::Capturing(_),
+            CallableEnvironment::Default
+        )
+    ) {
+        return false;
+    }
+    callable_environment_coerces(from, to)
+}
+
+/// True when `from` fails to bind to `to` solely because a capturing
+/// environment meets an unqualified `def(...)` value contract — the shape that
+/// deserves the "spell `capturing[...]`" migration hint.
+pub(super) fn callable_mismatch_is_environment_only(from: &Ty, to: &Ty) -> bool {
+    let (
+        Ty::Func {
+            environment: from_environment,
+            ..
+        },
+        Ty::Func {
+            environment: to_environment,
+            ..
+        },
+    ) = (from, to)
+    else {
+        return false;
+    };
+    if callable_environment_value_coerces(from_environment, to_environment)
+        || !callable_environment_coerces(from_environment, to_environment)
+    {
+        return false;
+    }
+    let mut aligned = from.clone();
+    if let Ty::Func { environment, .. } = &mut aligned {
+        *environment = to_environment.clone();
+    }
+    coerces(&aligned, to)
+}
+
 pub(crate) fn callable_environment_coerces(
     from: &crate::origin::CallableEnvironment,
     to: &crate::origin::CallableEnvironment,
@@ -428,13 +479,13 @@ pub(crate) fn callable_environment_coerces(
         return true;
     }
     match (from, to) {
-        // An unqualified callable contract does not constrain the environment.
-        // This is the contract used by ordinary `def(...)` annotations and by
-        // anonymous callable bounds without an explicit effect.  Mojito's
-        // downward-funarg extension therefore accepts both a stateless function
-        // and a materialized non-escaping closure here; `thin` and
-        // `capturing[...]` remain the spellings that impose an environment
-        // constraint.
+        // An unqualified callable contract does not constrain the environment
+        // in the *bound* channel: a supplied `@parameter`/comptime callable
+        // argument against `F: def(...)` may capture (upstream accepts this —
+        // see `subscript_call_contracts.mojo`), so `unify`,
+        // `callable_bound_accepts`, and MIR verify stay on this permissive
+        // predicate. Runtime value coercion uses the strict
+        // `callable_environment_value_coerces` above.
         (
             CallableEnvironment::Thin | CallableEnvironment::Capturing(_),
             CallableEnvironment::Default,

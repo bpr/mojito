@@ -365,6 +365,11 @@ fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         // Environment differences are semantic, not a representational detail
         // that lowering may erase. In particular, an inference/default contract
         // is not a general MIR-level wildcard for a concrete capture set.
+        // This is deliberately the permissive bound-channel predicate: the
+        // checker's strict value-coercion rule (no capturing closure into an
+        // unqualified `def(...)` value) has already run, and comptime callable
+        // bounds legitimately ground `Capturing` values against `Default`
+        // contracts here.
         return false;
     }
     if contains_type_param(found) || contains_type_param(expected) {

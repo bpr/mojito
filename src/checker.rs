@@ -2612,6 +2612,35 @@ fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
         && keyword_names(a) == keyword_names(b)
 }
 
+/// Current Mojo rejects a `__setitem__` pair whose assignment value is the
+/// final positional parameter in one overload and a keyword-only parameter in
+/// the other over the same index types: selection would otherwise depend on
+/// the assignment's right-hand side.
+fn competing_setitem_value_shapes(a: &MethodSig, b: &MethodSig) -> bool {
+    fn positional_value_indices(sig: &MethodSig) -> Option<&[Ty]> {
+        (sig.keyword_only.is_none()
+            && sig.variadic.is_none()
+            && sig.kw_variadic.is_none()
+            && !sig.params.is_empty())
+        .then(|| &sig.params[..sig.params.len() - 1])
+    }
+    fn keyword_value_indices(sig: &MethodSig) -> Option<&[Ty]> {
+        let keyword_only = sig.keyword_only?;
+        (sig.variadic.is_none() && sig.kw_variadic.is_none() && sig.names.len() == keyword_only + 1)
+            .then(|| &sig.params[..keyword_only])
+    }
+    fn competes(positional: &MethodSig, keyword: &MethodSig) -> bool {
+        matches!(
+            (
+                positional_value_indices(positional),
+                keyword_value_indices(keyword),
+            ),
+            (Some(left), Some(right)) if symbol_equivalent_params(left, right)
+        )
+    }
+    competes(a, b) || competes(b, a)
+}
+
 /// A conforming method may promise no error where its trait requirement raises,
 /// but a raising implementation must preserve the exact declared error family.
 /// Bare `raises` denotes `Error`; it is not a wildcard for a distinct typed

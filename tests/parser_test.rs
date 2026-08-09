@@ -1361,9 +1361,8 @@ fn parses_current_and_legacy_closure_capture_lists() {
         ]
     );
 
-    let legacy =
-        parse("def outer():\n    var value = 1\n    def inner() unified {value}:\n        pass\n");
-    let StmtKind::Def { body, .. } = &legacy[0].kind else {
+    let bare = parse("def outer():\n    var value = 1\n    def inner() {value}:\n        pass\n");
+    let StmtKind::Def { body, .. } = &bare[0].kind else {
         panic!("expected outer def");
     };
     let StmtKind::Def {
@@ -1371,9 +1370,23 @@ fn parses_current_and_legacy_closure_capture_lists() {
         ..
     } = &body[1].kind
     else {
-        panic!("expected legacy nested closure");
+        panic!("expected nested closure");
     };
     assert_eq!(captures.entries[0].kind, CaptureKind::Read);
+}
+
+#[test]
+fn rejects_removed_unified_capture_spelling() {
+    let mut parser = Parser::new(Lexer::new(
+        "def outer():\n    var value = 1\n    def inner() unified {value}:\n        pass\n",
+    ));
+    let err = parser
+        .parse_program()
+        .expect_err("unified must be rejected");
+    assert!(
+        format!("{err:?}").contains("'unified {...}' capture spelling is not accepted"),
+        "unexpected diagnostic: {err:?}"
+    );
 }
 
 #[test]
