@@ -371,6 +371,11 @@ impl Checker {
                         };
                         (dtype, width)
                     })
+                } else if name == "Scalar" && param_args.len() == 1 {
+                    // `Scalar[DType.x](arg)` is width-1 SIMD construction; the
+                    // VM canonicalizes width-1 int/float64 back to the native
+                    // scalars, matching `simd_ty`.
+                    dtype_from_arg(&param_args[0]).ok().map(|dtype| (dtype, 1))
                 } else {
                     Dtype::from_scalar_alias(name).map(|dtype| (dtype, 1))
                 };

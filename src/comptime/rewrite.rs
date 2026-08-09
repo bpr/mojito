@@ -221,7 +221,7 @@ struct ElabBindingId(u32);
 /// value arguments. A dependent type such as `Ts[i]` stores `i` below a
 /// `ParamArg::Type`, so rewriting only top-level value arguments leaves an
 /// unbound index in an otherwise-unrolled specialization.
-fn rewrite_type(ty: &mut Type, subs: Subs) {
+pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
     match ty {
         Type::Named(_, arguments) => rewrite_param_args(arguments, subs),
         Type::Assoc { base, .. } => rewrite_type(base, subs),

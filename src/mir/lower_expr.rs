@@ -1185,6 +1185,46 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                // Parameterized SIMD methods (`v.cast[DType.<dt>]()`) carry
+                // their checker-resolved payload in the adjustment; the
+                // receiver is the member callee's object.
+                let simd_cast = self
+                    .checked_adjustments(e)
+                    .into_iter()
+                    .find_map(|adjustment| match adjustment {
+                        crate::SemanticAdjustment::SimdCast { dtype, width } => {
+                            Some((dtype, width))
+                        }
+                        _ => None,
+                    });
+                if let Some((dtype, width)) = simd_cast
+                    && let ExprKind::Member { object, .. } = &callee.kind
+                {
+                    let value = self.expr(object);
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::SimdCast {
+                        dest,
+                        value,
+                        dtype,
+                        width: usize::try_from(width).unwrap_or(0),
+                    });
+                    return dest;
+                }
+                let simd_shuffle = self
+                    .checked_adjustments(e)
+                    .into_iter()
+                    .find_map(|adjustment| match adjustment {
+                        crate::SemanticAdjustment::SimdShuffle { mask } => Some(mask),
+                        _ => None,
+                    });
+                if let Some(mask) = simd_shuffle
+                    && let ExprKind::Member { object, .. } = &callee.kind
+                {
+                    let value = self.expr(object);
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::SimdShuffle { dest, value, mask });
+                    return dest;
+                }
                 if let Some(operation) =
                     self.checked_adjustments(e).into_iter().find(|adjustment| {
                         matches!(

@@ -639,6 +639,24 @@ pub enum MirInstr {
         width: usize,
         elems: Vec<Reg>,
     },
+    /// Elementwise dtype conversion `v.cast[DType.<dt>]()`. The target
+    /// `dtype`/`width` are checker-resolved compile-time parameters, like
+    /// [`MirInstr::MakeSimd`]'s.
+    SimdCast {
+        dest: Reg,
+        value: Reg,
+        dtype: Dtype,
+        width: usize,
+    },
+    /// Lane gather `v.shuffle[*mask]()`: result lane `i` is `value`'s lane
+    /// `mask[i]`. The mask is a checker-resolved compile-time parameter —
+    /// every index is within the receiver's width and the mask length is a
+    /// valid SIMD width.
+    SimdShuffle {
+        dest: Reg,
+        value: Reg,
+        mask: Vec<usize>,
+    },
     /// `raise <src>` — raise an error value. Propagates as an exceptional outcome
     /// (the VM unwinds to the nearest enclosing [`MirInstr::Try`] handler).
     Raise {

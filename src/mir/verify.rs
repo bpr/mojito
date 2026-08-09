@@ -64,6 +64,8 @@ pub(crate) fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>
         | MirInstr::MakeTuple { dest, .. }
         | MirInstr::MakeVariant { dest, .. }
         | MirInstr::MakeSimd { dest, .. }
+        | MirInstr::SimdCast { dest, .. }
+        | MirInstr::SimdShuffle { dest, .. }
         | MirInstr::MakeClosure { dest, .. }
         | MirInstr::VariantIs { dest, .. }
         | MirInstr::VariantGet { dest, .. }
@@ -295,6 +297,7 @@ pub(crate) fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg
         MirInstr::MakeTuple { elems, .. } | MirInstr::MakeSimd { elems, .. } => {
             out.extend(elems.iter().copied())
         }
+        MirInstr::SimdCast { value, .. } | MirInstr::SimdShuffle { value, .. } => out.push(*value),
         MirInstr::MakeVariant { value, .. } => out.push(*value),
         MirInstr::MakeClosure { captures, .. } => {
             for capture in captures {
@@ -1836,7 +1839,32 @@ fn verify_instruction(
         }
     }
     let reg_ty = |register: &Reg| function.reg_types.get(&register.0);
+    let valid_simd_width = |width: usize| width >= 1 && (width & (width - 1)) == 0;
     match instruction {
+        // Widths are validated during checked elaboration; this is the
+        // phase-boundary backstop for assembled artifacts.
+        MirInstr::MakeSimd { width, .. } | MirInstr::SimdCast { width, .. } => {
+            if !valid_simd_width(*width) {
+                errors.push(format!(
+                    "{prefix}: SIMD width {width} is not a positive power of two"
+                ));
+            }
+        }
+        MirInstr::SimdShuffle { value, mask, .. } => {
+            if !valid_simd_width(mask.len()) {
+                errors.push(format!(
+                    "{prefix}: SIMD shuffle mask length {} is not a positive power of two",
+                    mask.len()
+                ));
+            }
+            if let Some(Ty::Simd { width, .. }) = reg_ty(value)
+                && let Some(bad) = mask.iter().find(|lane| **lane as i64 >= *width)
+            {
+                errors.push(format!(
+                    "{prefix}: SIMD shuffle lane {bad} is out of range for width {width}"
+                ));
+            }
+        }
         MirInstr::EstablishLoans {
             reference, loans, ..
         } => {

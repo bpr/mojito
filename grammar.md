@@ -830,9 +830,12 @@ an explicit `MaterializeLiteral` instruction.
 ## SIMD
 
 `SIMD[DType.<dt>, <width>]` is a fixed-width vector of `<width>` lanes of element type
-`<dt>` — a built-in **parameterized** type. `<width>` is a comptime `SIMDSize`
+`<dt>` — a built-in **parameterized** type. `<width>` is a comptime `SIMDLength`
 (represented by a compile-time `Int`) and must be a power of two; `_` in a
-construction infers the width from its explicit lanes. `<dt>` is written `DType.<dt>` where
+construction infers the width from its explicit lanes. `SIMDSize` is the
+deprecated transitional spelling: it stays accepted as a compatibility alias
+but is never emitted in diagnostics or documentation, and its removal is a
+future roadmap decision. `<dt>` is written `DType.<dt>` where
 `DType` is a built-in namespace (`DType.<dt>` is valid only inside a `SIMD[...]`
 argument, never as a value).
 
@@ -850,11 +853,34 @@ argument, never as a value).
   canonicalizes with `Scalar[DType.int]` while retaining its native VM representation.
 - **Construction**: `SIMD[DType.int32, 4](1, 2, 3, 4)` takes exactly `<width>` element
   arguments; `SIMD[DType.int32, 4](7)` **splats** one value across all lanes. A scalar
-  alias constructs a width-1 vector: `Int32(5)`.
+  alias constructs a width-1 vector: `Int32(5)`. **Explicit construction converts**
+  runtime values: an integer source (`Int`, `UInt`, any width-1 integer scalar, or —
+  for integer targets — any `Intable` value through `__int__`) wraps to the element
+  width or converts numerically into float lanes, and a float source adjusts
+  precision across float widths. A float source never converts to an integer lane —
+  spell the truncation (`Int(x)`) first. Implicit contexts (bindings, operator
+  splats) stay literal-exact.
+- **Generic widths**: a `def` may take its width as a `[w: SIMDLength]` value
+  parameter and use it in `SIMD[...]` positions; each call monomorphizes, and an
+  invalid bound width is rejected during checked elaboration. (A struct-parameter
+  width stays deferred.)
 - **Operators** (elementwise, both operands the same SIMD type; a numeric *literal*
   splats to the other operand's type): `+ - *` on any numeric element type, `/` on
-  `float32`. Comparisons `== != < > <= >=` return a `SIMD[DType.bool, <width>]` mask.
-  (`// % **` on SIMD, mixed-width broadcast, and a value-parameter width are deferred.)
+  `float32`, and unary `-v` on numeric lanes (integer lanes wrap). Comparisons
+  `== != < > <= >=` return a `SIMD[DType.bool, <width>]` mask.
+  (`// % **` on SIMD and mixed-width broadcast are deferred.)
+- **Methods**:
+  - `v.cast[DType.<dt>]()` converts elementwise: integer targets re-wrap at the new
+    element width, float targets convert numerically (`float32` rounds), and a float
+    source truncates toward zero into integer lanes; `bool` casts are deferred.
+  - `mask.select(t, f)` blends elementwise through a `bool` mask; the two cases
+    share one dtype at the mask's width (a scalar/literal case splats).
+  - `v.reduce_add()` / `reduce_mul` / `reduce_min` / `reduce_max` collapse numeric
+    lanes to the width-1 scalar (integer `add`/`mul` wrap per step; `DType.int`
+    results are the native `Int`); `mask.reduce_and()` / `reduce_or` yield `Bool`.
+  - `v.shuffle[*mask]()` gathers lanes by compile-time indices, each within the
+    receiver's width; the result takes the mask's (power-of-two) width. (The
+    two-vector shuffle and `rotate_*`/`join`/`interleave` are deferred.)
 - **Lane read**: `v[i]` (`i` an `Int`) returns lane `i` as the width-1 scalar
   `SIMD[DType.<dt>, 1]`.
 - **Lane write**: `v[i] = e` sets lane `i` (see **assignment**); `e` is a same-dtype

@@ -1476,6 +1476,9 @@ impl VmBackend {
                 "vm: {} has no method '{method}'",
                 kind.type_name()
             ))),
+            Value::Simd { dtype, lanes } => {
+                crate::runtime::simd_method(*dtype, lanes, method, &args)
+            }
             // `UnsafePointer` methods: `free()` releases the allocation (a no-op in
             // the arena model — the arena never reclaims).
             Value::Pointer { allocation, offset } => match method {
@@ -1990,7 +1993,10 @@ impl VmBackend {
                 }
                 builtin_convert(name, value)
             }
-            "Scalar" | "UInt" => builtin_convert(name, arg1(name, args)?),
+            // `Scalar[DType.x](arg)` lowers through the recorded SIMD
+            // construction (`MakeSimd`), never a direct builtin call — a bare
+            // `Scalar` name here has lost its dtype and cannot be executed.
+            "UInt" => builtin_convert(name, arg1(name, args)?),
             "divmod" => {
                 let (a, b) = arg2(name, args)?;
                 builtin_divmod(a, b)

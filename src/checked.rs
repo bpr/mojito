@@ -388,6 +388,19 @@ pub enum SemanticAdjustment {
         dtype: crate::ast::Dtype,
         width: i64,
     },
+    /// `v.cast[DType.target]()` — elementwise dtype conversion of a SIMD
+    /// value. The target dtype and lane width are resolved at checking; MIR
+    /// carries them so the VM never derives semantics from a runtime value.
+    SimdCast {
+        dtype: crate::ast::Dtype,
+        width: i64,
+    },
+    /// `v.shuffle[*mask]()` — lane gather by checker-resolved compile-time
+    /// indices, each within the receiver's width; the result takes the
+    /// mask's (power-of-two) width.
+    SimdShuffle {
+        mask: Vec<usize>,
+    },
     /// Construct the selected alternative of a checked `Variant` type.
     ConstructVariant {
         alternatives: Vec<Ty>,

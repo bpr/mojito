@@ -505,6 +505,25 @@ pub(crate) fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeE
         (PrefixOp::Neg, Value::IntLiteral(value)) => Ok(Value::IntLiteral(value.neg())),
         (PrefixOp::Neg, Value::FloatLiteral(value)) => Ok(Value::FloatLiteral(value.neg())),
         (PrefixOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
+        // Elementwise negation wraps integer lanes at the element width;
+        // float lanes negate exactly (a sign flip never re-rounds).
+        (PrefixOp::Neg, Value::Simd { dtype, lanes }) => match lanes {
+            SimdLanes::Int(v) => Ok(simd_value(
+                dtype,
+                SimdLanes::Int(
+                    v.into_iter()
+                        .map(|x| wrap(dtype, x.wrapping_neg()))
+                        .collect(),
+                ),
+            )),
+            SimdLanes::Float(v) => Ok(simd_value(
+                dtype,
+                SimdLanes::Float(v.into_iter().map(|x| -x).collect()),
+            )),
+            SimdLanes::Bool(_) => Err(RuntimeError::TypeError(
+                "cannot negate a bool SIMD mask".to_string(),
+            )),
+        },
         (PrefixOp::Neg, v) => Err(RuntimeError::TypeError(format!(
             "cannot negate {}",
             type_name(&v)
@@ -790,7 +809,7 @@ pub(crate) fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeErro
     match &v {
         Value::IntLiteral(value) => {
             return Ok(match name {
-                "Int" | "Scalar" => Value::Int(
+                "Int" => Value::Int(
                     value
                         .wrapping_signed(64)
                         .ok_or_else(|| literal_materialization_error(&value, "Int"))?,
@@ -810,7 +829,7 @@ pub(crate) fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeErro
         }
         Value::FloatLiteral(value) => {
             return Ok(match name {
-                "Int" | "Scalar" => Value::Int(
+                "Int" => Value::Int(
                     value
                         .trunc_to_int()
                         .wrapping_signed(64)
@@ -857,7 +876,7 @@ pub(crate) fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeErro
         }
     };
     Ok(match name {
-        "Int" | "Scalar" => Value::Int(as_i),
+        "Int" => Value::Int(as_i),
         "UInt" => Value::UInt(as_u),
         "Bool" => Value::Bool(as_bool),
         _ => Value::Float64(as_f), // "Float64"
@@ -1358,14 +1377,21 @@ fn materialize_like_numeric(literal: Value, concrete: &Value) -> Result<Value, R
 }
 
 /// Build a SIMD `Value` from `dtype`+`lanes`, canonicalizing a **width-1
-/// `float64`** to the native `Value::Float64` — the runtime side of unifying
-/// `Float64` with `SIMD[DType.float64, 1]`.
+/// `float64`** to the native `Value::Float64` and a **width-1 `int`** to the
+/// native `Value::Int` — the runtime side of `simd_ty`'s unification of
+/// `Float64`/`SIMD[DType.float64, 1]` and `Int`/`Scalar[DType.int]`.
 fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
     if dtype == Dtype::Float64
         && let SimdLanes::Float(v) = &lanes
         && v.len() == 1
     {
         return Value::Float64(v[0]);
+    }
+    if dtype == Dtype::Int
+        && let SimdLanes::Int(v) = &lanes
+        && v.len() == 1
+    {
+        return Value::Int(v[0] as i64);
     }
     Value::Simd { dtype, lanes }
 }
@@ -1446,6 +1472,7 @@ fn value_to_int_lane(v: &Value, dtype: Dtype) -> Result<i128, RuntimeError> {
 fn value_to_float(v: &Value) -> Result<f64, RuntimeError> {
     match v {
         Value::Int(n) => Ok(*n as f64),
+        Value::UInt(n) => Ok(*n as f64),
         Value::Float64(x) => Ok(*x),
         Value::IntLiteral(value) => value
             .to_f64()
@@ -1457,6 +1484,11 @@ fn value_to_float(v: &Value) -> Result<f64, RuntimeError> {
             lanes: SimdLanes::Float(l),
             ..
         } if l.len() == 1 => Ok(l[0]),
+        // An integer scalar converts to a float lane at explicit construction.
+        Value::Simd {
+            lanes: SimdLanes::Int(l),
+            ..
+        } if l.len() == 1 => Ok(l[0] as f64),
         other => Err(RuntimeError::TypeError(format!(
             "cannot use {} as a float SIMD element",
             type_name(other)
@@ -1525,6 +1557,211 @@ fn simd_shape(v: &Value) -> Option<(Dtype, usize)> {
     match v {
         Value::Simd { dtype, lanes } => Some((*dtype, lanes.width())),
         _ => None,
+    }
+}
+
+/// Elementwise dtype conversion (`v.cast[DType.<dt>]()`): integer targets
+/// re-wrap at the new element width, float targets convert numerically
+/// (`float32` rounds), and a float source converts to an integer lane by
+/// truncating toward zero (saturating at the 128-bit intermediate) and then
+/// wrapping — Mojito's pinned bit-accurate policy. Bool casts are rejected at
+/// checking.
+pub(crate) fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
+    // A canonicalized width-1 receiver arrives as a native scalar.
+    let lanes = match value {
+        Value::Simd { lanes, .. } => lanes.clone(),
+        Value::Int(n) => SimdLanes::Int(vec![*n as i128]),
+        Value::Float64(x) => SimdLanes::Float(vec![*x]),
+        other => {
+            return Err(RuntimeError::TypeError(format!(
+                "cannot cast {} as a SIMD value",
+                type_name(other)
+            )));
+        }
+    };
+    let cast = match (&lanes, target.is_float()) {
+        (SimdLanes::Int(v), false) => SimdLanes::Int(v.iter().map(|x| wrap(target, *x)).collect()),
+        (SimdLanes::Int(v), true) => {
+            let round = |x: f64| {
+                if target == Dtype::Float32 {
+                    round_f32(x)
+                } else {
+                    x
+                }
+            };
+            SimdLanes::Float(v.iter().map(|x| round(*x as f64)).collect())
+        }
+        (SimdLanes::Float(v), false) => {
+            SimdLanes::Int(v.iter().map(|x| wrap(target, x.trunc() as i128)).collect())
+        }
+        (SimdLanes::Float(v), true) => {
+            let round = |x: f64| {
+                if target == Dtype::Float32 {
+                    round_f32(x)
+                } else {
+                    x
+                }
+            };
+            SimdLanes::Float(v.iter().map(|x| round(*x)).collect())
+        }
+        (SimdLanes::Bool(_), _) => {
+            return Err(RuntimeError::TypeError(
+                "bool SIMD dtype casts are not supported".to_string(),
+            ));
+        }
+    };
+    Ok(simd_value(target, cast))
+}
+
+/// Lane gather (`v.shuffle[*mask]()`): result lane `i` is the source's lane
+/// `mask[i]`. The checker bounded every index by the receiver's width; the
+/// bounds check here is the phase-boundary backstop.
+pub(crate) fn simd_shuffle(value: &Value, mask: &[usize]) -> Result<Value, RuntimeError> {
+    let Value::Simd { dtype, lanes } = value else {
+        return Err(RuntimeError::TypeError(format!(
+            "cannot shuffle {} as a SIMD value",
+            type_name(value)
+        )));
+    };
+    let width = lanes.width();
+    if let Some(bad) = mask.iter().find(|lane| **lane >= width) {
+        return Err(RuntimeError::TypeError(format!(
+            "shuffle lane {bad} is out of range for width {width}"
+        )));
+    }
+    let gathered = match lanes {
+        SimdLanes::Int(v) => SimdLanes::Int(mask.iter().map(|lane| v[*lane]).collect()),
+        SimdLanes::Float(v) => SimdLanes::Float(mask.iter().map(|lane| v[*lane]).collect()),
+        SimdLanes::Bool(v) => SimdLanes::Bool(mask.iter().map(|lane| v[*lane]).collect()),
+    };
+    Ok(simd_value(*dtype, gathered))
+}
+
+/// Dispatch a method call on a SIMD receiver: `select` on bool masks and the
+/// lane reductions. The checker validated shapes; an unknown name is a clean
+/// has-no-method error.
+pub(crate) fn simd_method(
+    dtype: Dtype,
+    lanes: &SimdLanes,
+    method: &str,
+    args: &[Value],
+) -> Result<Value, RuntimeError> {
+    match method {
+        "select" if args.len() == 2 => simd_select(lanes, &args[0], &args[1]),
+        "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {
+            simd_reduce(dtype, lanes, method)
+        }
+        "reduce_and" | "reduce_or" if args.is_empty() => match lanes {
+            SimdLanes::Bool(v) => Ok(Value::Bool(if method == "reduce_and" {
+                v.iter().all(|lane| *lane)
+            } else {
+                v.iter().any(|lane| *lane)
+            })),
+            _ => Err(RuntimeError::TypeError(format!(
+                "{method}() requires bool lanes"
+            ))),
+        },
+        _ => Err(RuntimeError::Unsupported(format!(
+            "vm: SIMD[DType.{}, {}] has no method '{method}'",
+            dtype.name(),
+            lanes.width()
+        ))),
+    }
+}
+
+/// Elementwise blend through a bool mask: lane `i` of the result takes
+/// `when_true`'s lane where the mask is set, else `when_false`'s. A scalar or
+/// literal case splats, like an infix operand.
+fn simd_select(
+    mask: &SimdLanes,
+    when_true: &Value,
+    when_false: &Value,
+) -> Result<Value, RuntimeError> {
+    let SimdLanes::Bool(mask) = mask else {
+        return Err(RuntimeError::TypeError(
+            "select() requires a bool-mask receiver".to_string(),
+        ));
+    };
+    let width = mask.len();
+    // The checker guarantees at least one case is a SIMD of the payload dtype.
+    let Some(dtype) = [when_true, when_false].into_iter().find_map(|v| match v {
+        Value::Simd { dtype, .. } => Some(*dtype),
+        _ => None,
+    }) else {
+        return Err(RuntimeError::TypeError(
+            "select() requires a SIMD case operand".to_string(),
+        ));
+    };
+    let lanes = if dtype == Dtype::Bool {
+        let t = to_bool_lanes(when_true, width)?;
+        let f = to_bool_lanes(when_false, width)?;
+        SimdLanes::Bool(
+            mask.iter()
+                .enumerate()
+                .map(|(i, m)| if *m { t[i] } else { f[i] })
+                .collect(),
+        )
+    } else if dtype.is_float() {
+        let t = to_float_lanes(when_true, dtype, width)?;
+        let f = to_float_lanes(when_false, dtype, width)?;
+        SimdLanes::Float(
+            mask.iter()
+                .enumerate()
+                .map(|(i, m)| if *m { t[i] } else { f[i] })
+                .collect(),
+        )
+    } else {
+        let t = to_int_lanes(when_true, dtype, width)?;
+        let f = to_int_lanes(when_false, dtype, width)?;
+        SimdLanes::Int(
+            mask.iter()
+                .enumerate()
+                .map(|(i, m)| if *m { t[i] } else { f[i] })
+                .collect(),
+        )
+    };
+    Ok(simd_value(dtype, lanes))
+}
+
+/// Collapse lanes to the canonicalized width-1 scalar. Integer `add`/`mul`
+/// wrap at the element width per step, like the elementwise operators;
+/// `float32` rounds each step to single precision.
+fn simd_reduce(dtype: Dtype, lanes: &SimdLanes, method: &str) -> Result<Value, RuntimeError> {
+    match lanes {
+        SimdLanes::Int(v) => {
+            let mut acc = v[0];
+            for x in &v[1..] {
+                acc = match method {
+                    "reduce_add" => wrap(dtype, acc.wrapping_add(*x)),
+                    "reduce_mul" => wrap(dtype, acc.wrapping_mul(*x)),
+                    "reduce_min" => acc.min(*x),
+                    _ => acc.max(*x),
+                };
+            }
+            Ok(simd_value(dtype, SimdLanes::Int(vec![acc])))
+        }
+        SimdLanes::Float(v) => {
+            let round = |x: f64| {
+                if dtype == Dtype::Float32 {
+                    round_f32(x)
+                } else {
+                    x
+                }
+            };
+            let mut acc = v[0];
+            for x in &v[1..] {
+                acc = match method {
+                    "reduce_add" => round(acc + x),
+                    "reduce_mul" => round(acc * x),
+                    "reduce_min" => acc.min(*x),
+                    _ => acc.max(*x),
+                };
+            }
+            Ok(simd_value(dtype, SimdLanes::Float(vec![acc])))
+        }
+        SimdLanes::Bool(_) => Err(RuntimeError::TypeError(format!(
+            "{method}() requires numeric lanes"
+        ))),
     }
 }
 

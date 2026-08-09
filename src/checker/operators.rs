@@ -11,6 +11,11 @@ impl Checker {
             (PrefixOp::Neg, Ty::Int | Ty::Float64 | Ty::IntLiteral | Ty::FloatLiteral) => {
                 return Ok(t);
             }
+            // Elementwise negation on numeric SIMD lanes preserves the type;
+            // a bool mask does not negate.
+            (PrefixOp::Neg, Ty::Simd { dtype, width }) if *dtype != Dtype::Bool => {
+                return Ok(simd_ty(*dtype, *width));
+            }
             (PrefixOp::Not, Ty::Bool) => return Ok(Ty::Bool),
             _ => {}
         }
@@ -436,7 +441,15 @@ impl Checker {
         }
         for arg in args {
             let aty = self.infer(arg)?;
-            if !splats_to(&aty, dtype) {
+            // Integer lanes also construct from any Intable value (bounded
+            // parameter or conforming struct) through its `__int__`; the
+            // numeric scalars take the exact `converts_to_lane` matrix, so a
+            // float source still spells its truncation explicitly.
+            let intable_object = dtype != Dtype::Bool
+                && !dtype.is_float()
+                && matches!(&aty, Ty::Param { .. } | Ty::Struct(..))
+                && self.conforms_to(&aty, "Intable");
+            if !converts_to_lane(&aty, dtype) && !intable_object {
                 return Err(TypeError::TypeMismatch {
                     expected: format!("a DType.{} element", dtype.name()),
                     found: aty.to_string(),

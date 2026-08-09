@@ -514,6 +514,21 @@ impl<'a> Elab<'a> {
             expand_type_packs(&mut parameter.ty, &type_pack_expansions);
         }
         let mut specialized_raises_type = raises_type.clone();
+        // A scalar value parameter may appear inside a **type** position (a
+        // SIMD width, `-> SIMD[DType.int32, w]`); bake it into the signature
+        // exactly like the body/default/where expressions, so the clone's
+        // types resolve concretely — `simd_width` then validates the bound
+        // width during this checked elaboration.
+        let value_subs: Subs = &|name| subs.get(name).cloned();
+        if let Some(ret) = &mut specialized_ret {
+            rewrite_type(ret, value_subs);
+        }
+        for parameter in &mut specialized_params {
+            rewrite_type(&mut parameter.ty, value_subs);
+        }
+        if let Some(error) = &mut specialized_raises_type {
+            rewrite_type(error, value_subs);
+        }
         // Bake each dropped type parameter's concrete type into every remaining
         // type position: the residual signature no longer declares the binding
         // and the rewritten calls no longer supply it.

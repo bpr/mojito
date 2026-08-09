@@ -1177,8 +1177,27 @@ impl VmBackend {
                 width,
                 elems,
             } => {
-                let vals: Vec<Value> = elems.iter().map(|r| regs[r.0 as usize].clone()).collect();
+                let mut vals: Vec<Value> =
+                    elems.iter().map(|r| regs[r.0 as usize].clone()).collect();
+                // An `Intable`-bounded element arrives erased as its concrete
+                // struct; normalize it through `__int__` before lane build.
+                for val in &mut vals {
+                    if let Value::Struct { name, .. } = val {
+                        let name = name.clone();
+                        let receiver = std::mem::replace(val, Value::None);
+                        *val = self.call_dunder(prog, &name, "__int__", vec![receiver])?;
+                    }
+                }
                 regs[dest.0 as usize] = simd_from_values(*dtype, *width, &vals)?;
+            }
+            MirInstr::SimdCast {
+                dest, value, dtype, ..
+            } => {
+                regs[dest.0 as usize] = crate::runtime::simd_cast(*dtype, &regs[value.0 as usize])?;
+            }
+            MirInstr::SimdShuffle { dest, value, mask } => {
+                regs[dest.0 as usize] =
+                    crate::runtime::simd_shuffle(&regs[value.0 as usize], mask)?;
             }
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();

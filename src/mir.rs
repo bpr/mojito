@@ -2019,6 +2019,9 @@ fn close_register_types(
                     } => Some((dest, Some(Ty::Variant(alternatives.clone())))),
                     MirInstr::MakeSimd {
                         dest, dtype, width, ..
+                    }
+                    | MirInstr::SimdCast {
+                        dest, dtype, width, ..
                     } => Some((
                         dest,
                         Some(Ty::Simd {
@@ -2026,6 +2029,20 @@ fn close_register_types(
                             width: *width as i64,
                         }),
                     )),
+                    // A shuffle keeps the source dtype at the mask's width.
+                    MirInstr::SimdShuffle { dest, value, mask } => {
+                        let dtype = match reg_types.get(&value.0) {
+                            Some(Ty::Simd { dtype, .. }) => Some(*dtype),
+                            _ => None,
+                        };
+                        Some((
+                            dest,
+                            dtype.map(|dtype| Ty::Simd {
+                                dtype,
+                                width: mask.len() as i64,
+                            }),
+                        ))
+                    }
                     MirInstr::VariantIs { dest, .. } => Some((dest, Some(Ty::Bool))),
                     MirInstr::VariantGet {
                         dest,

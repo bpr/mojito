@@ -1649,6 +1649,131 @@ fn rejects_indexing_a_non_simd() {
 }
 
 #[test]
+fn accepts_simd_negation_select_and_reductions() {
+    ok(
+        "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var n: SIMD[DType.int32, 4] = -v\n    var total: Int32 = v.reduce_add()\n    var m = v < SIMD[DType.int32, 4](3, 3, 3, 3)\n    var blended: SIMD[DType.int32, 4] = m.select(v, -v)\n    var splatted: SIMD[DType.int32, 4] = m.select(v, 0)\n    var all_set: Bool = m.reduce_and()\n    var any_set: Bool = m.reduce_or()\n    var i: Int = SIMD[DType.int, 2](1, 2).reduce_add()\n",
+    );
+}
+
+#[test]
+fn accepts_simd_dtype_cast() {
+    ok(
+        "def main():\n    var v = SIMD[DType.int32, 4](1, -2, 3, -300)\n    var u: SIMD[DType.uint8, 4] = v.cast[DType.uint8]()\n    var f: SIMD[DType.float32, 4] = v.cast[DType.float32]()\n    var back: SIMD[DType.int32, 4] = f.cast[DType.int32]()\n    var scalar: Int8 = Byte(200).cast[DType.int8]()\n",
+    );
+}
+
+#[test]
+fn rejects_bool_simd_dtype_casts() {
+    // Bool dtype casts are deferred in both directions.
+    assert!(matches!(
+        err(
+            "def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bad = v.cast[DType.bool]()\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+    assert!(matches!(
+        err(
+            "def main():\n    var m = SIMD[DType.int32, 2](1, 2) < SIMD[DType.int32, 2](2, 2)\n    var bad = m.cast[DType.int32]()\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn accepts_simd_shuffle_masks() {
+    ok(
+        "def main():\n    var v = SIMD[DType.int32, 4](10, 20, 30, 40)\n    var r: SIMD[DType.int32, 4] = v.shuffle[3, 2, 1, 0]()\n    var pair: SIMD[DType.int32, 2] = v.shuffle[1, 1]()\n    var one: Int32 = v.shuffle[0]()\n",
+    );
+}
+
+#[test]
+fn rejects_bad_simd_shuffle_masks() {
+    // A lane index beyond the receiver's width.
+    assert!(matches!(
+        err(
+            "def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bad = v.shuffle[2, 0]()\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+    // The mask length must itself be a valid SIMD width.
+    assert!(matches!(
+        err(
+            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.shuffle[0, 1, 2]()\n"
+        ),
+        TypeError::BadSimdWidth(_)
+    ));
+    // Lane indices are compile-time values.
+    assert!(err(
+        "def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var i = 1\n    var bad = v.shuffle[i]()\n"
+    )
+    .to_string()
+    .contains("compile-time"));
+}
+
+#[test]
+fn rejects_simd_mask_negation_and_shape_misuse() {
+    // A bool mask does not negate.
+    assert!(matches!(
+        err(
+            "def main():\n    var m = SIMD[DType.int32, 2](1, 2) < SIMD[DType.int32, 2](2, 2)\n    var bad = -m\n"
+        ),
+        TypeError::BadOperator { .. }
+    ));
+    // `select` lives on the mask, not a numeric vector.
+    assert!(matches!(
+        err("def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bad = v.select(v, v)\n"),
+        TypeError::NoSuchMethod { .. }
+    ));
+    // The cases must share the mask's width.
+    assert!(matches!(
+        err(
+            "def main():\n    var m = SIMD[DType.int32, 2](1, 2) < SIMD[DType.int32, 2](2, 2)\n    var bad = m.select(SIMD[DType.int32, 4](1, 2, 3, 4), 0)\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+    // Bool reductions live on masks only.
+    assert!(matches!(
+        err("def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bad = v.reduce_and()\n"),
+        TypeError::NoSuchMethod { .. }
+    ));
+}
+
+#[test]
+fn accepts_runtime_scalar_dtype_conversions() {
+    // Explicit construction converts: runtime integers wrap to any integer
+    // width and convert to float lanes; floats adjust precision.
+    ok(
+        "def main():\n    var i = 300\n    var b: Byte = Byte(i)\n    var u: UInt32 = UInt32(UInt(70000))\n    var w: Int32 = Int32(b)\n    var f: Float32 = Float32(2.75)\n    var g: Float32 = Float32(i)\n    var v: SIMD[DType.uint8, 4] = SIMD[DType.uint8, 4](i, 1, 2, 3)\n",
+    );
+}
+
+#[test]
+fn accepts_intable_sources_for_integer_lanes() {
+    // Integer-Scalar construction accepts any Intable value: a bounded
+    // parameter or a conforming struct, converted through `__int__`.
+    ok(
+        "@fieldwise_init\nstruct W(Intable):\n    var n: Int\n\n    def __int__(self) -> Int:\n        return self.n\n\ndef to_byte[T: Intable](x: T) -> Byte:\n    return Byte(x)\n\ndef main():\n    var b = to_byte(W(261))\n    var c = Byte(W(300))\n",
+    );
+}
+
+#[test]
+fn rejects_float_sources_for_integer_lanes() {
+    // A float source spells its truncation explicitly (`Int(x)` first).
+    assert!(matches!(
+        err("def main():\n    var b = Byte(1.5)\n"),
+        TypeError::TypeMismatch { .. }
+    ));
+    assert!(matches!(
+        err("def main():\n    var f = 2.5\n    var b = Int8(f)\n"),
+        TypeError::TypeMismatch { .. }
+    ));
+    assert!(matches!(
+        err("def main():\n    var g: Float32 = Float32(1.0)\n    var b = Int8(g)\n"),
+        TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
 fn rejects_float_literal_for_integer_dtype() {
     let e = err("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1.5, 2.5)\n");
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
@@ -2765,9 +2890,18 @@ fn nightly_pack_conformance_checks_every_type_value() {
 }
 
 #[test]
-fn int_is_scalar_dtype_int_and_simdsize_drives_width_values() {
+fn int_is_scalar_dtype_int_and_simdlength_drives_width_values() {
     ok(
-        "def width_value[width: SIMDSize]() -> Int where width > 0:\n    return width\n\ndef main():\n    var scalar: Scalar[DType.int] = 41\n    var same: Int = Scalar[DType.int](scalar + 1)\n    var vector: SIMD[DType.int, 4] = SIMD[DType.int, _](1, 2, 3, 4)\n    var width = width_value[4]()\n",
+        "def width_value[width: SIMDLength]() -> Int where width > 0:\n    return width\n\ndef main():\n    var scalar: Scalar[DType.int] = 41\n    var same: Int = Scalar[DType.int](scalar + 1)\n    var vector: SIMD[DType.int, 4] = SIMD[DType.int, _](1, 2, 3, 4)\n    var width = width_value[4]()\n",
+    );
+}
+
+#[test]
+fn deprecated_simdsize_alias_stays_accepted() {
+    // The transitional `SIMDSize` spelling classifies a width value parameter
+    // exactly like `SIMDLength`; it is accepted but never emitted.
+    ok(
+        "def width_value[width: SIMDSize]() -> Int where width > 0:\n    return width\n\ndef main():\n    var width = width_value[4]()\n",
     );
 }
 

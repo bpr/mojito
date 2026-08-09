@@ -40,6 +40,32 @@ pub(super) fn splats_to(ty: &Ty, dtype: Dtype) -> bool {
     }
 }
 
+/// Whether `ty` may be an **explicit construction** argument for a `dtype`
+/// lane — `SIMD[...](...)`, a scalar alias like `Byte(...)`, or
+/// `Scalar[DType.x](...)`. Explicit construction converts where the implicit
+/// contexts `splats_to` governs (operator splats, coercions) stay
+/// literal-exact: runtime integers wrap to any integer width and convert to
+/// float lanes, and runtime floats adjust precision across float widths. A
+/// float source never converts to an integer lane — spell the truncation
+/// (`Int(x)`) first. `Intable` params/structs are the caller's separate,
+/// `conforms_to`-backed clause (`check_simd_args`).
+pub(super) fn converts_to_lane(ty: &Ty, dtype: Dtype) -> bool {
+    if splats_to(ty, dtype) {
+        return true;
+    }
+    let integer_source = matches!(ty, Ty::Int | Ty::UInt)
+        || matches!(ty, Ty::Simd { dtype: d, width: 1 } if !d.is_float() && *d != Dtype::Bool);
+    if dtype == Dtype::Bool {
+        return false;
+    }
+    if dtype.is_float() {
+        let float_source = matches!(ty, Ty::Float64)
+            || matches!(ty, Ty::Simd { dtype: d, width: 1 } if d.is_float());
+        return float_source || integer_source;
+    }
+    integer_source
+}
+
 pub(super) fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
     match dtype {
         Dtype::Int
@@ -75,6 +101,9 @@ pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {
 pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
     match name {
         "Int" => Some(Ty::Int),
+        "SIMDLength" => Some(Ty::Int),
+        // Deprecated transitional spelling of `SIMDLength`; accepted, never
+        // emitted.
         "SIMDSize" => Some(Ty::Int),
         "UInt" => Some(Ty::UInt),
         "Bool" => Some(Ty::Bool),

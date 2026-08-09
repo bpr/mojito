@@ -8,6 +8,32 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- SIMD semantic completion. `SIMDLength` is now the width-parameter
+  spelling (`SIMDSize` stays a deprecated, never-emitted compatibility
+  alias, and the comptime elaborator now classifies both as value
+  parameters). Explicit scalar/SIMD construction converts runtime values —
+  integers wrap to any integer width and convert to float lanes, floats
+  adjust precision, and any `Intable` value (bounded parameter or
+  conforming struct, whose builtin-trait conformance the checker now
+  recognizes for declaring structs) constructs integer scalars through
+  `__int__` — while implicit contexts stay literal-exact, and
+  `Scalar[DType.x](arg)` now lowers as ordinary width-1 SIMD construction
+  (previously a MIR-verify failure for non-canonical dtypes). New
+  CPU-visible operations: unary negation, `cast[DType.target]()`
+  (elementwise; float→int truncates toward zero; bool casts deferred),
+  bool-mask `select(t, f)`, the `reduce_add/mul/min/max` and mask
+  `reduce_and/or` reductions (collapsing to canonical native scalars),
+  and `shuffle[*mask]()` with compile-time lane indices — the latter two
+  compile-time-payload methods ride new verified `SimdCast`/`SimdShuffle`
+  MIR instructions. A `def` may take its width as a `[w: SIMDLength]`
+  value parameter: each call monomorphizes (value parameters now bake
+  into signature type positions), so an invalid bound width rejects
+  during checked elaboration, with a MIR-verify width backstop for
+  assembled artifacts. The runtime `Byte(Int)` conversions unlock
+  `Codepoint.from_u32(scalar)` — Int-based, `None` for
+  negatives/surrogates/out-of-range — whose character text is
+  UTF-8-encoded in ordinary library code.
+
 - String result APIs, non-raising slicing, and the un-annotated binding
   default. The nominal String's slice is now non-raising byte-wise library
   code with Python-normalized bounds and strides, matching the builtin

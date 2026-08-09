@@ -44,7 +44,7 @@ Work proceeds in dependency order through the numbered sections below:
 1. **Finish MIR-schema-prerequisite CPU semantics.** Anything that can still
    change MIR value, constant, or instruction schemas lands first.
    Current in-place operator dispatch, parameterized associated types and
-   borrowed iterator origins, SIMD, and CPU layout/tensor contracts are the
+   borrowed iterator origins, and CPU layout/tensor contracts are the
    remaining seams.
 2. **Freeze a textual MIR/VM assembly** once the checked-declaration + verified
    MIR contract is confirmed sufficient, giving backend-independent artifacts,
@@ -68,12 +68,6 @@ them before freezing the textual format; later library/API and source-syntax
 growth must lower to the frozen operations unless it deliberately reopens the
 schema.
 
-- [ ] **SIMD semantic completion** — finish dtype/literal conversions, masks,
-  reductions, shuffles, and other CPU-visible VM semantics; migrate the brief
-  `SIMDSize` spelling to current `SIMDLength` while retaining only an explicit
-  compatibility policy for the deprecated alias. Runtime `Byte(Int)`/dtype
-  scalar conversions also unlock direct `Codepoint` construction
-  (`from_u32`-style) and UTF-8 encoding in library code.
 - [ ] **CPU Layout and LayoutTensor semantics** — implement the target-independent
   type, indexing, and memory-view contracts required by CPU programs while
   leaving observable ABI layout and GPU memory spaces to later milestones.
@@ -143,6 +137,12 @@ schema.
   `Variant`, finish `destroy_with`, representation writing, and fully generic
   TypeList-driven conditional protocol synthesis rather than adding compiler
   special cases for every standard-library method.
+- [ ] **Scalar and generic vocabulary follow-ups (nightly §8)** — generalize the
+  Int-only `Range` proof subset to the current Int/Scalar family; adopt the
+  `TypeList` `length`/`any`/`all` vocabulary for variadic predicates (Mojito
+  currently spells pack-wide predicates via `conforms_to`); probe Tuple's new
+  public `*Ts` parameter name for compatibility. See
+  `docs/mojo-nightly.md` §8 — the SIMD half of that section is complete.
 - [ ] **HashSet growth and rehashing** — add load-factor growth while preserving
   deterministic behavior and value semantics.
 - [ ] **Current memory and pointer API** — replace the legacy static

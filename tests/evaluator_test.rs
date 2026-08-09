@@ -873,6 +873,71 @@ fn byte_alias_materializes_as_uint8() {
 }
 
 #[test]
+fn simd_dtype_cast_wraps_and_truncates() {
+    let e = run(
+        "var v = SIMD[DType.int32, 4](1, -2, 3, -300)\nvar u = v.cast[DType.uint8]()\nvar f = SIMD[DType.float32, 2](2.9, -3.9)\nvar t = f.cast[DType.int32]()\nvar s: Int8 = Byte(200).cast[DType.int8]()\n",
+    );
+    // Two's-complement wrap: -2 -> 254, -300 -> 212 in uint8.
+    assert_eq!(binding(&e, "u").to_string(), "[1, 254, 3, 212]");
+    // Float-to-int truncates toward zero.
+    assert_eq!(binding(&e, "t").to_string(), "[2, -3]");
+    assert_eq!(binding(&e, "s").to_string(), "-56");
+}
+
+#[test]
+fn simd_shuffle_gathers_lanes() {
+    let e = run(
+        "var v = SIMD[DType.int32, 4](10, 20, 30, 40)\nvar r = v.shuffle[3, 2, 1, 0]()\nvar pair = v.shuffle[1, 1]()\nvar m = (v < SIMD[DType.int32, 4](25, 25, 25, 25)).shuffle[3, 0]()\n",
+    );
+    assert_eq!(binding(&e, "r").to_string(), "[40, 30, 20, 10]");
+    assert_eq!(binding(&e, "pair").to_string(), "[20, 20]");
+    assert_eq!(binding(&e, "m").to_string(), "[False, True]");
+}
+
+#[test]
+fn simd_negation_select_and_reductions_execute() {
+    let e = run(
+        "var v = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar n = -v\nvar m = v < SIMD[DType.int32, 4](3, 3, 3, 3)\nvar blended = m.select(v, -v)\nvar total = v.reduce_add()\nvar product = v.reduce_mul()\nvar wrapped = SIMD[DType.uint8, 2](200, 100).reduce_add()\nvar all_set = m.reduce_and()\nvar any_set = m.reduce_or()\nvar canon: Int = SIMD[DType.int, 2](5, 6).reduce_add()\n",
+    );
+    assert_eq!(binding(&e, "n").to_string(), "[-1, -2, -3, -4]");
+    assert_eq!(binding(&e, "blended").to_string(), "[1, 2, -3, -4]");
+    assert_eq!(binding(&e, "total").to_string(), "10");
+    assert_eq!(binding(&e, "product").to_string(), "24");
+    // 200 + 100 wraps at the uint8 element width.
+    assert_eq!(binding(&e, "wrapped").to_string(), "44");
+    assert_eq!(binding(&e, "all_set"), Value::Bool(false));
+    assert_eq!(binding(&e, "any_set"), Value::Bool(true));
+    // A DType.int reduction is the canonical native Int.
+    assert_eq!(binding(&e, "canon"), Value::Int(11));
+}
+
+#[test]
+fn runtime_scalar_conversions_wrap_bit_accurately() {
+    // 300 wraps to 44 in uint8; a byte widens exactly into int32; an integer
+    // converts numerically into a float lane.
+    let e = run(
+        "var i = 300\nvar b: Byte = Byte(i)\nvar n: Int32 = Int32(Byte(200))\nvar f: Float32 = Float32(i)\nvar v: SIMD[DType.uint8, 2] = SIMD[DType.uint8, 2](i, 259)\n",
+    );
+    assert_eq!(binding(&e, "b").to_string(), "44");
+    assert_eq!(binding(&e, "n").to_string(), "200");
+    assert_eq!(binding(&e, "f").to_string(), "300.0");
+    assert_eq!(binding(&e, "v").to_string(), "[44, 3]");
+}
+
+#[test]
+fn scalar_dtype_construction_wraps_and_canonicalizes() {
+    // `Scalar[DType.x](arg)` is width-1 SIMD construction: non-canonical
+    // dtypes wrap at the element width, while `DType.int`/`DType.float64`
+    // canonicalize to the native scalars.
+    let e = run(
+        "var b: UInt8 = Scalar[DType.uint8](300)\nvar f: Float64 = Scalar[DType.float64](3)\nvar i: Int = Scalar[DType.int](41 + 1)\n",
+    );
+    assert_eq!(binding(&e, "b").to_string(), "44");
+    assert_eq!(binding(&e, "f"), Value::Float64(3.0));
+    assert_eq!(binding(&e, "i"), Value::Int(42));
+}
+
+#[test]
 fn simd_comparison_yields_bool_mask() {
     let e = run(
         "var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar w: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](4, 3, 2, 1)\nvar m: SIMD[DType.bool, 4] = v < w\n",

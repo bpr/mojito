@@ -1960,6 +1960,8 @@ fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::PointerStorageTake { .. }
         | MirInstr::PointerStorageDestroy { .. }
         | MirInstr::MakeSimd { .. }
+        | MirInstr::SimdCast { .. }
+        | MirInstr::SimdShuffle { .. }
         | MirInstr::Raise { .. }
         | MirInstr::Drop { .. }
         | MirInstr::Unsupported(_)

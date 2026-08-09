@@ -1341,7 +1341,15 @@ impl Checker {
                     is_integer_like(ty)
                 }
                 "Negatable" => is_signed_numeric_like(ty),
-                "Intable" => is_numeric_like(ty) || *ty == Ty::Bool,
+                // A struct declaring Intable (with its `__int__`) conforms
+                // like the numeric scalars — integer-Scalar construction
+                // accepts any Intable value.
+                "Intable" => {
+                    is_numeric_like(ty)
+                        || *ty == Ty::Bool
+                        || matches!(ty, Ty::Struct(name, args)
+                            if self.struct_conformance_applies(name, args, tr))
+                }
                 "Floatable" => is_numeric_like(ty),
                 // Layout/backend markers and future operation traits stay shallow.
                 _ => true,

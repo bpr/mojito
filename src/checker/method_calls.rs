@@ -165,6 +165,119 @@ impl Checker {
                 return self.infer_tuple_method(&span, object, method, &elements, call);
             }
         }
+        if let Ty::Simd { dtype, width } = &obj_ty {
+            let (dtype, width) = (*dtype, *width);
+            reject_kwargs(kwargs)?;
+            // Compiler-known SIMD methods: `cast` converts dtypes
+            // elementwise, `select` blends through a bool mask, the lane
+            // reductions collapse to the canonicalized width-1 scalar
+            // (`reduce_and`/`reduce_or` to `Bool`).
+            return match method {
+                "cast" if param_args.len() == 1 && args.is_empty() => {
+                    let target = dtype_from_arg(&param_args[0])?;
+                    // Bool casts are deferred: masks convert through
+                    // `select`, and no numeric dtype casts to bool yet.
+                    // (Not `NoSuchMethod`, which the Invoke path treats as
+                    // fall-through to indirect-callable inference.)
+                    if target == Dtype::Bool || dtype == Dtype::Bool {
+                        return Err(TypeError::TypeMismatch {
+                            expected: "a non-bool dtype cast".to_string(),
+                            found: format!(
+                                "cast from DType.{} to DType.{}",
+                                dtype.name(),
+                                target.name()
+                            ),
+                            context: "SIMD.cast".to_string(),
+                        });
+                    }
+                    self.operation_adjustments.borrow_mut().insert(
+                        span,
+                        crate::SemanticAdjustment::SimdCast {
+                            dtype: target,
+                            width,
+                        },
+                    );
+                    Ok(simd_ty(target, width))
+                }
+                "select" if dtype == Dtype::Bool && args.len() == 2 => {
+                    let true_case = self.infer(&args[0])?;
+                    let false_case = self.infer(&args[1])?;
+                    // Both cases share one dtype at the mask's width; a
+                    // scalar/literal case splats, like an infix operand.
+                    let payload = match (&true_case, &false_case) {
+                        (
+                            Ty::Simd {
+                                dtype: d1,
+                                width: w1,
+                            },
+                            Ty::Simd {
+                                dtype: d2,
+                                width: w2,
+                            },
+                        ) if d1 == d2 && w1 == w2 && *w1 == width => Some(*d1),
+                        (Ty::Simd { dtype: d, width: w }, other)
+                        | (other, Ty::Simd { dtype: d, width: w })
+                            if *w == width && splats_to(other, *d) =>
+                        {
+                            Some(*d)
+                        }
+                        _ => None,
+                    };
+                    match payload {
+                        Some(d) => Ok(simd_ty(d, width)),
+                        None => Err(TypeError::TypeMismatch {
+                            expected: format!("two width-{width} SIMD cases of one dtype"),
+                            found: format!("{true_case} and {false_case}"),
+                            context: "SIMD.select".to_string(),
+                        }),
+                    }
+                }
+                "shuffle" if !param_args.is_empty() && args.is_empty() => {
+                    // Compile-time lane indices; the result takes the mask's
+                    // width, which must itself be a valid SIMD width.
+                    let mut mask = Vec::with_capacity(param_args.len());
+                    for argument in param_args {
+                        let crate::ast::ParamArg::Value(index) = argument else {
+                            return Err(TypeError::TypeMismatch {
+                                expected: "a compile-time lane index".to_string(),
+                                found: "a type argument".to_string(),
+                                context: "SIMD.shuffle".to_string(),
+                            });
+                        };
+                        let value = self.eval_ct(index)?;
+                        let lane = value.to_i64().unwrap_or(-1);
+                        if lane < 0 || lane >= width {
+                            return Err(TypeError::TypeMismatch {
+                                expected: format!("a lane index below {width}"),
+                                found: value.to_string(),
+                                context: "SIMD.shuffle".to_string(),
+                            });
+                        }
+                        mask.push(lane as usize);
+                    }
+                    let result_width = mask.len() as i64;
+                    if result_width < 1 || (result_width & (result_width - 1)) != 0 {
+                        return Err(TypeError::BadSimdWidth(result_width.to_string()));
+                    }
+                    self.operation_adjustments
+                        .borrow_mut()
+                        .insert(span, crate::SemanticAdjustment::SimdShuffle { mask });
+                    Ok(simd_ty(dtype, result_width))
+                }
+                "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max"
+                    if dtype != Dtype::Bool && args.is_empty() =>
+                {
+                    Ok(simd_ty(dtype, 1))
+                }
+                "reduce_and" | "reduce_or" if dtype == Dtype::Bool && args.is_empty() => {
+                    Ok(Ty::Bool)
+                }
+                _ => Err(TypeError::NoSuchMethod {
+                    object_type: obj_ty.to_string(),
+                    method: method.to_string(),
+                }),
+            };
+        }
         if matches!(&obj_ty, Ty::Struct(name, args) if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty())
         {
             reject_kwargs(kwargs)?;

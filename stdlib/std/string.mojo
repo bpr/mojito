@@ -12,6 +12,7 @@
 # simplified to "never break after ZWJ" and GB9b (Prepend) omitted.
 
 from std.collections.list import List
+from std.optional import Optional
 
 struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
     var data: UnsafePointer[Byte]
@@ -529,9 +530,10 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
 
 # A decoded Unicode scalar together with its character text.  Produced by
 # `String.__getitem__(*, codepoint=...)`, which owns the bytes and derives
-# `text` through the struct-to-literal bridge; a scalar-only constructor
-# would need runtime Int-to-Byte encoding, which the subset does not have
-# yet, so direct construction is not offered.
+# `text` through the struct-to-literal bridge, or by the public
+# `Codepoint.from_u32(scalar)` (Mojito is Int-based), which UTF-8-encodes
+# the scalar in ordinary library code through runtime `Byte(Int)`
+# conversions.
 struct Codepoint(
     Comparable, Copyable, Equatable, ImplicitlyDeletable, Intable, Movable, Writable
 ):
@@ -541,6 +543,56 @@ struct Codepoint(
     def __init__(out self, scalar: Int, *, text: StringLiteral):
         self._scalar = scalar
         self._text = text
+
+    # The public scalar constructor: absent for negatives, the surrogate
+    # range, and values beyond U+10FFFF.
+    @staticmethod
+    def from_u32(scalar: Int) -> Optional[Codepoint]:
+        if scalar < 0:
+            return Optional[Codepoint]()
+        if scalar >= 0xD800 and scalar <= 0xDFFF:
+            return Optional[Codepoint]()
+        if scalar > 0x10FFFF:
+            return Optional[Codepoint]()
+        var text = Codepoint._encode_utf8(scalar)
+        return Optional[Codepoint](
+            Codepoint(scalar, text: text._as_string_literal()), True
+        )
+
+    # UTF-8-encode a valid Unicode scalar into a fresh String byte buffer:
+    # the lead byte carries the sequence width, continuations carry six bits
+    # each.
+    @staticmethod
+    def _encode_utf8(scalar: Int) -> String:
+        var result = String("")
+        result.data.free()
+        if scalar < 0x80:
+            result.data = UnsafePointer[Byte].alloc(1)
+            result.size = 1
+            result.cap = 1
+            result.data[0] = Byte(scalar)
+        elif scalar < 0x800:
+            result.data = UnsafePointer[Byte].alloc(2)
+            result.size = 2
+            result.cap = 2
+            result.data[0] = Byte(192 + scalar // 64)
+            result.data[1] = Byte(128 + scalar % 64)
+        elif scalar < 0x10000:
+            result.data = UnsafePointer[Byte].alloc(3)
+            result.size = 3
+            result.cap = 3
+            result.data[0] = Byte(224 + scalar // 4096)
+            result.data[1] = Byte(128 + (scalar // 64) % 64)
+            result.data[2] = Byte(128 + scalar % 64)
+        else:
+            result.data = UnsafePointer[Byte].alloc(4)
+            result.size = 4
+            result.cap = 4
+            result.data[0] = Byte(240 + scalar // 262144)
+            result.data[1] = Byte(128 + (scalar // 4096) % 64)
+            result.data[2] = Byte(128 + (scalar // 64) % 64)
+            result.data[3] = Byte(128 + scalar % 64)
+        return result^
 
     def __int__(self) -> Int:
         return self._scalar
