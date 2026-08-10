@@ -1,4 +1,4 @@
-def count[*Ts: Movable & ImplicitlyDeletable](var *args: *Ts) -> Int:
+def count[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:
     if True:
         var args = Tuple(7, 8)
         print(len(args))

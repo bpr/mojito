@@ -11,7 +11,7 @@ def choose[origin: Origin[mut=True]](
 
 
 def borrow[
-    T: Copyable & ImplicitlyDeletable,
+    T: Copyable & Deinitable,
     origin: Origin[mut=True],
 ](ref[origin] value: T) -> ref[origin] T:
     return value

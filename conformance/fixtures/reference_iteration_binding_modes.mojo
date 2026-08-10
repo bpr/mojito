@@ -2,7 +2,7 @@ from std.iterable import StopIteration
 
 
 @fieldwise_init
-struct Item(ImplicitlyCopyable, ImplicitlyDeletable, Movable):
+struct Item(ImplicitlyCopyable, Deinitable, Movable):
     var value: Int
 
 

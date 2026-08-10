@@ -1,5 +1,5 @@
 @explicit_destroy("close Conn")
-struct Conn(Movable, ImplicitlyDeletable where False):
+struct Conn(Movable, Deinitable where False):
     var id: Int
 
     def __init__(out self, id: Int):

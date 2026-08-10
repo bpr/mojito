@@ -809,6 +809,22 @@ impl Checker {
                 .borrow_mut()
                 .insert(span.clone());
         }
+        // A `var self` receiver takes ownership by move, so a declared
+        // `Movable where False` opt-out rejects it; `deinit self` is
+        // consumption-for-destruction and stays legal for non-Movable values.
+        if resolved.consumes_receiver
+            && resolved.self_convention == Some(crate::ast::ArgConvention::Var)
+            && !self.is_movable(&obj_ty)
+        {
+            return Err(TypeError::TraitNotSatisfied {
+                param: format!("receiver of method '{method}'"),
+                ty: obj_ty.to_string(),
+                trait_name: "Movable".to_string(),
+                reason: self
+                    .trait_failure_reason(&obj_ty, "Movable")
+                    .or_else(|| Some("its 'Movable' conformance condition is false".to_string())),
+            });
+        }
         if resolved.consumes_receiver
             && let Ty::Struct(name, _) = &obj_ty
             && self
@@ -847,11 +863,17 @@ impl Checker {
                         ),
                     });
                 }
-                Some(ArgConvention::Var | ArgConvention::Deinit) => {
-                    self.check_consuming(
+                Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) => {
+                    let kind = if convention == ArgConvention::Deinit {
+                        super::traits::ConsumeKind::Deinit
+                    } else {
+                        super::traits::ConsumeKind::Move
+                    };
+                    self.check_consuming_as(
                         expression,
                         &ty,
                         &format!("argument {} to method '{}'", index + 1, method),
+                        kind,
                     )?;
                 }
                 _ => {}
@@ -1626,12 +1648,12 @@ impl Checker {
                         context: format!("argument to compiler-private UnsafePointer.{method}"),
                     });
                 }
-                if method == "destroy" && !self.is_implicitly_deletable(elem) {
+                if method == "destroy" && !self.is_deinitable(elem) {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
                         ty: elem.to_string(),
-                        trait_name: "ImplicitlyDeletable".to_string(),
-                        reason: self.trait_failure_reason(elem, "ImplicitlyDeletable"),
+                        trait_name: "Deinitable".to_string(),
+                        reason: self.trait_failure_reason(elem, "Deinitable"),
                     });
                 }
                 let adjustment = if method == "take" {

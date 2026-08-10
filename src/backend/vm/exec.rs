@@ -1641,7 +1641,7 @@ impl VmBackend {
                 }
             }
             // ASAP destruction (Stage 7): drop the value at the variable's last
-            // use, running its `__del__` if it has one.
+            // use, running its `__deinit__` if it has one.
             MirInstr::DropVar { var } => {
                 let v = std::mem::replace(&mut vars[*var as usize], Value::None);
                 self.drop_value(prog, v)?;

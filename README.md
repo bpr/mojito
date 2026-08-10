@@ -55,7 +55,7 @@ mojito currently has:
   double moves, partial field moves, and reinitialization
 - borrow checking for ordinary call arguments, including mutable/shared aliasing
   checks and place-sensitive field borrowing
-- liveness-driven ASAP destruction via `__del__(deinit self)`
+- liveness-driven ASAP destruction via `__deinit__(deinit self)`
 - a register VM backend used as the runtime implementation
 - self-hosted standard-library proofs in `stdlib/`, including generic
   `Optional`, `List`, `Set`, `Dict`, `Range`, heterogeneous `Tuple`, and
@@ -357,7 +357,7 @@ Examples of modeled behavior:
   through caller frame/slot places on normal and raising paths, including calls
   inside `try`; bare `ref` propagates the caller's mutability
 - conflicting borrows in the same call are rejected
-- values with `__del__(deinit self)` are destroyed at last use, not scope end
+- values with `__deinit__(deinit self)` are destroyed at last use, not scope end
 - moved values are dropped once, at their new owner
 - structs drop their own destructor first, then fields in reverse declaration
   order
@@ -436,7 +436,7 @@ structs now have enough language hooks to behave like real value types:
 - `__init__(out self)`
 - `__copyinit__`
 - `__moveinit__`
-- `__del__(deinit self)`
+- `__deinit__(deinit self)`
 - `UnsafePointer[T]`
 - modules
 - comptime helpers

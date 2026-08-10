@@ -15,7 +15,7 @@ from std.hashing import bucket_index
 
 struct HashSet[T: Hashable & Equatable & Copyable & Movable](
     Copyable,
-    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
+    Deinitable where conforms_to(T, Deinitable),
 ):
     var buckets: List[List[Self.T]]
     var nbuckets: Int
@@ -46,7 +46,7 @@ struct HashSet[T: Hashable & Equatable & Copyable & Movable](
         return False
 
     def add(mut self, key: Self.T) where conforms_to(
-        Self.T, ImplicitlyDeletable
+        Self.T, Deinitable
     ):
         if self.contains(key):
             return

@@ -8,6 +8,29 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Lifecycle canonicalization (Mojo parity catch-up, slice B / nightly §0):
+  the internal vocabulary is now `Deinitable` + `__deinit__` end to end
+  (builtin-trait registry, checker capability queries and diagnostics, MIR
+  drop commentary, the VM's destructor-symbol lookup, bundled stdlib,
+  fixtures, tests, and docs); the upstream-deprecated `ImplicitlyDeletable`
+  and `__del__` spellings stay accepted and normalize at parse time (the
+  `read` → `imm` precedent), pinned by a dedicated compat fixture. A missed
+  normalization path fails loudly as `UnknownTrait` because `BUILTIN_TRAITS`
+  lists only the canonical name. Declared conditional `Movable` conformance
+  is now effective: `Movable where False` rejects `^` transfers, `var`
+  parameters and receivers, and move/copy captures, while `deinit`
+  consumption (destructors and named destructors) stays legal and Copyable
+  pass-by-value is untouched. Added the `TriviallyMovable[T]`/
+  `TriviallyCopyable[T]`/`TriviallyDeinitable[T]` comptime predicates
+  (semantics pinned from the audited head's `std/traits/*.mojo`: base
+  capability plus a compiler-generated lifecycle operation with recursively
+  trivial fields), usable in comptime control/bindings, `where` clauses, and
+  conformance conditions — and rejected as bounds. New docstring-only
+  `std.traits`/`std.origin` module homes export the builtin identities
+  (named, aliased, and wildcard imports resolve; unknown names stay
+  `NameNotFound`), mirroring the audited upstream export surface.
+
+
 - Extension alignment sweep (Mojo parity catch-up, slice A): Mojito now
   accepts what the audited Mojo head accepts within its subset — extensions
   remain tolerable only as upstream-tracked deprecation bridges or as cited

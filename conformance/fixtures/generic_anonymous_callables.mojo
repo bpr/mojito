@@ -8,12 +8,12 @@ def invoke_value[
     return callback[2](40)
 
 
-def identity[T: ImplicitlyCopyable & ImplicitlyDeletable](value: T) -> T:
+def identity[T: ImplicitlyCopyable & Deinitable](value: T) -> T:
     return value
 
 
 def invoke_bound[
-    F: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T
+    F: def[T: ImplicitlyCopyable & Deinitable](T) -> T
 ](callback: F) -> Int:
     return callback(42)
 

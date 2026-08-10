@@ -265,7 +265,7 @@ pub struct IterationProtocol {
     pub next: Option<Box<CheckedIteratorCall>>,
     /// Named destructor consuming the exhausted iterator when the element
     /// type is not implicitly deletable: such an iterator is itself linear
-    /// (its `__del__` would destroy residual elements), so the loop's
+    /// (its `__deinit__` would destroy residual elements), so the loop's
     /// exhaustion edge calls this `_finish(deinit self)` target instead of
     /// dropping the iterator slot. `None` whenever an implicit drop is
     /// correct.
@@ -538,7 +538,7 @@ pub struct CheckedComprehensionBinding {
     /// Whether this binding's storage is droppable in the checked constraint
     /// environment at its introduction site. Conditional generic conformances
     /// cannot be reconstructed from the nominal type after checking.
-    pub implicitly_deletable: bool,
+    pub deinitable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

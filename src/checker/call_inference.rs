@@ -575,14 +575,19 @@ impl Checker {
             // Only a `var`/`deinit` parameter *consumes* its argument (moving the
             // value in). `read` (the default), `mut`, and `ref` all **borrow** — no
             // copy — so passing a non-Copyable value to them is fine.
-            if matches!(
-                conventions.get(i),
-                Some(Some(ArgConvention::Var | ArgConvention::Deinit))
-            ) {
-                self.check_consuming(
+            if let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
+                conventions.get(i)
+            {
+                let kind = if *convention == ArgConvention::Deinit {
+                    super::traits::ConsumeKind::Deinit
+                } else {
+                    super::traits::ConsumeKind::Move
+                };
+                self.check_consuming_as(
                     arg,
                     &arg_ty,
                     &format!("argument '{}' to '{}'", names[i], name),
+                    kind,
                 )?;
             }
         }
@@ -865,18 +870,27 @@ impl Checker {
             }
         }
         for (i, slot) in slots.iter().enumerate() {
-            if matches!(
-                conventions.get(i),
-                Some(Some(ArgConvention::Var | ArgConvention::Deinit))
-            ) {
+            if let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
+                conventions.get(i)
+            {
                 let arg = match slot {
                     ArgSlot::Positional(p) => &args[*p],
                     ArgSlot::Keyword(k) => &kwargs[*k].value,
                     ArgSlot::Default => continue,
                 };
+                let kind = if *convention == ArgConvention::Deinit {
+                    super::traits::ConsumeKind::Deinit
+                } else {
+                    super::traits::ConsumeKind::Move
+                };
                 let expected = resolve(&params[i])?;
                 let ty = self.infer_with_expected(arg, &expected, true)?;
-                self.check_consuming(arg, &ty, &format!("argument '{}' to '{}'", names[i], name))?;
+                self.check_consuming_as(
+                    arg,
+                    &ty,
+                    &format!("argument '{}' to '{}'", names[i], name),
+                    kind,
+                )?;
             }
         }
         let (effective_conventions, return_ref) = self.solve_call_origins(

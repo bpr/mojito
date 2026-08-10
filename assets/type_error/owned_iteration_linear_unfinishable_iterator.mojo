@@ -4,7 +4,7 @@ struct StopIteration:
     pass
 
 @explicit_destroy("close Conn")
-struct Conn(Movable, ImplicitlyDeletable where False):
+struct Conn(Movable, Deinitable where False):
     var id: Int
 
     def __init__(out self, id: Int):
@@ -13,7 +13,7 @@ struct Conn(Movable, ImplicitlyDeletable where False):
     def close(deinit self):
         print("close", self.id)
 
-struct Drain(Iterator, ImplicitlyDeletable where False, Movable):
+struct Drain(Iterator, Deinitable where False, Movable):
     comptime Element = Conn
     var remaining: Int
 

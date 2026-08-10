@@ -2679,3 +2679,35 @@ fn keyword_subscripts_parse_on_value_bases_and_type_applications_stay() {
         value.kind
     );
 }
+
+#[test]
+fn normalizes_deprecated_lifecycle_spellings_at_parse_time() {
+    // `ImplicitlyDeletable` and `__del__` are upstream-deprecated compat
+    // spellings of `Deinitable`/`__deinit__`; the parser normalizes them so
+    // every later phase sees one canonical vocabulary.
+    let stmts = parse(
+        "struct Res(Movable, ImplicitlyDeletable where False):\n    var id: Int\n    def __del__(deinit self):\n        pass\n",
+    );
+    let StmtKind::Struct {
+        conforms,
+        conformance_conditions,
+        methods,
+        ..
+    } = &stmts[0].kind
+    else {
+        panic!("expected a struct");
+    };
+    assert_eq!(
+        conforms,
+        &vec!["Movable".to_string(), "Deinitable".to_string()]
+    );
+    assert_eq!(conformance_conditions[0].0, "Deinitable");
+    assert_eq!(methods[0].name, "__deinit__");
+
+    // Bounds normalize too.
+    let stmts = parse("def consume[T: Movable & ImplicitlyDeletable](var value: T):\n    pass\n");
+    let StmtKind::Def { type_params, .. } = &stmts[0].kind else {
+        panic!("expected a def");
+    };
+    assert_eq!(type_params[0].bounds, vec!["Movable", "Deinitable"]);
+}

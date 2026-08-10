@@ -1,5 +1,5 @@
 @fieldwise_init
-struct Token(Movable, ImplicitlyDeletable):
+struct Token(Movable, Deinitable):
     var id: Int
 
 def main():

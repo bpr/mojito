@@ -768,7 +768,7 @@ impl Checker {
                                     param, declaration, m.name
                                 ))
                             })?;
-                        if self.is_implicitly_deletable(&ty) {
+                        if self.is_deinitable(&ty) {
                             self.explicit_destroy_deletability
                                 .borrow_mut()
                                 .declarations
@@ -1246,22 +1246,27 @@ impl Checker {
                     kwargs,
                 )?;
                 for (index, slot) in selected.slots.iter().enumerate() {
-                    if !matches!(
-                        selected.conventions.get(index),
-                        Some(Some(ArgConvention::Var | ArgConvention::Deinit))
-                    ) {
+                    let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
+                        selected.conventions.get(index)
+                    else {
                         continue;
-                    }
+                    };
+                    let kind = if *convention == ArgConvention::Deinit {
+                        super::traits::ConsumeKind::Deinit
+                    } else {
+                        super::traits::ConsumeKind::Move
+                    };
                     let argument = match slot {
                         ArgSlot::Positional(position) => &args[*position],
                         ArgSlot::Keyword(position) => &kwargs[*position].value,
                         ArgSlot::Default => continue,
                     };
                     let ty = self.infer(argument)?;
-                    self.check_consuming(
+                    self.check_consuming_as(
                         argument,
                         &ty,
                         &format!("argument {} to '{name}'", index + 1),
+                        kind,
                     )?;
                 }
                 return Ok(self.struct_instance_type(name, Vec::new()));
@@ -1287,14 +1292,19 @@ impl Checker {
                             context: format!("argument {} to '{}.__init__'", i + 1, name),
                         });
                     }
-                    if matches!(
-                        sig.conventions.get(i),
-                        Some(Some(ArgConvention::Var | ArgConvention::Deinit))
-                    ) {
-                        self.check_consuming(
+                    if let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
+                        sig.conventions.get(i)
+                    {
+                        let kind = if *convention == ArgConvention::Deinit {
+                            super::traits::ConsumeKind::Deinit
+                        } else {
+                            super::traits::ConsumeKind::Move
+                        };
+                        self.check_consuming_as(
                             &args[i],
                             aty,
                             &format!("argument {} to '{}'", i + 1, name),
+                            kind,
                         )?;
                     }
                 }
@@ -1365,14 +1375,19 @@ impl Checker {
                     self.record_implicit_conversion(&args[*index], &arg_tys[*index], expected)?;
                 }
                 for (i, aty) in arg_tys.iter().enumerate() {
-                    if matches!(
-                        sig.conventions.get(i),
-                        Some(Some(ArgConvention::Var | ArgConvention::Deinit))
-                    ) {
-                        self.check_consuming(
+                    if let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
+                        sig.conventions.get(i)
+                    {
+                        let kind = if *convention == ArgConvention::Deinit {
+                            super::traits::ConsumeKind::Deinit
+                        } else {
+                            super::traits::ConsumeKind::Move
+                        };
+                        self.check_consuming_as(
                             &args[i],
                             aty,
                             &format!("argument {} to '{}'", i + 1, name),
+                            kind,
                         )?;
                     }
                 }

@@ -1,13 +1,13 @@
-//! Phase 4 — ASAP destruction (`__del__`) tests.
+//! Phase 4 — ASAP destruction (`__deinit__`) tests.
 //!
 //! The VM elaborates drops (`analysis::elaborate_drops_program`) before executing,
-//! splicing a `DropVar` at each variable's last use. A struct's `__del__` runs
+//! splicing a `DropVar` at each variable's last use. A struct's `__deinit__` runs
 //! there — *at last use*, not at scope end — and a value's struct fields are
 //! destroyed in reverse declaration order. The private heterogeneous pack
 //! storage behind nominal `Tuple` follows Mojo's distinct left-to-right element
 //! order. These behaviors are asserted directly on VM output.
 //!
-//! `__del__` uses Mojo's `def __del__(deinit self)` signature. The checker
+//! `__deinit__` uses Mojo's `def __deinit__(deinit self)` signature. The checker
 //! validates that lifecycle contract; the VM invokes the selected destructor.
 
 use mojito::Compiler;
@@ -29,13 +29,13 @@ fn compile_error(src: &str) -> String {
         .to_string()
 }
 
-const RES: &str = "@fieldwise_init\nstruct Res:\n    var id: Int\n    def __del__(deinit self):\n        print(\"del\", self.id)\n\n";
+const RES: &str = "@fieldwise_init\nstruct Res:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"del\", self.id)\n\n";
 
-const MOVABLE_NOISY: &str = "struct Noisy(Movable):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def __init__(out self, *, deinit move: Self):\n        self.id = move.id\n\n    def __del__(deinit self):\n        print(\"drop\", self.id)\n\n";
+const MOVABLE_NOISY: &str = "struct Noisy(Movable):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def __init__(out self, *, deinit move: Self):\n        self.id = move.id\n\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n\n";
 
 #[test]
 fn del_runs_at_last_use_not_scope_end() {
-    // `a`'s last use is `a.id`; ASAP destruction runs `__del__` there — *before*
+    // `a`'s last use is `a.id`; ASAP destruction runs `__deinit__` there — *before*
     // the following statement (scope-end semantics would print "del 1" last).
     let src = format!(
         "{RES}def main():\n    var a: Res = Res(1)\n    var n: Int = a.id\n    print(\"after a\")\n    print(n)\n"
@@ -74,7 +74,7 @@ fn partially_moved_field_is_dropped_once_at_its_new_owner() {
     // `p.a^` moves one field out to `x`; the moved field is destroyed exactly once
     // — at `x`'s last use — and dropping the whole `p` skips the moved field (no
     // double-drop) while still destroying the retained field `b`.
-    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __del__(deinit self):\n        print(\"del\", self.id)\n\n@fieldwise_init\nstruct Pair:\n    var a: Inner\n    var b: Inner\n\ndef main():\n    var p: Pair = Pair(Inner(1), Inner(2))\n    var x: Inner = p.a^\n    print(\"x =\", x.id)\n    print(\"b =\", p.b.id)\n";
+    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"del\", self.id)\n\n@fieldwise_init\nstruct Pair:\n    var a: Inner\n    var b: Inner\n\ndef main():\n    var p: Pair = Pair(Inner(1), Inner(2))\n    var x: Inner = p.a^\n    print(\"x =\", x.id)\n    print(\"b =\", p.b.id)\n";
     let out = vm(src);
     assert_eq!(
         out.matches("del 1").count(),
@@ -92,7 +92,7 @@ fn partially_moved_field_is_dropped_once_at_its_new_owner() {
 
 #[test]
 fn partial_aggregate_skips_its_whole_destructor_and_drops_residual_fields() {
-    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __del__(deinit self):\n        print(\"drop inner\", self.id)\n\n@fieldwise_init\nstruct Outer:\n    var first: Inner\n    var second: Inner\n    def __del__(deinit self):\n        print(\"drop outer\")\n\ndef main():\n    var outer = Outer(Inner(1), Inner(2))\n    var first = outer.first^\n    print(\"use first\", first.id)\n    print(\"use second\", outer.second.id)\n";
+    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"drop inner\", self.id)\n\n@fieldwise_init\nstruct Outer:\n    var first: Inner\n    var second: Inner\n    def __deinit__(deinit self):\n        print(\"drop outer\")\n\ndef main():\n    var outer = Outer(Inner(1), Inner(2))\n    var first = outer.first^\n    print(\"use first\", first.id)\n    print(\"use second\", outer.second.id)\n";
     let output = vm(src);
     assert!(!output.contains("drop outer"), "{output}");
     assert_eq!(output.matches("drop inner 1").count(), 1, "{output}");
@@ -101,8 +101,8 @@ fn partial_aggregate_skips_its_whole_destructor_and_drops_residual_fields() {
 
 #[test]
 fn fields_drop_in_reverse_declaration_order() {
-    // Destroying a struct runs its `__del__`, then its fields' — in reverse order.
-    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __del__(deinit self):\n        print(\"del inner\", self.id)\n\n@fieldwise_init\nstruct Outer:\n    var a: Inner\n    var b: Inner\n    def __del__(deinit self):\n        print(\"del outer\")\n\ndef main():\n    var o: Outer = Outer(Inner(1), Inner(2))\n    print(o.a.id)\n";
+    // Destroying a struct runs its `__deinit__`, then its fields' — in reverse order.
+    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"del inner\", self.id)\n\n@fieldwise_init\nstruct Outer:\n    var a: Inner\n    var b: Inner\n    def __deinit__(deinit self):\n        print(\"del outer\")\n\ndef main():\n    var o: Outer = Outer(Inner(1), Inner(2))\n    print(o.a.id)\n";
     // `del outer` first, then field `b` (Inner 2) before field `a` (Inner 1).
     assert_eq!(vm(src), "del outer\ndel inner 2\ndel inner 1\n1\n");
 }
@@ -250,19 +250,19 @@ fn borrowed_parameter_is_not_dropped_by_the_callee() {
 
 #[test]
 fn rebinding_reference_aggregate_releases_each_owner_generation_once() {
-    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __del__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef main():\n    var x = Owner(1)\n    var y = Owner(2)\n    var box = Borrowed(UnsafePointer(to=x))\n    print(box.ptr[0].n)\n    box = Borrowed(UnsafePointer(to=y))\n    print(\"rebound\")\n    print(box.ptr[0].n)\n";
+    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef main():\n    var x = Owner(1)\n    var y = Owner(2)\n    var box = Borrowed(UnsafePointer(to=x))\n    print(box.ptr[0].n)\n    box = Borrowed(UnsafePointer(to=y))\n    print(\"rebound\")\n    print(box.ptr[0].n)\n";
     assert_eq!(vm(src), "1\ndrop 1\nrebound\n2\ndrop 2\n");
 }
 
 #[test]
 fn runtime_reference_owner_drops_after_the_consuming_call() {
-    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __del__(deinit self):\n        print(\"drop\", self.n)\n\ndef borrow(ref owner: Owner) -> ref[origin_of(owner.n)] Int:\n    return owner.n\n\ndef main():\n    var owner = Owner(1)\n    ref view = borrow(owner)\n    print(view)\n    print(\"after\")\n";
+    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\ndef borrow(ref owner: Owner) -> ref[origin_of(owner.n)] Int:\n    return owner.n\n\ndef main():\n    var owner = Owner(1)\n    ref view = borrow(owner)\n    print(view)\n    print(\"after\")\n";
     assert_eq!(vm(src), "1\ndrop 1\nafter\n");
 }
 
 #[test]
 fn branch_rebinding_reference_aggregate_does_not_double_drop_owners() {
-    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __del__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef run(flag: Bool):\n    var x = Owner(1)\n    var y = Owner(2)\n    var box = Borrowed(UnsafePointer(to=x))\n    if flag:\n        box = Borrowed(UnsafePointer(to=y))\n    print(box.ptr[0].n)\n\ndef main():\n    run(True)\n    run(False)\n";
+    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef run(flag: Bool):\n    var x = Owner(1)\n    var y = Owner(2)\n    var box = Borrowed(UnsafePointer(to=x))\n    if flag:\n        box = Borrowed(UnsafePointer(to=y))\n    print(box.ptr[0].n)\n\ndef main():\n    run(True)\n    run(False)\n";
     let output = vm(src);
     assert_eq!(output, "drop 1\n2\ndrop 2\ndrop 2\n1\ndrop 1\n");
     assert_eq!(
@@ -279,7 +279,7 @@ fn branch_rebinding_reference_aggregate_does_not_double_drop_owners() {
 
 #[test]
 fn destructor_less_values_have_no_observable_drop() {
-    // A struct without `__del__`, and scalars, drop silently — nothing printed.
+    // A struct without `__deinit__`, and scalars, drop silently — nothing printed.
     let src = "@fieldwise_init\nstruct Plain:\n    var x: Int\n\ndef main():\n    var p: Plain = Plain(1)\n    var n: Int = 2\n    print(p.x + n)\n";
     assert_eq!(vm(src), "3\n");
 }
@@ -310,7 +310,7 @@ fn del_in_a_loop_runs_each_iteration() {
 
 #[test]
 fn return_from_owned_iteration_drops_the_current_and_residual_elements() {
-    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __del__(deinit self):\n        print(\"drop\", self.value)\n\ndef first_two() -> Int:\n    var items = [Item(1), Item(2), Item(3)]\n    for var item in items^:\n        print(\"take\", item.value)\n        if item.value == 2:\n            return item.value\n    return -1\n\ndef main():\n    print(\"returned\", first_two())\n    print(\"done\")\n";
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __deinit__(deinit self):\n        print(\"drop\", self.value)\n\ndef first_two() -> Int:\n    var items = [Item(1), Item(2), Item(3)]\n    for var item in items^:\n        print(\"take\", item.value)\n        if item.value == 2:\n            return item.value\n    return -1\n\ndef main():\n    print(\"returned\", first_two())\n    print(\"done\")\n";
     assert_eq!(
         vm(src),
         "take 1\ndrop 1\ntake 2\ndrop 2\ndrop 3\nreturned 2\ndone\n"
@@ -319,7 +319,7 @@ fn return_from_owned_iteration_drops_the_current_and_residual_elements() {
 
 #[test]
 fn return_from_owned_iteration_runs_finally_before_iterator_cleanup() {
-    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __del__(deinit self):\n        print(\"drop\", self.value)\n\ndef first_two() -> Int:\n    var items = [Item(1), Item(2), Item(3)]\n    for var item in items^:\n        try:\n            print(\"take\", item.value)\n            if item.value == 2:\n                return item.value\n        finally:\n            print(\"finally\", item.value)\n    return -1\n\ndef main():\n    print(\"returned\", first_two())\n    print(\"done\")\n";
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __deinit__(deinit self):\n        print(\"drop\", self.value)\n\ndef first_two() -> Int:\n    var items = [Item(1), Item(2), Item(3)]\n    for var item in items^:\n        try:\n            print(\"take\", item.value)\n            if item.value == 2:\n                return item.value\n        finally:\n            print(\"finally\", item.value)\n    return -1\n\ndef main():\n    print(\"returned\", first_two())\n    print(\"done\")\n";
     assert_eq!(
         vm(src),
         "take 1\nfinally 1\ndrop 1\ntake 2\nfinally 2\ndrop 2\ndrop 3\nreturned 2\ndone\n"
@@ -348,7 +348,7 @@ fn break_crossing_try_drops_body_local_and_outer_loop_local() {
     // the try — dropped via `Try.cleanup`) and an outer loop-body-local (declared
     // in the loop body, used inside the try — dropped via `EscapeJump.cleanup`).
     // Each is destroyed exactly once, and the loop variable survives for `finally`.
-    let src = "@fieldwise_init\nstruct D:\n    var id: Int\n    def __del__(deinit self):\n        print(\"drop\", self.id)\n\ndef main():\n    for i in range(3):\n        var outer: D = D(10 + i)\n        try:\n            var inner: D = D(20 + i)\n            print(\"use\", outer.id, inner.id)\n            if i == 1:\n                break\n        finally:\n            print(\"fin\", i)\n    print(\"done\")\n";
+    let src = "@fieldwise_init\nstruct D:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n\ndef main():\n    for i in range(3):\n        var outer: D = D(10 + i)\n        try:\n            var inner: D = D(20 + i)\n            print(\"use\", outer.id, inner.id)\n            if i == 1:\n                break\n        finally:\n            print(\"fin\", i)\n    print(\"done\")\n";
     let out = vm(src);
     // i=0: normal iteration — inner drops at its last use, outer after the try.
     // i=1: break — inner (body-local) and outer (loop-local) both drop, once each.
@@ -373,14 +373,14 @@ fn break_crossing_try_drops_body_local_and_outer_loop_local() {
 #[test]
 fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
     // A `deinit` move-source parameter (the `move` in `__moveinit__`) is
-    // *consumed*, not destroyed: its whole-value `__del__` is skipped (its
+    // *consumed*, not destroyed: its whole-value `__deinit__` is skipped (its
     // resources moved into the receiver, so running it would double-free), but
     // a residual field left live still receives its own destruction. Here the
     // Copyable `Handle` is *copied* by the move constructor rather than
     // transferred, so both the source's and the destination's handles are live
     // and each must be released — two "handle del 7", never a leak and never a
     // double `box del`.
-    let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __copyinit__(out self, existing: Self):\n        self.id = existing.id\n    def __del__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h\n    def __del__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
+    let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __copyinit__(out self, existing: Self):\n        self.id = existing.id\n    def __deinit__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h\n    def __deinit__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
     assert_eq!(vm(src), "handle del 7\nbox del\nhandle del 7\nmid 7\n");
 }
 
@@ -388,8 +388,8 @@ fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
 // its storage is kept live in its own slot through the loop and destroyed
 // exactly once, after the loop — in-place normalization would overwrite (leak)
 // it. `Numbers` uses the bounded `__len__`/`__next__` protocol; `NumbersIter`
-// borrows nothing observable so only the source has a `__del__`.
-const ITERABLE_NUMBERS: &str = "@fieldwise_init\nstruct NumbersIter:\n    var cur: Int\n    var stop: Int\n    def __len__(self) -> Int:\n        return self.stop - self.cur\n    def __next__(mut self) -> Int:\n        var v = self.cur\n        self.cur = self.cur + 1\n        return v\n\nstruct Numbers(Movable):\n    var stop: Int\n    def __init__(out self, stop: Int):\n        self.stop = stop\n    def __init__(out self, *, deinit move: Self):\n        self.stop = move.stop\n    def __del__(deinit self):\n        print(\"drop numbers\", self.stop)\n    def __iter__(self) -> NumbersIter:\n        return NumbersIter(0, self.stop)\n\n";
+// borrows nothing observable so only the source has a `__deinit__`.
+const ITERABLE_NUMBERS: &str = "@fieldwise_init\nstruct NumbersIter:\n    var cur: Int\n    var stop: Int\n    def __len__(self) -> Int:\n        return self.stop - self.cur\n    def __next__(mut self) -> Int:\n        var v = self.cur\n        self.cur = self.cur + 1\n        return v\n\nstruct Numbers(Movable):\n    var stop: Int\n    def __init__(out self, stop: Int):\n        self.stop = stop\n    def __init__(out self, *, deinit move: Self):\n        self.stop = move.stop\n    def __deinit__(deinit self):\n        print(\"drop numbers\", self.stop)\n    def __iter__(self) -> NumbersIter:\n        return NumbersIter(0, self.stop)\n\n";
 
 #[test]
 fn borrowed_iteration_over_a_temporary_drops_the_source_after_the_loop() {
@@ -413,7 +413,7 @@ fn breaking_out_of_borrowed_temporary_iteration_still_drops_the_source_once() {
 fn borrowed_comprehension_over_a_temporary_drops_the_source_once() {
     // The comprehension twin of the statement-loop split: the borrowed
     // temporary source keeps its own retained slot while the iterator object
-    // is normalized into a distinct one, so the source's `__del__` runs
+    // is normalized into a distinct one, so the source's `__deinit__` runs
     // exactly once, immediately after the comprehension — in-place
     // normalization would overwrite (leak) it.
     let src = format!(

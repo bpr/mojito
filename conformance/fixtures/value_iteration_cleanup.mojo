@@ -3,13 +3,13 @@ struct StopIteration:
     pass
 
 
-struct Item(ImplicitlyDeletable, Movable):
+struct Item(Deinitable, Movable):
     var value: Int
 
     def __init__(out self, value: Int):
         self.value = value
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         print("drop", self.value)
 
 

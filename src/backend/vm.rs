@@ -1665,7 +1665,7 @@ impl VmBackend {
         }
     }
 
-    /// Recursively destroy a value (ASAP drop): run a struct's `__del__` if it
+    /// Recursively destroy a value (ASAP drop): run a struct's `__deinit__` if it
     /// defines one, then drop its fields in reverse declaration order. Internal
     /// tuple/compile-time storage recurses through its elements. Scalars are a
     /// no-op; a destructor-less struct still recursively destroys its fields.
@@ -1690,7 +1690,7 @@ impl VmBackend {
                     }
                     return Ok(());
                 }
-                let del = format!("{name}.__del__");
+                let del = format!("{name}.__deinit__");
                 if let Some(idx) = prog.index_of(&del) {
                     // `self` is the whole struct; the return value is discarded.
                     let self_val = Value::Struct {
@@ -2779,7 +2779,7 @@ fn build_prog_lowered(lowered: crate::mir::MirProgram) -> Result<Prog, RuntimeEr
     let sigs = build_sigs(&mir.declarations);
     Ok(Prog {
         // Elaborate ASAP drops: splice a `DropVar` after each variable's last
-        // use, so a struct's `__del__` runs there (Stage 7). A no-op for values
+        // use, so a struct's `__deinit__` runs there (Stage 7). A no-op for values
         // without a destructor.
         mir,
         structs,

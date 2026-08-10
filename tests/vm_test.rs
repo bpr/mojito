@@ -9,7 +9,7 @@
 //! `for` over lists, variables, user `def` calls (default/keyword/variadic ABI,
 //! `mut`/`ref` reference-param write-back) + recursion, `return`, structs
 //! (fieldwise construction, field read, `mut self`), `List`/`Tuple`, SIMD
-//! construction + lane read, destructor (`__del__`) calls, `try`/`except`/`else`/
+//! construction + lane read, destructor (`__deinit__`) calls, `try`/`except`/`else`/
 //! `finally` with exceptional-edge cleanup, and `print`/`String`/`len`. Remaining
 //! gaps — a `return`/`break`/`continue` crossing a `try` boundary, and methods with
 //! `mut`/`ref` ordinary params — are covered by `vm_reports_unsupported_features_cleanly`
@@ -166,7 +166,7 @@ fn self_hosted_list_moves_and_destroys_raw_storage_exactly() {
 #[test]
 fn discarded_set_elements_and_replaced_dictionary_values_are_destroyed() {
     let output = vm(
-        "struct Token(Equatable, Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __del__(deinit self):\n        print(\"drop\", self.id)\n    def __hash__(self) -> UInt:\n        return UInt(self.id)\n    def __eq__(self, other: Self) -> Bool:\n        return self.id == other.id\n\ndef main():\n    var dictionary = {0: Token(1), 0: Token(2)}\n    print(\"built dict\", len(dictionary))\n    var values = {Token(3), Token(3)}\n    print(\"built set\", len(values))\n",
+        "struct Token(Equatable, Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n    def __hash__(self) -> UInt:\n        return UInt(self.id)\n    def __eq__(self, other: Self) -> Bool:\n        return self.id == other.id\n\ndef main():\n    var dictionary = {0: Token(1), 0: Token(2)}\n    print(\"built dict\", len(dictionary))\n    var values = {Token(3), Token(3)}\n    print(\"built set\", len(values))\n",
     );
     assert!(output.contains("built dict 1\n"), "{output}");
     assert!(output.contains("built set 1\n"), "{output}");
@@ -688,7 +688,7 @@ fn nested_reference_returns_preserve_the_caller_handle() {
 
 #[test]
 fn ref_returning_subscript_preserves_receiver_storage_through_the_read() {
-    let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n\n    def __getitem__(\n        ref self, index: Int\n    ) -> ref[origin_of(self.value)] Int:\n        return self.value\n\n    def __del__(deinit self):\n        print(\"drop\")\n\ndef main():\n    var box = Box(40)\n    print(box[0])\n";
+    let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n\n    def __getitem__(\n        ref self, index: Int\n    ) -> ref[origin_of(self.value)] Int:\n        return self.value\n\n    def __deinit__(deinit self):\n        print(\"drop\")\n\ndef main():\n    var box = Box(40)\n    print(box[0])\n";
     assert_eq!(vm(src), "40\ndrop\n");
 }
 
@@ -727,7 +727,7 @@ fn generic_nested_def_is_type_erased_after_checker_inference() {
 
 #[test]
 fn callable_type_bounds_execute_top_level_captured_and_nominal_values() {
-    let src = "def apply[T: Copyable & ImplicitlyDeletable, F: def(T) -> T](callback: F, value: T) -> T:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\n@fieldwise_init\nstruct Add(def(Int) -> Int):\n    var delta: Int\n    def __call__(self, value: Int) -> Int:\n        return value + self.delta\n\ndef main():\n    print(apply(increment, 41))\n    var offset = 2\n    def captured(value: Int) {imm offset} -> Int:\n        return value + offset\n    print(apply(captured, 40))\n    print(apply(Add(3), 39))\n";
+    let src = "def apply[T: Copyable & Deinitable, F: def(T) -> T](callback: F, value: T) -> T:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\n@fieldwise_init\nstruct Add(def(Int) -> Int):\n    var delta: Int\n    def __call__(self, value: Int) -> Int:\n        return value + self.delta\n\ndef main():\n    print(apply(increment, 41))\n    var offset = 2\n    def captured(value: Int) {imm offset} -> Int:\n        return value + offset\n    print(apply(captured, 40))\n    print(apply(Add(3), 39))\n";
     assert_eq!(vm(src), "42\n42\n42\n");
 }
 
@@ -772,10 +772,10 @@ fn explicit_origins_select_overloads_and_compose_with_generic_parameters() {
     let direct_overload = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = choose[origin_of(value)](value)\n    selected += 2\n    print(value)\n";
     assert_eq!(vm(direct_overload), "42\n");
 
-    let generic_value = "def borrow[T: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[Int, origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n    print(value)\n";
+    let generic_value = "def borrow[T: Copyable & Deinitable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[Int, origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n    print(value)\n";
     assert_eq!(vm(generic_value), "42\n");
 
-    let named_inferred = "def borrow[T: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = borrow[origin=origin_of(value)](value)\n    selected += 2\n    print(value)\n";
+    let named_inferred = "def borrow[T: Copyable & Deinitable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = borrow[origin=origin_of(value)](value)\n    selected += 2\n    print(value)\n";
     assert_eq!(vm(named_inferred), "42\n");
 }
 
@@ -865,7 +865,7 @@ fn borrowed_list_iteration_observes_element_replacement_without_copying() {
         "1\n9\n3\n"
     );
 
-    let lifetime = "@fieldwise_init\nstruct Holder(ImplicitlyDeletable):\n    var values: List[Int]\n    def __del__(deinit self):\n        print(\"drop holder\")\n\ndef main():\n    var holder = Holder([1, 2, 3])\n    for value in holder.values:\n        print(value)\n";
+    let lifetime = "@fieldwise_init\nstruct Holder(Deinitable):\n    var values: List[Int]\n    def __deinit__(deinit self):\n        print(\"drop holder\")\n\ndef main():\n    var holder = Holder([1, 2, 3])\n    for value in holder.values:\n        print(value)\n";
     assert_eq!(
         run_compiled(lifetime).expect("borrowed iterator retains its owner"),
         "1\n2\n3\ndrop holder\n"
@@ -876,7 +876,7 @@ fn borrowed_list_iteration_observes_element_replacement_without_copying() {
 fn reference_yielding_iteration_borrows_a_named_source() {
     // `for x in nums` over a user reference-yielding iterator borrows the *named*
     // source (a live shared loan), not a copy: reads flow through the yielded
-    // references, `nums` stays usable after the loop, and its `__del__` (`-1`)
+    // references, `nums` stays usable after the loop, and its `__deinit__` (`-1`)
     // runs exactly once at its ASAP last use — not the two drops a copy emits.
     let source = include_str!("../assets/ok/reference_yielding_iteration_named_source.mojo");
     assert_eq!(
@@ -889,7 +889,7 @@ fn reference_yielding_iteration_borrows_a_named_source() {
 fn comprehension_borrows_a_named_user_source() {
     // A comprehension over a named user iterable follows the same borrowed-
     // source rules as a `for` statement: the source is bound by reference (one
-    // `__del__`, at its ASAP last use), stays usable after the comprehension,
+    // `__deinit__`, at its ASAP last use), stays usable after the comprehension,
     // and the yielded references feed the comprehension element expression.
     let source = include_str!("../assets/ok/comprehension_borrowed_named_source.mojo");
     assert_eq!(
@@ -1179,7 +1179,7 @@ fn pointer_to_place_aliases_the_source_place() {
 
 #[test]
 fn pointer_owner_drops_after_the_pointer_last_use() {
-    let src = "struct Box:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __del__(deinit self):\n        print(\"drop\", self.n)\n\ndef main():\n    var box = Box(1)\n    var p = UnsafePointer(to=box.n)\n    print(\"before\")\n    print(p[0])\n    print(\"after\")\n";
+    let src = "struct Box:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\ndef main():\n    var box = Box(1)\n    var p = UnsafePointer(to=box.n)\n    print(\"before\")\n    print(p[0])\n    print(\"after\")\n";
     assert_eq!(vm(src), "before\ndrop 1\n1\nafter\n");
 }
 

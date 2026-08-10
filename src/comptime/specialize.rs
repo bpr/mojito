@@ -1291,6 +1291,7 @@ impl<'a> Elab<'a> {
                         "conforms_to on a type pack requires a trait name".to_string(),
                     ));
                 };
+                let trait_name = crate::ast::canonical_trait_name(trait_name);
                 let satisfied = elements.iter().all(|element| match element {
                     CtValue::Type(ty) => self.conformance.require(ty, trait_name).is_ok(),
                     _ => false,

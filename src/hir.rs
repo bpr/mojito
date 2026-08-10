@@ -196,7 +196,7 @@ pub enum HirInstr {
     /// through its checker-selected `_finish(deinit self)` named destructor.
     /// Emitted in place of the exit [`HirInstr::Drop`] when the element type is
     /// not implicitly deletable — such an iterator is itself linear (no
-    /// `__del__`), and the escape guard has already rejected every early exit,
+    /// `__deinit__`), and the escape guard has already rejected every early exit,
     /// so this edge is the loop's single teardown path.
     FinishIter {
         iter: VarId,
@@ -1307,7 +1307,7 @@ impl Lower {
                 // the source was split into its own slot, its explicit exit drop
                 // also extends its liveness through the loop (no loan records the
                 // borrowing iterator's dependency yet), so it is not destroyed
-                // early and its `__del__` runs exactly once, after the loop.
+                // early and its `__deinit__` runs exactly once, after the loop.
                 // A linear-element owned iterator has no implicit destructor;
                 // its checker-selected named destructor consumes it instead,
                 // and the escape guard guarantees this edge is the only exit.

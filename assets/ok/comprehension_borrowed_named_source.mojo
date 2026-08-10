@@ -1,6 +1,6 @@
 # A comprehension over a *named* user iterable borrows its source exactly like
 # a `for` statement: the source is bound by reference (not copied/moved), stays
-# usable after the comprehension, and its `__del__` runs exactly once at its
+# usable after the comprehension, and its `__deinit__` runs exactly once at its
 # ASAP last use — not the two drops a copy emits.
 from std.iterable import StopIteration
 
@@ -28,7 +28,7 @@ struct Numbers:
             self.items.append(i * 10)
             i += 1
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         print(-1)
 
     def __iter__(ref self) -> NumbersIter:

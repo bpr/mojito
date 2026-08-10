@@ -18,11 +18,11 @@ def main():
 "#;
 
 const GENERIC_ANONYMOUS_CALLABLE: &str = r#"
-def identity[U: ImplicitlyCopyable & ImplicitlyDeletable](value: U) -> U:
+def identity[U: ImplicitlyCopyable & Deinitable](value: U) -> U:
     return value
 
 def invoke[
-    callback: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) thin -> T
+    callback: def[T: ImplicitlyCopyable & Deinitable](T) thin -> T
 ](value: Int) -> Int:
     return callback(value)
 
@@ -316,7 +316,7 @@ def main():
 #[test]
 fn generic_callable_tuple_preserves_its_checked_parameter_contract() {
     let source = r#"
-def identity[T: ImplicitlyCopyable & ImplicitlyDeletable](value: T) -> T:
+def identity[T: ImplicitlyCopyable & Deinitable](value: T) -> T:
     return value
 
 def offset[n: Int = 1](value: Int) -> Int:

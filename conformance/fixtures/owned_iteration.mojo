@@ -7,7 +7,7 @@ struct Item(Movable):
     def __init__(out self, *, deinit move: Self):
         self.value = move.value
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         print("drop", self.value)
 
 def main():

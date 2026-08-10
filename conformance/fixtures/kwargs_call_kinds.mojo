@@ -1,26 +1,26 @@
-def generic_size[T: Copyable & ImplicitlyDeletable](**options: T) -> Int:
+def generic_size[T: Copyable & Deinitable](**options: T) -> Int:
     return len(options)
 
 
 trait Counts:
-    def count[Element: Copyable & ImplicitlyDeletable](self, **options: Element) -> Int: ...
+    def count[Element: Copyable & Deinitable](self, **options: Element) -> Int: ...
 
 
 @fieldwise_init
 struct Counter(Counts):
     var bias: Int
 
-    def size[T: Copyable & ImplicitlyDeletable](self, **options: T) -> Int:
+    def size[T: Copyable & Deinitable](self, **options: T) -> Int:
         return self.bias + len(options)
 
-    def count[Element: Copyable & ImplicitlyDeletable](self, **options: Element) -> Int:
+    def count[Element: Copyable & Deinitable](self, **options: Element) -> Int:
         return self.bias + len(options)
 
     def relay(self, **options: Int) -> Int:
         return self.size(**options^)
 
     @staticmethod
-    def static_size[T: Copyable & ImplicitlyDeletable](**options: T) -> Int:
+    def static_size[T: Copyable & Deinitable](**options: T) -> Int:
         return len(options)
 
 

@@ -84,9 +84,10 @@ impl Checker {
                         "associated type bounds cannot take arguments".to_string(),
                     ));
                 }
+                let bound = crate::ast::canonical_trait_name(bound);
                 self.check_trait_name(bound)?;
-                if !bounds.contains(bound) {
-                    bounds.push(bound.clone());
+                if !bounds.iter().any(|existing| existing == bound) {
+                    bounds.push(bound.to_string());
                 }
             }
             return Ok(CtMemberReq::Type {
@@ -96,13 +97,15 @@ impl Checker {
         }
         if let SourceType::Named(name, args) = ty
             && args.is_empty()
-            && (BUILTIN_TRAITS.contains(&name.as_str()) || self.traits.contains_key(name))
         {
-            self.check_trait_name(name)?;
-            return Ok(CtMemberReq::Type {
-                bounds: vec![name.clone()],
-                params: params.to_vec(),
-            });
+            let name = crate::ast::canonical_trait_name(name);
+            if BUILTIN_TRAITS.contains(&name) || self.traits.contains_key(name) {
+                self.check_trait_name(name)?;
+                return Ok(CtMemberReq::Type {
+                    bounds: vec![name.to_string()],
+                    params: params.to_vec(),
+                });
+            }
         }
         if !params.is_empty() {
             return Err(TypeError::Unsupported(
@@ -442,6 +445,32 @@ impl Checker {
         };
         Ok(match &expr.kind {
             ExprKind::Bool(value) => GenericConstraint::Bool(*value),
+            ExprKind::TypeApply { name, args }
+                if crate::types::trivial_predicate_name(name).is_some() =>
+            {
+                let kind = crate::types::trivial_predicate_name(name).expect("guarded");
+                if args.len() != 1 {
+                    return Err(TypeError::Unsupported(format!(
+                        "{name}[T] takes exactly one type argument"
+                    )));
+                }
+                GenericConstraint::Trivial(kind, self.trivial_predicate_operand(&args[0])?)
+            }
+            // A single non-scalar bracket argument (`TriviallyMovable[T]`)
+            // parses as runtime indexing; recognize the predicate here too.
+            ExprKind::Index { object, index }
+                if matches!(
+                    &object.kind,
+                    ExprKind::Identifier(name)
+                        if crate::types::trivial_predicate_name(name).is_some()
+                ) =>
+            {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    unreachable!("guarded above");
+                };
+                let kind = crate::types::trivial_predicate_name(name).expect("guarded");
+                GenericConstraint::Trivial(kind, self.constraint_operand(index)?)
+            }
             ExprKind::Prefix(PrefixOp::Not, value) => {
                 GenericConstraint::Not(Box::new(self.compile_generic_constraint(value)?))
             }
@@ -496,22 +525,46 @@ impl Checker {
                         "conforms_to requires a trait name".to_string(),
                     ));
                 };
+                let trait_name = crate::ast::canonical_trait_name(trait_name);
                 self.check_trait_name(trait_name)?;
                 if pack {
                     GenericConstraint::ConformsPack {
                         param,
-                        trait_name: trait_name.clone(),
+                        trait_name: trait_name.to_string(),
                     }
                 } else {
                     GenericConstraint::Conforms {
                         param,
-                        trait_name: trait_name.clone(),
+                        trait_name: trait_name.to_string(),
                     }
                 }
             }
             _ => {
                 return Err(TypeError::Unsupported(
                     "unsupported generic where proposition".to_string(),
+                ));
+            }
+        })
+    }
+
+    /// The single type argument of a `Trivially*` predicate: a bare name is a
+    /// generic parameter (mirroring `conforms_to`'s param-only operand) unless
+    /// it names a scalar; any other annotation resolves as a concrete type.
+    fn trivial_predicate_operand(
+        &self,
+        argument: &crate::ast::ParamArg,
+    ) -> Result<ConstraintOperand, TypeError> {
+        Ok(match argument {
+            crate::ast::ParamArg::Value(expr) => self.constraint_operand(expr)?,
+            crate::ast::ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
+                scalar_type_name(name)
+                    .map(ConstraintOperand::Type)
+                    .unwrap_or_else(|| ConstraintOperand::Param(name.clone()))
+            }
+            crate::ast::ParamArg::Type(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
+            crate::ast::ParamArg::Named { .. } => {
+                return Err(TypeError::Unsupported(
+                    "a Trivially* predicate takes a positional type argument".to_string(),
                 ));
             }
         })
@@ -590,6 +643,10 @@ impl Checker {
                     TyArg::Val(_) | TyArg::Origin(_) => None,
                 })
                 .unwrap_or(false),
+            Trivial(kind, operand) => match self.constraint_value(operand, environment) {
+                Some(TyArg::Ty(ty)) => self.is_trivially(*kind, &ty),
+                _ => false,
+            },
             ConformsPack { param, trait_name } => environment
                 .get(param.as_str())
                 .and_then(|argument| {

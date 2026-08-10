@@ -84,23 +84,115 @@ the checkbox as usual; the next re-pin recreates it with the fresh divergence
 list. Doing a pass before the textual-format freeze keeps artifacts from
 encoding a stale picture of the language.
 
-- [ ] **Mojo parity catch-up pass** — work the current divergence list in
-  [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (accepted-source and
-  diagnostic gaps, lambda expressions through the existing callable pipeline,
-  and the library-port prerequisites recorded there), plus the
-  divergence-column entries in `conformance/parity.tsv`. Governing rule:
-  Mojito matches or subsets Mojo — it accepts what the audited head accepts,
-  with extensions tolerable only as (a) temporary bridges tracking upstream's
-  own deprecation state or (b) implementations of features on Mojo's own
-  roadmap/proposals, citing the upstream evidence in the parity records and
-  re-probed at every re-pin (e.g. the `_finish` named-destructor convention
-  models the linear-types proposal; expected struct extensions would also
-  qualify). The extension alignment sweep is done
-  (see the changelog: `unified {...}`, bare `move:`, the competing
-  `__setitem__` pair, `def(...)`-typed storage, captured-Origin
-  specialization values, and unqualified stateful downward funargs now
-  reject; `objs[0](args)` is recorded as a subset gap). Remaining: the
-  prioritized changeset sections 0–8 in `docs/mojo-nightly.md`.
+Governing rule: Mojito matches or subsets Mojo — it accepts what the audited
+head accepts, with extensions tolerable only as (a) temporary bridges tracking
+upstream's own deprecation state or (b) implementations of features on Mojo's
+own roadmap/proposals, citing the upstream evidence in the parity records and
+re-probed at every re-pin (e.g. the `_finish` named-destructor convention
+models the linear-types proposal; expected struct extensions would also
+qualify). The extension alignment sweep for the `ae386d1b204` audit is done
+(see the changelog: `unified {...}`, bare `move:`, the competing `__setitem__`
+pair, `def(...)`-typed storage, captured-Origin specialization values, and
+unqualified stateful downward funargs now reject; `objs[0](args)` is recorded
+as a subset gap). The remaining pass works the prioritized changeset in
+[`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
+specifications and upstream evidence), in this order:
+
+- [ ] **Lifecycle canonicalization (nightly §0)** — in order:
+  1. Canonical `Deinitable`/`__deinit__` vocabulary with the deprecated
+     `ImplicitlyDeletable`/`__del__` spellings normalized early (the
+     `read` → `imm` precedent): builtin-trait registry, checker capability
+     queries and diagnostics, destructor-symbol naming through MIR and the
+     VM's drop dispatch, bundled stdlib, fixtures, and docs.
+  2. Conditional `Movable` opt-out: route `is_movable` through the existing
+     per-conformance `where`-predicate path so `Movable where False` (and
+     parameterized conditions) become effective.
+  3. `TriviallyMovable[T]`/`TriviallyCopyable[T]`/`TriviallyDeinitable[T]`
+     comptime predicates — confirm exact definitions against the audited
+     head's `std.traits` source first.
+  4. `std.traits`/`std.origin` module homes binding the builtin identities;
+     prelude re-exports remain compatibility bridges.
+- [ ] **Small accepted-source and diagnostic gaps (nightly §1)** —
+  independent, any order:
+  - Parse `var **kwargs` and reject bare `**kwargs`; add the
+    keyword-variadic role to function types and callable ABI identity.
+  - Reject a second same-named function imported from another module.
+  - Diagnose a standalone module importing its own name.
+  - Pin the existing imm-vs-mut-only overload rejection with a differential
+    case (no code change expected).
+  - Make `range(..., step=0)` empty in the CTFE evaluator and the VM
+    compile-time intrinsic (nominal runtime `Range` already matches).
+  - Interpret `where (condition, "message")` as a constraint plus retained
+    diagnostic message across functions, structs, conditional conformances,
+    and comptime declarations.
+  - Reject `class`/`match`/`yield` as free-function names at declaration
+    checking without pre-tokenizing them.
+- [ ] **Lambda expressions (nightly §2)** — one explicit AST/HIR node lowered
+  through the existing nested-definition, capture, callable-contract,
+  specialization, and indirect-call machinery; omitted capture list
+  imm-captures (thin when no free variables), omitted return type is fixed
+  `None`, never inferred. A source-porting prerequisite for the library work
+  below.
+- [ ] **`Array[T, length]` and list-expression retarget (nightly §3)** — in
+  order:
+  1. Nominal fixed-size `Array` with conditional
+     `Copyable`/`Movable`/`Deinitable` conformances over the existing
+     aggregate storage; keep nominal constructor lowering unless proven
+     insufficient.
+  2. Retarget uncontextualized `[1, 2, 3]` to `Array[Int, 3]`; an expected
+     type with a list-literal constructor (notably `List[T]`) still controls
+     contextual materialization.
+- [ ] **Current pointer/allocation model (nightly §4)** — `Pointer`/
+  `MutPointer`/`ImmPointer`, empty `ptr[]` dereference, the `unsafe_*`
+  operation vocabulary, and layout-based allocation
+  (`alloc(Layout[T](count))` → `Allocation[T]`/`ThinAllocation[T]`,
+  `dealloc(allocation^)`); retire the legacy static
+  `UnsafePointer[T].alloc[_aligned]` surface the head rejects (this also
+  resolves the `pointers.unsafe` divergence row). Lower onto the existing
+  typed pointer MIR, allocation identities, and explicit-destroy machinery —
+  no second allocation representation. Then grow `UnsafeMaybeUninit` around
+  the current `unsafe_write`/`unsafe_assume_init`/`unsafe_deinit`/
+  `unsafe_forget` vocabulary.
+- [ ] **Views and strict bounds (nightly §5)** — `Span` and canonical
+  `StringSpan` (with `Imm`/`Mut` aliases); contiguous List/Span/String slices
+  reject negative, out-of-range, or reversed bounds instead of normalizing;
+  byte endpoints on UTF-8 boundaries; grapheme-cluster `StringSpan` yields
+  from ordinary String iteration; strided List slicing keeps
+  `StridedSlice.indices()` normalization and copied results. Emit
+  `StringSpan`; accept `StringSlice` as an upstream compatibility alias.
+- [ ] **Linear containers and owning APIs (nightly §6)** — loosen
+  `Optional`/`Variant` to `AnyType` with `init_with=` placement construction
+  and `deinit_with`; `clear_with`, displacement-returning `insert`, and
+  consuming iteration by declared family; renames
+  (`Variant.take` → `unwrap`, `OwnedPointer.take` → `into_inner`);
+  quarantine or remove owned iteration for non-`Deinitable` elements where
+  the head requires `Movable & Deinitable`. (Depends on lifecycle
+  canonicalization; independent of Array and Pointer.)
+- [ ] **Subtree origins and temporary-origin inference (nightly §7)** — add
+  the experimental `Origin._subtree` as a separate conservative origin form
+  beside the existing named interior generations; allow an origin-bearing
+  `@implicit` conversion result to refine its origin from a register
+  temporary; carry both facts explicitly through checked HIR and verified
+  MIR. Follows the container work — the audited stdlib does not yet depend
+  on it.
+- [ ] **Scalar, SIMD, range, and generic vocabulary (nightly §8)** —
+  generalize the Int-only `Range` proof subset to the Int/Scalar family;
+  adopt `TypeList` `length`/`any`/`all` for variadic predicates; probe
+  Tuple's public `*Ts` parameter name for compatibility. The SIMD half of
+  the section is complete (`SIMDLength` landed; invalid widths already
+  reject at checked elaboration).
+- [ ] **Pass close-out** — in order:
+  1. Run the open-question probes and the re-probe list in
+     [`conformance/probes/`](conformance/probes/) against the audited build;
+     resolve each per its header.
+  2. Re-verify the "Confirmed Alignment" list in `docs/mojo-nightly.md`
+     (add the permanent two-root namespace-directory module case and the
+     caught-error `raise e` differential case).
+  3. Full differential conformance run in a Pixi environment with the exact
+     audited build; record `mojo --version` and both hashes with the
+     results; update the `conformance/parity.tsv` header pins.
+  4. Delete this section's checkboxes — the next re-pin recreates the pass
+     with a fresh divergence list.
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
@@ -162,12 +254,6 @@ encoding a stale picture of the language.
   `where` predicates (comptime method evaluation on frozen struct values),
   a public recursive `IntTuple`, and mixing type parameters with
   DType/struct value parameters on one struct.
-- [ ] **Scalar and generic vocabulary follow-ups (nightly §8)** — generalize the
-  Int-only `Range` proof subset to the current Int/Scalar family; adopt the
-  `TypeList` `length`/`any`/`all` vocabulary for variadic predicates (Mojito
-  currently spells pack-wide predicates via `conforms_to`); probe Tuple's new
-  public `*Ts` parameter name for compatibility. See
-  `docs/mojo-nightly.md` §8 — the SIMD half of that section is complete.
 - [ ] **Element-call dispatch for `value[i](args)`** — current Mojo dispatches
   the bare spelling as subscript-then-call on an indexable runtime value;
   Mojito parses it as compile-time parameter application and rejects with a
@@ -177,12 +263,6 @@ encoding a stale picture of the language.
   subscript-then-indirect-call MIR lowering channel for `ExprKind::Call`.
 - [ ] **HashSet growth and rehashing** — add load-factor growth while preserving
   deterministic behavior and value semantics.
-- [ ] **Current memory and pointer API** — replace the legacy static
-  `UnsafePointer[T].alloc[_aligned]` surface with free `alloc[T](...)`, add the
-  current empty `pointer[]` dereference and initialization/deinitialization
-  operations, and grow `Layout`/`Allocation`/`dealloc` as demanded by CPU
-  library code. Lower the syntax to the existing typed Pointer MIR operations;
-  do not add a second allocation representation.
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
   the Writer and explicit-destroy foundations.
 - [ ] **Time, random, and testing slices** — add deterministic testable cores and

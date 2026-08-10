@@ -799,7 +799,7 @@ drop.var $variable
 ```
 
 Removes the value from `$variable`, leaving `None`, and destroys the removed
-value. For a struct this can invoke `__del__`; fields are then dropped in reverse
+value. For a struct this can invoke `__deinit__`; fields are then dropped in reverse
 declaration order. Public collections are nominal structs and follow that rule.
 Elements of the compiler-private heterogeneous pack carrier use Mojo's
 left-to-right order. Moved fields and relocated pack storage are skipped at

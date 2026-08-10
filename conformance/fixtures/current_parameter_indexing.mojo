@@ -1,7 +1,7 @@
 # Current Mojo's compile-time parameter indexing hook is
 # `__getitem_param__`, not the earlier `__getitem__` spelling.
 @fieldwise_init
-struct CurrentPair(Copyable, ImplicitlyDeletable):
+struct CurrentPair(Copyable, Deinitable):
     var first: Int
 
     def __getitem_param__[index: Int](self) -> Int:

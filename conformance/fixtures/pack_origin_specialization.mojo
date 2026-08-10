@@ -1,6 +1,6 @@
 def choose_before[
     origin: Origin[mut=True],
-    *Ts: Copyable & ImplicitlyDeletable,
+    *Ts: Copyable & Deinitable,
 ](ref[origin] value: Int, var *args: *Ts) -> ref[origin] Int:
     comptime for i in range(args.__len__()):
         pass
@@ -8,7 +8,7 @@ def choose_before[
 
 
 def choose_after[
-    *Ts: Copyable & ImplicitlyDeletable,
+    *Ts: Copyable & Deinitable,
     origin: Origin[mut=True],
 ](ref[origin] value: Int, var *args: *Ts) -> ref[origin] Int:
     comptime for i in range(args.__len__()):

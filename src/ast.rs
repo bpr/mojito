@@ -10,6 +10,30 @@
 
 use crate::token::Span;
 
+/// Canonicalize a trait name: upstream deprecated `ImplicitlyDeletable` in
+/// favor of `Deinitable`. The parser normalizes the compat spelling wherever a
+/// trait name enters semantic data (conformance lists, bounds), and the
+/// checker wraps the positions where a trait name is extracted from an
+/// ordinary expression (`conforms_to(T, ...)`), so every later phase sees one
+/// canonical spelling (the `read` → `imm` precedent).
+pub fn canonical_trait_name(name: &str) -> &str {
+    match name {
+        "ImplicitlyDeletable" => "Deinitable",
+        other => other,
+    }
+}
+
+/// Canonicalize the whole-value destructor method name: upstream deprecated
+/// `__del__` in favor of `__deinit__`. Applied to method names at parse time
+/// so symbol mangling, overload maps, and the VM's destructor lookup all see
+/// the canonical spelling.
+pub fn canonical_destructor_name(name: &str) -> &str {
+    match name {
+        "__del__" => "__deinit__",
+        other => other,
+    }
+}
+
 /// A type annotation. Covers the scalar types plus nominal (`struct`) types,
 /// which may carry type arguments (`Pair[Int]`), and references to a type
 /// parameter. Function/closure and reference types are represented even though

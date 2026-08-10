@@ -1,5 +1,5 @@
 @explicit_destroy("close the child")
-struct Child(ImplicitlyDeletable where False):
+struct Child(Deinitable where False):
     var id: Int
 
     def __init__(out self, id: Int):
@@ -9,7 +9,7 @@ struct Child(ImplicitlyDeletable where False):
         print("child", self.id)
 
 @explicit_destroy("finish the aggregate")
-struct Aggregate(ImplicitlyDeletable where False):
+struct Aggregate(Deinitable where False):
     var child: Child
     var count: Int
 

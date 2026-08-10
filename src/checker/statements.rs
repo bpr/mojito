@@ -396,7 +396,7 @@ impl Checker {
                 self.binding_types
                     .borrow_mut()
                     .insert(value.source_span(), declared.clone());
-                if self.is_implicitly_deletable(&declared) {
+                if self.is_deinitable(&declared) {
                     self.explicit_destroy_deletability
                         .borrow_mut()
                         .bindings
@@ -1420,7 +1420,7 @@ impl Checker {
                 };
                 self.assumed_conformances.push(function_assumptions);
                 for (param, ty) in param_tys.iter().enumerate() {
-                    if self.is_implicitly_deletable(ty) {
+                    if self.is_deinitable(ty) {
                         self.explicit_destroy_deletability
                             .borrow_mut()
                             .declarations
@@ -1898,14 +1898,14 @@ impl Checker {
                 let binding_plan = self.iteration_binding_plan(*binding, &yielded_ty)?;
                 if source_mode == crate::checked::IterationMode::Owned
                     && binding_plan.action == crate::checked::IterationBindingAction::MoveValue
-                    && !self.is_implicitly_deletable(&binding_plan.binding_ty)
+                    && !self.is_deinitable(&binding_plan.binding_ty)
                     && block_can_escape_owned_iteration(body, 0)
                 {
                     // Name the element's declared obligation so the rejection
                     // says what each residual element still requires.
                     let obligation = self.residual_obligation_suffix(&binding_plan.binding_ty);
                     return Err(TypeError::Unsupported(format!(
-                        "owned iteration over non-ImplicitlyDeletable '{}' cannot exit early; its residual elements would require explicit destruction{obligation}",
+                        "owned iteration over non-Deinitable '{}' cannot exit early; its residual elements would require explicit destruction{obligation}",
                         binding_plan.binding_ty
                     )));
                 }
@@ -1916,7 +1916,7 @@ impl Checker {
                 // call is contained and does not mark).
                 let linear_element = (source_mode == crate::checked::IterationMode::Owned
                     && binding_plan.action == crate::checked::IterationBindingAction::MoveValue
-                    && !self.is_implicitly_deletable(&binding_plan.binding_ty))
+                    && !self.is_deinitable(&binding_plan.binding_ty))
                 .then(|| binding_plan.binding_ty.clone());
                 let binding_ty = binding_plan.binding_ty.clone();
                 protocol.binding = Some(Box::new(binding_plan.clone()));
@@ -1927,7 +1927,7 @@ impl Checker {
                 self.binding_types
                     .borrow_mut()
                     .insert(stmt.source_span(), binding_ty.clone());
-                if self.is_implicitly_deletable(&binding_ty) {
+                if self.is_deinitable(&binding_ty) {
                     self.explicit_destroy_deletability
                         .borrow_mut()
                         .bindings
@@ -1955,7 +1955,7 @@ impl Checker {
                 if raised && let Some(element) = linear_element {
                     let obligation = self.residual_obligation_suffix(&element);
                     return Err(TypeError::Unsupported(format!(
-                        "owned iteration over non-ImplicitlyDeletable '{element}' cannot contain an unhandled raising call; a propagating error would abandon its residual elements{obligation}",
+                        "owned iteration over non-Deinitable '{element}' cannot contain an unhandled raising call; a propagating error would abandon its residual elements{obligation}",
                     )));
                 }
                 if let Some(body) = orelse {

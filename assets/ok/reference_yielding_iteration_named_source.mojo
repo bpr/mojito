@@ -1,7 +1,7 @@
 # A `for` loop over a user-defined reference-yielding iterator whose source is a
 # *named* binding (`for x in nums`), not an owned temporary. The named source is
 # borrowed (not copied/moved): its yielded references flow through the loop as
-# handles, `nums` remains usable after the loop, and its `__del__` runs exactly
+# handles, `nums` remains usable after the loop, and its `__deinit__` runs exactly
 # once at enclosing-scope end (after the loop and the post-loop use).
 from std.iterable import StopIteration
 
@@ -29,7 +29,7 @@ struct Numbers:
             self.items.append(i * 10)
             i += 1
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         print(-1)
 
     def __iter__(ref self) -> NumbersIter:

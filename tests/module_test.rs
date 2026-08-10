@@ -653,3 +653,40 @@ fn imported_trait_effect_types_are_rewritten_with_their_module() {
 
     assert_eq!(run(&main).unwrap(), "7\n");
 }
+
+#[test]
+fn std_traits_and_std_origin_export_builtin_identities() {
+    let d = TempDir::new();
+
+    // Named imports resolve and the names stay usable as bounds/binders.
+    let main = d.write(
+        "main.mojo",
+        "from std.traits import Deinitable, Movable, TriviallyCopyable\nfrom std.origin import Origin\n\nstruct Res(Movable, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def close(deinit self):\n        print(\"closed\", self.id)\n\ndef borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef main():\n    var r = Res(1)\n    r^.close()\n    var x = 40\n    ref y = borrow(x)\n    y += 2\n    print(x)\n    comptime if TriviallyCopyable[Int]:\n        print(\"trivial int\")\n",
+    );
+    assert_eq!(run(&main).expect("run"), "closed 1\n42\ntrivial int\n");
+
+    // An alias rewrites to the canonical structural spelling.
+    let aliased = d.write(
+        "aliased.mojo",
+        "from std.traits import Movable as M\n\ndef consume[T: M](var value: T) -> Int:\n    return 1\n\ndef main():\n    print(consume(42))\n",
+    );
+    assert_eq!(run(&aliased).expect("run"), "1\n");
+
+    // Wildcard imports work through the same export table.
+    let wild = d.write(
+        "wild.mojo",
+        "from std.origin import *\n\ndef borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef main():\n    var x = 41\n    ref y = borrow(x)\n    y += 1\n    print(x)\n",
+    );
+    assert_eq!(run(&wild).expect("run"), "42\n");
+
+    // A name upstream does not export stays a NameNotFound error.
+    let unknown = d.write(
+        "unknown.mojo",
+        "from std.traits import NotAThing\n\ndef main():\n    pass\n",
+    );
+    let error = run(&unknown).expect_err("unknown import must fail");
+    assert!(
+        error.contains("no declaration named 'NotAThing'"),
+        "unexpected error: {error}"
+    );
+}

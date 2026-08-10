@@ -248,7 +248,7 @@ pub(crate) fn check_program_with_materialized_callables(
         .iter()
         .filter_map(|(name, info)| {
             let self_ty = Ty::Struct(name.clone(), info.decls.iter().map(param_as_arg).collect());
-            (!checker.is_implicitly_deletable(&self_ty)).then(|| {
+            (!checker.is_deinitable(&self_ty)).then(|| {
                 (
                     name.clone(),
                     crate::checked::ExplicitDestroyInfo {
@@ -261,7 +261,7 @@ pub(crate) fn check_program_with_materialized_callables(
                             .fields
                             .iter()
                             .filter_map(|(field, ty)| match ty {
-                                Ty::Struct(field_ty, _) if !checker.is_implicitly_deletable(ty) => {
+                                Ty::Struct(field_ty, _) if !checker.is_deinitable(ty) => {
                                     Some((field.clone(), field_ty.clone()))
                                 }
                                 _ => None,
@@ -467,6 +467,11 @@ impl ConformanceOracle {
                 reason: self.checker.trait_failure_reason(ty, trait_name),
             })
         }
+    }
+
+    /// Answer a `Trivially{Movable,Copyable,Deinitable}[T]` comptime predicate.
+    pub(crate) fn trivially(&self, kind: crate::types::TrivialLifecycle, ty: &Ty) -> bool {
+        self.checker.is_trivially(kind, ty)
     }
 }
 
@@ -2838,7 +2843,7 @@ type SplitCallableSpecialization = (
 /// must name one of these. `AnyType` is the least restrictive.
 const BUILTIN_TRAITS: &[&str] = &[
     "AnyType",
-    "ImplicitlyDeletable",
+    "Deinitable",
     "Movable",
     "Copyable",
     "ImplicitlyCopyable",

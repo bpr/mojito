@@ -11,7 +11,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Driver | `compiler::Compiler::{compile_path, compile_source, execute}` | The only whole-program stage ordering. |
 | Lex | `lexer::Lexer`, crate-level `lex` | Spanned token stream. |
 | Parse | `parser::Parser::{parse_program, parse_program_diagnostic}`, crate-level `parse` | Spanned AST; diagnostic partial AST is quarantined. |
-| Link | `module::{link_with_options, link_source_with_options, LinkOptions}` | Dependency-first flat program with `SourceSpan` module identity. |
+| Link | `module::{link_with_options, link_source_with_options, LinkOptions}` | Dependency-first flat program with `SourceSpan` module identity. `builtin_module_exports` gives the docstring-only `std.traits`/`std.origin` homes their builtin identity exports. |
 | Comptime | `comptime::elaborate`, `ct::CtValue` | Ordinary AST with compile-time control resolved. |
 | Check | `checker::{check_program, Checker}`, `checked::CheckedProgram` | Authoritative semantic handoff and side tables. |
 | HIR | `hir::Cfg::build_checked_fn` (unchecked `build`/`build_fn` are phase-test compatibility) | Statement CFG with nested expressions. |
@@ -76,7 +76,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/type_resolution.rs` resolves source annotations into checked `Ty`
   (builtin type-argument forms, dependent/associated projection).
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
-  (nominal and built-in), and type-capability queries.
+  (nominal and built-in), and type-capability queries (`is_deinitable`,
+  `is_movable`, `is_copyable`, …). Deprecated lifecycle spellings
+  (`ImplicitlyDeletable`/`__del__`) normalize to the canonical
+  `Deinitable`/`__deinit__` vocabulary via `ast::canonical_trait_name` /
+  `ast::canonical_destructor_name`, applied by the parser at the semantic
+  positions and by the checker where trait names are extracted from
+  expressions.
 - `checker/origins.rs` owns origin/reference-handle derivation, interior and
   aggregate-origin tracking, capture-origin collection, origin-signature
   lowering, and cross-call transfer effects (`abstract_body_origin`,

@@ -92,7 +92,7 @@ struct GenericSink(Copyable, Movable):
     def __getitem__(self, index: Int) -> Bool:
         return False
 
-    def __setitem__[T: Copyable & ImplicitlyDeletable](
+    def __setitem__[T: Copyable & Deinitable](
         mut self, index: Int, value: T
     ):
         self.value = index

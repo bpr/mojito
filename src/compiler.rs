@@ -773,6 +773,9 @@ fn tuple_specialization_constraint_is_closed(
         | GenericConstraint::ConformsPack { param, .. } => {
             type_binders.contains(param.trim_start_matches('*'))
         }
+        GenericConstraint::Trivial(_, operand) => {
+            tuple_specialization_constraint_operand_is_closed(operand, type_binders, value_binders)
+        }
         GenericConstraint::Eq(left, right)
         | GenericConstraint::Ne(left, right)
         | GenericConstraint::Lt(left, right)

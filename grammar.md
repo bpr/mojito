@@ -479,7 +479,7 @@ collection^` moves the collection and successively transfers its elements,
 including non-Copyable elements. An early exit destroys an implicitly deletable
 residual collection; it is rejected when residual linear elements would require
 explicit destruction. The bundled List owned iterator still requires
-`ImplicitlyDeletable` elements even for guaranteed full exhaustion; lifting that
+`Deinitable` elements even for guaranteed full exhaustion; lifting that
 restriction is tracked with the associated-iterator/origin work. `break` /
 `continue` outside a loop are checker errors.
 
@@ -819,6 +819,12 @@ intrinsics. Ordinary lexical bindings still shadow an implicit name.
   nominal `__len__` method (including List, Set, Dict, Range, and Tuple) → `Int`.
 - `List[T]()` / `List[T](a, b, …)` / `List(a, b, …)` — call a concrete
   specialization of the nominal prelude `List` struct (see **Collections**).
+- `TriviallyMovable[T]` / `TriviallyCopyable[T]` / `TriviallyDeinitable[T]` —
+  Bool-valued compile-time predicates (not traits): the base lifecycle
+  capability holds and the corresponding operation is compiler-generated with
+  recursively trivial fields. Usable in `comptime` control and bindings,
+  `where` clauses, and conformance conditions; rejected as type-parameter
+  bounds.
 
 ## Numbers
 

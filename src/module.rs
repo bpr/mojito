@@ -475,6 +475,41 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
     }
 }
 
+/// Builtin names exported by the canonical `std.traits`/`std.origin` module
+/// homes. These traits and origin spellings are compiler builtins with no
+/// source declaration, so the docstring-only module files export them through
+/// this table (mirroring the audited upstream export surface). Matched by
+/// canonical-path suffix so a replaced `--stdlib` root keeps the contract.
+fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
+    const TRAITS: &[&str] = &[
+        "AnyType",
+        "Movable",
+        "TriviallyMovable",
+        "Copyable",
+        "ImplicitlyCopyable",
+        "TriviallyCopyable",
+        "Deinitable",
+        "TriviallyDeinitable",
+    ];
+    const ORIGIN: &[&str] = &[
+        "Origin",
+        "OriginSet",
+        "UntrackedOrigin",
+        "MutUntrackedOrigin",
+        "ImmutUntrackedOrigin",
+        "MutUnsafeAnyOrigin",
+        "ImmutUnsafeAnyOrigin",
+    ];
+    let normalized = canon.to_string_lossy().replace('\\', "/");
+    if normalized.ends_with("std/traits.mojo") {
+        Some(TRAITS)
+    } else if normalized.ends_with("std/origin.mojo") {
+        Some(ORIGIN)
+    } else {
+        None
+    }
+}
+
 fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
@@ -709,6 +744,18 @@ impl Linker {
                 && (!implicit_bindings.contains_key(&name) || explicit_exports.contains(&name))
             {
                 exports.insert(name, target);
+            }
+        }
+        // The canonical `std.traits`/`std.origin` module homes export compiler
+        // builtins that have no source declaration. Bind them as identities:
+        // the checker resolves these names structurally, and bound-string
+        // comparisons (`bounds == ["Origin"]`) require the unqualified
+        // spelling to survive `rewrite_program`/`rewrite_type_param`.
+        if let Some(builtin_names) = builtin_module_exports(&canon) {
+            for name in builtin_names {
+                exports
+                    .entry((*name).to_string())
+                    .or_insert_with(|| (*name).to_string());
             }
         }
         self.exports.insert(canon, exports);

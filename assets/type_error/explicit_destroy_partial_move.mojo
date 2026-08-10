@@ -1,6 +1,6 @@
 # expect: is incomplete and cannot use a whole-value destructor
 @explicit_destroy("close the resource")
-struct Resource(ImplicitlyDeletable where False):
+struct Resource(Deinitable where False):
     var id: Int
 
     def __init__(out self, id: Int):

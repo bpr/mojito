@@ -3,7 +3,7 @@ struct StopIteration:
     pass
 
 
-struct Item(ImplicitlyDeletable, Movable):
+struct Item(Deinitable, Movable):
     var value: Int
 
     def __init__(out self, value: Int):
@@ -23,7 +23,7 @@ struct ValueIter:
 
 
 @fieldwise_init
-struct Values(ImplicitlyDeletable, Movable):
+struct Values(Deinitable, Movable):
     var value: Int
 
     def __iter__(ref self) -> ValueIter:

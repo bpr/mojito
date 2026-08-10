@@ -37,7 +37,7 @@ struct _RangeIter(Iterator):
         return result
 
 @fieldwise_init
-struct Range(Copyable, ImplicitlyDeletable, Iterable, Movable, Writable):
+struct Range(Copyable, Deinitable, Iterable, Movable, Writable):
     comptime Element = Int
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]

@@ -27,7 +27,7 @@ struct Point(Writable):
         writer.write("Point[x=", self.x, ", y=", self.y, "]")
 
 @fieldwise_init
-struct Wrapper[T: Copyable & ImplicitlyDeletable](
+struct Wrapper[T: Copyable & Deinitable](
     Writable where conforms_to(T, Writable)
 ):
     var value: Self.T

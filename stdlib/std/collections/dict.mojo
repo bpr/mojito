@@ -9,7 +9,7 @@ from std.optional import Optional
 
 struct DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](
     Copyable,
-    ImplicitlyDeletable where conforms_to(K, ImplicitlyDeletable) and conforms_to(V, ImplicitlyDeletable),
+    Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
     Movable,
 ):
     var key: Self.K
@@ -51,7 +51,7 @@ struct Dict[
     V: Copyable & Movable,
 ](
     Copyable,
-    ImplicitlyDeletable where conforms_to(K, ImplicitlyDeletable) and conforms_to(V, ImplicitlyDeletable),
+    Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
     Iterable,
     Movable,
     Writable where conforms_to(K, Writable) and conforms_to(V, Writable),
@@ -70,8 +70,8 @@ struct Dict[
         var keys: List[Self.K],
         var values: List[Self.V],
         __dict_literal__: NoneType,
-    ) where conforms_to(Self.K, ImplicitlyDeletable) and conforms_to(
-        Self.V, ImplicitlyDeletable
+    ) where conforms_to(Self.K, Deinitable) and conforms_to(
+        Self.V, Deinitable
     ):
         self.entries = List[DictEntry[Self.K, Self.V]]()
         var i = 0
@@ -108,8 +108,8 @@ struct Dict[
         raise Error("missing key")
 
     def __setitem__(mut self, key: Self.K, value: Self.V) where conforms_to(
-        Self.K, ImplicitlyDeletable
-    ) and conforms_to(Self.V, ImplicitlyDeletable):
+        Self.K, Deinitable
+    ) and conforms_to(Self.V, Deinitable):
         var i = self.find_index(key)
         if i >= 0:
             self.entries[i] = DictEntry[Self.K, Self.V](key, value)
@@ -132,8 +132,8 @@ struct Dict[
         return len(self.entries)
 
     def keys(self) -> List[Self.K] where conforms_to(
-        Self.K, ImplicitlyDeletable
-    ) and conforms_to(Self.V, ImplicitlyDeletable):
+        Self.K, Deinitable
+    ) and conforms_to(Self.V, Deinitable):
         var result = List[Self.K]()
         var i = 0
         while i < len(self.entries):
@@ -142,8 +142,8 @@ struct Dict[
         return result^
 
     def values(self) -> List[Self.V] where conforms_to(
-        Self.K, ImplicitlyDeletable
-    ) and conforms_to(Self.V, ImplicitlyDeletable):
+        Self.K, Deinitable
+    ) and conforms_to(Self.V, Deinitable):
         var result = List[Self.V]()
         var i = 0
         while i < len(self.entries):

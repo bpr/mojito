@@ -23,6 +23,18 @@ impl<'a> Elab<'a> {
                 }
                 self.type_value(name, &[], scope)
             }
+            ExprKind::TypeApply { name, args }
+                if crate::types::trivial_predicate_name(name).is_some() =>
+            {
+                let kind = crate::types::trivial_predicate_name(name).expect("guarded");
+                if args.len() != 1 {
+                    return Err(ComptimeError::Arity(format!(
+                        "{name}[T] takes exactly one type parameter"
+                    )));
+                }
+                let ty = self.param_arg_type(&args[0], scope)?;
+                Ok(CtValue::Bool(self.conformance.trivially(kind, &ty)))
+            }
             ExprKind::TypeApply { name, args } if name == "reflect" => {
                 if args.len() != 1 {
                     return Err(ComptimeError::Arity(
@@ -71,6 +83,15 @@ impl<'a> Elab<'a> {
                 }
             }
             ExprKind::Index { object, index } => {
+                // `TriviallyCopyable[Plain]`: a single non-scalar bracket
+                // argument parses as runtime indexing, so the predicate is
+                // recognized here as well as on the TypeApply path.
+                if let ExprKind::Identifier(name) = &object.kind
+                    && let Some(kind) = crate::types::trivial_predicate_name(name)
+                {
+                    let ty = self.param_arg_type(&ParamArg::Value((**index).clone()), scope)?;
+                    return Ok(CtValue::Bool(self.conformance.trivially(kind, &ty)));
+                }
                 if let ExprKind::Member {
                     object: reflected,
                     field,

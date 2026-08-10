@@ -55,7 +55,7 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
 
 /// Elaborate ASAP destruction across a whole program: after each variable's last
 /// use, splice a `DropVar`. Applied by the VM before execution so a struct's
-/// `__del__` fires at the value's last use (not at scope end).
+/// `__deinit__` fires at the value's last use (not at scope end).
 pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
     MirProgram {
         functions: prog
@@ -602,7 +602,7 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
     set_try_cleanups(&mut blocks);
 
     // A `deinit` parameter is *consumed*, not destroyed: the spliced teardown
-    // for it must skip the value's whole-value `__del__` (its resources already
+    // for it must skip the value's whole-value `__deinit__` (its resources already
     // moved into the receiver) while still destroying any residual fields. Drop
     // elaboration emits an ordinary `DropVar`; rewrite those to `ConsumeVar` for
     // deinit parameters. Their `^`-transferred fields are `Value::Moved` and a

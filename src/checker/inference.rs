@@ -60,7 +60,7 @@ impl Checker {
                             .borrow_mut()
                             .insert(iter.source_span(), protocol);
                         let binding_ty = binding_plan.binding_ty.clone();
-                        let implicitly_deletable = self.is_implicitly_deletable(&binding_ty);
+                        let deinitable = self.is_deinitable(&binding_ty);
                         // A generator binder scopes everything to its right, but
                         // not its own iterable. Giving every generator a lexical
                         // scope also permits a later generator to shadow the same
@@ -81,7 +81,7 @@ impl Checker {
                                 ))
                             })?,
                             plan: binding_plan,
-                            implicitly_deletable,
+                            deinitable,
                         });
                     }
                     crate::ast::ComprehensionClause::If(condition) => {
@@ -91,7 +91,7 @@ impl Checker {
                         // condition skips is dropped without its explicit
                         // destructor, which a linear binder cannot permit.
                         if let Some(linear) = bindings.iter().find(|binding| {
-                            !binding.implicitly_deletable
+                            !binding.deinitable
                                 && matches!(
                                     binding.plan.action,
                                     crate::checked::IterationBindingAction::MoveValue
@@ -99,7 +99,7 @@ impl Checker {
                         }) {
                             let obligation = self.residual_obligation_suffix(&linear.ty);
                             return Err(TypeError::Unsupported(format!(
-                                "a comprehension filter would abandon skipped non-ImplicitlyDeletable '{}' elements without explicit destruction{obligation}",
+                                "a comprehension filter would abandon skipped non-Deinitable '{}' elements without explicit destruction{obligation}",
                                 linear.ty
                             )));
                         }
@@ -161,7 +161,7 @@ impl Checker {
         if result.is_ok()
             && raised
             && let Some(linear) = bindings.iter().find(|binding| {
-                !binding.implicitly_deletable
+                !binding.deinitable
                     && matches!(
                         binding.plan.action,
                         crate::checked::IterationBindingAction::MoveValue
@@ -172,7 +172,7 @@ impl Checker {
             // abandoning residual elements exactly like a loop's raise.
             let obligation = self.residual_obligation_suffix(&linear.ty);
             return Err(TypeError::Unsupported(format!(
-                "a raising call in a comprehension would abandon non-ImplicitlyDeletable '{}' elements without explicit destruction{obligation}",
+                "a raising call in a comprehension would abandon non-Deinitable '{}' elements without explicit destruction{obligation}",
                 linear.ty
             )));
         }
@@ -1307,11 +1307,11 @@ impl Checker {
                             context: "Variant replacement output type".to_string(),
                         })?;
                     self.check_place(object)?;
-                    if field == "replace" && !self.is_implicitly_deletable(&input) {
+                    if field == "replace" && !self.is_deinitable(&input) {
                         return Err(TypeError::TraitNotSatisfied {
                             param: "Tin".to_string(),
                             ty: input.to_string(),
-                            trait_name: "ImplicitlyDeletable".to_string(),
+                            trait_name: "Deinitable".to_string(),
                             reason: Some(
                                 "checked replacement must be able to delete the incoming value if the active tag mismatches"
                                     .to_string(),

@@ -1,6 +1,6 @@
 # expect: was destroyed more than once
 @explicit_destroy("close the resource")
-struct Resource(ImplicitlyDeletable where False):
+struct Resource(Deinitable where False):
     def __init__(out self):
         pass
 

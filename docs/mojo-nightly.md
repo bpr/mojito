@@ -43,6 +43,12 @@ sources should use current canonical spellings.
 
 ### 0. Retarget the lifecycle foundation
 
+Status 2026-08-09: DONE — canonical `Deinitable`/`__deinit__` vocabulary with
+parse-time normalization of the deprecated spellings, effective conditional
+`Movable`, the three `Trivially*` predicates (semantics pinned from the
+audited `std/traits/*.mojo` sources), and the `std.traits`/`std.origin`
+module homes (export lists mirroring the audited upstream surface).
+
 Canonicalize `Deinitable` and `__deinit__` through syntax, checked traits, MIR
 drop metadata, VM dispatch, the proof standard library, and documentation.
 `ImplicitlyDeletable` and `__del__` still exist upstream as deprecated
@@ -247,8 +253,9 @@ lengths during checked elaboration, not at a late VM operation.
 Do not create duplicate implementation tasks for changes the stable baseline
 already covers:
 
-- Ordinary initialized values are movable by default. Only conditional
-  `Movable` opt-out is missing.
+- Ordinary initialized values are movable by default. Conditional `Movable`
+  opt-out (`Movable where False`) is now effective at transfer, `var`
+  parameter/receiver, and capture sites (2026-08-09).
 - Fresh local names already require explicit `var`, which is stricter than
   upstream's current warning. Package members already require explicit imports.
 - Callable structs already need nominal callable-trait conformance;

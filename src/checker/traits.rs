@@ -5,6 +5,16 @@
 
 use super::*;
 
+/// How a consuming position takes its value: an ownership **move** into new
+/// storage (gated on `Movable`), or a **deinit** binding — consumption by a
+/// destructor/named-destructor receiver or `deinit` parameter, which must stay
+/// legal for a non-Movable (`Movable where False`) value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConsumeKind {
+    Move,
+    Deinit,
+}
+
 impl Checker {
     /// A trait name is valid if it is a built-in or a user trait defined so far.
     pub(super) fn check_trait_name(&self, name: &str) -> Result<(), TypeError> {
@@ -301,7 +311,7 @@ impl Checker {
             .methods
             .iter()
             .filter(|method| {
-                method.name != "__del__" && method.self_convention == Some(ArgConvention::Deinit)
+                method.name != "__deinit__" && method.self_convention == Some(ArgConvention::Deinit)
             })
             .map(|method| (method.name.clone(), method.raises))
             .collect::<HashMap<_, _>>();
@@ -1024,8 +1034,11 @@ impl Checker {
         let ok = match tr {
             "Copyable" => self.struct_copyable_conformance_ok(name),
             "ImplicitlyCopyable" => self.struct_implicitly_copyable_conformance_ok(name),
-            "Movable" => self.is_movable(self_ty),
-            "ImplicitlyDeletable" => true,
+            // A declared narrowing conformance (`Movable where False`) must
+            // verify at declaration like `Deinitable where False`;
+            // effectiveness is enforced at the transfer/consuming use sites.
+            "Movable" => true,
+            "Deinitable" => true,
             "Indexer" => self.structs.get(name).is_some_and(|info| {
                 info.methods.get("__mlir_index__").is_some_and(|methods| {
                     methods.iter().any(|method| {
@@ -1315,7 +1328,7 @@ impl Checker {
                 "Copyable" => self.is_copyable(ty),
                 "ImplicitlyCopyable" => self.is_implicitly_copyable(ty),
                 "Movable" => self.is_movable(ty),
-                "ImplicitlyDeletable" => self.is_implicitly_deletable(ty),
+                "Deinitable" => self.is_deinitable(ty),
                 "Hashable" => self.is_hashable(ty),
                 "Writable" => {
                     // The discovery check runs before a `t"…"` occurrence's
@@ -1449,6 +1462,49 @@ impl Checker {
     ) -> bool {
         match &expr.kind {
             ExprKind::Bool(value) => *value,
+            ExprKind::TypeApply {
+                name,
+                args: applied,
+            } if crate::types::trivial_predicate_name(name).is_some() && applied.len() == 1 => {
+                let kind = crate::types::trivial_predicate_name(name).expect("guarded");
+                let operand = match &applied[0] {
+                    crate::ast::ParamArg::Type(SourceType::Named(param, param_args))
+                        if param_args.is_empty() =>
+                    {
+                        Some(param.as_str())
+                    }
+                    crate::ast::ParamArg::Value(Expr {
+                        kind: ExprKind::Identifier(param),
+                        ..
+                    }) => Some(param.as_str()),
+                    _ => None,
+                };
+                match operand.and_then(|param| args.get(param)) {
+                    Some(TyArg::Ty(ty)) => self.is_trivially(kind, ty),
+                    _ => false,
+                }
+            }
+            // The single-bracket-argument spelling parses as runtime indexing.
+            ExprKind::Index { object, index }
+                if matches!(
+                    &object.kind,
+                    ExprKind::Identifier(name)
+                        if crate::types::trivial_predicate_name(name).is_some()
+                ) =>
+            {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    unreachable!("guarded above");
+                };
+                let kind = crate::types::trivial_predicate_name(name).expect("guarded");
+                let param = match &index.kind {
+                    ExprKind::Identifier(param) => Some(param.as_str()),
+                    _ => None,
+                };
+                match param.and_then(|param| args.get(param)) {
+                    Some(TyArg::Ty(ty)) => self.is_trivially(kind, ty),
+                    _ => false,
+                }
+            }
             ExprKind::Prefix(PrefixOp::Not, value) => !self.eval_conformance_predicate(value, args),
             ExprKind::Infix(InfixOp::And, left, right) => {
                 self.eval_conformance_predicate(left, args)
@@ -1493,6 +1549,7 @@ impl Checker {
                 let ExprKind::Identifier(trait_name) = &operands[1].kind else {
                     return false;
                 };
+                let trait_name = crate::ast::canonical_trait_name(trait_name);
                 matches!(args.get(type_name.as_str()), Some(TyArg::Ty(ty)) if self.conforms_to(ty, trait_name))
             }
             _ => false,
@@ -1549,9 +1606,14 @@ impl Checker {
                     field_failure(&|field_ty| self.is_implicitly_copyable(field_ty))
                 }
             }
-            "ImplicitlyDeletable" => {
-                field_failure(&|field_ty| self.is_implicitly_deletable(field_ty))
-            }
+            "Deinitable" => field_failure(&|field_ty| self.is_deinitable(field_ty)),
+            "Movable" => info
+                .conforms
+                .iter()
+                .any(|conformance| conformance == "Movable")
+                .then(|| {
+                    "its declared 'Movable' conformance condition evaluates to false".to_string()
+                }),
             _ => builtin_trait_operation(tr)
                 .map(|operation| format!("missing required operation '{operation}'")),
         }
@@ -1662,31 +1724,122 @@ impl Checker {
             })
     }
 
-    pub(super) fn is_movable(&self, _ty: &Ty) -> bool {
-        // The current ownership model supports moving every initialized value.
-        true
-    }
-
-    pub(super) fn is_implicitly_deletable(&self, ty: &Ty) -> bool {
-        if self.has_assumed_conformance(ty, "ImplicitlyDeletable") {
+    /// Every initialized value is movable by default; only a struct that
+    /// *declares* a conditional `Movable` conformance whose predicate fails
+    /// (commonly `Movable where False`) opts out. `Ty::Param` stays movable
+    /// without a `Movable` bound — a deliberate asymmetry with
+    /// `is_deinitable`: the default-movable model means generic code moves
+    /// unbounded parameters, and only declared opt-outs are enforced.
+    pub(super) fn is_movable(&self, ty: &Ty) -> bool {
+        if self.has_assumed_conformance(ty, "Movable") {
             return true;
         }
         match ty {
-            Ty::ComptimeList(element) => self.is_implicitly_deletable(element),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
-                .iter()
-                .all(|element| self.is_implicitly_deletable(element)),
+            Ty::ComptimeList(element) => self.is_movable(element),
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+                elements.iter().all(|element| self.is_movable(element))
+            }
             Ty::Variant(alternatives) => alternatives
                 .iter()
-                .all(|alternative| self.is_implicitly_deletable(alternative)),
+                .all(|alternative| self.is_movable(alternative)),
             Ty::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
-                if info.conforms.iter().any(|tr| tr == "ImplicitlyDeletable") {
-                    self.struct_conformance_applies(name, args, "ImplicitlyDeletable")
+                if info.conforms.iter().any(|tr| tr == "Movable") {
+                    self.struct_conformance_applies(name, args, "Movable")
                 } else {
                     true
                 }
             }),
-            Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "ImplicitlyDeletable"),
+            _ => true,
+        }
+    }
+
+    /// The `Trivially{Movable,Copyable,Deinitable}[T]` predicate: the base
+    /// capability holds AND the corresponding lifecycle operation is
+    /// compiler-generated (no user `__moveinit__`/`__copyinit__`/`__deinit__`
+    /// or named destructor for the queried facet) AND every field is
+    /// recursively trivial — a bitwise move/copy or a no-op destructor,
+    /// matching upstream `std.traits` at the audited head.
+    pub(super) fn is_trivially(&self, kind: crate::types::TrivialLifecycle, ty: &Ty) -> bool {
+        let mut visiting = std::collections::HashSet::new();
+        self.trivial_lifecycle(kind, ty, &mut visiting)
+    }
+
+    fn trivial_lifecycle(
+        &self,
+        kind: crate::types::TrivialLifecycle,
+        ty: &Ty,
+        visiting: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        use crate::types::TrivialLifecycle;
+        let base_holds = match kind {
+            TrivialLifecycle::Movable => self.is_movable(ty),
+            TrivialLifecycle::Copyable => self.is_copyable(ty),
+            TrivialLifecycle::Deinitable => self.is_deinitable(ty),
+        };
+        if !base_holds {
+            return false;
+        }
+        match ty {
+            Ty::ComptimeList(element) => self.trivial_lifecycle(kind, element, visiting),
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+                .iter()
+                .all(|element| self.trivial_lifecycle(kind, element, visiting)),
+            Ty::Variant(alternatives) => alternatives
+                .iter()
+                .all(|alternative| self.trivial_lifecycle(kind, alternative, visiting)),
+            Ty::Struct(name, _) => {
+                if !visiting.insert(name.clone()) {
+                    // A cycle can only occur through indirection; the pointer
+                    // value itself is trivial.
+                    return true;
+                }
+                let result = self.structs.get(name).is_some_and(|info| {
+                    let user_defeats = match kind {
+                        TrivialLifecycle::Movable => info.methods.contains_key("__moveinit__"),
+                        TrivialLifecycle::Copyable => info.methods.contains_key("__copyinit__"),
+                        TrivialLifecycle::Deinitable => {
+                            info.methods.contains_key("__deinit__")
+                                || !info.explicit_destructors.is_empty()
+                        }
+                    };
+                    !user_defeats
+                        && info
+                            .fields
+                            .iter()
+                            .all(|(_, field_ty)| self.trivial_lifecycle(kind, field_ty, visiting))
+                });
+                visiting.remove(name);
+                result
+            }
+            // Generic parameters and associated members have no structural
+            // proof; comptime sites see concrete types after specialization.
+            Ty::Param { .. } | Ty::SelfType | Ty::Infer => false,
+            // Scalars, literals, pointers-as-values, and the remaining
+            // primitive representations move/copy bitwise and drop as no-ops.
+            _ => true,
+        }
+    }
+
+    pub(super) fn is_deinitable(&self, ty: &Ty) -> bool {
+        if self.has_assumed_conformance(ty, "Deinitable") {
+            return true;
+        }
+        match ty {
+            Ty::ComptimeList(element) => self.is_deinitable(element),
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+                elements.iter().all(|element| self.is_deinitable(element))
+            }
+            Ty::Variant(alternatives) => alternatives
+                .iter()
+                .all(|alternative| self.is_deinitable(alternative)),
+            Ty::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
+                if info.conforms.iter().any(|tr| tr == "Deinitable") {
+                    self.struct_conformance_applies(name, args, "Deinitable")
+                } else {
+                    true
+                }
+            }),
+            Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Deinitable"),
             _ => true,
         }
     }
@@ -1757,9 +1910,39 @@ impl Checker {
         ty: &Ty,
         context: &str,
     ) -> Result<(), TypeError> {
-        // A `^` transfer is `Expr::Transfer`, not a place, so it is naturally
-        // exempt. A fresh temporary (a call result, a literal, an operator) is not a
-        // place either — moving it is free.
+        self.check_consuming_as(expr, ty, context, ConsumeKind::Move)
+    }
+
+    pub(super) fn check_consuming_as(
+        &self,
+        expr: &Expr,
+        ty: &Ty,
+        context: &str,
+        kind: ConsumeKind,
+    ) -> Result<(), TypeError> {
+        // A `^` transfer is an ownership move: gated on `Movable`, so a
+        // declared conditional opt-out (`Movable where False`) rejects here.
+        // A `deinit` binding is consumption-for-destruction, not a move — a
+        // non-Movable value must remain destructible by its own destructor.
+        let mut source = expr;
+        while let ExprKind::Named { value, .. } = &source.kind {
+            source = value;
+        }
+        if kind == ConsumeKind::Move
+            && matches!(source.kind, ExprKind::Transfer(_))
+            && !self.is_movable(ty)
+        {
+            return Err(TypeError::TraitNotSatisfied {
+                param: context.to_string(),
+                ty: ty.to_string(),
+                trait_name: "Movable".to_string(),
+                reason: self
+                    .trait_failure_reason(ty, "Movable")
+                    .or_else(|| Some("its 'Movable' conformance condition is false".to_string())),
+            });
+        }
+        // A transfer of a Movable value and a fresh temporary (a call result,
+        // a literal, an operator) move freely; a *place* must be Copyable.
         if is_place_expr(expr) {
             if !self.is_copyable(ty) {
                 return Err(TypeError::NonCopyable {

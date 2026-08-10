@@ -15,7 +15,7 @@ struct Buf(Copyable, Movable, Writable):
     def __init__(out self, *, deinit move: Self):
         self.data = move.data^
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         self.data.free()
 
     def write_to(self, mut writer: Some[Writer]):

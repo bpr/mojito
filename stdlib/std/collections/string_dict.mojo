@@ -60,7 +60,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
         raise Error("missing key")
 
     def __setitem__(mut self, key: StringLiteral, value: Self.V) where conforms_to(
-        Self.V, ImplicitlyDeletable
+        Self.V, Deinitable
     ):
         var existing: Int = self.find_index(key)
         if existing >= 0:

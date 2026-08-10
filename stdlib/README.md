@@ -94,7 +94,7 @@ only from their authoritative `std` modules.
   `Hashable` does not imply `Equatable`, so both bounds are named — the hash picks a
   bucket, equality resolves collisions within it. Its nested buckets use the
   self-hosted `List`; `add` stages and writes back one copied bucket, and is
-  available only when `T: ImplicitlyDeletable` because replacement must satisfy
+  available only when `T: Deinitable` because replacement must satisfy
   the nested List setter's lifecycle contract. The bucket count remains fixed
   pending a rehashing follow-up.
 

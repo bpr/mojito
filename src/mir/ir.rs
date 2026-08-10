@@ -2,24 +2,24 @@
 
 use super::*;
 
-/// Whether the callee is responsible for running a parameter's `__del__` when
+/// Whether the callee is responsible for running a parameter's `__deinit__` when
 /// it reaches its last use still initialized — i.e. a plain consuming `var`
 /// parameter (the caller transferred ownership; the callee must destroy it).
 ///
 /// A `deinit` parameter is deliberately excluded: it is the destructor/
-/// move-source convention (`__del__(deinit self)`, `__moveinit__(out self,
+/// move-source convention (`__deinit__(deinit self)`, `__moveinit__(out self,
 /// deinit other)`). Such a value is *consumed* — the function body transfers
 /// its resources (move-only fields with `^`, copyable fields by copy) — so
-/// auto-running its whole-value `__del__` at function end would destroy a value
+/// auto-running its whole-value `__deinit__` at function end would destroy a value
 /// whose resources already moved elsewhere, double-freeing it.
 pub(super) fn is_owned(c: &Option<ArgConvention>) -> bool {
     matches!(c, Some(ArgConvention::Var))
 }
 
 /// Whether an argument convention is `deinit` — the destructor/move-source
-/// convention (`__del__(deinit self)`, `__moveinit__(out self, deinit other)`).
+/// convention (`__deinit__(deinit self)`, `__moveinit__(out self, deinit other)`).
 /// The callee is responsible for tearing the value down, but as a *consume*:
-/// its residual fields are destroyed while its whole-value `__del__` is skipped
+/// its residual fields are destroyed while its whole-value `__deinit__` is skipped
 /// (its resources moved into the receiver), so drop elaboration emits
 /// `ConsumeVar` rather than `DropVar` for such a parameter.
 pub(super) fn is_deinit(c: &Option<ArgConvention>) -> bool {
@@ -685,10 +685,10 @@ pub enum MirInstr {
         reg: Reg,
     },
     /// Drop the value in a variable slot — spliced in by the Stage 7 liveness pass
-    /// at a variable's last use (ASAP destruction). Runs the value's `__del__` (and
+    /// at a variable's last use (ASAP destruction). Runs the value's `__deinit__` (and
     /// its fields', in reverse order) and leaves the slot empty. A no-op for values
     /// without a destructor, so it never changes observable behaviour except when a
-    /// struct defines `__del__`.
+    /// struct defines `__deinit__`.
     DropVar {
         var: VarId,
     },
@@ -836,7 +836,7 @@ pub struct MirFunction {
     /// Whether each parameter is a `deinit` (destructor/move-source) parameter.
     /// Same order/length as the params. Such a parameter is *consumed* at its
     /// drop point — its residual fields are destroyed but its whole-value
-    /// `__del__` is skipped (its resources moved into the receiver), so drop
+    /// `__deinit__` is skipped (its resources moved into the receiver), so drop
     /// elaboration lowers its teardown to `ConsumeVar` instead of `DropVar`.
     pub deinit_params: Vec<bool>,
     /// Whether each parameter is a `mut`/`ref` **reference** (its final value is

@@ -6,7 +6,7 @@
 from std.iterable import StopIteration
 
 
-struct Token(ImplicitlyDeletable, Movable):
+struct Token(Deinitable, Movable):
     var value: Int
 
     def __init__(out self, value: Int):

@@ -196,14 +196,16 @@ impl Checker {
                 if name == "Some"
                     && args.len() == 1
                     && let Some(trait_name) = existential_trait
-                    && (BUILTIN_TRAITS.contains(&trait_name.as_str())
-                        || self.traits.contains_key(trait_name))
                 {
-                    return Ok(Ty::Param {
-                        name: format!("Some[{trait_name}]"),
-                        bounds: vec![trait_name.clone()],
-                        callable_bound: None,
-                    });
+                    let trait_name = crate::ast::canonical_trait_name(trait_name);
+                    if BUILTIN_TRAITS.contains(&trait_name) || self.traits.contains_key(trait_name)
+                    {
+                        return Ok(Ty::Param {
+                            name: format!("Some[{trait_name}]"),
+                            bounds: vec![trait_name.to_string()],
+                            callable_bound: None,
+                        });
+                    }
                 }
                 if name == "Never" && args.is_empty() {
                     return Ok(Ty::Never);

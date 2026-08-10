@@ -1,4 +1,4 @@
-def inspect[*Ts: Copyable & ImplicitlyDeletable](*args: *Ts):
+def inspect[*Ts: Copyable & Deinitable](*args: *Ts):
     def nested[Ts: AnyType](value: Tuple[*Ts]) -> Int:
         return len(value)
 

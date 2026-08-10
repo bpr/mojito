@@ -3,7 +3,7 @@
 # the only owner of its storage; its `__iter__(self)` returns a borrowing
 # iterator. Before comprehensions shared the statement loop's retained-source/
 # iterator-object slot split, normalization overwrote the source in place, so
-# its `__del__` never ran (a leak). The expected output pins the drop after the
+# its `__deinit__` never ran (a leak). The expected output pins the drop after the
 # comprehension, before execution continues.
 @fieldwise_init
 struct NumbersIter:
@@ -27,7 +27,7 @@ struct Numbers(Movable):
     def __init__(out self, *, deinit move: Self):
         self.stop = move.stop
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         print("drop numbers", self.stop)
 
     def __iter__(self) -> NumbersIter:

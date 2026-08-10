@@ -30,7 +30,7 @@ struct Numbers:
             self.items.append(i * 10)
             i += 1
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         print(-1)
 
     def __iter__(ref self) -> NumbersIter:

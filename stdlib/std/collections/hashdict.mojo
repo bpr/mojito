@@ -58,8 +58,8 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
         raise Error("missing key")
 
     def __setitem__(mut self, key: Self.K, value: Self.V) where conforms_to(
-        Self.K, ImplicitlyDeletable
-    ) and conforms_to(Self.V, ImplicitlyDeletable):
+        Self.K, Deinitable
+    ) and conforms_to(Self.V, Deinitable):
         var existing: Int = self.find_index(key)
         if existing >= 0:
             self.entries[existing] = DictEntry[Self.K, Self.V](key, value)

@@ -1239,7 +1239,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.next_token()?; // consume '('
         let mut traits = Vec::new();
         loop {
-            traits.push(self.expect_identifier("Expected a trait name in the conformance list")?);
+            let trait_name =
+                self.expect_identifier("Expected a trait name in the conformance list")?;
+            traits.push(crate::ast::canonical_trait_name(&trait_name).to_string());
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
                 if matches!(self.peek_token()?, Some(Token::RParen)) {
@@ -1282,8 +1284,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 break;
             }
-            let trait_name =
-                self.expect_identifier("Expected a trait name in the conformance list")?;
+            let trait_name = {
+                let spelled =
+                    self.expect_identifier("Expected a trait name in the conformance list")?;
+                crate::ast::canonical_trait_name(&spelled).to_string()
+            };
             traits.push(trait_name.clone());
             if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
                 self.next_token()?;
@@ -1385,7 +1390,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// **default implementation**, stored in `default_body`).
     fn parse_trait_method(&mut self) -> Result<crate::ast::TraitMethod, ParseError> {
         self.expect(Token::Def, "Expected 'def'")?;
-        let name = self.expect_identifier("Expected a method name after 'def'")?;
+        let name = {
+            let spelled = self.expect_identifier("Expected a method name after 'def'")?;
+            crate::ast::canonical_destructor_name(&spelled).to_string()
+        };
         let type_params = self.parse_type_params()?;
 
         self.expect(Token::LParen, "Expected '(' after the method name")?;
@@ -1482,7 +1490,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `def name([convention] self [, params]) -> ret: <block>` inside a struct.
     fn parse_method(&mut self, decorators: Vec<Decorator>) -> Result<Method, ParseError> {
         self.expect(Token::Def, "Expected 'def'")?;
-        let name = self.expect_identifier("Expected a method name after 'def'")?;
+        let name = {
+            let spelled = self.expect_identifier("Expected a method name after 'def'")?;
+            crate::ast::canonical_destructor_name(&spelled).to_string()
+        };
         let type_params = self.parse_type_params()?;
 
         self.expect(Token::LParen, "Expected '(' after the method name")?;
@@ -2229,10 +2240,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let (first_bound, callable_bound) = if matches!(self.peek_token()?, Some(Token::Def)) {
                 ("<function type>".to_string(), Some(self.parse_type()?))
             } else {
-                (
-                    self.expect_identifier("Expected a trait or type in the type-parameter bound")?,
-                    None,
-                )
+                let bound =
+                    self.expect_identifier("Expected a trait or type in the type-parameter bound")?;
+                (crate::ast::canonical_trait_name(&bound).to_string(), None)
             };
             // Origin parameters use `Origin[mut=<bool expression>]`. Preserve the
             // Origin classification and parse the mutability expression; semantic
@@ -2262,7 +2272,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let mut bounds = vec![first_bound];
             while matches!(self.peek_token()?, Some(Token::Amp)) {
                 self.next_token()?; // consume '&'
-                bounds.push(self.expect_identifier("Expected a trait name after '&'")?);
+                let bound = self.expect_identifier("Expected a trait name after '&'")?;
+                bounds.push(crate::ast::canonical_trait_name(&bound).to_string());
             }
             if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
                 return Err(ParseError::UnexpectedToken(

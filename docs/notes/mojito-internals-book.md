@@ -156,7 +156,7 @@ Walk through signature metadata, positional/keyword/default/variadic binding, fr
 
 ### 34. Methods, Constructors, and Lifecycle Dispatch
 
-Explain struct construction through fieldwise initialization or `__init__`, method-symbol lookup, receiver insertion, overloaded method targets, `mut self` write-back, and ordinary mutable parameters. Include `__copyinit__`, `__moveinit__`, and `__del__` as examples where source syntax, canonical symbols, checked capabilities, and runtime behavior all intersect.
+Explain struct construction through fieldwise initialization or `__init__`, method-symbol lookup, receiver insertion, overloaded method targets, `mut self` write-back, and ordinary mutable parameters. Include `__copyinit__`, `__moveinit__`, and `__deinit__` as examples where source syntax, canonical symbols, checked capabilities, and runtime behavior all intersect.
 
 ### 35. Builtins and Protocol Dispatch
 

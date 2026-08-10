@@ -413,10 +413,41 @@ pub enum ConstraintOperand {
     Type(Ty),
 }
 
+/// The lifecycle facet queried by the `Trivially{Movable,Copyable,Deinitable}[T]`
+/// comptime predicates: the base capability holds and the corresponding
+/// lifecycle operation is compiler-generated with recursively trivial fields
+/// (a bitwise move/copy or a no-op destructor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrivialLifecycle {
+    Movable,
+    Copyable,
+    Deinitable,
+}
+
+/// Recognize a `Trivially*` comptime-predicate name. These are Bool-valued
+/// predicates, not traits: they are valid in `where` clauses, conformance
+/// conditions, and `comptime if`, but not as type-parameter bounds.
+pub fn trivial_predicate_name(name: &str) -> Option<TrivialLifecycle> {
+    match name {
+        "TriviallyMovable" => Some(TrivialLifecycle::Movable),
+        "TriviallyCopyable" => Some(TrivialLifecycle::Copyable),
+        "TriviallyDeinitable" => Some(TrivialLifecycle::Deinitable),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GenericConstraint {
-    Conforms { param: String, trait_name: String },
-    ConformsPack { param: String, trait_name: String },
+    Conforms {
+        param: String,
+        trait_name: String,
+    },
+    ConformsPack {
+        param: String,
+        trait_name: String,
+    },
+    /// `Trivially{Movable,Copyable,Deinitable}[operand]`.
+    Trivial(TrivialLifecycle, ConstraintOperand),
     Eq(ConstraintOperand, ConstraintOperand),
     Ne(ConstraintOperand, ConstraintOperand),
     Lt(ConstraintOperand, ConstraintOperand),

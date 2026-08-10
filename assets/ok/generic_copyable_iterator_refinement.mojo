@@ -9,14 +9,14 @@ trait IteratorContract:
         ...
 
 trait IterableIteratorContract(IteratorContract):
-    comptime Element: ImplicitlyCopyable & ImplicitlyDeletable
+    comptime Element: ImplicitlyCopyable & Deinitable
 
     def __iter__(ref self) -> Self:
         ...
 
 @fieldwise_init
 struct IntRefIter(
-    ImplicitlyCopyable, ImplicitlyDeletable, IterableIteratorContract, Movable
+    ImplicitlyCopyable, Deinitable, IterableIteratorContract, Movable
 ):
     comptime Element = Int
 
@@ -37,7 +37,7 @@ struct IntRefIter(
         self.done = True
         return self.value
 
-def first[I: IterableIteratorContract & ImplicitlyDeletable](
+def first[I: IterableIteratorContract & Deinitable](
     var iterator: I
 ) raises StopIteration -> I.Element:
     for item in iterator:

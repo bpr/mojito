@@ -12,7 +12,7 @@ use std::collections::HashSet;
 /// constraint environment where each binding is introduced. Conditional
 /// conformances cannot be recovered from a nominal type name after checking:
 /// `List[T]` is linear in general, while it is ordinarily droppable under a
-/// proven `T: ImplicitlyDeletable` constraint.
+/// proven `T: Deinitable` constraint.
 #[derive(Default)]
 pub(crate) struct CheckedDeletability {
     pub(crate) declarations: HashSet<AnnotationSite>,
@@ -442,8 +442,8 @@ fn check_function<'a>(
 ) -> Result<(), TypeError> {
     let mut env = Env::default();
     env.push();
-    for (name, ty, convention, implicitly_deletable) in params {
-        let explicit = if implicitly_deletable {
+    for (name, ty, convention, deinitable) in params {
+        let explicit = if deinitable {
             None
         } else {
             source_explicit_name(ty, types)
@@ -821,7 +821,7 @@ fn check_comprehension_expr(
                         )
                     })?;
                     binding_index += 1;
-                    let explicit = if binding.implicitly_deletable {
+                    let explicit = if binding.deinitable {
                         None
                     } else {
                         ty_explicit_name(&binding.ty, types)

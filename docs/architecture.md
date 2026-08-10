@@ -2192,7 +2192,7 @@ slot. Each `Next` transfers one element, so the current loop binding and the
 residual iterator state have disjoint ownership. Normal exhaustion leaves no
 residual elements; return, raise, and `break` paths run the ordinary edge
 cleanup. The checker rejects an early exit when the element type is not
-`ImplicitlyDeletable`, because the residual state would otherwise conceal
+`Deinitable`, because the residual state would otherwise conceal
 undischarged explicit-destroy obligations. That rejection covers every
 abandoning path: the syntactic body walk (break/return/raise), an observation
 frame that flags any raising call whose `try` handler sits outside the loop
@@ -2202,7 +2202,7 @@ inside the body contains its error), and — in comprehensions — filter clause
 over a linear binder, since a skipped element would be abandoned. Each
 diagnostic names the element's `@explicit_destroy` obligation.
 
-A linear-element owned iterator is itself linear: its `__del__`, which
+A linear-element owned iterator is itself linear: its `__deinit__`, which
 destroys residual elements, is conditional on element deletability. Protocol
 selection therefore records the iterator's `_finish(deinit self)` named
 destructor in `IterationProtocol.finish` (a linear iterator without one is
@@ -2262,7 +2262,7 @@ The VM does not need to discover last uses dynamically. It just executes
 
 Drop roots are selected independently of type: every owned local and consuming
 parameter receives drop glue. This conservative policy releases heap-backed
-runtime storage at its last use even when no user `__del__` call is observable,
+runtime storage at its last use even when no user `__deinit__` call is observable,
 and it naturally covers destructor-less structs containing aggregate storage.
 Ownership is limited to:
 
@@ -2278,7 +2278,7 @@ write-back.
 When several variables die at the same point, they are dropped in reverse
 declaration order. Struct destruction runs:
 
-1. the struct's `__del__(deinit self)`, if present
+1. the struct's `__deinit__(deinit self)`, if present
 2. fields in reverse declaration order
 
 The compiler-private heterogeneous pack carrier drops elements left-to-right,
@@ -2287,8 +2287,14 @@ matching current Mojo's pack-storage lifecycle. Public collections, including
 declaration order for fields; their library destructors own any element-specific
 teardown.
 
-Types whose `ImplicitlyDeletable` conformance is explicitly unavailable, such
-as `ImplicitlyDeletable where False`, are excluded from this automatic path.
+Types whose `Deinitable` conformance is explicitly unavailable, such
+as `Deinitable where False`, are excluded from this automatic path.
+A declared conditional `Movable` conformance is likewise effective:
+`is_movable` evaluates the struct's own `Movable where ...` predicate, so a
+false condition rejects `^` transfers, `var` parameters and receivers, and
+move/copy captures at the checker's consuming positions (`check_consuming_as`
+distinguishes an ownership `Move` from `Deinit` consumption, so destructors
+and named destructors still consume a non-Movable value).
 The optional `@explicit_destroy("message")` decorator does not control
 linearity; it supplies the required user-facing diagnostic when an obligation
 is violated and is inert on an implicitly deletable type. A checked,
@@ -2299,7 +2305,7 @@ MIR retains the resulting declaration metadata. The checked obligation ensures
 that an intact linear value is consumed before it can reach automatic
 `DropVar`; the VM therefore does not guess concrete deletability from an open
 generic struct name. If any aggregate field has already moved, drop glue skips
-the whole-value `__del__` for every struct and recursively destroys only its
+the whole-value `__deinit__` for every struct and recursively destroys only its
 initialized residual fields.
 
 A named explicit destructor is lowered as a call followed by `ConsumeVar` for a
@@ -2487,7 +2493,7 @@ This makes the VM a useful backstop and executable model for ownership semantics
 `DropVar` removes the value from a variable slot and recursively destroys it.
 
 Dropping is observably a no-op for scalars and destructor-less leaf values. For
-structs with `__del__`, it calls the destructor and then drops fields. A
+structs with `__deinit__`, it calls the destructor and then drops fields. A
 destructor-less struct still recursively destroys aggregate fields; elements
 inside the compiler-private heterogeneous pack carrier are visited
 left-to-right. Moved-out fields are skipped so partial moves do not double-drop.

@@ -6,7 +6,7 @@ trait IteratorContract:
 
 
 struct RefBox[origin: Origin[mut=False]](
-    Copyable, ImplicitlyDeletable, Movable
+    Copyable, Deinitable, Movable
 ):
     var value: ref[origin] Int
 
@@ -20,7 +20,7 @@ struct RefBox[origin: Origin[mut=False]](
 
 @fieldwise_init
 struct RefIter[origin: Origin[mut=False]](
-    ImplicitlyDeletable, IteratorContract
+    Deinitable, IteratorContract
 ):
     comptime Element = RefBox
 
@@ -30,7 +30,7 @@ struct RefIter[origin: Origin[mut=False]](
         return self.box
 
 
-def take[I: IteratorContract & ImplicitlyDeletable](
+def take[I: IteratorContract & Deinitable](
     var iterator: I
 ) -> I.Element:
     return iterator.__next__()

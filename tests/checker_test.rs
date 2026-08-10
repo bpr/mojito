@@ -633,7 +633,7 @@ fn checks_owned_iteration_and_collection_comprehensions() {
         "def main():\n    var xs = [x * x for x in range(5) if x % 2 == 0]\n    var s = {x % 3 for x in range(8)}\n    var d = {x: x * x for x in range(4)}\n    print(len(xs), len(s), d[3])\n",
     );
 
-    let linear = "@explicit_destroy(\"close Item\")\nstruct Linear(ImplicitlyDeletable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
+    let linear = "@explicit_destroy(\"close Item\")\nstruct Linear(Deinitable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
     ok(&format!(
         "{linear}def main():\n    var values = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n"
     ));
@@ -654,7 +654,7 @@ fn comprehension_binders_are_lexical_and_enforce_linear_cleanup() {
         "def main():\n    var values = [x for x in range(2) for x in range(x + 1)]\n    print(values)\n",
     );
 
-    let linear = "@explicit_destroy(\"close Item\")\nstruct Item(ImplicitlyDeletable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
+    let linear = "@explicit_destroy(\"close Item\")\nstruct Item(Deinitable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
     assert!(matches!(
         err(&format!(
             "{linear}def main():\n    var values = [Item(1)]\n    var result = [item.value for var item in values^]\n"
@@ -1354,7 +1354,7 @@ fn composes_inherited_associated_type_bounds() {
 #[test]
 fn checks_composed_associated_type_bounds() {
     ok(
-        "trait Container:\n    comptime Element: Writable & Copyable & ImplicitlyDeletable\n\n@fieldwise_init\nstruct IntContainer(Container):\n    comptime Element = Int\n    var value: Int\n",
+        "trait Container:\n    comptime Element: Writable & Copyable & Deinitable\n\n@fieldwise_init\nstruct IntContainer(Container):\n    comptime Element = Int\n    var value: Int\n",
     );
 
     let e = err(
@@ -2481,11 +2481,11 @@ fn consuming_tuple_transforms_copy_only_implicitly_copyable_places() {
         "def main():\n    var pair = Tuple(1, 2)\n    var suffix = Tuple(3)\n    var reversed = pair.reverse()\n    var joined = pair.concat(suffix)\n    print(pair, suffix, reversed, joined)\n",
     );
 
-    let source = "@fieldwise_init\nstruct Token(Movable, ImplicitlyDeletable):\n    var id: Int\n\ndef main():\n    var pair = Tuple(Token(1), Token(2))\n    var reversed = pair.reverse()\n    print(reversed[0].id)\n";
+    let source = "@fieldwise_init\nstruct Token(Movable, Deinitable):\n    var id: Int\n\ndef main():\n    var pair = Tuple(Token(1), Token(2))\n    var reversed = pair.reverse()\n    print(reversed[0].id)\n";
     assert!(matches!(err(source), TypeError::NonCopyable { .. }));
 
     ok(
-        "@fieldwise_init\nstruct Token(Movable, ImplicitlyDeletable):\n    var id: Int\n\ndef main():\n    var pair = Tuple(Token(1), Token(2))\n    var reversed = pair^.reverse()\n    print(reversed[0].id)\n",
+        "@fieldwise_init\nstruct Token(Movable, Deinitable):\n    var id: Int\n\ndef main():\n    var pair = Tuple(Token(1), Token(2))\n    var reversed = pair^.reverse()\n    print(reversed[0].id)\n",
     );
 }
 
@@ -3172,7 +3172,7 @@ fn checks_callable_parameters_and_indirect_invocation() {
 #[test]
 fn callable_type_bounds_are_dependent_nominal_and_directional() {
     ok(
-        "def apply[T: Copyable & ImplicitlyDeletable, F: def(T) -> T](callback: F, value: T) -> T:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(apply(increment, 41))\n",
+        "def apply[T: Copyable & Deinitable, F: def(T) -> T](callback: F, value: T) -> T:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(apply(increment, 41))\n",
     );
     ok(
         "@fieldwise_init\nstruct Add(def(Int) -> Int):\n    var delta: Int\n    def __call__(self, value: Int) -> Int:\n        return value + self.delta\n\ndef apply[F: def(Int) -> Int](callback: F, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(apply(Add(1), 41))\n",
@@ -3188,28 +3188,27 @@ fn callable_type_bounds_are_dependent_nominal_and_directional() {
 #[test]
 fn generic_anonymous_callable_bounds_are_alpha_equivalent_and_invokable() {
     ok(
-        "def identity[U: ImplicitlyCopyable & ImplicitlyDeletable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",
+        "def identity[U: ImplicitlyCopyable & Deinitable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & Deinitable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",
     );
 }
 
 #[test]
 fn generic_anonymous_callable_contracts_preserve_binder_shape_and_bounds() {
     let wrong_bounds = err(
-        "def identity[U: ImplicitlyCopyable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",
+        "def identity[U: ImplicitlyCopyable](value: U) -> U:\n    return value\n\ndef apply[F: def[T: ImplicitlyCopyable & Deinitable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(identity))\n",
     );
     assert!(matches!(wrong_bounds, TypeError::TraitNotSatisfied { .. }));
 
     let wrong_arity = err(
-        "def first[U: ImplicitlyCopyable & ImplicitlyDeletable](left: U, right: U) -> U:\n    return left\n\ndef apply[F: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(first))\n",
+        "def first[U: ImplicitlyCopyable & Deinitable](left: U, right: U) -> U:\n    return left\n\ndef apply[F: def[T: ImplicitlyCopyable & Deinitable](T) -> T](callback: F) -> Int:\n    return callback(42)\n\ndef main():\n    print(apply(first))\n",
     );
     assert!(matches!(wrong_arity, TypeError::TraitNotSatisfied { .. }));
 }
 
 #[test]
 fn rejects_parametric_function_types_as_runtime_parameter_annotations() {
-    let error = err(
-        "def consume(callback: def[T: ImplicitlyCopyable & ImplicitlyDeletable](T) -> T):\n    pass\n",
-    );
+    let error =
+        err("def consume(callback: def[T: ImplicitlyCopyable & Deinitable](T) -> T):\n    pass\n");
     assert!(matches!(
         error,
         TypeError::Unsupported(ref feature)
@@ -3235,7 +3234,7 @@ fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effect
     assert!(matches!(mutable, TypeError::TraitNotSatisfied { .. }));
 
     let generic = err(
-        "def identity[T: Copyable & ImplicitlyDeletable](value: T) -> T:\n    return value\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(identity))\n",
+        "def identity[T: Copyable & Deinitable](value: T) -> T:\n    return value\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(identity))\n",
     );
     assert!(matches!(generic, TypeError::TraitNotSatisfied { .. }));
 
@@ -3294,10 +3293,10 @@ fn explicit_origins_participate_in_overload_and_generic_candidate_selection() {
         "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = choose[origin_of(value)](value)\n    selected += 2\n",
     );
     ok(
-        "def borrow[T: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[Int, origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n",
+        "def borrow[T: Copyable & Deinitable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[Int, origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n",
     );
     ok(
-        "def borrow[T: Copyable & ImplicitlyDeletable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = borrow[origin=origin_of(value)](value)\n    selected += 2\n",
+        "def borrow[T: Copyable & Deinitable, origin: Origin[mut=True]](ref[origin] value: T) -> ref[origin] T:\n    return value\n\ndef main():\n    var value = 40\n    ref selected = borrow[origin=origin_of(value)](value)\n    selected += 2\n",
     );
 }
 
@@ -3348,7 +3347,7 @@ fn owned_self_and_owned_params_are_accepted() {
     // conventions bind by value and now type-check (their ownership meaning is
     // handled by the ownership analysis / ASAP drops).
     assert!(
-        check_source("@fieldwise_init\nstruct R:\n    var x: Int\n    def __del__(deinit self):\n        print(self.x)\n").is_ok()
+        check_source("@fieldwise_init\nstruct R:\n    var x: Int\n    def __deinit__(deinit self):\n        print(self.x)\n").is_ok()
     );
     assert!(check_source("def f(var a: Int, read b: Int) -> Int:\n    return a + b\n").is_ok());
 }
@@ -3362,7 +3361,7 @@ fn nightly_implicit_deletion_controls_linearity_independently_of_the_decorator()
     );
 
     let error = err(
-        "struct Linear(ImplicitlyDeletable where False):\n    def __init__(out self):\n        pass\n    def close(deinit self):\n        pass\n\ndef main():\n    var value = Linear()\n",
+        "struct Linear(Deinitable where False):\n    def __init__(out self):\n        pass\n    def close(deinit self):\n        pass\n\ndef main():\n    var value = Linear()\n",
     );
     assert!(matches!(
         error,
@@ -3373,13 +3372,13 @@ fn nightly_implicit_deletion_controls_linearity_independently_of_the_decorator()
 
 #[test]
 fn conditional_deletability_is_retained_at_checked_binding_sites() {
-    let conditional = "@explicit_destroy(\"close Box\")\nstruct Box[T: Movable](\n    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable)\n):\n    var value: Self.T\n    def __init__(out self, value: Self.T):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
+    let conditional = "@explicit_destroy(\"close Box\")\nstruct Box[T: Movable](\n    Deinitable where conforms_to(T, Deinitable)\n):\n    var value: Self.T\n    def __init__(out self, value: Self.T):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
 
     // A positive `where` fact applies to both the consuming parameter and the
     // local that receives it. The explicit-destroy pass must consume the exact
     // checked-site facts rather than reclassifying the nominal `Box[T]` later.
     ok(&format!(
-        "{conditional}def consume[T: Movable](var incoming: Box[T]) where conforms_to(T, ImplicitlyDeletable):\n    var local = incoming^\n\nstruct Owner[T: Movable]:\n    def consume(self, var incoming: Box[Self.T]) where conforms_to(Self.T, ImplicitlyDeletable):\n        var local = incoming^\n"
+        "{conditional}def consume[T: Movable](var incoming: Box[T]) where conforms_to(T, Deinitable):\n    var local = incoming^\n\nstruct Owner[T: Movable]:\n    def consume(self, var incoming: Box[Self.T]) where conforms_to(Self.T, Deinitable):\n        var local = incoming^\n"
     ));
 
     // Without the positive constraint a generic `Box[T]` remains linear. This
@@ -3680,7 +3679,7 @@ fn structs_are_non_copyable_by_default() {
 
 #[test]
 fn ordinary_reference_result_reads_require_copyable_referents() {
-    let declarations = "@fieldwise_init\nstruct Token:\n    var value: Int\n    def __del__(deinit self):\n        pass\n\n@fieldwise_init\nstruct Holder:\n    var token: Token\n    def get(ref self) -> ref[origin_of(self.token)] Token:\n        return self.token\n\n";
+    let declarations = "@fieldwise_init\nstruct Token:\n    var value: Int\n    def __deinit__(deinit self):\n        pass\n\n@fieldwise_init\nstruct Holder:\n    var token: Token\n    def get(ref self) -> ref[origin_of(self.token)] Token:\n        return self.token\n\n";
 
     assert!(matches!(
         check_source(&format!(
@@ -3799,9 +3798,9 @@ fn borrow_check_rejects_move_while_borrowed() {
 fn deinit_self_is_the_current_destructor_convention() {
     // Current Mojo spells the destructor receiver `deinit self`; the older
     // `deinit self` is the current consuming destructor receiver.
-    let deinit = "@fieldwise_init\nstruct R:\n    var id: Int\n    def __del__(deinit self):\n        print(self.id)\n\ndef main():\n    var a: R = R(1)\n    print(a.id)\n";
+    let deinit = "@fieldwise_init\nstruct R:\n    var id: Int\n    def __deinit__(deinit self):\n        print(self.id)\n\ndef main():\n    var a: R = R(1)\n    print(a.id)\n";
     assert!(check_source(deinit).is_ok());
-    let owned = "@fieldwise_init\nstruct R:\n    var id: Int\n    def __del__(deinit self):\n        print(self.id)\n\ndef main():\n    var a: R = R(1)\n    print(a.id)\n";
+    let owned = "@fieldwise_init\nstruct R:\n    var id: Int\n    def __deinit__(deinit self):\n        print(self.id)\n\ndef main():\n    var a: R = R(1)\n    print(a.id)\n";
     assert!(check_source(owned).is_ok());
 }
 
@@ -3905,7 +3904,7 @@ fn setitem_dunder_typing_and_errors() {
 
     // Generic setter parameters are inferred from the implicit assignment RHS.
     ok(
-        "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __setitem__[T: Copyable & ImplicitlyDeletable](mut self, index: Int, value: T):\n        self.value = index\n\ndef main():\n    var sink = Sink(0)\n    sink[42] = True\n",
+        "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __setitem__[T: Copyable & Deinitable](mut self, index: Int, value: T):\n        self.value = index\n\ndef main():\n    var sink = Sink(0)\n    sink[42] = True\n",
     );
 }
 
@@ -4807,4 +4806,64 @@ fn rejects_a_capturing_closure_bound_to_an_unqualified_def_parameter() {
         message.contains("must spell 'capturing[...]'"),
         "unexpected diagnostic: {message}"
     );
+}
+
+#[test]
+fn movable_where_false_gates_transfers_but_not_deinit_consumption() {
+    let pinned = "struct Pinned(Movable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n";
+
+    // Rebinding, returning, var-argument, and var-receiver transfers reject.
+    for tail in [
+        "def main():\n    var p = Pinned(1)\n    var q = p^\n",
+        "def take(var value: Pinned) -> Int:\n    return value.id\n\ndef main():\n    var p = Pinned(1)\n    print(take(p^))\n",
+        "def make() -> Pinned:\n    var p = Pinned(1)\n    return p^\n",
+    ] {
+        let source = format!("{pinned}\n{tail}");
+        assert!(
+            matches!(
+                err(&source),
+                TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Movable"
+            ),
+            "expected a Movable rejection for: {tail}"
+        );
+    }
+
+    // `deinit self` consumption is not a move: the explicit-destroy pattern
+    // stays legal for a non-Movable linear value.
+    ok(
+        "@explicit_destroy(\"release the handle\")\nstruct Handle(Movable where False, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def release(deinit self):\n        pass\n\ndef main():\n    var h = Handle(7)\n    h^.release()\n",
+    );
+
+    // A Copyable value still passes by value without `^`.
+    ok(
+        "@fieldwise_init\nstruct Note(Copyable, Movable where False):\n    var id: Int\n\ndef read(value: Note) -> Int:\n    return value.id\n\ndef main():\n    var n = Note(2)\n    print(read(n))\n",
+    );
+
+    // A satisfied condition keeps the ordinary move path.
+    ok(
+        "struct Free(Movable where True):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n\ndef main():\n    var f = Free(3)\n    var g = f^\n",
+    );
+}
+
+#[test]
+fn trivially_predicates_serve_where_clauses_but_not_bounds() {
+    // A where clause selects on triviality through the checked seam.
+    let custom = "struct Custom(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x\n\n";
+    let generic =
+        "def bitwise[T: Copyable](value: T) -> Int where TriviallyCopyable[T]:\n    return 1\n\n";
+    ok(&format!(
+        "{generic}def main():\n    var chosen = bitwise(42)\n"
+    ));
+    assert!(matches!(
+        err(&format!(
+            "{custom}{generic}def main():\n    var chosen = bitwise(Custom(1))\n"
+        )),
+        TypeError::BadCall { .. }
+    ));
+
+    // The predicate names are not traits: a bound spelling stays rejected.
+    assert!(matches!(
+        err("def f[T: TriviallyMovable](value: T) -> Int:\n    return 1\n"),
+        TypeError::UnknownTrait(name) if name == "TriviallyMovable"
+    ));
 }

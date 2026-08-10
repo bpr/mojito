@@ -22,7 +22,7 @@ trait CountIterable:
         ...
 
 @fieldwise_init
-struct CountIter(Copyable, CountIterator, ImplicitlyDeletable, Movable):
+struct CountIter(Copyable, CountIterator, Deinitable, Movable):
     comptime Element = Int
 
     var current: Int
@@ -39,7 +39,7 @@ struct CountIter(Copyable, CountIterator, ImplicitlyDeletable, Movable):
         return value
 
 @fieldwise_init
-struct Counter(Copyable, CountIterable, ImplicitlyDeletable, Movable):
+struct Counter(Copyable, CountIterable, Deinitable, Movable):
     comptime Element = Int
     comptime Iter = CountIter
 

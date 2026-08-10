@@ -1,5 +1,5 @@
 def apply[
-    T: Copyable & ImplicitlyDeletable, F: def(T) -> T
+    T: Copyable & Deinitable, F: def(T) -> T
 ](callback: F, value: T) -> T:
     return callback(value)
 

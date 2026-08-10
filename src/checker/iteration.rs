@@ -95,15 +95,15 @@ impl Checker {
         // stores that value directly instead of an alias — a synthetic reference
         // into per-iteration storage would dangle on early control-flow exits.
         // A `Copyable` element is droppable even without an explicit
-        // `ImplicitlyDeletable` bound (its copies must be destroyed), so it also
+        // `Deinitable` bound (its copies must be destroyed), so it also
         // qualifies; only a linear element with no implicit destructor is
         // rejected.
-        if !self.is_implicitly_deletable(yielded_ty) && !self.is_copyable(yielded_ty) {
+        if !self.is_deinitable(yielded_ty) && !self.is_copyable(yielded_ty) {
             return Err(TypeError::TraitNotSatisfied {
                 param: "loop item".to_string(),
                 ty: yielded_ty.to_string(),
-                trait_name: "ImplicitlyDeletable".to_string(),
-                reason: self.trait_failure_reason(yielded_ty, "ImplicitlyDeletable"),
+                trait_name: "Deinitable".to_string(),
+                reason: self.trait_failure_reason(yielded_ty, "Deinitable"),
             });
         }
         Ok(CheckedIterationBinding {
@@ -581,7 +581,7 @@ impl Checker {
 
     /// Select the named destructor consuming an exhausted owned iterator
     /// whose element type is not implicitly deletable. Such an iterator is
-    /// itself linear — its `__del__`, which would destroy residual elements,
+    /// itself linear — its `__deinit__`, which would destroy residual elements,
     /// is exactly the capability linearity withholds — so the loop's
     /// exhaustion edge must consume it explicitly through a
     /// `_finish(deinit self)` named destructor. `None` when an implicit drop
@@ -596,8 +596,8 @@ impl Checker {
         iinfo: &StructInfo,
     ) -> Result<Option<Box<crate::checked::CheckedIteratorCall>>, TypeError> {
         if !matches!(mode, crate::checked::IterationMode::Owned)
-            || self.is_implicitly_deletable(element)
-            || self.is_implicitly_deletable(it_ty)
+            || self.is_deinitable(element)
+            || self.is_deinitable(it_ty)
         {
             return Ok(None);
         }
@@ -613,7 +613,7 @@ impl Checker {
         });
         let Some(signature) = finisher else {
             return Err(TypeError::Unsupported(format!(
-                "owned iteration over non-ImplicitlyDeletable '{element}' needs an explicitly \
+                "owned iteration over non-Deinitable '{element}' needs an explicitly \
                  finishable iterator: '{iname}' has no implicit destructor for this element \
                  and no '_finish(deinit self)' named destructor to consume the exhausted \
                  iterator"

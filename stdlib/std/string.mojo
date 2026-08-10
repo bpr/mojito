@@ -46,7 +46,7 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
         self.cap = move.cap
         self.data = move.data^
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         self.data.free()
 
     def __len__(self) -> Int:
@@ -535,7 +535,7 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
 # the scalar in ordinary library code through runtime `Byte(Int)`
 # conversions.
 struct Codepoint(
-    Comparable, Copyable, Equatable, ImplicitlyDeletable, Intable, Movable, Writable
+    Comparable, Copyable, Equatable, Deinitable, Intable, Movable, Writable
 ):
     var _scalar: Int
     var _text: StringLiteral

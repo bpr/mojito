@@ -8,7 +8,7 @@ trait IteratorContract:
     def __next__(mut self) raises StopIteration -> Self.Element:
         ...
 
-struct Item(Copyable, ImplicitlyDeletable, Movable):
+struct Item(Copyable, Deinitable, Movable):
     var value: Int
 
     def __init__(out self, value: Int):
@@ -19,7 +19,7 @@ struct Item(Copyable, ImplicitlyDeletable, Movable):
         self.value = copy.value
 
 @fieldwise_init
-struct ItemRefIter(ImplicitlyDeletable, IteratorContract):
+struct ItemRefIter(Deinitable, IteratorContract):
     comptime Element = Item
 
     var value: Item
@@ -31,7 +31,7 @@ struct ItemRefIter(ImplicitlyDeletable, IteratorContract):
         self.done = True
         return self.value
 
-def take[I: IteratorContract & ImplicitlyDeletable](
+def take[I: IteratorContract & Deinitable](
     var iterator: I
 ) raises StopIteration -> I.Element:
     return iterator.__next__()

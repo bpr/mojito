@@ -29,7 +29,7 @@ struct _ListIter[
         return self.src[r]
 
 struct _ListOwnedIter[T: Movable](
-    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
+    Deinitable where conforms_to(T, Deinitable),
     Iterator,
     Movable,
 ):
@@ -54,7 +54,7 @@ struct _ListOwnedIter[T: Movable](
         self.index += 1
         return result^
 
-    def __del__(deinit self) where conforms_to(Self.T, ImplicitlyDeletable):
+    def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
         var i = self.index
         while i < self.size:
             self.data.destroy(i)
@@ -63,13 +63,13 @@ struct _ListOwnedIter[T: Movable](
 
     def _finish(deinit self):
         # Named destructor for the linear-element instantiation, which has no
-        # `__del__`: the compiler calls it on the loop's exhaustion edge, when
+        # `__deinit__`: the compiler calls it on the loop's exhaustion edge, when
         # every element has been moved out, so only the buffer remains.
         self.data.free()
 
 struct List[T: Movable](
     Copyable where conforms_to(T, Copyable),
-    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
+    Deinitable where conforms_to(T, Deinitable),
     Iterable where conforms_to(T, Copyable),
     IterableOwned,
     Movable,
@@ -114,7 +114,7 @@ struct List[T: Movable](
         self.size = move.size
         self.data = move.data^
 
-    def __del__(deinit self) where conforms_to(Self.T, ImplicitlyDeletable):
+    def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
         var i = 0
         while i < self.size:
             self.data.destroy(i)
@@ -183,7 +183,7 @@ struct List[T: Movable](
         return result^
 
     def __setitem__(mut self, index: Int, var value: Self.T) where conforms_to(
-        Self.T, ImplicitlyDeletable
+        Self.T, Deinitable
     ):
         self.data.destroy(index)
         self.data[index] = value^
@@ -200,7 +200,7 @@ struct List[T: Movable](
 
     def remove(mut self, value: Self.T) where conforms_to(
         Self.T, Equatable
-    ) and conforms_to(Self.T, ImplicitlyDeletable):
+    ) and conforms_to(Self.T, Deinitable):
         var i = 0
         while i < self.size:
             if self.data[i] == value:
@@ -220,7 +220,7 @@ struct List[T: Movable](
         self.size -= 1
         return result^
 
-    def clear(mut self) where conforms_to(Self.T, ImplicitlyDeletable):
+    def clear(mut self) where conforms_to(Self.T, Deinitable):
         var i = 0
         while i < self.size:
             self.data.destroy(i)

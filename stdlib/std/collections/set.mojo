@@ -3,7 +3,7 @@ from std.iterable import Iterable
 
 struct Set[T: Equatable & Copyable & Movable](
     Copyable,
-    ImplicitlyDeletable where conforms_to(T, ImplicitlyDeletable),
+    Deinitable where conforms_to(T, Deinitable),
     Iterable,
     Movable,
     Writable where conforms_to(T, Writable),
@@ -20,7 +20,7 @@ struct Set[T: Equatable & Copyable & Movable](
         self.items = List[Self.T]()
 
     def __init__(out self, var *values: Self.T, __set_literal__: NoneType) where conforms_to(
-        Self.T, ImplicitlyDeletable
+        Self.T, Deinitable
     ):
         self.items = List[Self.T]()
         for var value in values^:
@@ -42,7 +42,7 @@ struct Set[T: Equatable & Copyable & Movable](
         return value in self
 
     def add(mut self, var value: Self.T) where conforms_to(
-        Self.T, ImplicitlyDeletable
+        Self.T, Deinitable
     ):
         if not (value in self):
             self.items.append(value^)
@@ -54,7 +54,7 @@ struct Set[T: Equatable & Copyable & Movable](
         # Construct the borrowed iterator directly: an explicit
         # `self.items.__iter__()` call is ambiguous between the borrowed and
         # owned overloads now that owned iteration is not gated on
-        # `ImplicitlyDeletable` elements.
+        # `Deinitable` elements.
         ref source = self.items
         return _ListIter[Self.T](source, 0)
 

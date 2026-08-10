@@ -319,7 +319,7 @@ fn variant_protocols_are_conditioned_on_every_alternative() {
 
     let nondeletable = compiler
         .compile_source(
-            "from std.utils import Variant\n\nstruct Linear(ImplicitlyDeletable where False):\n    pass\n\ndef require_deletable[T: ImplicitlyDeletable]():\n    pass\n\ndef main():\n    require_deletable[Variant[Int, Linear]]()\n",
+            "from std.utils import Variant\n\nstruct Linear(Deinitable where False):\n    pass\n\ndef require_deletable[T: Deinitable]():\n    pass\n\ndef main():\n    require_deletable[Variant[Int, Linear]]()\n",
             std::path::Path::new("/tmp/mojito_variant_nondeletable.mojo"),
         )
         .expect_err("a Variant is deletable only when every alternative is deletable");
@@ -558,14 +558,14 @@ fn callable_struct_call_replays_transfer_effects() {
 #[test]
 fn owned_iteration_of_linear_elements_requires_guaranteed_exhaustion() {
     // "Owned iteration of linear elements": with the bundled owned iterator's
-    // `ImplicitlyDeletable` gates lifted, a linear List reaches the checker's
+    // `Deinitable` gates lifted, a linear List reaches the checker's
     // residual-escape guard — the fully exhausting loop is accepted and
     // executes (each element consumed by its named destructor), while the
     // escaping twin rejects with the residual-obligation diagnostic instead
     // of the old iterator-selection mismatch.
     let compiler = Compiler::default();
-    let exhaustive = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, ImplicitlyDeletable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n";
-    let escaping = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, ImplicitlyDeletable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n        break\n";
+    let exhaustive = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n";
+    let escaping = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n        break\n";
     let program = compiler
         .compile_unlinked(exhaustive)
         .expect("linear exhaustive");
@@ -594,7 +594,7 @@ fn linear_owned_iteration_requires_a_finishable_iterator() {
     // can consume it; without one the protocol rejects contextually. The
     // deletable-iterator twin needs no finisher: its plain drop is correct.
     let compiler = Compiler::default();
-    let unfinishable = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, ImplicitlyDeletable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\nstruct Drain(Iterator, ImplicitlyDeletable where False, Movable):\n    comptime Element = Conn\n    var remaining: Int\n\n    def __init__(out self, remaining: Int):\n        self.remaining = remaining\n\n    def __next__(mut self) raises StopIteration -> Conn:\n        if self.remaining == 0:\n            raise StopIteration()\n        self.remaining -= 1\n        return Conn(self.remaining)\n\nstruct Bucket(Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def __iter__(var self) -> Drain:\n        return Drain(self.count)\n\ndef main():\n    var bucket = Bucket(2)\n    for var item in bucket^:\n        item^.close()\n";
+    let unfinishable = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\nstruct Drain(Iterator, Deinitable where False, Movable):\n    comptime Element = Conn\n    var remaining: Int\n\n    def __init__(out self, remaining: Int):\n        self.remaining = remaining\n\n    def __next__(mut self) raises StopIteration -> Conn:\n        if self.remaining == 0:\n            raise StopIteration()\n        self.remaining -= 1\n        return Conn(self.remaining)\n\nstruct Bucket(Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def __iter__(var self) -> Drain:\n        return Drain(self.count)\n\ndef main():\n    var bucket = Bucket(2)\n    for var item in bucket^:\n        item^.close()\n";
     let error = compiler
         .compile_unlinked(unfinishable)
         .expect_err("unfinishable");
@@ -608,7 +608,7 @@ fn linear_owned_iteration_requires_a_finishable_iterator() {
     assert!(message.contains("'Drain'"), "{message}");
 
     let deletable_iterator = unfinishable.replace(
-        "struct Drain(Iterator, ImplicitlyDeletable where False, Movable):",
+        "struct Drain(Iterator, Deinitable where False, Movable):",
         "struct Drain(Iterator, Movable):",
     );
     let program = compiler
