@@ -60,6 +60,12 @@ the **Mojo-only** ones (`var struct trait comptime raises`). `Token::keyword` is
 lookup table. Soft/contextual words such as `mut` (in `mut self`) are **not** reserved — they
 lex as identifiers, so they stay usable as ordinary names, matching Mojo.
 
+The predefined future-syntax words `class`, `del`, `match`, and `yield` also
+remain ordinary lexer identifiers. Declaration checking rejects them only as
+free or nested function names; they remain usable for variables and parameters,
+and current method names such as `match` remain valid. This keeps future class,
+pattern, and generator syntax out of tokenization until those constructs exist.
+
 **Line joining.** A logical line may span several physical lines two ways. *Implicit*:
 inside `( … )` / `[ … ]` newlines and indentation are suppressed (the brackets carry the
 continuation). *Explicit*: a **backslash immediately before a newline** (`\` then `LF` or
@@ -117,7 +123,7 @@ augmented_assignment: target aug_op expression
 aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**='
 target: NAME | place
 place: primary ('.' NAME | '[' expression ']')      # a field/index chain (checker: rooted at a variable)
-comptime_stmt: 'comptime' NAME '=' expression
+comptime_stmt: 'comptime' NAME [params_decl] [':' type] [where_clause] '=' expression
 return_stmt: 'return' [expression]
 raise_stmt: 'raise' expression
 ```
@@ -195,9 +201,11 @@ Top-level declarations (`def`/`struct`/`trait`/`comptime`, excluding
 `main`) receive module-qualified internal identities before being flattened. Plain
 qualified imports, module/member aliases, wildcard privacy for underscore names,
 lexically scoped imports, dots-only sibling imports, transitive imports, and collision
-isolation are resolved by the linker. Executable top-level code is invalid rather than
-an import-time side effect. Compiled package artifacts and imports from stdin remain
-unsupported.
+isolation are resolved by the linker. A second explicit import may repeat the same
+target, but it cannot bind the same local name to a different declaration; an exact
+self-import is diagnosed without disabling distinct mutual-import cycles. Executable
+top-level code is invalid rather than an import-time side effect. Compiled package
+artifacts and imports from stdin remain unsupported.
 
 ### function_def
 
@@ -211,11 +219,12 @@ param_item:
     | '/'                                  # positional-only marker
     | '*'                                  # keyword-only marker (bare)
     | [convention] '*' NAME ':' type       # *args; `var *args: *Ts` may be transferred
-    | '**' NAME ':' type                   # **kwargs (keyword variadic)
+    | 'var' '**' NAME ':' type             # keyword variadic collector
     | [convention] NAME ':' type ['=' expression]   # regular, optional default
 convention: 'imm' | 'read' | 'mut' | 'var' | 'out' | 'ref' [origin_spec] | 'deinit'
 function_effect: 'raises' [type] | 'capturing' ['[' ... ']'] | 'thin' | 'abi' '(' ... ')'
 capture_list: '{' [capture_entry (',' capture_entry)* [',']] '}'
+where_clause: 'where' expression
 capture_entry:
     | [('imm' | 'read' | 'mut' | 'ref' | 'var')] NAME ['^']
     | ('imm' | 'read' | 'mut' | 'ref' | 'var') ['^']
@@ -232,12 +241,14 @@ values, check each value against `Bound`, and support pack length queries and
 compile-time iteration/indexing for statically evident call arguments.
 Specialization exposes the concrete type at each pack index. A transferred pack
 can round-trip through `Tuple[*Types](*values^)`; this is a Tuple construction
-rule, not general spreading into fixed-arity calls. Homogeneous `**kwargs: T` is
+rule, not general spreading into fixed-arity calls. Homogeneous `var **kwargs: T` is
 also implemented: unmatched ordered keyword pairs are transported by the call
 ABI and materialized as an owned self-hosted `StringDict[T]` local. Free,
 generic, instance, static, and bounded-trait calls share this binder. A collector
 can be consumed and forwarded as the final call argument with `**kwargs^`; the
-callee must also declare a compatible collector. A single `out result: T` is a caller-transparent named
+callee must also declare a compatible collector. The declaration-side `var` is
+required; bare `**kwargs: T` is rejected, while call-site forwarding keeps the
+`**kwargs^` spelling. A single `out result: T` is a caller-transparent named
 result; multiple named results are unsupported.
 A `convention` word is only a convention when a parameter name follows it, so `imm`, `read`,
 `mut`, `ref`, etc. remain usable as parameter names (`def f(read: Int)`, `def f(ref:
@@ -254,6 +265,15 @@ An optional `params_decl` list (see **Parameterization** below) makes the
 function generic: its type/value parameters are in scope as bare `NAME`s in the
 signature and body (e.g. `def first[T: Copyable & Movable](p: Pair[T]) -> T`, or
 `def repeat[count: Int](msg: String)` with `count` a value parameter).
+
+A `where` clause accepts either a constraint expression or the current
+diagnostic form `(constraint, "message")`. The latter must be a two-element
+tuple whose second element is a string literal. The checker retains the message
+with the compiled constraint and reports it when specialization fails; the
+message does not change implication or conditional-conformance semantics.
+Mojito currently retains one trailing clause per declaration; current Mojo's
+repeated-clause form is tracked separately with generic top-level comptime
+aliases.
 
 The optional **`raises`** effect (before a capture list and `->`) marks a function that may raise an
 error (Mojo's `def` is non-raising by default). An error type may follow (`raises
@@ -364,12 +384,14 @@ required unsolved parameter is an error.
 ### struct_def
 
 ```
-struct_def: decorators 'struct' NAME [params_decl] [conformance] ':' struct_block
-conformance: '(' ','.NAME+ ')'
+struct_def: decorators 'struct' NAME [params_decl] [conformance] [where_clause] ':' struct_block
+conformance: '(' ','.conditional_conformance+ ')'
+conditional_conformance: NAME ['where' expression]
 struct_block: NEWLINE INDENT struct_member+ DEDENT
-struct_member: field | method
+struct_member: field | struct_comptime | method
 field: 'var' NAME ':' type NEWLINE
-method: decorators 'def' NAME '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' type] ':' block
+struct_comptime: 'comptime' NAME [params_decl] [':' type] [where_clause] '=' expression NEWLINE
+method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' type] [where_clause] ':' block
 receiver: [convention] 'self'    # instance method; absent ⇒ a @staticmethod (no self)
 ```
 
@@ -388,6 +410,12 @@ built-in traits (`Copyable`, …) impose no checked requirements. Conformance is
 **explicit/nominal** (matches Mojo): a struct satisfies a `[T: Trait]` bound only if it
 declares that trait here.
 
+Struct declarations, methods, and associated `comptime` members accept the same
+single trailing `where` clause as free functions. A parameterized associated
+member is checked when projected with concrete arguments; its availability may
+depend on either the enclosing struct parameters or its own parameters. The
+diagnostic tuple form retains its message through those checks.
+
 ### trait_def
 
 ```
@@ -396,7 +424,8 @@ trait_block: NEWLINE INDENT trait_member+ DEDENT
 trait_member: trait_method | trait_comptime
 trait_method: decorators 'def' NAME [params_decl] '(' 'self' [',' params] ')' ['raises' [type]] ['->' type] [where_clause] ':' NEWLINE INDENT (trait_req | block) DEDENT
 trait_req: '...' NEWLINE                                       # a pure requirement
-trait_comptime: 'comptime' NAME ':' type NEWLINE              # a compile-time member requirement
+trait_comptime: 'comptime' NAME [params_decl] ':' type [where_clause] NEWLINE
+                                                              # a compile-time member requirement
 ```
 
 A `trait` declares **method requirements**: each is a `def` header (with the implicit
@@ -616,7 +645,7 @@ forwarded_kwargs: '**' expression # expression must be a final transferred value
 
 Keyword arguments (`f(x=1, y=2)`; a positional argument may not follow a keyword
 one) are matched to parameters by name and compose with positional arguments,
-defaults, homogeneous `*args`, and `**kwargs` across free, generic, constructor,
+defaults, homogeneous `*args`, and `var **kwargs` across free, generic, constructor,
 instance, static, and bounded-trait calls. Builtins accept keywords only where
 their declared intrinsic contract does.
 
@@ -680,7 +709,7 @@ Notes:
 - **`args`** accepts positional arguments followed by keyword arguments. A final
   `**kwargs^` consumes an owned `StringDict` into a compatible collector. Callee
   signatures may use defaults, `/`, bare `*`, homogeneous `*args`, and homogeneous
-  `**kwargs`; structural matching is shared by checking and VM frame binding.
+  `var **kwargs`; structural matching is shared by checking and VM frame binding.
 - A specialized heterogeneous runtime pack can be forwarded once as `*args^`.
   The spread must follow every fixed positional argument; parameters after the
   target's variadic collector are supplied by keyword. The complete Tuple-backed
@@ -703,7 +732,9 @@ type:
     | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T`
     | NAME [param_args]            # struct type, optionally with type/value arguments
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
-function_type_param: [convention] [NAME ':'] type
+function_type_param:
+    | 'var' '**' NAME ':' type
+    | [convention] [NAME ':'] type
 fn_effect: 'capturing' ['[' ... ']'] | 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
@@ -751,13 +782,20 @@ last use and rejects overlapping mutation across branches, joins, loops, moves, 
 calls. Origin unions in signatures, origin parameters, and reference returns are
 retained syntax but do not yet have interprocedural semantics.
 
-`comptime NAME = expression` declares a **compile-time constant** (`comptime N = 8`).
+`comptime NAME [: type] [where clause] = expression` declares a
+**compile-time constant** (`comptime N: Int where (True, "enabled") = 8`).
 The right-hand side must be a comptime integer expression (literals, other
 `comptime` constants, and arithmetic/bitwise/shift operators); its `IntLiteral`
 value remains arbitrary precision until a declared value-parameter or runtime
 scalar context materializes it. The constant is usable both as a value parameter
 argument (`FixedBuffer[N]`) and as an ordinary `Int` at runtime. (Mojo removed
 `alias`; `comptime` replaces it.)
+
+The parser also retains the current generic-alias header
+`comptime Alias[params]: Type where ... = ...`, but the checker rejects that
+form until top-level aliases have a checked registry and type-resolution
+expansion path. Likewise, each supported declaration currently retains one
+trailing `where` clause; repeated clauses are tracked as a separate parity gap.
 
 ```
 comptime_if_stmt:  'comptime' if_stmt      # 'comptime' 'if' … 'elif' … 'else' …
@@ -775,7 +813,9 @@ time and keeps only the taken branch — the others are **dropped before type-ch
 so an unselected branch may contain code valid only for other specializations; `comptime
 for` unrolls over a compile-time **`range(...)` or a compile-time tuple/list**
 (`comptime for s in ("a", "b"):`), substituting the loop variable with its literal value
-in each body copy, bounded by an iteration **quota**. Shared compile-time values
+in each body copy, bounded by an iteration **quota**. A zero-step range is empty
+in both direct unrolling and VM-backed CTFE, so it produces no body copies and
+does not consume loop fuel. Shared compile-time values
 are `Int`/`Bool`/`String`/`Tuple`/`List` (integer arithmetic & comparisons, `and`/`or`/
 `not`, `String` `+`/`==`, indexing a comptime tuple/list) and it reads `comptime NAME`
 constants. **CTFE:** a `comptime` context may call a **pure top-level function** through

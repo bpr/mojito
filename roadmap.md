@@ -98,35 +98,15 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **Lifecycle canonicalization (nightly §0)** — in order:
-  1. Canonical `Deinitable`/`__deinit__` vocabulary with the deprecated
-     `ImplicitlyDeletable`/`__del__` spellings normalized early (the
-     `read` → `imm` precedent): builtin-trait registry, checker capability
-     queries and diagnostics, destructor-symbol naming through MIR and the
-     VM's drop dispatch, bundled stdlib, fixtures, and docs.
-  2. Conditional `Movable` opt-out: route `is_movable` through the existing
-     per-conformance `where`-predicate path so `Movable where False` (and
-     parameterized conditions) become effective.
-  3. `TriviallyMovable[T]`/`TriviallyCopyable[T]`/`TriviallyDeinitable[T]`
-     comptime predicates — confirm exact definitions against the audited
-     head's `std.traits` source first.
-  4. `std.traits`/`std.origin` module homes binding the builtin identities;
-     prelude re-exports remain compatibility bridges.
-- [ ] **Small accepted-source and diagnostic gaps (nightly §1)** —
-  independent, any order:
-  - Parse `var **kwargs` and reject bare `**kwargs`; add the
-    keyword-variadic role to function types and callable ABI identity.
-  - Reject a second same-named function imported from another module.
-  - Diagnose a standalone module importing its own name.
-  - Pin the existing imm-vs-mut-only overload rejection with a differential
-    case (no code change expected).
-  - Make `range(..., step=0)` empty in the CTFE evaluator and the VM
-    compile-time intrinsic (nominal runtime `Range` already matches).
-  - Interpret `where (condition, "message")` as a constraint plus retained
-    diagnostic message across functions, structs, conditional conformances,
-    and comptime declarations.
-  - Reject `class`/`match`/`yield` as free-function names at declaration
-    checking without pre-tokenizing them.
+- [ ] **Complete generic comptime aliases and repeated declaration
+  constraints (nightly §1 follow-up)** — represent top-level generic
+  `comptime Alias[params]: Type where ... = ...` declarations in the checked
+  alias registry and type-resolution expansion path, and retain multiple
+  trailing `where` clauses independently on functions, methods, structs, and
+  comptime aliases so each clause keeps its own diagnostic message. The small
+  accepted-source/diagnostic slice is otherwise complete; these require a real
+  alias feature and a plural checked constraint contract, not another parser
+  special case.
 - [ ] **Lambda expressions (nightly §2)** — one explicit AST/HIR node lowered
   through the existing nested-definition, capture, callable-contract,
   specialization, and indirect-call machinery; omitted capture list

@@ -772,7 +772,7 @@ impl Checker {
 
     /// Type the built-in `range(stop)` / `range(start, stop)` /
     /// `range(start, stop, step)`. All arguments must be `Int`; the result is a
-    /// `range`. A zero `step` is a *runtime* value error, not a type error.
+    /// `range`. A zero `step` is valid and produces an empty sequence.
     pub(super) fn infer_range(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         if args.is_empty() {
             return Err(TypeError::ArityMismatch {

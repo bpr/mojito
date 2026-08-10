@@ -90,16 +90,33 @@ impl<'a> Elab<'a> {
             }
             StmtKind::RefDecl { value, .. }
             | StmtKind::Assign { value, .. }
-            | StmtKind::Comptime { value, .. }
             | StmtKind::Raise(value)
             | StmtKind::Return(Some(value)) => self.mono_expr(value, consts, mono),
+            StmtKind::Comptime {
+                type_params,
+                ty,
+                where_clause,
+                value,
+                ..
+            } => {
+                let inner_consts = consts_without_type_params(consts, type_params);
+                for parameter in type_params {
+                    self.mono_type_parameter(parameter, &inner_consts, mono)?;
+                }
+                if let Some(ty) = ty {
+                    self.mono_type(ty, &inner_consts, mono)?;
+                }
+                if let Some(condition) = where_clause {
+                    self.mono_expr(condition, &inner_consts, mono)?;
+                }
+                self.mono_expr(value, &inner_consts, mono)
+            }
             StmtKind::Return(None)
             | StmtKind::Pass
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Import { .. }
-            | StmtKind::FromImport { .. }
-            | StmtKind::Trait { .. } => Ok(()),
+            | StmtKind::FromImport { .. } => Ok(()),
             StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
                 self.mono_expr(place, consts, mono)?;
                 self.mono_expr(value, consts, mono)
@@ -175,34 +192,43 @@ impl<'a> Elab<'a> {
                 result
             }
             StmtKind::Def {
+                type_params,
                 params,
                 raises_type,
                 ret,
+                where_clause,
                 body,
                 ..
             } => {
+                let inner_consts = consts_without_type_params(consts, type_params);
+                for parameter in type_params {
+                    self.mono_type_parameter(parameter, &inner_consts, mono)?;
+                }
                 for parameter in params.iter_mut() {
-                    self.mono_type(&mut parameter.ty, consts, mono)?;
-                    if let Some(default) = &mut parameter.default {
-                        self.mono_expr(default, consts, mono)?;
-                    }
+                    self.mono_fn_parameter(parameter, &inner_consts, mono)?;
                 }
                 if let Some(error) = raises_type {
-                    self.mono_type(error, consts, mono)?;
+                    self.mono_type(error, &inner_consts, mono)?;
                 }
                 if let Some(ret) = ret {
-                    self.mono_type(ret, consts, mono)?;
+                    self.mono_type(ret, &inner_consts, mono)?;
+                }
+                if let Some(condition) = where_clause {
+                    self.mono_expr(condition, &inner_consts, mono)?;
                 }
                 mono.push_function_scope();
                 for parameter in params {
                     mono.bind_parameter(parameter);
                 }
-                let result = self.mono_block_contents(body, consts, mono);
+                let result = self.mono_block_contents(body, &inner_consts, mono);
                 mono.pop_function_scope();
                 result
             }
             StmtKind::Struct {
                 type_params,
+                callable_conformance,
+                conformance_conditions,
+                where_clause,
                 fields,
                 associated,
                 methods,
@@ -222,6 +248,18 @@ impl<'a> Elab<'a> {
                     struct_consts
                         .insert(parameter.name.clone(), ct_origin_marker(index, mutability));
                 }
+                for parameter in type_params.iter_mut() {
+                    self.mono_type_parameter(parameter, &struct_consts, mono)?;
+                }
+                if let Some(callable) = callable_conformance {
+                    self.mono_type(callable, &struct_consts, mono)?;
+                }
+                for (_, condition) in conformance_conditions {
+                    self.mono_expr(condition, &struct_consts, mono)?;
+                }
+                if let Some(condition) = where_clause {
+                    self.mono_expr(condition, &struct_consts, mono)?;
+                }
                 for field in fields.iter_mut() {
                     self.mono_type(&mut field.ty, &struct_consts, mono)?;
                 }
@@ -230,20 +268,39 @@ impl<'a> Elab<'a> {
                 // before its template is removed (for example an Iterable's
                 // associated iterator family).
                 for member in associated.iter_mut() {
-                    self.mono_expr(&mut member.value, &struct_consts, mono)?;
+                    let member_consts = consts_without_type_params(&struct_consts, &member.params);
+                    for parameter in &mut member.params {
+                        self.mono_type_parameter(parameter, &member_consts, mono)?;
+                    }
+                    if let Some(ty) = &mut member.ty {
+                        self.mono_type(ty, &member_consts, mono)?;
+                    }
+                    if let Some(condition) = &mut member.where_clause {
+                        self.mono_expr(condition, &member_consts, mono)?;
+                    }
+                    self.mono_expr(&mut member.value, &member_consts, mono)?;
                 }
                 for m in methods.iter_mut() {
-                    for parameter in m.params.iter_mut() {
-                        self.mono_type(&mut parameter.ty, &struct_consts, mono)?;
-                        if let Some(default) = &mut parameter.default {
-                            self.mono_expr(default, &struct_consts, mono)?;
+                    let method_consts = consts_without_type_params(&struct_consts, &m.type_params);
+                    for parameter in &mut m.type_params {
+                        self.mono_type_parameter(parameter, &method_consts, mono)?;
+                    }
+                    if let Some(origins) = &mut m.self_origin {
+                        for origin in origins {
+                            self.mono_expr(origin, &method_consts, mono)?;
                         }
                     }
+                    for parameter in m.params.iter_mut() {
+                        self.mono_fn_parameter(parameter, &method_consts, mono)?;
+                    }
                     if let Some(error) = &mut m.raises_type {
-                        self.mono_type(error, &struct_consts, mono)?;
+                        self.mono_type(error, &method_consts, mono)?;
                     }
                     if let Some(ret) = &mut m.ret {
-                        self.mono_type(ret, &struct_consts, mono)?;
+                        self.mono_type(ret, &method_consts, mono)?;
+                    }
+                    if let Some(condition) = &mut m.where_clause {
+                        self.mono_expr(condition, &method_consts, mono)?;
                     }
                     mono.push_function_scope();
                     if m.has_self {
@@ -252,13 +309,98 @@ impl<'a> Elab<'a> {
                     for parameter in &m.params {
                         mono.bind_parameter(parameter);
                     }
-                    let result = self.mono_block_contents(&mut m.body, &struct_consts, mono);
+                    let result = self.mono_block_contents(&mut m.body, &method_consts, mono);
                     mono.pop_function_scope();
                     result?;
                 }
                 Ok(())
             }
+            StmtKind::Trait {
+                methods,
+                comptime_members,
+                ..
+            } => {
+                for method in methods {
+                    let inner_consts = consts_without_type_params(consts, &method.type_params);
+                    for parameter in &mut method.type_params {
+                        self.mono_type_parameter(parameter, &inner_consts, mono)?;
+                    }
+                    if let Some(origins) = &mut method.self_origin {
+                        for origin in origins {
+                            self.mono_expr(origin, &inner_consts, mono)?;
+                        }
+                    }
+                    for parameter in &mut method.params {
+                        self.mono_fn_parameter(parameter, &inner_consts, mono)?;
+                    }
+                    if let Some(error) = &mut method.raises_type {
+                        self.mono_type(error, &inner_consts, mono)?;
+                    }
+                    if let Some(ret) = &mut method.ret {
+                        self.mono_type(ret, &inner_consts, mono)?;
+                    }
+                    if let Some(condition) = &mut method.where_clause {
+                        self.mono_expr(condition, &inner_consts, mono)?;
+                    }
+                    if let Some(body) = &mut method.default_body {
+                        self.mono_block(body, &inner_consts, mono)?;
+                    }
+                }
+                for member in comptime_members {
+                    let inner_consts = consts_without_type_params(consts, &member.params);
+                    for parameter in &mut member.params {
+                        self.mono_type_parameter(parameter, &inner_consts, mono)?;
+                    }
+                    self.mono_type(&mut member.ty, &inner_consts, mono)?;
+                    if let Some(condition) = &mut member.where_clause {
+                        self.mono_expr(condition, &inner_consts, mono)?;
+                    }
+                }
+                Ok(())
+            }
         }
+    }
+
+    fn mono_type_parameter(
+        &self,
+        parameter: &mut TypeParam,
+        consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
+    ) -> Result<(), ComptimeError> {
+        if let Some(value_type) = &mut parameter.value_type {
+            self.mono_type(value_type, consts, mono)?;
+        }
+        if let Some(callable) = &mut parameter.callable_bound {
+            self.mono_type(callable, consts, mono)?;
+        }
+        if let Some(mutability) = &mut parameter.origin_mutability {
+            self.mono_expr(mutability, consts, mono)?;
+        }
+        if let Some(default) = &mut parameter.default {
+            self.mono_expr(default, consts, mono)?;
+        }
+        for constraint in &mut parameter.constraints {
+            self.mono_expr(constraint, consts, mono)?;
+        }
+        Ok(())
+    }
+
+    fn mono_fn_parameter(
+        &self,
+        parameter: &mut FnParam,
+        consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
+    ) -> Result<(), ComptimeError> {
+        self.mono_type(&mut parameter.ty, consts, mono)?;
+        if let Some(origins) = &mut parameter.origin {
+            for origin in origins {
+                self.mono_expr(origin, consts, mono)?;
+            }
+        }
+        if let Some(default) = &mut parameter.default {
+            self.mono_expr(default, consts, mono)?;
+        }
+        Ok(())
     }
 
     /// Rewrite variadic-struct template names inside a type annotation to their
@@ -305,7 +447,13 @@ impl<'a> Elab<'a> {
                 }
                 Ok(())
             }
-            Type::Assoc { base, .. } => self.mono_type(base, consts, mono),
+            Type::Assoc { base, args, .. } => {
+                self.mono_type(base, consts, mono)?;
+                for argument in args {
+                    self.mono_param_arg(argument, consts, mono)?;
+                }
+                Ok(())
+            }
             Type::IndexedProjection { base, index } => {
                 self.mono_type(base, consts, mono)?;
                 self.mono_expr(index, consts, mono)
@@ -1231,6 +1379,18 @@ impl<'a> Elab<'a> {
         }
         Ok((vals, kept_type_args))
     }
+}
+
+fn consts_without_type_params(
+    consts: &HashMap<String, CtValue>,
+    parameters: &[TypeParam],
+) -> HashMap<String, CtValue> {
+    let mut inner = consts.clone();
+    for parameter in parameters {
+        inner.remove(&parameter.name);
+        inner.remove(parameter.name.trim_start_matches('*'));
+    }
+    inner
 }
 
 /// Bind a call's source compile-time argument list to the template's

@@ -37,6 +37,10 @@ impl Checker {
             && let Some(signatures) = info.methods.get(method)
         {
             let mut matches = Vec::new();
+            let mut availability_failure = None;
+            // Preserve established overload diagnostics: a retained constraint
+            // message replaces `NoMatch` only when this is the sole callable shape.
+            let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
             for sig in signatures.iter().filter(|sig| !sig.has_self) {
                 let (params, variadic, kw_variadic, method_subst, method_arguments) = match self
                     .instantiate_method_generics(
@@ -52,7 +56,23 @@ impl Checker {
                     Ok(instantiated) => instantiated,
                     Err(_) => continue,
                 };
-                if !self.method_constraints_apply(sig, &method_arguments) {
+                if let Err(message) = self.method_constraint_result(sig, &method_arguments) {
+                    if single_candidate
+                        && availability_failure.is_none()
+                        && let Some(message) = message
+                        && self
+                            .score_method_call(
+                                sig,
+                                &params,
+                                variadic.as_ref(),
+                                kw_variadic.as_ref(),
+                                args,
+                                kwargs,
+                            )
+                            .is_ok()
+                    {
+                        availability_failure = Some(message.to_string());
+                    }
                     continue;
                 }
                 if let Ok(scored) = self.score_method_call(
@@ -120,6 +140,12 @@ impl Checker {
                     )?;
                 }
                 return Ok(selected.return_type);
+            }
+            if let Some(message) = availability_failure {
+                return Err(TypeError::BadCall {
+                    func: format!("{sname}.{method}"),
+                    reason: format!("constraint failed: {message}"),
+                });
             }
         }
         let obj_ty = self.infer(object)?;
@@ -371,6 +397,9 @@ impl Checker {
         // Resolve the method to a concrete signature (params + return + whether
         // it mutates `self`) for this receiver, substituting the receiver's type
         // arguments (struct) or `Self` (a bounded type parameter's trait method).
+        // Multi-candidate failure ordering remains the ordinary overload diagnostic;
+        // a sole shape can safely explain that its availability predicate rejected.
+        let mut availability_failure = None;
         let resolved: Result<Option<MethodCallResolution>, OverloadSelect> = match &obj_ty {
             Ty::Struct(sname, targs) => {
                 let info = self.structs.get(sname).ok_or_else(|| {
@@ -379,6 +408,7 @@ impl Checker {
                 match info.methods.get(method) {
                     Some(sigs) => {
                         let overloaded = sigs.len() > 1;
+                        let single_candidate = sigs.len() == 1;
                         let subst = struct_subst(&info.decls, targs);
                         let mut matches = Vec::new();
                         for sig in sigs {
@@ -413,7 +443,25 @@ impl Checker {
                                     argument.clone(),
                                 );
                             }
-                            if !self.method_constraints_apply(sig, &method_arguments) {
+                            if let Err(message) =
+                                self.method_constraint_result(sig, &method_arguments)
+                            {
+                                if single_candidate
+                                    && availability_failure.is_none()
+                                    && let Some(message) = message
+                                    && self
+                                        .score_method_call(
+                                            sig,
+                                            &params,
+                                            variadic.as_ref(),
+                                            kw_variadic.as_ref(),
+                                            args,
+                                            kwargs,
+                                        )
+                                        .is_ok()
+                                {
+                                    availability_failure = Some(message.to_string());
+                                }
                                 continue;
                             }
                             if let Ok(scored) = self.score_method_call(
@@ -483,6 +531,7 @@ impl Checker {
                         method: method.to_string(),
                     });
                 }
+                let single_candidate = signatures.len() == 1;
                 let mut matches = Vec::new();
                 for sig in signatures {
                     let receiver_params: Vec<_> = sig
@@ -512,7 +561,23 @@ impl Checker {
                     else {
                         continue;
                     };
-                    if !self.method_constraints_apply(&sig, &method_arguments) {
+                    if let Err(message) = self.method_constraint_result(&sig, &method_arguments) {
+                        if single_candidate
+                            && availability_failure.is_none()
+                            && let Some(message) = message
+                            && self
+                                .score_method_call(
+                                    &sig,
+                                    &params,
+                                    variadic.as_ref(),
+                                    kw_variadic.as_ref(),
+                                    args,
+                                    kwargs,
+                                )
+                                .is_ok()
+                        {
+                            availability_failure = Some(message.to_string());
+                        }
                         continue;
                     }
                     let Ok(scored) = self.score_method_call(
@@ -672,7 +737,10 @@ impl Checker {
             Err(OverloadSelect::NoMatch) => {
                 return Err(TypeError::BadCall {
                     func: method.to_string(),
-                    reason: "no overload matches the supplied arguments".to_string(),
+                    reason: availability_failure.map_or_else(
+                        || "no overload matches the supplied arguments".to_string(),
+                        |message| format!("constraint failed: {message}"),
+                    ),
                 });
             }
             Err(OverloadSelect::Ambiguous) => {
@@ -2011,7 +2079,7 @@ impl Checker {
         args: &[Expr],
         kwargs: &[crate::ast::KwArg],
     ) -> Result<Ty, TypeError> {
-        let (ret, _, error) =
+        let (ret, _, error, _) =
             self.infer_callable_ty(&span, "<callable>", callable.clone(), &[], args, kwargs)?;
         self.record_call_environment_effects(span.clone(), &callable, &[], args, kwargs)?;
         let carried = contract_transfer_effects(&callable);

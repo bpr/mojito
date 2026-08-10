@@ -4,6 +4,31 @@
 
 use super::*;
 
+/// Read the concrete truth value from a folded declaration constraint while
+/// preserving validation of the diagnostic tuple form.
+fn folded_constraint_truth(expression: &Expr) -> Result<Option<bool>, ComptimeError> {
+    match &expression.kind {
+        ExprKind::Bool(value) => Ok(Some(*value)),
+        ExprKind::TupleLit(elements) => {
+            let [condition, message] = elements.as_slice() else {
+                return Err(ComptimeError::NotComptime(
+                    "a diagnostic where clause must be `(condition, \"message\")`".to_string(),
+                ));
+            };
+            if !matches!(&message.kind, ExprKind::Str(_)) {
+                return Err(ComptimeError::NotComptime(
+                    "a where-clause diagnostic message must be a string literal".to_string(),
+                ));
+            }
+            Ok(match &condition.kind {
+                ExprKind::Bool(value) => Some(*value),
+                _ => None,
+            })
+        }
+        _ => Ok(None),
+    }
+}
+
 impl<'a> Elab<'a> {
     /// Specialize every comptime-dependent generic template against the value
     /// arguments at its call sites, replacing each template with its concrete
@@ -473,6 +498,7 @@ impl<'a> Elab<'a> {
             };
             env.insert(pack_param.name.clone(), CtValue::Tuple(types.clone()));
         }
+        let constraint_env = env.clone();
         // Elaborate the body with the parameters bound, so its comptime constructs
         // select/unroll against the concrete arguments.
         let elaborated = self.block(body, &mut env, true)?;
@@ -508,6 +534,24 @@ impl<'a> Elab<'a> {
                 .map(|predicate| materialize_expression(predicate, &subs)),
             _ => None,
         };
+        // Once every compile-time binder has been baked into a clone, its
+        // trailing predicate is a specialization precondition rather than a
+        // residual declaration constraint. Prove it now (retaining an optional
+        // diagnostic message), then erase it so the concrete clone does not
+        // pretend to have a parameter to which the constraint can attach.
+        let has_residual_constraint_binder = kept_type_params.iter().any(|parameter| {
+            !matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+                && !parameter.is_origin_mutability_binder(type_params)
+        });
+        if !has_residual_constraint_binder
+            && let StmtKind::Def {
+                where_clause: Some(predicate),
+                ..
+            } = &template.kind
+        {
+            self.validate_specialized_where(predicate, &constraint_env, display_name)?;
+            specialized_where = None;
+        }
         expand_pack_spreads_in_function_body(
             &mut final_body,
             &specialized_params,
@@ -588,6 +632,40 @@ impl<'a> Elab<'a> {
         Ok(specialization)
     }
 
+    fn validate_specialized_where(
+        &self,
+        predicate: &Expr,
+        environment: &HashMap<String, CtValue>,
+        display_name: &str,
+    ) -> Result<(), ComptimeError> {
+        let (condition, message) = match &predicate.kind {
+            ExprKind::TupleLit(elements) => {
+                let [condition, message] = elements.as_slice() else {
+                    return Err(ComptimeError::NotComptime(
+                        "a diagnostic where clause must be `(condition, \"message\")`".to_string(),
+                    ));
+                };
+                let ExprKind::Str(message) = &message.kind else {
+                    return Err(ComptimeError::NotComptime(
+                        "a where-clause diagnostic message must be a string literal".to_string(),
+                    ));
+                };
+                (condition, Some(message.as_str()))
+            }
+            _ => (predicate, None),
+        };
+        if self
+            .eval(condition, environment)?
+            .as_bool("specialized where clause")?
+        {
+            return Ok(());
+        }
+        Err(ComptimeError::Constraint(message.map_or_else(
+            || format!("'{display_name}' where clause evaluated to False"),
+            str::to_string,
+        )))
+    }
+
     /// Generate one specialization of variadic-struct template `orig` for the
     /// compile-time arguments `vals`: bind the type pack in the comptime env so
     /// member bodies' `comptime if`/`for` resolve against the concrete element
@@ -607,16 +685,17 @@ impl<'a> Elab<'a> {
     ) -> Result<Stmt, ComptimeError> {
         let template = self.specializable[orig];
         let StmtKind::Struct {
+            name: _,
             decorators,
             type_params,
             conforms,
             callable_conformance,
             conformance_conditions,
+            where_clause,
             fields,
             associated,
             methods,
             fieldwise_init,
-            ..
         } = &template.kind
         else {
             return Err(ComptimeError::NotComptime(format!(
@@ -652,9 +731,59 @@ impl<'a> Elab<'a> {
         for field in &mut specialized_fields {
             rewrite_type(&mut field.ty, value_subs);
         }
+        let mut specialized_callable_conformance = callable_conformance.clone();
+        if let Some(callable) = &mut specialized_callable_conformance {
+            rewrite_type(callable, value_subs);
+        }
+        let specialized_conformance_conditions = conformance_conditions
+            .iter()
+            .map(|(trait_name, condition)| {
+                (trait_name.clone(), materialize_expression(condition, &subs))
+            })
+            .collect();
+        let mut specialized_where = where_clause
+            .as_ref()
+            .map(|predicate| materialize_expression(predicate, &subs));
+        if kept_type_params.is_empty()
+            && let Some(predicate) = where_clause
+        {
+            self.validate_specialized_where(predicate, &env, orig)?;
+            specialized_where = None;
+        }
         let mut specialized_associated = associated.clone();
         for member in &mut specialized_associated {
-            member.value = materialize_expression(&member.value, &subs);
+            // An associated declaration's own parameters shadow names from the
+            // enclosing struct. Materialize only the outer bindings which are
+            // still visible in its annotation, availability, and value.
+            let mut member_subs = subs.clone();
+            for parameter in &member.params {
+                member_subs.remove(parameter.name.trim_start_matches('*'));
+            }
+            let member_value_subs: Subs = &|name| member_subs.get(name).cloned();
+            for parameter in &mut member.params {
+                if let Some(value_type) = &mut parameter.value_type {
+                    rewrite_type(value_type, member_value_subs);
+                }
+                if let Some(callable) = &mut parameter.callable_bound {
+                    rewrite_type(callable, member_value_subs);
+                }
+                if let Some(mutability) = &mut parameter.origin_mutability {
+                    *mutability = materialize_expression(mutability, &member_subs);
+                }
+                if let Some(default) = &mut parameter.default {
+                    *default = materialize_expression(default, &member_subs);
+                }
+                for constraint in &mut parameter.constraints {
+                    *constraint = materialize_expression(constraint, &member_subs);
+                }
+            }
+            if let Some(ty) = &mut member.ty {
+                rewrite_type(ty, member_value_subs);
+            }
+            if let Some(condition) = &mut member.where_clause {
+                *condition = materialize_expression(condition, &member_subs);
+            }
+            member.value = materialize_expression(&member.value, &member_subs);
         }
         let mut specialized_methods = Vec::with_capacity(methods.len());
         for method in methods {
@@ -702,8 +831,9 @@ impl<'a> Elab<'a> {
                 decorators: decorators.clone(),
                 type_params: kept_type_params,
                 conforms: conforms.clone(),
-                callable_conformance: callable_conformance.clone(),
-                conformance_conditions: conformance_conditions.clone(),
+                callable_conformance: specialized_callable_conformance,
+                conformance_conditions: specialized_conformance_conditions,
+                where_clause: specialized_where,
                 fields: specialized_fields,
                 associated: specialized_associated,
                 methods: specialized_methods,
@@ -734,6 +864,7 @@ impl<'a> Elab<'a> {
             conforms,
             callable_conformance,
             conformance_conditions,
+            where_clause,
             fields,
             associated,
             methods,
@@ -848,6 +979,10 @@ impl<'a> Elab<'a> {
                         .collect(),
                 );
             }
+            if let Some(condition) = member.where_clause.take() {
+                member.where_clause =
+                    Some(self.fold_pack_conformance_predicate(&condition, &binding, types)?);
+            }
         }
         // Conditional conformances on the source pack become unconditional
         // facts (or disappear) on the concrete implementation struct. Leaving
@@ -863,15 +998,24 @@ impl<'a> Elab<'a> {
                 continue;
             };
             let folded = self.fold_pack_conformance_predicate(condition, &binding, types)?;
-            match folded.kind {
-                ExprKind::Bool(true) => specialized_conforms.push(conformance.clone()),
-                ExprKind::Bool(false) => {}
-                _ => {
+            match folded_constraint_truth(&folded)? {
+                Some(true) => specialized_conforms.push(conformance.clone()),
+                Some(false) => {}
+                None => {
                     return Err(ComptimeError::NotComptime(format!(
                         "variadic struct '{orig}': conditional conformance '{conformance}' did not become concrete after specializing '*{binding}'"
                     )));
                 }
             }
+        }
+        let specialized_where = where_clause
+            .as_ref()
+            .map(|predicate| self.fold_pack_conformance_predicate(predicate, &binding, types))
+            .transpose()?;
+        if let Some(predicate) = &specialized_where {
+            let mut environment = self.top_consts.borrow().clone();
+            environment.insert(binding.clone(), CtValue::Tuple(types.clone()));
+            self.validate_specialized_where(predicate, &environment, orig)?;
         }
         // Elaborate each method body with the pack bound, so comptime constructs
         // select/unroll against the concrete element types.
@@ -1142,6 +1286,10 @@ impl<'a> Elab<'a> {
                 conforms: specialized_conforms,
                 callable_conformance: callable_conformance.clone(),
                 conformance_conditions: Vec::new(),
+                // Every source pack binder has been discharged above. The
+                // constraint is a specialization precondition, not a residual
+                // declaration predicate on the concrete clone.
+                where_clause: None,
                 fields: fields.clone(),
                 associated: specialized_associated,
                 methods: elaborated_methods,
@@ -1274,6 +1422,12 @@ impl<'a> Elab<'a> {
             folded
         };
         match &expression.kind {
+            ExprKind::TupleLit(diagnostic_elements) => Ok(with_kind(ExprKind::TupleLit(
+                diagnostic_elements
+                    .iter()
+                    .map(|element| self.fold_pack_conformance_predicate(element, binding, elements))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))),
             ExprKind::Call {
                 name, args, kwargs, ..
             } if name == "conforms_to" && kwargs.is_empty() && args.len() == 2 => {

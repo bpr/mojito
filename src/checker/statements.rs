@@ -1080,6 +1080,9 @@ impl Checker {
                 decorators,
                 where_clause,
             } => {
+                if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
+                    return Err(TypeError::ReservedName(name.clone()));
+                }
                 if self.structs.contains_key(name) {
                     return Err(TypeError::Redeclaration(name.clone()));
                 }
@@ -1136,8 +1139,9 @@ impl Checker {
                 self.validate_origin_signature(type_params, params, None)?;
                 let mut decls = self.classify_params(type_params)?;
                 let mut function_assumptions = HashSet::new();
+                let mut erased_origin_constraint = None;
                 if let Some(condition) = where_clause {
-                    let constraint = self.compile_generic_constraint(condition)?;
+                    let constraint = self.compile_where_clause(condition)?;
                     let mut facts = Vec::new();
                     guaranteed_conformance_atoms(&constraint, &mut facts);
                     function_assumptions.extend(facts.into_iter().map(
@@ -1145,14 +1149,15 @@ impl Checker {
                             (parameter.trim_start_matches('*').to_string(), trait_name)
                         },
                     ));
-                    let Some(last) = decls.last_mut() else {
-                        return Err(TypeError::Unsupported(
-                            "a where clause requires compile-time parameters".to_string(),
-                        ));
-                    };
-                    match last {
-                        ParamDecl::Type { constraints, .. }
-                        | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
+                    if let Some(last) = decls.last_mut() {
+                        match last {
+                            ParamDecl::Type { constraints, .. }
+                            | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
+                        }
+                    } else if type_params.is_empty() {
+                        self.validate_declaration_constraint(name, &constraint)?;
+                    } else {
+                        erased_origin_constraint = Some(constraint);
                     }
                 }
                 self.generic_parameters.borrow_mut().insert(
@@ -1341,7 +1346,11 @@ impl Checker {
                 self.record_statement_binding(stmt, name);
                 self.register_callable_origins(
                     name,
-                    callable_origin_signature(type_params, &caller_regular),
+                    callable_origin_signature(
+                        type_params,
+                        &caller_regular,
+                        erased_origin_constraint,
+                    ),
                 );
                 let capture_policy = if self.function_bases.is_empty() {
                     if captures.is_some() {
@@ -1665,6 +1674,7 @@ impl Checker {
                 conforms,
                 callable_conformance,
                 conformance_conditions,
+                where_clause,
                 fields,
                 associated,
                 methods,
@@ -1681,6 +1691,7 @@ impl Checker {
                     conforms,
                     callable_conformance,
                     conformance_conditions,
+                    where_clause,
                     fields,
                     associated,
                     methods,
@@ -1707,7 +1718,22 @@ impl Checker {
                 }
             }
 
-            StmtKind::Comptime { name, value } => {
+            StmtKind::Comptime {
+                name,
+                type_params,
+                ty: _,
+                where_clause,
+                value,
+            } => {
+                if !type_params.is_empty() {
+                    return Err(TypeError::Unsupported(
+                        "generic top-level comptime aliases".to_string(),
+                    ));
+                }
+                if let Some(condition) = where_clause {
+                    let constraint = self.compile_where_clause(condition)?;
+                    self.validate_declaration_constraint(name, &constraint)?;
+                }
                 // A comptime `Int` is recorded (for value-parameter use) and bound as
                 // `Int`. A richer comptime value (tuple/list/string) the `Int` folder
                 // can't evaluate is still an ordinary binding — the elaborator has
@@ -2116,3 +2142,5 @@ impl Checker {
             .collect()
     }
 }
+
+const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield"];

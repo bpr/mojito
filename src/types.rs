@@ -438,6 +438,10 @@ pub fn trivial_predicate_name(name: &str) -> Option<TrivialLifecycle> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GenericConstraint {
+    /// A top-level `where (condition, "message")` clause. The message affects
+    /// only the failed-specialization diagnostic; semantic operations recurse
+    /// through the wrapped condition.
+    WithMessage(Box<GenericConstraint>, String),
     Conforms {
         param: String,
         trait_name: String,

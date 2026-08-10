@@ -236,7 +236,7 @@ impl Checker {
             availability: method
                 .where_clause
                 .as_ref()
-                .map(|condition| self.compile_generic_constraint(condition))
+                .map(|condition| self.compile_where_clause(condition))
                 .transpose()?
                 .into_iter()
                 .collect(),
@@ -353,7 +353,7 @@ impl Checker {
                     constraints: tp
                         .constraints
                         .iter()
-                        .map(|condition| self.compile_generic_constraint(condition))
+                        .map(|condition| self.compile_where_clause(condition))
                         .collect::<Result<_, _>>()?,
                 });
                 continue;
@@ -385,7 +385,7 @@ impl Checker {
                     constraints: tp
                         .constraints
                         .iter()
-                        .map(|condition| self.compile_generic_constraint(condition))
+                        .map(|condition| self.compile_where_clause(condition))
                         .collect::<Result<_, _>>()?,
                 });
                 continue;
@@ -411,7 +411,7 @@ impl Checker {
                     constraints: tp
                         .constraints
                         .iter()
-                        .map(|condition| self.compile_generic_constraint(condition))
+                        .map(|condition| self.compile_where_clause(condition))
                         .collect::<Result<_, _>>()?,
                 });
                 continue;
@@ -447,7 +447,7 @@ impl Checker {
                 constraints: tp
                     .constraints
                     .iter()
-                    .map(|condition| self.compile_generic_constraint(condition))
+                    .map(|condition| self.compile_where_clause(condition))
                     .collect::<Result<_, _>>()?,
             });
         }
@@ -736,7 +736,7 @@ impl Checker {
             let Some(condition) = &m.where_clause else {
                 return Ok(HashSet::new());
             };
-            let constraint = self.compile_generic_constraint(condition)?;
+            let constraint = self.compile_where_clause(condition)?;
             let mut facts = Vec::new();
             guaranteed_conformance_atoms(&constraint, &mut facts);
             Ok(facts

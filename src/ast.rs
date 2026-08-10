@@ -125,11 +125,13 @@ pub enum Type {
 }
 
 /// One parameter in a source-level function/closure type. Unlike [`FnParam`],
-/// it has no default or variadic role; a name is optional and retained only
-/// when the annotation spells one (`def(mut writer: Writer)`).
+/// it has no default; its regular or keyword-variadic role and optional name
+/// are retained from spellings such as `def(mut writer: Writer)` and
+/// `def(var **options: Int)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionTypeParam {
     pub name: Option<String>,
+    pub kind: ParamKind,
     pub convention: Option<ArgConvention>,
     pub origin: Option<OriginSpec>,
     pub ty: Type,
@@ -331,7 +333,7 @@ pub struct Param {
 }
 
 /// A function/method parameter, e.g. `a: Int`, `b: Int = 2`, `*rest: Int`,
-/// `**opts: Int`, or `mut x: Int`. Defaults, variadics, and the supported
+/// `var **opts: Int`, or `mut x: Int`. Defaults, variadics, and the supported
 /// conventions participate in checking and VM argument binding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnParam {
@@ -353,7 +355,7 @@ pub enum ParamKind {
     Regular,
     /// `*name: T` — a positional variadic parameter.
     Variadic,
-    /// `**name: T` — a keyword variadic parameter.
+    /// `var **name: T` — a consuming keyword-variadic parameter.
     KwVariadic,
 }
 
@@ -499,6 +501,8 @@ pub struct TraitComptime {
     /// Origin[mut=iterable_mut]]: Iterator`); empty for a monomorphic member.
     pub params: Vec<TypeParam>,
     pub ty: Type,
+    /// Optional availability constraint, including the diagnostic tuple form.
+    pub where_clause: Option<Expr>,
 }
 
 /// A `comptime NAME = expr` associated compile-time fact inside a `struct` body.
@@ -509,6 +513,11 @@ pub struct StructComptime {
     /// Parameter declarations when this defines a parameterized associated type
     /// (`comptime IteratorType[params] = ...`); empty for a monomorphic member.
     pub params: Vec<TypeParam>,
+    /// Optional declared result/value type. Associated aliases use `AnyType` or
+    /// a trait bound; value members commonly use a scalar type.
+    pub ty: Option<Type>,
+    /// Optional availability constraint, including the diagnostic tuple form.
+    pub where_clause: Option<Expr>,
     pub value: Expr,
 }
 
@@ -689,6 +698,8 @@ pub enum StmtKind {
         /// Conditions attached to entries in `conforms`, represented as
         /// `(trait_name, comptime predicate)`. An absent entry is unconditional.
         conformance_conditions: Vec<(String, Expr)>,
+        /// Trailing declaration constraint (`struct S[...] where ...:`).
+        where_clause: Option<Expr>,
         fields: Vec<Param>,
         associated: Vec<StructComptime>,
         methods: Vec<Method>,
@@ -713,7 +724,17 @@ pub enum StmtKind {
     /// `alias`; `comptime` replaces it). `value` must be a comptime `Int`
     /// expression; the constant is usable as a value-parameter argument and as an
     /// ordinary `Int` at runtime.
-    Comptime { name: String, value: Expr },
+    Comptime {
+        name: String,
+        /// Retained for generic compile-time aliases. Ordinary constants leave
+        /// this empty.
+        type_params: Vec<TypeParam>,
+        /// Optional declared result/value type.
+        ty: Option<Type>,
+        /// Optional availability constraint, including its diagnostic message.
+        where_clause: Option<Expr>,
+        value: Expr,
+    },
     /// `comptime if cond: ... (elif cond: ...)* (else: ...)?` — a **compile-time
     /// conditional**. Compile-time elaboration selects one branch before semantic
     /// checking, so discarded branches do not need to type-check.
@@ -1354,7 +1375,10 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
         fn ty(&mut self, ty: &mut Type) {
             match ty {
                 Type::Named(_, args) => self.param_args(args),
-                Type::Assoc { base, .. } => self.ty(base),
+                Type::Assoc { base, args, .. } => {
+                    self.ty(base);
+                    self.param_args(args);
+                }
                 Type::IndexedProjection { base, index } => {
                     self.ty(base);
                     self.expr(index);
@@ -1434,12 +1458,27 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                 }
                 StmtKind::RefDecl { value, .. }
                 | StmtKind::Assign { value, .. }
-                | StmtKind::Comptime { value, .. }
                 | StmtKind::Raise(value)
                 | StmtKind::Return(Some(value))
                 | StmtKind::Expr(value) => self.expr(value),
                 StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
                     self.expr(place);
+                    self.expr(value);
+                }
+                StmtKind::Comptime {
+                    type_params,
+                    ty,
+                    where_clause,
+                    value,
+                    ..
+                } => {
+                    self.type_params(type_params);
+                    if let Some(ty) = ty {
+                        self.ty(ty);
+                    }
+                    if let Some(condition) = where_clause {
+                        self.expr(condition);
+                    }
                     self.expr(value);
                 }
                 StmtKind::Unpack { targets, value, .. } => {
@@ -1534,16 +1573,27 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     decorators,
                     conformance_conditions,
                     callable_conformance,
+                    where_clause,
                     ..
                 } => {
                     self.type_params(type_params);
                     if let Some(callable) = callable_conformance {
                         self.ty(callable);
                     }
+                    if let Some(condition) = where_clause {
+                        self.expr(condition);
+                    }
                     for field in fields {
                         self.ty(&mut field.ty);
                     }
                     for member in associated {
+                        self.type_params(&mut member.params);
+                        if let Some(ty) = &mut member.ty {
+                            self.ty(ty);
+                        }
+                        if let Some(condition) = &mut member.where_clause {
+                            self.expr(condition);
+                        }
                         self.expr(&mut member.value);
                     }
                     for (_, condition) in conformance_conditions {
@@ -1602,7 +1652,11 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                         }
                     }
                     for member in comptime_members {
+                        self.type_params(&mut member.params);
                         self.ty(&mut member.ty);
+                        if let Some(condition) = &mut member.where_clause {
+                            self.expr(condition);
+                        }
                     }
                 }
                 StmtKind::Return(None)
@@ -1789,8 +1843,10 @@ fn stamp_expr(expr: &mut Expr, source: &str) {
 
 fn stamp_param_args(args: &mut [ParamArg], source: &str) {
     for arg in args {
-        if let ParamArg::Value(value) = arg {
-            stamp_expr(value, source);
+        match arg {
+            ParamArg::Type(ty) => stamp_type(ty, source),
+            ParamArg::Value(value) => stamp_expr(value, source),
+            ParamArg::Named { value, .. } => stamp_param_args(std::slice::from_mut(value), source),
         }
     }
 }
@@ -1818,7 +1874,10 @@ fn stamp_type_params(params: &mut [TypeParam], source: &str) {
 fn stamp_type(ty: &mut Type, source: &str) {
     match ty {
         Type::Named(_, args) => stamp_param_args(args, source),
-        Type::Assoc { base, .. } => stamp_type(base, source),
+        Type::Assoc { base, args, .. } => {
+            stamp_type(base, source);
+            stamp_param_args(args, source);
+        }
         Type::IndexedProjection { base, index } => {
             stamp_type(base, source);
             stamp_expr(index, source);
@@ -1898,12 +1957,27 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
         }
         StmtKind::RefDecl { value, .. }
         | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
         | StmtKind::Raise(value)
         | StmtKind::Return(Some(value))
         | StmtKind::Expr(value) => stamp_expr(value, source),
         StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
             stamp_expr(place, source);
+            stamp_expr(value, source);
+        }
+        StmtKind::Comptime {
+            type_params,
+            ty,
+            where_clause,
+            value,
+            ..
+        } => {
+            stamp_type_params(type_params, source);
+            if let Some(ty) = ty {
+                stamp_type(ty, source);
+            }
+            if let Some(condition) = where_clause {
+                stamp_expr(condition, source);
+            }
             stamp_expr(value, source);
         }
         StmtKind::Unpack { targets, value, .. } => {
@@ -1960,6 +2034,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             params,
             raises_type,
             ret,
+            where_clause,
             body,
             decorators,
             ..
@@ -1974,6 +2049,9 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             if let Some(ret) = ret {
                 stamp_type(ret, source);
             }
+            if let Some(condition) = where_clause {
+                stamp_expr(condition, source);
+            }
             stamp_decorators(decorators, source);
             stamp_block(body, source);
         }
@@ -1985,11 +2063,15 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             associated,
             methods,
             decorators,
+            where_clause,
             ..
         } => {
             stamp_type_params(type_params, source);
             if let Some(callable) = callable_conformance {
                 stamp_type(callable, source);
+            }
+            if let Some(condition) = where_clause {
+                stamp_expr(condition, source);
             }
             for (_, condition) in conformance_conditions {
                 stamp_expr(condition, source);
@@ -1998,6 +2080,13 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
                 stamp_type(&mut field.ty, source);
             }
             for member in associated {
+                stamp_type_params(&mut member.params, source);
+                if let Some(ty) = &mut member.ty {
+                    stamp_type(ty, source);
+                }
+                if let Some(condition) = &mut member.where_clause {
+                    stamp_expr(condition, source);
+                }
                 stamp_expr(&mut member.value, source);
             }
             stamp_decorators(decorators, source);
@@ -2053,7 +2142,11 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
                 }
             }
             for member in comptime_members {
+                stamp_type_params(&mut member.params, source);
                 stamp_type(&mut member.ty, source);
+                if let Some(condition) = &mut member.where_clause {
+                    stamp_expr(condition, source);
+                }
             }
         }
         StmtKind::Return(None)

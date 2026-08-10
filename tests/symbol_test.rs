@@ -33,6 +33,52 @@ fn free_function_overloads_get_signature_qualified_names() {
 }
 
 #[test]
+fn keyword_variadic_role_is_part_of_callable_identity() {
+    let source = "def route(value: Int) -> Int:\n    return 1\n\ndef route(var **options: Int) -> Int:\n    return 2\n\ndef main():\n    print(route(7))\n    print(route(answer=7))\n";
+    let names = lowered_names(source);
+    assert!(names.contains("route$ov$Int"), "{names:?}");
+    assert!(names.contains("route$ov$$kwv$Int"), "{names:?}");
+
+    let program = parse(source).expect("parse error");
+    let targets = resolve_overload_targets(&program).expect("check error");
+    for target in targets
+        .values()
+        .filter(|target| target.starts_with("route$ov$"))
+    {
+        assert!(
+            names.contains(target),
+            "missing lowered target {target}: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn generic_keyword_variadic_role_is_part_of_callable_identity() {
+    let source = "def route[T: Copyable & Movable](value: T) -> Int:\n    return 1\n\ndef route[T: Copyable & Movable](var **options: T) -> Int:\n    return 2\n\ndef main():\n    print(route(7))\n    print(route(answer=7))\n";
+    let names = lowered_names(source);
+    let route_names: HashSet<_> = names
+        .iter()
+        .filter(|name| name.starts_with("route$ov$"))
+        .cloned()
+        .collect();
+    assert_eq!(route_names.len(), 2, "{route_names:?}");
+    assert!(
+        route_names.iter().any(|name| name.contains("$kwv$")),
+        "{route_names:?}"
+    );
+
+    let program = parse(source).expect("parse error");
+    let targets = resolve_overload_targets(&program).expect("check error");
+    let route_targets: HashSet<_> = targets
+        .values()
+        .filter(|target| target.starts_with("route$ov$"))
+        .cloned()
+        .collect();
+    assert_eq!(route_targets.len(), 2, "{route_targets:?}");
+    assert!(route_targets.iter().all(|target| names.contains(target)));
+}
+
+#[test]
 fn non_overloaded_def_keeps_its_source_name() {
     let names = lowered_names("def solo(x: Int) -> Int:\n    return x\n");
     assert!(names.contains("solo"), "{names:?}");

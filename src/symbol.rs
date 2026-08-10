@@ -53,6 +53,10 @@ impl TypeKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignatureKey {
     types: Vec<TypeKey>,
+    /// The homogeneous keyword-variadic collector type, kept outside the
+    /// positional sequence so `def f(x: T)` and `def f(var **x: T)` cannot
+    /// collide after lowering.
+    kw_variadic: Option<TypeKey>,
     /// Keyword-only parameter names. Overloads whose parameter types agree
     /// may still differ by keyword-only names (`s[byte=i]` vs
     /// `s[codepoint=i]`), so the names are part of callable identity; the
@@ -65,7 +69,15 @@ impl SignatureKey {
     /// The signature of a declared `def`/method parameter list.
     pub fn from_ast_params(params: &[FnParam]) -> SignatureKey {
         SignatureKey {
-            types: params.iter().map(|p| TypeKey::from_ast(&p.ty)).collect(),
+            types: params
+                .iter()
+                .filter(|parameter| parameter.kind != crate::ast::ParamKind::KwVariadic)
+                .map(|parameter| TypeKey::from_ast(&parameter.ty))
+                .collect(),
+            kw_variadic: params
+                .iter()
+                .find(|parameter| parameter.kind == crate::ast::ParamKind::KwVariadic)
+                .map(|parameter| TypeKey::from_ast(&parameter.ty)),
             keywords: Vec::new(),
         }
     }
@@ -74,8 +86,15 @@ impl SignatureKey {
     pub fn from_tys<'a>(tys: impl IntoIterator<Item = &'a Ty>) -> SignatureKey {
         SignatureKey {
             types: tys.into_iter().map(TypeKey::from_ty).collect(),
+            kw_variadic: None,
             keywords: Vec::new(),
         }
+    }
+
+    /// Attach the homogeneous keyword-variadic collector to callable identity.
+    pub fn with_kw_variadic(mut self, ty: Option<&Ty>) -> SignatureKey {
+        self.kw_variadic = ty.map(TypeKey::from_ty);
+        self
     }
 
     /// Attach the keyword-only parameter names to this signature's identity.
@@ -91,11 +110,16 @@ impl SignatureKey {
             .map(|k| k.0.as_str())
             .collect::<Vec<_>>()
             .join("$");
-        if self.keywords.is_empty() {
-            format!("{OV_SEP}{parts}")
-        } else {
-            format!("{OV_SEP}{parts}$kw${}", self.keywords.join("$"))
+        let mut suffix = format!("{OV_SEP}{parts}");
+        if let Some(keyword_variadic) = &self.kw_variadic {
+            suffix.push_str("$kwv$");
+            suffix.push_str(&keyword_variadic.0);
         }
+        if !self.keywords.is_empty() {
+            suffix.push_str("$kw$");
+            suffix.push_str(&self.keywords.join("$"));
+        }
+        suffix
     }
 
     fn with_receiver(&self, convention: Option<ArgConvention>) -> SignatureKey {
@@ -111,6 +135,7 @@ impl SignatureKey {
         parts.extend(self.types.iter().cloned());
         SignatureKey {
             types: parts,
+            kw_variadic: self.kw_variadic.clone(),
             keywords: self.keywords.clone(),
         }
     }
@@ -159,6 +184,7 @@ pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
         Some(convention),
         &SignatureKey {
             types: Vec::new(),
+            kw_variadic: None,
             keywords: Vec::new(),
         },
     )
@@ -672,8 +698,13 @@ fn signature_from_ast(
     SignatureKey {
         types: params
             .iter()
+            .filter(|param| param.kind != crate::ast::ParamKind::KwVariadic)
             .map(|param| TypeKey(sanitize(&ast_raw(&param.ty, comptimes, &type_bounds))))
             .collect(),
+        kw_variadic: params
+            .iter()
+            .find(|param| param.kind == crate::ast::ParamKind::KwVariadic)
+            .map(|param| TypeKey(sanitize(&ast_raw(&param.ty, comptimes, &type_bounds)))),
         keywords: Vec::new(),
     }
 }

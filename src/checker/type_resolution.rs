@@ -54,16 +54,29 @@ impl Checker {
                             .unwrap_or_else(|| format!("arg{index}")),
                         ty: parameter.ty.clone(),
                         default: None,
-                        kind: crate::ast::ParamKind::Regular,
+                        kind: parameter.kind,
                         convention: parameter.convention,
                         origin: parameter.origin.clone(),
                     })
                     .collect();
-                let regular: Vec<&FnParam> = function_params.iter().collect();
-                let parameter_types = function_params
+                let regular: Vec<&FnParam> = function_params
+                    .iter()
+                    .filter(|parameter| parameter.kind == crate::ast::ParamKind::Regular)
+                    .collect();
+                let parameter_types = regular
                     .iter()
                     .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
                     .collect::<Result<Vec<_>, _>>()?;
+                let variadic = function_params
+                    .iter()
+                    .find(|parameter| parameter.kind == crate::ast::ParamKind::Variadic)
+                    .map(|parameter| self.resolve_ty_from_anno(&parameter.ty).map(Box::new))
+                    .transpose()?;
+                let kw_variadic = function_params
+                    .iter()
+                    .find(|parameter| parameter.kind == crate::ast::ParamKind::KwVariadic)
+                    .map(|parameter| self.resolve_ty_from_anno(&parameter.ty).map(Box::new))
+                    .transpose()?;
                 let (return_type, ref_return) = match &**ret {
                     SourceType::Ref { referent, origin } => (
                         self.resolve_ty_from_anno(referent)?,
@@ -84,12 +97,13 @@ impl Checker {
                     params: parameter_types,
                     names: function_params
                         .iter()
+                        .filter(|parameter| parameter.kind == crate::ast::ParamKind::Regular)
                         .map(|parameter| parameter.name.clone())
                         .collect(),
                     ret: Box::new(return_type),
-                    required: vec![true; params.len()],
-                    variadic: None,
-                    kw_variadic: None,
+                    required: vec![true; regular.len()],
+                    variadic,
+                    kw_variadic,
                     positional_only: None,
                     keyword_only: None,
                     raises: *raises,
@@ -103,6 +117,7 @@ impl Checker {
                     },
                     conventions: function_params
                         .iter()
+                        .filter(|parameter| parameter.kind == crate::ast::ParamKind::Regular)
                         .map(|parameter| parameter.convention)
                         .collect(),
                     ref_params: Box::new(
@@ -842,6 +857,26 @@ impl Checker {
                             object_type: base.to_string(),
                             member: name.to_string(),
                         })?;
+                if let Some(constraint) = info.associated_constraints.get(name) {
+                    let environment: HashMap<&str, &TyArg> = info
+                        .decls
+                        .iter()
+                        .zip(targs)
+                        .map(|(declaration, argument)| {
+                            (declaration.name().trim_start_matches('*'), argument)
+                        })
+                        .collect();
+                    if !environment
+                        .values()
+                        .any(|argument| tyarg_is_symbolic(argument))
+                    {
+                        self.validate_constraint_in_environment(
+                            &format!("{base}.{name}"),
+                            constraint,
+                            &environment,
+                        )?;
+                    }
+                }
                 let CtValue::Type(ty) = value else {
                     return Err(TypeError::NoSuchAssociatedType {
                         object_type: base.to_string(),
@@ -929,6 +964,33 @@ impl Checker {
                 TyArg::Origin(origin) => {
                     origins.insert((member.param_base + index) as u32, origin.clone());
                 }
+            }
+        }
+        if let Some(constraint) = &member.availability {
+            let mut environment: HashMap<&str, &TyArg> = struct_decls
+                .iter()
+                .zip(struct_targs)
+                .map(|(declaration, argument)| {
+                    (declaration.name().trim_start_matches('*'), argument)
+                })
+                .collect();
+            for (parameter, argument) in member
+                .params
+                .iter()
+                .filter(|parameter| !parameter.infer_only)
+                .zip(args)
+            {
+                environment.insert(parameter.name.trim_start_matches('*'), argument);
+            }
+            if !environment
+                .values()
+                .any(|argument| tyarg_is_symbolic(argument))
+            {
+                self.validate_constraint_in_environment(
+                    &format!("{base}.{name}"),
+                    constraint,
+                    &environment,
+                )?;
             }
         }
         let bindings = AssocBindings {
@@ -1534,5 +1596,65 @@ impl Checker {
             .rev()
             .find_map(|scope| scope.get(name))
             .cloned()
+    }
+}
+
+fn tyarg_is_symbolic(argument: &TyArg) -> bool {
+    match argument {
+        TyArg::Val(CtValue::Param(_)) => true,
+        TyArg::Val(CtValue::Tuple(values) | CtValue::List(values)) => values
+            .iter()
+            .any(|value| matches!(value, CtValue::Param(_))),
+        TyArg::Val(_) => false,
+        TyArg::Origin(crate::origin::Origin::Param(_) | crate::origin::Origin::SelfParam) => true,
+        TyArg::Origin(_) => false,
+        TyArg::Ty(ty) => type_is_symbolic(ty),
+    }
+}
+
+fn type_is_symbolic(ty: &Ty) -> bool {
+    match ty {
+        Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType | Ty::Infer => true,
+        Ty::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
+        Ty::Simd { .. }
+        | Ty::Int
+        | Ty::UInt
+        | Ty::Bool
+        | Ty::StringLiteral
+        | Ty::Float64
+        | Ty::None
+        | Ty::Never
+        | Ty::IntLiteral
+        | Ty::FloatLiteral
+        | Ty::Dtype
+        | Ty::Error => false,
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        } => {
+            params.iter().any(type_is_symbolic)
+                || type_is_symbolic(ret)
+                || variadic.as_deref().is_some_and(type_is_symbolic)
+                || kw_variadic.as_deref().is_some_and(type_is_symbolic)
+                || error.as_deref().is_some_and(type_is_symbolic)
+        }
+        Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
+            types.iter().any(type_is_symbolic)
+        }
+        Ty::ComptimeList(element) | Ty::VariadicPack(element) => type_is_symbolic(element),
+        Ty::Pointer { element, .. } => type_is_symbolic(element),
+        Ty::Ref(reference) => type_is_symbolic(&reference.referent),
     }
 }

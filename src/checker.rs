@@ -57,14 +57,13 @@ pub(crate) fn callable_contract_target(ty: &Ty) -> Option<String> {
         } => (params, variadic, kw_variadic),
         _ => return None,
     };
-    let signature_types = params
-        .iter()
-        .chain(variadic.iter().map(Box::as_ref))
-        .chain(kw_variadic.iter().map(Box::as_ref));
+    let signature_types = params.iter().chain(variadic.iter().map(Box::as_ref));
+    let signature = crate::symbol::SignatureKey::from_tys(signature_types)
+        .with_kw_variadic(kw_variadic.as_deref());
     Some(crate::symbol::method_symbol(
         "__trait_dispatch",
         "__call__",
-        &crate::symbol::SignatureKey::from_tys(signature_types),
+        &signature,
     ))
 }
 
@@ -355,6 +354,7 @@ impl ConformanceOracle {
                     refines: refines.clone(),
                     methods: HashMap::new(),
                     comptime_members: HashMap::new(),
+                    comptime_constraints: HashMap::new(),
                 },
             );
         }
@@ -371,6 +371,7 @@ impl ConformanceOracle {
                 type_params,
                 conforms,
                 conformance_conditions,
+                where_clause,
                 methods,
                 fieldwise_init,
                 ..
@@ -379,7 +380,18 @@ impl ConformanceOracle {
                 continue;
             };
 
-            let decls = checker.classify_params(type_params)?;
+            let mut decls = checker.classify_params(type_params)?;
+            if let Some(condition) = where_clause {
+                let constraint = checker.compile_where_clause(condition)?;
+                if let Some(last) = decls.last_mut() {
+                    match last {
+                        ParamDecl::Type { constraints, .. }
+                        | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
+                    }
+                } else if type_params.is_empty() {
+                    checker.validate_declaration_constraint(name, &constraint)?;
+                }
+            }
             let mut method_names: HashMap<String, Vec<MethodSig>> = HashMap::new();
             for method in methods {
                 method_names
@@ -397,6 +409,7 @@ impl ConformanceOracle {
                     conformance_conditions: conformance_conditions.iter().cloned().collect(),
                     fields: Vec::new(),
                     associated: HashMap::new(),
+                    associated_constraints: HashMap::new(),
                     parameterized_associated: HashMap::new(),
                     methods: method_names,
                     fieldwise_init: *fieldwise_init,
@@ -1724,6 +1737,12 @@ fn generic_constraint_implies(
     premise: &GenericConstraint,
     consequence: &GenericConstraint,
 ) -> bool {
+    if let GenericConstraint::WithMessage(condition, _) = premise {
+        return generic_constraint_implies(condition, consequence);
+    }
+    if let GenericConstraint::WithMessage(condition, _) = consequence {
+        return generic_constraint_implies(premise, condition);
+    }
     if premise == consequence || matches!(consequence, GenericConstraint::Bool(true)) {
         return true;
     }
@@ -1762,6 +1781,9 @@ struct StructInfo {
     /// Associated compile-time facts declared by `comptime NAME = ...` in the
     /// struct body. These live on the type, not on runtime instances.
     associated: HashMap<String, CtValue>,
+    /// Availability constraints for monomorphic associated members. They are
+    /// evaluated against the enclosing struct arguments at projection time.
+    associated_constraints: HashMap<String, GenericConstraint>,
     /// Parameterized associated types declared by `comptime NAME[params] = body`.
     /// Unlike `associated`, the body cannot be evaluated eagerly (it references
     /// the member's own parameters); it is lowered once to a symbolic template
@@ -1784,6 +1806,9 @@ struct StructInfo {
 struct ParameterizedMember {
     params: Vec<crate::ast::TypeParam>,
     template: Ty,
+    /// Constraint evaluated against both enclosing struct arguments and the
+    /// member application's explicit arguments.
+    availability: Option<GenericConstraint>,
     /// The index the member's parameters started at in `enclosing_type_params`
     /// while the template was lowered. An origin parameter at member position `k`
     /// therefore appears in the template as `Origin::Param(param_base + k)`, which
@@ -1796,6 +1821,7 @@ struct ParameterizedMember {
 /// templates for later concrete substitution.
 type StructAssociatedMembers = (
     HashMap<String, CtValue>,
+    HashMap<String, GenericConstraint>,
     HashMap<String, ParameterizedMember>,
 );
 
@@ -1806,6 +1832,15 @@ struct DependentIndexAccessorFamily {
 }
 
 fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<ParamDecl>, Vec<Ty>) {
+    let identity_constraints = |constraints: &[GenericConstraint]| {
+        constraints
+            .iter()
+            .map(|constraint| match constraint {
+                GenericConstraint::WithMessage(condition, _) => (**condition).clone(),
+                constraint => constraint.clone(),
+            })
+            .collect()
+    };
     let mut subst = HashMap::new();
     let mut value_names = HashMap::new();
     let canonical_decls = decls
@@ -1846,7 +1881,7 @@ fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<Param
                     default: None,
                     infer_only: false,
                     variadic: *variadic,
-                    constraints: constraints.clone(),
+                    constraints: identity_constraints(constraints),
                 }
             }
             ParamDecl::Value {
@@ -1873,7 +1908,7 @@ fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<Param
                     callable_default: None,
                     infer_only: false,
                     variadic: *variadic,
-                    constraints: constraints.clone(),
+                    constraints: identity_constraints(constraints),
                 }
             }
         })
@@ -1885,6 +1920,32 @@ fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<Param
     (canonical_decls, canonical_params)
 }
 
+fn canonical_generic_parameter_shape(
+    decls: &[ParamDecl],
+    params: &[Ty],
+    variadic: Option<&Ty>,
+    kw_variadic: Option<&Ty>,
+) -> (Vec<ParamDecl>, Vec<Ty>, Option<Ty>, Option<Ty>) {
+    let mut signature = params.to_vec();
+    let variadic_index = variadic.map(|parameter| {
+        let index = signature.len();
+        signature.push(parameter.clone());
+        index
+    });
+    let kw_variadic_index = kw_variadic.map(|parameter| {
+        let index = signature.len();
+        signature.push(parameter.clone());
+        index
+    });
+    let (decls, signature) = canonical_generic_signature(decls, &signature);
+    (
+        decls,
+        signature[..params.len()].to_vec(),
+        variadic_index.map(|index| signature[index].clone()),
+        kw_variadic_index.map(|index| signature[index].clone()),
+    )
+}
+
 /// The checked signature of a trait: required methods plus associated
 /// compile-time facts. A method requirement's signature may mention
 /// `Ty::SelfType` (the conforming type).
@@ -1892,6 +1953,7 @@ struct TraitInfo {
     refines: Vec<String>,
     methods: HashMap<String, Vec<MethodSig>>,
     comptime_members: HashMap<String, CtMemberReq>,
+    comptime_constraints: HashMap<String, GenericConstraint>,
 }
 
 fn callable_parameter_count(ty: &Ty) -> Option<usize> {
@@ -1911,6 +1973,9 @@ fn guaranteed_conformance_atoms(
     output: &mut Vec<(String, String)>,
 ) {
     match constraint {
+        GenericConstraint::WithMessage(condition, _) => {
+            guaranteed_conformance_atoms(condition, output);
+        }
         GenericConstraint::Conforms { param, trait_name } => {
             let atom = (param.clone(), trait_name.clone());
             if !output.contains(&atom) {
@@ -1981,19 +2046,8 @@ fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
                 ..
             },
         ) => {
-            let aparams: Vec<_> = ap
-                .iter()
-                .chain(av.iter().map(Box::as_ref))
-                .chain(akw.iter().map(Box::as_ref))
-                .cloned()
-                .collect();
-            let bparams: Vec<_> = bp
-                .iter()
-                .chain(bv.iter().map(Box::as_ref))
-                .chain(bkw.iter().map(Box::as_ref))
-                .cloned()
-                .collect();
-            canonical_generic_signature(ad, &aparams) == canonical_generic_signature(bd, &bparams)
+            canonical_generic_parameter_shape(ad, ap, av.as_deref(), akw.as_deref())
+                == canonical_generic_parameter_shape(bd, bp, bv.as_deref(), bkw.as_deref())
         }
         _ => false,
     }
@@ -2184,12 +2238,10 @@ fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
     let signature_types: Vec<_> = params
         .iter()
         .chain(variadic.iter().map(Box::as_ref))
-        .chain(kw_variadic.iter().map(Box::as_ref))
         .collect();
-    Some(crate::symbol::function_symbol(
-        name,
-        &crate::symbol::SignatureKey::from_tys(signature_types),
-    ))
+    let signature = crate::symbol::SignatureKey::from_tys(signature_types)
+        .with_kw_variadic(kw_variadic.as_deref());
+    Some(crate::symbol::function_symbol(name, &signature))
 }
 
 /// The lowered symbol of an overloaded method/constructor resolution, likewise
@@ -2199,14 +2251,14 @@ fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String
     let signature_types = sig
         .params
         .iter()
-        .chain(sig.variadic.iter().map(Box::as_ref))
-        .chain(sig.kw_variadic.iter().map(Box::as_ref));
+        .chain(sig.variadic.iter().map(Box::as_ref));
     let keyword_names = match sig.keyword_only {
         Some(index) => sig.names[index..].to_vec(),
         None => Vec::new(),
     };
-    let signature =
-        crate::symbol::SignatureKey::from_tys(signature_types).with_keyword_names(keyword_names);
+    let signature = crate::symbol::SignatureKey::from_tys(signature_types)
+        .with_kw_variadic(sig.kw_variadic.as_deref())
+        .with_keyword_names(keyword_names);
     if method == "__iter__" {
         crate::symbol::iterator_method_symbol(type_name, sig.self_convention, &signature)
     } else {
@@ -2436,6 +2488,10 @@ struct CallableSourceParam {
 struct CallableOriginSignature {
     origins: Vec<CallableOriginParam>,
     source: Vec<CallableSourceParam>,
+    /// A declaration constraint whose only binders were erased origin
+    /// metadata. It is checked after call-origin solving recovers the inferred
+    /// Bool mutability arguments.
+    availability: Option<GenericConstraint>,
 }
 
 /// The raw-slot operations on `UnsafePointer` are an implementation privilege,
@@ -2480,6 +2536,7 @@ struct StructDeclaration<'a> {
     conforms: &'a [String],
     callable_conformance: &'a Option<SourceType>,
     conformance_conditions: &'a [(String, Expr)],
+    where_clause: &'a Option<Expr>,
     fields: &'a [crate::ast::Param],
     associated: &'a [StructComptime],
     methods: &'a [Method],
@@ -2496,6 +2553,7 @@ fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         conforms,
         callable_conformance,
         conformance_conditions,
+        where_clause,
         fields,
         associated,
         methods,
@@ -2512,6 +2570,7 @@ fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         conforms,
         callable_conformance,
         conformance_conditions,
+        where_clause,
         fields,
         associated,
         methods,
@@ -2998,6 +3057,34 @@ mod dependent_callable_signature_tests {
         }
     }
 
+    fn callable_with_parameter_role(role: crate::ast::ParamKind) -> Ty {
+        let mut callable = indexed_callable("index", 0);
+        let Ty::GenericFunc {
+            params,
+            names,
+            required,
+            variadic,
+            kw_variadic,
+            conventions,
+            ref_params,
+            ..
+        } = &mut callable
+        else {
+            unreachable!("indexed_callable constructs a generic function")
+        };
+        let parameter = params.pop().expect("one regular parameter");
+        names.clear();
+        required.clear();
+        conventions.clear();
+        ref_params.clear();
+        match role {
+            crate::ast::ParamKind::Regular => params.push(parameter),
+            crate::ast::ParamKind::Variadic => *variadic = Some(Box::new(parameter)),
+            crate::ast::ParamKind::KwVariadic => *kw_variadic = Some(Box::new(parameter)),
+        }
+        callable
+    }
+
     #[test]
     fn dependent_callable_binders_are_alpha_equivalent() {
         assert!(same_callable_signature(
@@ -3008,5 +3095,15 @@ mod dependent_callable_signature_tests {
             &indexed_callable("index", 0),
             &indexed_callable("i", 1),
         ));
+    }
+
+    #[test]
+    fn generic_parameter_roles_are_not_redeclaration_equivalent() {
+        let regular = callable_with_parameter_role(crate::ast::ParamKind::Regular);
+        let variadic = callable_with_parameter_role(crate::ast::ParamKind::Variadic);
+        let kw_variadic = callable_with_parameter_role(crate::ast::ParamKind::KwVariadic);
+        assert!(!same_callable_signature(&regular, &variadic));
+        assert!(!same_callable_signature(&regular, &kw_variadic));
+        assert!(!same_callable_signature(&variadic, &kw_variadic));
     }
 }

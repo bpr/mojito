@@ -4,7 +4,57 @@
 
 use super::*;
 
+type InferredCall = (Ty, usize, Option<Ty>, HashMap<usize, bool>);
+
 impl Checker {
+    fn erased_origin_constraint_environment(
+        signature: &CallableOriginSignature,
+        bindings: &HashMap<usize, bool>,
+    ) -> Vec<(String, TyArg)> {
+        bindings
+            .iter()
+            .filter_map(|(index, value)| {
+                signature
+                    .source
+                    .get(*index)
+                    .map(|parameter| (parameter.name.clone(), TyArg::Val(CtValue::Bool(*value))))
+            })
+            .collect()
+    }
+
+    fn erased_origin_constraint_applies(
+        &self,
+        signature: &CallableOriginSignature,
+        bindings: &HashMap<usize, bool>,
+    ) -> bool {
+        let Some(constraint) = &signature.availability else {
+            return true;
+        };
+        let owned = Self::erased_origin_constraint_environment(signature, bindings);
+        let environment = owned
+            .iter()
+            .map(|(name, value)| (name.as_str(), value))
+            .collect();
+        self.eval_generic_constraint(constraint, &environment)
+    }
+
+    fn validate_erased_origin_constraint(
+        &self,
+        name: &str,
+        signature: &CallableOriginSignature,
+        bindings: &HashMap<usize, bool>,
+    ) -> Result<(), TypeError> {
+        let Some(constraint) = &signature.availability else {
+            return Ok(());
+        };
+        let owned = Self::erased_origin_constraint_environment(signature, bindings);
+        let environment = owned
+            .iter()
+            .map(|(name, value)| (name.as_str(), value))
+            .collect();
+        self.validate_constraint_in_environment(name, constraint, &environment)
+    }
+
     /// Record the conversion plumbing that makes a builtin string-producing
     /// call yield the nominal `String` struct: route the call itself to the
     /// `"String"` conversion builtin (a `ResolveCallable` adjustment) and
@@ -234,6 +284,7 @@ impl Checker {
         let origin_signatures = self.lookup_callable_origins(name).unwrap_or_default();
         if let Ty::Overload(candidates) = ty {
             let mut matches = Vec::new();
+            let mut availability_failures = Vec::new();
             for (index, candidate) in candidates.iter().enumerate() {
                 let saved_conversions = self.implicit_conversions.borrow().clone();
                 let saved_invalidations = self.interior_invalidations.borrow().clone();
@@ -243,16 +294,79 @@ impl Checker {
                     param_args,
                     candidate.clone(),
                     origin_signatures.get(index),
-                ) && let Ok((ret, score, error)) = self.infer_callable_ty(
-                    &span,
-                    name,
-                    prepared,
-                    &ordinary_param_args,
-                    args,
-                    kwargs,
-                ) && let Some(target) = callable_lowered_name(name, candidate)
-                {
-                    matches.push((ret, score, target, error));
+                ) {
+                    match self.infer_callable_ty(
+                        &span,
+                        name,
+                        prepared.clone(),
+                        &ordinary_param_args,
+                        args,
+                        kwargs,
+                    ) {
+                        Ok((ret, score, error, bool_bindings)) => {
+                            if let Some(target) = callable_lowered_name(name, candidate) {
+                                match origin_signatures.get(index) {
+                                    Some(signature)
+                                        if !self.erased_origin_constraint_applies(
+                                            signature,
+                                            &bool_bindings,
+                                        ) =>
+                                    {
+                                        availability_failures.push(
+                                            signature.availability.as_ref().and_then(
+                                                |constraint| match constraint {
+                                                    GenericConstraint::WithMessage(_, message) => {
+                                                        Some(format!(
+                                                            "constraint failed: {message}"
+                                                        ))
+                                                    }
+                                                    _ => None,
+                                                },
+                                            ),
+                                        );
+                                    }
+                                    _ => matches.push((ret, score, target, error)),
+                                }
+                            }
+                        }
+                        Err(TypeError::BadCall { reason, .. })
+                            if reason.starts_with("constraint failed: ")
+                                || reason.starts_with("generic constraint is not satisfied: ") =>
+                        {
+                            // Generic constraints are validated while solving type
+                            // arguments, before the final coercion and alias checks.
+                            // Probe the same candidate without those availability
+                            // predicates so only an otherwise call-compatible shape
+                            // can contribute a retained diagnostic.
+                            let mut unconstrained = prepared;
+                            if let Ty::GenericFunc { decls, .. } = &mut unconstrained {
+                                for decl in decls {
+                                    match decl {
+                                        ParamDecl::Type { constraints, .. }
+                                        | ParamDecl::Value { constraints, .. } => {
+                                            constraints.clear();
+                                        }
+                                    }
+                                }
+                            }
+                            if self
+                                .infer_callable_ty(
+                                    &span,
+                                    name,
+                                    unconstrained,
+                                    &ordinary_param_args,
+                                    args,
+                                    kwargs,
+                                )
+                                .is_ok()
+                            {
+                                availability_failures.push(
+                                    reason.starts_with("constraint failed: ").then_some(reason),
+                                );
+                            }
+                        }
+                        Err(_) => {}
+                    }
                 }
                 *self.implicit_conversions.borrow_mut() = saved_conversions;
                 *self.interior_invalidations.borrow_mut() = saved_invalidations;
@@ -317,7 +431,10 @@ impl Checker {
                 }
                 Err(OverloadSelect::NoMatch) => Err(TypeError::BadCall {
                     func: name.to_string(),
-                    reason: "no overload matches the supplied arguments".to_string(),
+                    reason: match availability_failures.as_slice() {
+                        [Some(reason)] => reason.clone(),
+                        _ => "no overload matches the supplied arguments".to_string(),
+                    },
                 }),
                 Err(OverloadSelect::Ambiguous) => Err(TypeError::BadCall {
                     func: name.to_string(),
@@ -347,8 +464,11 @@ impl Checker {
                 },
             );
         }
-        let (ret, _, error) =
+        let (ret, _, error, bool_bindings) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
+        if let Some(signature) = origin_signatures.first() {
+            self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
+        }
         // Replay the callee's loan-transfer effects against the actuals.
         self.apply_transfer_effects(name, None, args, &span)?;
         // A call through one of the current body's own callable parameters
@@ -411,7 +531,7 @@ impl Checker {
         param_args: &[crate::ast::ParamArg],
         args: &[Expr],
         kwargs: &[crate::ast::KwArg],
-    ) -> Result<(Ty, usize, Option<Ty>), TypeError> {
+    ) -> Result<InferredCall, TypeError> {
         let (
             params,
             names,
@@ -661,14 +781,15 @@ impl Checker {
         // Borrow check (mutable-XOR-shared), root-sensitive: within one call a
         // variable borrowed exclusively (`mut`/`ref`) or moved (`^`) may not be
         // borrowed again — mutably, shared, or moved.
-        let (effective_conventions, return_ref) = self.solve_call_origins(
-            &slots,
-            &conventions,
-            &ref_params,
-            ref_return.as_deref(),
-            args,
-            kwargs,
-        )?;
+        let (effective_conventions, return_ref, bool_bindings) = self
+            .solve_call_origins_with_bool_bindings(
+                &slots,
+                &conventions,
+                &ref_params,
+                ref_return.as_deref(),
+                args,
+                kwargs,
+            )?;
         let copied_reads = slots
             .iter()
             .enumerate()
@@ -701,6 +822,7 @@ impl Checker {
             result,
             overload_rank(score, variadic.is_some() || has_kw_collector, 0, false),
             error.map(|error| *error),
+            bool_bindings,
         ))
     }
 
@@ -715,7 +837,7 @@ impl Checker {
         param_args: &[crate::ast::ParamArg],
         args: &[Expr],
         kwargs: &[crate::ast::KwArg],
-    ) -> Result<(Ty, usize, Option<Ty>), TypeError> {
+    ) -> Result<InferredCall, TypeError> {
         let Ty::GenericFunc {
             decls,
             params,
@@ -893,14 +1015,15 @@ impl Checker {
                 )?;
             }
         }
-        let (effective_conventions, return_ref) = self.solve_call_origins(
-            &slots,
-            conventions,
-            ref_params,
-            ref_return.as_deref(),
-            args,
-            kwargs,
-        )?;
+        let (effective_conventions, return_ref, bool_bindings) = self
+            .solve_call_origins_with_bool_bindings(
+                &slots,
+                conventions,
+                ref_params,
+                ref_return.as_deref(),
+                args,
+                kwargs,
+            )?;
         let copied_reads = slots
             .iter()
             .enumerate()
@@ -945,6 +1068,7 @@ impl Checker {
                 true,
             ),
             error,
+            bool_bindings,
         ))
     }
 

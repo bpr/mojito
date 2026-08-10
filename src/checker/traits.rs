@@ -46,6 +46,7 @@ impl Checker {
             }
         }
         let mut ct_members = HashMap::new();
+        let mut ct_constraints = HashMap::new();
         for parent in refines {
             let inherited = self.traits.get(parent).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("trait '{parent}' was not registered"))
@@ -57,9 +58,27 @@ impl Checker {
                     ct_members.insert(member.clone(), requirement.clone());
                 }
             }
+            for (member, constraint) in &inherited.comptime_constraints {
+                ct_constraints
+                    .entry(member.clone())
+                    .or_insert_with(|| constraint.clone());
+            }
         }
         for member in comptime_members {
             let requirement = self.ct_member_req_from_anno(&member.params, &member.ty)?;
+            if let Some(condition) = &member.where_clause {
+                let constraint = self.compile_where_clause(condition)?;
+                if let Some(previous) =
+                    ct_constraints.insert(member.name.clone(), constraint.clone())
+                    && !generic_constraint_implies(&previous, &constraint)
+                    && !generic_constraint_implies(&constraint, &previous)
+                {
+                    return Err(TypeError::Unsupported(format!(
+                        "conflicting inherited constraints on associated member '{}'",
+                        member.name
+                    )));
+                }
+            }
             if let Some(existing) = ct_members.get_mut(&member.name) {
                 merge_associated_requirement(existing, &requirement, &member.name)?;
             } else {
@@ -105,7 +124,7 @@ impl Checker {
                 }
                 let mut decls = self.classify_params(&m.type_params)?;
                 if let Some(condition) = &m.where_clause {
-                    let constraint = self.compile_generic_constraint(condition)?;
+                    let constraint = self.compile_where_clause(condition)?;
                     let Some(last) = decls.last_mut() else {
                         return Err(TypeError::Unsupported(
                             "a where clause requires compile-time parameters".to_string(),
@@ -210,6 +229,7 @@ impl Checker {
                 refines: refines.to_vec(),
                 methods,
                 comptime_members: ct_members,
+                comptime_constraints: ct_constraints,
             },
         );
         Ok(())
@@ -330,6 +350,7 @@ impl Checker {
                     .collect(),
                 fields: Vec::new(),
                 associated: HashMap::new(),
+                associated_constraints: HashMap::new(),
                 parameterized_associated: HashMap::new(),
                 methods: HashMap::new(),
                 fieldwise_init: declaration.fieldwise_init,
@@ -391,10 +412,55 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
+        if let Some(condition) = declaration.where_clause {
+            let constraint = self.compile_where_clause(condition)?;
+            let has_constraint_binder = self
+                .structs
+                .get(name)
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation(format!(
+                        "struct '{name}' was not registered before applying its where clause"
+                    ))
+                })?
+                .decls
+                .last()
+                .is_some();
+            if !has_constraint_binder && declaration.type_params.is_empty() {
+                self.validate_declaration_constraint(name, &constraint)?;
+            }
+            let updated_decls = {
+                let info = self
+                    .structs
+                    .get_mut(name)
+                    .expect("struct existence checked above");
+                if let Some(last) = info.decls.last_mut() {
+                    match last {
+                        ParamDecl::Type { constraints, .. }
+                        | ParamDecl::Value { constraints, .. } => {
+                            constraints.push(constraint);
+                        }
+                    }
+                }
+                info.decls.clone()
+            };
+            self.generic_parameters.borrow_mut().insert(
+                crate::checked::GenericSite::Struct {
+                    module: declaration.module.clone(),
+                    declaration: name.to_string(),
+                },
+                updated_decls,
+            );
+        }
         let (_, saved) = self.enter_struct_scope(declaration)?;
         let resolved = self.resolve_struct_member_types(declaration);
         self.exit_struct_scope(saved);
-        let (fields, associated, parameterized_associated, callable_conformance) = resolved?;
+        let (
+            fields,
+            associated,
+            associated_constraints,
+            parameterized_associated,
+            callable_conformance,
+        ) = resolved?;
         if callable_conformance
             .as_ref()
             .is_some_and(|ty| !matches!(ty, Ty::Func { .. }))
@@ -409,6 +475,7 @@ impl Checker {
             .expect("struct shell is registered before member-type resolution");
         info.fields = fields;
         info.associated = associated;
+        info.associated_constraints = associated_constraints;
         info.parameterized_associated = parameterized_associated;
         info.callable_conformance = callable_conformance;
         Ok(())
@@ -462,7 +529,7 @@ impl Checker {
             );
             field_tys.push((f.name.clone(), ty));
         }
-        let (associated_values, parameterized_associated) =
+        let (associated_values, associated_constraints, parameterized_associated) =
             self.check_struct_associated(declaration.associated)?;
         let callable_conformance = declaration
             .callable_conformance
@@ -472,6 +539,7 @@ impl Checker {
         Ok((
             field_tys,
             associated_values,
+            associated_constraints,
             parameterized_associated,
             callable_conformance,
         ))
@@ -727,6 +795,16 @@ impl Checker {
         tr: &str,
         self_ty: &Ty,
     ) -> Result<(), TypeError> {
+        if let Some(condition) = self
+            .structs
+            .get(name)
+            .and_then(|info| info.conformance_conditions.get(tr))
+        {
+            // Validate the declaration shape even for builtin marker traits.
+            // Truth is evaluated at each concrete use, but a malformed
+            // `(condition, message)` tuple is always a declaration error.
+            self.compile_where_clause(condition)?;
+        }
         // The focused checker can recognize protocol bounds without linking the
         // implicit prelude, but a registered nominal trait is authoritative.
         // In production `Iterator`/`Iterable` are ordinary stdlib traits; the
@@ -746,7 +824,7 @@ impl Checker {
         let conformance_assumption = struct_info
             .conformance_conditions
             .get(tr)
-            .map(|condition| self.compile_generic_constraint(condition))
+            .map(|condition| self.compile_where_clause(condition))
             .transpose()?;
         for (mname, req_sigs) in &trait_info.methods {
             let got_sigs =
@@ -811,6 +889,36 @@ impl Checker {
             }
         }
         for (member, req) in &trait_info.comptime_members {
+            let witness_constraint = struct_info
+                .parameterized_associated
+                .get(member)
+                .and_then(|definition| definition.availability.as_ref())
+                .or_else(|| struct_info.associated_constraints.get(member));
+            if let Some(constraint) = witness_constraint
+                && !matches!(constraint, GenericConstraint::Bool(true))
+            {
+                let covered = conformance_assumption
+                    .as_ref()
+                    .is_some_and(|premise| generic_constraint_implies(premise, constraint))
+                    || trait_info
+                        .comptime_constraints
+                        .get(member)
+                        .is_some_and(|premise| generic_constraint_implies(premise, constraint));
+                if !covered {
+                    let reason = match constraint {
+                        GenericConstraint::WithMessage(_, message) => {
+                            format!("constraint failed: {message}")
+                        }
+                        _ => {
+                            format!("associated member constraint is not satisfied: {constraint:?}")
+                        }
+                    };
+                    return Err(TypeError::BadCall {
+                        func: format!("{name}.{member}"),
+                        reason,
+                    });
+                }
+            }
             // A parameterized associated type is stored separately and cannot be
             // eagerly evaluated. Its parameterization was validated at declaration;
             // require the definition's explicit parameter count to match the
@@ -1004,7 +1112,7 @@ impl Checker {
                     let Some(condition) = info.conformance_conditions.get(declared) else {
                         return true;
                     };
-                    let Ok(condition) = self.compile_generic_constraint(condition) else {
+                    let Ok(condition) = self.compile_where_clause(condition) else {
                         return false;
                     };
                     self.eval_constraint_under_assumption(
@@ -1186,7 +1294,7 @@ impl Checker {
                 let Some(condition) = info.conformance_conditions.get(declared) else {
                     return true;
                 };
-                let Ok(condition) = self.compile_generic_constraint(condition) else {
+                let Ok(condition) = self.compile_where_clause(condition) else {
                     return false;
                 };
                 let environment: HashMap<&str, &TyArg> = info
@@ -1216,6 +1324,12 @@ impl Checker {
     ) -> bool {
         use GenericConstraint::*;
         match constraint {
+            WithMessage(condition, _) => self.eval_constraint_under_assumption(
+                condition,
+                environment,
+                assumption,
+                visiting,
+            ),
             Conforms { param, trait_name } => environment
                 .get(param.as_str())
                 .is_some_and(|argument| match argument {
@@ -1461,6 +1575,20 @@ impl Checker {
         args: &HashMap<&str, &TyArg>,
     ) -> bool {
         match &expr.kind {
+            ExprKind::TupleLit(elements)
+                if matches!(
+                    elements.as_slice(),
+                    [
+                        _,
+                        Expr {
+                            kind: ExprKind::Str(_),
+                            ..
+                        }
+                    ]
+                ) =>
+            {
+                self.eval_conformance_predicate(&elements[0], args)
+            }
             ExprKind::Bool(value) => *value,
             ExprKind::TypeApply {
                 name,
@@ -1581,11 +1709,33 @@ impl Checker {
     /// prevents fieldwise synthesis, while operation traits name the operation
     /// promised by the bound.
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
-        let Ty::Struct(name, _) = ty else {
+        let Ty::Struct(name, arguments) = ty else {
             return builtin_trait_operation(tr)
                 .map(|operation| format!("missing required operation '{operation}'"));
         };
         let info = self.structs.get(name)?;
+        for declared in &info.conforms {
+            if declared != tr && !self.trait_refines(declared, tr) {
+                continue;
+            }
+            let Some(condition) = info.conformance_conditions.get(declared) else {
+                continue;
+            };
+            if self.eval_conformance_condition(info, arguments, condition) {
+                continue;
+            }
+            if let ExprKind::TupleLit(elements) = &condition.kind
+                && let [
+                    _,
+                    Expr {
+                        kind: ExprKind::Str(message),
+                        ..
+                    },
+                ] = elements.as_slice()
+            {
+                return Some(message.clone());
+            }
+        }
         let field_failure = |predicate: &dyn Fn(&Ty) -> bool| {
             info.fields
                 .iter()
@@ -2068,6 +2218,7 @@ struct SavedStructScope {
 type StructMemberTypes = (
     Vec<(String, Ty)>,
     HashMap<String, CtValue>,
+    HashMap<String, GenericConstraint>,
     HashMap<String, ParameterizedMember>,
     Option<Ty>,
 );

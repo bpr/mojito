@@ -1834,11 +1834,6 @@ impl VmBackend {
                     [start, stop, step] => (*start, *stop, *step),
                     _ => unreachable!("range arity checked above"),
                 };
-                if step == 0 {
-                    return Err(RuntimeError::TypeError(
-                        "range() step argument must not be zero".to_string(),
-                    ));
-                }
                 let limit = self.ctfe_fuel.unwrap_or(0);
                 let mut values = Vec::new();
                 while (step > 0 && current < stop) || (step < 0 && current > stop) {

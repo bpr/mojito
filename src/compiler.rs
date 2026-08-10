@@ -769,6 +769,9 @@ fn tuple_specialization_constraint_is_closed(
 ) -> bool {
     use crate::types::GenericConstraint;
     match constraint {
+        GenericConstraint::WithMessage(condition, _) => {
+            tuple_specialization_constraint_is_closed(condition, type_binders, value_binders)
+        }
         GenericConstraint::Conforms { param, .. }
         | GenericConstraint::ConformsPack { param, .. } => {
             type_binders.contains(param.trim_start_matches('*'))

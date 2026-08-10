@@ -761,7 +761,7 @@ impl Checker {
                 }
                 let callable = self.infer(callee)?;
                 let target = self.indirect_callable_target(&callable);
-                let (ret, _, error) = self.infer_callable_ty(
+                let (ret, _, error, _) = self.infer_callable_ty(
                     &expr.source_span(),
                     "<callable>",
                     callable.clone(),

@@ -122,13 +122,24 @@ impl Checker {
         associated: &[StructComptime],
     ) -> Result<StructAssociatedMembers, TypeError> {
         let mut out = HashMap::new();
+        let mut constraints = HashMap::new();
         let mut parameterized = HashMap::new();
         for member in associated {
             if out.contains_key(&member.name) || parameterized.contains_key(&member.name) {
                 return Err(TypeError::Redeclaration(member.name.clone()));
             }
+            if let Some(annotation) = &member.ty {
+                // Resolve and classify the annotation now even when the member's
+                // symbolic body cannot be checked until application. This keeps
+                // associated `comptime NAME: Type where ... = ...` declarations
+                // from silently discarding an invalid declared type.
+                self.ct_member_req_from_anno(&member.params, annotation)?;
+            }
             if member.params.is_empty() {
                 let value = self.eval_associated_ct(&member.value, &out)?;
+                if let Some(condition) = &member.where_clause {
+                    constraints.insert(member.name.clone(), self.compile_where_clause(condition)?);
+                }
                 out.insert(member.name.clone(), value);
             } else {
                 let param_base = self.enclosing_type_params.len();
@@ -138,12 +149,17 @@ impl Checker {
                     ParameterizedMember {
                         params: member.params.clone(),
                         template,
+                        availability: member
+                            .where_clause
+                            .as_ref()
+                            .map(|condition| self.compile_where_clause(condition))
+                            .transpose()?,
                         param_base,
                     },
                 );
             }
         }
-        Ok((out, parameterized))
+        Ok((out, constraints, parameterized))
     }
 
     /// Lower the body of a parameterized associated type to its symbolic template.
@@ -433,6 +449,30 @@ impl Checker {
         })
     }
 
+    /// Compile a declaration-level `where` clause, retaining the optional
+    /// diagnostic carried by current Mojo's `(condition, "message")` form.
+    /// Only the outer clause may carry a message; tuple expressions nested
+    /// inside a proposition remain unsupported constraint syntax.
+    pub(super) fn compile_where_clause(&self, expr: &Expr) -> Result<GenericConstraint, TypeError> {
+        let ExprKind::TupleLit(elements) = &expr.kind else {
+            return self.compile_generic_constraint(expr);
+        };
+        let [condition, message] = elements.as_slice() else {
+            return Err(TypeError::Unsupported(
+                "a diagnostic where clause must be `(condition, \"message\")`".to_string(),
+            ));
+        };
+        let ExprKind::Str(message) = &message.kind else {
+            return Err(TypeError::Unsupported(
+                "a where-clause diagnostic message must be a string literal".to_string(),
+            ));
+        };
+        Ok(GenericConstraint::WithMessage(
+            Box::new(self.compile_generic_constraint(condition)?),
+            message.clone(),
+        ))
+    }
+
     pub(super) fn compile_generic_constraint(
         &self,
         expr: &Expr,
@@ -609,14 +649,42 @@ impl Checker {
                 constraints.as_slice()
             }
         }) {
-            if !self.eval_generic_constraint(constraint, &environment) {
-                return Err(TypeError::BadCall {
-                    func: name.to_string(),
-                    reason: format!("generic constraint is not satisfied: {constraint:?}"),
-                });
-            }
+            self.validate_constraint_in_environment(name, constraint, &environment)?;
         }
         Ok(())
+    }
+
+    pub(super) fn validate_constraint_in_environment(
+        &self,
+        name: &str,
+        constraint: &GenericConstraint,
+        environment: &HashMap<&str, &TyArg>,
+    ) -> Result<(), TypeError> {
+        if self.eval_generic_constraint(constraint, environment) {
+            return Ok(());
+        }
+        let reason = match constraint {
+            GenericConstraint::WithMessage(_, message) => {
+                format!("constraint failed: {message}")
+            }
+            _ => format!("generic constraint is not satisfied: {constraint:?}"),
+        };
+        Err(TypeError::BadCall {
+            func: name.to_string(),
+            reason,
+        })
+    }
+
+    /// Validate a constraint on a declaration with no generic argument list,
+    /// such as a non-generic `comptime` constant. Parameterized declarations
+    /// attach the same constraint to their final [`ParamDecl`] instead so it is
+    /// evaluated against each concrete application.
+    pub(super) fn validate_declaration_constraint(
+        &self,
+        name: &str,
+        constraint: &GenericConstraint,
+    ) -> Result<(), TypeError> {
+        self.validate_constraint_in_environment(name, constraint, &HashMap::new())
     }
 
     pub(super) fn eval_generic_constraint(
@@ -626,6 +694,7 @@ impl Checker {
     ) -> bool {
         use GenericConstraint::*;
         match constraint {
+            WithMessage(condition, _) => self.eval_generic_constraint(condition, environment),
             Bool(value) => *value,
             Not(value) => !self.eval_generic_constraint(value, environment),
             And(left, right) => {

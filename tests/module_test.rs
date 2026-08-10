@@ -3,7 +3,7 @@
 //! multi-file layout into a unique temp directory, then either inspect linking or
 //! compile and run the entry through the authoritative whole-program pipeline.
 
-use mojito::{BackendKind, Compiler, LinkOptions, inject_prelude, link, parse};
+use mojito::{BackendKind, Compiler, LinkOptions, ModuleError, inject_prelude, link, parse};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -465,6 +465,171 @@ fn missing_module_and_missing_name_error() {
             .unwrap_err()
             .contains("no declaration named 'g'")
     );
+}
+
+#[test]
+fn duplicate_explicit_import_bindings_from_distinct_modules_are_rejected() {
+    let d = TempDir::new();
+    d.write("left.mojo", "def pick() -> Int:\n    return 1\n");
+    d.write(
+        "right.mojo",
+        "def pick() -> Int:\n    return 2\n\ndef other() -> Int:\n    return 3\n",
+    );
+    let direct = d.write(
+        "direct.mojo",
+        "from left import pick\nfrom right import pick\n\ndef main():\n    pass\n",
+    );
+    let aliased = d.write(
+        "aliased.mojo",
+        "from left import pick\nfrom right import other as pick\n\ndef main():\n    pass\n",
+    );
+    d.write(
+        "facade.mojo",
+        "from left import pick\nfrom right import pick\n",
+    );
+    let transitive = d.write(
+        "transitive.mojo",
+        "import facade\n\ndef main():\n    pass\n",
+    );
+
+    for entry in [&direct, &aliased, &transitive] {
+        let error = link(entry).expect_err("different explicit imports must not overwrite");
+        assert!(
+            matches!(
+                &error,
+                ModuleError::DuplicateImport { module, name }
+                    if module == "right" && name == "pick"
+            ),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "duplicate import of 'pick' from module 'right': an earlier import already binds \
+             this name; rename one with 'as'"
+        );
+    }
+}
+
+#[test]
+fn identical_explicit_imports_and_local_declarations_keep_shadowing_rules() {
+    let d = TempDir::new();
+    d.write("values.mojo", "def pick() -> Int:\n    return 1\n");
+    d.write("reexport.mojo", "from values import pick\n");
+    let repeated = d.write(
+        "repeated.mojo",
+        "from values import pick\nfrom values import pick\nfrom reexport import pick\n\ndef main():\n    print(pick())\n",
+    );
+    assert_eq!(run(&repeated).expect("same-target re-import"), "1\n");
+
+    d.write(
+        "local.mojo",
+        "from values import pick\n\ndef pick() -> Int:\n    return 2\n",
+    );
+    let local_entry = d.write(
+        "local_entry.mojo",
+        "from local import pick\n\ndef main():\n    print(pick())\n",
+    );
+    assert_eq!(run(&local_entry).expect("local declaration shadow"), "2\n");
+}
+
+#[test]
+fn explicit_imports_can_shadow_implicit_prelude_and_string_dict_bindings() {
+    let d = TempDir::new();
+    d.write(
+        "replacements.mojo",
+        "def replacement() -> Int:\n    return 42\n",
+    );
+    let prelude = d.write(
+        "prelude.mojo",
+        "from replacements import replacement as range\n\ndef main():\n    print(range())\n",
+    );
+    assert_eq!(run(&prelude).expect("explicit prelude shadow"), "42\n");
+
+    let string_dict = d.write(
+        "string_dict.mojo",
+        "from replacements import replacement as StringDict\n\ndef collect(var **kwargs: Int):\n    pass\n\ndef main():\n    print(StringDict())\n",
+    );
+    link(&string_dict).expect("explicit StringDict shadow after runtime injection");
+}
+
+#[test]
+fn exact_self_imports_are_rejected() {
+    let d = TempDir::new();
+    let named = d.write(
+        "named.mojo",
+        "from named import value\n\ndef value() -> Int:\n    return 1\n\ndef main():\n    pass\n",
+    );
+    let qualified = d.write(
+        "qualified.mojo",
+        "import qualified\n\ndef main():\n    pass\n",
+    );
+    let relative = d.write(
+        "relative.mojo",
+        "from . import relative\n\ndef main():\n    pass\n",
+    );
+
+    for (entry, module) in [
+        (&named, "named"),
+        (&qualified, "qualified"),
+        (&relative, "relative"),
+    ] {
+        let error = link(entry).expect_err("a module must not import its own file");
+        assert!(
+            matches!(&error, ModuleError::SelfImport { module: found } if found == module),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("module '{module}' imports itself")
+        );
+    }
+}
+
+#[test]
+fn self_imports_are_rejected_while_loading_modules_and_packages() {
+    let d = TempDir::new();
+    d.write(
+        "dependency.mojo",
+        "from dependency import value\n\ndef value() -> Int:\n    return 1\n",
+    );
+    let module_entry = d.write(
+        "module_entry.mojo",
+        "import dependency\n\ndef main():\n    pass\n",
+    );
+    let error = link(&module_entry).expect_err("loaded module self-import");
+    assert!(
+        matches!(&error, ModuleError::SelfImport { module } if module == "dependency"),
+        "unexpected error: {error}"
+    );
+
+    d.write("pkg/__init__.mojo", "from .. import pkg\n");
+    let package_entry = d.write(
+        "package_entry.mojo",
+        "import pkg\n\ndef main():\n    pass\n",
+    );
+    let error = link(&package_entry).expect_err("package initializer self-import");
+    assert!(
+        matches!(&error, ModuleError::SelfImport { module } if module == "pkg"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn mutual_module_import_cycle_is_not_a_self_import() {
+    let d = TempDir::new();
+    d.write(
+        "a.mojo",
+        "from b import value_b\n\ndef value_a() -> Int:\n    return value_b()\n",
+    );
+    d.write(
+        "b.mojo",
+        "from a import value_a\n\ndef value_b() -> Int:\n    return 42\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "from a import value_a\n\ndef main():\n    print(value_a())\n",
+    );
+    assert_eq!(run(&main).expect("mutual import cycle"), "42\n");
 }
 
 #[test]

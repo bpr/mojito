@@ -1339,9 +1339,18 @@ fn build_checked_expressions(
                     VarDecl { value, .. }
                     | RefDecl { value, .. }
                     | Assign { value, .. }
-                    | Comptime { value, .. }
                     | Raise(value)
                     | Expr(value) => {
+                        self.expr(value);
+                    }
+                    Comptime {
+                        where_clause,
+                        value,
+                        ..
+                    } => {
+                        if let Some(constraint) = where_clause {
+                            self.expr(constraint);
+                        }
                         self.expr(value);
                     }
                     AugAssign { place, value, .. } | SetPlace { place, value } => {
@@ -1372,6 +1381,7 @@ fn build_checked_expressions(
                     }
                     Struct {
                         conformance_conditions,
+                        where_clause,
                         associated,
                         methods,
                         ..
@@ -1379,7 +1389,13 @@ fn build_checked_expressions(
                         for (_, value) in conformance_conditions {
                             self.expr(value);
                         }
+                        if let Some(value) = where_clause {
+                            self.expr(value);
+                        }
                         for value in associated {
+                            if let Some(constraint) = &value.where_clause {
+                                self.expr(constraint);
+                            }
                             self.expr(&value.value);
                         }
                         for method in methods {
@@ -1394,7 +1410,11 @@ fn build_checked_expressions(
                             self.block(&method.body);
                         }
                     }
-                    Trait { methods, .. } => {
+                    Trait {
+                        methods,
+                        comptime_members,
+                        ..
+                    } => {
                         for method in methods {
                             for param in &method.params {
                                 if let Some(value) = &param.default {
@@ -1406,6 +1426,11 @@ fn build_checked_expressions(
                             }
                             if let Some(body) = &method.default_body {
                                 self.block(body);
+                            }
+                        }
+                        for member in comptime_members {
+                            if let Some(constraint) = &member.where_clause {
+                                self.expr(constraint);
                             }
                         }
                     }

@@ -1165,13 +1165,30 @@ impl Checker {
         signature: &MethodSig,
         arguments: &HashMap<String, TyArg>,
     ) -> bool {
+        self.method_constraint_result(signature, arguments).is_ok()
+    }
+
+    /// Evaluate method availability while preserving an outer diagnostic message.
+    /// `Err(None)` is an ordinary failed constraint; `Err(Some(_))` is the current
+    /// `(condition, "message")` form and may explain a sole-candidate call failure.
+    pub(super) fn method_constraint_result<'signature>(
+        &self,
+        signature: &'signature MethodSig,
+        arguments: &HashMap<String, TyArg>,
+    ) -> Result<(), Option<&'signature str>> {
         let borrowed: HashMap<&str, &TyArg> = arguments
             .iter()
             .map(|(name, argument)| (name.as_str(), argument))
             .collect();
-        signature
-            .availability
-            .iter()
-            .all(|constraint| self.eval_generic_constraint(constraint, &borrowed))
+        for constraint in &signature.availability {
+            if !self.eval_generic_constraint(constraint, &borrowed) {
+                let message = match constraint {
+                    GenericConstraint::WithMessage(_, message) => Some(message.as_str()),
+                    _ => None,
+                };
+                return Err(message);
+            }
+        }
+        Ok(())
     }
 }

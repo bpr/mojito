@@ -11,7 +11,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Driver | `compiler::Compiler::{compile_path, compile_source, execute}` | The only whole-program stage ordering. |
 | Lex | `lexer::Lexer`, crate-level `lex` | Spanned token stream. |
 | Parse | `parser::Parser::{parse_program, parse_program_diagnostic}`, crate-level `parse` | Spanned AST; diagnostic partial AST is quarantined. |
-| Link | `module::{link_with_options, link_source_with_options, LinkOptions}` | Dependency-first flat program with `SourceSpan` module identity. `builtin_module_exports` gives the docstring-only `std.traits`/`std.origin` homes their builtin identity exports. |
+| Link | `module::{link_with_options, link_source_with_options, LinkOptions, ModuleError}` | Dependency-first flat program with `SourceSpan` module identity, explicit-binding collision checks, canonical self-import checks, and provisional exports for mutual cycles. `builtin_module_exports` gives the docstring-only `std.traits`/`std.origin` homes their builtin identity exports. |
 | Comptime | `comptime::elaborate`, `ct::CtValue` | Ordinary AST with compile-time control resolved. |
 | Check | `checker::{check_program, Checker}`, `checked::CheckedProgram` | Authoritative semantic handoff and side tables. |
 | HIR | `hir::Cfg::build_checked_fn` (unchecked `build`/`build_fn` are phase-test compatibility) | Statement CFG with nested expressions. |
@@ -27,7 +27,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 |---|---|---|
 | Structural call binding | `call::{match_call_slots, ArgSlot, CallSlots}` | Checker and VM call adapters. |
 | Parser-to-call marker normalization | `call::{regular_marker_index, effective_keyword_only_index}` | Checker and MIR declaration lowering. |
-| Callable identity and overload names | `symbol::{OverloadSets, lowered_def_name, lowered_method_name, function_symbol, method_symbol}` | Checker, MIR, VM registries, symbol tests. |
+| Callable identity and overload names | `symbol::{SignatureKey, OverloadSets, lowered_def_name, lowered_method_name, function_symbol, method_symbol}` | Checker, MIR, VM registries, symbol tests. `SignatureKey` retains positional types, keyword-only names, and the keyword-variadic collector role. |
 | Checked semantic facts | `checked::{CheckedProgram, CheckedConst, AnnotationSite, CheckedCallContract, CheckedIteratorCall, CheckedResultAdapter}` | MIR, ownership driver, backends. |
 | Source annotation syntax | `ast::SourceType` (alias of the AST `Type` node) | Parser, checker input, HIR/MIR source metadata. |
 | Source location/provenance | `token::{Span, SourceSpan}` | AST, checker side tables, MIR diagnostics. |
@@ -95,7 +95,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
   nested-def capture-access checks.
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
-  compilation/evaluation.
+  compilation/evaluation. `compile_where_clause` retains an optional source
+  diagnostic around the semantic constraint compiled by
+  `compile_generic_constraint`.
 - `checker/operators.rs` and `checker/iteration.rs` own operator/SIMD inference
   and iterator-protocol selection respectively.
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates

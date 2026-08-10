@@ -174,6 +174,7 @@ fn parses_struct_with_field_and_method() {
             conforms: vec![],
             callable_conformance: None,
             conformance_conditions: vec![],
+            where_clause: None,
             fields: vec![Param {
                 name: "x".into(),
                 ty: Type::Int
@@ -556,6 +557,7 @@ fn parses_generic_struct_header_and_self_param_field() {
             conforms: vec![],
             callable_conformance: None,
             conformance_conditions: vec![],
+            where_clause: None,
             fields: vec![
                 Param {
                     name: "left".into(),
@@ -839,7 +841,8 @@ fn parses_trait_comptime_member() {
                 &vec![TraitComptime {
                     name: "count".into(),
                     params: vec![],
-                    ty: Type::Int
+                    ty: Type::Int,
+                    where_clause: None,
                 }]
             );
         }
@@ -905,6 +908,8 @@ fn parses_struct_comptime_associated_member() {
                 &vec![StructComptime {
                     name: "Element".into(),
                     params: vec![],
+                    ty: None,
+                    where_clause: None,
                     value: Expr::from(ExprKind::Member {
                         object: ident("Self"),
                         field: "T".into(),
@@ -926,6 +931,9 @@ fn parses_comptime_constant() {
         stmts[0],
         Stmt::from(StmtKind::Comptime {
             name: "N".into(),
+            type_params: vec![],
+            ty: None,
+            where_clause: None,
             value: Expr::from(ExprKind::Infix(InfixOp::Mul, int(2), int(4))),
         })
     );
@@ -938,9 +946,55 @@ fn parses_annotated_comptime_constant() {
         stmts[0],
         Stmt::from(StmtKind::Comptime {
             name: "counter".into(),
+            type_params: vec![],
+            ty: Some(Type::Int),
+            where_clause: None,
             value: int_expr(1),
         })
     );
+}
+
+#[test]
+fn retains_where_messages_on_struct_and_comptime_declarations() {
+    let statements = parse(
+        "struct Box[T: AnyType] where (True, \"Box enabled\"):\n    comptime Item[U: AnyType]: AnyType where (True, \"Item enabled\") = U\n\ntrait HasItem:\n    comptime Item: AnyType where (True, \"requirement enabled\")\n\ncomptime Alias[T: AnyType]: AnyType where (True, \"Alias enabled\") = T\n",
+    );
+
+    let StmtKind::Struct {
+        where_clause,
+        associated,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected struct declaration");
+    };
+    assert!(where_clause.is_some());
+    assert_eq!(
+        associated[0].ty,
+        Some(Type::Named("AnyType".into(), vec![]))
+    );
+    assert!(associated[0].where_clause.is_some());
+
+    let StmtKind::Trait {
+        comptime_members, ..
+    } = &statements[1].kind
+    else {
+        panic!("expected trait declaration");
+    };
+    assert!(comptime_members[0].where_clause.is_some());
+
+    let StmtKind::Comptime {
+        type_params,
+        ty,
+        where_clause,
+        ..
+    } = &statements[2].kind
+    else {
+        panic!("expected comptime declaration");
+    };
+    assert_eq!(type_params.len(), 1);
+    assert_eq!(ty, &Some(Type::Named("AnyType".into(), vec![])));
+    assert!(where_clause.is_some());
 }
 
 #[test]
@@ -1887,14 +1941,17 @@ fn parses_variadic_and_kw_variadic() {
     let (p, _, _) = def_params("def sum(*values: Int) -> Int:\n    return 0\n");
     assert_eq!(p[0].kind, ParamKind::Variadic);
     assert_eq!(p[0].name, "values");
-    let (p, _, _) = def_params("def opts(**kw: Int):\n    pass\n");
+    let (p, _, _) = def_params("def opts(var **kw: Int):\n    pass\n");
     assert_eq!(p[0].kind, ParamKind::KwVariadic);
+    assert_eq!(p[0].convention, Some(ArgConvention::Var));
+    let error = mojito::parse("def opts(**kw: Int):\n    pass\n").expect_err("bare ** must reject");
+    assert!(format!("{error}").contains("var **name: Type"));
 }
 
 #[test]
 fn parses_generic_method_keyword_collectors_and_forwarding() {
     let parsed = parse(
-        "struct Relay:\n    def target[T: Copyable & Movable](self, **options: T):\n        pass\n    def forward(self, **options: Int):\n        self.target(**options^)\n",
+        "struct Relay:\n    def target[T: Copyable & Movable](self, var **options: T):\n        pass\n    def forward(self, var **options: Int):\n        self.target(**options^)\n",
     );
     let StmtKind::Struct { methods, .. } = &parsed[0].kind else {
         panic!("expected struct declaration")
@@ -2329,6 +2386,7 @@ fn var_anno_type(src: &str) -> Type {
 fn function_type_param(ty: Type) -> FunctionTypeParam {
     FunctionTypeParam {
         name: None,
+        kind: ParamKind::Regular,
         convention: None,
         origin: None,
         ty,
@@ -2391,6 +2449,28 @@ fn parses_function_type_annotations() {
             raises_type: None,
         }
     );
+}
+
+#[test]
+fn function_types_retain_the_var_keyword_variadic_role() {
+    let ty = var_anno_type("var callback: def(var **options: Int) -> Int = target\n");
+    let Type::Func { params, .. } = ty else {
+        panic!("expected a function type");
+    };
+    assert!(matches!(
+        params.as_slice(),
+        [FunctionTypeParam {
+            name: Some(name),
+            kind: ParamKind::KwVariadic,
+            convention: Some(ArgConvention::Var),
+            ty: Type::Int,
+            ..
+        }] if name == "options"
+    ));
+
+    let error = mojito::parse("var callback: def(**options: Int) -> Int = target\n")
+        .expect_err("bare function-type ** must reject");
+    assert!(format!("{error}").contains("var **name: Type"));
 }
 
 #[test]

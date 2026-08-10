@@ -1,8 +1,8 @@
-# Runtime representation for `**kwargs`
+# Runtime representation for `var **kwargs`
 
 ## Decision context
 
-Mojito parses and binds homogeneous `**kwargs` parameters on free, generic,
+Mojito parses and binds homogeneous `var **kwargs` parameters on free, generic,
 instance, static, and trait-bounded calls. The ordinary call path carries ordered
 keyword pairs and `match_call_slots` is the shared checker binder. Unknown
 keywords are therefore the natural point at which a keyword collector takes
@@ -31,7 +31,7 @@ the generic hash-table choice is now historical rather than an open decision.
 
 ## Required semantics
 
-- Values are homogeneous according to the declared `**kwargs: T` element type.
+- Values are homogeneous according to the declared `var **kwargs: T` element type.
 - Keys are copied strings and iteration follows call-site insertion order.
 - The collector is an owned callee local and never writes values back to callers.
 - Explicit parameters bind first; unmatched keywords enter the collector;

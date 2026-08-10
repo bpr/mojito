@@ -290,6 +290,8 @@ pub enum ComptimeError {
     /// An explicit type argument failed its type parameter's trait bound at
     /// the call that requested specialization.
     GenericBound(Box<GenericBoundError>),
+    /// A fully specialized declaration's trailing `where` predicate was false.
+    Constraint(String),
     /// The compile-time step/iteration quota was exceeded (a likely infinite loop).
     QuotaExceeded,
 }
@@ -363,6 +365,9 @@ impl std::fmt::Display for ComptimeError {
                     write!(f, " ({reason})")?;
                 }
                 Ok(())
+            }
+            ComptimeError::Constraint(message) => {
+                write!(f, "compile-time constraint failed: {message}")
             }
             ComptimeError::QuotaExceeded => {
                 write!(f, "compile-time execution exceeded the step quota ({FUEL})")
@@ -464,11 +469,99 @@ pub(crate) fn elaborate_with_requests(
 /// dependency walk, not a purity classifier: it traverses every child so the
 /// checked VM-CTFE subprogram retains helpers mentioned anywhere in a retained
 /// function or nominal method body.
+fn collect_vm_ctfe_type_calls(ty: &Type, calls: &mut HashSet<String>) {
+    let argument = |argument: &ParamArg, calls: &mut HashSet<String>| {
+        fn collect(argument: &ParamArg, calls: &mut HashSet<String>) {
+            match argument {
+                ParamArg::Type(ty) => collect_vm_ctfe_type_calls(ty, calls),
+                ParamArg::Value(value) => collect_vm_ctfe_expr_calls(value, calls),
+                ParamArg::Named { value, .. } => collect(value, calls),
+            }
+        }
+        collect(argument, calls);
+    };
+    let type_parameter = |parameter: &TypeParam, calls: &mut HashSet<String>| {
+        if let Some(value_type) = &parameter.value_type {
+            collect_vm_ctfe_type_calls(value_type, calls);
+        }
+        if let Some(callable) = &parameter.callable_bound {
+            collect_vm_ctfe_type_calls(callable, calls);
+        }
+        if let Some(mutability) = &parameter.origin_mutability {
+            collect_vm_ctfe_expr_calls(mutability, calls);
+        }
+        if let Some(default) = &parameter.default {
+            collect_vm_ctfe_expr_calls(default, calls);
+        }
+        for constraint in &parameter.constraints {
+            collect_vm_ctfe_expr_calls(constraint, calls);
+        }
+    };
+
+    match ty {
+        Type::Named(_, arguments) => {
+            for value in arguments {
+                argument(value, calls);
+            }
+        }
+        Type::Assoc { base, args, .. } => {
+            collect_vm_ctfe_type_calls(base, calls);
+            for value in args {
+                argument(value, calls);
+            }
+        }
+        Type::IndexedProjection { base, index } => {
+            collect_vm_ctfe_type_calls(base, calls);
+            collect_vm_ctfe_expr_calls(index, calls);
+        }
+        Type::Func {
+            type_params,
+            params,
+            ret,
+            capturing,
+            raises_type,
+            ..
+        } => {
+            for parameter in type_params {
+                type_parameter(parameter, calls);
+            }
+            for parameter in params {
+                collect_vm_ctfe_type_calls(&parameter.ty, calls);
+                for origin in parameter.origin.iter().flatten() {
+                    collect_vm_ctfe_expr_calls(origin, calls);
+                }
+            }
+            collect_vm_ctfe_type_calls(ret, calls);
+            for origin in capturing.iter().flatten() {
+                collect_vm_ctfe_expr_calls(origin, calls);
+            }
+            if let Some(error) = raises_type {
+                collect_vm_ctfe_type_calls(error, calls);
+            }
+        }
+        Type::Ref { referent, origin } => {
+            collect_vm_ctfe_type_calls(referent, calls);
+            for value in origin.iter().flatten() {
+                collect_vm_ctfe_expr_calls(value, calls);
+            }
+        }
+        Type::Int
+        | Type::UInt
+        | Type::Bool
+        | Type::StringLiteral
+        | Type::Float64
+        | Type::None
+        | Type::SelfParam(_)
+        | Type::SelfType
+        | Type::MaterializedCallable(_) => {}
+    }
+}
+
 fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<String>) {
     let param_args = |arguments: &[ParamArg], calls: &mut HashSet<String>| {
         fn collect(argument: &ParamArg, calls: &mut HashSet<String>) {
             match argument {
-                ParamArg::Type(_) => {}
+                ParamArg::Type(ty) => collect_vm_ctfe_type_calls(ty, calls),
                 ParamArg::Value(value) => collect_vm_ctfe_expr_calls(value, calls),
                 ParamArg::Named { value, .. } => collect(value, calls),
             }
@@ -629,8 +722,8 @@ fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<String>) {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::Uninitialized
-        | ExprKind::Identifier(_)
-        | ExprKind::TypeValue(_) => {}
+        | ExprKind::Identifier(_) => {}
+        ExprKind::TypeValue(ty) => collect_vm_ctfe_type_calls(ty, calls),
     }
 }
 
@@ -739,8 +832,11 @@ fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Ty
                 substitute_source_param_arg_binding(argument, binding, replacement);
             }
         }
-        Type::Assoc { base, .. } => {
+        Type::Assoc { base, args, .. } => {
             substitute_source_type_binding(base, binding, replacement);
+            for argument in args {
+                substitute_source_param_arg_binding(argument, binding, replacement);
+            }
         }
         Type::IndexedProjection { base, .. } => {
             substitute_source_type_binding(base, binding, replacement);
@@ -1487,7 +1583,17 @@ impl<'a> Elab<'a> {
     ) -> Result<(), ComptimeError> {
         let span = stmt.span;
         match &stmt.kind {
-            StmtKind::Comptime { name, value } => {
+            StmtKind::Comptime {
+                name,
+                type_params,
+                ty,
+                where_clause,
+                value,
+            } => {
+                if !type_params.is_empty() {
+                    out.push(stmt.clone());
+                    return Ok(());
+                }
                 let v = self.eval(value, env)?;
                 if !in_fn {
                     self.top_consts.borrow_mut().insert(name.clone(), v.clone());
@@ -1504,6 +1610,9 @@ impl<'a> Elab<'a> {
                     out.push(mk(
                         StmtKind::Comptime {
                             name: name.clone(),
+                            type_params: type_params.clone(),
+                            ty: ty.clone(),
+                            where_clause: where_clause.clone(),
                             value,
                         },
                         span,
@@ -1712,6 +1821,7 @@ impl<'a> Elab<'a> {
                 conforms,
                 callable_conformance,
                 conformance_conditions,
+                where_clause,
                 fields,
                 associated,
                 methods,
@@ -1740,6 +1850,7 @@ impl<'a> Elab<'a> {
                         conforms: conforms.clone(),
                         callable_conformance: callable_conformance.clone(),
                         conformance_conditions: conformance_conditions.clone(),
+                        where_clause: where_clause.clone(),
                         fields: fields.clone(),
                         associated: associated.clone(),
                         methods,
@@ -2427,20 +2538,63 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
     };
     let parameters = |parameters: &[FnParam], calls: &mut HashSet<String>| {
         for parameter in parameters {
+            collect_vm_ctfe_type_calls(&parameter.ty, calls);
+            for origin in parameter.origin.iter().flatten() {
+                collect_vm_ctfe_expr_calls(origin, calls);
+            }
             if let Some(default) = &parameter.default {
                 collect_vm_ctfe_expr_calls(default, calls);
             }
         }
     };
+    let type_parameters = |parameters: &[TypeParam], calls: &mut HashSet<String>| {
+        for parameter in parameters {
+            if let Some(value_type) = &parameter.value_type {
+                collect_vm_ctfe_type_calls(value_type, calls);
+            }
+            if let Some(callable) = &parameter.callable_bound {
+                collect_vm_ctfe_type_calls(callable, calls);
+            }
+            if let Some(mutability) = &parameter.origin_mutability {
+                collect_vm_ctfe_expr_calls(mutability, calls);
+            }
+            if let Some(default) = &parameter.default {
+                collect_vm_ctfe_expr_calls(default, calls);
+            }
+            for constraint in &parameter.constraints {
+                collect_vm_ctfe_expr_calls(constraint, calls);
+            }
+        }
+    };
 
     match &statement.kind {
-        StmtKind::VarDecl { value, .. }
-        | StmtKind::RefDecl { value, .. }
+        StmtKind::VarDecl { ty, value, .. } => {
+            if let Some(ty) = ty {
+                collect_vm_ctfe_type_calls(ty, calls);
+            }
+            collect_vm_ctfe_expr_calls(value, calls);
+        }
+        StmtKind::RefDecl { value, .. }
         | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
         | StmtKind::Raise(value)
         | StmtKind::Return(Some(value))
         | StmtKind::Expr(value) => collect_vm_ctfe_expr_calls(value, calls),
+        StmtKind::Comptime {
+            type_params,
+            ty,
+            where_clause,
+            value,
+            ..
+        } => {
+            type_parameters(type_params, calls);
+            if let Some(ty) = ty {
+                collect_vm_ctfe_type_calls(ty, calls);
+            }
+            if let Some(condition) = where_clause {
+                collect_vm_ctfe_expr_calls(condition, calls);
+            }
+            collect_vm_ctfe_expr_calls(value, calls);
+        }
         StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
             collect_vm_ctfe_expr_calls(place, calls);
             collect_vm_ctfe_expr_calls(value, calls);
@@ -2505,13 +2659,23 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
         }
         StmtKind::Def {
             decorators: declaration_decorators,
+            type_params,
             params,
+            raises_type,
+            ret,
             where_clause,
             body,
             ..
         } => {
             decorators(declaration_decorators, calls);
+            type_parameters(type_params, calls);
             parameters(params, calls);
+            if let Some(error) = raises_type {
+                collect_vm_ctfe_type_calls(error, calls);
+            }
+            if let Some(ret) = ret {
+                collect_vm_ctfe_type_calls(ret, calls);
+            }
             if let Some(condition) = where_clause {
                 collect_vm_ctfe_expr_calls(condition, calls);
             }
@@ -2519,35 +2683,87 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
         }
         StmtKind::Struct {
             decorators: declaration_decorators,
+            type_params,
+            callable_conformance,
             conformance_conditions,
+            where_clause,
+            fields,
             associated,
             methods,
             ..
         } => {
             decorators(declaration_decorators, calls);
+            type_parameters(type_params, calls);
+            if let Some(callable) = callable_conformance {
+                collect_vm_ctfe_type_calls(callable, calls);
+            }
             for (_, condition) in conformance_conditions {
                 collect_vm_ctfe_expr_calls(condition, calls);
             }
+            if let Some(condition) = where_clause {
+                collect_vm_ctfe_expr_calls(condition, calls);
+            }
+            for field in fields {
+                collect_vm_ctfe_type_calls(&field.ty, calls);
+            }
             for member in associated {
+                type_parameters(&member.params, calls);
+                if let Some(ty) = &member.ty {
+                    collect_vm_ctfe_type_calls(ty, calls);
+                }
+                if let Some(condition) = &member.where_clause {
+                    collect_vm_ctfe_expr_calls(condition, calls);
+                }
                 collect_vm_ctfe_expr_calls(&member.value, calls);
             }
             for method in methods {
                 decorators(&method.decorators, calls);
+                type_parameters(&method.type_params, calls);
+                for origin in method.self_origin.iter().flatten() {
+                    collect_vm_ctfe_expr_calls(origin, calls);
+                }
                 parameters(&method.params, calls);
+                if let Some(error) = &method.raises_type {
+                    collect_vm_ctfe_type_calls(error, calls);
+                }
+                if let Some(ret) = &method.ret {
+                    collect_vm_ctfe_type_calls(ret, calls);
+                }
                 if let Some(condition) = &method.where_clause {
                     collect_vm_ctfe_expr_calls(condition, calls);
                 }
                 collect_vm_ctfe_block_calls(&method.body, calls);
             }
         }
-        StmtKind::Trait { methods, .. } => {
+        StmtKind::Trait {
+            methods,
+            comptime_members,
+            ..
+        } => {
             for method in methods {
+                type_parameters(&method.type_params, calls);
+                for origin in method.self_origin.iter().flatten() {
+                    collect_vm_ctfe_expr_calls(origin, calls);
+                }
                 parameters(&method.params, calls);
+                if let Some(error) = &method.raises_type {
+                    collect_vm_ctfe_type_calls(error, calls);
+                }
+                if let Some(ret) = &method.ret {
+                    collect_vm_ctfe_type_calls(ret, calls);
+                }
                 if let Some(condition) = &method.where_clause {
                     collect_vm_ctfe_expr_calls(condition, calls);
                 }
                 if let Some(body) = &method.default_body {
                     collect_vm_ctfe_block_calls(body, calls);
+                }
+            }
+            for member in comptime_members {
+                type_parameters(&member.params, calls);
+                collect_vm_ctfe_type_calls(&member.ty, calls);
+                if let Some(condition) = &member.where_clause {
+                    collect_vm_ctfe_expr_calls(condition, calls);
                 }
             }
         }

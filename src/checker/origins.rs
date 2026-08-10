@@ -5,6 +5,12 @@
 
 use super::*;
 
+type SolvedCallOrigins = (
+    Vec<Option<ArgConvention>>,
+    Option<crate::origin::RefTy>,
+    HashMap<usize, bool>,
+);
+
 impl Checker {
     /// Convert a source place into the stable, projection-sensitive identity
     /// used by checked origins. Index values are intentionally abstracted: the
@@ -1055,6 +1061,26 @@ impl Checker {
         args: &[Expr],
         kwargs: &[crate::ast::KwArg],
     ) -> Result<(Vec<Option<ArgConvention>>, Option<crate::origin::RefTy>), TypeError> {
+        let (conventions, returned, _) = self.solve_call_origins_with_bool_bindings(
+            slots,
+            conventions,
+            signatures,
+            return_signature,
+            args,
+            kwargs,
+        )?;
+        Ok((conventions, returned))
+    }
+
+    pub(super) fn solve_call_origins_with_bool_bindings(
+        &self,
+        slots: &[ArgSlot],
+        conventions: &[Option<ArgConvention>],
+        signatures: &[Option<crate::origin::RefSig>],
+        return_signature: Option<&crate::origin::RefSig>,
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+    ) -> Result<SolvedCallOrigins, TypeError> {
         use crate::origin::{Mutability, Origin, RefTy, SigMutability};
         let mut effective = conventions.to_vec();
         let mut origins = vec![None; slots.len()];
@@ -1192,7 +1218,30 @@ impl Checker {
                 },
             }
         });
-        Ok((effective, returned))
+        let mut bool_bindings = HashMap::new();
+        for (index, signature) in signatures.iter().enumerate() {
+            let Some(crate::origin::RefSig {
+                mutability: SigMutability::BoolParam(parameter),
+                ..
+            }) = signature
+            else {
+                continue;
+            };
+            if origins.get(index).and_then(Option::as_ref).is_none() {
+                continue;
+            }
+            if let Some(previous) = bool_bindings.insert(*parameter, mutable[index])
+                && previous != mutable[index]
+            {
+                return Err(TypeError::BadCall {
+                    func: "reference argument".to_string(),
+                    reason:
+                        "arguments infer conflicting values for one origin mutability parameter"
+                            .to_string(),
+                });
+            }
+        }
+        Ok((effective, returned, bool_bindings))
     }
 }
 
@@ -1352,6 +1401,7 @@ pub(super) fn lower_ref_param_sigs(
 pub(super) fn callable_origin_signature(
     type_params: &[crate::ast::TypeParam],
     params: &[&FnParam],
+    availability: Option<GenericConstraint>,
 ) -> CallableOriginSignature {
     let origins = type_params
         .iter()
@@ -1392,7 +1442,11 @@ pub(super) fn callable_origin_signature(
             ),
         })
         .collect();
-    CallableOriginSignature { origins, source }
+    CallableOriginSignature {
+        origins,
+        source,
+        availability,
+    }
 }
 
 pub(super) fn lower_ref_sig(

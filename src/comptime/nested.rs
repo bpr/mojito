@@ -265,8 +265,25 @@ impl NestedMono {
                 self.qualify_expression(value);
                 self.bind(name, TemplateBinding::Other);
             }
-            StmtKind::Assign { value, .. } | StmtKind::Comptime { value, .. } => {
-                self.qualify_expression(value)
+            StmtKind::Assign { value, .. } => self.qualify_expression(value),
+            StmtKind::Comptime {
+                name,
+                type_params,
+                ty,
+                where_clause,
+                value,
+            } => {
+                for parameter in type_params {
+                    self.qualify_type_parameter(parameter);
+                }
+                if let Some(ty) = ty {
+                    self.qualify_type(ty);
+                }
+                if let Some(condition) = where_clause {
+                    self.qualify_expression(condition);
+                }
+                self.qualify_expression(value);
+                self.bind(name, TemplateBinding::Other);
             }
             StmtKind::AugAssign { place, value, .. } | StmtKind::SetPlace { place, value } => {
                 self.qualify_expression(place);
@@ -358,8 +375,87 @@ impl NestedMono {
                     self.qualify_block(body, definition_depth);
                 }
             }
-            StmtKind::Struct { name, .. } | StmtKind::Trait { name, .. } => {
-                self.bind(name, TemplateBinding::Other)
+            StmtKind::Struct {
+                name,
+                type_params,
+                callable_conformance,
+                conformance_conditions,
+                where_clause,
+                fields,
+                associated,
+                ..
+            } => {
+                self.bind(name, TemplateBinding::Other);
+                for parameter in type_params {
+                    self.qualify_type_parameter(parameter);
+                }
+                if let Some(callable) = callable_conformance {
+                    self.qualify_type(callable);
+                }
+                for (_, condition) in conformance_conditions {
+                    self.qualify_expression(condition);
+                }
+                if let Some(condition) = where_clause {
+                    self.qualify_expression(condition);
+                }
+                for field in fields {
+                    self.qualify_type(&mut field.ty);
+                }
+                for member in associated {
+                    for parameter in &mut member.params {
+                        self.qualify_type_parameter(parameter);
+                    }
+                    if let Some(ty) = &mut member.ty {
+                        self.qualify_type(ty);
+                    }
+                    if let Some(condition) = &mut member.where_clause {
+                        self.qualify_expression(condition);
+                    }
+                    self.qualify_expression(&mut member.value);
+                }
+            }
+            StmtKind::Trait {
+                name,
+                methods,
+                comptime_members,
+                ..
+            } => {
+                self.bind(name, TemplateBinding::Other);
+                for method in methods {
+                    for parameter in &mut method.type_params {
+                        self.qualify_type_parameter(parameter);
+                    }
+                    for expression in method.self_origin.iter_mut().flatten() {
+                        self.qualify_expression(expression);
+                    }
+                    for parameter in &mut method.params {
+                        self.qualify_type(&mut parameter.ty);
+                        for expression in parameter.origin.iter_mut().flatten() {
+                            self.qualify_expression(expression);
+                        }
+                        if let Some(default) = &mut parameter.default {
+                            self.qualify_expression(default);
+                        }
+                    }
+                    if let Some(error) = &mut method.raises_type {
+                        self.qualify_type(error);
+                    }
+                    if let Some(ret) = &mut method.ret {
+                        self.qualify_type(ret);
+                    }
+                    if let Some(condition) = &mut method.where_clause {
+                        self.qualify_expression(condition);
+                    }
+                }
+                for member in comptime_members {
+                    for parameter in &mut member.params {
+                        self.qualify_type_parameter(parameter);
+                    }
+                    self.qualify_type(&mut member.ty);
+                    if let Some(condition) = &mut member.where_clause {
+                        self.qualify_expression(condition);
+                    }
+                }
             }
             StmtKind::Import { path, alias } => {
                 if let Some(name) = alias.as_ref().or_else(|| path.first()) {
@@ -412,6 +508,9 @@ impl NestedMono {
             }
             for parameter in params.iter_mut() {
                 self.qualify_type(&mut parameter.ty);
+                for expression in parameter.origin.iter_mut().flatten() {
+                    self.qualify_expression(expression);
+                }
                 if let Some(default) = &mut parameter.default {
                     self.qualify_expression(default);
                 }
@@ -466,7 +565,12 @@ impl NestedMono {
                     self.qualify_param_arg(argument);
                 }
             }
-            Type::Assoc { base, .. } => self.qualify_type(base),
+            Type::Assoc { base, args, .. } => {
+                self.qualify_type(base);
+                for argument in args {
+                    self.qualify_param_arg(argument);
+                }
+            }
             Type::IndexedProjection { base, index } => {
                 self.qualify_type(base);
                 self.qualify_expression(index);
@@ -768,9 +872,24 @@ impl NestedMono {
             return Ok(()); // deferred template; scan only concrete instances
         }
         match &mut statement.kind {
-            StmtKind::VarDecl { name, value, .. }
-            | StmtKind::RefDecl { name, value }
-            | StmtKind::Comptime { name, value } => {
+            StmtKind::VarDecl { name, value, .. } | StmtKind::RefDecl { name, value } => {
+                self.scan_expression(elab, value, runtime_packs)?;
+                runtime_packs.bind_other(name);
+                Ok(())
+            }
+            StmtKind::Comptime {
+                name,
+                type_params,
+                where_clause,
+                value,
+                ..
+            } => {
+                for parameter in type_params {
+                    self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
+                }
+                if let Some(condition) = where_clause {
+                    self.scan_expression(elab, condition, runtime_packs)?;
+                }
                 self.scan_expression(elab, value, runtime_packs)?;
                 runtime_packs.bind_other(name);
                 Ok(())
@@ -879,12 +998,21 @@ impl NestedMono {
                 result
             }
             StmtKind::Def {
-                name, params, body, ..
+                name,
+                type_params,
+                params,
+                where_clause,
+                body,
+                ..
             } => {
+                for parameter in type_params {
+                    self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
+                }
                 for parameter in params.iter_mut() {
-                    if let Some(default) = &mut parameter.default {
-                        self.scan_expression(elab, default, runtime_packs)?;
-                    }
+                    self.scan_fn_parameter_expressions(elab, parameter, runtime_packs)?;
+                }
+                if let Some(condition) = where_clause {
+                    self.scan_expression(elab, condition, runtime_packs)?;
                 }
                 runtime_packs.bind_other(name);
                 runtime_packs.push_function_scope();
@@ -898,9 +1026,47 @@ impl NestedMono {
                 runtime_packs.pop_function_scope();
                 result
             }
-            StmtKind::Struct { name, methods, .. } => {
+            StmtKind::Struct {
+                name,
+                type_params,
+                conformance_conditions,
+                where_clause,
+                associated,
+                methods,
+                ..
+            } => {
                 runtime_packs.bind_other(name);
+                for parameter in type_params {
+                    self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
+                }
+                for (_, condition) in conformance_conditions {
+                    self.scan_expression(elab, condition, runtime_packs)?;
+                }
+                if let Some(condition) = where_clause {
+                    self.scan_expression(elab, condition, runtime_packs)?;
+                }
+                for member in associated {
+                    for parameter in &mut member.params {
+                        self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
+                    }
+                    if let Some(condition) = &mut member.where_clause {
+                        self.scan_expression(elab, condition, runtime_packs)?;
+                    }
+                    self.scan_expression(elab, &mut member.value, runtime_packs)?;
+                }
                 for method in methods {
+                    for parameter in &mut method.type_params {
+                        self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
+                    }
+                    for origin in method.self_origin.iter_mut().flatten() {
+                        self.scan_expression(elab, origin, runtime_packs)?;
+                    }
+                    for parameter in &mut method.params {
+                        self.scan_fn_parameter_expressions(elab, parameter, runtime_packs)?;
+                    }
+                    if let Some(condition) = &mut method.where_clause {
+                        self.scan_expression(elab, condition, runtime_packs)?;
+                    }
                     runtime_packs.push_function_scope();
                     if method.has_self {
                         runtime_packs.bind_other("self");
@@ -931,11 +1097,74 @@ impl NestedMono {
                 }
                 Ok(())
             }
-            StmtKind::Trait { name, .. } => {
+            StmtKind::Trait {
+                name,
+                methods,
+                comptime_members,
+                ..
+            } => {
                 runtime_packs.bind_other(name);
+                for method in methods {
+                    for parameter in &mut method.type_params {
+                        self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
+                    }
+                    for origin in method.self_origin.iter_mut().flatten() {
+                        self.scan_expression(elab, origin, runtime_packs)?;
+                    }
+                    for parameter in &mut method.params {
+                        self.scan_fn_parameter_expressions(elab, parameter, runtime_packs)?;
+                    }
+                    if let Some(condition) = &mut method.where_clause {
+                        self.scan_expression(elab, condition, runtime_packs)?;
+                    }
+                    if let Some(body) = &mut method.default_body {
+                        self.scan_block(elab, body, runtime_packs)?;
+                    }
+                }
+                for member in comptime_members {
+                    for parameter in &mut member.params {
+                        self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
+                    }
+                    if let Some(condition) = &mut member.where_clause {
+                        self.scan_expression(elab, condition, runtime_packs)?;
+                    }
+                }
                 Ok(())
             }
         }
+    }
+
+    fn scan_type_parameter_expressions(
+        &mut self,
+        elab: &Elab<'_>,
+        parameter: &mut crate::ast::TypeParam,
+        runtime_packs: &mut RuntimePackEnv,
+    ) -> Result<(), ComptimeError> {
+        if let Some(mutability) = &mut parameter.origin_mutability {
+            self.scan_expression(elab, mutability, runtime_packs)?;
+        }
+        if let Some(default) = &mut parameter.default {
+            self.scan_expression(elab, default, runtime_packs)?;
+        }
+        for constraint in &mut parameter.constraints {
+            self.scan_expression(elab, constraint, runtime_packs)?;
+        }
+        Ok(())
+    }
+
+    fn scan_fn_parameter_expressions(
+        &mut self,
+        elab: &Elab<'_>,
+        parameter: &mut crate::ast::FnParam,
+        runtime_packs: &mut RuntimePackEnv,
+    ) -> Result<(), ComptimeError> {
+        for origin in parameter.origin.iter_mut().flatten() {
+            self.scan_expression(elab, origin, runtime_packs)?;
+        }
+        if let Some(default) = &mut parameter.default {
+            self.scan_expression(elab, default, runtime_packs)?;
+        }
+        Ok(())
     }
 
     fn scan_expression(

@@ -33,6 +33,13 @@ fn accepts_functions_and_calls() {
 }
 
 #[test]
+fn reserved_function_words_remain_valid_for_parameters_variables_and_methods() {
+    ok(
+        "def allowed(class: Int, del: Int) -> Int:\n    var match = class\n    var yield = match + del\n    return yield\n\nstruct Methods:\n    def class(self):\n        pass\n    def match(self):\n        pass\n    def yield(self):\n        pass\n",
+    );
+}
+
+#[test]
 fn accepts_a_named_out_result_as_the_function_return() {
     ok(
         "def doubled(value: Int, out result: Int):\n    result = value * 2\n\ndef main():\n    var answer: Int = doubled(21)\n",
@@ -357,6 +364,17 @@ fn rejects_escaping_closure() {
 fn rejects_same_scope_redeclaration() {
     let e = err("var x: Int = 1\nvar x: Int = 2\n");
     assert_eq!(e, TypeError::Redeclaration("x".into()));
+}
+
+#[test]
+fn rejects_reserved_free_and_nested_function_names() {
+    for name in ["class", "del", "match", "yield"] {
+        let free = format!("def {name}():\n    pass\n");
+        assert_eq!(err(&free), TypeError::ReservedName(name.to_string()));
+
+        let nested = format!("def outer():\n    def {name}():\n        pass\n");
+        assert_eq!(err(&nested), TypeError::ReservedName(name.to_string()));
+    }
 }
 
 #[test]
@@ -2607,13 +2625,13 @@ fn flags_advanced_parameter_forms_as_unsupported() {
 
 #[test]
 fn kwargs_collect_unknown_keywords_and_check_values() {
-    ok("def f(x: Int, **opts: Int):\n    pass\n\nf(1, a=2, b=3)\n");
+    ok("def f(x: Int, var **opts: Int):\n    pass\n\nf(1, a=2, b=3)\n");
     assert!(matches!(
-        err("def f(**opts: Int):\n    pass\n\nf(a=\"wrong\")\n"),
+        err("def f(var **opts: Int):\n    pass\n\nf(a=\"wrong\")\n"),
         TypeError::TypeMismatch { .. }
     ));
     assert!(matches!(
-        err("def f(x: Int, **opts: Int):\n    pass\n\nf(x=1, x=2)\n"),
+        err("def f(x: Int, var **opts: Int):\n    pass\n\nf(x=1, x=2)\n"),
         TypeError::BadCall { .. }
     ));
 }
@@ -2621,11 +2639,11 @@ fn kwargs_collect_unknown_keywords_and_check_values() {
 #[test]
 fn transferred_string_dict_can_forward_keyword_arguments() {
     ok(
-        "def target(prefix: Int, **options: Int):\n    pass\n\ndef relay(**options: Int):\n    target(prefix=7, **options^)\n\nrelay(left=20, right=22)\n",
+        "def target(prefix: Int, var **options: Int):\n    pass\n\ndef relay(var **options: Int):\n    target(prefix=7, **options^)\n\nrelay(left=20, right=22)\n",
     );
     assert!(matches!(
         err(
-            "def target(**options: StringLiteral):\n    pass\n\ndef relay(**options: Int):\n    target(**options^)\n"
+            "def target(var **options: StringLiteral):\n    pass\n\ndef relay(var **options: Int):\n    target(**options^)\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -2634,34 +2652,34 @@ fn transferred_string_dict_can_forward_keyword_arguments() {
 #[test]
 fn generic_and_method_kwargs_share_collection_and_forwarding_checks() {
     ok(
-        "def generic_size[T: Copyable & Movable](**options: T) -> Int:\n    return 0\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable](self, **options: T) -> Int:\n        return self.bias\n    def relay(self, **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable](**options: T) -> Int:\n        return 0\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
+        "def generic_size[T: Copyable & Movable](var **options: T) -> Int:\n    return 0\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable](self, var **options: T) -> Int:\n        return self.bias\n    def relay(self, var **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable](var **options: T) -> Int:\n        return 0\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
     );
     assert!(matches!(
         err(
-            "def generic_size[T: Copyable & Movable](**options: T) -> Int:\n    return 0\n\nvar value = generic_size(first=1, second=\"wrong\")\n"
+            "def generic_size[T: Copyable & Movable](var **options: T) -> Int:\n    return 0\n\nvar value = generic_size(first=1, second=\"wrong\")\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size(self, **options: StringLiteral) -> Int:\n        return self.bias\n\nvar counter = Counter(0)\nvar value = counter.size(first=1)\n"
+            "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size(self, var **options: StringLiteral) -> Int:\n        return self.bias\n\nvar counter = Counter(0)\nvar value = counter.size(first=1)\n"
         ),
         TypeError::BadCall { .. } | TypeError::TypeMismatch { .. }
     ));
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size(self, **options: Int) -> Int:\n        return self.bias\n\nvar counter = Counter(0)\nvar value = counter.size(first=1, first=2)\n"
+            "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size(self, var **options: Int) -> Int:\n        return self.bias\n\nvar counter = Counter(0)\nvar value = counter.size(first=1, first=2)\n"
         ),
         TypeError::BadCall { .. }
     ));
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def fail(self, **options: Int) raises -> Int:\n        raise \"failed\"\n\ndef call(counter: Counter) -> Int:\n    return counter.fail(code=1)\n"
+            "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def fail(self, var **options: Int) raises -> Int:\n        raise \"failed\"\n\ndef call(counter: Counter) -> Int:\n    return counter.fail(code=1)\n"
         ),
         TypeError::UnhandledRaise(_)
     ));
     let ownership_error = err(
-        "struct Token:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __moveinit__(out self, deinit other: Self):\n        self.value = other.value\n\n@fieldwise_init\nstruct Collector:\n    var marker: Int\n    def take(self, **options: Token):\n        pass\n\nvar collector = Collector(0)\nvar token = Token(1)\ncollector.take(item=token)\n",
+        "struct Token:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __moveinit__(out self, deinit other: Self):\n        self.value = other.value\n\n@fieldwise_init\nstruct Collector:\n    var marker: Int\n    def take(self, var **options: Token):\n        pass\n\nvar collector = Collector(0)\nvar token = Token(1)\ncollector.take(item=token)\n",
     );
     assert!(
         matches!(
@@ -2673,7 +2691,7 @@ fn generic_and_method_kwargs_share_collection_and_forwarding_checks() {
         "got {ownership_error:?}"
     );
     let storage_error = err(
-        "struct Token:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __moveinit__(out self, deinit other: Self):\n        self.value = other.value\n\n@fieldwise_init\nstruct Collector:\n    var marker: Int\n    def take(self, **options: Token):\n        pass\n",
+        "struct Token:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __moveinit__(out self, deinit other: Self):\n        self.value = other.value\n\n@fieldwise_init\nstruct Collector:\n    var marker: Int\n    def take(self, var **options: Token):\n        pass\n",
     );
     assert!(
         matches!(
@@ -2687,17 +2705,17 @@ fn generic_and_method_kwargs_share_collection_and_forwarding_checks() {
 #[test]
 fn bounded_trait_methods_share_generic_keyword_collection_and_effect_checks() {
     ok(
-        "trait Collects:\n    def count[Element: Copyable & Movable](self, **options: Element) -> Int: ...\n\ndef direct[Target: Collects](target: Target) -> Int:\n    return target.count(first=1, second=2)\n\ndef relay[Target: Collects](target: Target, **options: Int) -> Int:\n    return target.count(**options^)\n",
+        "trait Collects:\n    def count[Element: Copyable & Movable](self, var **options: Element) -> Int: ...\n\ndef direct[Target: Collects](target: Target) -> Int:\n    return target.count(first=1, second=2)\n\ndef relay[Target: Collects](target: Target, var **options: Int) -> Int:\n    return target.count(**options^)\n",
     );
     assert!(matches!(
         err(
-            "trait Collects:\n    def count[Element: Copyable & Movable](self, **options: Element) -> Int: ...\n\ndef bad[Target: Collects](target: Target) -> Int:\n    return target.count(first=1, second=\"wrong\")\n"
+            "trait Collects:\n    def count[Element: Copyable & Movable](self, var **options: Element) -> Int: ...\n\ndef bad[Target: Collects](target: Target) -> Int:\n    return target.count(first=1, second=\"wrong\")\n"
         ),
         TypeError::BadCall { .. } | TypeError::TypeMismatch { .. }
     ));
     assert!(matches!(
         err(
-            "trait FallibleCollector:\n    def collect(self, **options: Int) raises -> Int: ...\n\ndef call[Target: FallibleCollector](target: Target) -> Int:\n    return target.collect(code=1)\n"
+            "trait FallibleCollector:\n    def collect(self, var **options: Int) raises -> Int: ...\n\ndef call[Target: FallibleCollector](target: Target) -> Int:\n    return target.collect(code=1)\n"
         ),
         TypeError::UnhandledRaise(_)
     ));
@@ -4866,4 +4884,128 @@ fn trivially_predicates_serve_where_clauses_but_not_bounds() {
         err("def f[T: TriviallyMovable](value: T) -> Int:\n    return 1\n"),
         TypeError::UnknownTrait(name) if name == "TriviallyMovable"
     ));
+}
+
+#[test]
+fn where_clause_messages_are_retained_without_changing_constraint_semantics() {
+    ok(
+        "def enabled[T: AnyType](value: T) -> Int where (True, \"enabled only\"):\n    return 1\n\ndef main():\n    var result = enabled(42)\n",
+    );
+
+    let TypeError::BadCall { reason, .. } = err(
+        "def disabled[T: AnyType](value: T) -> Int where (False, \"this overload is disabled\"):\n    return 1\n\ndef main():\n    var result = disabled(42)\n",
+    ) else {
+        panic!("expected a failed generic-constraint call");
+    };
+    assert_eq!(reason, "constraint failed: this overload is disabled");
+
+    let TypeError::Unsupported(message) =
+        err("def invalid[T: AnyType](value: T) where (True, 7):\n    pass\n")
+    else {
+        panic!("expected an invalid where-message diagnostic");
+    };
+    assert!(message.contains("must be a string literal"), "{message}");
+
+    // Method availability and trait requirements compile through the same
+    // retained wrapper instead of treating the tuple as a new proposition.
+    // Keep the declaration-path checks separate: normalizing constraints
+    // between generic trait methods and conforming methods is a distinct task.
+    ok(
+        "trait Selects:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"select is available\"): ...\n",
+    );
+    ok(
+        "struct Selector:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"select is available\"):\n        return 1\n",
+    );
+
+    // Conditional conformances consume the same tuple shape while deciding
+    // lifecycle capabilities; the message never changes the predicate value.
+    let TypeError::TraitNotSatisfied { reason, .. } = err(
+        "struct Pinned(Movable where (False, \"pinned values cannot move\")):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n\ndef main():\n    var value = Pinned(1)\n    var moved = value^\n",
+    ) else {
+        panic!("expected a failed conditional conformance");
+    };
+    assert_eq!(reason.as_deref(), Some("pinned values cannot move"));
+
+    let TypeError::Unsupported(message) =
+        err("struct Invalid(Movable where (False, 7)):\n    var id: Int\n")
+    else {
+        panic!("expected invalid conditional-conformance message syntax");
+    };
+    assert!(message.contains("must be a string literal"), "{message}");
+}
+
+#[test]
+fn diagnostic_where_clauses_cover_structs_and_comptime_declarations() {
+    ok(
+        "@fieldwise_init\nstruct Box[n: Int] where (n > 0, \"positive size required\"):\n    var value: Int\n\ndef main():\n    var value = Box[1](1)\n",
+    );
+    let TypeError::BadCall { reason, .. } = err(
+        "struct Box[n: Int] where (n > 0, \"positive size required\"):\n    var value: Int\n\ndef main():\n    var value: Box[0]\n",
+    ) else {
+        panic!("expected a failed struct constraint");
+    };
+    assert_eq!(reason, "constraint failed: positive size required");
+
+    ok(
+        "struct CopyToken(Copyable, Movable):\n    var value: Int\n\nstruct Factory:\n    comptime Selected[T: AnyType]: AnyType where (conforms_to(T, Copyable), \"Copyable type required\") = T\n\ndef main():\n    var value: Factory.Selected[CopyToken]\n",
+    );
+    let TypeError::BadCall { reason, .. } = err(
+        "struct Token(Movable):\n    var value: Int\n\nstruct Factory:\n    comptime Selected[T: AnyType]: AnyType where (conforms_to(T, Copyable), \"Copyable type required\") = T\n\ndef main():\n    var value: Factory.Selected[Token]\n",
+    ) else {
+        panic!("expected a failed parameterized associated-member constraint");
+    };
+    assert_eq!(reason, "constraint failed: Copyable type required");
+
+    ok("comptime N: Int where (True, \"N enabled\") = 1\n");
+    let TypeError::BadCall { reason, .. } =
+        err("comptime N: Int where (False, \"N unavailable\") = 1\n")
+    else {
+        panic!("expected a failed comptime declaration constraint");
+    };
+    assert_eq!(reason, "constraint failed: N unavailable");
+
+    let TypeError::Unsupported(message) =
+        err("trait Invalid:\n    comptime Item: AnyType where (True, 7)\n")
+    else {
+        panic!("expected invalid trait comptime message syntax");
+    };
+    assert!(message.contains("must be a string literal"), "{message}");
+}
+
+#[test]
+fn method_where_message_surfaces_when_availability_filters_the_candidate() {
+    let TypeError::BadCall { reason, .. } = err(
+        "@fieldwise_init\nstruct Selector:\n    var marker: Int\n    def select[T: AnyType](self, value: T) -> Int where (False, \"selection disabled\"):\n        return 1\n\ndef main():\n    var selector = Selector(0)\n    print(selector.select(42))\n",
+    ) else {
+        panic!("expected method availability to reject the call");
+    };
+    assert_eq!(reason, "constraint failed: selection disabled");
+}
+
+#[test]
+fn overloaded_function_where_message_surfaces_only_for_one_compatible_candidate() {
+    let TypeError::BadCall { reason, .. } = err(
+        "def select[T: AnyType](value: T) -> Int where (False, \"generic selection disabled\"):\n    return 1\n\ndef select(value: Int, extra: Int) -> Int:\n    return 2\n\ndef main():\n    var result = select(42)\n",
+    ) else {
+        panic!("expected overload availability to reject the call");
+    };
+    assert_eq!(reason, "constraint failed: generic selection disabled");
+
+    ok(
+        "def select[T: AnyType](value: T) -> Int where (False, \"generic selection disabled\"):\n    return 1\n\ndef select(value: Int) -> Int:\n    return 2\n\ndef main():\n    var result = select(42)\n",
+    );
+
+    let TypeError::BadCall { reason, .. } = err(
+        "def select[T: AnyType](value: T) -> Int where (False, \"generic selection disabled\"):\n    return 1\n\ndef select[U: AnyType](value: U, extra: Int = 0) -> Int where (False, \"fallback selection disabled\"):\n    return 2\n\ndef main():\n    var result = select(42)\n",
+    ) else {
+        panic!("expected both overload availability clauses to reject the call");
+    };
+    assert_eq!(reason, "no overload matches the supplied arguments");
+}
+
+#[test]
+fn function_typed_keyword_variadics_keep_their_collector_role() {
+    ok(
+        "def count(var **options: Int) -> Int:\n    return 2\n\ndef main():\n    var callback: def(var **options: Int) thin -> Int = count\n    var result = callback(first=1, second=2)\n",
+    );
 }

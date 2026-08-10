@@ -137,7 +137,7 @@ fn kwargs_mutation_during_iteration_is_rejected() {
     let directory = TempDir::new();
     let main = directory.write(
         "main.mojo",
-        "def tally(**options: Int) -> Int:\n    var count = 0\n    for key in options:\n        options[\"extra\"] = 1\n        count += 1\n    return count\n\ndef main():\n    print(tally(alpha=1, beta=2))\n",
+        "def tally(var **options: Int) -> Int:\n    var count = 0\n    for key in options:\n        options[\"extra\"] = 1\n        count += 1\n    return count\n\ndef main():\n    print(tally(alpha=1, beta=2))\n",
     );
     let error = run_compiled(&main).expect_err("kwargs mutation during iteration must be rejected");
     assert!(
@@ -344,7 +344,7 @@ fn kwargs_are_owned_self_hosted_string_dicts() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def show(prefix: Int, **options: Int) raises:\n    print(prefix, len(options))\n    for key in options:\n        print(key, options[key])\n    options[\"local\"] = 9\n    print(options.get(\"missing\", -1), len(options))\n\ndef main() raises:\n    show(7, first=1, second=2)\n    show(8)\n",
+        "def show(prefix: Int, var **options: Int) raises:\n    print(prefix, len(options))\n    for key in options:\n        print(key, options[key])\n    options[\"local\"] = 9\n    print(options.get(\"missing\", -1), len(options))\n\ndef main() raises:\n    show(7, first=1, second=2)\n    show(8)\n",
     );
     assert_eq!(
         run(&main).unwrap(),
@@ -357,7 +357,7 @@ fn transferred_string_dict_forwards_keywords_in_order() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def show(prefix: Int, **options: Int) raises:\n    print(prefix, len(options))\n    for key in options:\n        print(key, options[key])\n\ndef relay(**options: Int) raises:\n    show(prefix=7, **options^)\n\ndef main() raises:\n    relay(left=20, right=22)\n",
+        "def show(prefix: Int, var **options: Int) raises:\n    print(prefix, len(options))\n    for key in options:\n        print(key, options[key])\n\ndef relay(var **options: Int) raises:\n    show(prefix=7, **options^)\n\ndef main() raises:\n    relay(left=20, right=22)\n",
     );
     assert_eq!(run(&main).unwrap(), "7 2\nleft 20\nright 22\n");
 }
@@ -367,7 +367,7 @@ fn generic_and_method_kwargs_execute_through_string_dict() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def generic_size[T: Copyable & Movable](**options: T) -> Int:\n    return len(options)\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable](self, **options: T) -> Int:\n        return self.bias + len(options)\n    def relay(self, **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable](**options: T) -> Int:\n        return len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
+        "def generic_size[T: Copyable & Movable](var **options: T) -> Int:\n    return len(options)\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n    def relay(self, var **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable](var **options: T) -> Int:\n        return len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
     );
     assert_eq!(run(&main).unwrap(), "2\n12\n13\n4\n");
 }
@@ -377,7 +377,7 @@ fn bounded_trait_method_kwargs_execute_through_the_selected_method() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "trait Counts:\n    def count[Element: Copyable & Movable](self, **options: Element) -> Int: ...\n\n@fieldwise_init\nstruct Counter(Counts):\n    var bias: Int\n    def count[Element: Copyable & Movable](self, **options: Element) -> Int:\n        return self.bias + len(options)\n\ndef count_through_bound[Target: Counts](target: Target, **options: Int) -> Int:\n    return target.count(**options^)\n\ndef main():\n    var counter = Counter(10)\n    print(count_through_bound(counter, left=1, right=2))\n",
+        "trait Counts:\n    def count[Element: Copyable & Movable](self, var **options: Element) -> Int: ...\n\n@fieldwise_init\nstruct Counter(Counts):\n    var bias: Int\n    def count[Element: Copyable & Movable](self, var **options: Element) -> Int:\n        return self.bias + len(options)\n\ndef count_through_bound[Target: Counts](target: Target, var **options: Int) -> Int:\n    return target.count(**options^)\n\ndef main():\n    var counter = Counter(10)\n    print(count_through_bound(counter, left=1, right=2))\n",
     );
     assert_eq!(run(&main).unwrap(), "12\n");
 }
@@ -387,7 +387,7 @@ fn bounded_keyword_overloads_keep_the_checker_selected_signature() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "trait Picks:\n    def pick(self, **options: Int) -> Int: ...\n    def pick(self, **options: String) -> Int: ...\n\n@fieldwise_init\nstruct Picker(Picks):\n    var marker: Int\n    def pick(self, **options: Int) -> Int:\n        return 1\n    def pick(self, **options: String) -> Int:\n        return 2\n\ndef through_bound[Target: Picks](target: Target) -> Int:\n    return target.pick(value=\"selected\")\n\ndef main():\n    var picker = Picker(0)\n    print(through_bound(picker))\n",
+        "trait Picks:\n    def pick(self, var **options: Int) -> Int: ...\n    def pick(self, var **options: String) -> Int: ...\n\n@fieldwise_init\nstruct Picker(Picks):\n    var marker: Int\n    def pick(self, var **options: Int) -> Int:\n        return 1\n    def pick(self, var **options: String) -> Int:\n        return 2\n\ndef through_bound[Target: Picks](target: Target) -> Int:\n    return target.pick(value=\"selected\")\n\ndef main():\n    var picker = Picker(0)\n    print(through_bound(picker))\n",
     );
     assert_eq!(run(&main).unwrap(), "2\n");
 }
@@ -397,7 +397,7 @@ fn keyword_collectors_follow_named_out_results_in_the_runtime_frame() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def count(out result: Int, **options: Int):\n    result = len(options)\n\ndef main():\n    print(count(first=1, second=2))\n",
+        "def count(out result: Int, var **options: Int):\n    result = len(options)\n\ndef main():\n    print(count(first=1, second=2))\n",
     );
     assert_eq!(run(&main).unwrap(), "2\n");
 }
@@ -407,7 +407,7 @@ fn keyword_overflow_records_implicit_conversions_for_every_call_kind() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "struct Box(Copyable):\n    var value: Int\n    @implicit\n    def __init__(out self, value: Int):\n        self.value = value\n\ndef free(**options: Box) raises -> Int:\n    return options[\"item\"].value\n\n@fieldwise_init\nstruct Collector:\n    var bias: Int\n    def method(self, **options: Box) raises -> Int:\n        return self.bias + options[\"item\"].value\n    @staticmethod\n    def static(**options: Box) raises -> Int:\n        return options[\"item\"].value\n\ntrait Collects:\n    def bounded(self, **options: Box) raises -> Int: ...\n\n@fieldwise_init\nstruct BoundedCollector(Collects):\n    var bias: Int\n    def bounded(self, **options: Box) raises -> Int:\n        return self.bias + options[\"item\"].value\n\ndef through_bound[Target: Collects](target: Target) raises -> Int:\n    return target.bounded(item=4)\n\ndef main() raises:\n    var collector = Collector(10)\n    var bounded = BoundedCollector(20)\n    print(free(item=1))\n    print(collector.method(item=2))\n    print(Collector.static(item=3))\n    print(through_bound(bounded))\n",
+        "struct Box(Copyable):\n    var value: Int\n    @implicit\n    def __init__(out self, value: Int):\n        self.value = value\n\ndef free(var **options: Box) raises -> Int:\n    return options[\"item\"].value\n\n@fieldwise_init\nstruct Collector:\n    var bias: Int\n    def method(self, var **options: Box) raises -> Int:\n        return self.bias + options[\"item\"].value\n    @staticmethod\n    def static(var **options: Box) raises -> Int:\n        return options[\"item\"].value\n\ntrait Collects:\n    def bounded(self, var **options: Box) raises -> Int: ...\n\n@fieldwise_init\nstruct BoundedCollector(Collects):\n    var bias: Int\n    def bounded(self, var **options: Box) raises -> Int:\n        return self.bias + options[\"item\"].value\n\ndef through_bound[Target: Collects](target: Target) raises -> Int:\n    return target.bounded(item=4)\n\ndef main() raises:\n    var collector = Collector(10)\n    var bounded = BoundedCollector(20)\n    print(free(item=1))\n    print(collector.method(item=2))\n    print(Collector.static(item=3))\n    print(through_bound(bounded))\n",
     );
     assert_eq!(run(&main).unwrap(), "1\n12\n3\n24\n");
 }
@@ -417,7 +417,7 @@ fn method_overloads_distinguish_fixed_and_keyword_collector_shapes() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "@fieldwise_init\nstruct Selector:\n    var marker: Int\n    def choose(self, value: Int) -> Int:\n        return 1\n    def choose(self, value: Int, **options: Int) -> Int:\n        return 2 + len(options)\n\ndef main():\n    var selector = Selector(0)\n    print(selector.choose(7))\n    print(selector.choose(7, extra=9))\n",
+        "@fieldwise_init\nstruct Selector:\n    var marker: Int\n    def choose(self, value: Int) -> Int:\n        return 1\n    def choose(self, value: Int, var **options: Int) -> Int:\n        return 2 + len(options)\n\ndef main():\n    var selector = Selector(0)\n    print(selector.choose(7))\n    print(selector.choose(7, extra=9))\n",
     );
     assert_eq!(run(&main).unwrap(), "1\n3\n");
 }
@@ -427,7 +427,7 @@ fn forwarded_method_kwargs_preserve_duplicate_detection() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "@fieldwise_init\nstruct Relay:\n    var marker: Int\n    def target(self, **options: Int):\n        pass\n    def forward(self, **options: Int):\n        self.target(first=0, **options^)\n\ndef main():\n    var relay = Relay(0)\n    relay.forward(first=1)\n",
+        "@fieldwise_init\nstruct Relay:\n    var marker: Int\n    def target(self, var **options: Int):\n        pass\n    def forward(self, var **options: Int):\n        self.target(first=0, **options^)\n\ndef main():\n    var relay = Relay(0)\n    relay.forward(first=1)\n",
     );
     let error = run(&main).expect_err("forwarded duplicate must fail at runtime binding");
     assert!(

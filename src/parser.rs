@@ -516,24 +516,34 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         self.last_span,
                     )));
                 }
-                if matches!(self.peek_token()?, Some(Token::LBracket)) {
-                    self.parse_type_params()?;
-                }
+                let type_params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
+                    self.parse_type_params()?
+                } else {
+                    Vec::new()
+                };
                 // Mojo permits an optional annotation (`comptime N: Int = 1`).
-                // The current AST stores the folded value only; parsing the type
-                // here keeps syntax compatibility and validates that the annotation
-                // itself is well formed.
-                if matches!(self.peek_token()?, Some(Token::Colon)) {
+                // Retain it with the declaration so checked constraints and future
+                // generic-alias expansion never need to reconstruct source syntax.
+                let ty = if matches!(self.peek_token()?, Some(Token::Colon)) {
                     self.next_token()?; // consume ':'
-                    self.parse_type()?;
-                }
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                let where_clause = self.parse_optional_where_clause()?;
                 self.expect(
                     Token::Assign,
                     "Expected '=' after the comptime constant name (or its ': Type')",
                 )?;
                 let value = self.parse_expression(Precedence::Lowest)?;
                 self.expect_stmt_end()?;
-                Ok(StmtKind::Comptime { name, value })
+                Ok(StmtKind::Comptime {
+                    name,
+                    type_params,
+                    ty,
+                    where_clause,
+                    value,
+                })
             }
         }
     }
@@ -630,6 +640,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             where_clause,
             body,
         })
+    }
+
+    /// Parse one trailing declaration constraint. `where` remains contextual
+    /// rather than becoming a lexer keyword so future syntax can continue to
+    /// use the identifier in ordinary positions.
+    fn parse_optional_where_clause(&mut self) -> Result<Option<Expr>, ParseError> {
+        if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
+            self.next_token()?;
+            Ok(Some(self.parse_expression(Precedence::Lowest)?))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Parse a closure capture list, spelled as a bare `{...}` after effects.
@@ -946,7 +968,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Parses a parameter list (after the `(`), returning the parameters plus the
     /// positions of the `/` (positional-only) and bare `*` (keyword-only) markers.
     /// Supports every Mojo parameter form — conventions, defaults, `*args`,
-    /// `**kwargs`, and the `/`/`*` markers — all **parsed** (the checker flags the
+    /// `var **kwargs`, and the `/`/`*` markers — all **parsed** (the checker flags the
     /// advanced ones as unsupported). Parsing is lenient about argument ordering.
     fn parse_params(&mut self) -> Result<ParamList, ParseError> {
         let mut params = Vec::new();
@@ -966,11 +988,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.next_token()?;
                     positional_only = Some(params.len());
                 }
-                // `**name: T` — keyword variadic.
+                // Current Mojo requires the consuming `var **name: T` spelling
+                // for a keyword-variadic collector.
                 Some(Token::DoubleStar) => {
-                    self.next_token()?;
-                    let name = self.expect_identifier("Expected a name after '**'")?;
-                    params.push(self.finish_param(name, ParamKind::KwVariadic, None, None)?);
+                    return Err(ParseError::UnexpectedToken(
+                        self.next_token()?,
+                        "a keyword-variadic parameter must be spelled 'var **name: Type'"
+                            .to_string(),
+                    ));
                 }
                 Some(Token::Star) => {
                     self.next_token()?;
@@ -987,7 +1012,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 // marker: `var *args: *Ts` (not `*var args`).
                 Some(Token::Var) => {
                     self.next_token()?;
-                    if matches!(self.peek_token()?, Some(Token::Star)) {
+                    if matches!(self.peek_token()?, Some(Token::DoubleStar)) {
+                        self.next_token()?;
+                        let name = self.expect_identifier("Expected a name after 'var **'")?;
+                        params.push(self.finish_param(
+                            name,
+                            ParamKind::KwVariadic,
+                            Some(ArgConvention::Var),
+                            None,
+                        )?);
+                    } else if matches!(self.peek_token()?, Some(Token::Star)) {
                         self.next_token()?;
                         let name = self.expect_identifier("Expected a name after 'var *'")?;
                         params.push(self.finish_param(
@@ -1135,6 +1169,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let type_params = self.parse_type_params()?;
         let (conforms, conformance_conditions, callable_conformance) =
             self.parse_struct_conformance()?;
+        let where_clause = self.parse_optional_where_clause()?;
         self.expect(Token::Colon, "Expected ':' after the struct name")?;
         self.expect_stmt_end()?;
 
@@ -1202,6 +1237,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             conforms,
             callable_conformance,
             conformance_conditions,
+            where_clause,
             fields,
             associated,
             methods,
@@ -1219,12 +1255,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             Vec::new()
         };
+        let ty = if matches!(self.peek_token()?, Some(Token::Colon)) {
+            self.next_token()?;
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let where_clause = self.parse_optional_where_clause()?;
         self.expect(Token::Assign, "Expected '=' after the comptime member name")?;
         let value = self.parse_expression(Precedence::Lowest)?;
         self.expect_stmt_end()?;
         Ok(crate::ast::StructComptime {
             name,
             params,
+            ty,
+            where_clause,
             value,
         })
     }
@@ -1381,8 +1426,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 bounds.into_iter().map(crate::ast::ParamArg::Type).collect(),
             )
         };
+        let where_clause = self.parse_optional_where_clause()?;
         self.expect_stmt_end()?;
-        Ok(crate::ast::TraitComptime { name, params, ty })
+        Ok(crate::ast::TraitComptime {
+            name,
+            params,
+            ty,
+            where_clause,
+        })
     }
 
     /// `def name([convention] self [, params]) -> ret:` followed by an indented
@@ -1497,17 +1548,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let type_params = self.parse_type_params()?;
 
         self.expect(Token::LParen, "Expected '(' after the method name")?;
+        let is_static = decorators
+            .iter()
+            .any(|decorator| decorator.path.as_slice() == ["staticmethod"]);
         // Detect the receiver. An instance method starts with `self`, optionally
         // carrying a convention (`mut self`, `out self`, `var self`, `imm self`
-        // — convention words are contextual identifiers). A `@staticmethod` has no
-        // `self`: its parameters (if any) start immediately. (A convention word as
-        // the first token is read as `<conv> self`, so a static method whose first
-        // parameter carries a convention is not distinguished — a rare case.)
+        // — convention words are contextual identifiers). A `@staticmethod` has
+        // no `self`, so its parameters start immediately even when the first one
+        // has a convention, notably canonical `var **kwargs`.
         let first_is_self =
             matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "self");
         let first_is_convention = matches!(self.peek_token()?, Some(Token::Identifier(id)) if convention_word(id).is_some())
             || matches!(self.peek_token()?, Some(Token::Var));
-        let (has_self, self_convention, self_origin) = if first_is_self {
+        let (has_self, self_convention, self_origin) = if is_static {
+            (false, None, None)
+        } else if first_is_self {
             self.next_token()?; // consume 'self'
             (true, None, None)
         } else if first_is_convention {
@@ -1934,10 +1989,23 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     }
                     continue;
                 }
+                let mut kind = ParamKind::Regular;
                 let convention = match self.peek_token()?.cloned() {
                     Some(Token::Var) => {
                         self.next_token()?;
+                        if matches!(self.peek_token()?, Some(Token::DoubleStar)) {
+                            self.next_token()?;
+                            kind = ParamKind::KwVariadic;
+                        }
                         Some(ArgConvention::Var)
+                    }
+                    Some(Token::DoubleStar) => {
+                        return Err(ParseError::UnexpectedToken(
+                            self.next_token()?,
+                            "a keyword-variadic function-type parameter must be spelled \
+                             'var **name: Type'"
+                                .to_string(),
+                        ));
                     }
                     Some(Token::Identifier(word)) if convention_word(&word).is_some() => {
                         self.next_token()?;
@@ -1950,27 +2018,38 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 } else {
                     None
                 };
-                let first = self.parse_type()?;
-                let (name, ty) = if matches!(self.peek_token()?, Some(Token::Colon)) {
-                    let Type::Named(name, arguments) = first else {
-                        return Err(ParseError::UnexpectedToken(
-                            Token::Colon,
-                            "a function-type parameter name must be an identifier".to_string(),
-                        ));
-                    };
-                    if !arguments.is_empty() {
-                        return Err(ParseError::UnexpectedToken(
-                            Token::Colon,
-                            "a function-type parameter name cannot have type arguments".to_string(),
-                        ));
-                    }
-                    self.next_token()?;
+                let (name, ty) = if kind == ParamKind::KwVariadic {
+                    let name = self.expect_identifier("Expected a name after 'var **'")?;
+                    self.expect(
+                        Token::Colon,
+                        "Expected ':' after a keyword-variadic function-type parameter",
+                    )?;
                     (Some(name), self.parse_type()?)
                 } else {
-                    (None, first)
+                    let first = self.parse_type()?;
+                    if matches!(self.peek_token()?, Some(Token::Colon)) {
+                        let Type::Named(name, arguments) = first else {
+                            return Err(ParseError::UnexpectedToken(
+                                Token::Colon,
+                                "a function-type parameter name must be an identifier".to_string(),
+                            ));
+                        };
+                        if !arguments.is_empty() {
+                            return Err(ParseError::UnexpectedToken(
+                                Token::Colon,
+                                "a function-type parameter name cannot have type arguments"
+                                    .to_string(),
+                            ));
+                        }
+                        self.next_token()?;
+                        (Some(name), self.parse_type()?)
+                    } else {
+                        (None, first)
+                    }
                 };
                 params.push(FunctionTypeParam {
                     name,
+                    kind,
                     convention,
                     origin,
                     ty,

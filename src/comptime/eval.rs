@@ -23,6 +23,9 @@ impl<'a> Elab<'a> {
                 }
                 self.type_value(name, &[], scope)
             }
+            ExprKind::TypeValue(ty) => Ok(CtValue::Type(Box::new(
+                self.param_arg_type(&ParamArg::Type(ty.clone()), scope)?,
+            ))),
             ExprKind::TypeApply { name, args }
                 if crate::types::trivial_predicate_name(name).is_some() =>
             {
@@ -186,6 +189,51 @@ impl<'a> Elab<'a> {
                     left = r;
                 }
                 Ok(CtValue::Bool(true))
+            }
+            ExprKind::Call {
+                name, args, kwargs, ..
+            } if name == "conforms_to" && kwargs.is_empty() && args.len() == 2 => {
+                let ExprKind::Identifier(trait_name) = &args[1].kind else {
+                    return Err(ComptimeError::NotComptime(
+                        "conforms_to requires a trait name".to_string(),
+                    ));
+                };
+                let trait_name = crate::ast::canonical_trait_name(trait_name);
+                let values = match &args[0].kind {
+                    ExprKind::Member { object, field }
+                        if field == "values" && matches!(&object.kind, ExprKind::Identifier(_)) =>
+                    {
+                        let ExprKind::Identifier(pack) = &object.kind else {
+                            unreachable!("guard established a pack identifier")
+                        };
+                        scope.get(pack).cloned().ok_or_else(|| {
+                            ComptimeError::NotComptime(format!(
+                                "unknown compile-time type pack '{pack}'"
+                            ))
+                        })?
+                    }
+                    _ => self.eval(&args[0], scope)?,
+                };
+                let types = match values {
+                    CtValue::Type(ty) => vec![*ty],
+                    CtValue::Tuple(values) | CtValue::List(values) => values
+                        .into_iter()
+                        .map(|value| match value {
+                            CtValue::Type(ty) => Ok(*ty),
+                            _ => Err(ComptimeError::NotComptime(
+                                "conforms_to expects a type or type pack".to_string(),
+                            )),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    _ => {
+                        return Err(ComptimeError::NotComptime(
+                            "conforms_to expects a type or type pack".to_string(),
+                        ));
+                    }
+                };
+                Ok(CtValue::Bool(types.iter().all(|ty| {
+                    self.conformance.require(ty, trait_name).is_ok()
+                })))
             }
             // A built-in compile-time **type predicate** (roadmap milestone 7): `is_same_type[T,
             // U]()` is `Bool` type equality, usable in a `comptime if`.
@@ -612,6 +660,19 @@ impl<'a> Elab<'a> {
             }
             _ => {}
         }
+        // Type equality is a compile-time proposition used by trailing `where`
+        // clauses after their type parameters have been specialized.
+        if let (CtValue::Type(left), CtValue::Type(right)) =
+            (self.eval(l, scope)?, self.eval(r, scope)?)
+        {
+            return match op {
+                InfixOp::Eq => Ok(CtValue::Bool(left == right)),
+                InfixOp::Ne => Ok(CtValue::Bool(left != right)),
+                _ => Err(ComptimeError::NotComptime(
+                    "only == and != are defined for compile-time types".to_string(),
+                )),
+            };
+        }
         // String concatenation (`+`) and equality (`==`/`!=`) at compile time.
         if let (CtValue::Str(a), CtValue::Str(b)) = (self.eval(l, scope)?, self.eval(r, scope)?) {
             return match op {
@@ -768,11 +829,6 @@ impl<'a> Elab<'a> {
                     ));
                 }
             };
-            if step == 0 {
-                return Err(ComptimeError::BadRange(
-                    "range step cannot be zero".to_string(),
-                ));
-            }
             let mut out = Vec::new();
             let mut i = start;
             while (step > 0 && i < stop) || (step < 0 && i > stop) {

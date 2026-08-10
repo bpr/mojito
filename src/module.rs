@@ -19,6 +19,10 @@ pub enum ModuleError {
     Parse { module: String, err: ParseError },
     /// `from module import Name` where `Name` isn't a top-level declaration of it.
     NameNotFound { module: String, name: String },
+    /// A second explicit import binds a local name to a different declaration.
+    DuplicateImport { module: String, name: String },
+    /// An import resolves to the importing module's own canonical file.
+    SelfImport { module: String },
     /// An empty module path used with a form other than named sibling imports.
     EmptyModulePath,
 }
@@ -53,6 +57,14 @@ impl std::fmt::Display for ModuleError {
             ModuleError::NameNotFound { module, name } => {
                 write!(f, "module '{module}' has no declaration named '{name}'")
             }
+            ModuleError::DuplicateImport { module, name } => write!(
+                f,
+                "duplicate import of '{name}' from module '{module}': an earlier import already \
+                 binds this name; rename one with 'as'"
+            ),
+            ModuleError::SelfImport { module } => {
+                write!(f, "module '{module}' imports itself")
+            }
             ModuleError::EmptyModulePath => {
                 write!(
                     f,
@@ -80,7 +92,7 @@ pub fn link_with_options(
     let mut linker = Linker::new(options);
     let program = read_and_parse(entry_path)?;
     let dir = entry_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut body = linker.resolve_entry(program, dir)?;
+    let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
     let entry_module = display(entry_path);
     crate::ast::stamp_source(&mut body, &entry_module);
     let mut result = linker.decls;
@@ -106,7 +118,7 @@ pub fn link_source_with_options(
     })?;
     let mut linker = Linker::new(options);
     let dir = entry_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut body = linker.resolve_entry(program, dir)?;
+    let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
     let entry_module = display(entry_path);
     crate::ast::stamp_source(&mut body, &entry_module);
     let mut result = linker.decls;
@@ -131,7 +143,7 @@ pub fn inject_prelude_with_options(
     options: LinkOptions,
 ) -> Result<Vec<Stmt>, ModuleError> {
     let mut linker = Linker::new(options);
-    let body = linker.resolve_entry(program, Path::new("."))?;
+    let body = linker.resolve_entry(program, Path::new("."), None)?;
     let mut result = linker.decls;
     result.extend(body);
     Ok(result)
@@ -306,13 +318,16 @@ fn rewrite_type(
             rename(name, names);
             rewrite_args(args, names, namespaces);
         }
-        Type::Assoc { base, name, .. } => {
-            if let Some(namespace) = type_path(base)
-                && let Some(target) = namespaces
+        Type::Assoc { base, name, args } => {
+            let target = type_path(base).and_then(|namespace| {
+                namespaces
                     .get(&namespace)
                     .and_then(|exports| exports.get(name))
-            {
-                *ty = Type::Named(target.clone(), Vec::new());
+                    .cloned()
+            });
+            rewrite_args(args, names, namespaces);
+            if let Some(target) = target {
+                *ty = Type::Named(target, std::mem::take(args));
             } else {
                 rewrite_type(base, names, namespaces);
             }
@@ -514,6 +529,20 @@ fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn check_self_import(
+    importer: Option<&Path>,
+    imported: &Path,
+    module: &str,
+) -> Result<(), ModuleError> {
+    if importer.is_some_and(|path| canonical(path) == canonical(imported)) {
+        Err(ModuleError::SelfImport {
+            module: module.to_string(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
 fn program_uses_kwargs(program: &[Stmt]) -> bool {
     program.iter().any(|stmt| match &stmt.kind {
         StmtKind::Def { params, body, .. } => {
@@ -548,7 +577,7 @@ fn display(path: &Path) -> String {
 
 struct Linker {
     options: LinkOptions,
-    /// Module files already hoisted (canonical path) — dedup + cycle break.
+    /// Module files already entered (canonical path) — dedup + cycle break.
     loaded: HashSet<PathBuf>,
     /// The top-level declaration names each loaded module exposes (for validating
     /// `from module import Name`).
@@ -564,6 +593,12 @@ struct Linker {
     /// Stable public bindings exported by the fully loaded implicit prelude.
     /// `None` while the prelude and its own dependency graph are bootstrapping.
     prelude_bindings: Option<HashMap<String, String>>,
+}
+
+struct ImportScope<'a> {
+    bindings: &'a mut HashMap<String, String>,
+    namespaces: &'a mut HashMap<String, HashMap<String, String>>,
+    explicit_imports: &'a mut HashSet<String>,
 }
 
 impl Linker {
@@ -615,7 +650,12 @@ impl Linker {
 
     /// Resolve the entry program's imports (loading their modules) and return its
     /// own non-import statements (declarations + top-level code + `main`).
-    fn resolve_entry(&mut self, program: Vec<Stmt>, dir: &Path) -> Result<Vec<Stmt>, ModuleError> {
+    fn resolve_entry(
+        &mut self,
+        program: Vec<Stmt>,
+        dir: &Path,
+        importer: Option<&Path>,
+    ) -> Result<Vec<Stmt>, ModuleError> {
         self.ensure_prelude()?;
         let uses_kwargs = program_uses_kwargs(&program);
         if uses_kwargs && let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
@@ -624,6 +664,7 @@ impl Linker {
         }
         let mut bindings = self.prelude_bindings.clone().unwrap_or_default();
         let mut namespaces = HashMap::new();
+        let mut explicit_imports = HashSet::new();
         if uses_kwargs && let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
             let runtime = Path::new(root).join("stdlib/std/collections/string_dict.mojo");
             if let Some(target) = self.exports[&canonical(&runtime)].get("StringDict") {
@@ -636,20 +677,24 @@ impl Linker {
                 StmtKind::FromImport { level, path, names } => {
                     self.apply_from_import(
                         dir,
+                        importer,
                         *level,
                         path,
                         names,
-                        &mut bindings,
-                        &mut namespaces,
+                        ImportScope {
+                            bindings: &mut bindings,
+                            namespaces: &mut namespaces,
+                            explicit_imports: &mut explicit_imports,
+                        },
                     )?;
                 }
                 StmtKind::Import { path, alias } => {
-                    self.apply_import(dir, path, alias.as_deref(), &mut namespaces)?;
+                    self.apply_import(dir, importer, path, alias.as_deref(), &mut namespaces)?;
                 }
                 _ => body.push(stmt),
             }
         }
-        self.resolve_scoped_imports(&mut body, dir, &bindings, &namespaces)?;
+        self.resolve_scoped_imports(&mut body, dir, importer, &bindings, &namespaces)?;
         Ok(body)
     }
 
@@ -658,10 +703,27 @@ impl Linker {
     fn load_module(&mut self, path: &Path, module_name: &str) -> Result<(), ModuleError> {
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if !self.loaded.insert(canon.clone()) {
-            return Ok(()); // already loaded (or a cycle) — declarations are in place
+            // A completed module has its final exports; a mutual-cycle peer has
+            // the provisional local exports published below.
+            return Ok(());
         }
         let program = read_and_parse_named(path, module_name)?;
         let dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut local = HashMap::new();
+        for stmt in &program {
+            if let Some(name) = declared_name(stmt) {
+                if name == "main" {
+                    continue;
+                }
+                let linked_name = implicit_public_identity(module_name, name)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| qualified(module_name, name));
+                local.insert(name.to_string(), linked_name);
+            }
+        }
+        // Publish local declarations before following imports so a distinct
+        // module in a mutual cycle can bind them while this module is loading.
+        self.exports.insert(canon.clone(), local.clone());
         // Modules loaded after prelude bootstrap see the same implicit names as
         // the entry module. Prelude dependencies themselves are loaded while the
         // table is `None` and therefore use only their explicit imports.
@@ -669,6 +731,7 @@ impl Linker {
         let mut bindings = implicit_bindings.clone();
         let mut namespaces = HashMap::new();
         let mut explicit_exports = HashSet::new();
+        let mut explicit_imports = HashSet::new();
         if module_name != "std.collections.string_dict"
             && program_uses_kwargs(&program)
             && let Some(root) = option_env!("CARGO_MANIFEST_DIR")
@@ -688,11 +751,15 @@ impl Linker {
                 } => {
                     self.apply_from_import(
                         dir,
+                        Some(path),
                         *level,
                         mpath,
                         names,
-                        &mut bindings,
-                        &mut namespaces,
+                        ImportScope {
+                            bindings: &mut bindings,
+                            namespaces: &mut namespaces,
+                            explicit_imports: &mut explicit_imports,
+                        },
                     )?;
                     if let ImportNames::Names(items) = names {
                         explicit_exports.extend(
@@ -703,21 +770,9 @@ impl Linker {
                     }
                 }
                 StmtKind::Import { path: mpath, alias } => {
-                    self.apply_import(dir, mpath, alias.as_deref(), &mut namespaces)?;
+                    self.apply_import(dir, Some(path), mpath, alias.as_deref(), &mut namespaces)?;
                 }
                 _ => {}
-            }
-        }
-        let mut local = HashMap::new();
-        for stmt in &program {
-            if let Some(name) = declared_name(stmt) {
-                if name == "main" {
-                    continue;
-                }
-                let linked_name = implicit_public_identity(module_name, name)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| qualified(module_name, name));
-                local.insert(name.to_string(), linked_name);
             }
         }
         bindings.extend(local.clone());
@@ -725,7 +780,7 @@ impl Linker {
             .into_iter()
             .filter(|stmt| declared_name(stmt).is_some_and(|name| name != "main"))
             .collect();
-        self.resolve_scoped_imports(&mut declarations, dir, &bindings, &namespaces)?;
+        self.resolve_scoped_imports(&mut declarations, dir, Some(path), &bindings, &namespaces)?;
         rewrite_program(&mut declarations, &bindings, &namespaces);
         for mut stmt in declarations {
             crate::ast::stamp_source(std::slice::from_mut(&mut stmt), &display(path));
@@ -775,11 +830,13 @@ impl Linker {
     fn apply_import(
         &mut self,
         dir: &Path,
+        importer: Option<&Path>,
         path: &[String],
         alias: Option<&str>,
         namespaces: &mut HashMap<String, HashMap<String, String>>,
     ) -> Result<(), ModuleError> {
         let (module_path, module_name) = self.resolve_module(dir, 0, path)?;
+        check_self_import(importer, &module_path, &module_name)?;
         self.load_module(&module_path, &module_name)?;
         if let Some(alias) = alias {
             self.bind_namespace_tree(&module_path, alias, namespaces);
@@ -818,16 +875,16 @@ impl Linker {
     fn bind_from_imports(
         &self,
         path: &Path,
+        module_name: &str,
         names: &ImportNames,
-        bindings: &mut HashMap<String, String>,
-        namespaces: &mut HashMap<String, HashMap<String, String>>,
-    ) {
+        scope: ImportScope<'_>,
+    ) -> Result<(), ModuleError> {
         let canon = canonical(path);
         let exports = &self.exports[&canon];
         let namespace_exports = self.namespace_exports.get(&canon);
         match names {
             ImportNames::Wildcard => {
-                bindings.extend(
+                scope.bindings.extend(
                     exports
                         .iter()
                         .filter(|(n, _)| !n.starts_with('_'))
@@ -836,7 +893,7 @@ impl Linker {
                 if let Some(children) = namespace_exports {
                     for (name, child_exports) in children {
                         if !name.split('.').next().is_some_and(|p| p.starts_with('_')) {
-                            namespaces.insert(name.clone(), child_exports.clone());
+                            scope.namespaces.insert(name.clone(), child_exports.clone());
                         }
                     }
                 }
@@ -845,31 +902,48 @@ impl Linker {
                 for item in items {
                     let local = item.alias.clone().unwrap_or_else(|| item.name.clone());
                     if let Some(target) = exports.get(&item.name) {
-                        bindings.insert(local, target.clone());
+                        if scope.explicit_imports.contains(&local)
+                            && scope
+                                .bindings
+                                .get(&local)
+                                .is_some_and(|previous| previous != target)
+                        {
+                            return Err(ModuleError::DuplicateImport {
+                                module: module_name.to_string(),
+                                name: local,
+                            });
+                        }
+                        scope.bindings.insert(local.clone(), target.clone());
+                        scope.explicit_imports.insert(local);
                     } else if let Some(children) = namespace_exports
                         && let Some(child_exports) = children.get(&item.name)
                     {
-                        namespaces.insert(local.clone(), child_exports.clone());
+                        scope
+                            .namespaces
+                            .insert(local.clone(), child_exports.clone());
                         let prefix = format!("{}.", item.name);
                         for (name, exports) in children {
                             if let Some(suffix) = name.strip_prefix(&prefix) {
-                                namespaces.insert(format!("{local}.{suffix}"), exports.clone());
+                                scope
+                                    .namespaces
+                                    .insert(format!("{local}.{suffix}"), exports.clone());
                             }
                         }
                     }
                 }
             }
         }
+        Ok(())
     }
 
     fn apply_from_import(
         &mut self,
         dir: &Path,
+        importer: Option<&Path>,
         level: usize,
         path: &[String],
         names: &ImportNames,
-        bindings: &mut HashMap<String, String>,
-        namespaces: &mut HashMap<String, HashMap<String, String>>,
+        scope: ImportScope<'_>,
     ) -> Result<(), ModuleError> {
         if path.is_empty() {
             let ImportNames::Names(items) = names else {
@@ -878,52 +952,66 @@ impl Linker {
             for item in items {
                 let submodule = vec![item.name.clone()];
                 let (module_path, module_name) = self.resolve_module(dir, level, &submodule)?;
+                check_self_import(importer, &module_path, &module_name)?;
                 self.load_module(&module_path, &module_name)?;
                 self.bind_namespace_tree(
                     &module_path,
                     &item.alias.clone().unwrap_or_else(|| item.name.clone()),
-                    namespaces,
+                    scope.namespaces,
                 );
             }
             return Ok(());
         }
         let (module_path, module_name) = self.resolve_module(dir, level, path)?;
+        check_self_import(importer, &module_path, &module_name)?;
         self.load_module(&module_path, &module_name)?;
         self.check_names(&module_path, &module_name, names)?;
-        self.bind_from_imports(&module_path, names, bindings, namespaces);
-        Ok(())
+        self.bind_from_imports(&module_path, &module_name, names, scope)
     }
 
     fn resolve_scoped_imports(
         &mut self,
         body: &mut Vec<Stmt>,
         dir: &Path,
+        importer: Option<&Path>,
         inherited_bindings: &HashMap<String, String>,
         inherited_namespaces: &HashMap<String, HashMap<String, String>>,
     ) -> Result<(), ModuleError> {
         let mut bindings = inherited_bindings.clone();
         let mut namespaces = inherited_namespaces.clone();
+        let mut explicit_imports = HashSet::new();
         let mut resolved = Vec::with_capacity(body.len());
         for mut statement in std::mem::take(body) {
             match &statement.kind {
                 StmtKind::FromImport { level, path, names } => {
                     self.apply_from_import(
                         dir,
+                        importer,
                         *level,
                         path,
                         names,
-                        &mut bindings,
-                        &mut namespaces,
+                        ImportScope {
+                            bindings: &mut bindings,
+                            namespaces: &mut namespaces,
+                            explicit_imports: &mut explicit_imports,
+                        },
                     )?;
                 }
                 StmtKind::Import { path, alias } => {
-                    self.apply_import(dir, path, alias.as_deref(), &mut namespaces)?;
+                    self.apply_import(dir, importer, path, alias.as_deref(), &mut namespaces)?;
                 }
                 _ => {
-                    self.resolve_imports_in_statement(&mut statement, dir, &bindings, &namespaces)?;
+                    self.resolve_imports_in_statement(
+                        &mut statement,
+                        dir,
+                        importer,
+                        &bindings,
+                        &namespaces,
+                    )?;
                     rewrite_stmt(&mut statement, &bindings, &namespaces);
                     if let Some(local) = lexical_binding_name(&statement) {
                         bindings.remove(local);
+                        explicit_imports.remove(local);
                         remove_namespace_binding(&mut namespaces, local);
                     }
                     resolved.push(statement);
@@ -938,6 +1026,7 @@ impl Linker {
         &mut self,
         statement: &mut Stmt,
         dir: &Path,
+        importer: Option<&Path>,
         bindings: &HashMap<String, String>,
         namespaces: &HashMap<String, HashMap<String, String>>,
     ) -> Result<(), ModuleError> {
@@ -953,7 +1042,13 @@ impl Linker {
                     params.iter().map(|param| param.name.clone()),
                     body,
                 );
-                self.resolve_scoped_imports(body, dir, &local_bindings, &local_namespaces)?
+                self.resolve_scoped_imports(
+                    body,
+                    dir,
+                    importer,
+                    &local_bindings,
+                    &local_namespaces,
+                )?
             }
             StmtKind::Struct { methods, .. } => {
                 for method in methods {
@@ -970,6 +1065,7 @@ impl Linker {
                     self.resolve_scoped_imports(
                         &mut method.body,
                         dir,
+                        importer,
                         &local_bindings,
                         &local_namespaces,
                     )?;
@@ -978,23 +1074,23 @@ impl Linker {
             StmtKind::Trait { methods, .. } => {
                 for method in methods {
                     if let Some(body) = &mut method.default_body {
-                        self.resolve_scoped_imports(body, dir, bindings, namespaces)?;
+                        self.resolve_scoped_imports(body, dir, importer, bindings, namespaces)?;
                     }
                 }
             }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 for (_, block) in branches {
-                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                    self.resolve_scoped_imports(block, dir, importer, bindings, namespaces)?;
                 }
                 if let Some(block) = orelse {
-                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                    self.resolve_scoped_imports(block, dir, importer, bindings, namespaces)?;
                 }
             }
             StmtKind::While { body, .. }
             | StmtKind::For { body, .. }
             | StmtKind::ComptimeFor { body, .. }
             | StmtKind::With { body, .. } => {
-                self.resolve_scoped_imports(body, dir, bindings, namespaces)?
+                self.resolve_scoped_imports(body, dir, importer, bindings, namespaces)?
             }
             StmtKind::Try {
                 body,
@@ -1002,15 +1098,15 @@ impl Linker {
                 orelse,
                 finalbody,
             } => {
-                self.resolve_scoped_imports(body, dir, bindings, namespaces)?;
+                self.resolve_scoped_imports(body, dir, importer, bindings, namespaces)?;
                 if let Some((_, block)) = except {
-                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                    self.resolve_scoped_imports(block, dir, importer, bindings, namespaces)?;
                 }
                 if let Some(block) = orelse {
-                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                    self.resolve_scoped_imports(block, dir, importer, bindings, namespaces)?;
                 }
                 if let Some(block) = finalbody {
-                    self.resolve_scoped_imports(block, dir, bindings, namespaces)?;
+                    self.resolve_scoped_imports(block, dir, importer, bindings, namespaces)?;
                 }
             }
             _ => {}
@@ -1268,6 +1364,7 @@ fn rewrite_stmt(
             conforms,
             callable_conformance,
             conformance_conditions,
+            where_clause,
             fields,
             associated,
             methods,
@@ -1287,10 +1384,22 @@ fn rewrite_stmt(
                 rename(conformance, names);
                 rewrite_expr(condition, names, namespaces);
             }
+            if let Some(condition) = where_clause {
+                rewrite_expr(condition, names, namespaces);
+            }
             for f in fields {
                 rewrite_type(&mut f.ty, names, namespaces);
             }
             for a in associated {
+                for parameter in &mut a.params {
+                    rewrite_type_param(parameter, names, namespaces);
+                }
+                if let Some(ty) = &mut a.ty {
+                    rewrite_type(ty, names, namespaces);
+                }
+                if let Some(condition) = &mut a.where_clause {
+                    rewrite_expr(condition, names, namespaces);
+                }
                 rewrite_expr(&mut a.value, names, namespaces);
             }
             for m in methods {
@@ -1356,7 +1465,13 @@ fn rewrite_stmt(
                 }
             }
             for c in comptime_members {
+                for parameter in &mut c.params {
+                    rewrite_type_param(parameter, names, namespaces);
+                }
                 rewrite_type(&mut c.ty, names, namespaces);
+                if let Some(condition) = &mut c.where_clause {
+                    rewrite_expr(condition, names, namespaces);
+                }
             }
         }
         StmtKind::VarDecl { ty, value, .. } => {
@@ -1365,8 +1480,23 @@ fn rewrite_stmt(
             }
             rewrite_expr(value, names, namespaces);
         }
-        StmtKind::Comptime { name, value } => {
+        StmtKind::Comptime {
+            name,
+            type_params,
+            ty,
+            where_clause,
+            value,
+        } => {
             rename(name, names);
+            for parameter in type_params {
+                rewrite_type_param(parameter, names, namespaces);
+            }
+            if let Some(ty) = ty {
+                rewrite_type(ty, names, namespaces);
+            }
+            if let Some(condition) = where_clause {
+                rewrite_expr(condition, names, namespaces);
+            }
             rewrite_expr(value, names, namespaces);
         }
         StmtKind::RefDecl { value, .. }

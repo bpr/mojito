@@ -67,6 +67,18 @@ fn comptime_for_range_variants_and_reverse() {
 }
 
 #[test]
+fn comptime_for_zero_step_range_unrolls_nothing() {
+    let src = "def main():\n    print(\"before\")\n    comptime for i in range(0, 5, 0):\n        print(i)\n    print(\"after\")\n";
+    assert_eq!(run(src).unwrap(), "before\nafter\n");
+}
+
+#[test]
+fn specialized_where_erases_after_only_origin_metadata_remains() {
+    let src = "def enabled[m: Bool, //, o: Origin[mut=m]](ref[o] value: Int) -> Int where (m == True, \"mutable only\"):\n    return value\n\ndef main():\n    var value = 1\n    print(enabled(value))\n";
+    assert_eq!(run(src).unwrap(), "1\n");
+}
+
+#[test]
 fn comptime_for_quota_rejects_a_huge_unroll() {
     let err =
         run("def main():\n    comptime for i in range(1000000):\n        print(i)\n").unwrap_err();
@@ -379,6 +391,12 @@ fn ctfe_runs_a_pure_function_at_compile_time() {
 }
 
 #[test]
+fn vm_backed_ctfe_zero_step_range_is_empty() {
+    let src = "def count_iterations() -> Int:\n    var count = 0\n    for i in range(3, 0, 0):\n        count += 1\n    return count\n\ncomptime COUNT = count_iterations()\n\ndef main():\n    print(COUNT)\n";
+    assert_eq!(run_compiled(src).unwrap(), "0\n");
+}
+
+#[test]
 fn ctfe_supports_recursion() {
     let src = "def fact(n: Int) -> Int:\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\n\ncomptime F = fact(5)\n\ndef main():\n    print(F)\n";
     assert_eq!(run(src).unwrap(), "120\n");
@@ -649,6 +667,48 @@ fn value_pack_specialization_accepts_named_origin_after_pack() {
 // Compile-time elaboration specializes a variadic struct template per
 // instantiation (mirroring pack functions): `Tuple[*Ts]` members expand to the
 // concrete element list, and the template itself is dropped.
+
+#[test]
+fn value_struct_specialization_validates_a_diagnostic_where_clause() {
+    let template = "@fieldwise_init\nstruct Window[size: Int] where (size > 0, \"size must be positive\"):\n    var value: Int\n\n";
+    assert_eq!(
+        run(&format!(
+            "{template}def main():\n    var value = Window[1](42)\n    print(value.value)\n"
+        ))
+        .unwrap(),
+        "42\n"
+    );
+
+    let error = run(&format!(
+        "{template}def main():\n    var value = Window[0](42)\n    print(value.value)\n"
+    ))
+    .unwrap_err();
+    assert!(
+        error.contains("constraint failed: size must be positive"),
+        "got: {error}"
+    );
+}
+
+#[test]
+fn variadic_struct_specialization_folds_a_diagnostic_where_clause() {
+    let template = "@fieldwise_init\nstruct CopyPack[*Ts: AnyType] where (conforms_to(Ts.values, Copyable), \"pack elements must be Copyable\"):\n    var values: Tuple[*Ts]\n\n";
+    assert_eq!(
+        run(&format!(
+            "{template}def main():\n    var value = CopyPack[Int, Bool]((1, True))\n    print(value.values[0])\n"
+        ))
+        .unwrap(),
+        "1\n"
+    );
+
+    let error = run(&format!(
+        "{template}struct Token(Movable):\n    var value: Int\n\ndef main():\n    var value: CopyPack[Token]\n"
+    ))
+    .unwrap_err();
+    assert!(
+        error.contains("constraint failed: pack elements must be Copyable"),
+        "got: {error}"
+    );
+}
 
 #[test]
 fn variadic_struct_specializes_with_per_index_typed_storage() {

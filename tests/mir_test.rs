@@ -1204,7 +1204,7 @@ fn seam_tstrings_keep_the_eager_conversion_fallback() {
 
 #[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
-    let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable](self, **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
+    let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -1369,7 +1369,7 @@ fn checked_declaration_types_are_keyed_by_source_site_not_type_syntax() {
 #[test]
 fn mir_declarations_carry_generic_free_and_method_keyword_collectors() {
     let program = parse(
-        "def collect[T: Copyable & Movable](**options: T):\n    pass\n\nstruct Relay:\n    def collect[T: Copyable & Movable](self, **options: T):\n        pass\n",
+        "def collect[T: Copyable & Movable](var **options: T):\n    pass\n\nstruct Relay:\n    def collect[T: Copyable & Movable](self, var **options: T):\n        pass\n",
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");

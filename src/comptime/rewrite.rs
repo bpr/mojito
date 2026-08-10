@@ -110,8 +110,14 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
         | ExprKind::Str(_)
-        | ExprKind::None
-        | ExprKind::TString { .. } => {}
+        | ExprKind::None => {}
+        ExprKind::TString { parts, .. } => {
+            for part in parts {
+                if let crate::ast::TStringPart::Expr(value) = part {
+                    rewrite_expr(value, subs);
+                }
+            }
+        }
         // A value **parameter** argument (`Box[CAP](…)`, `UnsafePointer[CAP]`) may
         // reference a comptime constant, so rewrite the `Value` param args too.
         ExprKind::TypeApply { args, .. } => rewrite_param_args(args, subs),
@@ -184,9 +190,28 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
             }
         }
         ExprKind::ListLit(elems) | ExprKind::TupleLit(elems) => rewrite_exprs(elems, subs),
-        ExprKind::TypeValue(_) => {}
-        ExprKind::Invoke { .. } => {}
-        ExprKind::BraceLit(_) => {}
+        ExprKind::TypeValue(ty) => rewrite_type(ty, subs),
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            rewrite_expr(callee, subs);
+            rewrite_param_args(param_args, subs);
+            rewrite_exprs(args, subs);
+            for argument in kwargs {
+                rewrite_expr(&mut argument.value, subs);
+            }
+        }
+        ExprKind::BraceLit(entries) => {
+            for (key, value) in entries {
+                rewrite_expr(key, subs);
+                if let Some(value) = value {
+                    rewrite_expr(value, subs);
+                }
+            }
+        }
         // Comprehension targets introduce a nested lexical environment. The
         // runtime checker/lowerer handles their expressions; blindly applying
         // this flat comptime substitution could replace a shadowed target.
@@ -224,7 +249,10 @@ struct ElabBindingId(u32);
 pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
     match ty {
         Type::Named(_, arguments) => rewrite_param_args(arguments, subs),
-        Type::Assoc { base, .. } => rewrite_type(base, subs),
+        Type::Assoc { base, args, .. } => {
+            rewrite_type(base, subs);
+            rewrite_param_args(args, subs);
+        }
         Type::IndexedProjection { base, index } => {
             rewrite_type(base, subs);
             rewrite_expr(index, subs);
@@ -413,7 +441,10 @@ impl PackRewriter {
     fn expand_type(&mut self, ty: &mut Type) {
         match ty {
             Type::Named(_, arguments) => self.expand_type_pack_arguments(arguments),
-            Type::Assoc { base, .. } => self.expand_type(base),
+            Type::Assoc { base, args, .. } => {
+                self.expand_type(base);
+                self.expand_type_pack_arguments(args);
+            }
             Type::IndexedProjection { base, index } => {
                 self.expand_type(base);
                 self.expand_expression(index);
@@ -547,8 +578,30 @@ impl PackRewriter {
                 self.expand_expression(value);
                 self.declare_value(name, None);
             }
-            StmtKind::RefDecl { name, value } | StmtKind::Comptime { name, value } => {
+            StmtKind::RefDecl { name, value } => {
                 self.expand_expression(value);
+                self.declare_value(name, None);
+            }
+            StmtKind::Comptime {
+                name,
+                type_params,
+                ty,
+                where_clause,
+                value,
+            } => {
+                self.push_type_scope();
+                for parameter in type_params {
+                    self.expand_type_parameter(parameter);
+                    self.declare_type(&parameter.name);
+                }
+                if let Some(ty) = ty {
+                    self.expand_type(ty);
+                }
+                if let Some(condition) = where_clause {
+                    self.expand_expression(condition);
+                }
+                self.expand_expression(value);
+                self.pop_type_scope();
                 self.declare_value(name, None);
             }
             StmtKind::Assign { name, value } => {
@@ -668,10 +721,7 @@ impl PackRewriter {
                 }
                 self.push_value_scope();
                 for parameter in params {
-                    self.expand_type(&mut parameter.ty);
-                    if let Some(default) = &mut parameter.default {
-                        self.expand_expression(default);
-                    }
+                    self.expand_fn_parameter(parameter);
                     self.declare_parameter(parameter);
                 }
                 if let Some(error) = raises_type {
@@ -692,6 +742,7 @@ impl PackRewriter {
                 type_params,
                 callable_conformance,
                 conformance_conditions,
+                where_clause,
                 fields,
                 associated,
                 methods,
@@ -706,6 +757,9 @@ impl PackRewriter {
                 if let Some(callable) = callable_conformance {
                     self.expand_type(callable);
                 }
+                if let Some(condition) = where_clause {
+                    self.expand_expression(condition);
+                }
                 for (_, condition) in conformance_conditions {
                     self.expand_expression(condition);
                 }
@@ -713,12 +767,45 @@ impl PackRewriter {
                     self.expand_type(&mut field.ty);
                 }
                 for item in associated {
+                    self.push_type_scope();
+                    for parameter in &mut item.params {
+                        self.expand_type_parameter(parameter);
+                        self.declare_type(&parameter.name);
+                    }
+                    if let Some(ty) = &mut item.ty {
+                        self.expand_type(ty);
+                    }
+                    if let Some(condition) = &mut item.where_clause {
+                        self.expand_expression(condition);
+                    }
                     self.expand_expression(&mut item.value);
+                    self.pop_type_scope();
                 }
                 for method in methods {
                     self.expand_method(method);
                 }
                 self.pop_type_scope();
+            }
+            StmtKind::Trait {
+                methods,
+                comptime_members,
+                ..
+            } => {
+                for method in methods {
+                    self.expand_trait_method(method);
+                }
+                for member in comptime_members {
+                    self.push_type_scope();
+                    for parameter in &mut member.params {
+                        self.expand_type_parameter(parameter);
+                        self.declare_type(&parameter.name);
+                    }
+                    self.expand_type(&mut member.ty);
+                    if let Some(condition) = &mut member.where_clause {
+                        self.expand_expression(condition);
+                    }
+                    self.pop_type_scope();
+                }
             }
             StmtKind::Import { path, alias } => {
                 if let Some(name) = alias.as_ref().or_else(|| path.first()) {
@@ -735,11 +822,7 @@ impl PackRewriter {
                     }
                 }
             }
-            StmtKind::Return(None)
-            | StmtKind::Pass
-            | StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Trait { .. } => {}
+            StmtKind::Return(None) | StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
         }
     }
 
@@ -753,11 +836,13 @@ impl PackRewriter {
         if method.has_self {
             self.declare_value("self", None);
         }
-        for parameter in &mut method.params {
-            self.expand_type(&mut parameter.ty);
-            if let Some(default) = &mut parameter.default {
-                self.expand_expression(default);
+        if let Some(origins) = &mut method.self_origin {
+            for origin in origins {
+                self.expand_expression(origin);
             }
+        }
+        for parameter in &mut method.params {
+            self.expand_fn_parameter(parameter);
             self.declare_parameter(parameter);
         }
         if let Some(error) = &mut method.raises_type {
@@ -772,6 +857,51 @@ impl PackRewriter {
         self.expand_block(&mut method.body);
         self.pop_value_scope();
         self.pop_type_scope();
+    }
+
+    fn expand_trait_method(&mut self, method: &mut crate::ast::TraitMethod) {
+        self.push_type_scope();
+        for parameter in &mut method.type_params {
+            self.expand_type_parameter(parameter);
+            self.declare_type(&parameter.name);
+        }
+        self.push_value_scope();
+        self.declare_value("self", None);
+        if let Some(origins) = &mut method.self_origin {
+            for origin in origins {
+                self.expand_expression(origin);
+            }
+        }
+        for parameter in &mut method.params {
+            self.expand_fn_parameter(parameter);
+            self.declare_parameter(parameter);
+        }
+        if let Some(error) = &mut method.raises_type {
+            self.expand_type(error);
+        }
+        if let Some(ret) = &mut method.ret {
+            self.expand_type(ret);
+        }
+        if let Some(condition) = &mut method.where_clause {
+            self.expand_expression(condition);
+        }
+        if let Some(body) = &mut method.default_body {
+            self.expand_block(body);
+        }
+        self.pop_value_scope();
+        self.pop_type_scope();
+    }
+
+    fn expand_fn_parameter(&mut self, parameter: &mut FnParam) {
+        self.expand_type(&mut parameter.ty);
+        if let Some(origins) = &mut parameter.origin {
+            for origin in origins {
+                self.expand_expression(origin);
+            }
+        }
+        if let Some(default) = &mut parameter.default {
+            self.expand_expression(default);
+        }
     }
 
     fn expand_expression(&mut self, expression: &mut Expr) {
@@ -1054,14 +1184,77 @@ fn rewrite_param_args(args: &mut [crate::ast::ParamArg], subs: Subs) {
     }
 }
 
+fn rewrite_type_parameter(parameter: &mut TypeParam, subs: Subs) {
+    if let Some(value_type) = &mut parameter.value_type {
+        rewrite_type(value_type, subs);
+    }
+    if let Some(callable) = &mut parameter.callable_bound {
+        rewrite_type(callable, subs);
+    }
+    if let Some(mutability) = &mut parameter.origin_mutability {
+        rewrite_expr(mutability, subs);
+    }
+    if let Some(default) = &mut parameter.default {
+        rewrite_expr(default, subs);
+    }
+    rewrite_exprs(&mut parameter.constraints, subs);
+}
+
+fn rewrite_fn_parameter(parameter: &mut FnParam, subs: Subs) {
+    rewrite_type(&mut parameter.ty, subs);
+    if let Some(origins) = &mut parameter.origin {
+        rewrite_exprs(origins, subs);
+    }
+    if let Some(default) = &mut parameter.default {
+        rewrite_expr(default, subs);
+    }
+}
+
+fn rewrite_decorators(decorators: &mut [crate::ast::Decorator], subs: Subs) {
+    for decorator in decorators {
+        rewrite_exprs(&mut decorator.args, subs);
+        for argument in &mut decorator.kwargs {
+            rewrite_expr(&mut argument.value, subs);
+        }
+    }
+}
+
 fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
     match &mut s.kind {
         StmtKind::VarDecl { value, .. }
         | StmtKind::RefDecl { value, .. }
         | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
         | StmtKind::Raise(value)
         | StmtKind::Return(Some(value)) => rewrite_expr(value, subs),
+        StmtKind::Comptime {
+            type_params,
+            ty,
+            where_clause,
+            value,
+            ..
+        } => {
+            let shadowed: HashSet<String> = type_params
+                .iter()
+                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                .collect();
+            let inner: Subs = &|name| {
+                if shadowed.contains(name) {
+                    None
+                } else {
+                    subs(name)
+                }
+            };
+            for parameter in type_params {
+                rewrite_type_parameter(parameter, inner);
+            }
+            if let Some(ty) = ty {
+                rewrite_type(ty, inner);
+            }
+            if let Some(condition) = where_clause {
+                rewrite_expr(condition, inner);
+            }
+            rewrite_expr(value, inner);
+        }
         StmtKind::Return(None) | StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
         StmtKind::Import { .. } | StmtKind::FromImport { .. } => {}
         StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
@@ -1129,25 +1322,264 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
         // (`into_defs`), descend but shadow the function's parameters (a parameter
         // named like a module constant is *not* that constant). For loop-variable
         // substitution, don't descend (the loop var is an outer compile-time symbol).
-        StmtKind::Def { params, body, .. } => {
+        StmtKind::Def {
+            decorators,
+            type_params,
+            params,
+            raises_type,
+            ret,
+            where_clause,
+            body,
+            ..
+        } => {
             if into_defs {
-                let shadowed: HashSet<&str> = params.iter().map(|p| p.name.as_str()).collect();
-                let inner: Subs = &|n| if shadowed.contains(n) { None } else { subs(n) };
+                let mut shadowed: HashSet<String> = params
+                    .iter()
+                    .map(|parameter| parameter.name.clone())
+                    .collect();
+                shadowed.extend(
+                    type_params
+                        .iter()
+                        .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
+                );
+                let inner: Subs = &|name| {
+                    if shadowed.contains(name) {
+                        None
+                    } else {
+                        subs(name)
+                    }
+                };
+                rewrite_decorators(decorators, inner);
+                for parameter in type_params {
+                    rewrite_type_parameter(parameter, inner);
+                }
+                for parameter in params {
+                    rewrite_fn_parameter(parameter, inner);
+                }
+                if let Some(error) = raises_type {
+                    rewrite_type(error, inner);
+                }
+                if let Some(ret) = ret {
+                    rewrite_type(ret, inner);
+                }
+                if let Some(condition) = where_clause {
+                    rewrite_expr(condition, inner);
+                }
                 rewrite_block(body, inner, into_defs);
             }
         }
-        StmtKind::Struct { methods, .. } => {
+        StmtKind::Struct {
+            decorators,
+            type_params,
+            callable_conformance,
+            conformance_conditions,
+            where_clause,
+            fields,
+            associated,
+            methods,
+            ..
+        } => {
             if into_defs {
-                for m in methods {
-                    let mut shadowed: HashSet<&str> =
-                        m.params.iter().map(|p| p.name.as_str()).collect();
-                    shadowed.insert("self");
-                    let inner: Subs = &|n| if shadowed.contains(n) { None } else { subs(n) };
-                    rewrite_block(&mut m.body, inner, into_defs);
+                let shadowed: HashSet<String> = type_params
+                    .iter()
+                    .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                    .collect();
+                let inner: Subs = &|name| {
+                    if shadowed.contains(name) {
+                        None
+                    } else {
+                        subs(name)
+                    }
+                };
+                rewrite_decorators(decorators, inner);
+                for parameter in type_params {
+                    rewrite_type_parameter(parameter, inner);
+                }
+                if let Some(callable) = callable_conformance {
+                    rewrite_type(callable, inner);
+                }
+                for (_, condition) in conformance_conditions {
+                    rewrite_expr(condition, inner);
+                }
+                if let Some(condition) = where_clause {
+                    rewrite_expr(condition, inner);
+                }
+                for field in fields {
+                    rewrite_type(&mut field.ty, inner);
+                }
+                for member in associated {
+                    let member_shadowed: HashSet<String> = member
+                        .params
+                        .iter()
+                        .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                        .collect();
+                    let member_subs: Subs = &|name| {
+                        if member_shadowed.contains(name) {
+                            None
+                        } else {
+                            inner(name)
+                        }
+                    };
+                    for parameter in &mut member.params {
+                        rewrite_type_parameter(parameter, member_subs);
+                    }
+                    if let Some(ty) = &mut member.ty {
+                        rewrite_type(ty, member_subs);
+                    }
+                    if let Some(condition) = &mut member.where_clause {
+                        rewrite_expr(condition, member_subs);
+                    }
+                    rewrite_expr(&mut member.value, member_subs);
+                }
+                for method in methods {
+                    let mut method_shadowed: HashSet<String> = method
+                        .params
+                        .iter()
+                        .map(|parameter| parameter.name.clone())
+                        .collect();
+                    method_shadowed.extend(
+                        method
+                            .type_params
+                            .iter()
+                            .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
+                    );
+                    method_shadowed.insert("self".to_string());
+                    let method_subs: Subs = &|name| {
+                        if method_shadowed.contains(name) {
+                            None
+                        } else {
+                            inner(name)
+                        }
+                    };
+                    rewrite_decorators(&mut method.decorators, method_subs);
+                    for parameter in &mut method.type_params {
+                        rewrite_type_parameter(parameter, method_subs);
+                    }
+                    if let Some(origins) = &mut method.self_origin {
+                        rewrite_exprs(origins, method_subs);
+                    }
+                    for parameter in &mut method.params {
+                        rewrite_fn_parameter(parameter, method_subs);
+                    }
+                    if let Some(error) = &mut method.raises_type {
+                        rewrite_type(error, method_subs);
+                    }
+                    if let Some(ret) = &mut method.ret {
+                        rewrite_type(ret, method_subs);
+                    }
+                    if let Some(condition) = &mut method.where_clause {
+                        rewrite_expr(condition, method_subs);
+                    }
+                    rewrite_block(&mut method.body, method_subs, into_defs);
                 }
             }
         }
-        StmtKind::Trait { .. } => {}
+        StmtKind::Trait {
+            methods,
+            comptime_members,
+            ..
+        } => {
+            if into_defs {
+                for method in methods {
+                    let mut shadowed: HashSet<String> = method
+                        .params
+                        .iter()
+                        .map(|parameter| parameter.name.clone())
+                        .collect();
+                    shadowed.extend(
+                        method
+                            .type_params
+                            .iter()
+                            .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
+                    );
+                    shadowed.insert("self".to_string());
+                    let inner: Subs = &|name| {
+                        if shadowed.contains(name) {
+                            None
+                        } else {
+                            subs(name)
+                        }
+                    };
+                    for parameter in &mut method.type_params {
+                        rewrite_type_parameter(parameter, inner);
+                    }
+                    if let Some(origins) = &mut method.self_origin {
+                        rewrite_exprs(origins, inner);
+                    }
+                    for parameter in &mut method.params {
+                        rewrite_fn_parameter(parameter, inner);
+                    }
+                    if let Some(error) = &mut method.raises_type {
+                        rewrite_type(error, inner);
+                    }
+                    if let Some(ret) = &mut method.ret {
+                        rewrite_type(ret, inner);
+                    }
+                    if let Some(condition) = &mut method.where_clause {
+                        rewrite_expr(condition, inner);
+                    }
+                    if let Some(body) = &mut method.default_body {
+                        rewrite_block(body, inner, into_defs);
+                    }
+                }
+                for member in comptime_members {
+                    let shadowed: HashSet<String> = member
+                        .params
+                        .iter()
+                        .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                        .collect();
+                    let inner: Subs = &|name| {
+                        if shadowed.contains(name) {
+                            None
+                        } else {
+                            subs(name)
+                        }
+                    };
+                    for parameter in &mut member.params {
+                        rewrite_type_parameter(parameter, inner);
+                    }
+                    rewrite_type(&mut member.ty, inner);
+                    if let Some(condition) = &mut member.where_clause {
+                        rewrite_expr(condition, inner);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn retype_type_parameter(parameter: &mut TypeParam, subs: TypeSubs) {
+    if let Some(value_type) = &mut parameter.value_type {
+        substitute_type_bindings_in_type(value_type, subs);
+    }
+    if let Some(callable) = &mut parameter.callable_bound {
+        substitute_type_bindings_in_type(callable, subs);
+    }
+    if let Some(mutability) = &mut parameter.origin_mutability {
+        retype_expr(mutability, subs);
+    }
+    if let Some(default) = &mut parameter.default {
+        retype_expr(default, subs);
+    }
+    retype_exprs(&mut parameter.constraints, subs);
+}
+
+fn retype_fn_parameter(parameter: &mut FnParam, subs: TypeSubs) {
+    substitute_type_bindings_in_type(&mut parameter.ty, subs);
+    if let Some(origins) = &mut parameter.origin {
+        retype_exprs(origins, subs);
+    }
+    if let Some(default) = &mut parameter.default {
+        retype_expr(default, subs);
+    }
+}
+
+fn retype_decorators(decorators: &mut [crate::ast::Decorator], subs: TypeSubs) {
+    for decorator in decorators {
+        retype_exprs(&mut decorator.args, subs);
+        for argument in &mut decorator.kwargs {
+            retype_expr(&mut argument.value, subs);
+        }
     }
 }
 
@@ -1161,9 +1593,29 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
         }
         StmtKind::RefDecl { value, .. }
         | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
         | StmtKind::Raise(value)
         | StmtKind::Return(Some(value)) => retype_expr(value, subs),
+        StmtKind::Comptime {
+            type_params,
+            ty,
+            where_clause,
+            value,
+            ..
+        } => {
+            let Some(inner) = without_shadowed(subs, type_params) else {
+                return;
+            };
+            for parameter in type_params {
+                retype_type_parameter(parameter, &inner);
+            }
+            if let Some(ty) = ty {
+                substitute_type_bindings_in_type(ty, &inner);
+            }
+            if let Some(condition) = where_clause {
+                retype_expr(condition, &inner);
+            }
+            retype_expr(value, &inner);
+        }
         StmtKind::Return(None) | StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
         StmtKind::Import { .. } | StmtKind::FromImport { .. } => {}
         StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
@@ -1176,12 +1628,12 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
         }
         StmtKind::Expr(e) => retype_expr(e, subs),
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-            for (c, b) in branches {
-                retype_expr(c, subs);
-                substitute_type_bindings_in_block(b, subs);
+            for (condition, body) in branches {
+                retype_expr(condition, subs);
+                substitute_type_bindings_in_block(body, subs);
             }
-            if let Some(b) = orelse {
-                substitute_type_bindings_in_block(b, subs);
+            if let Some(body) = orelse {
+                substitute_type_bindings_in_block(body, subs);
             }
         }
         StmtKind::While { cond, body, orelse } => {
@@ -1211,14 +1663,14 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             finalbody,
         } => {
             substitute_type_bindings_in_block(body, subs);
-            if let Some((_, b)) = except {
-                substitute_type_bindings_in_block(b, subs);
+            if let Some((_, body)) = except {
+                substitute_type_bindings_in_block(body, subs);
             }
-            if let Some(b) = orelse {
-                substitute_type_bindings_in_block(b, subs);
+            if let Some(body) = orelse {
+                substitute_type_bindings_in_block(body, subs);
             }
-            if let Some(b) = finalbody {
-                substitute_type_bindings_in_block(b, subs);
+            if let Some(body) = finalbody {
+                substitute_type_bindings_in_block(body, subs);
             }
         }
         StmtKind::With { items, body } => {
@@ -1228,6 +1680,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             substitute_type_bindings_in_block(body, subs);
         }
         StmtKind::Def {
+            decorators,
             type_params,
             params,
             raises_type,
@@ -1239,11 +1692,12 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             let Some(inner) = without_shadowed(subs, type_params) else {
                 return;
             };
-            for parameter in params.iter_mut() {
-                substitute_type_bindings_in_type(&mut parameter.ty, &inner);
-                if let Some(default) = &mut parameter.default {
-                    retype_expr(default, &inner);
-                }
+            retype_decorators(decorators, &inner);
+            for parameter in type_params.iter_mut() {
+                retype_type_parameter(parameter, &inner);
+            }
+            for parameter in params {
+                retype_fn_parameter(parameter, &inner);
             }
             if let Some(ret) = ret {
                 substitute_type_bindings_in_type(ret, &inner);
@@ -1257,7 +1711,11 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             substitute_type_bindings_in_block(body, &inner);
         }
         StmtKind::Struct {
+            decorators,
             type_params,
+            callable_conformance,
+            conformance_conditions,
+            where_clause,
             fields,
             associated,
             methods,
@@ -1266,21 +1724,80 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             let Some(inner) = without_shadowed(subs, type_params) else {
                 return;
             };
-            for field in fields.iter_mut() {
+            retype_decorators(decorators, &inner);
+            for parameter in type_params.iter_mut() {
+                retype_type_parameter(parameter, &inner);
+            }
+            if let Some(callable) = callable_conformance {
+                substitute_type_bindings_in_type(callable, &inner);
+            }
+            for (_, condition) in conformance_conditions {
+                retype_expr(condition, &inner);
+            }
+            if let Some(condition) = where_clause {
+                retype_expr(condition, &inner);
+            }
+            for field in fields {
                 substitute_type_bindings_in_type(&mut field.ty, &inner);
             }
-            for member in associated.iter_mut() {
-                retype_expr(&mut member.value, &inner);
-            }
-            for method in methods.iter_mut() {
-                let Some(inner) = without_shadowed(&inner, &method.type_params) else {
+            for member in associated {
+                let Some(member_inner) = without_shadowed(&inner, &member.params) else {
                     continue;
                 };
-                for parameter in method.params.iter_mut() {
-                    substitute_type_bindings_in_type(&mut parameter.ty, &inner);
-                    if let Some(default) = &mut parameter.default {
-                        retype_expr(default, &inner);
-                    }
+                for parameter in &mut member.params {
+                    retype_type_parameter(parameter, &member_inner);
+                }
+                if let Some(ty) = &mut member.ty {
+                    substitute_type_bindings_in_type(ty, &member_inner);
+                }
+                if let Some(condition) = &mut member.where_clause {
+                    retype_expr(condition, &member_inner);
+                }
+                retype_expr(&mut member.value, &member_inner);
+            }
+            for method in methods {
+                let Some(method_inner) = without_shadowed(&inner, &method.type_params) else {
+                    continue;
+                };
+                retype_decorators(&mut method.decorators, &method_inner);
+                for parameter in &mut method.type_params {
+                    retype_type_parameter(parameter, &method_inner);
+                }
+                if let Some(origins) = &mut method.self_origin {
+                    retype_exprs(origins, &method_inner);
+                }
+                for parameter in &mut method.params {
+                    retype_fn_parameter(parameter, &method_inner);
+                }
+                if let Some(ret) = &mut method.ret {
+                    substitute_type_bindings_in_type(ret, &method_inner);
+                }
+                if let Some(error) = &mut method.raises_type {
+                    substitute_type_bindings_in_type(error, &method_inner);
+                }
+                if let Some(predicate) = &mut method.where_clause {
+                    retype_expr(predicate, &method_inner);
+                }
+                substitute_type_bindings_in_block(&mut method.body, &method_inner);
+            }
+        }
+        StmtKind::Trait {
+            methods,
+            comptime_members,
+            ..
+        } => {
+            for method in methods {
+                let Some(inner) = without_shadowed(subs, &method.type_params) else {
+                    continue;
+                };
+                for parameter in &mut method.type_params {
+                    retype_type_parameter(parameter, &inner);
+                }
+                if let Some(origins) = &mut method.self_origin {
+                    retype_exprs(origins, &inner);
+                }
+                for parameter in &mut method.params {
+                    retype_fn_parameter(parameter, &inner);
                 }
                 if let Some(ret) = &mut method.ret {
                     substitute_type_bindings_in_type(ret, &inner);
@@ -1288,13 +1805,26 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 if let Some(error) = &mut method.raises_type {
                     substitute_type_bindings_in_type(error, &inner);
                 }
-                if let Some(predicate) = &mut method.where_clause {
-                    retype_expr(predicate, &inner);
+                if let Some(condition) = &mut method.where_clause {
+                    retype_expr(condition, &inner);
                 }
-                substitute_type_bindings_in_block(&mut method.body, &inner);
+                if let Some(body) = &mut method.default_body {
+                    substitute_type_bindings_in_block(body, &inner);
+                }
+            }
+            for member in comptime_members {
+                let Some(inner) = without_shadowed(subs, &member.params) else {
+                    continue;
+                };
+                for parameter in &mut member.params {
+                    retype_type_parameter(parameter, &inner);
+                }
+                substitute_type_bindings_in_type(&mut member.ty, &inner);
+                if let Some(condition) = &mut member.where_clause {
+                    retype_expr(condition, &inner);
+                }
             }
         }
-        StmtKind::Trait { .. } => {}
     }
 }
 
@@ -1306,8 +1836,14 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
         | ExprKind::Str(_)
-        | ExprKind::None
-        | ExprKind::TString { .. } => {}
+        | ExprKind::None => {}
+        ExprKind::TString { parts, .. } => {
+            for part in parts {
+                if let crate::ast::TStringPart::Expr(value) = part {
+                    retype_expr(value, subs);
+                }
+            }
+        }
         ExprKind::TypeApply { name, args } => {
             retype_head(name, args, subs);
             retype_param_args(args, subs);

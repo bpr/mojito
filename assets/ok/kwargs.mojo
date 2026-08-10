@@ -1,4 +1,4 @@
-def total(**kwargs: Int) -> Int:
+def total(var **kwargs: Int) -> Int:
     return len(kwargs)
 
 def main():

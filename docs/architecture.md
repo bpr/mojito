@@ -114,7 +114,7 @@ policy or data-model responsibilities to focused children:
 
 - `call.rs` is the phase-neutral function-call contract: it normalizes parser
   marker indexes and matches positional, keyword, default, `*args`, and
-  `**kwargs` inputs to parameter slots. The checker and VM separately adapt its
+  `var **kwargs` collector inputs to parameter slots. The checker and VM separately adapt its
   structural errors and matched slots to types and runtime values.
 - `checker.rs` holds the `Checker` state, constructors, and shared prelude
   types, and coordinates checking; the single `Checker` type's methods are split
@@ -177,6 +177,15 @@ hoisted. Import bindings are rewritten to those names, so two modules can export
 the same source name without merging declarations or overload sets. A module
 exports top-level `def`, `struct`, `trait`, and `comptime` declarations except
 `main`; wildcard imports omit underscore-prefixed names.
+
+Each lexical import scope separately records names established by explicit
+imports. Repeating the same target is idempotent and an explicit import may
+shadow an implicit prelude binding, but a different target cannot overwrite an
+already explicit local name. Import resolution also compares canonical source
+paths and rejects an exact self-import. A module publishes provisional local
+exports before following dependencies, so this check does not mistake a real
+two-module cycle for self-import and mutually recursive modules can bind each
+other's declarations deterministically.
 
 Package directories resolve through `__init__.mojo`. Imports in that file become
 package re-exports. Mojo forbids executable file-scope statements, so package
@@ -246,7 +255,9 @@ The implemented forms are:
   specialization.
 - `comptime for`: evaluates the iterable as either `range(...)` or a
   compile-time tuple/list, substitutes the loop variable with a literal, and
-  splices a fresh elaborated copy of the loop body for each element.
+  splices a fresh elaborated copy of the loop body for each element. A
+  zero-step range has no elements in both this direct evaluator and the
+  VM-backed CTFE path; the shared loop predicate simply never enters.
 - CTFE calls: a compile-time expression may call a pure top-level `def`,
   including value-parameterized helpers and helpers whose type parameters are
   used only for compile-time facts. The elaborator clones the needed helper call
@@ -849,6 +860,22 @@ seeds it as an uninitialized callee-local slot, rewrites fallthrough and bare
 returns to read that slot, and exposes its declared type as the function result.
 The caller therefore invokes a named-result function exactly like an ordinary
 returning function and never supplies the `out` argument.
+
+Trailing `where` clauses compile once into the checked `GenericConstraint`
+algebra. The `(condition, "message")` form becomes a `WithMessage` wrapper:
+evaluation, implication, conformance assumptions, and specialization-closure
+checks recurse through the semantic condition, while a failed call reports the
+retained message. This keeps diagnostics attached without making message text
+part of generic identity or proof semantics. The same wrapper is retained on
+struct declarations, conditional conformances, method availability, associated
+and trait comptime members, and non-generic top-level comptime declarations.
+Associated-member constraints are validated at concrete projection; a
+conditional-conformance failure feeds its retained reason into lifecycle and
+trait diagnostics. Origin-mutability-only function constraints survive the
+ordinary generic erasure in `CallableOriginSignature` and are discharged after
+call-origin solving recovers the inferred Bool binding. The source model still
+holds one clause per declaration; repeated clauses and generic top-level
+comptime aliases are tracked as a separate checked-boundary extension.
 
 A variadic type parameter retains a leading `*` in the checked parameter name.
 Generic-call inference recognizes the matching `*args: *Pack` element type and
@@ -1522,7 +1549,13 @@ register, and rejects malformed raising and statically decidable
 reference-result metadata.
 
 `Ty::Func` and `Ty::GenericFunc` retain both the `raises` effect and its optional
-error type. Direct overload resolution carries the selected candidate's effect
+error type. A source function type also retains a `var **kwargs: T` parameter as
+the checked `kw_variadic` collector rather than flattening it into the ordinary
+parameter vector, so indirect calls preserve structural keyword binding.
+`SignatureKey` likewise stores a distinct keyword-variadic type key; ordinary,
+positional-variadic, and keyword-variadic slots with the same element type
+therefore cannot collide in lowered callable identity. Direct
+overload resolution carries the selected candidate's effect
 alongside its lowered symbol, and an indirect call reads the effect from its
 callable type. Generic substitution includes error types, with a nonraising
 callable inferring `Never`. `Never` is the bottom type, and `raises Never` is
@@ -1760,6 +1793,12 @@ from its annotation, e.g. `Point`, `Pair$Int`) and only the module formats the
 final symbol. Checker, MIR, and VM all route through it, so the recorded
 callee always names the emitted function; `tests/symbol_test.rs` pins the
 spellings and scans `src/` for stray hand-built `$ov$` strings.
+
+The signature stores a keyword-variadic collector separately from positional
+types and emits a `$kwv$Type` component when present. Thus
+`def route(value: Int)` and `def route(var **options: Int)` have distinct ABI
+identities even though their sole declared element type is `Int`; definition-
+and resolution-side symbol construction use the same field.
 
 Across phase boundaries, Mojito names source syntax and checked semantics
 explicitly. `SourceType` is parser-owned syntax; `Ty`, `binding_ty`, and MIR
@@ -2423,7 +2462,7 @@ Calling a function:
 4. creates a new frame
 5. writes arguments into parameter variable slots
 
-For a homogeneous `**kwargs: T` collector, the checker leaves explicit parameter
+For a homogeneous `var **kwargs: T` collector, the checker leaves explicit parameter
 binding unchanged and type-checks unmatched keyword values as `T`. The same
 logic participates in generic inference and in free, instance, static, and
 bounded-trait method selection. The ABI preserves unmatched pairs in call-site

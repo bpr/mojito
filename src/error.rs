@@ -117,6 +117,10 @@ pub enum TypeError {
     },
     /// Re-declaring a name already bound in the same scope.
     Redeclaration(String),
+    /// A free or nested function uses a word reserved for future Mojo syntax.
+    /// These words remain lexer-level identifiers so later syntax can adopt
+    /// them contextually.
+    ReservedName(String),
     /// A bare assignment (`x = e` or `a, b = e`) targets a name that is not in
     /// scope. Mojito requires `var` to declare a new variable.
     AssignToUndeclared(String),
@@ -428,6 +432,9 @@ impl fmt::Display for TypeError {
             }
             TypeError::Redeclaration(name) => {
                 write!(f, "'{}' is already declared in this scope", name)
+            }
+            TypeError::ReservedName(name) => {
+                write!(f, "'{name}' is a reserved word and cannot name a function")
             }
             TypeError::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")

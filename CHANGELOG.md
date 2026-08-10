@@ -8,6 +8,30 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Mojo dev-branch parity catch-up (nightly §1): keyword collectors now require
+  canonical `var **kwargs` syntax in declarations and function types (bare
+  `**kwargs` rejects), and the checked/lowered callable identity retains a
+  distinct keyword-variadic slot across free, generic, method, static, bounded,
+  and indirect calls. The source linker now rejects two different explicit
+  imports binding one local name and diagnoses exact canonical self-imports,
+  while preserving idempotent imports, prelude shadowing, and real mutual
+  cycles through provisional exports. Zero-step ranges are empty in direct
+  compile-time unrolling, VM-backed CTFE, and nominal runtime iteration. The
+  existing rejection of declarations differing only by `imm`/`mut` is now a
+  differential conformance pin.
+
+- Trailing `(condition, "message")` constraints retain the diagnostic in the
+  checked algebra across functions/methods, structs, conditional conformances,
+  associated and trait comptime members, and non-generic top-level comptime
+  declarations. Messages survive specialization, concrete associated-member
+  projection, conformance/lifecycle failure, and origin-mutability inference,
+  but remain irrelevant to generic identity and logical implication. The
+  future-syntax identifiers `class`, `del`, `match`, and `yield` are rejected
+  contextually as free or nested function names without becoming lexer
+  keywords; ordinary variable/parameter use and current method spellings remain
+  legal. Repeated trailing constraints and generic top-level comptime aliases
+  are now recorded separately instead of being overstated as implemented.
+
 - Lifecycle canonicalization (Mojo parity catch-up, slice B / nightly §0):
   the internal vocabulary is now `Deinitable` + `__deinit__` end to end
   (builtin-trait registry, checker capability queries and diagnostics, MIR

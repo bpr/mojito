@@ -2128,7 +2128,7 @@ impl Flatten<'_> {
                 self.emit(MirInstr::Raise { src });
             }
             // `comptime N = e` is an ordinary `Int` binding at runtime.
-            StmtKind::Comptime { name, value } => {
+            StmtKind::Comptime { name, value, .. } => {
                 let src = self.expr(value);
                 let var = statement_binding
                     .map(|binding| self.declare_binding_var(binding, name))

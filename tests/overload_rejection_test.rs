@@ -139,6 +139,16 @@ fn rejects_duplicate_differing_only_in_parameter_names() {
 }
 
 #[test]
+fn rejects_duplicate_free_function_differing_only_in_parameter_convention() {
+    // Parameter access conventions do not define distinct overloads: current
+    // Mojo rejects an otherwise identical `imm`/`mut` pair as a redeclaration.
+    assert_redeclaration(
+        include_str!("../conformance/fixtures/imm_mut_only_overloads.mojo"),
+        "inspect",
+    );
+}
+
+#[test]
 fn rejects_duplicate_added_to_an_existing_overload_set() {
     assert_redeclaration(
         "def f(x: Int) -> Int:\n    return 0\n\ndef f(x: StringLiteral) -> Int:\n    return 1\n\ndef f(x: Int) -> Int:\n    return 2\n",
@@ -188,6 +198,14 @@ fn fewer_conversions_beat_non_generic_preference() {
 fn rejects_exact_duplicate_generic_signature() {
     assert_redeclaration(
         "def f[T: AnyType](x: T) -> Int:\n    return 0\n\ndef f[T: AnyType](x: T) -> Int:\n    return 1\n",
+        "f",
+    );
+}
+
+#[test]
+fn generic_constraint_messages_do_not_distinguish_overloads() {
+    assert_redeclaration(
+        "def f[T: AnyType](x: T) -> Int where (True, \"first diagnostic\"):\n    return 0\n\ndef f[T: AnyType](x: T) -> Int where (True, \"second diagnostic\"):\n    return 1\n",
         "f",
     );
 }
