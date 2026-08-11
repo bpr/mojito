@@ -9,13 +9,13 @@ struct Holder:
 
     def stash_local(mut self):
         def install() {mut self}:
-            var local = [7]
+            var local: List[Int] = [7]
             ref alias = local
             self.slot = RefBox(alias)
         install()
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var holder = Holder(RefBox(whole))
     holder.stash_local()

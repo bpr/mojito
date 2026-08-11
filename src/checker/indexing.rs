@@ -465,6 +465,19 @@ impl Checker {
         };
 
         let object_ty = self.infer(object)?;
+        // `receiver[index] = value` without any `__setitem__`: current Mojo
+        // writes through a mutable-reference-returning `__getitem__` (upstream
+        // `Array` has no setter). Slice and multi-index assignment keep the
+        // setter requirement.
+        let has_setitem = matches!(&object_ty, Ty::Struct(name, _) if self
+            .structs
+            .get(name)
+            .is_some_and(|info| info.methods.contains_key("__setitem__")));
+        if !has_setitem && matches!(&target.kind, ExprKind::Index { .. }) {
+            return self
+                .check_subscript_reference_assignment(target, value, &object_ty)
+                .map(Some);
+        }
         let index_argument_count = arguments.len();
         let value_keyword = self.select_subscript_set_call_shape(&object_ty, &arguments, value)?;
         let kwargs = if value_keyword {
@@ -535,6 +548,74 @@ impl Checker {
             .borrow_mut()
             .insert(target.source_span(), target_ty.clone());
         Ok(Some(target_ty))
+    }
+
+    /// Check `receiver[index] = value` against a mutable-reference-returning
+    /// `__getitem__`: the getter contract is selected by ordinary subscript
+    /// inference, the right-hand side is typed against the referent, and the
+    /// recorded fact is an augmented reference write with no operator step
+    /// (`setter: None`, `inplace: None`), so MIR finishes with `WriteRef`.
+    fn check_subscript_reference_assignment(
+        &self,
+        target: &Expr,
+        value: &Expr,
+        object_ty: &Ty,
+    ) -> Result<Ty, TypeError> {
+        let element = self.infer(target)?;
+        let site = target.source_span();
+        let getter = self
+            .selected_calls
+            .borrow()
+            .get(&site)
+            .cloned()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "subscript reference assignment lost its getter contract".to_string(),
+                )
+            })?;
+        let Some(reference) = &getter.reference_result else {
+            // A value-returning getter offers no write-through path; without a
+            // setter the receiver is simply not index-assignable.
+            return Err(TypeError::NotIndexable(object_ty.to_string()));
+        };
+        if reference.mutability != crate::origin::Mutability::Mutable {
+            return Err(TypeError::ImmutableBinding(
+                "immutable reference returned by '__getitem__'".to_string(),
+            ));
+        }
+        let found = self.infer_with_expected(value, &element, true)?;
+        if !self.record_implicit_conversion(value, &found, &element)? {
+            return Err(TypeError::TypeMismatch {
+                expected: element.to_string(),
+                found: found.to_string(),
+                context: format!("index assignment on '{object_ty}'"),
+            });
+        }
+        self.check_consuming(value, &found, "index assignment")?;
+        self.subscript_descriptors
+            .borrow_mut()
+            .entry(site.clone())
+            .or_insert((vec![None], false));
+        self.expression_types
+            .borrow_mut()
+            .insert(site.clone(), element.clone());
+        self.expression_place_types
+            .borrow_mut()
+            .insert(site.clone(), element.clone());
+        self.operation_adjustments.borrow_mut().insert(
+            site,
+            crate::checked::SemanticAdjustment::AugmentedSubscript(Box::new(
+                crate::checked::CheckedAugmentedSubscript {
+                    getter,
+                    setter: None,
+                    inplace: None,
+                    operand_ty: element.clone(),
+                    result_ty: element.clone(),
+                    value_source: None,
+                },
+            )),
+        );
+        Ok(element)
     }
 
     /// Select how assignment syntax supplies the implicit RHS to

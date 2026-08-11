@@ -18,8 +18,9 @@ def close_id(var c: Conn) raises -> Int:
     return id
 
 def main():
+    var conns: List[Conn] = [Conn(4), Conn(5)]
     try:
-        var ids = [close_id(item^) for var item in [Conn(4), Conn(5)]^]
+        var ids = [close_id(item^) for var item in conns^]
         print(len(ids))
     except:
         print("caught")

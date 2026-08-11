@@ -13,10 +13,10 @@ struct Keeper:
         push(box^)
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var k = Keeper(RefBox(whole))
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     k.add_param(RefBox(alias))
     local.append(1)

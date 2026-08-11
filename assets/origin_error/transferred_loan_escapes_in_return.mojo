@@ -8,7 +8,7 @@ struct RefBox[origin: Origin[mut=True]]:
 
 def make() -> List[RefBox]:
     var sink: List[RefBox] = List[RefBox]()
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     sink.append(RefBox(alias))
     return sink^

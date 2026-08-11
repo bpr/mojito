@@ -1,7 +1,7 @@
 # Two simultaneous shared iterations over one source coexist: neither loop
 # mutates, so no generation is invalidated.
 def main() raises:
-    var xs = [1, 2]
+    var xs: List[Int] = [1, 2]
     var pairs = 0
     for a in xs:
         for b in xs:

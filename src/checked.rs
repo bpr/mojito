@@ -421,6 +421,14 @@ pub enum SemanticAdjustment {
         target: Ty,
         insert: Option<String>,
     },
+    /// A fixed-size list display resolved to `Array`'s variadic literal
+    /// constructor. MIR lowers this as one nominal constructor call carrying
+    /// the element registers and the concrete `length` parameter argument;
+    /// `constructor` is the exact lowered overload symbol.
+    ConstructArrayLiteral {
+        target: Ty,
+        constructor: String,
+    },
     /// Test the active runtime tag (`value.isa[T]()`).
     VariantIs {
         alternatives: Vec<Ty>,

@@ -8,6 +8,32 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Fixed-size `Array[T, length]` and the list-display retarget (nightly §3): a
+  new prelude-exported, self-hosted `std.collections.array.Array` declares
+  conditional `Copyable`/`Movable`/`Deinitable`/`Equatable`/`Iterable`/
+  `IterableOwned`/`Writable` conformances over a `T: AnyType` element and an
+  `Int` value parameter, with keyword `fill`/`copy:`/`deinit move:`
+  construction, by-reference `__getitem__` (no `__setitem__`, matching the
+  audited head), `__len__`/`__eq__`/`__ne__`/`__contains__`, and borrowed plus
+  owned iteration; it is neither `ImplicitlyCopyable` nor `Defaultable`. An
+  uncontextualized `[1, 2, 3]` now materializes as `Array[Int, 3]` through a
+  single nominal variadic literal-constructor call (a new
+  `ConstructArrayLiteral` checked fact — no new MIR instructions); an expected
+  type with a list-literal constructor (notably `List[T]`) still controls
+  contextual materialization, assignment targets now count as expected context,
+  and comprehensions still produce `List`. Supporting generalizations: value
+  parameters resolve symbolically in struct bodies and infer from argument
+  types, generic-struct constructors accept keyword arguments, constructor
+  declarations carry their struct's compile-time parameters for value-param
+  reification, same-type lifecycle constructors inherit the source's reified
+  value parameters, and `unify` solves through reference patterns. Plain
+  subscript assignment on a receiver with no `__setitem__` now writes through
+  a mutable-reference-returning `__getitem__` (upstream Array's contract) and
+  lowers to a direct reference write. Recorded subset gaps: Array's
+  `Hashable`, `unsafe_ptr`, `__getitem_param__`, `uninitialized:`
+  construction, `deinit_with`, and expected-type context for displays inside
+  tuple-unpack right-hand sides and `Variant` constructor arguments.
+
 - Repeated declaration constraints and generic comptime aliases (nightly §1
   follow-up): every declaration family that accepts a trailing `where` clause —
   functions, methods, structs, trait requirements, associated and trait

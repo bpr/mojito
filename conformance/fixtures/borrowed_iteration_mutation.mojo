@@ -1,5 +1,5 @@
 def main():
-    var values = [1, 2, 3]
+    var values: List[Int] = [1, 2, 3]
     for value in values:
         print(value)
         if value == 1:

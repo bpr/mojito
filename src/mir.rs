@@ -467,10 +467,24 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         declaration: name.clone(),
                         method: method_index,
                     };
-                    let param_decls = checked
+                    let mut param_decls = checked
                         .generic_parameters_at(&generic_site)
                         .unwrap_or(&[])
                         .to_vec();
+                    if method_name == "__init__" {
+                        // A constructor's compile-time interface is the struct's
+                        // parameter list: an explicit `Array[Int, 3](fill=7)`
+                        // call supplies the struct arguments, and the VM reifies
+                        // the constructed value's `value_params` in this
+                        // declaration order.
+                        let struct_decls = checked
+                            .generic_parameters_at(&GenericSite::Struct {
+                                module: s.module.clone(),
+                                declaration: name.clone(),
+                            })
+                            .unwrap_or(&[]);
+                        param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
+                    }
                     let value_parameter_locals = value_parameter_locals(&param_decls);
                     declarations.functions.push(MirFunctionDeclaration {
                         lowered_name: mangled.clone(),

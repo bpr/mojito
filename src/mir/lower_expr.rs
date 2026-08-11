@@ -173,6 +173,21 @@ impl Flatten<'_> {
             })
     }
 
+    /// Return the fixed-size array literal constructor selected by the
+    /// checker: the concrete target type and the exact lowered `__init__`
+    /// overload symbol of the variadic literal constructor.
+    pub(super) fn array_literal_plan(&self, expression: &Expr) -> Option<(Ty, String)> {
+        self.checked_adjustments(expression)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                crate::SemanticAdjustment::ConstructArrayLiteral {
+                    target,
+                    constructor,
+                } => Some((target, constructor)),
+                _ => None,
+            })
+    }
+
     /// Install the caller-side loans a callee's transfer effects imply at
     /// this call. The checker recorded the substituted sources per
     /// occurrence; the destination actual's root var receives the merged
@@ -1899,6 +1914,48 @@ impl Flatten<'_> {
 
             // --- Aggregates ----------------------------------------------------
             ExprKind::ListLit(elems) => {
+                if let Some((target, constructor)) = self.array_literal_plan(e) {
+                    // One nominal constructor call: the element registers are
+                    // the variadic arguments, `__list_literal__` selects the
+                    // literal overload, and the `length` parameter argument
+                    // reifies the constructed value's `value_params`.
+                    let regs = self.args(elems);
+                    let none = self.fresh_typed(span(e), None, Ty::None);
+                    self.emit(MirInstr::Const {
+                        dest: none,
+                        k: Const::None,
+                    });
+                    let length = crate::types::array_parts(&target)
+                        .map(|(_, length)| length)
+                        .unwrap_or(elems.len() as i64);
+                    let length_reg = self.fresh_typed(span(e), None, Ty::Int);
+                    self.emit(MirInstr::Const {
+                        dest: length_reg,
+                        k: Const::Int(length),
+                    });
+                    let d = self.fresh_typed(span(e), None, target.clone());
+                    self.emit(MirInstr::Call {
+                        dest: d,
+                        func: FuncRef::named(&constructor),
+                        raises: None,
+                        args: regs.clone(),
+                        kwargs: vec![("__list_literal__".to_string(), none)],
+                        arg_places: vec![None; regs.len()],
+                        kwarg_places: vec![None],
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: vec![
+                            MirParamArg {
+                                name: None,
+                                value: None,
+                            },
+                            MirParamArg {
+                                name: None,
+                                value: Some(length_reg),
+                            },
+                        ],
+                    });
+                    return d;
+                }
                 if let Some((target, Some(insert))) = self.collection_plan(e) {
                     let collection = self.begin_nominal_collection(e, &target);
                     for element in elems {

@@ -192,6 +192,8 @@ pub enum Ty {
     Ref(crate::origin::RefTy),
 }
 
+pub const ARRAY_TYPE_NAME: &str = "Array";
+
 pub const LIST_TYPE_NAME: &str = "List";
 
 pub const SET_TYPE_NAME: &str = "Set";
@@ -211,6 +213,39 @@ pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
 
 pub fn list_type(element: Ty) -> Ty {
     nominal_type(LIST_TYPE_NAME, vec![element])
+}
+
+pub fn array_type(element: Ty, length: i64) -> Ty {
+    Ty::Struct(
+        ARRAY_TYPE_NAME.into(),
+        vec![TyArg::Ty(element), TyArg::Val(CtValue::Int(length))],
+    )
+}
+
+pub fn array_parts(ty: &Ty) -> Option<(&Ty, i64)> {
+    let Ty::Struct(_, arguments) = ty else {
+        return None;
+    };
+    let element = array_element(ty)?;
+    let Some(TyArg::Val(CtValue::Int(length))) = arguments.last() else {
+        return None;
+    };
+    Some((element, *length))
+}
+
+/// The element of any `Array` instantiation, including a struct-body template
+/// whose `length` is still the symbolic `CtValue::Param`.
+pub fn array_element(ty: &Ty) -> Option<&Ty> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    if name != ARRAY_TYPE_NAME && !name.ends_with(&format!("${ARRAY_TYPE_NAME}")) {
+        return None;
+    }
+    let [TyArg::Ty(element), TyArg::Val(_)] = arguments.as_slice() else {
+        return None;
+    };
+    Some(element)
 }
 
 pub fn list_element(ty: &Ty) -> Option<&Ty> {

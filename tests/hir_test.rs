@@ -425,7 +425,7 @@ fn checked_hir_carries_nested_declaration_and_call_binding_identity() {
 #[test]
 fn checked_hir_next_retains_a_shadowed_loop_binder_identity() {
     let program = mojito::parse(
-        "def main():\n    var item = 1\n    for item in [40]:\n        def read() {item} -> Int:\n            return item\n        print(read())\n",
+        "def main():\n    var item = 1\n    var items: List[Int] = [40]\n    for item in items:\n        def read() {item} -> Int:\n            return item\n        print(read())\n",
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");

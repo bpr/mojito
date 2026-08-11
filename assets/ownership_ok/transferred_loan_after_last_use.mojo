@@ -10,10 +10,10 @@ struct Holder:
         self.slot = RefBox(alias)
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var holder = Holder(RefBox(whole))
-    var other = [5]
+    var other: List[Int] = [5]
     holder.rebind_to(other)
     print(holder.slot.value[0])
     other.append(6)

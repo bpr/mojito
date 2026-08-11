@@ -8,9 +8,9 @@ struct RefBox[origin: Origin[mut=True]]:
         self.value = source
 
 def main():
-    var first = [1, 2]
+    var first: List[Int] = [1, 2]
     ref whole = first
     var box = RefBox(whole)
-    var second = [7, 8]
+    var second: List[Int] = [7, 8]
     box.retarget(second)
     print(box.value[0])

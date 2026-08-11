@@ -630,6 +630,56 @@ impl Flatten<'_> {
         true
     }
 
+    /// `receiver[index] = value` through a mutable-reference `__getitem__`
+    /// when no `__setitem__` exists (the checker recorded an augmented
+    /// reference write with no operator): the getter's handle is written
+    /// directly, with no read-back or operator step.
+    pub(super) fn lower_subscript_reference_set(
+        &mut self,
+        target: &Expr,
+        rhs_expression: &Expr,
+    ) -> bool {
+        let Some(plan) = self.checked_augmented_subscript(target) else {
+            return false;
+        };
+        let ExprKind::Index { object, index } = &target.kind else {
+            return false;
+        };
+        let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let index_source = crate::checked::CheckedCallArgumentSource::Positional(0);
+        let retain_index = Self::checked_call_source_requires_place(&plan.getter, index_source);
+        let (raw_index, index_place) = self.lower_augmented_argument_source(index, retain_index);
+        let getter_index = self.apply_checked_call_value_adjustments(
+            &plan.getter,
+            index_source,
+            raw_index,
+            index.source_span(),
+        );
+        let getter_call = self.mir_subscript_call_contract(
+            plan.getter.clone(),
+            &[(index.source_span(), getter_index)],
+        );
+        self.emit_checked_call_boundary(&plan.getter, target.source_span());
+        let handle = self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
+        self.emit(MirInstr::Index {
+            dest: handle,
+            base: receiver,
+            index: getter_index,
+            base_place: receiver_place,
+            index_place: Self::checked_call_source_place(&plan.getter, index_source, &index_place),
+            call: Some(getter_call),
+            intrinsic: None,
+        });
+        let handle = self.peel_reference_handle_to(handle, &plan.operand_ty, target.source_span());
+        let rhs = self.expr(rhs_expression);
+        self.emit_interior_invalidations(target, None);
+        self.emit(MirInstr::WriteRef {
+            reference: handle,
+            value: rhs,
+        });
+        true
+    }
+
     pub(super) fn lower_augmented_subscript(
         &mut self,
         target: &Expr,
@@ -1911,6 +1961,9 @@ impl Flatten<'_> {
             }
             // --- Writes through a place (any nesting) --------------------------
             StmtKind::SetPlace { place, value } => {
+                if self.lower_subscript_reference_set(place, value) {
+                    return;
+                }
                 if self.lower_subscript_set(place, value) {
                     return;
                 }

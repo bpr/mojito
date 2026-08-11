@@ -7,6 +7,6 @@ def first(mut xs: List[Int]) -> Int:
     return 0
 
 def main():
-    var values = [1, 2, 3]
+    var values: List[Int] = [1, 2, 3]
     var doubled = [x + first(values) for x in values]
     print(len(doubled))

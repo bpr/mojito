@@ -24,6 +24,19 @@ List` still work when `stdlib/` is on the search path without maintaining a
 second implementation. Underscore-prefixed implementation types are available
 only from their authoritative `std` modules.
 
+- `std/collections/array.mojo` — a fixed-size `Array[T: AnyType, length: Int]`
+  backed by an `UnsafePointer[T]`, with conditional
+  `Copyable`/`Movable`/`Deinitable`/`Equatable`/`Iterable`/`IterableOwned`/
+  `Writable` conformances. Construction is the checker-driven variadic literal
+  constructor (`[a, b, c]` displays), keyword `fill`, `copy:`, and
+  `deinit move:`; it is neither `ImplicitlyCopyable` nor `Defaultable`.
+  Indexing is by-reference `__getitem__` only (no `__setitem__`, matching
+  upstream Array); `__len__` returns the comptime `length`, while the private
+  `_size` field exists so the owned iterator can neutralize the source's
+  destructor. Borrowed iteration mirrors `_ListIter` (`_ArrayIter` holds
+  `ref[iterable_origin] Array[T, length]`); owned iteration moves the buffer
+  into `_ArrayOwnedIter`, whose methods are where-gated so the `T: AnyType`
+  template stays checkable.
 - `std/collections/list.mojo` — a generic, growable `List[T]` backed by an
   `UnsafePointer[T]`, with the full value-type lifecycle (ordinary `__init__`,
   `__init__(..., copy:)`, and `__init__(..., deinit move:)`), subscript read/write

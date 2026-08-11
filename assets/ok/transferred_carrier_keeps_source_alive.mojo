@@ -4,7 +4,7 @@ struct RefBox[origin: Origin[mut=True]]:
 
 def main():
     var sink: List[RefBox] = List[RefBox]()
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     sink.append(RefBox(alias))
     print(sink[0].value[0])

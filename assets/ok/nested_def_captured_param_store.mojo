@@ -13,9 +13,9 @@ struct Holder:
         install()
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var holder = Holder(RefBox(whole))
-    var other = [5]
+    var other: List[Int] = [5]
     holder.stash_param(other)
     print("stored")

@@ -54,7 +54,7 @@ def main():
         print("unexpected keyword method")
     print(copied)
 
-    var values = [10, 20, 30]
+    var values: List[Int] = [10, 20, 30]
     try:
         ref selected = element(values, 1)
         selected += 2

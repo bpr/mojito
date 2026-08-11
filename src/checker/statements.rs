@@ -428,8 +428,6 @@ impl Checker {
                     return Ok(());
                 }
                 self.check_capture_access(name, true)?;
-                let found = self.infer(value)?;
-                self.check_consuming(value, &found, &format!("assignment to '{name}'"))?;
                 // Mojo treats a bare assignment in a function as a local
                 // introduction unless that name is already local to this
                 // function. Its initializer may still read an outer binding.
@@ -462,6 +460,20 @@ impl Checker {
                 } else {
                     self.lookup(name).cloned()
                 };
+                // A re-assigned binding's type is the expected context, so a
+                // collection display materializes against it (`values = [40]`
+                // stays `List[Int]` for a List-typed variable).
+                let found = match &target {
+                    Some(target) => {
+                        let expected = match target {
+                            Ty::Ref(reference) => (*reference.referent).clone(),
+                            other => other.clone(),
+                        };
+                        self.infer_with_expected(value, &expected, true)?
+                    }
+                    None => self.infer(value)?,
+                };
+                self.check_consuming(value, &found, &format!("assignment to '{name}'"))?;
                 match target {
                     // Re-assignment: the value must keep the variable's type.
                     Some(target) => {
@@ -996,7 +1008,10 @@ impl Checker {
                 let target = self.check_place(place)?;
                 self.record_place_write_invalidation(place.source_span(), place);
                 let storage = self.place_storage_ty(place);
-                let found = self.infer(value)?;
+                // The place's type is the assignment's expected context, so a
+                // collection display materializes against it (`self.items =
+                // [7, 8, 9]` stays `List[Int]` for a List-typed field).
+                let found = self.infer_with_expected(value, &target, true)?;
                 // A store into storage that outlives this frame (a parameter
                 // or `self` root) must not smuggle a frame-local loan outward
                 // — the symmetric twin of the Return escape check. Rebinding a
@@ -1470,7 +1485,9 @@ impl Checker {
                     // gate, and restrict it to compiler-shipped source paths.
                     let bundled_collection_interior_bridge =
                         self.self_ty.as_ref().is_some_and(|ty| {
-                            list_element(ty).is_some() || dict_elements(ty).is_some()
+                            list_element(ty).is_some()
+                                || dict_elements(ty).is_some()
+                                || array_element(ty).is_some()
                         }) && is_bundled_collection_source(e.source.as_deref());
                     if !origin_is_within(&actual, &allowed) && !bundled_collection_interior_bridge {
                         return Err(TypeError::ReturnsReferenceToLocal);

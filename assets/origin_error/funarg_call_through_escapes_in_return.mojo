@@ -16,11 +16,11 @@ def feed(f: def(mut Carrier, RefBox), mut sink: Carrier, box: RefBox):
 def make(mut source: List[Int]) -> Carrier:
     ref src_alias = source
     var sink = Carrier(RefBox(src_alias))
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     feed(stash, sink, RefBox(alias))
     return sink^
 
 def main():
-    var source = [7]
+    var source: List[Int] = [7]
     var got = make(source)

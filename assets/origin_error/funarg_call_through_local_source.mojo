@@ -11,12 +11,12 @@ def stash(mut sink: Carrier, box: RefBox):
     sink.slot = box^
 
 def feed[callback: def(mut Carrier, RefBox) thin](mut sink: Carrier):
-    var local = [5]
+    var local: List[Int] = [5]
     ref alias = local
     callback(sink, RefBox(alias))
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var sink = Carrier(RefBox(whole))
     feed[stash](sink)

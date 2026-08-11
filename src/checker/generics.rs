@@ -82,9 +82,82 @@ pub(super) fn unify(
             }
             Ok(())
         }
+        // A reference pattern solves through its referent; the actual may be
+        // the bare referent type (reference reads type as the referent).
+        Ty::Ref(pattern_reference) => match actual {
+            Ty::Ref(actual_reference) => unify(
+                &pattern_reference.referent,
+                &actual_reference.referent,
+                subst,
+            ),
+            _ => unify(&pattern_reference.referent, actual, subst),
+        },
         // A non-parameter pattern contributes no solution; coercion is checked
         // separately by the caller.
         _ => Ok(()),
+    }
+}
+
+/// Substitute a member template type at a receiver's type arguments: type
+/// parameters via [`substitute`], value parameters via the receiver's
+/// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
+/// becomes `Array[Int, 3]`, not `Array[Int, length]`.
+pub(super) fn substitute_at(ty: &Ty, decls: &[ParamDecl], targs: &[TyArg]) -> Ty {
+    substitute_assoc(
+        ty,
+        &AssocBindings {
+            types: struct_subst(decls, targs),
+            values: solved_value_bindings(decls, targs),
+            origins: HashMap::new(),
+        },
+    )
+}
+
+/// The value-parameter bindings a resolved application implies: each
+/// `ParamDecl::Value` paired with its solved `TyArg::Val` argument.
+pub(super) fn solved_value_bindings(
+    decls: &[ParamDecl],
+    tyargs: &[TyArg],
+) -> HashMap<String, CtValue> {
+    decls
+        .iter()
+        .zip(tyargs)
+        .filter_map(|(decl, argument)| match (decl, argument) {
+            (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
+                Some((name.clone(), value.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Solve value parameters from a pattern/actual type pair, the value-argument
+/// counterpart of [`unify`]: a pattern's symbolic `TyArg::Val(CtValue::Param)`
+/// binds to the actual's value argument in the same slot (`Array[T, length]`
+/// against `Array[Int, 3]` solves `length = 3`). First solution wins; a
+/// structural mismatch contributes nothing, exactly like `unify`.
+pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<String, CtValue>) {
+    match (pattern, actual) {
+        (Ty::Struct(pn, pargs), Ty::Struct(an, aargs))
+            if pn == an && pargs.len() == aargs.len() =>
+        {
+            for (p, a) in pargs.iter().zip(aargs) {
+                match (p, a) {
+                    (TyArg::Val(CtValue::Param(name)), TyArg::Val(value)) => {
+                        out.entry(name.clone()).or_insert_with(|| value.clone());
+                    }
+                    (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, out),
+                    _ => {}
+                }
+            }
+        }
+        (Ty::Ref(pattern_reference), Ty::Ref(actual_reference)) => {
+            solve_value_args(&pattern_reference.referent, &actual_reference.referent, out)
+        }
+        (Ty::Ref(pattern_reference), _) => {
+            solve_value_args(&pattern_reference.referent, actual, out)
+        }
+        _ => {}
     }
 }
 

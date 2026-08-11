@@ -519,6 +519,9 @@ fn ast_raw(
             // stable `String` spelling.
             "String".to_string()
         }
+        // Mirror `ty_raw`: the `NoneType` annotation resolves to `Ty::None`,
+        // which mangles as `None`.
+        Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
         // `Scalar[DType.x]` / `SIMD[DType.x, N]` annotations mangle as their
         // canonical checked spelling (`Scalar[DType.float32]` is the width-1
         // `Float32`), matching `ty_raw`'s display of the resolved `Ty::Simd`.
@@ -710,15 +713,29 @@ fn signature_from_ast(
 }
 
 /// The names of the keyword-only parameters, part of overload identity.
+/// Parameters after a `*` marker or a variadic collector are keyword-only;
+/// the collectors themselves are not named parameters.
 fn keyword_only_names(params: &[FnParam], keyword_only: Option<usize>) -> Vec<String> {
-    match keyword_only {
-        Some(index) => params
-            .iter()
-            .skip(index)
-            .map(|param| param.name.clone())
-            .collect(),
-        None => Vec::new(),
-    }
+    let variadic = params
+        .iter()
+        .position(|param| param.kind == crate::ast::ParamKind::Variadic);
+    let boundary = match (keyword_only, variadic) {
+        (Some(marker), Some(variadic)) => marker.min(variadic + 1),
+        (Some(marker), None) => marker,
+        (None, Some(variadic)) => variadic + 1,
+        (None, None) => return Vec::new(),
+    };
+    params
+        .iter()
+        .skip(boundary)
+        .filter(|param| {
+            !matches!(
+                param.kind,
+                crate::ast::ParamKind::Variadic | crate::ast::ParamKind::KwVariadic
+            )
+        })
+        .map(|param| param.name.clone())
+        .collect()
 }
 
 fn is_mojo_move_constructor(m: &Method) -> bool {

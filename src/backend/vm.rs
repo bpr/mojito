@@ -526,7 +526,28 @@ impl VmBackend {
             .iter()
             .map(|(f, _)| (f.clone(), Value::None))
             .collect();
-        let value_params = reify_value_parameters(&def.param_decls, param_vals);
+        let mut value_params = reify_value_parameters(&def.param_decls, param_vals);
+        // A same-type lifecycle constructor (`copy:` / `deinit move:`) always
+        // produces its argument's exact type; when the call site supplied no
+        // parameter arguments (a generic template body cannot), inherit the
+        // reified parameters from the source value.
+        if value_params
+            .iter()
+            .all(|(_, value)| matches!(value, Value::None))
+            && let Some(source) = args
+                .iter()
+                .chain(kwargs.iter().map(|(_, value)| value))
+                .find_map(|value| match value {
+                    Value::Struct {
+                        name: source_name,
+                        value_params,
+                        ..
+                    } if source_name == name && !value_params.is_empty() => Some(value_params),
+                    _ => None,
+                })
+        {
+            value_params = source.clone();
+        }
         let skeleton = Value::Struct {
             name: name.to_string(),
             fields,
@@ -690,7 +711,22 @@ impl VmBackend {
                 RuntimeError::Unsupported(format!("vm: struct '{name}' has no copy constructor"))
             })?;
         let def = &prog.structs[name];
-        let value_params = reify_value_parameters(&def.param_decls, param_vals);
+        let mut value_params = reify_value_parameters(&def.param_decls, param_vals);
+        // Copy construction produces the source's exact type; inherit its
+        // reified parameters when the call site supplied none.
+        if value_params
+            .iter()
+            .all(|(_, value)| matches!(value, Value::None))
+            && let Value::Struct {
+                name: source_name,
+                value_params: source_params,
+                ..
+            } = &kwargs[0].1
+            && source_name == name
+            && !source_params.is_empty()
+        {
+            value_params = source_params.clone();
+        }
         let skeleton = self.struct_skeleton(prog, name, value_params);
         let (_, frame_vars) =
             self.call_frame(prog, fidx, vec![skeleton, kwargs[0].1.clone()], &[])?;

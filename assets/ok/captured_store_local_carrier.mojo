@@ -7,10 +7,10 @@ struct Carrier:
     var slot: RefBox
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var sink = Carrier(RefBox(whole))
-    var local = [9]
+    var local: List[Int] = [9]
     def push() {mut sink, mut local}:
         ref alias = local
         sink.slot = RefBox(alias)

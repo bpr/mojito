@@ -10,12 +10,12 @@ struct RefBox[origin: Origin[mut=True]]:
 struct Holder:
     var slot: RefBox
     def swap(mut self):
-        var local = [9]
+        var local: List[Int] = [9]
         ref alias = local
         self.slot = RefBox(alias)
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var holder = Holder(RefBox(whole))
     holder.swap()

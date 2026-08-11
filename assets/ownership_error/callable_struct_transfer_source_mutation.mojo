@@ -10,10 +10,10 @@ struct Keeper(def(RefBox)):
         self.slot = box^
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var s = Keeper(RefBox(whole))
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     s(RefBox(alias))
     local.append(1)

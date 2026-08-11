@@ -354,7 +354,7 @@ fn opaque_trait_bound_dispatches_indexing() {
 #[test]
 fn indexer_values_normalize_once_for_nominal_collection_reads_and_writes() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        print(\"normalize\", self.value)\n        return self.value\n\ndef main():\n    var values = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        print(\"normalize\", self.value)\n        return self.value\n\ndef main():\n    var values: List[Int] = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n",
     );
     assert_eq!(actual, "normalize 1\nnormalize 1\n9\n");
 }
@@ -1561,7 +1561,9 @@ fn inferred_var_takes_the_values_natural_type() {
 
 #[test]
 fn inferred_var_list_is_mutable_and_reassignable() {
-    let e = run("var xs = [1, 2]\nxs.append(3)\nvar total = 0\nfor x in xs:\n    total += x\n");
+    let e = run(
+        "var xs: List[Int] = [1, 2]\nxs.append(3)\nvar total = 0\nfor x in xs:\n    total += x\n",
+    );
     assert_nominal(&binding(&e, "xs"), "List");
     assert_eq!(binding(&e, "total"), Value::Int(6));
 }

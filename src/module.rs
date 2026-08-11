@@ -1252,6 +1252,7 @@ fn module_path_under(mut base: PathBuf, path: &[String]) -> PathBuf {
 const PRELUDE_MODULE: &str = "std.prelude";
 
 const PRELUDE_EXPORTS: &[&str] = &[
+    "Array",
     "List",
     "Set",
     "Dict",
@@ -1575,6 +1576,7 @@ const PRELUDE_PATH: &str = "stdlib/std/prelude.mojo";
 /// and unqualified. Their implementation helpers remain module-qualified.
 fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static str> {
     match (module, declaration) {
+        ("std.collections.array", "Array") => Some("Array"),
         ("std.collections.list", "List") => Some("List"),
         ("std.collections.set", "Set") => Some("Set"),
         ("std.collections.dict", "Dict") => Some("Dict"),

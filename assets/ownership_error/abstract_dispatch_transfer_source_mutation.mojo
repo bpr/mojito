@@ -20,10 +20,10 @@ def feed(x: Int):
     print(x)
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var bag = Bag(RefBox(whole))
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     feed(bag, RefBox(alias))
     local.append(1)

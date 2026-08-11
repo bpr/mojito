@@ -68,7 +68,7 @@ fn accepts_lexical_capture_downward_funarg() {
 
 #[test]
 fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities() {
-    let source = "def main():\n    var values = [40]\n    var marker = 1\n    if True:\n        def choose() -> Int:\n            return 1\n        print(choose())\n    if True:\n        def choose() -> Int:\n            return 42\n        print(choose())\n    def inspect() {var marker}:\n        pass\n    def take() {var values^}:\n        pass\n";
+    let source = "def main():\n    var values: List[Int] = [40]\n    var marker = 1\n    if True:\n        def choose() -> Int:\n            return 1\n        print(choose())\n    if True:\n        def choose() -> Int:\n            return 42\n        print(choose())\n    def inspect() {var marker}:\n        pass\n    def take() {var values^}:\n        pass\n";
     let program = parse(source).expect("parse");
     let checked = check_program(&program).expect("check");
 
@@ -630,20 +630,22 @@ fn accepts_break_and_continue_inside_loop() {
 fn checks_owned_iteration_and_collection_comprehensions() {
     let move_only = "struct Item:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n\n";
     ok(&format!(
-        "{move_only}def main():\n    var values = [Item(1), Item(2)]\n    for var item in values^:\n        print(item.value)\n"
+        "{move_only}def main():\n    var values: List[Item] = [Item(1), Item(2)]\n    for var item in values^:\n        print(item.value)\n"
     ));
     // Binding convention and source mode are independent: a `var` target over a
     // borrowed source binds a mutable copy, and an immutable target over a
     // consumed source is accepted. Neither the old `var`-requires-transfer nor
     // transfer-requires-`var` coupling exists any longer.
     ok(
-        "def main():\n    var values = [1, 2]\n    for var item in values:\n        item += 1\n        print(item)\n",
+        "def main():\n    var values: List[Int] = [1, 2]\n    for var item in values:\n        item += 1\n        print(item)\n",
     );
-    ok("def main():\n    var values = [1, 2]\n    for item in values^:\n        print(item)\n");
+    ok(
+        "def main():\n    var values: List[Int] = [1, 2]\n    for item in values^:\n        print(item)\n",
+    );
     // An unadorned target is immutable regardless of the source mode, so
     // mutating it is rejected.
     assert!(matches!(
-        err("def main():\n    var values = [1, 2]\n    for item in values:\n        item += 1\n"),
+        err("def main():\n    var values: List[Int] = [1, 2]\n    for item in values:\n        item += 1\n"),
         TypeError::ImmutableBinding(name) if name == "item"
     ));
 
@@ -653,11 +655,11 @@ fn checks_owned_iteration_and_collection_comprehensions() {
 
     let linear = "@explicit_destroy(\"close Item\")\nstruct Linear(Deinitable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
     ok(&format!(
-        "{linear}def main():\n    var values = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n"
+        "{linear}def main():\n    var values: List[Linear] = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n"
     ));
     assert!(matches!(
         err(&format!(
-            "{linear}def main():\n    var values = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n        break\n"
+            "{linear}def main():\n    var values: List[Linear] = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n        break\n"
         )),
         TypeError::Unsupported(message) if message.contains("residual elements")
     ));
@@ -675,12 +677,12 @@ fn comprehension_binders_are_lexical_and_enforce_linear_cleanup() {
     let linear = "@explicit_destroy(\"close Item\")\nstruct Item(Deinitable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
     assert!(matches!(
         err(&format!(
-            "{linear}def main():\n    var values = [Item(1)]\n    var result = [item.value for var item in values^]\n"
+            "{linear}def main():\n    var values: List[Item] = [Item(1)]\n    var result = [item.value for var item in values^]\n"
         )),
         TypeError::ExplicitDestroy { var, .. } if var == "item"
     ));
     ok(&format!(
-        "{linear}def main():\n    var values = [Item(1)]\n    var result = [item^.close() for var item in values^]\n"
+        "{linear}def main():\n    var values: List[Item] = [Item(1)]\n    var result = [item^.close() for var item in values^]\n"
     ));
 }
 
@@ -2216,7 +2218,7 @@ fn accepts_new_list_methods() {
 
 #[test]
 fn count_and_index_work_on_a_temporary() {
-    ok("var c: Int = [1, 1, 2].count(1)\nvar i: Int = [3, 4, 5].index(4)\n");
+    ok("var c: Int = List[Int](1, 1, 2).count(1)\nvar i: Int = List[Int](3, 4, 5).index(4)\n");
 }
 
 #[test]
@@ -2246,7 +2248,9 @@ fn rejects_non_int_insert_index() {
 #[test]
 fn rejects_count_on_a_non_variable_when_temporary_is_not_equatable() {
     // count needs equatable elements even for a temporary.
-    let e = err("@fieldwise_init\nstruct P:\n    var x: Int\n\nvar c: Int = [P(1)].count(P(1))\n");
+    let e = err(
+        "@fieldwise_init\nstruct P:\n    var x: Int\n\nvar c: Int = List[P](P(1)).count(P(1))\n",
+    );
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
 }
 
@@ -2438,7 +2442,9 @@ fn accepts_inferred_var_and_uses_its_type() {
     // The inferred type flows to later uses (Int arithmetic, String concat, List).
     ok("var n = 40\nvar m: Int = n + 2\n");
     ok("var s = \"hi\"\nvar t: StringLiteral = s + \"!\"\n");
-    ok("var xs = [1, 2, 3]\nxs.append(4)\nvar k: Int = xs[0]\n");
+    // An uncontextualized display types as `Array` (registered only in
+    // linked programs), so the List flow uses the contextual path here.
+    ok("var xs: List[Int] = [1, 2, 3]\nxs.append(4)\nvar k: Int = xs[0]\n");
     ok("var f = 3.5\nvar g: Float64 = f * 2.0\n");
 }
 
@@ -3566,7 +3572,9 @@ fn checks_current_pointer_origin_aggregate_fields() {
 #[test]
 fn pointer_to_place_infers_an_origin_bearing_pointer() {
     ok("def main():\n    var x = 42\n    var p = UnsafePointer(to=x)\n    print(p[0])\n");
-    ok("def main():\n    var xs = [1, 2]\n    var p = UnsafePointer(to=xs[0])\n    print(p[0])\n");
+    ok(
+        "def main():\n    var xs: List[Int] = [1, 2]\n    var p = UnsafePointer(to=xs[0])\n    print(p[0])\n",
+    );
     ok(
         "@fieldwise_init\nstruct Pair:\n    var a: Int\n    var b: Int\n\ndef main():\n    var pair = Pair(1, 2)\n    var p = UnsafePointer(to=pair.b)\n    p[0] = 3\n",
     );
@@ -4751,13 +4759,13 @@ fn stores_into_outliving_storage_reject_frame_local_loans() {
     // The store-outward twin of the return escape: a reference-bearing value
     // rooted at a method-local cannot be stored into `self`, and a `ref`
     // field cannot be rebound to a frame-local place.
-    let carrier = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def swap(mut self):\n        var local = [9]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.swap()\n";
+    let carrier = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def swap(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.swap()\n";
     assert!(matches!(
         err(carrier),
         TypeError::StoredReferenceEscapesOrigin
     ));
 
-    let rebind = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n    def refresh(mut self):\n        var local = [9]\n        self.value = local\n\ndef main():\n    var values = [1, 2]\n    ref whole = values\n    var box = RefBox(whole)\n    box.refresh()\n";
+    let rebind = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n    def refresh(mut self):\n        var local: List[Int] = [9]\n        self.value = local\n\ndef main():\n    var values: List[Int] = [1, 2]\n    ref whole = values\n    var box = RefBox(whole)\n    box.refresh()\n";
     assert!(matches!(
         err(rebind),
         TypeError::StoredReferenceEscapesOrigin
@@ -4768,7 +4776,7 @@ fn stores_into_outliving_storage_reject_frame_local_loans() {
 fn stores_of_parameter_rooted_loans_into_self_stay_accepted() {
     // An origin that outlives the frame (a caller-owned parameter place) may
     // be stored outward; only frame-local roots escape.
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other = [5]\n    holder.rebind_to(other)\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n";
     assert!(check(&parse(src).expect("parse")).is_ok());
 }
 
@@ -4796,7 +4804,7 @@ fn origin_cast_cannot_upgrade_capability() {
 
 #[test]
 fn parameter_rooted_transfers_stay_accepted() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep = [4]\n    var got = fill(keep)\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [4]\n    var got = fill(keep)\n";
     assert!(check(&parse(src).expect("parse")).is_ok());
 }
 

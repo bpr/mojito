@@ -5,6 +5,7 @@
 # in their ordinary stdlib modules so explicit imports and aliases select the
 # same declarations rather than creating a second collection universe.
 
+from std.collections.array import Array
 from std.collections.list import List
 from std.format.tstring import TString
 from std.string import Codepoint, String

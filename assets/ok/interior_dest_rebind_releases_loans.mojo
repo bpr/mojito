@@ -10,7 +10,7 @@ struct Two:
 def main():
     var a: List[RefBox] = List[RefBox]()
     var t = Two(a^, [1])
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     t.a.append(RefBox(alias))
     var fresh: List[RefBox] = List[RefBox]()

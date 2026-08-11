@@ -1029,12 +1029,28 @@ impl Checker {
             // An empty list literal needs a contextual element type; the
             // context-aware paths never reach this uncontextualized inference.
             ExprKind::ListLit(elems) if elems.is_empty() => Err(TypeError::CannotInferTypeParam {
-                name: "List".to_string(),
+                name: "Array".to_string(),
                 param: "T".to_string(),
             }),
+            // An uncontextualized display materializes as the fixed-size
+            // `Array[T, len]`; an expected type with a list-literal constructor
+            // (notably `List[T]`) still controls contextual materialization.
             ExprKind::ListLit(elems) => {
-                let result = list_type(self.infer_list_elem(elems)?);
-                self.record_collection_construction(expr.source_span(), &result);
+                let element = self.infer_list_elem(elems)?;
+                if !self.is_movable(&element) {
+                    return Err(TypeError::TraitNotSatisfied {
+                        param: "T".to_string(),
+                        ty: element.to_string(),
+                        trait_name: "Movable".to_string(),
+                        reason: self.trait_failure_reason(&element, "Movable"),
+                    });
+                }
+                let result = array_type(element, elems.len() as i64);
+                for value in elems {
+                    let actual = self.infer(value)?;
+                    self.check_consuming(value, &actual, "collection display element")?;
+                }
+                self.record_array_literal_construction(expr.source_span(), &result)?;
                 Ok(result)
             }
             // A tuple literal keeps each element's own type (heterogeneous).
@@ -1617,6 +1633,53 @@ impl Checker {
             return Ok(expected.clone());
         }
 
+        if let (ExprKind::ListLit(values), Some((element, length))) =
+            (&expression.kind, array_parts(expected))
+        {
+            if values.len() as i64 != length {
+                return Err(TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: format!("a {}-element list display", values.len()),
+                    context: "fixed-size array display".to_string(),
+                });
+            }
+            if !self.is_movable(element) {
+                return Err(TypeError::TraitNotSatisfied {
+                    param: "T".to_string(),
+                    ty: element.to_string(),
+                    trait_name: "Movable".to_string(),
+                    reason: self.trait_failure_reason(element, "Movable"),
+                });
+            }
+            let element = element.clone();
+            for value in values {
+                let actual = self.infer_with_expected(value, &element, record)?;
+                let compatible = if record {
+                    self.record_implicit_conversion(value, &actual, &element)?
+                } else {
+                    self.value_coerces(&actual, &element)
+                        || self
+                            .implicit_conversion_target(&actual, &element)?
+                            .is_some()
+                };
+                if !compatible {
+                    return Err(TypeError::TypeMismatch {
+                        expected: element.to_string(),
+                        found: actual.to_string(),
+                        context: "collection display element".to_string(),
+                    });
+                }
+                self.check_consuming(value, &actual, "collection display element")?;
+            }
+            if record {
+                self.record_array_literal_construction(expression.source_span(), expected)?;
+                self.expression_types
+                    .borrow_mut()
+                    .insert(expression.source_span(), expected.clone());
+            }
+            return Ok(expected.clone());
+        }
+
         let elements: Option<Vec<(&Expr, &Ty, &'static str)>> =
             if let (ExprKind::ListLit(values), Some(element)) =
                 (&expression.kind, list_element(expected))
@@ -1764,6 +1827,42 @@ impl Checker {
                 insert,
             },
         );
+    }
+
+    /// Record a fixed-size list display's resolution to `Array`'s variadic
+    /// literal constructor, carrying the exact lowered overload symbol so MIR
+    /// emits one nominal constructor call.
+    pub(super) fn record_array_literal_construction(
+        &self,
+        span: SourceSpan,
+        target: &Ty,
+    ) -> Result<(), TypeError> {
+        let Ty::Struct(name, _) = target else {
+            return Ok(());
+        };
+        let constructor = self
+            .structs
+            .get(name)
+            .and_then(|info| info.methods.get("__init__"))
+            .and_then(|sigs| {
+                sigs.iter().find(|sig| {
+                    sig.variadic.is_some()
+                        && sig.names.iter().any(|name| name == "__list_literal__")
+                })
+            })
+            .map(|sig| method_lowered_name(name, "__init__", sig))
+            // An unlinked seam (no bundled stdlib) has no registered `Array`;
+            // its checked programs are never executed, so the plain constructor
+            // spelling suffices as the recorded symbol.
+            .unwrap_or_else(|| format!("{name}.__init__"));
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            crate::checked::SemanticAdjustment::ConstructArrayLiteral {
+                target: target.clone(),
+                constructor,
+            },
+        );
+        Ok(())
     }
 
     /// Type a `List` construction: `List[T](args)` (explicit element type) or

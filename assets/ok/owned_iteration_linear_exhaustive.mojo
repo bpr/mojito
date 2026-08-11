@@ -9,7 +9,7 @@ struct Conn(Movable, Deinitable where False):
         print("close", self.id)
 
 def main():
-    var conns = [Conn(1), Conn(2), Conn(3)]
+    var conns: List[Conn] = [Conn(1), Conn(2), Conn(3)]
     for var item in conns^:
         item^.close()
     print("done")

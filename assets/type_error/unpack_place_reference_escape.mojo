@@ -9,13 +9,13 @@ struct Pair:
     var b: Int
 
     def fill(mut self):
-        var local = [9]
+        var local: List[Int] = [9]
         ref alias = local
         var pack = (RefBox(alias), 5)
         self.a, self.b = pack^
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var pair = Pair(RefBox(whole), 0)
     pair.fill()

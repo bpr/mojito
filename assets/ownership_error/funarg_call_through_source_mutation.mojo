@@ -14,10 +14,10 @@ def feed[callback: def(mut Carrier, RefBox) thin](mut sink: Carrier, box: RefBox
     callback(sink, box^)
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var sink = Carrier(RefBox(whole))
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     feed[stash](sink, RefBox(alias))
     local.append(1)

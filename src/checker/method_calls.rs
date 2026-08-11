@@ -409,15 +409,21 @@ impl Checker {
                     Some(sigs) => {
                         let overloaded = sigs.len() > 1;
                         let single_candidate = sigs.len() == 1;
-                        let subst = struct_subst(&info.decls, targs);
                         let mut matches = Vec::new();
                         for sig in sigs {
-                            let receiver_params: Vec<Ty> =
-                                sig.params.iter().map(|t| substitute(t, &subst)).collect();
-                            let receiver_variadic =
-                                sig.variadic.as_ref().map(|ty| substitute(ty, &subst));
-                            let receiver_kw_variadic =
-                                sig.kw_variadic.as_ref().map(|ty| substitute(ty, &subst));
+                            let receiver_params: Vec<Ty> = sig
+                                .params
+                                .iter()
+                                .map(|t| substitute_at(t, &info.decls, targs))
+                                .collect();
+                            let receiver_variadic = sig
+                                .variadic
+                                .as_ref()
+                                .map(|ty| substitute_at(ty, &info.decls, targs));
+                            let receiver_kw_variadic = sig
+                                .kw_variadic
+                                .as_ref()
+                                .map(|ty| substitute_at(ty, &info.decls, targs));
                             let Ok((
                                 params,
                                 variadic,
@@ -482,14 +488,14 @@ impl Checker {
                                     conventions: sig.conventions.clone(),
                                     self_convention: sig.self_convention,
                                     return_type: substitute(
-                                        &substitute(&sig.ret, &subst),
+                                        &substitute_at(&sig.ret, &info.decls, targs),
                                         &method_subst,
                                     ),
                                     result_adapter: None,
                                     raises: sig.raises,
                                     error: sig.error.as_ref().map(|error| {
                                         Box::new(substitute(
-                                            &substitute(error, &subst),
+                                            &substitute_at(error, &info.decls, targs),
                                             &method_subst,
                                         ))
                                     }),
@@ -1774,8 +1780,11 @@ impl Checker {
             .get(name)?
             .iter()
             .find(|sig| sig.params.len() == args.len())?;
-        let subst = struct_subst(&info.decls, targs);
-        let params: Vec<Ty> = sig.params.iter().map(|t| substitute(t, &subst)).collect();
+        let params: Vec<Ty> = sig
+            .params
+            .iter()
+            .map(|t| substitute_at(t, &info.decls, targs))
+            .collect();
         if params.len() != args.len() {
             return Some(Err(TypeError::ArityMismatch {
                 name: name.to_string(),
@@ -1792,7 +1801,7 @@ impl Checker {
                 }));
             }
         }
-        Some(Ok(substitute(&sig.ret, &subst)))
+        Some(Ok(substitute_at(&sig.ret, &info.decls, targs)))
     }
 
     /// Type a `List` method call. The **mutating** methods (`append`, `insert`,

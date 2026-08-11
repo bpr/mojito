@@ -361,12 +361,9 @@ impl Checker {
                 }
             }
             // Bare `Self` — the enclosing struct type or a trait's abstract Self.
-            // Not usable as a type in a value-parameterized struct (a value
-            // parameter can't appear in a type).
+            // Value-parameterized structs carry their symbolic `CtValue::Param`
+            // arguments here; specialization bakes them out.
             SourceType::SelfType => match &self.self_ty {
-                Some(Ty::Struct(_, args)) if args.iter().any(|a| matches!(a, TyArg::Val(_))) => {
-                    return Err(TypeError::UnknownSelfParam("Self".to_string()));
-                }
                 Some(ty) => ty.clone(),
                 None => return Err(TypeError::UnknownSelfParam("Self".to_string())),
             },
@@ -1282,6 +1279,11 @@ impl Checker {
                         });
                     }
                     self.record_literal_materializations(expr, &actual, ty)?;
+                    // A symbolic enclosing-scope parameter stays symbolic here;
+                    // specialization bakes it out like the callable case above.
+                    if matches!(value, CtValue::Param(_)) {
+                        return Ok(TyArg::Val(value));
+                    }
                     let rendered = value.to_string();
                     let value = value.clone().materialize_as(ty).ok_or_else(|| {
                         TypeError::TypeMismatch {

@@ -98,15 +98,6 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **`Array[T, length]` and list-expression retarget (nightly §3)** — in
-  order:
-  1. Nominal fixed-size `Array` with conditional
-     `Copyable`/`Movable`/`Deinitable` conformances over the existing
-     aggregate storage; keep nominal constructor lowering unless proven
-     insufficient.
-  2. Retarget uncontextualized `[1, 2, 3]` to `Array[Int, 3]`; an expected
-     type with a list-literal constructor (notably `List[T]`) still controls
-     contextual materialization.
 - [ ] **Current pointer/allocation model (nightly §4)** — `Pointer`/
   `MutPointer`/`ImmPointer`, empty `ptr[]` dereference, the `unsafe_*`
   operation vocabulary, and layout-based allocation

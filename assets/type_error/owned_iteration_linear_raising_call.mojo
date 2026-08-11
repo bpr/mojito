@@ -12,8 +12,9 @@ struct Conn(Movable, Deinitable where False):
         print("close", self.id)
 
 def main():
+    var conns: List[Conn] = [Conn(1), Conn(2)]
     try:
-        for var item in [Conn(1), Conn(2)]^:
+        for var item in conns^:
             item^.close()
     except:
         print("caught")

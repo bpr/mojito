@@ -224,6 +224,11 @@ impl Checker {
                 if let Some(n) = self.comptimes.get(name) {
                     return Ok(CtValue::IntLiteral(n.clone()));
                 }
+                // The enclosing struct's parameters are in scope by bare name,
+                // exactly like their `Self.<name>` spelling below.
+                if let Some(value) = self.self_param_ct_value(name) {
+                    return Ok(value);
+                }
                 self.ty_value_from_name(name, &[])
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
             }

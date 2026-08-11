@@ -8,11 +8,11 @@ struct Carrier:
     var slot: RefBox
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var sink = Carrier(RefBox(whole))
     def push() {mut sink}:
-        var inner = [5]
+        var inner: List[Int] = [5]
         ref a = inner
         sink.slot = RefBox(a)
     push()

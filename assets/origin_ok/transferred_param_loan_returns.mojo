@@ -11,6 +11,6 @@ def fill(mut source: List[Int]) -> List[RefBox]:
     return sink^
 
 def main():
-    var keep = [4]
+    var keep: List[Int] = [4]
     var got = fill(keep)
     print(len(got))

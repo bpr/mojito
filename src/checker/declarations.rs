@@ -1160,7 +1160,14 @@ impl Checker {
                 &params,
                 std::slice::from_ref(&arg_ty),
             )?;
-            let expected = substitute(&params[0], &subst);
+            let expected = substitute_assoc(
+                &params[0],
+                &AssocBindings {
+                    types: subst,
+                    values: solved_value_bindings(&decls, &tyargs),
+                    origins: HashMap::new(),
+                },
+            );
             if !coerces(&arg_ty, &expected) {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
@@ -1268,7 +1275,7 @@ impl Checker {
                 }
                 return Ok(self.struct_instance_type(name, Vec::new()));
             }
-            if sigs.len() == 1 {
+            if sigs.len() == 1 && kwargs.is_empty() {
                 let sig = &sigs[0];
                 let params = sig.params.clone();
                 let decls = info.decls.clone();
@@ -1317,25 +1324,66 @@ impl Checker {
                 return Ok(self.struct_instance_type(name, tyargs));
             }
             let decls = info.decls.clone();
-            let arg_tys = args
-                .iter()
-                .map(|a| self.infer(a))
-                .collect::<Result<Vec<_>, _>>()?;
             let overloaded = sigs.len() > 1;
+            let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
+            // Map arguments (positional and keyword) to each candidate's
+            // parameter slots with the shared structural matcher, then solve
+            // the struct's generic parameters from the bound slots.
             let mut matches = Vec::new();
             for sig in sigs {
-                let params = sig.params.clone();
-                if params.len() != arg_tys.len() {
+                let Ok(matched) = crate::call::match_call_slots(
+                    &sig.names,
+                    &sig.required,
+                    sig.positional_only,
+                    sig.keyword_only,
+                    args.len(),
+                    &keyword_names,
+                    crate::call::CallVariadics {
+                        positional: sig.variadic.is_some(),
+                        keyword: sig.kw_variadic.is_some(),
+                    },
+                ) else {
+                    continue;
+                };
+                // Variadic constructors (the compiler-driven display literal
+                // path) and keyword collectors are not explicit-call surface.
+                if !matched.positional_overflow.is_empty() || !matched.keyword_overflow.is_empty() {
                     continue;
                 }
+                let mut bound: Vec<(&Expr, Ty, Option<ArgConvention>)> = Vec::new();
+                for (index, slot) in matched.slots.iter().enumerate() {
+                    let expression = match slot {
+                        ArgSlot::Positional(position) => &args[*position],
+                        ArgSlot::Keyword(position) => &kwargs[*position].value,
+                        ArgSlot::Default => continue,
+                    };
+                    bound.push((
+                        expression,
+                        sig.params[index].clone(),
+                        sig.conventions.get(index).cloned().flatten(),
+                    ));
+                }
+                let arg_tys = bound
+                    .iter()
+                    .map(|(expression, ..)| self.infer(expression))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let patterns: Vec<Ty> = bound
+                    .iter()
+                    .map(|(_, pattern, _)| pattern.clone())
+                    .collect();
                 if let Ok((subst, tyargs)) =
-                    self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)
+                    self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys)
                 {
+                    let bindings = AssocBindings {
+                        types: subst,
+                        values: solved_value_bindings(&decls, &tyargs),
+                        origins: HashMap::new(),
+                    };
                     let mut score = 0;
                     let mut ok = true;
                     let mut conversions = Vec::new();
-                    for (index, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
-                        let expected = substitute(pty, &subst);
+                    for (index, (aty, pty)) in arg_tys.iter().zip(&patterns).enumerate() {
+                        let expected = substitute_assoc(pty, &bindings);
                         if coerces(aty, &expected) {
                             if *aty != expected {
                                 score += 1;
@@ -1351,7 +1399,7 @@ impl Checker {
                         }
                     }
                     if ok {
-                        matches.push((score, sig.clone(), tyargs, conversions));
+                        matches.push((score, sig.clone(), tyargs, conversions, matched.slots));
                     }
                 }
             }
@@ -1367,22 +1415,37 @@ impl Checker {
                         reason: "ambiguous overloaded constructor call".to_string(),
                     });
                 }
-                let (_, sig, tyargs, conversions) = best_matches.remove(0);
+                let (_, sig, tyargs, conversions, slots) = best_matches.remove(0);
+                let bound: Vec<(&Expr, Option<ArgConvention>)> = slots
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, slot)| {
+                        let expression = match slot {
+                            ArgSlot::Positional(position) => &args[*position],
+                            ArgSlot::Keyword(position) => &kwargs[*position].value,
+                            ArgSlot::Default => return None,
+                        };
+                        Some((expression, sig.conventions.get(index).cloned().flatten()))
+                    })
+                    .collect();
                 for (index, expected) in &conversions {
-                    self.record_implicit_conversion(&args[*index], &arg_tys[*index], expected)?;
+                    let (expression, _) = bound[*index];
+                    let actual = self.infer(expression)?;
+                    self.record_implicit_conversion(expression, &actual, expected)?;
                 }
-                for (i, aty) in arg_tys.iter().enumerate() {
-                    if let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
-                        sig.conventions.get(i)
+                for (i, (expression, convention)) in bound.iter().enumerate() {
+                    if let Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) =
+                        convention
                     {
                         let kind = if *convention == ArgConvention::Deinit {
                             super::traits::ConsumeKind::Deinit
                         } else {
                             super::traits::ConsumeKind::Move
                         };
+                        let aty = self.infer(expression)?;
                         self.check_consuming_as(
-                            &args[i],
-                            aty,
+                            expression,
+                            &aty,
                             &format!("argument {} to '{}'", i + 1, name),
                             kind,
                         )?;
@@ -1393,7 +1456,6 @@ impl Checker {
                         .borrow_mut()
                         .insert(span, method_lowered_name(name, "__init__", &sig));
                 }
-                let slots = (0..args.len()).map(ArgSlot::Positional).collect::<Vec<_>>();
                 self.solve_call_origins(
                     &slots,
                     &sig.conventions,
@@ -1665,7 +1727,13 @@ impl Checker {
             self.validate_generic_constraints(name, decls, &tyargs)?;
             return Ok((subst, tyargs));
         }
-        // Inference: only type parameters, solved from the argument types.
+        // Inference: type parameters (and value parameters occupying a solved
+        // argument slot, `Array[T, length]` against `Array[Int, 3]`) from the
+        // argument types.
+        let mut value_solutions = HashMap::new();
+        for (pat, act) in patterns.iter().zip(actuals) {
+            solve_value_args(pat, act, &mut value_solutions);
+        }
         for (pat, act) in patterns.iter().zip(actuals) {
             if let Ty::Param { name, bounds, .. } = pat
                 && name.starts_with('*')
@@ -1712,7 +1780,11 @@ impl Checker {
                     ty,
                     ..
                 } => {
-                    if let Some(value) = default {
+                    if let Some(value) = value_solutions.get(pname) {
+                        value_environment
+                            .insert(pname.trim_start_matches('*').to_string(), value.clone());
+                        tyargs.push(TyArg::Val(value.clone()));
+                    } else if let Some(value) = default {
                         let value = value.evaluate(&value_environment).ok_or_else(|| {
                             TypeError::NotComptime(format!("default for parameter '{}'", pname))
                         })?;

@@ -16,10 +16,10 @@ def stash_into_a(mut t: Two, box: RefBox):
     t.a.slot = box^
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     ref whole = keep
     var t = Two(Carrier(RefBox(whole)), [1])
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     stash_into_a(t, RefBox(alias))
     local.append(1)

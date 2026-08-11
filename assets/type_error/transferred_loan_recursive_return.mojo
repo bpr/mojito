@@ -19,11 +19,11 @@ struct Sink:
 def make(mut keep: List[Int]) -> Sink:
     ref whole = keep
     var sink = Sink(RefBox(whole))
-    var local = [9]
+    var local: List[Int] = [9]
     ref alias = local
     sink.pong(RefBox(alias), 1)
     return sink^
 
 def main():
-    var keep = [1]
+    var keep: List[Int] = [1]
     var got = make(keep)

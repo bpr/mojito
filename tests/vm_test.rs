@@ -159,7 +159,7 @@ fn collection_displays_materialize_contextual_element_types() {
 
 #[test]
 fn self_hosted_list_moves_and_destroys_raw_storage_exactly() {
-    let source = "def main():\n    var values = [1, 2, 3]\n    values.insert(1, 9)\n    var removed = values.pop(2)\n    values.reverse()\n    print(removed, values)\n    values.clear()\n    print(len(values))\n";
+    let source = "def main():\n    var values: List[Int] = [1, 2, 3]\n    values.insert(1, 9)\n    var removed = values.pop(2)\n    values.reverse()\n    print(removed, values)\n    values.clear()\n    print(len(values))\n";
     assert_eq!(vm(source), "2 [3, 9, 1]\n0\n");
 }
 
@@ -405,13 +405,39 @@ fn structs_construction_fields_and_mut_self() {
 fn lists_tuples_and_indexing() {
     // List literal + index + mutation + membership; tuple return + const index.
     assert_eq!(
-        parity("var xs = [1, 2, 3]\nxs.append(4)\nprint(xs[0])\nprint(len(xs))\nprint(3 in xs)\n"),
+        parity(
+            "var xs: List[Int] = [1, 2, 3]\nxs.append(4)\nprint(xs[0])\nprint(len(xs))\nprint(3 in xs)\n"
+        ),
         "1\n4\nTrue\n"
     );
     let tup = "def pair() -> Tuple[Int, Int]:\n    return (7, 9)\n\ndef main():\n    var t = pair()\n    print(t[0])\n    print(t[1])\n";
     assert_eq!(
         run_compiled(tup).expect("compile nominal Tuple return"),
         "7\n9\n"
+    );
+}
+
+#[test]
+fn fixed_size_array_display_and_methods() {
+    // Contextual display construction of `Array[Int, 3]`, by-reference
+    // indexing, augmented element writes, copy/equality/containment, and
+    // borrowed + owned iteration.
+    let src = "def main():\n    var a: Array[Int, 3] = [1, 2, 3]\n    print(len(a), a[0], a[2])\n    a[1] += 5\n    print(a)\n    var b = a.copy()\n    print(a == b, 2 in b)\n    var total = 0\n    for x in a:\n        total += x\n    print(total)\n    var moved = 0\n    for var x in a^:\n        moved += x\n    print(moved)\n";
+    assert_eq!(
+        run_compiled(src).expect("compile the Array display program"),
+        "3 1 3\n[1, 7, 3]\nTrue False\n11\n11\n"
+    );
+}
+
+#[test]
+fn plain_subscript_assignment_writes_through_a_reference_getter() {
+    // No `__setitem__` anywhere: `a[i] = v` selects the mutable-reference
+    // `__getitem__` and finishes with a reference write, on Array and on a
+    // user struct alike.
+    let src = "@fieldwise_init\nstruct Cell:\n    var v: Int\n\n@fieldwise_init\nstruct Grid:\n    var cell: Cell\n    def __getitem__(ref self, i: Int) -> ref[origin_of(self)] Cell:\n        return self.cell\n\ndef main():\n    var a = [1, 2, 3]\n    a[0] = 5\n    a[1] = a[2] + 10\n    print(a)\n    var g = Grid(Cell(1))\n    g[0] = Cell(9)\n    print(g[0].v)\n";
+    assert_eq!(
+        run_compiled(src).expect("compile the reference-getter assignment"),
+        "[5, 13, 3]\n9\n"
     );
 }
 
@@ -927,7 +953,7 @@ fn reference_list_iteration_writes_through_checked_element_handles() {
 
 #[test]
 fn borrowed_list_iterator_rejects_use_after_structural_invalidation() {
-    let source = "def main():\n    var values = [1, 2, 3, 4]\n    for value in values:\n        print(value)\n        if value == 1:\n            values.append(5)\n";
+    let source = "def main():\n    var values: List[Int] = [1, 2, 3, 4]\n    for value in values:\n        print(value)\n        if value == 1:\n            values.append(5)\n";
     let error = run_compiled(source).expect_err("append may reallocate borrowed storage");
     assert!(
         error.contains("invalidated interior reference '$iter")
@@ -1209,7 +1235,7 @@ fn handwritten_initializer_stores_reference_field_handle() {
 
 #[test]
 fn runtime_returned_interior_reference_stores_in_fieldwise_aggregate() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef main():\n    var values = [40]\n    ref item = element(values)\n    var box = RefBox(item)\n    box.value += 2\n    print(values[0])\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef main():\n    var values: List[Int] = [40]\n    ref item = element(values)\n    var box = RefBox(item)\n    box.value += 2\n    print(values[0])\n";
     assert_eq!(vm(src), "42\n");
 }
 
@@ -1253,7 +1279,7 @@ fn nominal_setter_evaluates_receiver_then_subscripts_then_rhs() {
 
 #[test]
 fn union_return_through_runtime_reference_arguments_keeps_the_selected_owner_alive() {
-    let src = "def element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef choose(ref left: Int, ref right: Int, flag: Bool) -> ref[left, right] Int:\n    if flag:\n        return left\n    return right\n\ndef main():\n    var left_values = [1]\n    var right_values = [2]\n    ref left = element(left_values)\n    ref right = element(right_values)\n    ref selected = choose(left, right, False)\n    print(selected)\n";
+    let src = "def element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef choose(ref left: Int, ref right: Int, flag: Bool) -> ref[left, right] Int:\n    if flag:\n        return left\n    return right\n\ndef main():\n    var left_values: List[Int] = [1]\n    var right_values: List[Int] = [2]\n    ref left = element(left_values)\n    ref right = element(right_values)\n    ref selected = choose(left, right, False)\n    print(selected)\n";
     assert_eq!(vm(src), "2\n");
 }
 
@@ -1457,7 +1483,7 @@ fn explicit_bound_generic_application_iterates_concrete_collections() {
     // and re-checks the body with `C := List[Int]` / `Set[Int]`, so the
     // generic `for` runs through ordinary concrete borrowed iteration with no
     // erased dispatch at these call sites.
-    let src = "def total[C: Iterable](c: C) -> Int:\n    var acc = 0\n    for item in c:\n        acc += item\n    return acc\n\ndef main():\n    var xs = [3, 4, 5]\n    print(total[List[Int]](xs))\n    var s: Set[Int] = Set[Int]()\n    s.add(30)\n    print(total[Set[Int]](s))\n";
+    let src = "def total[C: Iterable](c: C) -> Int:\n    var acc = 0\n    for item in c:\n        acc += item\n    return acc\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(total[List[Int]](xs))\n    var s: Set[Int] = Set[Int]()\n    s.add(30)\n    print(total[Set[Int]](s))\n";
     assert_eq!(run_compiled(src).unwrap(), "12\n30\n");
 }
 

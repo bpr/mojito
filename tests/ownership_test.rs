@@ -115,7 +115,7 @@ fn variant_payload_reference_is_invalidated_when_the_tag_changes() {
 
 #[test]
 fn list_interior_references_allow_reads_direct_writes_and_overlap() {
-    let src = "def main():\n    var values = [10, 20, 30]\n    ref first = values[0]\n    ref same = values[0]\n    print(len(values))\n    same += 1\n    values[0] = 77\n    print(first, same)\n";
+    let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    ref first = values[0]\n    ref same = values[0]\n    print(len(values))\n    same += 1\n    values[0] = 77\n    print(first, same)\n";
     assert!(own(src).is_ok());
 }
 
@@ -127,7 +127,7 @@ fn a_reborrow_derives_permission_from_its_parent_reference() {
 
 #[test]
 fn structural_list_mutation_invalidates_an_old_element_generation() {
-    let src = "def main():\n    var values = [10, 20, 30]\n    ref first = values[0]\n    values.append(40)\n    print(first)\n";
+    let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    ref first = values[0]\n    values.append(40)\n    print(first)\n";
     match own(src) {
         Err(OwnershipError::InvalidatedInteriorReference {
             reference,
@@ -146,14 +146,14 @@ fn structural_list_mutation_invalidates_an_old_element_generation() {
 
 #[test]
 fn structural_list_mutation_invalidates_a_borrowed_iterator_generation() {
-    let source = "def main():\n    var values = [1, 2, 3, 4]\n    for value in values:\n        print(value)\n        if value == 1:\n            values.append(5)\n";
+    let source = "def main():\n    var values: List[Int] = [1, 2, 3, 4]\n    for value in values:\n        print(value)\n        if value == 1:\n            values.append(5)\n";
     assert!(matches!(
         own(source),
         Err(OwnershipError::InvalidatedInteriorReference { reference, origin, .. })
             if reference.starts_with("$iter") && origin == "values[\"element\"]"
     ));
 
-    let no_later_use = "def main():\n    var values = [1, 2, 3, 4]\n    for value in values:\n        values.append(5)\n        break\n";
+    let no_later_use = "def main():\n    var values: List[Int] = [1, 2, 3, 4]\n    for value in values:\n        values.append(5)\n        break\n";
     assert!(
         own(no_later_use).is_ok(),
         "an invalidated iterator may be discarded without reading through it"
@@ -162,7 +162,7 @@ fn structural_list_mutation_invalidates_a_borrowed_iterator_generation() {
 
 #[test]
 fn replacing_a_collection_invalidates_its_old_interiors() {
-    let src = "def main():\n    var values = [10, 20, 30]\n    ref first = values[0]\n    values = [40, 50]\n    print(first)\n";
+    let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    ref first = values[0]\n    values = [40, 50]\n    print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -171,7 +171,7 @@ fn replacing_a_collection_invalidates_its_old_interiors() {
 
 #[test]
 fn whole_replacement_through_reference_invalidates_nested_interiors() {
-    let src = "def main():\n    var values = [1, 2]\n    ref whole = values\n    ref first = values[0]\n    whole = [3, 4]\n    print(first)\n";
+    let src = "def main():\n    var values: List[Int] = [1, 2]\n    ref whole = values\n    ref first = values[0]\n    whole = [3, 4]\n    print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -180,7 +180,7 @@ fn whole_replacement_through_reference_invalidates_nested_interiors() {
 
 #[test]
 fn unpack_replacement_invalidates_old_collection_interiors() {
-    let src = "def main():\n    var values = [10, 20, 30]\n    var count = 0\n    ref first = values[0]\n    values, count = ([40, 50], 2)\n    print(first, count)\n";
+    let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    var count = 0\n    ref first = values[0]\n    values, count = (List[Int](40, 50), 2)\n    print(first, count)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -189,19 +189,19 @@ fn unpack_replacement_invalidates_old_collection_interiors() {
 
 #[test]
 fn indexed_and_variant_payload_replacement_invalidate_nested_interiors() {
-    let indexed = "def main():\n    var outer = [[1, 2]]\n    ref first = outer[0][0]\n    outer[0] = [3, 4]\n    print(first)\n";
+    let indexed = "def main():\n    var outer: List[List[Int]] = [[1, 2]]\n    ref first = outer[0][0]\n    outer[0] = [3, 4]\n    print(first)\n";
     assert!(matches!(
         own(indexed),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
     ));
 
-    let unpacked = "def main():\n    var outer = [[1, 2]]\n    var count = 0\n    ref first = outer[0][0]\n    outer[0], count = ([3, 4], 2)\n    print(first, count)\n";
+    let unpacked = "def main():\n    var outer: List[List[Int]] = [[1, 2]]\n    var count = 0\n    ref first = outer[0][0]\n    outer[0], count = (List[Int](3, 4), 2)\n    print(first, count)\n";
     assert!(matches!(
         own(unpacked),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
     ));
 
-    let variant = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[List[Int], StringLiteral]([1, 2])\n    ref first = value[List[Int]][0]\n    value[List[Int]] = [3, 4]\n    print(first)\n";
+    let variant = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[List[Int], StringLiteral](List[Int](1, 2))\n    ref first = value[List[Int]][0]\n    value[List[Int]] = [3, 4]\n    print(first)\n";
     assert!(matches!(
         own(variant),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -210,7 +210,7 @@ fn indexed_and_variant_payload_replacement_invalidate_nested_interiors() {
 
 #[test]
 fn pointer_whole_replacement_invalidates_referent_interiors() {
-    let src = "def main():\n    var values = [1, 2]\n    ref first = values[0]\n    var pointer = UnsafePointer(to=values)\n    pointer[0] = [3, 4]\n    print(first)\n";
+    let src = "def main():\n    var values: List[Int] = [1, 2]\n    ref first = values[0]\n    var pointer = UnsafePointer(to=values)\n    pointer[0] = [3, 4]\n    print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -219,7 +219,7 @@ fn pointer_whole_replacement_invalidates_referent_interiors() {
 
 #[test]
 fn reference_field_write_invalidates_the_referents_interiors() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var values = [1, 2]\n    ref whole = values\n    var box = RefBox(whole)\n    ref first = box.value[0]\n    box.value = [3, 4]\n    print(first)\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var values: List[Int] = [1, 2]\n    ref whole = values\n    var box = RefBox(whole)\n    ref first = box.value[0]\n    box.value = [3, 4]\n    print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -228,10 +228,10 @@ fn reference_field_write_invalidates_the_referents_interiors() {
 
 #[test]
 fn reference_field_write_is_field_sensitive() {
-    let distinct = "@fieldwise_init\nstruct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n\ndef main():\n    var left = [1, 2]\n    var right = [3, 4]\n    ref left_ref = left\n    ref right_ref = right\n    var pair = RefPair(left_ref, right_ref)\n    ref right_element = pair.right[0]\n    pair.left = [5, 6]\n    print(right_element)\n";
+    let distinct = "@fieldwise_init\nstruct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n\ndef main():\n    var left: List[Int] = [1, 2]\n    var right: List[Int] = [3, 4]\n    ref left_ref = left\n    ref right_ref = right\n    var pair = RefPair(left_ref, right_ref)\n    ref right_element = pair.right[0]\n    pair.left = [5, 6]\n    print(right_element)\n";
     assert!(own(distinct).is_ok());
 
-    let same = "@fieldwise_init\nstruct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n\ndef main():\n    var left = [1, 2]\n    var right = [3, 4]\n    ref left_ref = left\n    ref right_ref = right\n    var pair = RefPair(left_ref, right_ref)\n    ref right_element = pair.right[0]\n    pair.right = [5, 6]\n    print(right_element)\n";
+    let same = "@fieldwise_init\nstruct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n\ndef main():\n    var left: List[Int] = [1, 2]\n    var right: List[Int] = [3, 4]\n    ref left_ref = left\n    ref right_ref = right\n    var pair = RefPair(left_ref, right_ref)\n    ref right_element = pair.right[0]\n    pair.right = [5, 6]\n    print(right_element)\n";
     assert!(matches!(
         own(same),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -240,7 +240,7 @@ fn reference_field_write_is_field_sensitive() {
 
 #[test]
 fn handwritten_reference_fields_keep_their_referent_identity() {
-    let src = "struct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n    def __init__(out self, ref[left_origin] left: List[Int], ref[right_origin] right: List[Int]):\n        self.left = left\n        self.right = right\n\ndef main():\n    var left = [1, 2]\n    var right = [3, 4]\n    var pair = RefPair(left, right)\n    ref right_element = pair.right[0]\n    pair.right = [5, 6]\n    print(right_element)\n";
+    let src = "struct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n    def __init__(out self, ref[left_origin] left: List[Int], ref[right_origin] right: List[Int]):\n        self.left = left\n        self.right = right\n\ndef main():\n    var left: List[Int] = [1, 2]\n    var right: List[Int] = [3, 4]\n    var pair = RefPair(left, right)\n    ref right_element = pair.right[0]\n    pair.right = [5, 6]\n    print(right_element)\n";
     let result = own(src);
     assert!(
         matches!(
@@ -253,7 +253,7 @@ fn handwritten_reference_fields_keep_their_referent_identity() {
 
 #[test]
 fn list_interior_invalidation_joins_across_control_flow() {
-    let src = "def main():\n    var values = [10, 20, 30]\n    ref first = values[0]\n    if Bool(1):\n        values.append(40)\n    print(first)\n";
+    let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    ref first = values[0]\n    if Bool(1):\n        values.append(40)\n    print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -262,7 +262,7 @@ fn list_interior_invalidation_joins_across_control_flow() {
 
 #[test]
 fn fresh_list_element_generation_after_mutation_is_valid() {
-    let src = "def main():\n    var values = [10, 20, 30]\n    ref old = values[0]\n    print(old)\n    values.append(40)\n    ref fresh = values[3]\n    print(fresh)\n";
+    let src = "def main():\n    var values: List[Int] = [10, 20, 30]\n    ref old = values[0]\n    print(old)\n    values.append(40)\n    ref fresh = values[3]\n    print(fresh)\n";
     assert!(own(src).is_ok());
 }
 
@@ -280,7 +280,7 @@ fn interior_invalidation_is_field_sensitive() {
 
 #[test]
 fn mutable_cross_call_invalidates_collection_interiors() {
-    let src = "def alter(mut values: List[Int]):\n    values.append(4)\n\ndef main():\n    var values = [1, 2, 3]\n    ref first = values[0]\n    alter(values)\n    print(first)\n";
+    let src = "def alter(mut values: List[Int]):\n    values.append(4)\n\ndef main():\n    var values: List[Int] = [1, 2, 3]\n    ref first = values[0]\n    alter(values)\n    print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -289,7 +289,7 @@ fn mutable_cross_call_invalidates_collection_interiors() {
 
 #[test]
 fn copied_interior_argument_is_read_before_mutable_call_invalidation() {
-    let src = "def alter(mut values: List[Int], copied: Int):\n    values.append(copied)\n\ndef main():\n    var values = [1, 2]\n    ref first = values[0]\n    alter(values, first)\n";
+    let src = "def alter(mut values: List[Int], copied: Int):\n    values.append(copied)\n\ndef main():\n    var values: List[Int] = [1, 2]\n    ref first = values[0]\n    alter(values, first)\n";
     assert!(own(src).is_ok());
 }
 
@@ -309,10 +309,10 @@ fn explicit_interior_return_contract_preserves_the_full_receiver_path() {
 
 #[test]
 fn union_interior_return_allows_owner_reads_but_tracks_every_member() {
-    let valid = "def choose(ref left: List[Int], ref right: List[Int], flag: Bool) -> ref[origin_of(left)._get_owned_interior[\"element\"], origin_of(right)._get_owned_interior[\"element\"]] Int:\n    if flag:\n        return left[0]\n    return right[0]\n\ndef main():\n    var left = [1]\n    var right = [2]\n    ref selected = choose(left, right, True)\n    print(len(left), len(right))\n    print(selected)\n";
+    let valid = "def choose(ref left: List[Int], ref right: List[Int], flag: Bool) -> ref[origin_of(left)._get_owned_interior[\"element\"], origin_of(right)._get_owned_interior[\"element\"]] Int:\n    if flag:\n        return left[0]\n    return right[0]\n\ndef main():\n    var left: List[Int] = [1]\n    var right: List[Int] = [2]\n    ref selected = choose(left, right, True)\n    print(len(left), len(right))\n    print(selected)\n";
     assert!(own(valid).is_ok());
 
-    let invalid = "def choose(ref left: List[Int], ref right: List[Int], flag: Bool) -> ref[origin_of(left)._get_owned_interior[\"element\"], origin_of(right)._get_owned_interior[\"element\"]] Int:\n    if flag:\n        return left[0]\n    return right[0]\n\ndef main():\n    var left = [1]\n    var right = [2]\n    ref selected = choose(left, right, True)\n    right.append(3)\n    print(selected)\n";
+    let invalid = "def choose(ref left: List[Int], ref right: List[Int], flag: Bool) -> ref[origin_of(left)._get_owned_interior[\"element\"], origin_of(right)._get_owned_interior[\"element\"]] Int:\n    if flag:\n        return left[0]\n    return right[0]\n\ndef main():\n    var left: List[Int] = [1]\n    var right: List[Int] = [2]\n    ref selected = choose(left, right, True)\n    right.append(3)\n    print(selected)\n";
     assert!(matches!(
         own(invalid),
         Err(OwnershipError::InvalidatedInteriorReference { origin, .. })
@@ -322,7 +322,7 @@ fn union_interior_return_allows_owner_reads_but_tracks_every_member() {
 
 #[test]
 fn forwarding_a_union_reference_preserves_every_interior_generation() {
-    let src = "def element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef choose(ref left: Int, ref right: Int, flag: Bool) -> ref[left, right] Int:\n    if flag:\n        return left\n    else:\n        return right\n\ndef forward(ref value: Int) -> ref[value] Int:\n    return value\n\ndef main():\n    var left_values = [1, 10]\n    var right_values = [2, 20]\n    ref left = element(left_values)\n    ref right = element(right_values)\n    ref selected = choose(left, right, False)\n    ref forwarded = forward(selected)\n    right_values.append(3)\n    print(forwarded)\n";
+    let src = "def element(ref values: List[Int]) -> ref[origin_of(values)._get_owned_interior[\"element\"]] Int:\n    return values[0]\n\ndef choose(ref left: Int, ref right: Int, flag: Bool) -> ref[left, right] Int:\n    if flag:\n        return left\n    else:\n        return right\n\ndef forward(ref value: Int) -> ref[value] Int:\n    return value\n\ndef main():\n    var left_values: List[Int] = [1, 10]\n    var right_values: List[Int] = [2, 20]\n    ref left = element(left_values)\n    ref right = element(right_values)\n    ref selected = choose(left, right, False)\n    ref forwarded = forward(selected)\n    right_values.append(3)\n    print(forwarded)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { origin, .. })
@@ -332,7 +332,7 @@ fn forwarding_a_union_reference_preserves_every_interior_generation() {
 
 #[test]
 fn mixed_union_return_keeps_its_ordinary_owner_loan() {
-    let src = "def choose(ref plain: Int, ref values: List[Int], flag: Bool) -> ref[plain, origin_of(values)._get_owned_interior[\"element\"]] Int:\n    if flag:\n        return values[0]\n    return plain\n\ndef main():\n    var plain = 1\n    var values = [2]\n    ref selected = choose(plain, values, False)\n    plain = 9\n    print(selected)\n";
+    let src = "def choose(ref plain: Int, ref values: List[Int], flag: Bool) -> ref[plain, origin_of(values)._get_owned_interior[\"element\"]] Int:\n    if flag:\n        return values[0]\n    return plain\n\ndef main():\n    var plain = 1\n    var values: List[Int] = [2]\n    ref selected = choose(plain, values, False)\n    plain = 9\n    print(selected)\n";
     assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
 }
 
@@ -390,7 +390,7 @@ fn dict_lookup_refresh_invalidates_fields_of_the_previous_value_generation() {
 
 #[test]
 fn retained_subscript_reference_is_checked_after_later_argument_evaluation() {
-    let src = "def mutate(mut values: List[Int]) -> Int:\n    values.append(3)\n    return 0\n\n@fieldwise_init\nstruct Reader:\n    var marker: Int\n    def __getitem__[origin: Origin[mut=False]](\n        self, ref[origin] first: Int, second: Int\n    ) -> Int:\n        return first + second\n\ndef main():\n    var values = [10, 20]\n    ref first = values[0]\n    var reader = Reader(0)\n    print(reader[first, mutate(values)])\n";
+    let src = "def mutate(mut values: List[Int]) -> Int:\n    values.append(3)\n    return 0\n\n@fieldwise_init\nstruct Reader:\n    var marker: Int\n    def __getitem__[origin: Origin[mut=False]](\n        self, ref[origin] first: Int, second: Int\n    ) -> Int:\n        return first + second\n\ndef main():\n    var values: List[Int] = [10, 20]\n    ref first = values[0]\n    var reader = Reader(0)\n    print(reader[first, mutate(values)])\n";
     let result = own(src);
     assert!(
         matches!(
@@ -404,13 +404,13 @@ fn retained_subscript_reference_is_checked_after_later_argument_evaluation() {
 
 #[test]
 fn copied_subscript_argument_is_not_reread_after_later_argument_evaluation() {
-    let src = "def mutate(mut values: List[Int]) -> Int:\n    values.append(3)\n    return 0\n\n@fieldwise_init\nstruct Reader:\n    var marker: Int\n    def __getitem__(self, first: Int, second: Int) -> Int:\n        return first + second\n\ndef main():\n    var values = [10, 20]\n    ref first = values[0]\n    var reader = Reader(0)\n    print(reader[first, mutate(values)])\n";
+    let src = "def mutate(mut values: List[Int]) -> Int:\n    values.append(3)\n    return 0\n\n@fieldwise_init\nstruct Reader:\n    var marker: Int\n    def __getitem__(self, first: Int, second: Int) -> Int:\n        return first + second\n\ndef main():\n    var values: List[Int] = [10, 20]\n    ref first = values[0]\n    var reader = Reader(0)\n    print(reader[first, mutate(values)])\n";
     assert!(own(src).is_ok());
 }
 
 #[test]
 fn raising_mutation_invalidates_on_the_try_path() {
-    let src = "def alter(mut values: List[Int]) raises:\n    values.append(4)\n    raise Error(\"changed\")\n\ndef main():\n    var values = [1, 2, 3]\n    ref first = values[0]\n    try:\n        alter(values)\n    except error:\n        pass\n    print(first)\n";
+    let src = "def alter(mut values: List[Int]) raises:\n    values.append(4)\n    raise Error(\"changed\")\n\ndef main():\n    var values: List[Int] = [1, 2, 3]\n    ref first = values[0]\n    try:\n        alter(values)\n    except error:\n        pass\n    print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -419,19 +419,19 @@ fn raising_mutation_invalidates_on_the_try_path() {
 
 #[test]
 fn returning_try_path_does_not_invalidate_the_fallthrough_path() {
-    let src = "def main():\n    var values = [1, 2, 3]\n    ref first = values[0]\n    try:\n        if Bool(1):\n            values.append(4)\n            return\n    finally:\n        pass\n    print(first)\n";
+    let src = "def main():\n    var values: List[Int] = [1, 2, 3]\n    ref first = values[0]\n    try:\n        if Bool(1):\n            values.append(4)\n            return\n    finally:\n        pass\n    print(first)\n";
     assert!(own(src).is_ok());
 }
 
 #[test]
 fn handler_entry_excludes_nonraising_mutations_after_an_earlier_failure() {
-    let src = "def fail() raises:\n    raise Error(\"stop\")\n\ndef main():\n    var values = [1, 2, 3]\n    ref first = values[0]\n    try:\n        fail()\n        values.append(4)\n    except error:\n        print(first)\n";
+    let src = "def fail() raises:\n    raise Error(\"stop\")\n\ndef main():\n    var values: List[Int] = [1, 2, 3]\n    ref first = values[0]\n    try:\n        fail()\n        values.append(4)\n    except error:\n        print(first)\n";
     assert!(own(src).is_ok());
 }
 
 #[test]
 fn finally_checks_the_returning_path_before_it_exits() {
-    let src = "def main():\n    var values = [1, 2, 3]\n    ref first = values[0]\n    try:\n        values.append(4)\n        return\n    finally:\n        print(first)\n";
+    let src = "def main():\n    var values: List[Int] = [1, 2, 3]\n    ref first = values[0]\n    try:\n        values.append(4)\n        return\n    finally:\n        print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -440,7 +440,7 @@ fn finally_checks_the_returning_path_before_it_exits() {
 
 #[test]
 fn nested_try_propagates_invalidated_state_to_an_outer_handler() {
-    let src = "def alter(mut values: List[Int]) raises:\n    values.append(4)\n    raise Error(\"changed\")\n\ndef main():\n    var values = [1, 2, 3]\n    ref first = values[0]\n    try:\n        try:\n            alter(values)\n        finally:\n            pass\n    except error:\n        print(first)\n";
+    let src = "def alter(mut values: List[Int]) raises:\n    values.append(4)\n    raise Error(\"changed\")\n\ndef main():\n    var values: List[Int] = [1, 2, 3]\n    ref first = values[0]\n    try:\n        try:\n            alter(values)\n        finally:\n            pass\n    except error:\n        print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
@@ -460,19 +460,19 @@ fn move_without_later_use_is_ok() {
 
 #[test]
 fn move_capture_consumes_the_source_at_the_nested_declaration() {
-    let moved = "def main():\n    var values = [40]\n    def take() {var values^} -> Int:\n        return values[0]\n    print(values[0])\n";
+    let moved = "def main():\n    var values: List[Int] = [40]\n    def take() {var values^} -> Int:\n        return values[0]\n    print(values[0])\n";
     assert!(matches!(
         own(moved),
         Err(OwnershipError::UseAfterMove { .. })
     ));
 
-    let no_later_use = "def main():\n    var values = [40]\n    def take() {var values^} -> Int:\n        return values[0]\n    print(take())\n";
+    let no_later_use = "def main():\n    var values: List[Int] = [40]\n    def take() {var values^} -> Int:\n        return values[0]\n    print(take())\n";
     assert!(own(no_later_use).is_ok());
 }
 
 #[test]
 fn unused_explicit_move_capture_still_consumes_the_source() {
-    let source = "def main():\n    var values = [40]\n    def take() {var values^}:\n        pass\n    print(values[0])\n";
+    let source = "def main():\n    var values: List[Int] = [40]\n    def take() {var values^}:\n        pass\n    print(values[0])\n";
     assert!(matches!(
         own(source),
         Err(OwnershipError::UseAfterMove { .. })
@@ -482,12 +482,12 @@ fn unused_explicit_move_capture_still_consumes_the_source() {
 #[test]
 fn owned_iteration_consumes_the_source_collection() {
     let ok_source = format!(
-        "{THING}def main():\n    var values = [Thing(1), Thing(2)]\n    for var item in values^:\n        print(item.x)\n"
+        "{THING}def main():\n    var values: List[Thing] = [Thing(1), Thing(2)]\n    for var item in values^:\n        print(item.x)\n"
     );
     assert!(own(&ok_source).is_ok());
 
     let used_again = format!(
-        "{THING}def main():\n    var values = [Thing(1), Thing(2)]\n    for var item in values^:\n        print(item.x)\n    print(len(values))\n"
+        "{THING}def main():\n    var values: List[Thing] = [Thing(1), Thing(2)]\n    for var item in values^:\n        print(item.x)\n    print(len(values))\n"
     );
     match own(&used_again) {
         Err(OwnershipError::UseAfterMove { .. }) => {}
@@ -756,13 +756,13 @@ fn callee_installed_loans_conflict_with_source_mutation() {
     // `self`; the call replays that effect, so mutating the source while the
     // carrier lives conflicts, and the same program with the carrier's last
     // use before the mutation stays accepted.
-    let conflicting = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other = [5]\n    holder.rebind_to(other)\n    other.append(6)\n    print(holder.slot.value[0])\n";
+    let conflicting = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n    other.append(6)\n    print(holder.slot.value[0])\n";
     assert!(matches!(
         own(conflicting),
         Err(OwnershipError::LoanConflict { .. })
     ));
 
-    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other = [5]\n    holder.rebind_to(other)\n    print(holder.slot.value[0])\n    other.append(6)\n    print(other[1])\n";
+    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n    print(holder.slot.value[0])\n    other.append(6)\n    print(other[1])\n";
     assert!(own(after_last_use).is_ok());
 }
 
@@ -773,7 +773,7 @@ fn nested_call_transferred_loans_conflict_with_source_mutation() {
     // so mutating the loan source afterward conflicts exactly like the
     // free-call path. (The unlinked seam records through the user-struct
     // store; the seeded `List.append` chain is covered by the linked tests.)
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier:\n    var slot: RefBox\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var carrier = Carrier(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    def stash(mut c: Carrier, box: RefBox):\n        c.slot = box^\n    stash(carrier, RefBox(alias))\n    local.append(1)\n    print(carrier.slot.value[0])\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier:\n    var slot: RefBox\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var carrier = Carrier(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut c: Carrier, box: RefBox):\n        c.slot = box^\n    stash(carrier, RefBox(alias))\n    local.append(1)\n    print(carrier.slot.value[0])\n";
     assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
 }
 
@@ -782,6 +782,6 @@ fn transferred_carrier_loans_keep_the_source_alive() {
     // The appended carrier's loan lands on the collection, so the drops pass
     // keeps the borrowed source alive while the collection lives — the
     // chained read executes without explicit source liveness.
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    print(sink[0].value[0])\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    print(sink[0].value[0])\n";
     assert!(own(src).is_ok());
 }

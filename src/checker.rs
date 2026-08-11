@@ -31,8 +31,9 @@ use crate::error::TypeError;
 use crate::token::SourceSpan;
 use crate::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SliceKind, Ty,
-    TyArg, contains_infer, dict_elements, dict_type, list_element, list_type, range_type,
-    set_element, set_type, tuple_elements, tuple_type as nominal_tuple_type,
+    TyArg, array_element, array_parts, array_type, contains_infer, dict_elements, dict_type,
+    list_element, list_type, range_type, set_element, set_type, tuple_elements,
+    tuple_type as nominal_tuple_type,
 };
 
 /// The checker's value-coercion predicate, shared with MIR verification so the
@@ -2286,10 +2287,17 @@ fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
 /// canonical (`sig.params` are the declared parameter types, unsubstituted —
 /// matching the MIR definition side, which mangles the declared annotations).
 fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String {
-    let signature_types = sig
-        .params
-        .iter()
-        .chain(sig.variadic.iter().map(Box::as_ref));
+    // The variadic element participates in overload identity at its declared
+    // position (the MIR symbol walks parameters in source order).
+    let mut signature_types: Vec<&Ty> = sig.params.iter().collect();
+    if let Some(element) = sig.variadic.as_deref() {
+        let index = sig
+            .variadic_index
+            .unwrap_or(signature_types.len())
+            .min(signature_types.len());
+        signature_types.insert(index, element);
+    }
+    let signature_types = signature_types.into_iter();
     let keyword_names = match sig.keyword_only {
         Some(index) => sig.names[index..].to_vec(),
         None => Vec::new(),
@@ -2549,6 +2557,7 @@ fn is_bundled_collection_source(source: Option<&str>) -> bool {
         || source == stdlib.join("list.mojo")
         || source == stdlib.join("std/collections/dict.mojo")
         || source == stdlib.join("dict.mojo")
+        || source == stdlib.join("std/collections/array.mojo")
 }
 
 /// Select the current Mojo parameter-index hook first, while retaining the

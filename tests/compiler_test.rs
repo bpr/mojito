@@ -376,11 +376,11 @@ fn callee_stores_transfer_loans_to_caller_bookkeeping() {
     let compiler = Compiler::default();
     for source in [
         // via the seeded stdlib effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef make() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var got = make()\n",
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef make() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var got = make()\n",
         // via a transitively derived free-function effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef collect() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n",
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef collect() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n",
         // via a body-inferred user-method effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef steal() -> Holder:\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var local = [5]\n    holder.rebind_to(local)\n    return holder^\n\ndef main():\n    var got = steal()\n",
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef steal() -> Holder:\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var local: List[Int] = [5]\n    holder.rebind_to(local)\n    return holder^\n\ndef main():\n    var got = steal()\n",
     ] {
         let error = compiler
             .compile_unlinked(source)
@@ -405,13 +405,13 @@ fn call_through_residues_resolve_at_call_sites() {
     let compiler = Compiler::default();
     let prologue = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], box: RefBox):\n    sink.append(box^)\n\n";
     let value_param = format!(
-        "{prologue}def feed[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    callback(sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    feed[stash](sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
+        "{prologue}def feed[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    callback(sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    feed[stash](sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
     );
     let runtime_param = format!(
-        "{prologue}def feed(f: def(mut List[RefBox], RefBox), mut sink: List[RefBox], box: RefBox):\n    f(sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    feed(stash, sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
+        "{prologue}def feed(f: def(mut List[RefBox], RefBox), mut sink: List[RefBox], box: RefBox):\n    f(sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    feed(stash, sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
     );
     let composed = format!(
-        "{prologue}def feed[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    callback(sink, box^)\n\ndef outer[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    feed[callback](sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    outer[stash](sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
+        "{prologue}def feed[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    callback(sink, box^)\n\ndef outer[callback: def(mut List[RefBox], RefBox) thin](mut sink: List[RefBox], box: RefBox):\n    feed[callback](sink, box^)\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    outer[stash](sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n"
     );
     for source in [&value_param, &runtime_param, &composed] {
         let error = compiler
@@ -433,7 +433,7 @@ fn call_through_visibility_is_declaration_order_independent() {
     // calling a LATER same-struct method that forwards through a callable
     // value parameter still resolves the residue, in both orders.
     let compiler = Compiler::default();
-    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: Sink, box: RefBox):\n    sink.slot = box^\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)\n\n    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
+    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: Sink, box: RefBox):\n    sink.slot = box^\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)\n\n    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
     let early = late.replace(
         "    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)\n\n    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)",
         "    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)\n\n    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)",
@@ -463,7 +463,7 @@ fn captured_store_effects_replay_at_closure_invocations() {
     // and the enclosing method re-abstracts it so ITS callers replay too.
     // The seeded `List.append` chain requires the linked compiler.
     let compiler = Compiler::default();
-    let escape = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Keeper:\n    var items: List[RefBox]\n\n    def add_local(mut self):\n        var local = [9]\n        ref alias = local\n        def push(var box: RefBox) {mut self}:\n            self.items.append(box^)\n        push(RefBox(alias))\n\ndef main():\n    var items: List[RefBox] = List[RefBox]()\n    var k = Keeper(items^)\n    k.add_local()\n";
+    let escape = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Keeper:\n    var items: List[RefBox]\n\n    def add_local(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n        def push(var box: RefBox) {mut self}:\n            self.items.append(box^)\n        push(RefBox(alias))\n\ndef main():\n    var items: List[RefBox] = List[RefBox]()\n    var k = Keeper(items^)\n    k.add_local()\n";
     let error = compiler
         .compile_unlinked(escape)
         .expect_err("local-rooted loan through the captured store must escape");
@@ -472,7 +472,7 @@ fn captured_store_effects_replay_at_closure_invocations() {
         "{error}"
     );
 
-    let transitive = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Keeper:\n    var items: List[RefBox]\n\n    def add_param(mut self, var box: RefBox):\n        def push(var b: RefBox) {mut self}:\n            self.items.append(b^)\n        push(box^)\n\ndef main():\n    var items: List[RefBox] = List[RefBox]()\n    var k = Keeper(items^)\n    var local = [9]\n    ref alias = local\n    k.add_param(RefBox(alias))\n    local.append(1)\n    print(k.items[0].value[0])\n";
+    let transitive = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Keeper:\n    var items: List[RefBox]\n\n    def add_param(mut self, var box: RefBox):\n        def push(var b: RefBox) {mut self}:\n            self.items.append(b^)\n        push(box^)\n\ndef main():\n    var items: List[RefBox] = List[RefBox]()\n    var k = Keeper(items^)\n    var local: List[Int] = [9]\n    ref alias = local\n    k.add_param(RefBox(alias))\n    local.append(1)\n    print(k.items[0].value[0])\n";
     let error = compiler
         .compile_unlinked(transitive)
         .expect_err("the re-abstracted effect must reach the method's caller");
@@ -493,8 +493,8 @@ fn abstract_dispatch_replays_the_conformer_effect_union() {
     // overloaded sibling keeps `feed` on the abstract erased-dispatch path.
     // Both conformer declaration orders converge through the two-phase pass.
     let compiler = Compiler::default();
-    let conformer_first = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ntrait Sink:\n    def put(mut self, var box: RefBox): ...\n\n@fieldwise_init\nstruct Bag(Sink):\n    var slot: RefBox\n\n    def put(mut self, var box: RefBox):\n        self.slot = box^\n\ndef feed[T: Sink](mut sink: T, var box: RefBox):\n    sink.put(box^)\n\ndef feed(x: Int):\n    print(x)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var bag = Bag(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    feed(bag, RefBox(alias))\n    local.append(1)\n    print(bag.slot.value[0])\n";
-    let conformer_last = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ntrait Sink:\n    def put(mut self, var box: RefBox): ...\n\ndef feed[T: Sink](mut sink: T, var box: RefBox):\n    sink.put(box^)\n\ndef feed(x: Int):\n    print(x)\n\n@fieldwise_init\nstruct Bag(Sink):\n    var slot: RefBox\n\n    def put(mut self, var box: RefBox):\n        self.slot = box^\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var bag = Bag(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    feed(bag, RefBox(alias))\n    local.append(1)\n    print(bag.slot.value[0])\n";
+    let conformer_first = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ntrait Sink:\n    def put(mut self, var box: RefBox): ...\n\n@fieldwise_init\nstruct Bag(Sink):\n    var slot: RefBox\n\n    def put(mut self, var box: RefBox):\n        self.slot = box^\n\ndef feed[T: Sink](mut sink: T, var box: RefBox):\n    sink.put(box^)\n\ndef feed(x: Int):\n    print(x)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var bag = Bag(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    feed(bag, RefBox(alias))\n    local.append(1)\n    print(bag.slot.value[0])\n";
+    let conformer_last = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ntrait Sink:\n    def put(mut self, var box: RefBox): ...\n\ndef feed[T: Sink](mut sink: T, var box: RefBox):\n    sink.put(box^)\n\ndef feed(x: Int):\n    print(x)\n\n@fieldwise_init\nstruct Bag(Sink):\n    var slot: RefBox\n\n    def put(mut self, var box: RefBox):\n        self.slot = box^\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var bag = Bag(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    feed(bag, RefBox(alias))\n    local.append(1)\n    print(bag.slot.value[0])\n";
     for source in [conformer_first, conformer_last] {
         let error = compiler
             .compile_unlinked(source)
@@ -517,7 +517,7 @@ fn overloaded_call_sites_replay_the_shared_effect_entry() {
     // replay entirely). The seeded `List.append` chain requires the linked
     // compiler.
     let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef stash(x: Int):\n    print(x)\n\ndef collect() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef stash(x: Int):\n    print(x)\n\ndef collect() -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n";
     let error = compiler
         .compile_unlinked(source)
         .expect_err("transferred local-rooted loan must not escape");
@@ -535,7 +535,7 @@ fn callable_struct_call_replays_transfer_effects() {
     // so mutating the loan source while the sink lives conflicts. Runs
     // through the compiler so the seeded stdlib effect participates.
     let compiler = Compiler::default();
-    let conflict = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox], RefBox)):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox], box: RefBox):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
+    let conflict = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox], RefBox)):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox], box: RefBox):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
     let error = compiler
         .compile_unlinked(conflict)
         .expect_err("mutating the transferred loan's source must conflict");
@@ -549,7 +549,7 @@ fn callable_struct_call_replays_transfer_effects() {
 
     // The same program with the sink's last use before the mutation stays
     // accepted — no spurious rejection from the indirect replay.
-    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox], RefBox)):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox], box: RefBox):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink: List[RefBox] = List[RefBox]()\n    var local = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    print(sink[0].value[0])\n    local.append(1)\n    print(local[1])\n";
+    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox], RefBox)):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox], box: RefBox):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    print(sink[0].value[0])\n    local.append(1)\n    print(local[1])\n";
     compiler
         .compile_unlinked(after_last_use)
         .expect("carrier released before the mutation compiles");
@@ -564,8 +564,8 @@ fn owned_iteration_of_linear_elements_requires_guaranteed_exhaustion() {
     // escaping twin rejects with the residual-obligation diagnostic instead
     // of the old iterator-selection mismatch.
     let compiler = Compiler::default();
-    let exhaustive = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n";
-    let escaping = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n        break\n";
+    let exhaustive = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n";
+    let escaping = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n        break\n";
     let program = compiler
         .compile_unlinked(exhaustive)
         .expect("linear exhaustive");
@@ -627,7 +627,7 @@ fn nested_def_captured_self_store_faces_the_escape_guard() {
     // rejects what previously slipped through to a stale-reference crash at
     // runtime.
     let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_local(mut self):\n        def install() {mut self}:\n            var local = [7]\n            ref alias = local\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n    print(holder.slot.value[0])\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_local(mut self):\n        def install() {mut self}:\n            var local: List[Int] = [7]\n            ref alias = local\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n    print(holder.slot.value[0])\n";
     let error = compiler
         .compile_unlinked(source)
         .expect_err("nested-def store");
@@ -640,7 +640,7 @@ fn nested_def_captured_self_store_faces_the_escape_guard() {
     // installs roots at the enclosing method's `mut` parameter, which is
     // caller-visible storage. (End-to-end execution of capture-installed
     // reference reads is a recorded capture-channel residue.)
-    let param_rooted = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_param(mut self, mut source: List[Int]):\n        def install() {mut self, ref source}:\n            ref alias = source\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other = [5]\n    holder.stash_param(other)\n";
+    let param_rooted = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_param(mut self, mut source: List[Int]):\n        def install() {mut self, ref source}:\n            ref alias = source\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.stash_param(other)\n";
     compiler
         .compile_unlinked(param_rooted)
         .expect("param-rooted nested-def store stays accepted");
@@ -648,7 +648,7 @@ fn nested_def_captured_self_store_faces_the_escape_guard() {
     // Frame balance: a store BESIDE (after) a nested def, in the method's own
     // body, still faces the guard — the nested frame pushes and pops without
     // disturbing the method's escape context.
-    let adjacent = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_local(mut self):\n        def helper(x: Int) -> Int:\n            return x\n        var local = [helper(7)]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n";
+    let adjacent = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n\n    def stash_local(mut self):\n        def helper(x: Int) -> Int:\n            return x\n        var local: List[Int] = [helper(7)]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.stash_local()\n";
     let error = compiler
         .compile_unlinked(adjacent)
         .expect_err("adjacent store");
@@ -666,7 +666,7 @@ fn transfer_effect_visibility_is_declaration_order_independent() {
     // whenever a call site observed a stale callee entry — so both
     // declaration orders reject identically.
     let compiler = Compiler::default();
-    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def via(mut self, var box: RefBox):\n        self.stash(box^)\n\n    def stash(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
+    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def via(mut self, var box: RefBox):\n        self.stash(box^)\n\n    def stash(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
     let error = compiler.compile_unlinked(late).expect_err("late order");
     assert!(matches!(
         error,
@@ -690,7 +690,7 @@ fn recursion_only_transfer_effects_reach_the_fixpoint() {
     // (its callee's body is uncommitted at the call site), the rerun closes
     // the cycle, and the caller's return-escape rejects.
     let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def ping(mut self, var box: RefBox, n: Int):\n        if n > 0:\n            self.pong(box^, n - 1)\n        else:\n            self.slot = box^\n\n    def pong(mut self, var box: RefBox, n: Int):\n        self.ping(box^, n)\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink.pong(RefBox(alias), 1)\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def ping(mut self, var box: RefBox, n: Int):\n        if n > 0:\n            self.pong(box^, n - 1)\n        else:\n            self.slot = box^\n\n    def pong(mut self, var box: RefBox, n: Int):\n        self.ping(box^, n)\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.pong(RefBox(alias), 1)\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
     let error = compiler
         .compile_unlinked(source)
         .expect_err("mutual recursion");
@@ -707,7 +707,7 @@ fn augmented_assignment_replays_the_dunders_transfer_effects() {
     // installs the transfer at the `sink += carrier` site: returning the
     // receiver with a local-rooted transferred loan rejects.
     let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def __iadd__(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local = [9]\n    ref alias = local\n    sink += RefBox(alias)\n    return sink^\n\ndef main():\n    var keep = [1]\n    var got = make(keep)\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink:\n    var slot: RefBox\n\n    def __iadd__(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink += RefBox(alias)\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
     let error = compiler.compile_unlinked(source).expect_err("augassign");
     assert!(matches!(
         error,
@@ -724,7 +724,7 @@ fn unpack_into_place_faces_the_store_outward_guard() {
     // passes the guard and still lands on the pre-existing
     // implicitly-copyable rvalue-unpack requirement.
     let compiler = Compiler::default();
-    let escaping = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Pair:\n    var a: RefBox\n    var b: Int\n\n    def fill(mut self):\n        var local = [9]\n        ref alias = local\n        var pack = (RefBox(alias), 5)\n        self.a, self.b = pack^\n\ndef main():\n    var keep = [1]\n    ref whole = keep\n    var pair = Pair(RefBox(whole), 0)\n    pair.fill()\n";
+    let escaping = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Pair:\n    var a: RefBox\n    var b: Int\n\n    def fill(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n        var pack = (RefBox(alias), 5)\n        self.a, self.b = pack^\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var pair = Pair(RefBox(whole), 0)\n    pair.fill()\n";
     let error = compiler
         .compile_unlinked(escaping)
         .expect_err("escaping unpack");
@@ -734,10 +734,13 @@ fn unpack_into_place_faces_the_store_outward_guard() {
     ));
 
     let param_rooted = escaping.replace(
-        "    def fill(mut self):\n        var local = [9]\n        ref alias = local\n",
+        "    def fill(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n",
         "    def fill(mut self, mut source: List[Int]):\n        ref alias = source\n",
     );
-    let param_rooted = param_rooted.replace("pair.fill()", "var src = [9]\n    pair.fill(src)");
+    let param_rooted = param_rooted.replace(
+        "pair.fill()",
+        "var src: List[Int] = [9]\n    pair.fill(src)",
+    );
     let error = compiler
         .compile_unlinked(&param_rooted)
         .expect_err("copyable wall");
