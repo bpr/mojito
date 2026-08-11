@@ -1344,11 +1344,11 @@ fn build_checked_expressions(
                         self.expr(value);
                     }
                     Comptime {
-                        where_clause,
+                        where_clauses,
                         value,
                         ..
                     } => {
-                        if let Some(constraint) = where_clause {
+                        for constraint in where_clauses {
                             self.expr(constraint);
                         }
                         self.expr(value);
@@ -1365,7 +1365,7 @@ fn build_checked_expressions(
                     }
                     Def {
                         params,
-                        where_clause,
+                        where_clauses,
                         body,
                         ..
                     } => {
@@ -1374,14 +1374,14 @@ fn build_checked_expressions(
                                 self.expr(value);
                             }
                         }
-                        if let Some(value) = where_clause {
+                        for value in where_clauses {
                             self.expr(value);
                         }
                         self.block(body);
                     }
                     Struct {
                         conformance_conditions,
-                        where_clause,
+                        where_clauses,
                         associated,
                         methods,
                         ..
@@ -1389,11 +1389,11 @@ fn build_checked_expressions(
                         for (_, value) in conformance_conditions {
                             self.expr(value);
                         }
-                        if let Some(value) = where_clause {
+                        for value in where_clauses {
                             self.expr(value);
                         }
                         for value in associated {
-                            if let Some(constraint) = &value.where_clause {
+                            for constraint in &value.where_clauses {
                                 self.expr(constraint);
                             }
                             self.expr(&value.value);
@@ -1404,7 +1404,7 @@ fn build_checked_expressions(
                                     self.expr(value);
                                 }
                             }
-                            if let Some(value) = &method.where_clause {
+                            for value in &method.where_clauses {
                                 self.expr(value);
                             }
                             self.block(&method.body);
@@ -1421,7 +1421,7 @@ fn build_checked_expressions(
                                     self.expr(value);
                                 }
                             }
-                            if let Some(value) = &method.where_clause {
+                            for value in &method.where_clauses {
                                 self.expr(value);
                             }
                             if let Some(body) = &method.default_body {
@@ -1429,7 +1429,7 @@ fn build_checked_expressions(
                             }
                         }
                         for member in comptime_members {
-                            if let Some(constraint) = &member.where_clause {
+                            for constraint in &member.where_clauses {
                                 self.expr(constraint);
                             }
                         }

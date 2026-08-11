@@ -529,28 +529,29 @@ impl<'a> Elab<'a> {
             }
         }
         let mut specialized_where = match &template.kind {
-            StmtKind::Def { where_clause, .. } => where_clause
-                .as_ref()
-                .map(|predicate| materialize_expression(predicate, &subs)),
-            _ => None,
+            StmtKind::Def { where_clauses, .. } => where_clauses
+                .iter()
+                .map(|predicate| materialize_expression(predicate, &subs))
+                .collect(),
+            _ => Vec::new(),
         };
         // Once every compile-time binder has been baked into a clone, its
-        // trailing predicate is a specialization precondition rather than a
-        // residual declaration constraint. Prove it now (retaining an optional
-        // diagnostic message), then erase it so the concrete clone does not
-        // pretend to have a parameter to which the constraint can attach.
+        // trailing predicates are specialization preconditions rather than
+        // residual declaration constraints. Prove each now (retaining an
+        // optional per-clause diagnostic message), then erase them so the
+        // concrete clone does not pretend to have a parameter to which the
+        // constraints can attach.
         let has_residual_constraint_binder = kept_type_params.iter().any(|parameter| {
             !matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
                 && !parameter.is_origin_mutability_binder(type_params)
         });
         if !has_residual_constraint_binder
-            && let StmtKind::Def {
-                where_clause: Some(predicate),
-                ..
-            } = &template.kind
+            && let StmtKind::Def { where_clauses, .. } = &template.kind
         {
-            self.validate_specialized_where(predicate, &constraint_env, display_name)?;
-            specialized_where = None;
+            for predicate in where_clauses {
+                self.validate_specialized_where(predicate, &constraint_env, display_name)?;
+            }
+            specialized_where = Vec::new();
         }
         expand_pack_spreads_in_function_body(
             &mut final_body,
@@ -596,7 +597,7 @@ impl<'a> Elab<'a> {
             if let Some(error) = &mut specialized_raises_type {
                 substitute_type_bindings_in_type(error, &type_substitutions);
             }
-            if let Some(predicate) = &mut specialized_where {
+            for predicate in &mut specialized_where {
                 substitute_type_bindings_in_expr(predicate, &type_substitutions);
             }
             substitute_type_bindings_in_block(&mut final_body, &type_substitutions);
@@ -616,7 +617,7 @@ impl<'a> Elab<'a> {
                 raises: *raises,
                 raises_type: specialized_raises_type,
                 ret: specialized_ret,
-                where_clause: specialized_where,
+                where_clauses: specialized_where,
                 body: final_body,
             },
             template.span,
@@ -691,7 +692,7 @@ impl<'a> Elab<'a> {
             conforms,
             callable_conformance,
             conformance_conditions,
-            where_clause,
+            where_clauses,
             fields,
             associated,
             methods,
@@ -741,14 +742,15 @@ impl<'a> Elab<'a> {
                 (trait_name.clone(), materialize_expression(condition, &subs))
             })
             .collect();
-        let mut specialized_where = where_clause
-            .as_ref()
-            .map(|predicate| materialize_expression(predicate, &subs));
-        if kept_type_params.is_empty()
-            && let Some(predicate) = where_clause
-        {
-            self.validate_specialized_where(predicate, &env, orig)?;
-            specialized_where = None;
+        let mut specialized_where: Vec<Expr> = where_clauses
+            .iter()
+            .map(|predicate| materialize_expression(predicate, &subs))
+            .collect();
+        if kept_type_params.is_empty() {
+            for predicate in where_clauses {
+                self.validate_specialized_where(predicate, &env, orig)?;
+            }
+            specialized_where = Vec::new();
         }
         let mut specialized_associated = associated.clone();
         for member in &mut specialized_associated {
@@ -780,7 +782,7 @@ impl<'a> Elab<'a> {
             if let Some(ty) = &mut member.ty {
                 rewrite_type(ty, member_value_subs);
             }
-            if let Some(condition) = &mut member.where_clause {
+            for condition in &mut member.where_clauses {
                 *condition = materialize_expression(condition, &member_subs);
             }
             member.value = materialize_expression(&member.value, &member_subs);
@@ -819,8 +821,8 @@ impl<'a> Elab<'a> {
             if let Some(error) = &mut method.raises_type {
                 rewrite_type(error, method_value_subs);
             }
-            if let Some(condition) = method.where_clause.take() {
-                method.where_clause = Some(materialize_expression(&condition, &method_subs));
+            for condition in &mut method.where_clauses {
+                *condition = materialize_expression(condition, &method_subs);
             }
             specialized_methods.push(method);
         }
@@ -833,7 +835,7 @@ impl<'a> Elab<'a> {
                 conforms: conforms.clone(),
                 callable_conformance: specialized_callable_conformance,
                 conformance_conditions: specialized_conformance_conditions,
-                where_clause: specialized_where,
+                where_clauses: specialized_where,
                 fields: specialized_fields,
                 associated: specialized_associated,
                 methods: specialized_methods,
@@ -864,7 +866,7 @@ impl<'a> Elab<'a> {
             conforms,
             callable_conformance,
             conformance_conditions,
-            where_clause,
+            where_clauses,
             fields,
             associated,
             methods,
@@ -979,9 +981,8 @@ impl<'a> Elab<'a> {
                         .collect(),
                 );
             }
-            if let Some(condition) = member.where_clause.take() {
-                member.where_clause =
-                    Some(self.fold_pack_conformance_predicate(&condition, &binding, types)?);
+            for condition in &mut member.where_clauses {
+                *condition = self.fold_pack_conformance_predicate(condition, &binding, types)?;
             }
         }
         // Conditional conformances on the source pack become unconditional
@@ -1008,14 +1009,16 @@ impl<'a> Elab<'a> {
                 }
             }
         }
-        let specialized_where = where_clause
-            .as_ref()
+        let specialized_where = where_clauses
+            .iter()
             .map(|predicate| self.fold_pack_conformance_predicate(predicate, &binding, types))
-            .transpose()?;
-        if let Some(predicate) = &specialized_where {
+            .collect::<Result<Vec<_>, _>>()?;
+        if !specialized_where.is_empty() {
             let mut environment = self.top_consts.borrow().clone();
             environment.insert(binding.clone(), CtValue::Tuple(types.clone()));
-            self.validate_specialized_where(predicate, &environment, orig)?;
+            for predicate in &specialized_where {
+                self.validate_specialized_where(predicate, &environment, orig)?;
+            }
         }
         // Elaborate each method body with the pack bound, so comptime constructs
         // select/unroll against the concrete element types.
@@ -1066,14 +1069,23 @@ impl<'a> Elab<'a> {
             // false concrete clause removes the unavailable method; a true one
             // is erased. Any residual method-generic proposition remains for
             // ordinary checker specialization.
-            if let Some(condition) = method.where_clause.take() {
+            let mut method_unavailable = false;
+            let mut residual_clauses = Vec::new();
+            for condition in method.where_clauses.drain(..) {
                 let folded = self.fold_pack_conformance_predicate(&condition, &binding, types)?;
                 match &folded.kind {
-                    ExprKind::Bool(false) => continue,
+                    ExprKind::Bool(false) => {
+                        method_unavailable = true;
+                        break;
+                    }
                     ExprKind::Bool(true) => {}
-                    _ => method.where_clause = Some(folded),
+                    _ => residual_clauses.push(folded),
                 }
             }
+            if method_unavailable {
+                continue;
+            }
+            method.where_clauses = residual_clauses;
             // A pack-typed runtime parameter (`var *args: *Ts`) becomes the
             // concrete `$pack[T0, ...]`; its element sequence is exposed in the
             // comptime env so `len(args)`/`args[i]`/`comptime for` evaluate
@@ -1289,7 +1301,7 @@ impl<'a> Elab<'a> {
                 // Every source pack binder has been discharged above. The
                 // constraint is a specialization precondition, not a residual
                 // declaration predicate on the concrete clone.
-                where_clause: None,
+                where_clauses: Vec::new(),
                 fields: fields.clone(),
                 associated: specialized_associated,
                 methods: elaborated_methods,

@@ -27,15 +27,42 @@ impl Checker {
         signature: &CallableOriginSignature,
         bindings: &HashMap<usize, bool>,
     ) -> bool {
-        let Some(constraint) = &signature.availability else {
+        if signature.availability.is_empty() {
             return true;
-        };
+        }
         let owned = Self::erased_origin_constraint_environment(signature, bindings);
         let environment = owned
             .iter()
             .map(|(name, value)| (name.as_str(), value))
-            .collect();
-        self.eval_generic_constraint(constraint, &environment)
+            .collect::<HashMap<_, _>>();
+        signature
+            .availability
+            .iter()
+            .all(|constraint| self.eval_generic_constraint(constraint, &environment))
+    }
+
+    /// The retained diagnostic for a failed erased-origin availability check:
+    /// the first failing clause's message, when it declared one.
+    fn first_failing_erased_origin_message(
+        &self,
+        signature: &CallableOriginSignature,
+        bindings: &HashMap<usize, bool>,
+    ) -> Option<String> {
+        let owned = Self::erased_origin_constraint_environment(signature, bindings);
+        let environment = owned
+            .iter()
+            .map(|(name, value)| (name.as_str(), value))
+            .collect::<HashMap<_, _>>();
+        signature
+            .availability
+            .iter()
+            .find(|constraint| !self.eval_generic_constraint(constraint, &environment))
+            .and_then(|constraint| match constraint {
+                GenericConstraint::WithMessage(_, message) => {
+                    Some(format!("constraint failed: {message}"))
+                }
+                _ => None,
+            })
     }
 
     fn validate_erased_origin_constraint(
@@ -44,15 +71,18 @@ impl Checker {
         signature: &CallableOriginSignature,
         bindings: &HashMap<usize, bool>,
     ) -> Result<(), TypeError> {
-        let Some(constraint) = &signature.availability else {
+        if signature.availability.is_empty() {
             return Ok(());
-        };
+        }
         let owned = Self::erased_origin_constraint_environment(signature, bindings);
         let environment = owned
             .iter()
             .map(|(name, value)| (name.as_str(), value))
-            .collect();
-        self.validate_constraint_in_environment(name, constraint, &environment)
+            .collect::<HashMap<_, _>>();
+        for constraint in &signature.availability {
+            self.validate_constraint_in_environment(name, constraint, &environment)?;
+        }
+        Ok(())
     }
 
     /// Record the conversion plumbing that makes a builtin string-producing
@@ -313,15 +343,9 @@ impl Checker {
                                         ) =>
                                     {
                                         availability_failures.push(
-                                            signature.availability.as_ref().and_then(
-                                                |constraint| match constraint {
-                                                    GenericConstraint::WithMessage(_, message) => {
-                                                        Some(format!(
-                                                            "constraint failed: {message}"
-                                                        ))
-                                                    }
-                                                    _ => None,
-                                                },
+                                            self.first_failing_erased_origin_message(
+                                                signature,
+                                                &bool_bindings,
                                             ),
                                         );
                                     }

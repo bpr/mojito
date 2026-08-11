@@ -174,14 +174,14 @@ fn parses_struct_with_field_and_method() {
             conforms: vec![],
             callable_conformance: None,
             conformance_conditions: vec![],
-            where_clause: None,
+            where_clauses: Vec::new(),
             fields: vec![Param {
                 name: "x".into(),
                 ty: Type::Int
             }],
             associated: vec![],
             methods: vec![Method {
-                where_clause: None,
+                where_clauses: Vec::new(),
                 type_params: vec![],
                 name: "get".into(),
                 has_self: true,
@@ -339,7 +339,7 @@ fn parses_def_signature_and_body() {
     assert_eq!(
         stmts[0],
         Stmt::from(StmtKind::Def {
-            where_clause: None,
+            where_clauses: Vec::new(),
             name: "add".into(),
             decorators: vec![],
             type_params: vec![],
@@ -557,7 +557,7 @@ fn parses_generic_struct_header_and_self_param_field() {
             conforms: vec![],
             callable_conformance: None,
             conformance_conditions: vec![],
-            where_clause: None,
+            where_clauses: Vec::new(),
             fields: vec![
                 Param {
                     name: "left".into(),
@@ -581,7 +581,7 @@ fn parses_generic_def_with_type_param_signature() {
     assert_eq!(
         stmts[0],
         Stmt::from(StmtKind::Def {
-            where_clause: None,
+            where_clauses: Vec::new(),
             name: "id".into(),
             decorators: vec![],
             type_params: vec![TypeParam {
@@ -644,7 +644,7 @@ fn parses_trait_with_method_requirements() {
             refines: vec![],
             methods: vec![
                 TraitMethod {
-                    where_clause: None,
+                    where_clauses: Vec::new(),
                     type_params: vec![],
                     name: "quack".into(),
                     self_convention: None,
@@ -658,7 +658,7 @@ fn parses_trait_with_method_requirements() {
                     default_body: None,
                 },
                 TraitMethod {
-                    where_clause: None,
+                    where_clauses: Vec::new(),
                     type_params: vec![],
                     name: "volume".into(),
                     self_convention: None,
@@ -842,7 +842,7 @@ fn parses_trait_comptime_member() {
                     name: "count".into(),
                     params: vec![],
                     ty: Type::Int,
-                    where_clause: None,
+                    where_clauses: Vec::new(),
                 }]
             );
         }
@@ -909,7 +909,7 @@ fn parses_struct_comptime_associated_member() {
                     name: "Element".into(),
                     params: vec![],
                     ty: None,
-                    where_clause: None,
+                    where_clauses: Vec::new(),
                     value: Expr::from(ExprKind::Member {
                         object: ident("Self"),
                         field: "T".into(),
@@ -933,7 +933,7 @@ fn parses_comptime_constant() {
             name: "N".into(),
             type_params: vec![],
             ty: None,
-            where_clause: None,
+            where_clauses: Vec::new(),
             value: Expr::from(ExprKind::Infix(InfixOp::Mul, int(2), int(4))),
         })
     );
@@ -948,7 +948,7 @@ fn parses_annotated_comptime_constant() {
             name: "counter".into(),
             type_params: vec![],
             ty: Some(Type::Int),
-            where_clause: None,
+            where_clauses: Vec::new(),
             value: int_expr(1),
         })
     );
@@ -961,19 +961,19 @@ fn retains_where_messages_on_struct_and_comptime_declarations() {
     );
 
     let StmtKind::Struct {
-        where_clause,
+        where_clauses,
         associated,
         ..
     } = &statements[0].kind
     else {
         panic!("expected struct declaration");
     };
-    assert!(where_clause.is_some());
+    assert_eq!(where_clauses.len(), 1);
     assert_eq!(
         associated[0].ty,
         Some(Type::Named("AnyType".into(), vec![]))
     );
-    assert!(associated[0].where_clause.is_some());
+    assert_eq!(associated[0].where_clauses.len(), 1);
 
     let StmtKind::Trait {
         comptime_members, ..
@@ -981,12 +981,12 @@ fn retains_where_messages_on_struct_and_comptime_declarations() {
     else {
         panic!("expected trait declaration");
     };
-    assert!(comptime_members[0].where_clause.is_some());
+    assert_eq!(comptime_members[0].where_clauses.len(), 1);
 
     let StmtKind::Comptime {
         type_params,
         ty,
-        where_clause,
+        where_clauses,
         ..
     } = &statements[2].kind
     else {
@@ -994,7 +994,48 @@ fn retains_where_messages_on_struct_and_comptime_declarations() {
     };
     assert_eq!(type_params.len(), 1);
     assert_eq!(ty, &Some(Type::Named("AnyType".into(), vec![])));
-    assert!(where_clause.is_some());
+    assert_eq!(where_clauses.len(), 1);
+}
+
+#[test]
+fn retains_repeated_where_clauses_independently_on_every_declaration_family() {
+    let statements = parse(
+        "def f[T: AnyType]() -> Int where (True, \"m1\") where (True, \"m2\"):\n    return 0\n\nstruct Box[T: AnyType] where (True, \"m1\") where (True, \"m2\"):\n    comptime Item[U: AnyType]: AnyType where (True, \"m1\") where (True, \"m2\") = U\n    def get[U: AnyType](self) -> Int where (True, \"m1\") where (True, \"m2\"):\n        return 0\n\ntrait HasItem:\n    comptime Item: AnyType where (True, \"m1\") where (True, \"m2\")\n    def req[U: AnyType](self) -> Int where (True, \"m1\") where (True, \"m2\"):\n        ...\n\ncomptime Alias[T: AnyType]: AnyType where (True, \"m1\") where (True, \"m2\") = T\n",
+    );
+
+    let StmtKind::Def { where_clauses, .. } = &statements[0].kind else {
+        panic!("expected def declaration");
+    };
+    assert_eq!(where_clauses.len(), 2);
+
+    let StmtKind::Struct {
+        where_clauses,
+        associated,
+        methods,
+        ..
+    } = &statements[1].kind
+    else {
+        panic!("expected struct declaration");
+    };
+    assert_eq!(where_clauses.len(), 2);
+    assert_eq!(associated[0].where_clauses.len(), 2);
+    assert_eq!(methods[0].where_clauses.len(), 2);
+
+    let StmtKind::Trait {
+        comptime_members,
+        methods,
+        ..
+    } = &statements[2].kind
+    else {
+        panic!("expected trait declaration");
+    };
+    assert_eq!(comptime_members[0].where_clauses.len(), 2);
+    assert_eq!(methods[0].where_clauses.len(), 2);
+
+    let StmtKind::Comptime { where_clauses, .. } = &statements[3].kind else {
+        panic!("expected comptime declaration");
+    };
+    assert_eq!(where_clauses.len(), 2);
 }
 
 #[test]
@@ -1078,14 +1119,14 @@ fn retains_trailing_where_constraints() {
     let statements = parse("def f[n: Int]() -> Int where n > 0 and n < 10:\n    return n\n");
     let StmtKind::Def {
         type_params,
-        where_clause,
+        where_clauses,
         ..
     } = &statements[0].kind
     else {
         panic!("expected def");
     };
     assert!(type_params[0].constraints.is_empty());
-    assert!(where_clause.is_some());
+    assert_eq!(where_clauses.len(), 1);
 }
 
 #[test]

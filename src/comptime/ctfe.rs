@@ -270,7 +270,7 @@ impl<'a> Elab<'a> {
                 raises: false,
                 raises_type: None,
                 ret: Some(ret),
-                where_clause: None,
+                where_clauses: Vec::new(),
                 body: vec![mk(StmtKind::Return(Some(call)), span)],
             },
             span,

@@ -4973,6 +4973,79 @@ fn diagnostic_where_clauses_cover_structs_and_comptime_declarations() {
 }
 
 #[test]
+fn repeated_where_clauses_keep_independent_messages_across_declaration_families() {
+    // Free function: both clauses hold, the call succeeds; the first failing
+    // clause reports its own message regardless of position.
+    ok(
+        "def pick[n: Int]() -> Int where (n > 0, \"positive required\") where (n < 10, \"single digit required\"):\n    return n\n\ndef main():\n    var result = pick[5]()\n",
+    );
+    let TypeError::BadCall { reason, .. } = err(
+        "def pick[n: Int]() -> Int where (n > 0, \"positive required\") where (n < 10, \"single digit required\"):\n    return n\n\ndef main():\n    var result = pick[0]()\n",
+    ) else {
+        panic!("expected the first clause to reject the call");
+    };
+    assert_eq!(reason, "constraint failed: positive required");
+    let TypeError::BadCall { reason, .. } = err(
+        "def pick[n: Int]() -> Int where (n > 0, \"positive required\") where (n < 10, \"single digit required\"):\n    return n\n\ndef main():\n    var result = pick[10]()\n",
+    ) else {
+        panic!("expected the second clause to reject the call");
+    };
+    assert_eq!(reason, "constraint failed: single digit required");
+
+    // Struct declarations retain each clause on the declaration parameters.
+    ok(
+        "@fieldwise_init\nstruct Box[n: Int] where (n > 0, \"positive size\") where (n < 10, \"small size\"):\n    var value: Int\n\ndef main():\n    var value = Box[5](1)\n",
+    );
+    let TypeError::BadCall { reason, .. } = err(
+        "struct Box[n: Int] where (n > 0, \"positive size\") where (n < 10, \"small size\"):\n    var value: Int\n\ndef main():\n    var value: Box[12]\n",
+    ) else {
+        panic!("expected the second struct clause to reject the application");
+    };
+    assert_eq!(reason, "constraint failed: small size");
+
+    // Method availability keeps one entry per clause and reports the failing
+    // clause's own message.
+    let TypeError::BadCall { reason, .. } = err(
+        "@fieldwise_init\nstruct Selector:\n    var marker: Int\n    def select[T: AnyType](self, value: T) -> Int where (True, \"enabled\") where (False, \"selection disabled\"):\n        return 1\n\ndef main():\n    var selector = Selector(0)\n    print(selector.select(42))\n",
+    ) else {
+        panic!("expected the second method clause to reject the call");
+    };
+    assert_eq!(reason, "constraint failed: selection disabled");
+
+    // Non-generic top-level comptime declarations validate every clause.
+    ok("comptime N: Int where (True, \"m1\") where (True, \"m2\") = 1\n");
+    let TypeError::BadCall { reason, .. } =
+        err("comptime N: Int where (True, \"m1\") where (False, \"m2\") = 1\n")
+    else {
+        panic!("expected the second comptime clause to fail");
+    };
+    assert_eq!(reason, "constraint failed: m2");
+
+    // Parameterized associated members carry the full clause list to each
+    // projection.
+    let TypeError::BadCall { reason, .. } = err(
+        "struct Token(Movable):\n    var value: Int\n\nstruct Factory:\n    comptime Selected[T: AnyType]: AnyType where (True, \"m1\") where (conforms_to(T, Copyable), \"Copyable type required\") = T\n\ndef main():\n    var value: Factory.Selected[Token]\n",
+    ) else {
+        panic!("expected the second associated-member clause to reject the projection");
+    };
+    assert_eq!(reason, "constraint failed: Copyable type required");
+
+    // Trait requirements and struct methods accept repeated clauses at
+    // declaration. As with single clauses, normalizing constraints between a
+    // generic trait requirement and a conforming method remains a distinct
+    // task, so an implementation clause list no requirement covers rejects.
+    ok(
+        "trait Selects:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"m1\") where (True, \"m2\"): ...\n",
+    );
+    assert!(matches!(
+        err(
+            "trait Selects:\n    def select[T: AnyType](self, value: T) -> Int where (True, \"m1\"): ...\n\n@fieldwise_init\nstruct Chooser(Selects):\n    var marker: Int\n    def select[T: AnyType](self, value: T) -> Int where (True, \"m1\") where (False, \"m2\"):\n        return 1\n",
+        ),
+        TypeError::TraitMethodMismatch { .. }
+    ));
+}
+
+#[test]
 fn method_where_message_surfaces_when_availability_filters_the_candidate() {
     let TypeError::BadCall { reason, .. } = err(
         "@fieldwise_init\nstruct Selector:\n    var marker: Int\n    def select[T: AnyType](self, value: T) -> Int where (False, \"selection disabled\"):\n        return 1\n\ndef main():\n    var selector = Selector(0)\n    print(selector.select(42))\n",
@@ -5001,6 +5074,112 @@ fn overloaded_function_where_message_surfaces_only_for_one_compatible_candidate(
         panic!("expected both overload availability clauses to reject the call");
     };
     assert_eq!(reason, "no overload matches the supplied arguments");
+}
+
+#[test]
+fn generic_comptime_aliases_expand_in_type_positions() {
+    // Direct expansion, alias-of-alias, alias as a generic argument, and a
+    // value-parameter alias whose clause validates per application.
+    ok(
+        "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair: Pair[Int] = (1, 2)\n    print(pair[0])\n",
+    );
+    ok(
+        "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\ncomptime Second[T: Copyable & Movable]: AnyType = Pair[T]\n\ndef main():\n    var nested: Second[Int] = (4, 5)\n    var wrapped: List[Pair[Int]] = [(1, 2)]\n    print(len(wrapped))\n",
+    );
+    ok(
+        "comptime Boxed[T: Copyable & Movable]: AnyType = List[T]\n\ndef main():\n    var values: Boxed[Int] = [1, 2, 3]\n    print(len(values))\n",
+    );
+    ok(
+        "comptime Guard[n: Int]: AnyType where (n > 0, \"positive only\") = Int\n\ndef main():\n    var guarded: Guard[3] = 7\n    print(guarded)\n",
+    );
+
+    // Repeated clauses on the alias validate per application with each
+    // clause's own message.
+    let TypeError::BadCall { reason, .. } = err(
+        "comptime Guard[n: Int]: AnyType where (n > 0, \"positive only\") where (n < 10, \"single digit only\") = Int\n\ndef main():\n    var guarded: Guard[12] = 7\n",
+    ) else {
+        panic!("expected the second alias clause to reject the application");
+    };
+    assert_eq!(reason, "constraint failed: single digit only");
+
+    // Bound violations reject at the application like a struct's would.
+    assert!(matches!(
+        err(
+            "struct Token(Movable):\n    var value: Int\n\ncomptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair: Pair[Token]\n",
+        ),
+        TypeError::TraitNotSatisfied { .. }
+    ));
+}
+
+#[test]
+fn generic_comptime_aliases_reject_unsupported_shapes() {
+    // Wrong arity reports through the shared struct-application contract.
+    assert!(matches!(
+        err(
+            "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair: Pair[Int, Int] = (1, 2)\n",
+        ),
+        TypeError::WrongTypeArgCount {
+            expected: 1,
+            got: 2,
+            ..
+        }
+    ));
+
+    // A value-bodied generic alias is a recorded subset gap.
+    let TypeError::Unsupported(message) = err("comptime Twice[n: Int] = 2 * n\n") else {
+        panic!("expected a value-bodied alias rejection");
+    };
+    assert_eq!(
+        message,
+        "a generic comptime alias must be defined by a type"
+    );
+
+    // Sequential lowering: a self-referential body names an unknown type.
+    assert!(matches!(
+        err("comptime Loop[T: Copyable & Movable] = Loop[T]\n"),
+        TypeError::UnknownType(name) if name == "Loop"
+    ));
+
+    // Module scope only.
+    let TypeError::Unsupported(message) =
+        err("def main():\n    comptime Local[T: Copyable & Movable] = Tuple[T, T]\n    print(1)\n")
+    else {
+        panic!("expected a function-body alias rejection");
+    };
+    assert_eq!(
+        message,
+        "a generic comptime alias must be declared at module scope"
+    );
+
+    // Origin parameters never occupy a checked alias parameter slot.
+    let TypeError::Unsupported(message) = err("comptime Held[origin: Origin]: AnyType = Int\n")
+    else {
+        panic!("expected an origin-parameter rejection");
+    };
+    assert_eq!(message, "origin parameters on a generic comptime alias");
+
+    // An alias shares the type namespace with structs.
+    assert!(matches!(
+        err(
+            "struct Pair:\n    var a: Int\n\ncomptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n",
+        ),
+        TypeError::Redeclaration(name) if name == "Pair"
+    ));
+
+    // Constructor-through-alias and bare value-position uses stay rejected:
+    // an alias declares no value binding (recorded subset gap).
+    assert!(matches!(
+        err(
+            "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair = Pair[Int](1, 2)\n",
+        ),
+        TypeError::UndefinedVariable(name) if name == "Pair"
+    ));
+    assert!(matches!(
+        err(
+            "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair = Pair\n",
+        ),
+        TypeError::UndefinedVariable(name) if name == "Pair"
+    ));
 }
 
 #[test]

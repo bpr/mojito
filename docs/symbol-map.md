@@ -63,7 +63,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   line count; a moved method is `pub(super)` so siblings and the parent can call
   it.
 - `checker/statements.rs` owns `check_program`, block scoping, and the
-  `check_stmt` statement dispatcher.
+  `check_stmt` statement dispatcher, including generic comptime alias lowering
+  (`check_generic_comptime_alias` fills the `Checker.comptime_aliases`
+  registry of `ComptimeAlias` entries — classified `ParamDecl`s plus a
+  symbolic template).
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
   list/tuple/variant construction, and t-string typing (the lazy `TString`
   element list and its snapshot capture policy).
@@ -74,7 +77,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/call_inference.rs` owns free-function and callable-value call
   inference (`infer_call`, generic-call instantiation).
 - `checker/type_resolution.rs` resolves source annotations into checked `Ty`
-  (builtin type-argument forms, dependent/associated projection).
+  (builtin type-argument forms, dependent/associated projection, and generic
+  comptime alias expansion via `resolve_comptime_alias`).
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
   (nominal and built-in), and type-capability queries (`is_deinitable`,
   `is_movable`, `is_copyable`, …). Deprecated lifecycle spellings
@@ -97,7 +101,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` retains an optional source
   diagnostic around the semantic constraint compiled by
-  `compile_generic_constraint`.
+  `compile_generic_constraint`; declarations compile one constraint per
+  trailing `where` clause. `lower_parameterized_member` lowers the symbolic
+  template shared by parameterized associated members and generic comptime
+  aliases.
 - `checker/operators.rs` and `checker/iteration.rs` own operator/SIMD inference
   and iterator-protocol selection respectively.
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates

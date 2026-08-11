@@ -530,7 +530,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 } else {
                     None
                 };
-                let where_clause = self.parse_optional_where_clause()?;
+                let where_clauses = self.parse_where_clauses()?;
                 self.expect(
                     Token::Assign,
                     "Expected '=' after the comptime constant name (or its ': Type')",
@@ -541,7 +541,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     name,
                     type_params,
                     ty,
-                    where_clause,
+                    where_clauses,
                     value,
                 })
             }
@@ -615,13 +615,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             self.expect(Token::RBrace, "Expected '}' after function effects")?;
         }
 
-        let where_clause = if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where")
-        {
-            self.next_token()?;
-            Some(self.parse_expression(Precedence::Lowest)?)
-        } else {
-            None
-        };
+        let where_clauses = self.parse_where_clauses()?;
 
         self.expect(Token::Colon, "Expected ':' before the function body")?;
         let body = self.parse_suite()?;
@@ -637,21 +631,22 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             raises,
             raises_type,
             ret,
-            where_clause,
+            where_clauses,
             body,
         })
     }
 
-    /// Parse one trailing declaration constraint. `where` remains contextual
-    /// rather than becoming a lexer keyword so future syntax can continue to
-    /// use the identifier in ordinary positions.
-    fn parse_optional_where_clause(&mut self) -> Result<Option<Expr>, ParseError> {
-        if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
+    /// Parse the trailing declaration constraints, one per `where` clause; each
+    /// clause is retained independently. `where` remains contextual rather than
+    /// becoming a lexer keyword so future syntax can continue to use the
+    /// identifier in ordinary positions.
+    fn parse_where_clauses(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut clauses = Vec::new();
+        while matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
             self.next_token()?;
-            Ok(Some(self.parse_expression(Precedence::Lowest)?))
-        } else {
-            Ok(None)
+            clauses.push(self.parse_expression(Precedence::Lowest)?);
         }
+        Ok(clauses)
     }
 
     /// Parse a closure capture list, spelled as a bare `{...}` after effects.
@@ -1169,7 +1164,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let type_params = self.parse_type_params()?;
         let (conforms, conformance_conditions, callable_conformance) =
             self.parse_struct_conformance()?;
-        let where_clause = self.parse_optional_where_clause()?;
+        let where_clauses = self.parse_where_clauses()?;
         self.expect(Token::Colon, "Expected ':' after the struct name")?;
         self.expect_stmt_end()?;
 
@@ -1237,7 +1232,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             conforms,
             callable_conformance,
             conformance_conditions,
-            where_clause,
+            where_clauses,
             fields,
             associated,
             methods,
@@ -1261,7 +1256,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             None
         };
-        let where_clause = self.parse_optional_where_clause()?;
+        let where_clauses = self.parse_where_clauses()?;
         self.expect(Token::Assign, "Expected '=' after the comptime member name")?;
         let value = self.parse_expression(Precedence::Lowest)?;
         self.expect_stmt_end()?;
@@ -1269,7 +1264,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             name,
             params,
             ty,
-            where_clause,
+            where_clauses,
             value,
         })
     }
@@ -1426,13 +1421,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 bounds.into_iter().map(crate::ast::ParamArg::Type).collect(),
             )
         };
-        let where_clause = self.parse_optional_where_clause()?;
+        let where_clauses = self.parse_where_clauses()?;
         self.expect_stmt_end()?;
         Ok(crate::ast::TraitComptime {
             name,
             params,
             ty,
-            where_clause,
+            where_clauses,
         })
     }
 
@@ -1510,13 +1505,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
             self.expect(Token::RBrace, "Expected '}' after method effects")?;
         }
-        let where_clause = if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where")
-        {
-            self.next_token()?;
-            Some(self.parse_expression(Precedence::Lowest)?)
-        } else {
-            None
-        };
+        let where_clauses = self.parse_where_clauses()?;
         self.expect(Token::Colon, "Expected ':' before the method body")?;
         // A body of exactly `...` is a pure requirement; anything else is a
         // default implementation (parsed, flagged unsupported by the checker).
@@ -1533,7 +1522,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             raises,
             raises_type,
             ret,
-            where_clause,
+            where_clauses,
             default_body,
         })
     }
@@ -1621,13 +1610,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             None
         };
 
-        let where_clause = if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where")
-        {
-            self.next_token()?;
-            Some(self.parse_expression(Precedence::Lowest)?)
-        } else {
-            None
-        };
+        let where_clauses = self.parse_where_clauses()?;
 
         self.expect(Token::Colon, "Expected ':' before the method body")?;
         let body = self.parse_suite()?;
@@ -1645,7 +1628,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             raises,
             raises_type,
             ret,
-            where_clause,
+            where_clauses,
             body,
         })
     }

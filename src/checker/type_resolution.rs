@@ -244,6 +244,19 @@ impl Checker {
                 {
                     return Ok(parameter);
                 }
+                // Annotations parse the primitive spellings to dedicated
+                // `SourceType` variants; a `Named` primitive reaches this arm
+                // only from an expression-derived type position (a comptime
+                // alias or associated-member body).
+                if args.is_empty() {
+                    match name.as_str() {
+                        "Int" => return Ok(Ty::Int),
+                        "UInt" => return Ok(Ty::UInt),
+                        "Bool" => return Ok(Ty::Bool),
+                        "Float64" => return Ok(Ty::Float64),
+                        _ => {}
+                    }
+                }
                 // SIMD vector types and their fixed-width scalar aliases.
                 if let Some(dtype) = Dtype::from_scalar_alias(name) {
                     if !args.is_empty() {
@@ -309,6 +322,13 @@ impl Checker {
                     && self.declared_structs.contains(name)
                 {
                     return self.generated_tuple_forward_type(name, args);
+                }
+                // Generic comptime aliases share the redeclaration-checked
+                // type namespace with structs; expand an application into the
+                // aliased type before the struct lookup.
+                if let Some(alias) = self.comptime_aliases.get(name) {
+                    let alias = alias.clone();
+                    return self.resolve_comptime_alias(name, &alias, args);
                 }
                 if let Some(info) = self.structs.get(name) {
                     let decls = info.decls.clone();
@@ -857,7 +877,7 @@ impl Checker {
                             object_type: base.to_string(),
                             member: name.to_string(),
                         })?;
-                if let Some(constraint) = info.associated_constraints.get(name) {
+                if let Some(constraints) = info.associated_constraints.get(name) {
                     let environment: HashMap<&str, &TyArg> = info
                         .decls
                         .iter()
@@ -870,11 +890,13 @@ impl Checker {
                         .values()
                         .any(|argument| tyarg_is_symbolic(argument))
                     {
-                        self.validate_constraint_in_environment(
-                            &format!("{base}.{name}"),
-                            constraint,
-                            &environment,
-                        )?;
+                        for constraint in constraints {
+                            self.validate_constraint_in_environment(
+                                &format!("{base}.{name}"),
+                                constraint,
+                                &environment,
+                            )?;
+                        }
                     }
                 }
                 let CtValue::Type(ty) = value else {
@@ -910,6 +932,46 @@ impl Checker {
                 member: name.to_string(),
             }),
         }
+    }
+
+    /// Expand a generic comptime alias application (`Alias[args]`) into the
+    /// aliased type. `resolve_use_params` validates arity, bounds, defaults,
+    /// and the alias's declaration constraints — including repeated `where`
+    /// clauses, each retaining its own message — through the same contract a
+    /// struct application uses; the resulting arguments then substitute into
+    /// the symbolic template.
+    fn resolve_comptime_alias(
+        &self,
+        name: &str,
+        alias: &ComptimeAlias,
+        args: &[crate::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        let (_, tyargs) = self.resolve_use_params(name, &alias.decls, args, &[], &[])?;
+        let mut types = HashMap::new();
+        let mut values = HashMap::new();
+        for (decl, argument) in alias.decls.iter().zip(&tyargs) {
+            match (decl, argument) {
+                (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => {
+                    types.insert(name.clone(), ty.clone());
+                }
+                (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
+                    values.insert(name.clone(), value.clone());
+                }
+                _ => {}
+            }
+        }
+        let bindings = AssocBindings {
+            types,
+            values,
+            // Origin parameters are rejected at alias declaration.
+            origins: HashMap::new(),
+        };
+        // The symbolic template keeps canonical `Tuple[T, ...]`; a substituted
+        // application must re-select the executable nominal implementation so
+        // discovery can materialize it.
+        Ok(self.canonicalize_public_tuple_types(
+            self.resolve_assoc_ty(&substitute_assoc(&alias.template, &bindings)),
+        ))
     }
 
     /// Concretely resolve a parameterized associated-type application on a
@@ -966,7 +1028,7 @@ impl Checker {
                 }
             }
         }
-        if let Some(constraint) = &member.availability {
+        if !member.availability.is_empty() {
             let mut environment: HashMap<&str, &TyArg> = struct_decls
                 .iter()
                 .zip(struct_targs)
@@ -986,11 +1048,13 @@ impl Checker {
                 .values()
                 .any(|argument| tyarg_is_symbolic(argument))
             {
-                self.validate_constraint_in_environment(
-                    &format!("{base}.{name}"),
-                    constraint,
-                    &environment,
-                )?;
+                for constraint in &member.availability {
+                    self.validate_constraint_in_environment(
+                        &format!("{base}.{name}"),
+                        constraint,
+                        &environment,
+                    )?;
+                }
             }
         }
         let bindings = AssocBindings {

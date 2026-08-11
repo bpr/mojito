@@ -586,7 +586,7 @@ impl PackRewriter {
                 name,
                 type_params,
                 ty,
-                where_clause,
+                where_clauses,
                 value,
             } => {
                 self.push_type_scope();
@@ -597,7 +597,7 @@ impl PackRewriter {
                 if let Some(ty) = ty {
                     self.expand_type(ty);
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.expand_expression(condition);
                 }
                 self.expand_expression(value);
@@ -707,7 +707,7 @@ impl PackRewriter {
                 params,
                 raises_type,
                 ret,
-                where_clause,
+                where_clauses,
                 body,
                 ..
             } => {
@@ -730,7 +730,7 @@ impl PackRewriter {
                 if let Some(ret) = ret {
                     self.expand_type(ret);
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.expand_expression(condition);
                 }
                 self.expand_block(body);
@@ -742,7 +742,7 @@ impl PackRewriter {
                 type_params,
                 callable_conformance,
                 conformance_conditions,
-                where_clause,
+                where_clauses,
                 fields,
                 associated,
                 methods,
@@ -757,7 +757,7 @@ impl PackRewriter {
                 if let Some(callable) = callable_conformance {
                     self.expand_type(callable);
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.expand_expression(condition);
                 }
                 for (_, condition) in conformance_conditions {
@@ -775,7 +775,7 @@ impl PackRewriter {
                     if let Some(ty) = &mut item.ty {
                         self.expand_type(ty);
                     }
-                    if let Some(condition) = &mut item.where_clause {
+                    for condition in &mut item.where_clauses {
                         self.expand_expression(condition);
                     }
                     self.expand_expression(&mut item.value);
@@ -801,7 +801,7 @@ impl PackRewriter {
                         self.declare_type(&parameter.name);
                     }
                     self.expand_type(&mut member.ty);
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         self.expand_expression(condition);
                     }
                     self.pop_type_scope();
@@ -851,7 +851,7 @@ impl PackRewriter {
         if let Some(ret) = &mut method.ret {
             self.expand_type(ret);
         }
-        if let Some(condition) = &mut method.where_clause {
+        for condition in &mut method.where_clauses {
             self.expand_expression(condition);
         }
         self.expand_block(&mut method.body);
@@ -882,7 +882,7 @@ impl PackRewriter {
         if let Some(ret) = &mut method.ret {
             self.expand_type(ret);
         }
-        if let Some(condition) = &mut method.where_clause {
+        for condition in &mut method.where_clauses {
             self.expand_expression(condition);
         }
         if let Some(body) = &mut method.default_body {
@@ -1229,7 +1229,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
         StmtKind::Comptime {
             type_params,
             ty,
-            where_clause,
+            where_clauses,
             value,
             ..
         } => {
@@ -1250,7 +1250,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             if let Some(ty) = ty {
                 rewrite_type(ty, inner);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 rewrite_expr(condition, inner);
             }
             rewrite_expr(value, inner);
@@ -1328,7 +1328,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             params,
             raises_type,
             ret,
-            where_clause,
+            where_clauses,
             body,
             ..
         } => {
@@ -1362,7 +1362,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                 if let Some(ret) = ret {
                     rewrite_type(ret, inner);
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     rewrite_expr(condition, inner);
                 }
                 rewrite_block(body, inner, into_defs);
@@ -1373,7 +1373,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             type_params,
             callable_conformance,
             conformance_conditions,
-            where_clause,
+            where_clauses,
             fields,
             associated,
             methods,
@@ -1401,7 +1401,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                 for (_, condition) in conformance_conditions {
                     rewrite_expr(condition, inner);
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     rewrite_expr(condition, inner);
                 }
                 for field in fields {
@@ -1426,7 +1426,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                     if let Some(ty) = &mut member.ty {
                         rewrite_type(ty, member_subs);
                     }
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         rewrite_expr(condition, member_subs);
                     }
                     rewrite_expr(&mut member.value, member_subs);
@@ -1467,7 +1467,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                     if let Some(ret) = &mut method.ret {
                         rewrite_type(ret, method_subs);
                     }
-                    if let Some(condition) = &mut method.where_clause {
+                    for condition in &mut method.where_clauses {
                         rewrite_expr(condition, method_subs);
                     }
                     rewrite_block(&mut method.body, method_subs, into_defs);
@@ -1515,7 +1515,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                     if let Some(ret) = &mut method.ret {
                         rewrite_type(ret, inner);
                     }
-                    if let Some(condition) = &mut method.where_clause {
+                    for condition in &mut method.where_clauses {
                         rewrite_expr(condition, inner);
                     }
                     if let Some(body) = &mut method.default_body {
@@ -1539,7 +1539,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                         rewrite_type_parameter(parameter, inner);
                     }
                     rewrite_type(&mut member.ty, inner);
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         rewrite_expr(condition, inner);
                     }
                 }
@@ -1598,7 +1598,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
         StmtKind::Comptime {
             type_params,
             ty,
-            where_clause,
+            where_clauses,
             value,
             ..
         } => {
@@ -1611,7 +1611,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             if let Some(ty) = ty {
                 substitute_type_bindings_in_type(ty, &inner);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 retype_expr(condition, &inner);
             }
             retype_expr(value, &inner);
@@ -1685,7 +1685,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             params,
             raises_type,
             ret,
-            where_clause,
+            where_clauses,
             body,
             ..
         } => {
@@ -1705,7 +1705,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             if let Some(error) = raises_type {
                 substitute_type_bindings_in_type(error, &inner);
             }
-            if let Some(predicate) = where_clause {
+            for predicate in where_clauses {
                 retype_expr(predicate, &inner);
             }
             substitute_type_bindings_in_block(body, &inner);
@@ -1715,7 +1715,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             type_params,
             callable_conformance,
             conformance_conditions,
-            where_clause,
+            where_clauses,
             fields,
             associated,
             methods,
@@ -1734,7 +1734,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             for (_, condition) in conformance_conditions {
                 retype_expr(condition, &inner);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 retype_expr(condition, &inner);
             }
             for field in fields {
@@ -1750,7 +1750,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 if let Some(ty) = &mut member.ty {
                     substitute_type_bindings_in_type(ty, &member_inner);
                 }
-                if let Some(condition) = &mut member.where_clause {
+                for condition in &mut member.where_clauses {
                     retype_expr(condition, &member_inner);
                 }
                 retype_expr(&mut member.value, &member_inner);
@@ -1775,7 +1775,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 if let Some(error) = &mut method.raises_type {
                     substitute_type_bindings_in_type(error, &method_inner);
                 }
-                if let Some(predicate) = &mut method.where_clause {
+                for predicate in &mut method.where_clauses {
                     retype_expr(predicate, &method_inner);
                 }
                 substitute_type_bindings_in_block(&mut method.body, &method_inner);
@@ -1805,7 +1805,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 if let Some(error) = &mut method.raises_type {
                     substitute_type_bindings_in_type(error, &inner);
                 }
-                if let Some(condition) = &mut method.where_clause {
+                for condition in &mut method.where_clauses {
                     retype_expr(condition, &inner);
                 }
                 if let Some(body) = &mut method.default_body {
@@ -1820,7 +1820,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                     retype_type_parameter(parameter, &inner);
                 }
                 substitute_type_bindings_in_type(&mut member.ty, &inner);
-                if let Some(condition) = &mut member.where_clause {
+                for condition in &mut member.where_clauses {
                     retype_expr(condition, &inner);
                 }
             }

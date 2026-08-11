@@ -137,23 +137,29 @@ impl Checker {
             }
             if member.params.is_empty() {
                 let value = self.eval_associated_ct(&member.value, &out)?;
-                if let Some(condition) = &member.where_clause {
-                    constraints.insert(member.name.clone(), self.compile_where_clause(condition)?);
+                if !member.where_clauses.is_empty() {
+                    let compiled = member
+                        .where_clauses
+                        .iter()
+                        .map(|condition| self.compile_where_clause(condition))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    constraints.insert(member.name.clone(), compiled);
                 }
                 out.insert(member.name.clone(), value);
             } else {
                 let param_base = self.enclosing_type_params.len();
-                let template = self.lower_parameterized_member(&member.params, &member.value)?;
+                let source_ty = assoc_body_source_type(&member.value)?;
+                let template = self.lower_parameterized_member(&member.params, &source_ty)?;
                 parameterized.insert(
                     member.name.clone(),
                     ParameterizedMember {
                         params: member.params.clone(),
                         template,
                         availability: member
-                            .where_clause
-                            .as_ref()
+                            .where_clauses
+                            .iter()
                             .map(|condition| self.compile_where_clause(condition))
-                            .transpose()?,
+                            .collect::<Result<_, _>>()?,
                         param_base,
                     },
                 );
@@ -162,17 +168,17 @@ impl Checker {
         Ok((out, constraints, parameterized))
     }
 
-    /// Lower the body of a parameterized associated type to its symbolic template.
-    /// The member's own parameters are put in scope (as the enclosing struct's
+    /// Lower the type-valued body of a parameterized associated type — or a
+    /// generic top-level comptime alias — to its symbolic template. The
+    /// declaration's own parameters are put in scope (any enclosing struct's
     /// parameters already are), so type parameters resolve to `Ty::Param`, value
     /// parameters to `CtValue::Param`, and origin parameters to `Origin::Param`;
     /// concrete resolution substitutes an application's arguments into the result.
-    fn lower_parameterized_member(
+    pub(super) fn lower_parameterized_member(
         &mut self,
         params: &[crate::ast::TypeParam],
-        value: &Expr,
+        source_ty: &SourceType,
     ) -> Result<Ty, TypeError> {
-        let source_ty = assoc_body_source_type(value)?;
         // Member type parameters resolve as `Ty::Param` (via the `tparams` scope,
         // like a generic def's parameters); origin parameters resolve to
         // `Origin::Param` via `enclosing_type_params`; value parameters resolve to
@@ -194,7 +200,7 @@ impl Checker {
         self.tparams.push(scope);
         let saved = self.enclosing_type_params.len();
         self.enclosing_type_params.extend(params.iter().cloned());
-        let template = self.ty_from_anno(&source_ty);
+        let template = self.ty_from_anno(source_ty);
         self.enclosing_type_params.truncate(saved);
         self.tparams.pop();
         template
@@ -783,7 +789,7 @@ impl Checker {
 /// an ordinary compile-time expression; the type-valued forms are a bare name
 /// (`Element`), a type application (`List[T]`, `Fixed[n]`), an explicit type
 /// value, or a `Self.` member.
-fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeError> {
+pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeError> {
     match &value.kind {
         ExprKind::TypeValue(ty) => Ok(ty.clone()),
         ExprKind::Identifier(name) => Ok(SourceType::Named(name.clone(), Vec::new())),

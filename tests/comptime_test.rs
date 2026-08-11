@@ -213,6 +213,34 @@ fn top_level_whole_pack_forwarding_preserves_fixed_prefix_and_linear_values() {
 }
 
 #[test]
+fn generic_comptime_aliases_survive_elaboration_unchanged() {
+    // A generic alias cannot be folded eagerly (its body references its own
+    // parameters); the elaborator passes it through untouched — repeated
+    // where clauses included — and the checker owns expansion.
+    let src = "comptime Pair[T: Copyable & Movable]: AnyType where (True, \"m1\") where (True, \"m2\") = Tuple[T, T]\n\ndef main():\n    print(1)\n";
+    let program = elaborate(parse(src).expect("parse")).expect("elaborate");
+    let alias = program
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            mojito::ast::StmtKind::Comptime {
+                name,
+                type_params,
+                where_clauses,
+                ..
+            } if name == "Pair" => Some((type_params.len(), where_clauses.len())),
+            _ => None,
+        })
+        .expect("the generic alias survives elaboration");
+    assert_eq!(alias, (1, 2));
+}
+
+#[test]
+fn generic_comptime_alias_expansion_runs_through_the_vm() {
+    let src = "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\ncomptime Guard[n: Int]: AnyType where (n > 0, \"positive only\") = Int\n\ndef main():\n    var pair: Pair[Int] = (1, 2)\n    var guarded: Guard[3] = 7\n    print(pair[0] + guarded)\n";
+    assert_eq!(run(src).unwrap(), "8\n");
+}
+
+#[test]
 fn whole_pack_forwarding_reaches_mir_as_one_tuple_move() {
     let src = "def sink[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return len(values)\n\ndef relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return sink(*values^)\n\ndef main():\n    print(relay(42))\n";
     let program = elaborate(parse(src).expect("parse")).expect("specialize");

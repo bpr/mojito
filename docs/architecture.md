@@ -868,14 +868,23 @@ checks recurse through the semantic condition, while a failed call reports the
 retained message. This keeps diagnostics attached without making message text
 part of generic identity or proof semantics. The same wrapper is retained on
 struct declarations, conditional conformances, method availability, associated
-and trait comptime members, and non-generic top-level comptime declarations.
+and trait comptime members, and comptime declarations.
 Associated-member constraints are validated at concrete projection; a
 conditional-conformance failure feeds its retained reason into lifecycle and
 trait diagnostics. Origin-mutability-only function constraints survive the
 ordinary generic erasure in `CallableOriginSignature` and are discharged after
-call-origin solving recovers the inferred Bool binding. The source model still
-holds one clause per declaration; repeated clauses and generic top-level
-comptime aliases are tracked as a separate checked-boundary extension.
+call-origin solving recovers the inferred Bool binding. The checked constraint
+contract is plural: every declaration family stores one compiled constraint
+per trailing `where` clause, the first failing clause reports its own message,
+and truth-only operations (implication, inherited-requirement merging) fold a
+clause list into one conjunction without erasing the stored per-clause
+messages. Per-trait conditional-conformance conditions stay single-clause.
+Generic top-level comptime aliases lower once into the checker's alias
+registry (classified `ParamDecl`s plus a symbolic template shared with
+parameterized associated members) and expand per application in type
+resolution through the same `resolve_use_params` contract as a struct
+application; an alias is a pure type declaration with no runtime form, skipped
+at MIR program assembly like a struct or trait.
 
 A variadic type parameter retains a leading `*` in the checked parameter name.
 Generic-call inference recognizes the matching `*args: *Pack` element type and

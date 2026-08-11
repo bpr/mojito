@@ -1587,7 +1587,7 @@ impl<'a> Elab<'a> {
                 name,
                 type_params,
                 ty,
-                where_clause,
+                where_clauses,
                 value,
             } => {
                 if !type_params.is_empty() {
@@ -1612,7 +1612,7 @@ impl<'a> Elab<'a> {
                             name: name.clone(),
                             type_params: type_params.clone(),
                             ty: ty.clone(),
-                            where_clause: where_clause.clone(),
+                            where_clauses: where_clauses.clone(),
                             value,
                         },
                         span,
@@ -1786,7 +1786,7 @@ impl<'a> Elab<'a> {
                 raises,
                 raises_type,
                 ret,
-                where_clause,
+                where_clauses,
                 body,
             } => {
                 // A comptime-dependent generic template can't be elaborated now (its
@@ -1808,7 +1808,7 @@ impl<'a> Elab<'a> {
                         raises: *raises,
                         raises_type: raises_type.clone(),
                         ret: ret.clone(),
-                        where_clause: where_clause.clone(),
+                        where_clauses: where_clauses.clone(),
                         body,
                     },
                     span,
@@ -1821,7 +1821,7 @@ impl<'a> Elab<'a> {
                 conforms,
                 callable_conformance,
                 conformance_conditions,
-                where_clause,
+                where_clauses,
                 fields,
                 associated,
                 methods,
@@ -1850,7 +1850,7 @@ impl<'a> Elab<'a> {
                         conforms: conforms.clone(),
                         callable_conformance: callable_conformance.clone(),
                         conformance_conditions: conformance_conditions.clone(),
-                        where_clause: where_clause.clone(),
+                        where_clauses: where_clauses.clone(),
                         fields: fields.clone(),
                         associated: associated.clone(),
                         methods,
@@ -2582,7 +2582,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
         StmtKind::Comptime {
             type_params,
             ty,
-            where_clause,
+            where_clauses,
             value,
             ..
         } => {
@@ -2590,7 +2590,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
             if let Some(ty) = ty {
                 collect_vm_ctfe_type_calls(ty, calls);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 collect_vm_ctfe_expr_calls(condition, calls);
             }
             collect_vm_ctfe_expr_calls(value, calls);
@@ -2663,7 +2663,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
             params,
             raises_type,
             ret,
-            where_clause,
+            where_clauses,
             body,
             ..
         } => {
@@ -2676,7 +2676,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
             if let Some(ret) = ret {
                 collect_vm_ctfe_type_calls(ret, calls);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 collect_vm_ctfe_expr_calls(condition, calls);
             }
             collect_vm_ctfe_block_calls(body, calls);
@@ -2686,7 +2686,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
             type_params,
             callable_conformance,
             conformance_conditions,
-            where_clause,
+            where_clauses,
             fields,
             associated,
             methods,
@@ -2700,7 +2700,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
             for (_, condition) in conformance_conditions {
                 collect_vm_ctfe_expr_calls(condition, calls);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 collect_vm_ctfe_expr_calls(condition, calls);
             }
             for field in fields {
@@ -2711,7 +2711,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
                 if let Some(ty) = &member.ty {
                     collect_vm_ctfe_type_calls(ty, calls);
                 }
-                if let Some(condition) = &member.where_clause {
+                for condition in &member.where_clauses {
                     collect_vm_ctfe_expr_calls(condition, calls);
                 }
                 collect_vm_ctfe_expr_calls(&member.value, calls);
@@ -2729,7 +2729,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
                 if let Some(ret) = &method.ret {
                     collect_vm_ctfe_type_calls(ret, calls);
                 }
-                if let Some(condition) = &method.where_clause {
+                for condition in &method.where_clauses {
                     collect_vm_ctfe_expr_calls(condition, calls);
                 }
                 collect_vm_ctfe_block_calls(&method.body, calls);
@@ -2752,7 +2752,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
                 if let Some(ret) = &method.ret {
                     collect_vm_ctfe_type_calls(ret, calls);
                 }
-                if let Some(condition) = &method.where_clause {
+                for condition in &method.where_clauses {
                     collect_vm_ctfe_expr_calls(condition, calls);
                 }
                 if let Some(body) = &method.default_body {
@@ -2762,7 +2762,7 @@ fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<String>) {
             for member in comptime_members {
                 type_parameters(&member.params, calls);
                 collect_vm_ctfe_type_calls(&member.ty, calls);
-                if let Some(condition) = &member.where_clause {
+                for condition in &member.where_clauses {
                     collect_vm_ctfe_expr_calls(condition, calls);
                 }
             }
@@ -3251,7 +3251,7 @@ fn tuple_transform_method(
         raises: false,
         raises_type: None,
         ret: Some(Type::Named(target, Vec::new())),
-        where_clause: None,
+        where_clauses: Vec::new(),
         body: vec![mk(StmtKind::Return(Some(result)), span)],
     }
 }

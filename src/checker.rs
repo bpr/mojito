@@ -371,7 +371,7 @@ impl ConformanceOracle {
                 type_params,
                 conforms,
                 conformance_conditions,
-                where_clause,
+                where_clauses,
                 methods,
                 fieldwise_init,
                 ..
@@ -381,7 +381,7 @@ impl ConformanceOracle {
             };
 
             let mut decls = checker.classify_params(type_params)?;
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 let constraint = checker.compile_where_clause(condition)?;
                 if let Some(last) = decls.last_mut() {
                     match last {
@@ -592,6 +592,9 @@ pub struct Checker {
     trait_self_comptime: Vec<HashMap<String, CtMemberReq>>,
     /// Exact integer constants declared by `comptime NAME = value`.
     comptimes: HashMap<String, crate::literal::IntLiteral>,
+    /// Generic top-level type aliases declared by `comptime NAME[params] = Type`,
+    /// expanded per application during type resolution. See [`ComptimeAlias`].
+    comptime_aliases: HashMap<String, ComptimeAlias>,
     /// Whether `self` is writable in the method body being checked — set while
     /// checking a `mut self` method's body (so `self.x = e` is allowed there).
     self_mutable: bool,
@@ -772,6 +775,7 @@ impl Checker {
             self_ty: None,
             trait_self_comptime: Vec::new(),
             comptimes: HashMap::new(),
+            comptime_aliases: HashMap::new(),
             self_mutable: false,
             self_initializing: false,
             overload_targets: RefCell::new(HashMap::new()),
@@ -1758,6 +1762,20 @@ fn generic_constraint_implies(
     }
 }
 
+/// Fold a clause list into one right-nested conjunction for truth-only
+/// operations such as implication. Storage keeps the un-folded list so each
+/// clause retains its own diagnostic message.
+fn fold_constraint_conjunction(constraints: &[GenericConstraint]) -> GenericConstraint {
+    let mut folded: Option<GenericConstraint> = None;
+    for constraint in constraints.iter().rev() {
+        folded = Some(match folded {
+            None => constraint.clone(),
+            Some(rest) => GenericConstraint::And(Box::new(constraint.clone()), Box::new(rest)),
+        });
+    }
+    folded.unwrap_or(GenericConstraint::Bool(true))
+}
+
 /// The checked signature of a struct, kept in the checker's registry.
 struct StructInfo {
     /// Compile-time parameters (type and value); empty for a non-generic struct.
@@ -1781,9 +1799,10 @@ struct StructInfo {
     /// Associated compile-time facts declared by `comptime NAME = ...` in the
     /// struct body. These live on the type, not on runtime instances.
     associated: HashMap<String, CtValue>,
-    /// Availability constraints for monomorphic associated members. They are
-    /// evaluated against the enclosing struct arguments at projection time.
-    associated_constraints: HashMap<String, GenericConstraint>,
+    /// Availability constraints for monomorphic associated members, one entry
+    /// per trailing `where` clause. They are evaluated against the enclosing
+    /// struct arguments at projection time.
+    associated_constraints: HashMap<String, Vec<GenericConstraint>>,
     /// Parameterized associated types declared by `comptime NAME[params] = body`.
     /// Unlike `associated`, the body cannot be evaluated eagerly (it references
     /// the member's own parameters); it is lowered once to a symbolic template
@@ -1793,6 +1812,22 @@ struct StructInfo {
     fieldwise_init: bool,
     explicit_destroy_message: Option<String>,
     explicit_destructors: HashMap<String, bool>,
+}
+
+/// A generic top-level type alias (`comptime Alias[params] = Type`). The
+/// parameters are classified `ParamDecl`s — trailing `where` clauses attach to
+/// the last one — so each application validates arity, bounds, defaults, and
+/// declaration constraints through the same `resolve_use_params` contract as a
+/// struct application. The body is lowered once to a symbolic template
+/// (`Ty::Param` / `CtValue::Param`) and substituted per application. Aliases
+/// lower sequentially at declaration, so a body may reference only
+/// already-declared names: self-reference fails as an unknown type, and an
+/// alias expanding an earlier alias bakes the expansion into its template.
+/// Origin parameters are rejected at declaration, so no origin bindings exist.
+#[derive(Clone)]
+struct ComptimeAlias {
+    decls: Vec<ParamDecl>,
+    template: Ty,
 }
 
 /// A parameterized associated type a conforming struct defines
@@ -1806,9 +1841,10 @@ struct StructInfo {
 struct ParameterizedMember {
     params: Vec<crate::ast::TypeParam>,
     template: Ty,
-    /// Constraint evaluated against both enclosing struct arguments and the
-    /// member application's explicit arguments.
-    availability: Option<GenericConstraint>,
+    /// Constraints (one per trailing `where` clause) evaluated against both
+    /// enclosing struct arguments and the member application's explicit
+    /// arguments.
+    availability: Vec<GenericConstraint>,
     /// The index the member's parameters started at in `enclosing_type_params`
     /// while the template was lowered. An origin parameter at member position `k`
     /// therefore appears in the template as `Origin::Param(param_base + k)`, which
@@ -1821,7 +1857,7 @@ struct ParameterizedMember {
 /// templates for later concrete substitution.
 type StructAssociatedMembers = (
     HashMap<String, CtValue>,
-    HashMap<String, GenericConstraint>,
+    HashMap<String, Vec<GenericConstraint>>,
     HashMap<String, ParameterizedMember>,
 );
 
@@ -1953,7 +1989,9 @@ struct TraitInfo {
     refines: Vec<String>,
     methods: HashMap<String, Vec<MethodSig>>,
     comptime_members: HashMap<String, CtMemberReq>,
-    comptime_constraints: HashMap<String, GenericConstraint>,
+    /// Per-member declaration constraints, one entry per trailing `where`
+    /// clause on the requirement.
+    comptime_constraints: HashMap<String, Vec<GenericConstraint>>,
 }
 
 fn callable_parameter_count(ty: &Ty) -> Option<usize> {
@@ -2396,7 +2434,7 @@ fn expand_trait_defaults(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeError> {
                     raises_type: method.raises_type.clone(),
                     ret: method.ret.clone(),
                     body: body.clone(),
-                    where_clause: method.where_clause.clone(),
+                    where_clauses: method.where_clauses.clone(),
                 },
             );
         }
@@ -2488,10 +2526,10 @@ struct CallableSourceParam {
 struct CallableOriginSignature {
     origins: Vec<CallableOriginParam>,
     source: Vec<CallableSourceParam>,
-    /// A declaration constraint whose only binders were erased origin
-    /// metadata. It is checked after call-origin solving recovers the inferred
-    /// Bool mutability arguments.
-    availability: Option<GenericConstraint>,
+    /// Declaration constraints whose only binders were erased origin
+    /// metadata, one per trailing `where` clause. They are checked after
+    /// call-origin solving recovers the inferred Bool mutability arguments.
+    availability: Vec<GenericConstraint>,
 }
 
 /// The raw-slot operations on `UnsafePointer` are an implementation privilege,
@@ -2536,7 +2574,7 @@ struct StructDeclaration<'a> {
     conforms: &'a [String],
     callable_conformance: &'a Option<SourceType>,
     conformance_conditions: &'a [(String, Expr)],
-    where_clause: &'a Option<Expr>,
+    where_clauses: &'a [Expr],
     fields: &'a [crate::ast::Param],
     associated: &'a [StructComptime],
     methods: &'a [Method],
@@ -2553,7 +2591,7 @@ fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         conforms,
         callable_conformance,
         conformance_conditions,
-        where_clause,
+        where_clauses,
         fields,
         associated,
         methods,
@@ -2570,7 +2608,7 @@ fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         conforms,
         callable_conformance,
         conformance_conditions,
-        where_clause,
+        where_clauses,
         fields,
         associated,
         methods,

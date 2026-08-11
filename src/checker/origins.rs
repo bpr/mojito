@@ -1401,7 +1401,7 @@ pub(super) fn lower_ref_param_sigs(
 pub(super) fn callable_origin_signature(
     type_params: &[crate::ast::TypeParam],
     params: &[&FnParam],
-    availability: Option<GenericConstraint>,
+    availability: Vec<GenericConstraint>,
 ) -> CallableOriginSignature {
     let origins = type_params
         .iter()

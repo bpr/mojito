@@ -66,17 +66,28 @@ impl Checker {
         }
         for member in comptime_members {
             let requirement = self.ct_member_req_from_anno(&member.params, &member.ty)?;
-            if let Some(condition) = &member.where_clause {
-                let constraint = self.compile_where_clause(condition)?;
+            if !member.where_clauses.is_empty() {
+                let constraints = member
+                    .where_clauses
+                    .iter()
+                    .map(|condition| self.compile_where_clause(condition))
+                    .collect::<Result<Vec<_>, _>>()?;
                 if let Some(previous) =
-                    ct_constraints.insert(member.name.clone(), constraint.clone())
-                    && !generic_constraint_implies(&previous, &constraint)
-                    && !generic_constraint_implies(&constraint, &previous)
+                    ct_constraints.insert(member.name.clone(), constraints.clone())
                 {
-                    return Err(TypeError::Unsupported(format!(
-                        "conflicting inherited constraints on associated member '{}'",
-                        member.name
-                    )));
+                    // Implication compares whole declarations, so fold each
+                    // clause list to one conjunction; the stored list keeps
+                    // per-clause messages.
+                    let previous = fold_constraint_conjunction(&previous);
+                    let declared = fold_constraint_conjunction(&constraints);
+                    if !generic_constraint_implies(&previous, &declared)
+                        && !generic_constraint_implies(&declared, &previous)
+                    {
+                        return Err(TypeError::Unsupported(format!(
+                            "conflicting inherited constraints on associated member '{}'",
+                            member.name
+                        )));
+                    }
                 }
             }
             if let Some(existing) = ct_members.get_mut(&member.name) {
@@ -123,7 +134,7 @@ impl Checker {
                     ));
                 }
                 let mut decls = self.classify_params(&m.type_params)?;
-                if let Some(condition) = &m.where_clause {
+                for condition in &m.where_clauses {
                     let constraint = self.compile_where_clause(condition)?;
                     let Some(last) = decls.last_mut() else {
                         return Err(TypeError::Unsupported(
@@ -412,23 +423,23 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
-        if let Some(condition) = declaration.where_clause {
-            let constraint = self.compile_where_clause(condition)?;
+        if !declaration.where_clauses.is_empty() {
             let has_constraint_binder = self
                 .structs
                 .get(name)
                 .ok_or_else(|| {
                     TypeError::InvariantViolation(format!(
-                        "struct '{name}' was not registered before applying its where clause"
+                        "struct '{name}' was not registered before applying its where clauses"
                     ))
                 })?
                 .decls
                 .last()
                 .is_some();
-            if !has_constraint_binder && declaration.type_params.is_empty() {
-                self.validate_declaration_constraint(name, &constraint)?;
-            }
-            let updated_decls = {
+            for condition in declaration.where_clauses {
+                let constraint = self.compile_where_clause(condition)?;
+                if !has_constraint_binder && declaration.type_params.is_empty() {
+                    self.validate_declaration_constraint(name, &constraint)?;
+                }
                 let info = self
                     .structs
                     .get_mut(name)
@@ -441,8 +452,13 @@ impl Checker {
                         }
                     }
                 }
-                info.decls.clone()
-            };
+            }
+            let updated_decls = self
+                .structs
+                .get(name)
+                .expect("struct existence checked above")
+                .decls
+                .clone();
             self.generic_parameters.borrow_mut().insert(
                 crate::checked::GenericSite::Struct {
                     module: declaration.module.clone(),
@@ -889,20 +905,31 @@ impl Checker {
             }
         }
         for (member, req) in &trait_info.comptime_members {
-            let witness_constraint = struct_info
+            let witness_constraints = struct_info
                 .parameterized_associated
                 .get(member)
-                .and_then(|definition| definition.availability.as_ref())
-                .or_else(|| struct_info.associated_constraints.get(member));
-            if let Some(constraint) = witness_constraint
-                && !matches!(constraint, GenericConstraint::Bool(true))
-            {
+                .map(|definition| definition.availability.as_slice())
+                .filter(|constraints| !constraints.is_empty())
+                .or_else(|| {
+                    struct_info
+                        .associated_constraints
+                        .get(member)
+                        .map(Vec::as_slice)
+                })
+                .unwrap_or(&[]);
+            let requirement_premise = trait_info
+                .comptime_constraints
+                .get(member)
+                .map(|premises| fold_constraint_conjunction(premises));
+            for constraint in witness_constraints {
+                if matches!(constraint, GenericConstraint::Bool(true)) {
+                    continue;
+                }
                 let covered = conformance_assumption
                     .as_ref()
                     .is_some_and(|premise| generic_constraint_implies(premise, constraint))
-                    || trait_info
-                        .comptime_constraints
-                        .get(member)
+                    || requirement_premise
+                        .as_ref()
                         .is_some_and(|premise| generic_constraint_implies(premise, constraint));
                 if !covered {
                     let reason = match constraint {
@@ -2218,7 +2245,7 @@ struct SavedStructScope {
 type StructMemberTypes = (
     Vec<(String, Ty)>,
     HashMap<String, CtValue>,
-    HashMap<String, GenericConstraint>,
+    HashMap<String, Vec<GenericConstraint>>,
     HashMap<String, ParameterizedMember>,
     Option<Ty>,
 );

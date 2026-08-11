@@ -616,6 +616,9 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             }
             // A `trait`'s requirements have no body (`...`); nothing to lower yet.
             StmtKind::Trait { .. } => {}
+            // A generic comptime alias is a pure type declaration the checker
+            // consumed; like a struct or trait it has no runtime form.
+            StmtKind::Comptime { type_params, .. } if !type_params.is_empty() => {}
             _ => toplevel.push(s.clone()),
         }
     }

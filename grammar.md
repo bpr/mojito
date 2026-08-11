@@ -123,7 +123,7 @@ augmented_assignment: target aug_op expression
 aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**='
 target: NAME | place
 place: primary ('.' NAME | '[' expression ']')      # a field/index chain (checker: rooted at a variable)
-comptime_stmt: 'comptime' NAME [params_decl] [':' type] [where_clause] '=' expression
+comptime_stmt: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression
 return_stmt: 'return' [expression]
 raise_stmt: 'raise' expression
 ```
@@ -210,7 +210,7 @@ artifacts and imports from stdin remain unsupported.
 ### function_def
 
 ```
-function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] [where_clause] ':' block
+function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] where_clause* ':' block
 decorators: decorator*
 decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name (only `@fieldwise_init` is acted on)
 dotted_name: NAME ('.' NAME)*
@@ -271,9 +271,9 @@ diagnostic form `(constraint, "message")`. The latter must be a two-element
 tuple whose second element is a string literal. The checker retains the message
 with the compiled constraint and reports it when specialization fails; the
 message does not change implication or conditional-conformance semantics.
-Mojito currently retains one trailing clause per declaration; current Mojo's
-repeated-clause form is tracked separately with generic top-level comptime
-aliases.
+A declaration may carry several trailing clauses (`where (c1, "m1") where
+(c2, "m2")`); each clause is retained independently and a failing application
+reports the failing clause's own message.
 
 The optional **`raises`** effect (before a capture list and `->`) marks a function that may raise an
 error (Mojo's `def` is non-raising by default). An error type may follow (`raises
@@ -384,14 +384,14 @@ required unsolved parameter is an error.
 ### struct_def
 
 ```
-struct_def: decorators 'struct' NAME [params_decl] [conformance] [where_clause] ':' struct_block
+struct_def: decorators 'struct' NAME [params_decl] [conformance] where_clause* ':' struct_block
 conformance: '(' ','.conditional_conformance+ ')'
 conditional_conformance: NAME ['where' expression]
 struct_block: NEWLINE INDENT struct_member+ DEDENT
 struct_member: field | struct_comptime | method
 field: 'var' NAME ':' type NEWLINE
-struct_comptime: 'comptime' NAME [params_decl] [':' type] [where_clause] '=' expression NEWLINE
-method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' type] [where_clause] ':' block
+struct_comptime: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression NEWLINE
+method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' type] where_clause* ':' block
 receiver: [convention] 'self'    # instance method; absent ⇒ a @staticmethod (no self)
 ```
 
@@ -411,7 +411,7 @@ built-in traits (`Copyable`, …) impose no checked requirements. Conformance is
 declares that trait here.
 
 Struct declarations, methods, and associated `comptime` members accept the same
-single trailing `where` clause as free functions. A parameterized associated
+trailing `where` clauses as free functions. A parameterized associated
 member is checked when projected with concrete arguments; its availability may
 depend on either the enclosing struct parameters or its own parameters. The
 diagnostic tuple form retains its message through those checks.
@@ -422,9 +422,9 @@ diagnostic tuple form retains its message through those checks.
 trait_def: 'trait' NAME [conformance] ':' trait_block         # conformance here = super-traits (refinement)
 trait_block: NEWLINE INDENT trait_member+ DEDENT
 trait_member: trait_method | trait_comptime
-trait_method: decorators 'def' NAME [params_decl] '(' 'self' [',' params] ')' ['raises' [type]] ['->' type] [where_clause] ':' NEWLINE INDENT (trait_req | block) DEDENT
+trait_method: decorators 'def' NAME [params_decl] '(' 'self' [',' params] ')' ['raises' [type]] ['->' type] where_clause* ':' NEWLINE INDENT (trait_req | block) DEDENT
 trait_req: '...' NEWLINE                                       # a pure requirement
-trait_comptime: 'comptime' NAME [params_decl] ':' type [where_clause] NEWLINE
+trait_comptime: 'comptime' NAME [params_decl] ':' type where_clause* NEWLINE
                                                               # a compile-time member requirement
 ```
 
@@ -791,11 +791,17 @@ scalar context materializes it. The constant is usable both as a value parameter
 argument (`FixedBuffer[N]`) and as an ordinary `Int` at runtime. (Mojo removed
 `alias`; `comptime` replaces it.)
 
-The parser also retains the current generic-alias header
-`comptime Alias[params]: Type where ... = ...`, but the checker rejects that
-form until top-level aliases have a checked registry and type-resolution
-expansion path. Likewise, each supported declaration currently retains one
-trailing `where` clause; repeated clauses are tracked as a separate parity gap.
+A module-scope **generic alias** `comptime Alias[params]: Type where ... = ...`
+declares a parametric type abbreviation: the body must be a type expression,
+and each application (`Alias[Int]`, in any type position) validates arity,
+bounds, defaults, and the declared `where` clauses before expanding to the
+aliased type. Aliases lower sequentially, so a body may reference only
+already-declared names (self-reference is an unknown type; an alias may expand
+an earlier alias). Value-bodied generic aliases (`comptime Twice[n: Int] =
+2 * n`), origin parameters, aliases in function bodies, and using an alias as
+a constructor callee or bare value are rejected. Repeated trailing `where`
+clauses are retained independently on every declaration that accepts a clause
+(see **function_def**).
 
 ```
 comptime_if_stmt:  'comptime' if_stmt      # 'comptime' 'if' … 'elif' … 'else' …

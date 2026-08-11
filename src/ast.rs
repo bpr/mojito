@@ -458,7 +458,7 @@ pub struct Method {
     /// The declared typed error, or `None` for bare `raises`/non-raising.
     pub raises_type: Option<Type>,
     pub ret: Option<Type>,
-    pub where_clause: Option<Expr>,
+    pub where_clauses: Vec<Expr>,
     pub body: Vec<Stmt>,
 }
 
@@ -484,7 +484,7 @@ pub struct TraitMethod {
     /// The declared typed error, or `None` for bare `raises`/non-raising.
     pub raises_type: Option<Type>,
     pub ret: Option<Type>,
-    pub where_clause: Option<Expr>,
+    pub where_clauses: Vec<Expr>,
     /// The method body. `None` for a pure requirement (`...`); `Some(body)` for a
     /// **default implementation**. The checker currently rejects default bodies.
     pub default_body: Option<Vec<Stmt>>,
@@ -502,7 +502,7 @@ pub struct TraitComptime {
     pub params: Vec<TypeParam>,
     pub ty: Type,
     /// Optional availability constraint, including the diagnostic tuple form.
-    pub where_clause: Option<Expr>,
+    pub where_clauses: Vec<Expr>,
 }
 
 /// A `comptime NAME = expr` associated compile-time fact inside a `struct` body.
@@ -517,7 +517,7 @@ pub struct StructComptime {
     /// a trait bound; value members commonly use a scalar type.
     pub ty: Option<Type>,
     /// Optional availability constraint, including the diagnostic tuple form.
-    pub where_clause: Option<Expr>,
+    pub where_clauses: Vec<Expr>,
     pub value: Expr,
 }
 
@@ -678,7 +678,7 @@ pub enum StmtKind {
         /// The typed error following `raises`, if present.
         raises_type: Option<Type>,
         ret: Option<Type>,
-        where_clause: Option<Expr>,
+        where_clauses: Vec<Expr>,
         body: Vec<Stmt>,
     },
     /// `[decorators] struct Name[type_params](conforms): <fields, associated
@@ -699,7 +699,7 @@ pub enum StmtKind {
         /// `(trait_name, comptime predicate)`. An absent entry is unconditional.
         conformance_conditions: Vec<(String, Expr)>,
         /// Trailing declaration constraint (`struct S[...] where ...:`).
-        where_clause: Option<Expr>,
+        where_clauses: Vec<Expr>,
         fields: Vec<Param>,
         associated: Vec<StructComptime>,
         methods: Vec<Method>,
@@ -732,7 +732,7 @@ pub enum StmtKind {
         /// Optional declared result/value type.
         ty: Option<Type>,
         /// Optional availability constraint, including its diagnostic message.
-        where_clause: Option<Expr>,
+        where_clauses: Vec<Expr>,
         value: Expr,
     },
     /// `comptime if cond: ... (elif cond: ...)* (else: ...)?` — a **compile-time
@@ -1468,7 +1468,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                 StmtKind::Comptime {
                     type_params,
                     ty,
-                    where_clause,
+                    where_clauses,
                     value,
                     ..
                 } => {
@@ -1476,7 +1476,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     if let Some(ty) = ty {
                         self.ty(ty);
                     }
-                    if let Some(condition) = where_clause {
+                    for condition in where_clauses {
                         self.expr(condition);
                     }
                     self.expr(value);
@@ -1546,7 +1546,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     ret,
                     body,
                     decorators,
-                    where_clause,
+                    where_clauses,
                     ..
                 } => {
                     self.type_params(type_params);
@@ -1560,7 +1560,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                         self.ty(ret);
                     }
                     self.decorators(decorators);
-                    if let Some(condition) = where_clause {
+                    for condition in where_clauses {
                         self.expr(condition);
                     }
                     self.block(body);
@@ -1573,14 +1573,14 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     decorators,
                     conformance_conditions,
                     callable_conformance,
-                    where_clause,
+                    where_clauses,
                     ..
                 } => {
                     self.type_params(type_params);
                     if let Some(callable) = callable_conformance {
                         self.ty(callable);
                     }
-                    if let Some(condition) = where_clause {
+                    for condition in where_clauses {
                         self.expr(condition);
                     }
                     for field in fields {
@@ -1591,7 +1591,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                         if let Some(ty) = &mut member.ty {
                             self.ty(ty);
                         }
-                        if let Some(condition) = &mut member.where_clause {
+                        for condition in &mut member.where_clauses {
                             self.expr(condition);
                         }
                         self.expr(&mut member.value);
@@ -1617,7 +1617,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                             self.ty(ret);
                         }
                         self.decorators(&mut method.decorators);
-                        if let Some(condition) = &mut method.where_clause {
+                        for condition in &mut method.where_clauses {
                             self.expr(condition);
                         }
                         self.block(&mut method.body);
@@ -1644,7 +1644,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                         if let Some(ret) = &mut method.ret {
                             self.ty(ret);
                         }
-                        if let Some(condition) = &mut method.where_clause {
+                        for condition in &mut method.where_clauses {
                             self.expr(condition);
                         }
                         if let Some(body) = &mut method.default_body {
@@ -1654,7 +1654,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     for member in comptime_members {
                         self.type_params(&mut member.params);
                         self.ty(&mut member.ty);
-                        if let Some(condition) = &mut member.where_clause {
+                        for condition in &mut member.where_clauses {
                             self.expr(condition);
                         }
                     }
@@ -1967,7 +1967,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
         StmtKind::Comptime {
             type_params,
             ty,
-            where_clause,
+            where_clauses,
             value,
             ..
         } => {
@@ -1975,7 +1975,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             if let Some(ty) = ty {
                 stamp_type(ty, source);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 stamp_expr(condition, source);
             }
             stamp_expr(value, source);
@@ -2034,7 +2034,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             params,
             raises_type,
             ret,
-            where_clause,
+            where_clauses,
             body,
             decorators,
             ..
@@ -2049,7 +2049,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             if let Some(ret) = ret {
                 stamp_type(ret, source);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 stamp_expr(condition, source);
             }
             stamp_decorators(decorators, source);
@@ -2063,14 +2063,14 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             associated,
             methods,
             decorators,
-            where_clause,
+            where_clauses,
             ..
         } => {
             stamp_type_params(type_params, source);
             if let Some(callable) = callable_conformance {
                 stamp_type(callable, source);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 stamp_expr(condition, source);
             }
             for (_, condition) in conformance_conditions {
@@ -2084,7 +2084,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
                 if let Some(ty) = &mut member.ty {
                     stamp_type(ty, source);
                 }
-                if let Some(condition) = &mut member.where_clause {
+                for condition in &mut member.where_clauses {
                     stamp_expr(condition, source);
                 }
                 stamp_expr(&mut member.value, source);
@@ -2106,7 +2106,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
                 if let Some(ret) = &mut method.ret {
                     stamp_type(ret, source);
                 }
-                if let Some(condition) = &mut method.where_clause {
+                for condition in &mut method.where_clauses {
                     stamp_expr(condition, source);
                 }
                 stamp_decorators(&mut method.decorators, source);
@@ -2134,7 +2134,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
                 if let Some(ret) = &mut method.ret {
                     stamp_type(ret, source);
                 }
-                if let Some(condition) = &mut method.where_clause {
+                for condition in &mut method.where_clauses {
                     stamp_expr(condition, source);
                 }
                 if let Some(body) = &mut method.default_body {
@@ -2144,7 +2144,7 @@ fn stamp_stmt_kind(kind: &mut StmtKind, source: &str) {
             for member in comptime_members {
                 stamp_type_params(&mut member.params, source);
                 stamp_type(&mut member.ty, source);
-                if let Some(condition) = &mut member.where_clause {
+                for condition in &mut member.where_clauses {
                     stamp_expr(condition, source);
                 }
             }

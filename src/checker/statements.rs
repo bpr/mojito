@@ -1078,7 +1078,7 @@ impl Checker {
                 raises,
                 raises_type,
                 decorators,
-                where_clause,
+                where_clauses,
             } => {
                 if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
                     return Err(TypeError::ReservedName(name.clone()));
@@ -1139,8 +1139,8 @@ impl Checker {
                 self.validate_origin_signature(type_params, params, None)?;
                 let mut decls = self.classify_params(type_params)?;
                 let mut function_assumptions = HashSet::new();
-                let mut erased_origin_constraint = None;
-                if let Some(condition) = where_clause {
+                let mut erased_origin_constraints = Vec::new();
+                for condition in where_clauses {
                     let constraint = self.compile_where_clause(condition)?;
                     let mut facts = Vec::new();
                     guaranteed_conformance_atoms(&constraint, &mut facts);
@@ -1157,7 +1157,7 @@ impl Checker {
                     } else if type_params.is_empty() {
                         self.validate_declaration_constraint(name, &constraint)?;
                     } else {
-                        erased_origin_constraint = Some(constraint);
+                        erased_origin_constraints.push(constraint);
                     }
                 }
                 self.generic_parameters.borrow_mut().insert(
@@ -1349,7 +1349,7 @@ impl Checker {
                     callable_origin_signature(
                         type_params,
                         &caller_regular,
-                        erased_origin_constraint,
+                        erased_origin_constraints,
                     ),
                 );
                 let capture_policy = if self.function_bases.is_empty() {
@@ -1674,7 +1674,7 @@ impl Checker {
                 conforms,
                 callable_conformance,
                 conformance_conditions,
-                where_clause,
+                where_clauses,
                 fields,
                 associated,
                 methods,
@@ -1691,7 +1691,7 @@ impl Checker {
                     conforms,
                     callable_conformance,
                     conformance_conditions,
-                    where_clause,
+                    where_clauses,
                     fields,
                     associated,
                     methods,
@@ -1721,16 +1721,20 @@ impl Checker {
             StmtKind::Comptime {
                 name,
                 type_params,
-                ty: _,
-                where_clause,
+                ty,
+                where_clauses,
                 value,
             } => {
                 if !type_params.is_empty() {
-                    return Err(TypeError::Unsupported(
-                        "generic top-level comptime aliases".to_string(),
-                    ));
+                    return self.check_generic_comptime_alias(
+                        name,
+                        type_params,
+                        ty.as_ref(),
+                        where_clauses,
+                        value,
+                    );
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     let constraint = self.compile_where_clause(condition)?;
                     self.validate_declaration_constraint(name, &constraint)?;
                 }
@@ -2140,6 +2144,71 @@ impl Checker {
                 self.ty_from_anno(&parameter.ty)
             })
             .collect()
+    }
+
+    /// Lower a generic `comptime Alias[params] = Type` declaration into the
+    /// checked alias registry. The body cannot be evaluated eagerly (it
+    /// references the alias's own parameters), so it is lowered once to a
+    /// symbolic template and expanded per application during type resolution.
+    /// The alias declares no value binding: it is a pure type declaration,
+    /// like a struct or trait, with no runtime form.
+    fn check_generic_comptime_alias(
+        &mut self,
+        name: &str,
+        type_params: &[crate::ast::TypeParam],
+        ty: Option<&SourceType>,
+        where_clauses: &[Expr],
+        value: &Expr,
+    ) -> Result<(), TypeError> {
+        if !self.function_bases.is_empty() {
+            return Err(TypeError::Unsupported(
+                "a generic comptime alias must be declared at module scope".to_string(),
+            ));
+        }
+        // The registry binds application arguments through classified
+        // `ParamDecl`s, which erase origin parameters; reject them instead of
+        // silently dropping a binder the template could still mention.
+        if type_params.iter().any(|parameter| {
+            matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+                || parameter.is_origin_mutability_binder(type_params)
+        }) {
+            return Err(TypeError::Unsupported(
+                "origin parameters on a generic comptime alias".to_string(),
+            ));
+        }
+        if self.comptime_aliases.contains_key(name)
+            || self.comptimes.contains_key(name)
+            || self.structs.contains_key(name)
+        {
+            return Err(TypeError::Redeclaration(name.to_string()));
+        }
+        if let Some(annotation) = ty {
+            // Resolve and classify the annotation even though the symbolic
+            // body is checked only at application, so a declared type is not
+            // silently discarded (mirrors associated-member declarations).
+            self.ct_member_req_from_anno(type_params, annotation)?;
+        }
+        let mut decls = self.classify_params(type_params)?;
+        for condition in where_clauses {
+            let constraint = self.compile_where_clause(condition)?;
+            let Some(last) = decls.last_mut() else {
+                return Err(TypeError::Unsupported(
+                    "a where clause requires compile-time parameters".to_string(),
+                ));
+            };
+            match last {
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                    constraints.push(constraint)
+                }
+            }
+        }
+        let source_ty = super::constraints::assoc_body_source_type(value).map_err(|_| {
+            TypeError::Unsupported("a generic comptime alias must be defined by a type".to_string())
+        })?;
+        let template = self.lower_parameterized_member(type_params, &source_ty)?;
+        self.comptime_aliases
+            .insert(name.to_string(), ComptimeAlias { decls, template });
+        Ok(())
     }
 }
 

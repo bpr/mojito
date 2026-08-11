@@ -234,12 +234,10 @@ impl Checker {
         Ok(MethodSig {
             decls,
             availability: method
-                .where_clause
-                .as_ref()
+                .where_clauses
+                .iter()
                 .map(|condition| self.compile_where_clause(condition))
-                .transpose()?
-                .into_iter()
-                .collect(),
+                .collect::<Result<_, _>>()?,
             has_self: method.has_self,
             params: regular
                 .iter()
@@ -733,18 +731,17 @@ impl Checker {
         let saved = self.enclosing_type_params.clone();
         self.enclosing_type_params.extend(m.type_params.clone());
         let assumptions = (|| {
-            let Some(condition) = &m.where_clause else {
-                return Ok(HashSet::new());
-            };
-            let constraint = self.compile_where_clause(condition)?;
             let mut facts = Vec::new();
-            guaranteed_conformance_atoms(&constraint, &mut facts);
+            for condition in &m.where_clauses {
+                let constraint = self.compile_where_clause(condition)?;
+                guaranteed_conformance_atoms(&constraint, &mut facts);
+            }
             Ok(facts
                 .into_iter()
                 .map(|(parameter, trait_name)| {
                     (parameter.trim_start_matches('*').to_string(), trait_name)
                 })
-                .collect())
+                .collect::<HashSet<_>>())
         })();
         let result = match assumptions {
             Ok(assumptions) => {

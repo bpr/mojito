@@ -232,16 +232,13 @@ fn linking_rewrites_conditional_conformance_and_where_clause_names() {
     };
     assert!(condition_names_trait(&conformance_conditions[0].1));
     assert!(
-        methods[0]
-            .where_clause
-            .as_ref()
-            .is_some_and(condition_names_trait)
+        matches!(methods[0].where_clauses.as_slice(), [condition] if condition_names_trait(condition))
     );
 
-    let mojito::ast::StmtKind::Def { where_clause, .. } = &function_stmt.kind else {
+    let mojito::ast::StmtKind::Def { where_clauses, .. } = &function_stmt.kind else {
         unreachable!()
     };
-    assert!(where_clause.as_ref().is_some_and(condition_names_trait));
+    assert!(matches!(where_clauses.as_slice(), [condition] if condition_names_trait(condition)));
 }
 
 #[test]
@@ -256,6 +253,20 @@ fn wildcard_and_relative_import() {
         "from .util import *\n\ndef main():\n    print(triple(5))\n",
     );
     assert_eq!(run(&main).unwrap(), "15\n");
+}
+
+#[test]
+fn imported_generic_comptime_alias_expands_in_type_annotations() {
+    let d = TempDir::new();
+    d.write(
+        "aliases.mojo",
+        "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\ncomptime Guard[n: Int]: AnyType where (n > 0, \"positive only\") = Int\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "from aliases import Pair, Guard as Bounded\n\ndef main():\n    var pair: Pair[Int] = (1, 2)\n    var guarded: Bounded[3] = 7\n    print(pair[0] + guarded)\n",
+    );
+    assert_eq!(run(&main).unwrap(), "8\n");
 }
 
 #[test]

@@ -270,7 +270,7 @@ impl NestedMono {
                 name,
                 type_params,
                 ty,
-                where_clause,
+                where_clauses,
                 value,
             } => {
                 for parameter in type_params {
@@ -279,7 +279,7 @@ impl NestedMono {
                 if let Some(ty) = ty {
                     self.qualify_type(ty);
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.qualify_expression(condition);
                 }
                 self.qualify_expression(value);
@@ -380,7 +380,7 @@ impl NestedMono {
                 type_params,
                 callable_conformance,
                 conformance_conditions,
-                where_clause,
+                where_clauses,
                 fields,
                 associated,
                 ..
@@ -395,7 +395,7 @@ impl NestedMono {
                 for (_, condition) in conformance_conditions {
                     self.qualify_expression(condition);
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.qualify_expression(condition);
                 }
                 for field in fields {
@@ -408,7 +408,7 @@ impl NestedMono {
                     if let Some(ty) = &mut member.ty {
                         self.qualify_type(ty);
                     }
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         self.qualify_expression(condition);
                     }
                     self.qualify_expression(&mut member.value);
@@ -443,7 +443,7 @@ impl NestedMono {
                     if let Some(ret) = &mut method.ret {
                         self.qualify_type(ret);
                     }
-                    if let Some(condition) = &mut method.where_clause {
+                    for condition in &mut method.where_clauses {
                         self.qualify_expression(condition);
                     }
                 }
@@ -452,7 +452,7 @@ impl NestedMono {
                         self.qualify_type_parameter(parameter);
                     }
                     self.qualify_type(&mut member.ty);
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         self.qualify_expression(condition);
                     }
                 }
@@ -487,7 +487,7 @@ impl NestedMono {
                 params,
                 raises_type,
                 ret,
-                where_clause,
+                where_clauses,
                 body,
                 ..
             } = &mut statement.kind
@@ -521,7 +521,7 @@ impl NestedMono {
             if let Some(ret) = ret {
                 self.qualify_type(ret);
             }
-            if let Some(predicate) = where_clause {
+            for predicate in where_clauses {
                 self.qualify_expression(predicate);
             }
 
@@ -880,14 +880,14 @@ impl NestedMono {
             StmtKind::Comptime {
                 name,
                 type_params,
-                where_clause,
+                where_clauses,
                 value,
                 ..
             } => {
                 for parameter in type_params {
                     self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.scan_expression(elab, condition, runtime_packs)?;
                 }
                 self.scan_expression(elab, value, runtime_packs)?;
@@ -1001,7 +1001,7 @@ impl NestedMono {
                 name,
                 type_params,
                 params,
-                where_clause,
+                where_clauses,
                 body,
                 ..
             } => {
@@ -1011,7 +1011,7 @@ impl NestedMono {
                 for parameter in params.iter_mut() {
                     self.scan_fn_parameter_expressions(elab, parameter, runtime_packs)?;
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.scan_expression(elab, condition, runtime_packs)?;
                 }
                 runtime_packs.bind_other(name);
@@ -1030,7 +1030,7 @@ impl NestedMono {
                 name,
                 type_params,
                 conformance_conditions,
-                where_clause,
+                where_clauses,
                 associated,
                 methods,
                 ..
@@ -1042,14 +1042,14 @@ impl NestedMono {
                 for (_, condition) in conformance_conditions {
                     self.scan_expression(elab, condition, runtime_packs)?;
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.scan_expression(elab, condition, runtime_packs)?;
                 }
                 for member in associated {
                     for parameter in &mut member.params {
                         self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
                     }
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         self.scan_expression(elab, condition, runtime_packs)?;
                     }
                     self.scan_expression(elab, &mut member.value, runtime_packs)?;
@@ -1064,7 +1064,7 @@ impl NestedMono {
                     for parameter in &mut method.params {
                         self.scan_fn_parameter_expressions(elab, parameter, runtime_packs)?;
                     }
-                    if let Some(condition) = &mut method.where_clause {
+                    for condition in &mut method.where_clauses {
                         self.scan_expression(elab, condition, runtime_packs)?;
                     }
                     runtime_packs.push_function_scope();
@@ -1114,7 +1114,7 @@ impl NestedMono {
                     for parameter in &mut method.params {
                         self.scan_fn_parameter_expressions(elab, parameter, runtime_packs)?;
                     }
-                    if let Some(condition) = &mut method.where_clause {
+                    for condition in &mut method.where_clauses {
                         self.scan_expression(elab, condition, runtime_packs)?;
                     }
                     if let Some(body) = &mut method.default_body {
@@ -1125,7 +1125,7 @@ impl NestedMono {
                     for parameter in &mut member.params {
                         self.scan_type_parameter_expressions(elab, parameter, runtime_packs)?;
                     }
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         self.scan_expression(elab, condition, runtime_packs)?;
                     }
                 }

@@ -95,7 +95,7 @@ impl<'a> Elab<'a> {
             StmtKind::Comptime {
                 type_params,
                 ty,
-                where_clause,
+                where_clauses,
                 value,
                 ..
             } => {
@@ -106,7 +106,7 @@ impl<'a> Elab<'a> {
                 if let Some(ty) = ty {
                     self.mono_type(ty, &inner_consts, mono)?;
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.mono_expr(condition, &inner_consts, mono)?;
                 }
                 self.mono_expr(value, &inner_consts, mono)
@@ -196,7 +196,7 @@ impl<'a> Elab<'a> {
                 params,
                 raises_type,
                 ret,
-                where_clause,
+                where_clauses,
                 body,
                 ..
             } => {
@@ -213,7 +213,7 @@ impl<'a> Elab<'a> {
                 if let Some(ret) = ret {
                     self.mono_type(ret, &inner_consts, mono)?;
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.mono_expr(condition, &inner_consts, mono)?;
                 }
                 mono.push_function_scope();
@@ -228,7 +228,7 @@ impl<'a> Elab<'a> {
                 type_params,
                 callable_conformance,
                 conformance_conditions,
-                where_clause,
+                where_clauses,
                 fields,
                 associated,
                 methods,
@@ -257,7 +257,7 @@ impl<'a> Elab<'a> {
                 for (_, condition) in conformance_conditions {
                     self.mono_expr(condition, &struct_consts, mono)?;
                 }
-                if let Some(condition) = where_clause {
+                for condition in where_clauses {
                     self.mono_expr(condition, &struct_consts, mono)?;
                 }
                 for field in fields.iter_mut() {
@@ -275,7 +275,7 @@ impl<'a> Elab<'a> {
                     if let Some(ty) = &mut member.ty {
                         self.mono_type(ty, &member_consts, mono)?;
                     }
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         self.mono_expr(condition, &member_consts, mono)?;
                     }
                     self.mono_expr(&mut member.value, &member_consts, mono)?;
@@ -299,7 +299,7 @@ impl<'a> Elab<'a> {
                     if let Some(ret) = &mut m.ret {
                         self.mono_type(ret, &method_consts, mono)?;
                     }
-                    if let Some(condition) = &mut m.where_clause {
+                    for condition in &mut m.where_clauses {
                         self.mono_expr(condition, &method_consts, mono)?;
                     }
                     mono.push_function_scope();
@@ -339,7 +339,7 @@ impl<'a> Elab<'a> {
                     if let Some(ret) = &mut method.ret {
                         self.mono_type(ret, &inner_consts, mono)?;
                     }
-                    if let Some(condition) = &mut method.where_clause {
+                    for condition in &mut method.where_clauses {
                         self.mono_expr(condition, &inner_consts, mono)?;
                     }
                     if let Some(body) = &mut method.default_body {
@@ -352,7 +352,7 @@ impl<'a> Elab<'a> {
                         self.mono_type_parameter(parameter, &inner_consts, mono)?;
                     }
                     self.mono_type(&mut member.ty, &inner_consts, mono)?;
-                    if let Some(condition) = &mut member.where_clause {
+                    for condition in &mut member.where_clauses {
                         self.mono_expr(condition, &inner_consts, mono)?;
                     }
                 }

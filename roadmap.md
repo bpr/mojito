@@ -98,15 +98,6 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **Complete generic comptime aliases and repeated declaration
-  constraints (nightly §1 follow-up)** — represent top-level generic
-  `comptime Alias[params]: Type where ... = ...` declarations in the checked
-  alias registry and type-resolution expansion path, and retain multiple
-  trailing `where` clauses independently on functions, methods, structs, and
-  comptime aliases so each clause keeps its own diagnostic message. The small
-  accepted-source/diagnostic slice is otherwise complete; these require a real
-  alias feature and a plural checked constraint contract, not another parser
-  special case.
 - [ ] **Lambda expressions (nightly §2)** — one explicit AST/HIR node lowered
   through the existing nested-definition, capture, callable-contract,
   specialization, and indirect-call machinery; omitted capture list

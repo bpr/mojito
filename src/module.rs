@@ -1320,7 +1320,7 @@ fn rewrite_stmt(
             params,
             raises_type,
             ret,
-            where_clause,
+            where_clauses,
             body,
             decorators,
             ..
@@ -1341,7 +1341,7 @@ fn rewrite_stmt(
             if let Some(ret) = ret {
                 rewrite_type(ret, names, namespaces);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 rewrite_expr(condition, names, namespaces);
             }
             for d in decorators {
@@ -1364,7 +1364,7 @@ fn rewrite_stmt(
             conforms,
             callable_conformance,
             conformance_conditions,
-            where_clause,
+            where_clauses,
             fields,
             associated,
             methods,
@@ -1384,7 +1384,7 @@ fn rewrite_stmt(
                 rename(conformance, names);
                 rewrite_expr(condition, names, namespaces);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 rewrite_expr(condition, names, namespaces);
             }
             for f in fields {
@@ -1397,7 +1397,7 @@ fn rewrite_stmt(
                 if let Some(ty) = &mut a.ty {
                     rewrite_type(ty, names, namespaces);
                 }
-                if let Some(condition) = &mut a.where_clause {
+                for condition in &mut a.where_clauses {
                     rewrite_expr(condition, names, namespaces);
                 }
                 rewrite_expr(&mut a.value, names, namespaces);
@@ -1418,7 +1418,7 @@ fn rewrite_stmt(
                 if let Some(ret) = &mut m.ret {
                     rewrite_type(ret, names, namespaces);
                 }
-                if let Some(condition) = &mut m.where_clause {
+                for condition in &mut m.where_clauses {
                     rewrite_expr(condition, names, namespaces);
                 }
                 let locals = without_local_bindings(
@@ -1457,7 +1457,7 @@ fn rewrite_stmt(
                 if let Some(ret) = &mut m.ret {
                     rewrite_type(ret, names, namespaces);
                 }
-                if let Some(condition) = &mut m.where_clause {
+                for condition in &mut m.where_clauses {
                     rewrite_expr(condition, names, namespaces);
                 }
                 if let Some(body) = &mut m.default_body {
@@ -1469,7 +1469,7 @@ fn rewrite_stmt(
                     rewrite_type_param(parameter, names, namespaces);
                 }
                 rewrite_type(&mut c.ty, names, namespaces);
-                if let Some(condition) = &mut c.where_clause {
+                for condition in &mut c.where_clauses {
                     rewrite_expr(condition, names, namespaces);
                 }
             }
@@ -1484,7 +1484,7 @@ fn rewrite_stmt(
             name,
             type_params,
             ty,
-            where_clause,
+            where_clauses,
             value,
         } => {
             rename(name, names);
@@ -1494,7 +1494,7 @@ fn rewrite_stmt(
             if let Some(ty) = ty {
                 rewrite_type(ty, names, namespaces);
             }
-            if let Some(condition) = where_clause {
+            for condition in where_clauses {
                 rewrite_expr(condition, names, namespaces);
             }
             rewrite_expr(value, names, namespaces);

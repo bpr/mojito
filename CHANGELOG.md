@@ -8,6 +8,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Repeated declaration constraints and generic comptime aliases (nightly §1
+  follow-up): every declaration family that accepts a trailing `where` clause —
+  functions, methods, structs, trait requirements, associated and trait
+  comptime members, and comptime declarations — now retains its full clause
+  list (`where (c1, "m1") where (c2, "m2")`) through a plural checked
+  constraint contract; each clause validates independently and the first
+  failing clause reports its own retained message. Per-trait
+  conditional-conformance conditions stay single-clause. Generic top-level
+  `comptime Alias[params]: Type where ... = ...` declarations lower once into
+  a checked alias registry (classified parameters plus the symbolic template
+  machinery shared with parameterized associated members) and expand per
+  application in any type position — directly, through another alias, or as a
+  generic argument, including across module imports — validating arity,
+  bounds, defaults, and the alias's own clauses through the same contract as
+  a struct application. Bare primitive names (`Int`, `UInt`, `Bool`,
+  `Float64`) now resolve as types in expression-derived type positions such
+  as alias and associated-member bodies. Recorded subset gaps: value-bodied
+  generic aliases, origin-parameterized aliases, function-body generic
+  aliases, and constructor-through-alias calls reject with contextual
+  diagnostics.
+
 - Mojo dev-branch parity catch-up (nightly §1): keyword collectors now require
   canonical `var **kwargs` syntax in declarations and function types (bare
   `**kwargs` rejects), and the checked/lowered callable identity retains a
