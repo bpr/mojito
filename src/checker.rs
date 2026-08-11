@@ -2495,6 +2495,9 @@ struct CapturePolicy {
     declaration: SourceSpan,
     entries: HashMap<String, crate::ast::CaptureKind>,
     default: Option<crate::ast::CaptureKind>,
+    /// Whether this policy belongs to a lambda expression's hidden definition
+    /// (selects the lambda wording for capture-convention diagnostics).
+    lambda: bool,
 }
 
 /// How one source-level `Origin` parameter is represented by the callable's

@@ -2832,3 +2832,259 @@ fn normalizes_deprecated_lifecycle_spellings_at_parse_time() {
     };
     assert_eq!(type_params[0].bounds, vec!["Movable", "Deinitable"]);
 }
+
+/// The hidden definition synthesized for a lambda whose `lambda` keyword
+/// starts at byte offset `start` (dummy spans; equality ignores them).
+#[allow(clippy::too_many_arguments)]
+fn lambda_expr(
+    start: usize,
+    type_params: Vec<TypeParam>,
+    params: Vec<FnParam>,
+    captures: Option<mojito::ast::CaptureList>,
+    raises: bool,
+    ret: Option<Type>,
+    body: ExprKind,
+) -> Expr {
+    Expr::from(ExprKind::Lambda {
+        def: Box::new(Stmt::from(StmtKind::Def {
+            name: format!("$lambda${start}"),
+            decorators: vec![],
+            type_params,
+            params,
+            positional_only: None,
+            keyword_only: None,
+            captures,
+            raises,
+            raises_type: None,
+            ret,
+            where_clauses: vec![],
+            body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(body))))],
+        })),
+    })
+}
+
+#[test]
+fn parses_minimal_lambda() {
+    // `lambda: None` — no parameters, no arguments, no captures, no return
+    // type; the hidden def's body is `return None`.
+    assert_eq!(
+        parse_expr("lambda: None\n"),
+        lambda_expr(0, vec![], vec![], None, false, None, ExprKind::None)
+    );
+}
+
+#[test]
+fn parses_fully_explicit_lambda() {
+    // Every optional part present: lambda-owned parameter list, typed
+    // argument, `raises`, capture list, and return type.
+    assert_eq!(
+        parse_expr("lambda [N: Int](x: Int) raises {imm y} -> Int: x\n"),
+        lambda_expr(
+            0,
+            vec![TypeParam {
+                constraints: vec![],
+                value_type: None,
+                name: "N".into(),
+                bounds: vec!["Int".into()],
+                callable_bound: None,
+                origin_mutability: None,
+                infer_only: false,
+                default: None,
+            }],
+            vec![fnparam("x", Type::Int)],
+            Some(mojito::ast::CaptureList {
+                entries: vec![Capture {
+                    name: "y".into(),
+                    kind: CaptureKind::Read,
+                }],
+                default: None,
+            }),
+            true,
+            Some(Type::Int),
+            ExprKind::Identifier("x".into()),
+        )
+    );
+}
+
+#[test]
+fn parses_lambda_omission_forms() {
+    // No argument list.
+    assert_eq!(
+        parse_expr("lambda -> Int: 42\n"),
+        lambda_expr(
+            0,
+            vec![],
+            vec![],
+            None,
+            false,
+            Some(Type::Int),
+            ExprKind::Int(42.into())
+        )
+    );
+    // No return type (fixed `None` downstream, not inferred).
+    assert_eq!(
+        parse_expr("lambda (x: Int): x\n"),
+        lambda_expr(
+            0,
+            vec![],
+            vec![fnparam("x", Type::Int)],
+            None,
+            false,
+            None,
+            ExprKind::Identifier("x".into()),
+        )
+    );
+    // Captures only.
+    assert_eq!(
+        parse_expr("lambda {mut lst}: lst\n"),
+        lambda_expr(
+            0,
+            vec![],
+            vec![],
+            Some(mojito::ast::CaptureList {
+                entries: vec![Capture {
+                    name: "lst".into(),
+                    kind: CaptureKind::Mut,
+                }],
+                default: None,
+            }),
+            false,
+            None,
+            ExprKind::Identifier("lst".into()),
+        )
+    );
+    // Explicit empty capture list stays distinct from an omitted one.
+    assert_eq!(
+        parse_expr("lambda (x: Int) {} -> Int: x + 1\n"),
+        lambda_expr(
+            0,
+            vec![],
+            vec![fnparam("x", Type::Int)],
+            Some(mojito::ast::CaptureList {
+                entries: vec![],
+                default: None,
+            }),
+            false,
+            Some(Type::Int),
+            ExprKind::Infix(InfixOp::Add, ident("x"), int(1)),
+        )
+    );
+    // Trailing comma in the argument list.
+    assert_eq!(
+        parse_expr("lambda (x: Int,) -> Int: x\n"),
+        lambda_expr(
+            0,
+            vec![],
+            vec![fnparam("x", Type::Int)],
+            None,
+            false,
+            Some(Type::Int),
+            ExprKind::Identifier("x".into()),
+        )
+    );
+}
+
+#[test]
+fn lambda_body_extends_through_ternary() {
+    // The body is one expression at conditional level: a trailing ternary
+    // belongs to the body.
+    assert_eq!(
+        parse_expr("lambda (x: Bool) -> Int: 1 if x else 2\n"),
+        lambda_expr(
+            0,
+            vec![],
+            vec![fnparam("x", Type::Bool)],
+            None,
+            false,
+            Some(Type::Int),
+            ExprKind::IfExpr {
+                cond: ident("x"),
+                then_branch: int(1),
+                else_branch: int(2),
+            },
+        )
+    );
+}
+
+#[test]
+fn lambda_as_call_argument_stops_at_comma() {
+    // `f(lambda: x, y)` passes a lambda and a second argument; the comma is
+    // not part of the lambda body.
+    assert_eq!(
+        parse_expr("f(lambda: x, y)\n"),
+        Expr::from(ExprKind::Call {
+            name: "f".into(),
+            param_args: vec![],
+            args: vec![
+                lambda_expr(
+                    2,
+                    vec![],
+                    vec![],
+                    None,
+                    false,
+                    None,
+                    ExprKind::Identifier("x".into())
+                ),
+                Expr::from(ExprKind::Identifier("y".into())),
+            ],
+            kwargs: vec![],
+        })
+    );
+}
+
+#[test]
+fn parses_nested_lambda_in_body() {
+    // A lambda body may contain (and immediately invoke) another lambda.
+    let expr = parse_expr("lambda (x: Int) -> Int: (lambda (y: Int) -> Int: y)(x)\n");
+    let ExprKind::Lambda { def } = &expr.kind else {
+        panic!("expected a lambda");
+    };
+    let StmtKind::Def { body, .. } = &def.kind else {
+        panic!("expected the hidden def");
+    };
+    let StmtKind::Return(Some(value)) = &body[0].kind else {
+        panic!("expected the synthesized return");
+    };
+    let ExprKind::Invoke { callee, args, .. } = &value.kind else {
+        panic!("expected an invocation of the inner lambda, got {value:?}");
+    };
+    assert!(matches!(callee.kind, ExprKind::Lambda { .. }));
+    assert_eq!(args[0], Expr::from(ExprKind::Identifier("x".into())));
+}
+
+#[test]
+fn rejects_unparenthesized_lambda_arguments() {
+    let mut parser = Parser::new(Lexer::new("var f = lambda x: x\n"));
+    let err = parser
+        .parse_program()
+        .expect_err("unparenthesized lambda arguments must be rejected");
+    assert!(
+        format!("{err:?}").contains("lambda arguments must be parenthesized and typed"),
+        "unexpected diagnostic: {err:?}"
+    );
+}
+
+#[test]
+fn rejects_lambda_without_body_colon() {
+    let mut parser = Parser::new(Lexer::new("var f = lambda (x: Int) x\n"));
+    let err = parser
+        .parse_program()
+        .expect_err("a lambda without ':' must be rejected");
+    assert!(
+        format!("{err:?}").contains("Expected ':' before the lambda body"),
+        "unexpected diagnostic: {err:?}"
+    );
+}
+
+#[test]
+fn lambda_is_a_reserved_word() {
+    // Upstream made `lambda` a keyword: it is no longer usable as a name.
+    let mut parser = Parser::new(Lexer::new("def lambda():\n    pass\n"));
+    parser
+        .parse_program()
+        .expect_err("'lambda' as a def name must be rejected");
+    let mut parser = Parser::new(Lexer::new("var lambda = 1\n"));
+    parser
+        .parse_program()
+        .expect_err("'lambda' as a var name must be rejected");
+}

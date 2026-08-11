@@ -66,10 +66,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_stmt` statement dispatcher, including generic comptime alias lowering
   (`check_generic_comptime_alias` fills the `Checker.comptime_aliases`
   registry of `ComptimeAlias` entries — classified `ParamDecl`s plus a
-  symbolic template).
+  symbolic template). `check_def` checks one function declaration — the
+  `StmtKind::Def` arm delegates to it, and lambda mode (`lambda = true`)
+  applies the lambda-specific capture-default/thinness/diagnostic deltas.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
   list/tuple/variant construction, and t-string typing (the lazy `TString`
-  element list and its snapshot capture policy).
+  element list and its snapshot capture policy). `check_lambda` runs a lambda
+  expression's hidden definition through `check_def` during statement-root
+  registration and caches the finalized function-value type under the
+  expression span (the comprehension pattern); `ast::lambdas_in_expr`/
+  `lambdas_in_stmt` are the shared lambda-discovery walkers used by the
+  checker, `checked.rs`, and `mir/nested.rs`.
 - `checker/indexing.rs` owns place validation, subscript/index inference and
   assignment, pointer offset/write checks, and member access.
 - `checker/method_calls.rs` owns method-call inference, overload scoring, and

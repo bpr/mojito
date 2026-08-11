@@ -822,6 +822,9 @@ impl NestedMono {
                         .unwrap_or_else(|| self.marker(id, name));
                 }
             }
+            // A lambda's hidden definition qualifies like a nested `def`
+            // (depth ≥ 1: never a specializable top-level template).
+            ExprKind::Lambda { def } => self.qualify_definition(def, 1),
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
@@ -1400,6 +1403,10 @@ impl NestedMono {
                 }
                 Ok(())
             }
+            // A lambda's hidden definition scans exactly like a nested `def`
+            // statement (signature expressions, then the body in its own
+            // function scope).
+            ExprKind::Lambda { def } => self.scan_statement(elab, def, runtime_packs),
             ExprKind::TypeValue(_)
             | ExprKind::Identifier(_)
             | ExprKind::Int(_)

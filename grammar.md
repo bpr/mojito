@@ -563,7 +563,10 @@ rules (`comparison`, `sum`, `term`, `primary`) encode left associativity.
 ```
 expression:
     | NAME ':=' expression        # named expression (walrus) — parsed, deferred
+    | lambda_expr
     | conditional
+lambda_expr:
+    | 'lambda' [params_decl] ['(' [params] ')'] function_effect* [capture_list] ['->' type] ':' conditional
 conditional:
     | disjunction 'if' disjunction 'else' expression   # ternary `a if c else b` (implemented)
     | disjunction
@@ -661,6 +664,21 @@ Notes:
   substring path. In infix position `not` can only begin `not in`; note that the
   prefix form `not x in c` instead parses as `not (x in c)` (the same truth
   value).
+- **A lambda expression** `lambda [params] [(args)] [effects] [{captures}]
+  [-> Type]: expr` is an anonymous single-expression function value; `lambda`
+  is a reserved word. Every part except the `:` and body is optional
+  (`lambda: None` is the minimal form). The body is one expression at the
+  conditional level — a trailing ternary belongs to the body, while `:=`, `,`,
+  and statement structure do not, so `f(lambda: x, y)` passes a lambda and a
+  second argument. Arguments must be parenthesized and typed and take the same
+  conventions as `def` parameters; effects and the brace capture list follow
+  the `function_def` grammar. An omitted `-> Type` fixes the return type to
+  `None` — it is never inferred — and an omitted capture list imm-captures the
+  body's free variables (the lambda is thin when it captures nothing), while
+  an explicit `{}` captures nothing and any explicit capture entry or
+  convention (or a lambda-owned `[params]` list) makes the lambda a closure.
+  The parser lowers each lambda to a hidden nested `def` whose body is
+  `return <expr>`, so checking and lowering reuse the nested-closure pipeline.
 - **The walrus / named expression `NAME := e`** binds looser than every operator (so
   `(n := a + b)` is `n := (a + b)`); the target must be a bare `NAME`. It evaluates
   the right side once, introduces the target in the containing function scope, and

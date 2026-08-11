@@ -627,6 +627,9 @@ impl<'a> Elab<'a> {
                 }
                 Ok(())
             }
+            // A lambda's hidden definition body is a separate function scope,
+            // mirroring the `StmtKind::Def` skip in the statement rewriter.
+            ExprKind::Lambda { .. } => Ok(()),
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
@@ -839,6 +842,7 @@ impl<'a> Elab<'a> {
             | ExprKind::TypeApply { .. }
             | ExprKind::Named { .. }
             | ExprKind::TString { .. }
+            | ExprKind::Lambda { .. }
             | ExprKind::Uninitialized => false,
         }
     }

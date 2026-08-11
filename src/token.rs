@@ -102,6 +102,7 @@ pub enum Token {
 
     // --- Keywords shared with Python ---
     Def,
+    Lambda,
     Return,
     Pass,
     None,
@@ -212,6 +213,7 @@ impl Token {
             "raises" => Token::Raises,
             // Shared with Python
             "def" => Token::Def,
+            "lambda" => Token::Lambda,
             "return" => Token::Return,
             "pass" => Token::Pass,
             "None" => Token::None,

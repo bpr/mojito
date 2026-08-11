@@ -1066,607 +1066,7 @@ impl Checker {
             }
 
             // `raises` is parsed but its effect is not analyzed (deferred).
-            StmtKind::Def {
-                name,
-                type_params,
-                params,
-                positional_only,
-                keyword_only,
-                captures,
-                ret: ret_anno,
-                body,
-                raises,
-                raises_type,
-                decorators,
-                where_clauses,
-            } => {
-                if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
-                    return Err(TypeError::ReservedName(name.clone()));
-                }
-                if self.structs.contains_key(name) {
-                    return Err(TypeError::Redeclaration(name.clone()));
-                }
-                // Free functions, including generic functions, share one binder
-                // for regular, `*args`, and homogeneous `**kwargs` parameters.
-                if let Some(feature) = Self::advanced_param_feature(
-                    params,
-                    *positional_only,
-                    *keyword_only,
-                    false,
-                    false,
-                    false,
-                ) {
-                    return Err(TypeError::Unsupported(feature.to_string()));
-                }
-                // A `*args` variadic is supported on non-generic functions; any
-                // regular parameters after it are keyword-only.
-                let variadic_idx = params
-                    .iter()
-                    .position(|p| p.kind == crate::ast::ParamKind::Variadic);
-                let kw_variadic_idx = params
-                    .iter()
-                    .position(|p| p.kind == crate::ast::ParamKind::KwVariadic);
-                // Regular (non-variadic) parameters, over which arity is computed.
-                let regular: Vec<&crate::ast::FnParam> = params
-                    .iter()
-                    .filter(|p| p.kind == crate::ast::ParamKind::Regular)
-                    .collect();
-                let out_params: Vec<_> = regular
-                    .iter()
-                    .copied()
-                    .filter(|p| matches!(p.convention, Some(crate::ast::ArgConvention::Out)))
-                    .collect();
-                if out_params.len() > 1 {
-                    return Err(TypeError::Unsupported(
-                        "multiple named 'out' results".to_string(),
-                    ));
-                }
-                let named_result = out_params.first().copied();
-                if named_result.is_some() && ret_anno.is_some() {
-                    return Err(TypeError::Unsupported(
-                        "a function cannot declare both a named result and '->' return type"
-                            .to_string(),
-                    ));
-                }
-                let caller_regular: Vec<_> = regular
-                    .iter()
-                    .copied()
-                    .filter(|p| !matches!(p.convention, Some(crate::ast::ArgConvention::Out)))
-                    .collect();
-                let pos_only = regular_marker_index(params, *positional_only);
-                let kw_only = effective_keyword_only_index(params, *keyword_only, variadic_idx);
-                let required = required_mask(&caller_regular, kw_only)?;
-                self.validate_origin_signature(type_params, params, None)?;
-                let mut decls = self.classify_params(type_params)?;
-                let mut function_assumptions = HashSet::new();
-                let mut erased_origin_constraints = Vec::new();
-                for condition in where_clauses {
-                    let constraint = self.compile_where_clause(condition)?;
-                    let mut facts = Vec::new();
-                    guaranteed_conformance_atoms(&constraint, &mut facts);
-                    function_assumptions.extend(facts.into_iter().map(
-                        |(parameter, trait_name)| {
-                            (parameter.trim_start_matches('*').to_string(), trait_name)
-                        },
-                    ));
-                    if let Some(last) = decls.last_mut() {
-                        match last {
-                            ParamDecl::Type { constraints, .. }
-                            | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
-                        }
-                    } else if type_params.is_empty() {
-                        self.validate_declaration_constraint(name, &constraint)?;
-                    } else {
-                        erased_origin_constraints.push(constraint);
-                    }
-                }
-                self.generic_parameters.borrow_mut().insert(
-                    crate::checked::GenericSite::Function {
-                        module: stmt.module.clone(),
-                        declaration: stmt.span,
-                        syntax: stmt.syntax_id,
-                    },
-                    decls.clone(),
-                );
-                // Type parameters are in scope while resolving the signature and
-                // checking the body (as bare `T`).
-                self.tparams.push(type_scope(&decls));
-
-                let signature = (|| {
-                    let param_tys = self.param_tys(params)?;
-                    let ret_ty = match (ret_anno, named_result) {
-                        (Some(SourceType::Ref { referent, .. }), _) => {
-                            self.ty_from_anno(referent)?
-                        }
-                        (Some(t), _) => self.ty_from_anno(t)?,
-                        (None, Some(result)) => self.ty_from_anno(&result.ty)?,
-                        (None, None) => Ty::None,
-                    };
-                    Ok::<_, TypeError>((param_tys, ret_ty))
-                })();
-                let (param_tys, ret_ty) = match signature {
-                    Ok(sig) => sig,
-                    Err(e) => {
-                        self.tparams.pop();
-                        return Err(e);
-                    }
-                };
-                let ref_params = lower_ref_param_sigs(type_params, &caller_regular)?;
-                let ref_return = match ret_anno {
-                    Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
-                        origin.as_ref().ok_or_else(|| {
-                            TypeError::Unsupported(
-                                "reference return requires an origin".to_string(),
-                            )
-                        })?,
-                        type_params,
-                        &regular,
-                    )?),
-                    _ => None,
-                };
-                for (param, ty) in param_tys.iter().enumerate() {
-                    self.declaration_types.borrow_mut().insert(
-                        crate::checked::AnnotationSite::FunctionParam {
-                            module: stmt.module.clone(),
-                            declaration: stmt.span,
-                            syntax: stmt.syntax_id,
-                            param,
-                        },
-                        ty.clone(),
-                    );
-                }
-                self.declaration_types.borrow_mut().insert(
-                    crate::checked::AnnotationSite::FunctionReturn {
-                        module: stmt.module.clone(),
-                        declaration: stmt.span,
-                        syntax: stmt.syntax_id,
-                    },
-                    ret_ty.clone(),
-                );
-                // A default value must fit its parameter's type.
-                for (p, pty) in params.iter().zip(&param_tys) {
-                    if let Some(d) = &p.default {
-                        let dty = match self.infer(d) {
-                            Ok(t) => t,
-                            Err(e) => {
-                                self.tparams.pop();
-                                return Err(e);
-                            }
-                        };
-                        if !coerces(&dty, pty) {
-                            self.tparams.pop();
-                            return Err(TypeError::TypeMismatch {
-                                expected: pty.to_string(),
-                                found: dty.to_string(),
-                                context: format!("default value of '{}'", p.name),
-                            });
-                        }
-                    }
-                }
-
-                // Bind the function in the enclosing scope before checking its
-                // body, so it can call itself (recursion). A generic `def`
-                // becomes a `GenericFunc` (its call sites infer/supply parameters).
-                let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
-                let effect_raises = declared_error.as_ref().is_some_and(|ty| *ty != Ty::Never);
-                let parameter_closure = decorators
-                    .iter()
-                    .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "parameter");
-                let initial_environment = if parameter_closure {
-                    crate::origin::CallableEnvironment::Capturing(
-                        crate::origin::CaptureOriginSet::Infer,
-                    )
-                } else if self.function_bases.is_empty() {
-                    crate::origin::CallableEnvironment::Thin
-                } else {
-                    crate::origin::CallableEnvironment::Default
-                };
-                self.declaration_effects.borrow_mut().insert(
-                    crate::checked::AnnotationSite::FunctionReturn {
-                        module: stmt.module.clone(),
-                        declaration: stmt.span,
-                        syntax: stmt.syntax_id,
-                    },
-                    crate::checked::DeclarationEffect {
-                        raises: effect_raises,
-                        error: effect_raises.then(|| declared_error.clone()).flatten(),
-                        returns_reference: ref_return.is_some(),
-                    },
-                );
-                let fn_ty = if decls.is_empty() {
-                    let regular_tys: Vec<Ty> = params
-                        .iter()
-                        .zip(&param_tys)
-                        .filter(|(p, _)| {
-                            p.kind == crate::ast::ParamKind::Regular
-                                && !matches!(p.convention, Some(crate::ast::ArgConvention::Out))
-                        })
-                        .map(|(_, ty)| ty.clone())
-                        .collect();
-                    Ty::Func {
-                        environment: initial_environment.clone(),
-                        params: regular_tys,
-                        names: caller_regular.iter().map(|p| p.name.clone()).collect(),
-                        ret: Box::new(ret_ty.clone()),
-                        required,
-                        variadic: variadic_idx.map(|vi| Box::new(param_tys[vi].clone())),
-                        kw_variadic: kw_variadic_idx
-                            .map(|index| Box::new(param_tys[index].clone())),
-                        positional_only: pos_only,
-                        keyword_only: kw_only,
-                        raises: effect_raises,
-                        error: declared_error.clone().map(Box::new),
-                        conventions: caller_regular.iter().map(|p| p.convention).collect(),
-                        ref_params: Box::new(ref_params.clone()),
-                        ref_return: ref_return.clone().map(Box::new),
-                        transfers: Default::default(),
-                    }
-                } else {
-                    let regular_tys: Vec<Ty> = params
-                        .iter()
-                        .zip(&param_tys)
-                        .filter(|(p, _)| {
-                            p.kind == crate::ast::ParamKind::Regular
-                                && !matches!(p.convention, Some(crate::ast::ArgConvention::Out))
-                        })
-                        .map(|(_, ty)| ty.clone())
-                        .collect();
-                    Ty::GenericFunc {
-                        environment: initial_environment,
-                        decls: decls.clone(),
-                        params: regular_tys,
-                        names: caller_regular.iter().map(|p| p.name.clone()).collect(),
-                        ret: Box::new(ret_ty.clone()),
-                        required,
-                        variadic: variadic_idx.map(|vi| Box::new(param_tys[vi].clone())),
-                        kw_variadic: kw_variadic_idx
-                            .map(|index| Box::new(param_tys[index].clone())),
-                        positional_only: pos_only,
-                        keyword_only: kw_only,
-                        raises: effect_raises,
-                        error: declared_error.clone().map(Box::new),
-                        conventions: caller_regular.iter().map(|p| p.convention).collect(),
-                        ref_params: Box::new(ref_params.clone()),
-                        ref_return: ref_return.clone().map(Box::new),
-                        transfers: Default::default(),
-                    }
-                };
-                self.declaration_types.borrow_mut().insert(
-                    crate::checked::AnnotationSite::FunctionType {
-                        module: stmt.module.clone(),
-                        declaration: stmt.span,
-                        syntax: stmt.syntax_id,
-                    },
-                    fn_ty.clone(),
-                );
-                if let Err(e) = self.declare(name, fn_ty.clone()) {
-                    self.tparams.pop();
-                    return Err(e);
-                }
-                self.record_statement_binding(stmt, name);
-                self.register_callable_origins(
-                    name,
-                    callable_origin_signature(
-                        type_params,
-                        &caller_regular,
-                        erased_origin_constraints,
-                    ),
-                );
-                let capture_policy = if self.function_bases.is_empty() {
-                    if captures.is_some() {
-                        self.tparams.pop();
-                        return Err(TypeError::Unsupported(
-                            "unified capture lists are valid only on nested functions".to_string(),
-                        ));
-                    }
-                    None
-                } else {
-                    let mut entries = HashMap::new();
-                    let mut checked_captures = Vec::new();
-                    if let Some(captures) = captures {
-                        for capture in &captures.entries {
-                            if let Err(error) = self.check_capture_access(&capture.name, false) {
-                                self.tparams.pop();
-                                return Err(error);
-                            }
-                            let Some(scope) = self.binding_scope(&capture.name) else {
-                                self.tparams.pop();
-                                return Err(TypeError::UndefinedVariable(capture.name.clone()));
-                            };
-                            if scope == 0 {
-                                self.tparams.pop();
-                                return Err(TypeError::Unsupported(format!(
-                                    "module binding '{}' is not a closure capture",
-                                    capture.name
-                                )));
-                            }
-                            if capture.kind == crate::ast::CaptureKind::Mut
-                                && !self.is_binding_mutable(&capture.name)
-                            {
-                                self.tparams.pop();
-                                return Err(TypeError::ImmutableBinding(capture.name.clone()));
-                            }
-                            if let Err(error) =
-                                self.check_capture_capability(&capture.name, capture.kind)
-                            {
-                                self.tparams.pop();
-                                return Err(error);
-                            }
-                            let binding = self.lookup_owner(&capture.name).ok_or_else(|| {
-                                TypeError::InvariantViolation(format!(
-                                    "capture '{}' lost its checked binding",
-                                    capture.name
-                                ))
-                            })?;
-                            let ty = self.lookup(&capture.name).cloned().ok_or_else(|| {
-                                TypeError::InvariantViolation(format!(
-                                    "capture '{}' lost its checked storage type",
-                                    capture.name
-                                ))
-                            })?;
-                            checked_captures.push(self.checked_capture(
-                                &capture.name,
-                                binding,
-                                ty,
-                                capture.kind,
-                            ));
-                            entries.insert(capture.name.clone(), capture.kind);
-                        }
-                    }
-                    self.declaration_captures
-                        .borrow_mut()
-                        .insert(stmt.source_span(), checked_captures);
-                    Some(CapturePolicy {
-                        base: self.scopes.len(),
-                        function_name: name.clone(),
-                        declaration: stmt.source_span(),
-                        entries,
-                        default: captures
-                            .as_ref()
-                            .and_then(|list| list.default)
-                            .or_else(|| parameter_closure.then_some(crate::ast::CaptureKind::Read)),
-                    })
-                };
-                self.assumed_conformances.push(function_assumptions);
-                for (param, ty) in param_tys.iter().enumerate() {
-                    if self.is_deinitable(ty) {
-                        self.explicit_destroy_deletability
-                            .borrow_mut()
-                            .declarations
-                            .insert(crate::checked::AnnotationSite::FunctionParam {
-                                module: stmt.module.clone(),
-                                declaration: stmt.span,
-                                syntax: stmt.syntax_id,
-                                param,
-                            });
-                    }
-                }
-                self.push_scope();
-                self.function_bases.push(self.scopes.len() - 1);
-                if let Some(policy) = capture_policy {
-                    self.capture_contexts.borrow_mut().push(policy);
-                }
-                self.raising_context.push(declared_error);
-                let mut result = Ok(());
-                // Value parameters are ordinary `Int` locals in the body.
-                for d in &decls {
-                    if let ParamDecl::Value { name, ty, .. } = d {
-                        result = self.declare_immutable(
-                            name.trim_start_matches('*'),
-                            if matches!(d, ParamDecl::Value { variadic: true, .. }) {
-                                Ty::VariadicPack(ty.clone())
-                            } else {
-                                (**ty).clone()
-                            },
-                        );
-                        if result.is_err() {
-                            break;
-                        }
-                    }
-                }
-                if result.is_ok() {
-                    for (param, ty) in params.iter().zip(&param_tys) {
-                        // A `*args` parameter is compiler pack storage inside the
-                        // body; it must not impersonate the nominal stdlib List.
-                        let bind_ty = match param.kind {
-                            crate::ast::ParamKind::Variadic => match ty {
-                                Ty::RuntimePack(elements) => Ty::Tuple(elements.clone()),
-                                _ => Ty::VariadicPack(Box::new(ty.clone())),
-                            },
-                            crate::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
-                                ty.clone(),
-                                &format!("keyword collector '{}'", param.name),
-                            )?,
-                            crate::ast::ParamKind::Regular => ty.clone(),
-                        };
-                        // Duplicate parameter names are a redeclaration.
-                        result = self.declare_with_mutability(
-                            &param.name,
-                            bind_ty.clone(),
-                            param.kind == crate::ast::ParamKind::KwVariadic
-                                || matches!(param.convention, Some(crate::ast::ArgConvention::Out))
-                                || ref_parameter_is_writable(param, type_params),
-                        );
-                        if result.is_ok()
-                            && matches!(param.convention, Some(crate::ast::ArgConvention::Ref))
-                        {
-                            self.register_reference_parameter(
-                                &param.name,
-                                bind_ty.clone(),
-                                ref_parameter_is_writable(param, type_params),
-                            );
-                        }
-                        if result.is_ok()
-                            && !matches!(bind_ty, Ty::Ref(_))
-                            && self.type_carries_loans(&bind_ty)
-                            && let Some(owner) = self.lookup_owner(&param.name)
-                        {
-                            self.set_aggregate_origins(
-                                &param.name,
-                                vec![crate::origin::Origin::Place(crate::origin::OriginPlace {
-                                    root: owner,
-                                    path: Vec::new(),
-                                })],
-                            );
-                        }
-                        if result.is_err() {
-                            break;
-                        }
-                    }
-                }
-                // A function body is a fresh loop context: `break`/`continue`
-                // do not cross into a nested `def`.
-                if result.is_ok() {
-                    let owners: Vec<_> = caller_regular
-                        .iter()
-                        .map(|param| {
-                            self.lookup_owner(&param.name)
-                                .expect("bound function parameter")
-                        })
-                        .collect();
-                    let base = *self
-                        .function_bases
-                        .last()
-                        .expect("function scope is active");
-                    let mut allowed: std::collections::HashSet<_> =
-                        owners.iter().copied().collect();
-                    // Variadic collectors are parameters too (see the method
-                    // twin in declarations.rs).
-                    allowed.extend(
-                        params
-                            .iter()
-                            .filter(|param| param.kind != crate::ast::ParamKind::Regular)
-                            .filter_map(|param| self.lookup_owner(&param.name)),
-                    );
-                    // A nested def can reach the enclosing callable's outliving
-                    // storage (`self`, parameters) through captures; stores
-                    // into those owners face the same store-outward rule, with
-                    // this def's own frame deciding source locality.
-                    if let Some((_, enclosing)) = self.aggregate_escape_contexts.last() {
-                        allowed.extend(enclosing.iter().copied());
-                    }
-                    self.aggregate_escape_contexts.push((base, allowed));
-                    self.transfer_frames.borrow_mut().push(TransferFrame {
-                        callable: name.clone(),
-                        param_owners: owners.clone(),
-                        param_borrowed: caller_regular
-                            .iter()
-                            .map(|param| {
-                                matches!(
-                                    param.convention,
-                                    Some(
-                                        crate::ast::ArgConvention::Mut
-                                            | crate::ast::ArgConvention::Ref
-                                    )
-                                )
-                            })
-                            .collect(),
-                        self_owner: None,
-                        value_callables: decls
-                            .iter()
-                            .filter_map(|decl| match decl {
-                                ParamDecl::Value { name, ty, .. }
-                                    if matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }) =>
-                                {
-                                    Some(name.trim_start_matches('*').to_string())
-                                }
-                                _ => None,
-                            })
-                            .collect(),
-                        effects: Vec::new(),
-                        call_throughs: Vec::new(),
-                    });
-                    self.raise_observation_frames
-                        .borrow_mut()
-                        .push((self.handled_raise_depth, false));
-                    self.return_ref_contracts.push(
-                        ref_return
-                            .clone()
-                            .map(|signature| (signature, owners, None)),
-                    );
-                    self.named_result_context.push(named_result.is_some());
-                    result = self.check_block(body, Some(&ret_ty), false);
-                    self.named_result_context.pop();
-                    self.return_ref_contracts.pop();
-                    self.raise_observation_frames.borrow_mut().pop();
-                    if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
-                        if !frame.effects.is_empty() {
-                            self.transfer_effects
-                                .borrow_mut()
-                                .insert(frame.callable.clone(), frame.effects);
-                        }
-                        if !frame.call_throughs.is_empty() {
-                            self.call_through_effects
-                                .borrow_mut()
-                                .insert(frame.callable, frame.call_throughs);
-                        }
-                    }
-                    self.aggregate_escape_contexts.pop();
-                }
-                // A function with a non-`None` return type must return on every
-                // path (falling off the end would yield `None`).
-                if result.is_ok()
-                    && named_result.is_none()
-                    && ret_ty != Ty::None
-                    && !definitely_returns(body)
-                {
-                    result = Err(TypeError::MissingReturn(name.clone()));
-                }
-                if result.is_ok()
-                    && let Some(named_result) = named_result
-                    && !definitely_initializes_named_result(body, &named_result.name)
-                {
-                    result = Err(TypeError::MissingReturn(name.clone()));
-                }
-                if result.is_ok() {
-                    let captures = self
-                        .declaration_captures
-                        .borrow()
-                        .get(&stmt.source_span())
-                        .cloned()
-                        .unwrap_or_default();
-                    let concrete = crate::origin::CaptureOriginSet::concrete(
-                        captures
-                            .iter()
-                            .flat_map(|capture| capture.origins.iter().cloned()),
-                    );
-                    let environment = if parameter_closure || !captures.is_empty() {
-                        crate::origin::CallableEnvironment::Capturing(concrete)
-                    } else {
-                        crate::origin::CallableEnvironment::Thin
-                    };
-                    let finalized = with_callable_environment(fn_ty.clone(), environment);
-                    let function_scope = *self
-                        .function_bases
-                        .last()
-                        .expect("function scope remains active through finalization");
-                    if let Some(existing) = function_scope
-                        .checked_sub(1)
-                        .and_then(|scope| self.scopes.get_mut(scope))
-                        .and_then(|scope| scope.get_mut(name))
-                        && !matches!(existing, Ty::Overload(_))
-                    {
-                        *existing = finalized.clone();
-                    }
-                    self.declaration_types.borrow_mut().insert(
-                        crate::checked::AnnotationSite::FunctionType {
-                            module: stmt.module.clone(),
-                            declaration: stmt.span,
-                            syntax: stmt.syntax_id,
-                        },
-                        finalized,
-                    );
-                }
-                self.pop_scope();
-                self.function_bases.pop();
-                if !self.function_bases.is_empty() {
-                    self.capture_contexts.borrow_mut().pop();
-                }
-                self.raising_context.pop();
-                self.assumed_conformances.pop();
-                self.tparams.pop();
-                result
-            }
+            StmtKind::Def { .. } => self.check_def(stmt, false),
 
             StmtKind::Struct {
                 name,
@@ -2125,6 +1525,652 @@ impl Checker {
                 Ok(())
             }
         }
+    }
+
+    /// Check one function declaration: an ordinary (possibly nested) `def`
+    /// statement, or (`lambda = true`) the hidden definition synthesized for a
+    /// lambda expression. Lambda mode differs only where current Mojo differs:
+    /// an omitted capture list imm-captures free variables by default, an
+    /// explicit capture-all convention or a lambda-owned parameter list forces
+    /// a capturing environment, and the fixed-`None` omitted return type is
+    /// named in the body mismatch diagnostic.
+    pub(super) fn check_def(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
+        let StmtKind::Def {
+            name,
+            type_params,
+            params,
+            positional_only,
+            keyword_only,
+            captures,
+            ret: ret_anno,
+            body,
+            raises,
+            raises_type,
+            decorators,
+            where_clauses,
+        } = &stmt.kind
+        else {
+            return Err(TypeError::InvariantViolation(
+                "check_def requires a function declaration".to_string(),
+            ));
+        };
+        if lambda && self.function_bases.is_empty() {
+            return Err(TypeError::Unsupported(
+                "lambda expressions outside a function body".to_string(),
+            ));
+        }
+        // Parameter defaults are inferred without scoped pre-registration, so a
+        // lambda there has no declaration point.
+        for param in params.iter() {
+            if let Some(default) = &param.default {
+                let mut lambdas = Vec::new();
+                crate::ast::lambdas_in_expr(default, &mut lambdas);
+                if !lambdas.is_empty() {
+                    return Err(TypeError::Unsupported(
+                        "lambda expressions in parameter default values".to_string(),
+                    ));
+                }
+            }
+        }
+        if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
+            return Err(TypeError::ReservedName(name.clone()));
+        }
+        if self.structs.contains_key(name) {
+            return Err(TypeError::Redeclaration(name.clone()));
+        }
+        // Free functions, including generic functions, share one binder
+        // for regular, `*args`, and homogeneous `**kwargs` parameters.
+        if let Some(feature) = Self::advanced_param_feature(
+            params,
+            *positional_only,
+            *keyword_only,
+            false,
+            false,
+            false,
+        ) {
+            return Err(TypeError::Unsupported(feature.to_string()));
+        }
+        // A `*args` variadic is supported on non-generic functions; any
+        // regular parameters after it are keyword-only.
+        let variadic_idx = params
+            .iter()
+            .position(|p| p.kind == crate::ast::ParamKind::Variadic);
+        let kw_variadic_idx = params
+            .iter()
+            .position(|p| p.kind == crate::ast::ParamKind::KwVariadic);
+        // Regular (non-variadic) parameters, over which arity is computed.
+        let regular: Vec<&crate::ast::FnParam> = params
+            .iter()
+            .filter(|p| p.kind == crate::ast::ParamKind::Regular)
+            .collect();
+        let out_params: Vec<_> = regular
+            .iter()
+            .copied()
+            .filter(|p| matches!(p.convention, Some(crate::ast::ArgConvention::Out)))
+            .collect();
+        if out_params.len() > 1 {
+            return Err(TypeError::Unsupported(
+                "multiple named 'out' results".to_string(),
+            ));
+        }
+        let named_result = out_params.first().copied();
+        if named_result.is_some() && ret_anno.is_some() {
+            return Err(TypeError::Unsupported(
+                "a function cannot declare both a named result and '->' return type".to_string(),
+            ));
+        }
+        let caller_regular: Vec<_> = regular
+            .iter()
+            .copied()
+            .filter(|p| !matches!(p.convention, Some(crate::ast::ArgConvention::Out)))
+            .collect();
+        let pos_only = regular_marker_index(params, *positional_only);
+        let kw_only = effective_keyword_only_index(params, *keyword_only, variadic_idx);
+        let required = required_mask(&caller_regular, kw_only)?;
+        self.validate_origin_signature(type_params, params, None)?;
+        let mut decls = self.classify_params(type_params)?;
+        let mut function_assumptions = HashSet::new();
+        let mut erased_origin_constraints = Vec::new();
+        for condition in where_clauses {
+            let constraint = self.compile_where_clause(condition)?;
+            let mut facts = Vec::new();
+            guaranteed_conformance_atoms(&constraint, &mut facts);
+            function_assumptions.extend(facts.into_iter().map(|(parameter, trait_name)| {
+                (parameter.trim_start_matches('*').to_string(), trait_name)
+            }));
+            if let Some(last) = decls.last_mut() {
+                match last {
+                    ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                        constraints.push(constraint)
+                    }
+                }
+            } else if type_params.is_empty() {
+                self.validate_declaration_constraint(name, &constraint)?;
+            } else {
+                erased_origin_constraints.push(constraint);
+            }
+        }
+        self.generic_parameters.borrow_mut().insert(
+            crate::checked::GenericSite::Function {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            decls.clone(),
+        );
+        // Type parameters are in scope while resolving the signature and
+        // checking the body (as bare `T`).
+        self.tparams.push(type_scope(&decls));
+
+        let signature = (|| {
+            let param_tys = self.param_tys(params)?;
+            let ret_ty = match (ret_anno, named_result) {
+                (Some(SourceType::Ref { referent, .. }), _) => self.ty_from_anno(referent)?,
+                (Some(t), _) => self.ty_from_anno(t)?,
+                (None, Some(result)) => self.ty_from_anno(&result.ty)?,
+                (None, None) => Ty::None,
+            };
+            Ok::<_, TypeError>((param_tys, ret_ty))
+        })();
+        let (param_tys, ret_ty) = match signature {
+            Ok(sig) => sig,
+            Err(e) => {
+                self.tparams.pop();
+                return Err(e);
+            }
+        };
+        let ref_params = lower_ref_param_sigs(type_params, &caller_regular)?;
+        let ref_return = match ret_anno {
+            Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
+                origin.as_ref().ok_or_else(|| {
+                    TypeError::Unsupported("reference return requires an origin".to_string())
+                })?,
+                type_params,
+                &regular,
+            )?),
+            _ => None,
+        };
+        for (param, ty) in param_tys.iter().enumerate() {
+            self.declaration_types.borrow_mut().insert(
+                crate::checked::AnnotationSite::FunctionParam {
+                    module: stmt.module.clone(),
+                    declaration: stmt.span,
+                    syntax: stmt.syntax_id,
+                    param,
+                },
+                ty.clone(),
+            );
+        }
+        self.declaration_types.borrow_mut().insert(
+            crate::checked::AnnotationSite::FunctionReturn {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            ret_ty.clone(),
+        );
+        // A default value must fit its parameter's type.
+        for (p, pty) in params.iter().zip(&param_tys) {
+            if let Some(d) = &p.default {
+                let dty = match self.infer(d) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        self.tparams.pop();
+                        return Err(e);
+                    }
+                };
+                if !coerces(&dty, pty) {
+                    self.tparams.pop();
+                    return Err(TypeError::TypeMismatch {
+                        expected: pty.to_string(),
+                        found: dty.to_string(),
+                        context: format!("default value of '{}'", p.name),
+                    });
+                }
+            }
+        }
+
+        // Bind the function in the enclosing scope before checking its
+        // body, so it can call itself (recursion). A generic `def`
+        // becomes a `GenericFunc` (its call sites infer/supply parameters).
+        let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
+        let effect_raises = declared_error.as_ref().is_some_and(|ty| *ty != Ty::Never);
+        let parameter_closure = decorators
+            .iter()
+            .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "parameter");
+        let initial_environment = if parameter_closure {
+            crate::origin::CallableEnvironment::Capturing(crate::origin::CaptureOriginSet::Infer)
+        } else if self.function_bases.is_empty() {
+            crate::origin::CallableEnvironment::Thin
+        } else {
+            crate::origin::CallableEnvironment::Default
+        };
+        self.declaration_effects.borrow_mut().insert(
+            crate::checked::AnnotationSite::FunctionReturn {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            crate::checked::DeclarationEffect {
+                raises: effect_raises,
+                error: effect_raises.then(|| declared_error.clone()).flatten(),
+                returns_reference: ref_return.is_some(),
+            },
+        );
+        let fn_ty = if decls.is_empty() {
+            let regular_tys: Vec<Ty> = params
+                .iter()
+                .zip(&param_tys)
+                .filter(|(p, _)| {
+                    p.kind == crate::ast::ParamKind::Regular
+                        && !matches!(p.convention, Some(crate::ast::ArgConvention::Out))
+                })
+                .map(|(_, ty)| ty.clone())
+                .collect();
+            Ty::Func {
+                environment: initial_environment.clone(),
+                params: regular_tys,
+                names: caller_regular.iter().map(|p| p.name.clone()).collect(),
+                ret: Box::new(ret_ty.clone()),
+                required,
+                variadic: variadic_idx.map(|vi| Box::new(param_tys[vi].clone())),
+                kw_variadic: kw_variadic_idx.map(|index| Box::new(param_tys[index].clone())),
+                positional_only: pos_only,
+                keyword_only: kw_only,
+                raises: effect_raises,
+                error: declared_error.clone().map(Box::new),
+                conventions: caller_regular.iter().map(|p| p.convention).collect(),
+                ref_params: Box::new(ref_params.clone()),
+                ref_return: ref_return.clone().map(Box::new),
+                transfers: Default::default(),
+            }
+        } else {
+            let regular_tys: Vec<Ty> = params
+                .iter()
+                .zip(&param_tys)
+                .filter(|(p, _)| {
+                    p.kind == crate::ast::ParamKind::Regular
+                        && !matches!(p.convention, Some(crate::ast::ArgConvention::Out))
+                })
+                .map(|(_, ty)| ty.clone())
+                .collect();
+            Ty::GenericFunc {
+                environment: initial_environment,
+                decls: decls.clone(),
+                params: regular_tys,
+                names: caller_regular.iter().map(|p| p.name.clone()).collect(),
+                ret: Box::new(ret_ty.clone()),
+                required,
+                variadic: variadic_idx.map(|vi| Box::new(param_tys[vi].clone())),
+                kw_variadic: kw_variadic_idx.map(|index| Box::new(param_tys[index].clone())),
+                positional_only: pos_only,
+                keyword_only: kw_only,
+                raises: effect_raises,
+                error: declared_error.clone().map(Box::new),
+                conventions: caller_regular.iter().map(|p| p.convention).collect(),
+                ref_params: Box::new(ref_params.clone()),
+                ref_return: ref_return.clone().map(Box::new),
+                transfers: Default::default(),
+            }
+        };
+        self.declaration_types.borrow_mut().insert(
+            crate::checked::AnnotationSite::FunctionType {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+            },
+            fn_ty.clone(),
+        );
+        if let Err(e) = self.declare(name, fn_ty.clone()) {
+            self.tparams.pop();
+            return Err(e);
+        }
+        self.record_statement_binding(stmt, name);
+        self.register_callable_origins(
+            name,
+            callable_origin_signature(type_params, &caller_regular, erased_origin_constraints),
+        );
+        let capture_policy = if self.function_bases.is_empty() {
+            if captures.is_some() {
+                self.tparams.pop();
+                return Err(TypeError::Unsupported(
+                    "unified capture lists are valid only on nested functions".to_string(),
+                ));
+            }
+            None
+        } else {
+            let mut entries = HashMap::new();
+            let mut checked_captures = Vec::new();
+            if let Some(captures) = captures {
+                for capture in &captures.entries {
+                    if let Err(error) = self.check_capture_access(&capture.name, false) {
+                        self.tparams.pop();
+                        return Err(error);
+                    }
+                    let Some(scope) = self.binding_scope(&capture.name) else {
+                        self.tparams.pop();
+                        return Err(TypeError::UndefinedVariable(capture.name.clone()));
+                    };
+                    if scope == 0 {
+                        self.tparams.pop();
+                        return Err(TypeError::Unsupported(format!(
+                            "module binding '{}' is not a closure capture",
+                            capture.name
+                        )));
+                    }
+                    if capture.kind == crate::ast::CaptureKind::Mut
+                        && !self.is_binding_mutable(&capture.name)
+                    {
+                        self.tparams.pop();
+                        return Err(TypeError::ImmutableBinding(capture.name.clone()));
+                    }
+                    if let Err(error) = self.check_capture_capability(&capture.name, capture.kind) {
+                        self.tparams.pop();
+                        return Err(error);
+                    }
+                    let binding = self.lookup_owner(&capture.name).ok_or_else(|| {
+                        TypeError::InvariantViolation(format!(
+                            "capture '{}' lost its checked binding",
+                            capture.name
+                        ))
+                    })?;
+                    let ty = self.lookup(&capture.name).cloned().ok_or_else(|| {
+                        TypeError::InvariantViolation(format!(
+                            "capture '{}' lost its checked storage type",
+                            capture.name
+                        ))
+                    })?;
+                    checked_captures.push(self.checked_capture(
+                        &capture.name,
+                        binding,
+                        ty,
+                        capture.kind,
+                    ));
+                    entries.insert(capture.name.clone(), capture.kind);
+                }
+            }
+            self.declaration_captures
+                .borrow_mut()
+                .insert(stmt.source_span(), checked_captures);
+            Some(CapturePolicy {
+                base: self.scopes.len(),
+                function_name: name.clone(),
+                declaration: stmt.source_span(),
+                entries,
+                // A lambda with the capture list omitted entirely imm-captures
+                // its free variables, exactly like a `@parameter` closure; an
+                // explicit `{}` keeps the no-default policy and rejects them.
+                default: captures.as_ref().and_then(|list| list.default).or_else(|| {
+                    (parameter_closure || (lambda && captures.is_none()))
+                        .then_some(crate::ast::CaptureKind::Read)
+                }),
+                lambda,
+            })
+        };
+        self.assumed_conformances.push(function_assumptions);
+        for (param, ty) in param_tys.iter().enumerate() {
+            if self.is_deinitable(ty) {
+                self.explicit_destroy_deletability
+                    .borrow_mut()
+                    .declarations
+                    .insert(crate::checked::AnnotationSite::FunctionParam {
+                        module: stmt.module.clone(),
+                        declaration: stmt.span,
+                        syntax: stmt.syntax_id,
+                        param,
+                    });
+            }
+        }
+        self.push_scope();
+        self.function_bases.push(self.scopes.len() - 1);
+        if let Some(policy) = capture_policy {
+            self.capture_contexts.borrow_mut().push(policy);
+        }
+        self.raising_context.push(declared_error);
+        let mut result = Ok(());
+        // Value parameters are ordinary `Int` locals in the body.
+        for d in &decls {
+            if let ParamDecl::Value { name, ty, .. } = d {
+                result = self.declare_immutable(
+                    name.trim_start_matches('*'),
+                    if matches!(d, ParamDecl::Value { variadic: true, .. }) {
+                        Ty::VariadicPack(ty.clone())
+                    } else {
+                        (**ty).clone()
+                    },
+                );
+                if result.is_err() {
+                    break;
+                }
+            }
+        }
+        if result.is_ok() {
+            for (param, ty) in params.iter().zip(&param_tys) {
+                // A `*args` parameter is compiler pack storage inside the
+                // body; it must not impersonate the nominal stdlib List.
+                let bind_ty = match param.kind {
+                    crate::ast::ParamKind::Variadic => match ty {
+                        Ty::RuntimePack(elements) => Ty::Tuple(elements.clone()),
+                        _ => Ty::VariadicPack(Box::new(ty.clone())),
+                    },
+                    crate::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
+                        ty.clone(),
+                        &format!("keyword collector '{}'", param.name),
+                    )?,
+                    crate::ast::ParamKind::Regular => ty.clone(),
+                };
+                // Duplicate parameter names are a redeclaration.
+                result = self.declare_with_mutability(
+                    &param.name,
+                    bind_ty.clone(),
+                    param.kind == crate::ast::ParamKind::KwVariadic
+                        || matches!(param.convention, Some(crate::ast::ArgConvention::Out))
+                        || ref_parameter_is_writable(param, type_params),
+                );
+                if result.is_ok()
+                    && matches!(param.convention, Some(crate::ast::ArgConvention::Ref))
+                {
+                    self.register_reference_parameter(
+                        &param.name,
+                        bind_ty.clone(),
+                        ref_parameter_is_writable(param, type_params),
+                    );
+                }
+                if result.is_ok()
+                    && !matches!(bind_ty, Ty::Ref(_))
+                    && self.type_carries_loans(&bind_ty)
+                    && let Some(owner) = self.lookup_owner(&param.name)
+                {
+                    self.set_aggregate_origins(
+                        &param.name,
+                        vec![crate::origin::Origin::Place(crate::origin::OriginPlace {
+                            root: owner,
+                            path: Vec::new(),
+                        })],
+                    );
+                }
+                if result.is_err() {
+                    break;
+                }
+            }
+        }
+        // A function body is a fresh loop context: `break`/`continue`
+        // do not cross into a nested `def`.
+        if result.is_ok() {
+            let owners: Vec<_> = caller_regular
+                .iter()
+                .map(|param| {
+                    self.lookup_owner(&param.name)
+                        .expect("bound function parameter")
+                })
+                .collect();
+            let base = *self
+                .function_bases
+                .last()
+                .expect("function scope is active");
+            let mut allowed: std::collections::HashSet<_> = owners.iter().copied().collect();
+            // Variadic collectors are parameters too (see the method
+            // twin in declarations.rs).
+            allowed.extend(
+                params
+                    .iter()
+                    .filter(|param| param.kind != crate::ast::ParamKind::Regular)
+                    .filter_map(|param| self.lookup_owner(&param.name)),
+            );
+            // A nested def can reach the enclosing callable's outliving
+            // storage (`self`, parameters) through captures; stores
+            // into those owners face the same store-outward rule, with
+            // this def's own frame deciding source locality.
+            if let Some((_, enclosing)) = self.aggregate_escape_contexts.last() {
+                allowed.extend(enclosing.iter().copied());
+            }
+            self.aggregate_escape_contexts.push((base, allowed));
+            self.transfer_frames.borrow_mut().push(TransferFrame {
+                callable: name.clone(),
+                param_owners: owners.clone(),
+                param_borrowed: caller_regular
+                    .iter()
+                    .map(|param| {
+                        matches!(
+                            param.convention,
+                            Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
+                        )
+                    })
+                    .collect(),
+                self_owner: None,
+                value_callables: decls
+                    .iter()
+                    .filter_map(|decl| match decl {
+                        ParamDecl::Value { name, ty, .. }
+                            if matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }) =>
+                        {
+                            Some(name.trim_start_matches('*').to_string())
+                        }
+                        _ => None,
+                    })
+                    .collect(),
+                effects: Vec::new(),
+                call_throughs: Vec::new(),
+            });
+            self.raise_observation_frames
+                .borrow_mut()
+                .push((self.handled_raise_depth, false));
+            self.return_ref_contracts.push(
+                ref_return
+                    .clone()
+                    .map(|signature| (signature, owners, None)),
+            );
+            self.named_result_context.push(named_result.is_some());
+            result = self.check_block(body, Some(&ret_ty), false);
+            self.named_result_context.pop();
+            self.return_ref_contracts.pop();
+            self.raise_observation_frames.borrow_mut().pop();
+            if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
+                if !frame.effects.is_empty() {
+                    self.transfer_effects
+                        .borrow_mut()
+                        .insert(frame.callable.clone(), frame.effects);
+                }
+                if !frame.call_throughs.is_empty() {
+                    self.call_through_effects
+                        .borrow_mut()
+                        .insert(frame.callable, frame.call_throughs);
+                }
+            }
+            self.aggregate_escape_contexts.pop();
+        }
+        // A function with a non-`None` return type must return on every
+        // path (falling off the end would yield `None`).
+        if result.is_ok()
+            && named_result.is_none()
+            && ret_ty != Ty::None
+            && !definitely_returns(body)
+        {
+            result = Err(TypeError::MissingReturn(name.clone()));
+        }
+        if result.is_ok()
+            && let Some(named_result) = named_result
+            && !definitely_initializes_named_result(body, &named_result.name)
+        {
+            result = Err(TypeError::MissingReturn(name.clone()));
+        }
+        // A lambda is thin only when it captures nothing, writes no explicit
+        // capture-all convention, and owns no parameter list; `{imm}` with
+        // zero actual captures is still a closure, while an omitted list
+        // (whose imm default lives only in the policy) and an explicit `{}`
+        // both stay thin when nothing was captured.
+        let lambda_forces_closure = lambda
+            && (captures.as_ref().is_some_and(|list| list.default.is_some())
+                || !type_params.is_empty());
+        if result.is_ok() {
+            let captures = self
+                .declaration_captures
+                .borrow()
+                .get(&stmt.source_span())
+                .cloned()
+                .unwrap_or_default();
+            let concrete = crate::origin::CaptureOriginSet::concrete(
+                captures
+                    .iter()
+                    .flat_map(|capture| capture.origins.iter().cloned()),
+            );
+            let environment = if parameter_closure || lambda_forces_closure || !captures.is_empty()
+            {
+                crate::origin::CallableEnvironment::Capturing(concrete)
+            } else {
+                crate::origin::CallableEnvironment::Thin
+            };
+            let finalized = with_callable_environment(fn_ty.clone(), environment);
+            let function_scope = *self
+                .function_bases
+                .last()
+                .expect("function scope remains active through finalization");
+            if let Some(existing) = function_scope
+                .checked_sub(1)
+                .and_then(|scope| self.scopes.get_mut(scope))
+                .and_then(|scope| scope.get_mut(name))
+                && !matches!(existing, Ty::Overload(_))
+            {
+                *existing = finalized.clone();
+            }
+            self.declaration_types.borrow_mut().insert(
+                crate::checked::AnnotationSite::FunctionType {
+                    module: stmt.module.clone(),
+                    declaration: stmt.span,
+                    syntax: stmt.syntax_id,
+                },
+                finalized,
+            );
+        }
+        // Name the fixed-`None` rule when a lambda without `-> T` returns a
+        // value, instead of the bare return mismatch.
+        if lambda
+            && ret_anno.is_none()
+            && let Err(TypeError::TypeMismatch {
+                expected,
+                found,
+                context,
+            }) = &result
+            && context == "return"
+            && expected == "None"
+        {
+            result = Err(TypeError::TypeMismatch {
+                expected: expected.clone(),
+                found: found.clone(),
+                context: "the lambda body (an omitted lambda return type is fixed to 'None', \
+                          never inferred)"
+                    .to_string(),
+            });
+        }
+        self.pop_scope();
+        self.function_bases.pop();
+        if !self.function_bases.is_empty() {
+            self.capture_contexts.borrow_mut().pop();
+        }
+        self.raising_context.pop();
+        self.assumed_conformances.pop();
+        self.tparams.pop();
+        result
     }
 
     /// Resolve a parameter/field list to its types.

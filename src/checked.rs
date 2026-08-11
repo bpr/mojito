@@ -1196,8 +1196,16 @@ fn build_checked_expressions(
                         }
                     }
                 }
+                // A lambda expression is a leaf here: its hidden definition's
+                // body belongs to that definition's own checked declaration,
+                // not to the enclosing expression tree.
                 Int(_) | Float(_) | Bool(_) | Str(_) | None | Uninitialized | Identifier(_)
                 | TypeValue(_) => {}
+                // A lambda expression node has no expression children of its
+                // own, but its hidden definition's body must be built exactly
+                // like a nested `def` statement's body so the body's checked
+                // facts become checked nodes.
+                Lambda { def } => self.block(std::slice::from_ref(def)),
                 TypeApply { args, .. } => {
                     for argument in args {
                         match argument {
@@ -1543,6 +1551,54 @@ fn build_checked_declarations(
         use crate::ast::StmtKind;
         let mut ids = Vec::new();
         for statement in statements {
+            // Lambda expressions in this statement's own expressions declare
+            // hidden nested functions in this block's scope.
+            let mut lambda_nodes = Vec::new();
+            crate::ast::lambdas_in_stmt(statement, &mut lambda_nodes);
+            for lambda in lambda_nodes {
+                let crate::ast::ExprKind::Lambda { def } = &lambda.kind else {
+                    continue;
+                };
+                let StmtKind::Def {
+                    name,
+                    body: def_body,
+                    ..
+                } = &def.kind
+                else {
+                    continue;
+                };
+                let id = CheckedDeclId(out.len() as u32);
+                let location = def.source_span();
+                out.push(CheckedDeclaration {
+                    id,
+                    kind: CheckedDeclKind::Function,
+                    name: name.clone(),
+                    binding: statement_bindings.get(&location).copied(),
+                    captures: declaration_captures
+                        .get(&location)
+                        .cloned()
+                        .unwrap_or_default(),
+                    location,
+                    ty: annotation_types
+                        .get(&AnnotationSite::FunctionType {
+                            module: def.module.clone(),
+                            declaration: def.span,
+                            syntax: def.syntax_id,
+                        })
+                        .cloned(),
+                    children: Vec::new(),
+                });
+                let children = block(
+                    def_body,
+                    out,
+                    annotation_types,
+                    statement_bindings,
+                    declaration_captures,
+                    binding_types,
+                );
+                out[id.0 as usize].children = children;
+                ids.push(id);
+            }
             let (kind, name) = match &statement.kind {
                 StmtKind::Def { name, .. } => (CheckedDeclKind::Function, name.clone()),
                 StmtKind::Struct { name, .. } => (CheckedDeclKind::Struct, name.clone()),

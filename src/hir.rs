@@ -742,6 +742,10 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
             rename_expr(then_branch, resolve);
             rename_expr(else_branch, resolve);
         }
+        // A lambda's hidden definition is its own function: its body is never
+        // renamed with the enclosing frame (captures resolve by owner
+        // identity, not spelling).
+        ExprKind::Lambda { .. } => {}
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)

@@ -98,12 +98,6 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **Lambda expressions (nightly §2)** — one explicit AST/HIR node lowered
-  through the existing nested-definition, capture, callable-contract,
-  specialization, and indirect-call machinery; omitted capture list
-  imm-captures (thin when no free variables), omitted return type is fixed
-  `None`, never inferred. A source-porting prerequisite for the library work
-  below.
 - [ ] **`Array[T, length]` and list-expression retarget (nightly §3)** — in
   order:
   1. Nominal fixed-size `Array` with conditional

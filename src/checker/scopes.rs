@@ -221,6 +221,12 @@ impl Checker {
                 (Some(_), true) | (Some(crate::ast::CaptureKind::Mut), false) => {
                     return Err(TypeError::ImmutableBinding(name.to_string()));
                 }
+                (None, _) if policy.lambda => {
+                    return Err(TypeError::Unsupported(format!(
+                        "could not infer capture convention for '{name}': the lambda's \
+                         explicit '{{}}' capture list captures nothing"
+                    )));
+                }
                 (None, _) => {
                     return Err(TypeError::Unsupported(format!(
                         "nested function must explicitly capture '{name}' with {{...}}"

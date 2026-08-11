@@ -2500,6 +2500,68 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         ))
     }
 
+    /// Parse a lambda expression after its consumed `lambda` keyword:
+    /// `lambda [params] [(args)] [effects] [{captures}] [-> T]: expr`.
+    /// Synthesizes the hidden nested definition documented on
+    /// [`ExprKind::Lambda`]: an unspellable `$lambda$<start>` name and a
+    /// one-statement `return <expr>` body, so an omitted `-> T` pins the
+    /// fixed `None` return and the body coercion is the ordinary return check.
+    fn parse_lambda(&mut self, start: usize) -> Result<Expr, ParseError> {
+        let type_params = self.parse_type_params()?;
+        let mut params = Vec::new();
+        let mut positional_only = None;
+        let mut keyword_only = None;
+        if matches!(self.peek_token()?, Some(Token::LParen)) {
+            self.next_token()?; // consume '('
+            let list = self.parse_params()?;
+            params = list.params;
+            positional_only = list.positional_only;
+            keyword_only = list.keyword_only;
+            self.expect(Token::RParen, "Expected ')' after lambda arguments")?;
+        } else if matches!(
+            self.peek_token()?,
+            Some(Token::Identifier(word)) if !matches!(word.as_str(), "capturing" | "thin" | "abi")
+        ) {
+            return Err(ParseError::UnexpectedToken(
+                self.next_token()?,
+                "lambda arguments must be parenthesized and typed, e.g. 'lambda (x: Int) ...'"
+                    .to_string(),
+            ));
+        }
+        let (raises, raises_type) = self.parse_callable_effects()?;
+        let captures = self.parse_capture_list()?;
+        let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
+            self.next_token()?; // consume '->'
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(Token::Colon, "Expected ':' before the lambda body")?;
+        // The body is one expression above walrus level: a trailing ternary is
+        // part of the body, while `:=`, `,`, and statement structure are not.
+        let body = self.parse_expression(Precedence::Walrus)?;
+        let body_span = body.span;
+        let return_stmt = Stmt::new(StmtKind::Return(Some(body)), body_span);
+        let def = Stmt::new(
+            StmtKind::Def {
+                name: format!("$lambda${start}"),
+                decorators: Vec::new(),
+                type_params,
+                params,
+                positional_only,
+                keyword_only,
+                captures,
+                raises,
+                raises_type,
+                ret,
+                where_clauses: Vec::new(),
+                body: vec![return_stmt],
+            },
+            (start, self.last_span.1),
+        );
+        Ok(self.node(ExprKind::Lambda { def: Box::new(def) }, start))
+    }
+
     fn parse_prefix(&mut self) -> Result<Expr, ParseError> {
         let start = self.peek_start();
         let token = self.next_token()?;
@@ -2517,6 +2579,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let ty = self.parse_function_type_tail()?;
                 Ok(self.node(ExprKind::TypeValue(ty), start))
             }
+            Token::Lambda => self.parse_lambda(start),
             Token::Minus => {
                 let operand = self.parse_expression(Precedence::Unary)?;
                 Ok(self.node(ExprKind::Prefix(PrefixOp::Neg, Box::new(operand)), start))

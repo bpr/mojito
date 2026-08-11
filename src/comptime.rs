@@ -716,6 +716,9 @@ fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<String>) {
                 }
             }
         }
+        // A lambda's hidden definition is not CTFE-evaluated in place; its
+        // body's calls are not comptime-needed here.
+        ExprKind::Lambda { .. } => {}
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)

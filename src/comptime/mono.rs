@@ -907,6 +907,9 @@ impl<'a> Elab<'a> {
                 self.mono_expr(then_branch, consts, mono)?;
                 self.mono_expr(else_branch, consts, mono)
             }
+            // A lambda's hidden definition monomorphizes like the equivalent
+            // nested `def` statement (signature plus body in its own scope).
+            ExprKind::Lambda { def } => self.mono_stmt(def, consts, mono),
         }
     }
 

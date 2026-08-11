@@ -179,9 +179,54 @@ impl Checker {
         result
     }
 
+    /// Check a lambda expression's hidden definition through the nested-def
+    /// pipeline and cache the finalized function-value type (and binding)
+    /// under the expression's span, mirroring the comprehension pattern:
+    /// declaration needs `&mut self`, so it runs during statement-root
+    /// registration, and `infer_impl` reads the cache.
+    pub(super) fn check_lambda(&mut self, expression: &Expr) -> Result<(), TypeError> {
+        let ExprKind::Lambda { def } = &expression.kind else {
+            return Ok(());
+        };
+        let span = expression.source_span();
+        if self.expression_types.borrow().contains_key(&span) {
+            return Ok(());
+        }
+        self.check_def(def, true)?;
+        let ty = self
+            .declaration_types
+            .borrow()
+            .get(&crate::checked::AnnotationSite::FunctionType {
+                module: def.module.clone(),
+                declaration: def.span,
+                syntax: def.syntax_id,
+            })
+            .cloned()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "lambda definition lost its finalized function type".to_string(),
+                )
+            })?;
+        if let Some(owner) = self
+            .statement_bindings
+            .borrow()
+            .get(&def.source_span())
+            .copied()
+        {
+            self.expression_bindings
+                .borrow_mut()
+                .insert(span.clone(), owner);
+        }
+        self.expression_types.borrow_mut().insert(span, ty);
+        Ok(())
+    }
+
     pub(super) fn register_named_bindings(&mut self, expression: &Expr) -> Result<(), TypeError> {
         if matches!(expression.kind, ExprKind::Comprehension { .. }) {
             return self.check_comprehension(expression);
+        }
+        if matches!(expression.kind, ExprKind::Lambda { .. }) {
+            return self.check_lambda(expression);
         }
         if let ExprKind::Named { name, value } = &expression.kind {
             self.register_named_bindings(value)?;
@@ -728,6 +773,16 @@ impl Checker {
             ExprKind::TypeValue(_) => Err(TypeError::Unsupported(
                 "function types as compile-time values".to_string(),
             )),
+            ExprKind::Lambda { .. } => self
+                .expression_types
+                .borrow()
+                .get(&expr.source_span())
+                .cloned()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation(
+                        "lambda reached inference before scoped checking".to_string(),
+                    )
+                }),
             ExprKind::Spread(_) => Err(TypeError::Unsupported(
                 "call spread outside a specialized type pack".to_string(),
             )),

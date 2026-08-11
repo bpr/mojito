@@ -116,6 +116,16 @@ pub(super) fn lower_fn_nested(
 /// declaration's body. Recursive lifting calls this once per lexical scope.
 fn find_nested_defs<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
     for s in body {
+        // Lambda expressions anywhere in this statement's own expressions
+        // (conditions, iterables, values, arguments) declare hidden nested
+        // definitions in this scope.
+        let mut lambdas = Vec::new();
+        crate::ast::lambdas_in_stmt(s, &mut lambdas);
+        for lambda in lambdas {
+            if let crate::ast::ExprKind::Lambda { def } = &lambda.kind {
+                out.push(def);
+            }
+        }
         match &s.kind {
             StmtKind::Def { .. } => out.push(s),
             StmtKind::If { branches, orelse } => {

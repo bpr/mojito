@@ -227,6 +227,11 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
             rewrite_expr(then_branch, subs);
             rewrite_expr(else_branch, subs);
         }
+        // Always substitute into a lambda's hidden definition (its own
+        // argument and type-parameter names shadow): an enclosing comptime
+        // binding is substituted, never captured, so it must materialize in
+        // the lambda body even in walks that skip named nested `def`s.
+        ExprKind::Lambda { def } => rewrite_stmt(def, subs, true),
     }
 }
 
@@ -1091,6 +1096,10 @@ impl PackRewriter {
                     }
                 }
             }
+            // A lambda's hidden definition expands like the equivalent nested
+            // `def` statement (binding registration plus body expansion in its
+            // own shadowed scope).
+            ExprKind::Lambda { def } => self.expand_statement(def),
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
@@ -1970,6 +1979,9 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
             retype_expr(then_branch, subs);
             retype_expr(else_branch, subs);
         }
+        // A lambda's hidden definition retypes like the equivalent nested
+        // `def` statement (signature and body, minus its shadowed names).
+        ExprKind::Lambda { def } => retype_stmt(def, subs),
     }
 }
 

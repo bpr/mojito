@@ -978,6 +978,17 @@ pub enum ExprKind {
         value: Box<Expr>,
         clauses: Vec<ComprehensionClause>,
     },
+    /// A lambda expression `lambda [params] [(args)] [effects] [{captures}]
+    /// [-> T]: expr`. The parser synthesizes the contained statement, which is
+    /// always a `StmtKind::Def` with an unspellable hidden name
+    /// (`$lambda$<start-offset>`), body `[Return(Some(<the body expression>))]`,
+    /// and `captures` exactly as written (`None` ⇔ the list was omitted, which
+    /// for a lambda means free variables imm-capture by default). The
+    /// expression's value is that definition's function value, materialized at
+    /// the expression's evaluation point.
+    Lambda {
+        def: Box<Stmt>,
+    },
     /// A tuple literal `(a, b, …)` — a fixed-size, heterogeneous `Tuple`. `()` is
     /// the empty tuple and `(a,)` a 1-tuple; a plain `(e)` is grouping, not a tuple.
     TupleLit(Vec<Expr>),
@@ -1155,6 +1166,224 @@ impl InfixOp {
     }
 }
 
+/// Collect the lambda expression nodes in `expr`, outermost first. The walk
+/// does **not** descend into a collected lambda's own body — inner lambdas
+/// belong to the inner definition's scope and are found when that body is
+/// processed. Type positions are not walked: a lambda is a runtime expression.
+pub(crate) fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+    match &expr.kind {
+        ExprKind::Lambda { .. } => out.push(expr),
+        ExprKind::Prefix(_, value)
+        | ExprKind::Transfer(value)
+        | ExprKind::Spread(value)
+        | ExprKind::Named { value, .. } => lambdas_in_expr(value, out),
+        ExprKind::Infix(_, left, right)
+        | ExprKind::Index {
+            object: left,
+            index: right,
+        } => {
+            lambdas_in_expr(left, out);
+            lambdas_in_expr(right, out);
+        }
+        ExprKind::Call {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } => {
+            lambdas_in_param_args(param_args, out);
+            for arg in args {
+                lambdas_in_expr(arg, out);
+            }
+            for arg in kwargs {
+                lambdas_in_expr(&arg.value, out);
+            }
+        }
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            lambdas_in_expr(callee, out);
+            lambdas_in_param_args(param_args, out);
+            for arg in args {
+                lambdas_in_expr(arg, out);
+            }
+            for arg in kwargs {
+                lambdas_in_expr(&arg.value, out);
+            }
+        }
+        ExprKind::Member { object, .. } => lambdas_in_expr(object, out),
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } => {
+            lambdas_in_expr(object, out);
+            for arg in args {
+                lambdas_in_expr(arg, out);
+            }
+            for arg in kwargs {
+                lambdas_in_expr(&arg.value, out);
+            }
+        }
+        ExprKind::TypeApply { args, .. } => lambdas_in_param_args(args, out),
+        ExprKind::ListLit(items) | ExprKind::TupleLit(items) => {
+            for item in items {
+                lambdas_in_expr(item, out);
+            }
+        }
+        ExprKind::BraceLit(entries) => {
+            for (key, value) in entries {
+                lambdas_in_expr(key, out);
+                if let Some(value) = value {
+                    lambdas_in_expr(value, out);
+                }
+            }
+        }
+        ExprKind::Comprehension {
+            key,
+            value,
+            clauses,
+            ..
+        } => {
+            for clause in clauses {
+                match clause {
+                    ComprehensionClause::For { iter, .. } => lambdas_in_expr(iter, out),
+                    ComprehensionClause::If(cond) => lambdas_in_expr(cond, out),
+                }
+            }
+            if let Some(key) = key {
+                lambdas_in_expr(key, out);
+            }
+            lambdas_in_expr(value, out);
+        }
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            lambdas_in_expr(cond, out);
+            lambdas_in_expr(then_branch, out);
+            lambdas_in_expr(else_branch, out);
+        }
+        ExprKind::Compare { first, rest } => {
+            lambdas_in_expr(first, out);
+            for (_, value) in rest {
+                lambdas_in_expr(value, out);
+            }
+        }
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => {
+            lambdas_in_expr(object, out);
+            for value in [lower, upper, step].into_iter().flatten() {
+                lambdas_in_expr(value, out);
+            }
+        }
+        ExprKind::MultiIndex { object, args } => {
+            lambdas_in_expr(object, out);
+            for argument in args {
+                match argument {
+                    SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
+                        lambdas_in_expr(value, out)
+                    }
+                    SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    } => {
+                        for value in [lower, upper, step].into_iter().flatten() {
+                            lambdas_in_expr(value, out);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::TString { parts, .. } => {
+            for part in parts {
+                if let TStringPart::Expr(value) = part {
+                    lambdas_in_expr(value, out);
+                }
+            }
+        }
+        ExprKind::TypeValue(_)
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::None
+        | ExprKind::Uninitialized
+        | ExprKind::Identifier(_) => {}
+    }
+}
+
+/// Collect the lambda expression nodes in `stmt`'s **own** expressions,
+/// outermost first. Deliberately shallow: nested statement bodies are not
+/// walked, because every caller already recurses over blocks and a lambda in
+/// an inner statement belongs to that statement's visit.
+pub(crate) fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
+    match &stmt.kind {
+        StmtKind::VarDecl { value, .. }
+        | StmtKind::RefDecl { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::Comptime { value, .. }
+        | StmtKind::Return(Some(value))
+        | StmtKind::Raise(value)
+        | StmtKind::Expr(value) => lambdas_in_expr(value, out),
+        StmtKind::AugAssign { place, value, .. } | StmtKind::SetPlace { place, value } => {
+            lambdas_in_expr(place, out);
+            lambdas_in_expr(value, out);
+        }
+        StmtKind::Unpack { targets, value, .. } => {
+            for target in targets {
+                lambdas_in_expr(target, out);
+            }
+            lambdas_in_expr(value, out);
+        }
+        StmtKind::If { branches, .. } | StmtKind::ComptimeIf { branches, .. } => {
+            for (cond, _) in branches {
+                lambdas_in_expr(cond, out);
+            }
+        }
+        StmtKind::While { cond, .. } => lambdas_in_expr(cond, out),
+        StmtKind::For { iter, .. } | StmtKind::ComptimeFor { iter, .. } => {
+            lambdas_in_expr(iter, out)
+        }
+        StmtKind::With { items, .. } => {
+            for item in items {
+                lambdas_in_expr(&item.context, out);
+            }
+        }
+        StmtKind::Def { .. }
+        | StmtKind::Struct { .. }
+        | StmtKind::Trait { .. }
+        | StmtKind::Try { .. }
+        | StmtKind::Return(None)
+        | StmtKind::Import { .. }
+        | StmtKind::FromImport { .. }
+        | StmtKind::Pass
+        | StmtKind::Break
+        | StmtKind::Continue => {}
+    }
+}
+
+fn lambdas_in_param_args<'a>(args: &'a [ParamArg], out: &mut Vec<&'a Expr>) {
+    for arg in args {
+        match arg {
+            ParamArg::Type(_) => {}
+            ParamArg::Value(value) => lambdas_in_expr(value, out),
+            ParamArg::Named { value, .. } => {
+                lambdas_in_param_args(std::slice::from_ref(value.as_ref()), out)
+            }
+        }
+    }
+}
+
 /// Ensure a unique identity for every statement and expression occurrence in a
 /// final syntax tree. This must run after cloning transformations (trait-default
 /// expansion and compile-time specialization) and before semantic facts are
@@ -1165,6 +1394,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
     struct Rekey {
         next: u64,
         used: std::collections::HashSet<crate::token::SyntaxId>,
+        lambda_names: std::collections::HashSet<String>,
     }
 
     impl Rekey {
@@ -1330,6 +1560,26 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     }
                 }
                 ExprKind::TypeValue(ty) => self.ty(ty),
+                ExprKind::Lambda { def } => {
+                    def.syntax_id = self.id(def.syntax_id);
+                    // Cloning transformations (compile-time unrolling and
+                    // specialization) duplicate a lambda's hidden definition
+                    // name; the name is compiler-internal, so uniquify clones
+                    // here alongside their syntax identities.
+                    if let StmtKind::Def { name, .. } = &mut def.kind
+                        && !self.lambda_names.insert(name.clone())
+                    {
+                        loop {
+                            let unique = format!("{name}${}", self.next);
+                            self.next += 1;
+                            if self.lambda_names.insert(unique.clone()) {
+                                *name = unique;
+                                break;
+                            }
+                        }
+                    }
+                    self.statement(&mut def.kind);
+                }
                 ExprKind::Int(_)
                 | ExprKind::Float(_)
                 | ExprKind::Bool(_)
@@ -1672,6 +1922,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
     Rekey {
         next: 1,
         used: std::collections::HashSet::new(),
+        lambda_names: std::collections::HashSet::new(),
     }
     .block(statements);
 }
@@ -1831,6 +2082,10 @@ fn stamp_expr(expr: &mut Expr, source: &str) {
             }
         }
         ExprKind::TypeValue(ty) => stamp_type(ty, source),
+        ExprKind::Lambda { def } => {
+            def.module = Some(source.to_string());
+            stamp_stmt_kind(&mut def.kind, source);
+        }
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)

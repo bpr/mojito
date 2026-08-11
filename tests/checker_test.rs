@@ -5188,3 +5188,113 @@ fn function_typed_keyword_variadics_keep_their_collector_role() {
         "def count(var **options: Int) -> Int:\n    return 2\n\ndef main():\n    var callback: def(var **options: Int) thin -> Int = count\n    var result = callback(first=1, second=2)\n",
     );
 }
+
+// --- Lambda expressions ---
+
+#[test]
+fn accepts_thin_lambda_bindings_and_calls() {
+    // `{}` and an omitted list with no free variables are both thin.
+    ok(
+        "def main():\n    var f: def(x: Int) -> Int = lambda (x: Int) {} -> Int: x * 2\n    var r: Int = f(21)\n",
+    );
+    ok(
+        "def main():\n    var f: def(x: Int) -> Int = lambda (x: Int) -> Int: x + 1\n    var r: Int = f(1)\n",
+    );
+    ok("def main():\n    var f: def() -> Int = lambda -> Int: 42\n    var r: Int = f()\n");
+    ok("def main():\n    var f: def() = lambda: None\n    f()\n");
+}
+
+#[test]
+fn lambda_with_explicit_capture_all_is_a_closure_even_without_captures() {
+    // `{imm}` is an explicit capture convention: the lambda is a closure and
+    // cannot bind to an unqualified `def(...)` contract.
+    let error = err(
+        "def main():\n    var f: def(x: Int) -> Int = lambda (x: Int) {imm} -> Int: x + 1\n    var r: Int = f(1)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::TypeMismatch { found, .. } if found.contains("capturing")),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn lambda_omitted_capture_list_imm_captures_free_variables() {
+    // The free variable makes the lambda capturing; the imm capture is
+    // implicit, so a `capturing[...]` contract accepts it...
+    ok(
+        "def apply(f: def(x: Int) capturing[_] -> Int, v: Int) -> Int:\n    return f(v)\n\ndef main():\n    var z = 10\n    var r: Int = apply(lambda (x: Int) -> Int: x + z, 5)\n",
+    );
+    // ...and a thin contract rejects it.
+    let error = err(
+        "def main():\n    var z = 10\n    var f: def(x: Int) -> Int = lambda (x: Int) -> Int: x + z\n    var r: Int = f(5)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::TypeMismatch { found, .. } if found.contains("capturing")),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn lambda_omitted_return_type_is_fixed_none() {
+    let error = err("def main():\n    var f: def() = lambda: 1 + 1\n    f()\n");
+    assert!(
+        matches!(
+            &error,
+            TypeError::TypeMismatch { expected, context, .. }
+                if expected == "None" && context.contains("fixed to 'None'")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn lambda_empty_capture_list_rejects_free_variables() {
+    let error = err(
+        "def main():\n    var z = 10\n    var f: def(x: Int) -> Int = lambda (x: Int) {} -> Int: x + z\n    var r: Int = f(5)\n",
+    );
+    assert!(
+        matches!(
+            &error,
+            TypeError::Unsupported(msg)
+                if msg.contains("could not infer capture convention for 'z'")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn lambda_mut_capture_requires_a_mutable_binding() {
+    // A function parameter is immutable; `{mut seed}` must reject.
+    let error = err("def run(seed: Int) -> Int:\n    return (lambda {mut seed} -> Int: seed)()\n");
+    assert!(
+        matches!(&error, TypeError::ImmutableBinding(name) if name == "seed"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn lambda_in_a_parameter_default_is_rejected_contextually() {
+    let error = err(
+        "def hof(f: def() -> Int = lambda -> Int: 1) -> Int:\n    return f()\n\ndef main():\n    var r: Int = hof()\n",
+    );
+    assert!(
+        matches!(
+            &error,
+            TypeError::Unsupported(msg) if msg.contains("parameter default")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn generic_lambda_is_a_closure() {
+    // A lambda-owned parameter list forces the capturing environment, so a
+    // thin `def(...)` contract rejects it.
+    let error = err(
+        "def main():\n    var f: def(x: Int) -> Int = lambda [N: Int](x: Int) {} -> Int: x + N\n    var r: Int = f(1)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::TypeMismatch { found, .. } if found.contains("capturing")),
+        "unexpected error: {error:?}"
+    );
+}

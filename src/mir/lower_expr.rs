@@ -1408,10 +1408,28 @@ impl Flatten<'_> {
                     self.emit_nested_closure_argument_keepalives(args, kwargs);
                     return dest;
                 }
-                let callee_place = self.callable_receiver_place(callee);
+                let mut callee_place = self.callable_receiver_place(callee);
                 let callable_ty = self.checked_ty(callee);
+                let lambda_callee = matches!(callee.kind, ExprKind::Lambda { .. });
                 let callee = self.expr(callee);
                 let callable_ty = callable_ty.or_else(|| self.f.reg_types.get(&callee.0).cloned());
+                if lambda_callee && callee_place.is_none() {
+                    // An immediately invoked lambda's closure is a temporary;
+                    // bind it to a synthetic slot so owned capture slots are
+                    // called from stable storage like a declaration-owned
+                    // closure.
+                    let slot = self.fresh_var();
+                    if let Some(ty) = &callable_ty {
+                        self.var_types.insert(slot, ty.clone());
+                    }
+                    self.emit(MirInstr::DefVar {
+                        var: slot,
+                        src: callee,
+                        binding_ty: callable_ty.clone(),
+                    });
+                    let place = MirPlace::root(slot, callable_ty.clone());
+                    callee_place = place.is_typed().then_some(place);
+                }
                 let param_arg_regs = self.param_arg_regs(param_args);
                 let param_decls = callable_ty
                     .as_ref()
@@ -2287,6 +2305,23 @@ impl Flatten<'_> {
                         .expect("checked callable TypeApply has a lowered target"),
                 ),
             ),
+            // A lambda expression materializes its hidden definition's
+            // closure at the expression's evaluation point — copy/move
+            // captures snapshot here, once per evaluation.
+            ExprKind::Lambda { .. } => match self.nested_info(e) {
+                Some(info) => self.emit_nested_closure(&info, span(e), false),
+                None => {
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::Unsupported(
+                        "lambda expression lost its checked nested declaration".to_string(),
+                    ));
+                    self.emit(MirInstr::Const {
+                        dest,
+                        k: Const::None,
+                    });
+                    dest
+                }
+            },
             ExprKind::TypeValue(_) | ExprKind::TypeApply { .. } => {
                 let dest = self.fresh(span(e), None);
                 self.emit(MirInstr::Unsupported(format!(
@@ -2449,7 +2484,9 @@ impl Flatten<'_> {
                 ExprKind::Named { value, .. } => value.as_ref(),
                 _ => expression,
             };
-            let ExprKind::Identifier(_) = &expression.kind else {
+            // A closure argument is either a binding naming a nested def or a
+            // lambda expression materialized in place.
+            let (ExprKind::Identifier(_) | ExprKind::Lambda { .. }) = &expression.kind else {
                 continue;
             };
             let Some(info) = self.nested_info(expression) else {
