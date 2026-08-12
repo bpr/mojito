@@ -103,6 +103,20 @@ impl Checker {
             }
             ExprKind::Index { object, index } => {
                 let obj_ty = self.check_place(object)?;
+                // The empty-subscript store `p[] = v` writes the pointee at
+                // offset 0; the provenance must carry mutable capability.
+                if matches!(index.kind, ExprKind::EmptySubscript) {
+                    return match &obj_ty {
+                        Ty::Pointer { element, origin } => {
+                            self.check_pointer_write(origin)?;
+                            Ok((**element).clone())
+                        }
+                        other => Err(TypeError::Unsupported(format!(
+                            "an empty subscript ('value[]') is the pointer dereference; \
+                             '{other}' is not a pointer"
+                        ))),
+                    };
+                }
                 self.prepare_index_argument(&obj_ty, index, "__setitem__", 0)?;
                 if let Ty::Struct(name, _) = &obj_ty
                     && !self.structs.contains_key(name)
@@ -785,6 +799,30 @@ impl Checker {
         arguments: &[SubscriptArg],
     ) -> Result<Ty, TypeError> {
         let object_type = self.infer(object)?;
+        // `ptr[unsafe_offset=i]` is current Mojo's keyword spelling of the
+        // indexed dereference (the positional `ptr[i]` is its deprecated
+        // form). It is the only keyword subscript a pointer has.
+        if let Ty::Pointer { element, origin } = &object_type {
+            if let [SubscriptArg::Keyword { name, value }] = arguments
+                && name == "unsafe_offset"
+            {
+                self.check_pointer_offset(origin, value)?;
+                let index = self.infer(value)?;
+                if !self.is_index_type(&index) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "Indexer".to_string(),
+                        found: index.to_string(),
+                        context: "index".to_string(),
+                    });
+                }
+                return Ok((**element).clone());
+            }
+            return Err(TypeError::Unsupported(
+                "a Pointer keyword subscript is spelled exactly \
+                 'pointer[unsafe_offset=i]'"
+                    .to_string(),
+            ));
+        }
         if !matches!(object_type, Ty::Struct(..) | Ty::Param { .. }) {
             return Err(TypeError::NotIndexable(object_type.to_string()));
         }
@@ -1003,6 +1041,18 @@ impl Checker {
             Ty::Ref(reference) => (*reference.referent).clone(),
             other => other,
         };
+        // The empty subscript `p[]` dereferences a pointer at offset 0 (always
+        // in provenance, so no offset check); any other receiver rejects here
+        // rather than dispatching an accessor with the marker as its argument.
+        if matches!(index.kind, ExprKind::EmptySubscript) {
+            return match &obj_ty {
+                Ty::Pointer { element, .. } => Ok((**element).clone()),
+                other => Err(TypeError::Unsupported(format!(
+                    "an empty subscript ('value[]') is the pointer dereference; \
+                     '{other}' is not a pointer"
+                ))),
+            };
+        }
         self.prepare_index_argument(&obj_ty, index, "__getitem__", 0)?;
         // A generated Tuple declaration may occur later than the generic body
         // currently being checked (the bundled List slice overload is one such
@@ -1351,35 +1401,27 @@ impl Checker {
         match self.eval_ct(index) {
             Ok(value) if value.is_zero() => Ok(()),
             _ => Err(TypeError::Unsupported(
-                "an origin-bearing UnsafePointer designates a single value; only \
+                "an origin-bearing Pointer designates a single value; only \
                  offset 0 can be dereferenced"
                     .to_string(),
             )),
         }
     }
 
-    /// Reject a write through an origin-bearing pointer whose provenance does
-    /// not carry mutable capability. A symbolic parameter mutability is
+    /// Reject a write through a pointer whose provenance does not carry
+    /// statically known mutable capability. A symbolic parameter mutability is
     /// writable: storage coercion only admits mutable places into fields whose
     /// declared mutability is not explicitly immutable.
     pub(super) fn check_pointer_write(
         &self,
         origin: &crate::origin::PointerOrigin,
     ) -> Result<(), TypeError> {
-        let writable = match origin {
-            crate::origin::PointerOrigin::Place { mutable, .. } => *mutable,
-            crate::origin::PointerOrigin::Param { mutability, .. } => {
-                *mutability != crate::origin::Mutability::Immutable
-            }
-            _ => return Ok(()),
-        };
-        if writable {
-            Ok(())
-        } else {
-            Err(TypeError::Unsupported(
-                "cannot write through an UnsafePointer with an immutable origin".to_string(),
-            ))
+        if origin.statically_mutable() == Some(false) {
+            return Err(TypeError::Unsupported(
+                "cannot write through a Pointer with an immutable origin".to_string(),
+            ));
         }
+        Ok(())
     }
 
     /// Whether a value can be normalized to the VM's index representation.

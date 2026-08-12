@@ -1,0 +1,7 @@
+# Test binaries run each test on a spawned thread whose default 2 MiB stack
+# sits close to the checker/lowering recursion depth for programs that link
+# the full bundled prelude (which grew with std.memory). The CLI's 8 MiB main
+# thread never hits this. Give Rust-spawned threads the same headroom instead
+# of letting stdlib growth abort borderline tests.
+[env]
+RUST_MIN_STACK = "16777216"

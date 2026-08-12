@@ -1,5 +1,7 @@
+from std.memory import unsafe_alloc
+
 def main():
-    var base = UnsafePointer[Int].alloc_aligned(4, 16)
+    var base = unsafe_alloc[Int](4, alignment=16)
     base[0] = 10
     base[1] = 20
     var next = base + 1

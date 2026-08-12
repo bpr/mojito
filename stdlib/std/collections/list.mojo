@@ -1,7 +1,10 @@
 # A self-hosted growable List.  Heap slots in `[0, size)` are initialized;
-# slots in `[size, cap)` are not.  `UnsafePointer.take(index)` moves an
-# initialized slot out and `destroy(index)` destroys one in place.  Both are
-# compiler-private unsafe operations used only by the bundled core library.
+# slots in `[size, cap)` are not.  `unsafe_offset(i).unsafe_take_pointee()`
+# moves an initialized slot out and `unsafe_offset(i).unsafe_deinit_pointee()`
+# destroys one in place — the public raw-pointer vocabulary over storage this
+# List owns.
+
+from std.memory import unsafe_alloc
 
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
@@ -50,22 +53,22 @@ struct _ListOwnedIter[T: Movable](
     def __next__(mut self) raises StopIteration -> Self.T:
         if self.index >= self.size:
             raise StopIteration()
-        var result = self.data.take(self.index)
+        var result = self.data.unsafe_offset(self.index).unsafe_take_pointee()
         self.index += 1
         return result^
 
     def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
         var i = self.index
         while i < self.size:
-            self.data.destroy(i)
+            self.data.unsafe_offset(i).unsafe_deinit_pointee()
             i += 1
-        self.data.free()
+        self.data.unsafe_free()
 
     def _finish(deinit self):
         # Named destructor for the linear-element instantiation, which has no
         # `__deinit__`: the compiler calls it on the loop's exhaustion edge, when
         # every element has been moved out, so only the buffer remains.
-        self.data.free()
+        self.data.unsafe_free()
 
 struct List[T: Movable](
     Copyable where conforms_to(T, Copyable),
@@ -88,19 +91,19 @@ struct List[T: Movable](
     def __init__(out self):
         self.cap = 4
         self.size = 0
-        self.data = UnsafePointer[Self.T].alloc(self.cap)
+        self.data = unsafe_alloc[Self.T](self.cap)
 
     def __init__(out self, var *values: Self.T, __list_literal__: NoneType):
         self.cap = 4
         self.size = 0
-        self.data = UnsafePointer[Self.T].alloc(self.cap)
+        self.data = unsafe_alloc[Self.T](self.cap)
         for var value in values^:
             self.append(value^)
 
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self.cap = copy.cap
         self.size = copy.size
-        self.data = UnsafePointer[Self.T].alloc(copy.cap)
+        self.data = unsafe_alloc[Self.T](copy.cap)
         var i = 0
         while i < copy.size:
             self.data[i] = copy.data[i]
@@ -117,18 +120,18 @@ struct List[T: Movable](
     def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
         var i = 0
         while i < self.size:
-            self.data.destroy(i)
+            self.data.unsafe_offset(i).unsafe_deinit_pointee()
             i += 1
-        self.data.free()
+        self.data.unsafe_free()
 
     def grow(mut self):
         var new_cap = self.cap * 2
-        var new_data = UnsafePointer[Self.T].alloc(new_cap)
+        var new_data = unsafe_alloc[Self.T](new_cap)
         var i = 0
         while i < self.size:
-            new_data[i] = self.data.take(i)
+            new_data[i] = self.data.unsafe_offset(i).unsafe_take_pointee()
             i += 1
-        self.data.free()
+        self.data.unsafe_free()
         self.data = new_data
         self.cap = new_cap
 
@@ -143,7 +146,7 @@ struct List[T: Movable](
             self.grow()
         var i = self.size
         while i > index:
-            self.data[i] = self.data.take(i - 1)
+            self.data[i] = self.data.unsafe_offset(i - 1).unsafe_take_pointee()
             i -= 1
         self.data[index] = value^
         self.size += 1
@@ -185,7 +188,7 @@ struct List[T: Movable](
     def __setitem__(mut self, index: Int, var value: Self.T) where conforms_to(
         Self.T, Deinitable
     ):
-        self.data.destroy(index)
+        self.data.unsafe_offset(index).unsafe_deinit_pointee()
         self.data[index] = value^
 
     def __contains__(self, value: Self.T) -> Bool where conforms_to(
@@ -212,10 +215,10 @@ struct List[T: Movable](
         return self.pop(self.size - 1)^
 
     def pop(mut self, index: Int) -> Self.T:
-        var result = self.data.take(index)
+        var result = self.data.unsafe_offset(index).unsafe_take_pointee()
         var i = index
         while i + 1 < self.size:
-            self.data[i] = self.data.take(i + 1)
+            self.data[i] = self.data.unsafe_offset(i + 1).unsafe_take_pointee()
             i += 1
         self.size -= 1
         return result^
@@ -223,7 +226,7 @@ struct List[T: Movable](
     def clear(mut self) where conforms_to(Self.T, Deinitable):
         var i = 0
         while i < self.size:
-            self.data.destroy(i)
+            self.data.unsafe_offset(i).unsafe_deinit_pointee()
             i += 1
         self.size = 0
 
@@ -231,8 +234,8 @@ struct List[T: Movable](
         var left = 0
         var right = self.size - 1
         while left < right:
-            var left_value = self.data.take(left)
-            var right_value = self.data.take(right)
+            var left_value = self.data.unsafe_offset(left).unsafe_take_pointee()
+            var right_value = self.data.unsafe_offset(right).unsafe_take_pointee()
             self.data[left] = right_value^
             self.data[right] = left_value^
             left += 1
@@ -269,7 +272,7 @@ struct List[T: Movable](
 
     def __iter__(var self) -> _ListOwnedIter[Self.T]:
         var result = _ListOwnedIter[Self.T](self.data, self.size)
-        self.data = UnsafePointer[Self.T].alloc(0)
+        self.data = unsafe_alloc[Self.T](0)
         self.size = 0
         self.cap = 0
         return result^

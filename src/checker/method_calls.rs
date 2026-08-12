@@ -30,7 +30,7 @@ impl Checker {
         // the object (which would reject a bare `TypeApply`).
         if let ExprKind::TypeApply { name, args: targs } = &object.kind {
             reject_kwargs(kwargs)?;
-            return self.infer_static_method(name, targs, method, args);
+            return self.infer_static_method(name, targs, method, args, object.source.as_deref());
         }
         if let ExprKind::Identifier(sname) = &object.kind
             && let Some(info) = self.structs.get(sname)
@@ -383,16 +383,15 @@ impl Checker {
             reject_kwargs(kwargs)?;
             return self.infer_tuple_method(&span, object, method, elements, call);
         }
-        // Built-in `UnsafePointer` methods. Raw storage take/destroy are
-        // checker-gated compiler-private operations; ordinary user code only
-        // sees the public pointer surface.
+        // Built-in `Pointer` methods: the public unsafe_* operation
+        // vocabulary. `unsafe_write(copy=v)` is the one keyword shape; every
+        // other pointer method rejects kwargs inside.
         if let Ty::Pointer {
             element: elem,
             origin,
         } = &obj_ty
         {
-            reject_kwargs(kwargs)?;
-            return self.infer_pointer_method(&span, object, method, elem, origin, args);
+            return self.infer_pointer_method(&span, method, elem, origin, args, kwargs);
         }
         // Resolve the method to a concrete signature (params + return + whether
         // it mutates `self`) for this receiver, substituting the receiver's type
@@ -1606,23 +1605,39 @@ impl Checker {
     }
 
     /// Type a static method on a parameterized built-in type. Currently only
-    /// `UnsafePointer[T].alloc(count: Int) -> UnsafePointer[T]`.
+    /// the compiler-private heap primitive
+    /// `UnsafePointer[T].alloc(count: Int) -> UnsafePointer[T]` (plus
+    /// `alloc_aligned` and `dangling`), reachable only from bundled
+    /// standard-library sources — the audited Mojo head rejects the static
+    /// allocation spelling, so user code allocates through `std.memory`.
     pub(super) fn infer_static_method(
         &self,
         tyname: &str,
         targs: &[crate::ast::ParamArg],
         method: &str,
         args: &[Expr],
+        source: Option<&str>,
     ) -> Result<Ty, TypeError> {
-        if tyname != "UnsafePointer" {
+        if !matches!(tyname, "UnsafePointer" | "Pointer") {
             return Err(TypeError::NoSuchMethod {
                 object_type: format!("{tyname}[…]"),
                 method: method.to_string(),
             });
         }
-        let ptr_ty = self.pointer_type(targs)?;
+        let ptr_ty = self.pointer_type(tyname, targs)?;
         match method {
             "alloc" | "alloc_aligned" => {
+                // Sourceless expressions come from the stage-composed test
+                // seam, which retains the primitive; every linked user file
+                // carries its path and must allocate through std.memory.
+                if source.is_some() && !is_bundled_stdlib_source(source) {
+                    return Err(TypeError::Unsupported(format!(
+                        "static UnsafePointer allocation was removed from Mojo; \
+                         allocate with 'alloc(Layout[T](count=n))' from std.memory \
+                         (or 'unsafe_alloc[T](n)' for a raw pointer) instead of \
+                         'UnsafePointer[T].{method}'"
+                    )));
+                }
                 let expected = if method == "alloc" { 1 } else { 2 };
                 if args.len() != expected {
                     return Err(TypeError::ArityMismatch {
@@ -1643,7 +1658,7 @@ impl Checker {
                 }
                 Ok(ptr_ty)
             }
-            "dangling" => {
+            "unsafe_dangling" => {
                 if !args.is_empty() {
                     return Err(TypeError::ArityMismatch {
                         name: method.to_string(),
@@ -1653,6 +1668,10 @@ impl Checker {
                 }
                 Ok(ptr_ty)
             }
+            // The pre-rename spelling is gone upstream and stays gone here.
+            "dangling" => Err(TypeError::Unsupported(
+                "'dangling()' was renamed in Mojo; use 'Pointer[T].unsafe_dangling()'".to_string(),
+            )),
             _ => Err(TypeError::NoSuchMethod {
                 object_type: ptr_ty.to_string(),
                 method: method.to_string(),
@@ -1660,69 +1679,115 @@ impl Checker {
         }
     }
 
-    /// Type an `UnsafePointer[T]` instance method. `take` and `destroy` are raw
-    /// initialized-slot operations reserved for the bundled self-hosted
-    /// collections; indexed load/store remain ordinary public pointer syntax.
+    /// Type a `Pointer[T]` instance method: the public `unsafe_*` operation
+    /// vocabulary (offset, write, take/deinit pointee, free) plus the
+    /// deprecated `free()` bridge. Indexed load/store remain ordinary public
+    /// pointer subscript syntax.
     pub(super) fn infer_pointer_method(
         &self,
         span: &SourceSpan,
-        object: &Expr,
         method: &str,
         elem: &Ty,
         origin: &crate::origin::PointerOrigin,
         args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        // `unsafe_write` accepts the keyword `copy=` overload; every other
+        // pointer method is positional-only.
+        if !kwargs.is_empty() && method != "unsafe_write" {
+            reject_kwargs(kwargs)?;
+        }
         match method {
-            "free" => {
+            "unsafe_offset" => {
                 if origin.as_origin().is_some() {
                     return Err(TypeError::Unsupported(
-                        "free() is not supported on an origin-bearing UnsafePointer; \
-                         it does not own an allocation"
+                        "pointer arithmetic and comparison are not supported on an \
+                         origin-bearing Pointer"
                             .to_string(),
                     ));
                 }
-                if !args.is_empty() {
-                    return Err(TypeError::ArityMismatch {
-                        name: "free".to_string(),
-                        expected: 0,
-                        got: args.len(),
-                    });
-                }
-                Ok(Ty::None)
-            }
-            "take" | "destroy" => {
-                if !is_bundled_collection_source(object.source.as_deref()) {
-                    return Err(TypeError::NoSuchMethod {
-                        object_type: Ty::Pointer {
-                            element: Box::new(elem.clone()),
-                            origin: origin.clone(),
-                        }
-                        .to_string(),
-                        method: method.to_string(),
-                    });
-                }
-                if !matches!(origin, crate::origin::PointerOrigin::Legacy) {
-                    return Err(TypeError::Unsupported(format!(
-                        "{method}() is supported only on an allocation-owning \
-                         UnsafePointer without an explicit origin"
-                    )));
-                }
                 if args.len() != 1 {
                     return Err(TypeError::ArityMismatch {
-                        name: method.to_string(),
+                        name: "unsafe_offset".to_string(),
                         expected: 1,
                         got: args.len(),
                     });
                 }
-                let index = self.infer(&args[0])?;
-                if !coerces(&index, &Ty::Int) {
+                let offset = self.infer(&args[0])?;
+                if !coerces(&offset, &Ty::Int) {
                     return Err(TypeError::TypeMismatch {
                         expected: "Int".to_string(),
-                        found: index.to_string(),
-                        context: format!("argument to compiler-private UnsafePointer.{method}"),
+                        found: offset.to_string(),
+                        context: "argument to 'Pointer.unsafe_offset'".to_string(),
                     });
                 }
-                if method == "destroy" && !self.is_deinitable(elem) {
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    crate::checked::SemanticAdjustment::PointerOffset,
+                );
+                Ok(Ty::Pointer {
+                    element: Box::new(elem.clone()),
+                    origin: origin.clone(),
+                })
+            }
+            "unsafe_write" => {
+                self.check_pointer_write(origin)?;
+                let (value, copy) = match (args, kwargs) {
+                    ([value], []) => (value, false),
+                    ([], [keyword]) if keyword.name == "copy" => (&keyword.value, true),
+                    _ => {
+                        return Err(TypeError::BadCall {
+                            func: "Pointer.unsafe_write".to_string(),
+                            reason: "expected one positional value or a single 'copy=' \
+                                     keyword argument"
+                                .to_string(),
+                        });
+                    }
+                };
+                if copy && !self.is_copyable(elem) {
+                    return Err(TypeError::TraitNotSatisfied {
+                        param: "T".to_string(),
+                        ty: elem.to_string(),
+                        trait_name: "Copyable".to_string(),
+                        reason: self.trait_failure_reason(elem, "Copyable"),
+                    });
+                }
+                let vty = self.infer(value)?;
+                if !coerces(&vty, elem) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: elem.to_string(),
+                        found: vty.to_string(),
+                        context: "value written through 'Pointer.unsafe_write'".to_string(),
+                    });
+                }
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    crate::checked::SemanticAdjustment::PointerWrite {
+                        element: elem.clone(),
+                        copy,
+                    },
+                );
+                Ok(Ty::None)
+            }
+            "unsafe_take_pointee" | "unsafe_deinit_pointee" => {
+                if !matches!(
+                    origin,
+                    crate::origin::PointerOrigin::Untracked { mutable: true }
+                ) {
+                    return Err(TypeError::Unsupported(format!(
+                        "{method}() requires an allocation-owning Pointer with a \
+                         mutable untracked origin; an origin-bearing Pointer's \
+                         pointee is owned by its checked storage"
+                    )));
+                }
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: method.to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                if method == "unsafe_deinit_pointee" && !self.is_deinitable(elem) {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
                         ty: elem.to_string(),
@@ -1730,7 +1795,7 @@ impl Checker {
                         reason: self.trait_failure_reason(elem, "Deinitable"),
                     });
                 }
-                let adjustment = if method == "take" {
+                let adjustment = if method == "unsafe_take_pointee" {
                     crate::checked::SemanticAdjustment::PointerStorageTake {
                         element: elem.clone(),
                     }
@@ -1742,11 +1807,27 @@ impl Checker {
                 self.operation_adjustments
                     .borrow_mut()
                     .insert(span.clone(), adjustment);
-                Ok(if method == "take" {
+                Ok(if method == "unsafe_take_pointee" {
                     elem.clone()
                 } else {
                     Ty::None
                 })
+            }
+            "free" | "unsafe_free" => {
+                if origin.as_origin().is_some() {
+                    return Err(TypeError::Unsupported(format!(
+                        "{method}() is not supported on an origin-bearing Pointer; \
+                         it does not own an allocation"
+                    )));
+                }
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: method.to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                Ok(Ty::None)
             }
             _ => Err(TypeError::NoSuchMethod {
                 object_type: Ty::Pointer {

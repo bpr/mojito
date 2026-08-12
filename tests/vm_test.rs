@@ -1076,17 +1076,70 @@ fn slice_bounds_construct_nominal_optional_values() {
 fn unsafe_pointer_alloc_load_store_alias() {
     // `UnsafePointer[T].alloc`/`ptr[i]` load+store, `ptr[i] += e`, and aliasing (a
     // copied pointer shares storage), running over the VM heap arena.
-    let src = "def main():\n    var p: UnsafePointer[Int] = UnsafePointer[Int].alloc(3)\n    p[0] = 10\n    p[1] = 20\n    p[1] += 5\n    var q: UnsafePointer[Int] = p\n    q[0] = 99\n    print(p[0], p[1])\n";
+    let src = "from std.memory import unsafe_alloc\n\ndef main():\n    var p: UnsafePointer[Int] = unsafe_alloc[Int](3)\n    p[0] = 10\n    p[1] = 20\n    p[1] += 5\n    var q: UnsafePointer[Int] = p\n    q[0] = 99\n    print(p[0], p[1])\n";
     assert_eq!(parity(src), "99 25\n");
+}
+
+#[test]
+fn empty_subscript_reads_and_writes_the_pointee() {
+    // `p[]` is offset-0 load/store on a heap pointer, and the direct pointee
+    // access on a place-origin pointer (writes reach the owner).
+    let src = "from std.memory import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    p[] = 41\n    p[] += 1\n    print(p[])\n    var x = 5\n    var q = Pointer(to=x)\n    q[] += 1\n    print(q[])\n    print(x)\n";
+    assert_eq!(parity(src), "42\n6\n6\n");
+}
+
+#[test]
+fn unsafe_pointer_vocabulary_round_trip() {
+    // unsafe_write / unsafe_offset chaining / unsafe_take_pointee /
+    // unsafe_deinit_pointee / unsafe_free over the heap arena, plus the
+    // write-through on a place-origin pointer.
+    let src = "from std.memory import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](2)\n    p.unsafe_write(41)\n    p.unsafe_offset(1).unsafe_write(1)\n    print(p[] + p.unsafe_offset(1)[])\n    var taken = p.unsafe_take_pointee()\n    print(taken)\n    p.unsafe_offset(1).unsafe_deinit_pointee()\n    p.unsafe_free()\n    var x = 5\n    var q = Pointer(to=x)\n    q.unsafe_write(9)\n    print(x)\n";
+    assert_eq!(parity(src), "42\n41\n9\n");
+}
+
+#[test]
+fn pointer_keyword_subscript_dereferences() {
+    // The keyword spelling executes as the same indexed dereference on heap
+    // and place pointers.
+    let src = "from std.memory import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](2)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[unsafe_offset=0], p[unsafe_offset=1])\n    p.unsafe_free()\n    var x = 5\n    var q = Pointer(to=x)\n    print(q[unsafe_offset=0])\n";
+    assert_eq!(parity(src), "1 2\n5\n");
+}
+
+#[test]
+fn unsafe_write_copy_keeps_the_source_alive() {
+    // The copy= overload runs the element's copy lifecycle: the heap slot owns
+    // an independent List while the source stays usable and mutable.
+    let src = "from std.memory import unsafe_alloc\n\ndef main():\n    var xs: List[Int] = [1, 2]\n    var p = unsafe_alloc[List[Int]](1)\n    p.unsafe_write(copy=xs)\n    xs.append(3)\n    var stored = p.unsafe_take_pointee()\n    print(len(stored), len(xs))\n    p.unsafe_free()\n";
+    assert_eq!(parity(src), "2 3\n");
+}
+
+#[test]
+fn layout_allocation_round_trip_and_linearity() {
+    // The §4 model end to end: alloc(Layout[T](count=n)) → unsafe_ptr →
+    // unsafe_offset/unsafe_write → dealloc(allocation^).
+    let src = "from std.memory import Layout, dealloc\n\ndef main():\n    var allocation = alloc(Layout[Int](count=4))\n    var ptr = allocation.unsafe_ptr()\n    ptr.unsafe_offset(0).unsafe_write(42)\n    print(ptr[])\n    print(allocation.layout().count())\n    dealloc(allocation^)\n";
+    assert_eq!(parity(src), "42\n4\n");
+    // dealloc consumes the Allocation: a later use is a transfer error.
+    let error = run(
+        "from std.memory import Layout, dealloc\n\ndef main():\n    var a = alloc(Layout[Int](count=1))\n    dealloc(a^)\n    var p = a.unsafe_ptr()\n",
+    )
+    .expect_err("expected a use-after-transfer rejection");
+    assert!(error.contains("after it was transferred"), "{error}");
+    // …and dropping one implicitly abandons its obligation.
+    let error = run(
+        "from std.memory import Layout\n\ndef main():\n    var a = alloc(Layout[Int](count=1))\n    print(1)\n",
+    )
+    .expect_err("expected an abandoned explicit-destroy obligation");
+    assert!(error.contains("dealloc(allocation^)"), "{error}");
 }
 
 #[test]
 fn unsafe_pointer_rejects_reads_from_uninitialized_storage() {
     let error =
-        run("def main():\n    var pointer = UnsafePointer[Int].alloc(1)\n    print(pointer[0])\n")
+        run("from std.memory import unsafe_alloc\n\ndef main():\n    var pointer = unsafe_alloc[Int](1)\n    print(pointer[0])\n")
             .expect_err("UnsafePointer.alloc reserves raw, uninitialized storage");
     assert!(
-        error.contains("read of uninitialized UnsafePointer storage"),
+        error.contains("read of uninitialized Pointer storage"),
         "{error}"
     );
 }
@@ -1095,7 +1148,7 @@ fn unsafe_pointer_rejects_reads_from_uninitialized_storage() {
 fn self_hosted_vec_over_unsafe_pointer() {
     // A heap-owning container written in mojito: `push` mutates storage through
     // the pointer (aliased across the value-type copy); the size is written back.
-    let src = "struct IntVec:\n    var data: UnsafePointer[Int]\n    var size: Int\n    def __init__(out self, cap: Int):\n        self.data = UnsafePointer[Int].alloc(cap)\n        self.size = 0\n    def push(mut self, v: Int):\n        self.data[self.size] = v\n        self.size = self.size + 1\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var xs: IntVec = IntVec(8)\n    xs.push(7)\n    xs.push(8)\n    xs.push(9)\n    print(xs.size, xs.get(0), xs.get(2))\n";
+    let src = "from std.memory import unsafe_alloc\n\nstruct IntVec:\n    var data: UnsafePointer[Int]\n    var size: Int\n    def __init__(out self, cap: Int):\n        self.data = unsafe_alloc[Int](cap)\n        self.size = 0\n    def push(mut self, v: Int):\n        self.data[self.size] = v\n        self.size = self.size + 1\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var xs: IntVec = IntVec(8)\n    xs.push(7)\n    xs.push(8)\n    xs.push(9)\n    print(xs.size, xs.get(0), xs.get(2))\n";
     assert_eq!(parity(src), "3 7 9\n");
 }
 
@@ -1104,7 +1157,7 @@ fn copyinit_gives_value_semantics() {
     // A pointer-owning struct with `__copyinit__` deep-copies on `var b = a` and on
     // pass-by-value, so writes through one don't affect the other. `__moveinit__`
     // relocates on `^`.
-    let src = "struct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = UnsafePointer[Int].alloc(n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = UnsafePointer[Int].alloc(e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = a\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
+    let src = "from std.memory import unsafe_alloc\n\nstruct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = unsafe_alloc[Int](n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = unsafe_alloc[Int](e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = a\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
     assert_eq!(parity(src), "5 9\n9\n");
 }
 
@@ -1116,7 +1169,7 @@ fn current_unified_move_initializer_uses_the_deinit_convention() {
 
 #[test]
 fn mojo_copy_constructor_gives_value_semantics() {
-    let src = "struct Buf(Copyable):\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = UnsafePointer[Int].alloc(n)\n        self.n = n\n    def __init__(out self, *, copy: Self):\n        self.n = copy.n\n        self.data = UnsafePointer[Int].alloc(copy.n)\n        var i: Int = 0\n        while i < copy.n:\n            self.data[i] = copy.data[i]\n            i = i + 1\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = a\n    c.set(0, 11)\n    print(a.get(0), c.get(0))\n";
+    let src = "from std.memory import unsafe_alloc\n\nstruct Buf(Copyable):\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = unsafe_alloc[Int](n)\n        self.n = n\n    def __init__(out self, *, copy: Self):\n        self.n = copy.n\n        self.data = unsafe_alloc[Int](copy.n)\n        var i: Int = 0\n        while i < copy.n:\n            self.data[i] = copy.data[i]\n            i = i + 1\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = a\n    c.set(0, 11)\n    print(a.get(0), c.get(0))\n";
     assert_eq!(parity(src), "5 9\n5 11\n");
 }
 

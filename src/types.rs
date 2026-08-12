@@ -669,9 +669,8 @@ impl fmt::Display for Ty {
             Ty::Simd { dtype, width } => write!(f, "SIMD[DType.{}, {}]", dtype.name(), width),
             Ty::Error => write!(f, "Error"),
             Ty::Pointer { element, origin } => {
-                write!(f, "UnsafePointer[{element}")?;
+                write!(f, "Pointer[{element}")?;
                 match origin {
-                    crate::origin::PointerOrigin::Legacy => {}
                     crate::origin::PointerOrigin::Place { place, .. } => {
                         write!(f, ", origin@{}", place.root.0)?
                     }

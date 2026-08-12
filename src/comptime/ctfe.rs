@@ -636,6 +636,7 @@ impl<'a> Elab<'a> {
             | ExprKind::Str(_)
             | ExprKind::None
             | ExprKind::Uninitialized
+            | ExprKind::EmptySubscript
             | ExprKind::Identifier(_)
             | ExprKind::TypeValue(_)
             | ExprKind::Invoke { .. }
@@ -744,6 +745,7 @@ impl<'a> Elab<'a> {
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
             | ExprKind::None
+            | ExprKind::EmptySubscript
             | ExprKind::Identifier(_) => true,
             ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) | ExprKind::Spread(inner) => {
                 self.vm_ctfe_safe_expr(inner, visiting, needed)

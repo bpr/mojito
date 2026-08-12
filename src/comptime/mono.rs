@@ -537,7 +537,8 @@ impl<'a> Elab<'a> {
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
-            | ExprKind::None => Ok(()),
+            | ExprKind::None
+            | ExprKind::EmptySubscript => Ok(()),
             ExprKind::TString { parts, .. } => {
                 for part in parts.iter_mut() {
                     if let TStringPart::Expr(value) = part {

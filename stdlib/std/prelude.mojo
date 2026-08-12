@@ -13,3 +13,4 @@ from std.collections.set import Set
 from std.collections.dict import Dict
 from std.collections.tuple import Tuple
 from std.range import Range, range
+from std.memory import alloc

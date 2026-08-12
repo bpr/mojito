@@ -900,6 +900,10 @@ pub enum ExprKind {
     None,
     /// Compiler-internal marker for `var name: Type` without an initializer.
     Uninitialized,
+    /// Parser-internal marker for the empty subscript `p[]`: the index child
+    /// of an `Index` node spelling a pointer dereference at offset 0. Distinct
+    /// from `None` so a source `p[None]` cannot pose as a dereference.
+    EmptySubscript,
     Identifier(String),
     /// A type used as a compile-time value, such as a function/closure signature.
     /// Parsed for source compatibility; semantic treatment as a first-class
@@ -1318,6 +1322,7 @@ pub(crate) fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::Uninitialized
+        | ExprKind::EmptySubscript
         | ExprKind::Identifier(_) => {}
     }
 }
@@ -1586,6 +1591,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                 | ExprKind::Str(_)
                 | ExprKind::None
                 | ExprKind::Uninitialized
+                | ExprKind::EmptySubscript
                 | ExprKind::Identifier(_) => {}
             }
         }
@@ -2092,6 +2098,7 @@ fn stamp_expr(expr: &mut Expr, source: &str) {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::Uninitialized
+        | ExprKind::EmptySubscript
         | ExprKind::Identifier(_) => {}
     }
 }

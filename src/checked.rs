@@ -481,6 +481,16 @@ pub enum SemanticAdjustment {
     PointerStorageDestroy {
         element: Ty,
     },
+    /// `pointer.unsafe_offset(i)`: provenance-preserving element arithmetic,
+    /// lowered as the ordinary pointer `+` operation.
+    PointerOffset,
+    /// `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`: initialize the
+    /// pointee at offset 0 with a moved (or copied) value, lowered onto the
+    /// same store family as `pointer[] = value`.
+    PointerWrite {
+        element: Ty,
+        copy: bool,
+    },
     /// Descriptor types selected for a subscript's arguments. `None` denotes an
     /// ordinary index; `Some` denotes a source slice and records whether overload
     /// selection chose the contiguous, strided, or general Slice protocol.
@@ -1207,8 +1217,8 @@ fn build_checked_expressions(
                 // A lambda expression is a leaf here: its hidden definition's
                 // body belongs to that definition's own checked declaration,
                 // not to the enclosing expression tree.
-                Int(_) | Float(_) | Bool(_) | Str(_) | None | Uninitialized | Identifier(_)
-                | TypeValue(_) => {}
+                Int(_) | Float(_) | Bool(_) | Str(_) | None | Uninitialized | EmptySubscript
+                | Identifier(_) | TypeValue(_) => {}
                 // A lambda expression node has no expression children of its
                 // own, but its hidden definition's body must be built exactly
                 // like a nested `def` statement's body so the body's checked

@@ -1539,11 +1539,11 @@ fn walrus_binds_and_produces_its_value() {
 fn unsafe_pointer_provenance_arithmetic_and_deallocation() {
     assert_eq!(
         output(
-            "def main():\n    var base = UnsafePointer[Int].alloc_aligned(3, 16)\n    base[1] = 42\n    var next = base + 1\n    print(next[0], next - base, next == base + 1)\n    base.free()\n"
+            "from std.memory import unsafe_alloc\n\ndef main():\n    var base = unsafe_alloc[Int](3, alignment=16)\n    base[1] = 42\n    var next = base + 1\n    print(next[0], next - base, next == base + 1)\n    base.free()\n"
         ),
         "42 1 True\n"
     );
-    assert!(run_err("def main():\n    var p = UnsafePointer[Int].alloc(1)\n    var q = p\n    p.free()\n    print(q[0])\n").to_string().contains("use after"));
+    assert!(run_err("from std.memory import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    var q = p\n    p.free()\n    print(q[0])\n").to_string().contains("use after"));
 }
 
 // --- Inferred `var` ---

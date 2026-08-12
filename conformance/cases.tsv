@@ -156,9 +156,10 @@ hidden-unsafe-any-origin	reject	conformance/fixtures/hidden_unsafe_any_origin.mo
 reference-valued-aggregate	mojito-only	conformance/fixtures/reference_valued_aggregate.mojo
 reborrows	run	conformance/fixtures/reborrows.mojo
 pointer-provenance	mojito-only	conformance/fixtures/pointer_provenance.mojo
-current-pointer-allocation	mojo-only	conformance/fixtures/current_pointer_allocation.mojo
+current-pointer-allocation	run	conformance/fixtures/current_pointer_allocation.mojo
 pointer-origin-escape	reject	conformance/fixtures/pointer_origin_escape.mojo
 pointer-loan-conflict	mojo-only	conformance/fixtures/pointer_loan_conflict.mojo
+static-pointer-alloc-removed	reject	assets/type_error/static_pointer_alloc_removed.mojo
 variant-completion	run	conformance/fixtures/variant_completion.mojo
 kwargs-forwarding	run	conformance/fixtures/kwargs_forwarding.mojo
 kwargs-call-kinds	run	conformance/fixtures/kwargs_call_kinds.mojo

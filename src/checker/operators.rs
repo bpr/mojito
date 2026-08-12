@@ -73,7 +73,7 @@ impl Checker {
         {
             return Err(TypeError::Unsupported(
                 "pointer arithmetic and comparison are not supported on an \
-                 origin-bearing UnsafePointer"
+                 origin-bearing Pointer"
                     .to_string(),
             ));
         }
@@ -512,9 +512,10 @@ impl Checker {
         Ok(Ty::Struct("Slice".to_string(), Vec::new()))
     }
 
-    /// Type `UnsafePointer(to=place)`: an origin-bearing pointer to existing
-    /// checked storage. The element type is the place's type and the origin is
-    /// the place itself, so loan analysis keeps the owner alive and rejects
+    /// Type `Pointer(to=place)` (also spelled through the deprecated
+    /// `UnsafePointer` alias): an origin-bearing pointer to existing checked
+    /// storage. The element type is the place's type and the origin is the
+    /// place itself, so loan analysis keeps the owner alive and rejects
     /// conflicting access. Execution represents the value as a frame/slot
     /// handle; only the VM erases the origin.
     pub(super) fn infer_pointer_to(
@@ -526,14 +527,14 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         if !param_args.is_empty() {
             return Err(TypeError::Unsupported(
-                "UnsafePointer(to=...) infers its element type; explicit type \
+                "Pointer(to=...) infers its element type; explicit type \
                  arguments are not supported"
                     .to_string(),
             ));
         }
         if !args.is_empty() || kwargs.len() != 1 || kwargs[0].name != "to" {
             return Err(TypeError::BadCall {
-                func: "UnsafePointer".to_string(),
+                func: "Pointer".to_string(),
                 reason: "expected exactly one 'to=' keyword argument".to_string(),
             });
         }
@@ -543,14 +544,12 @@ impl Checker {
                 || self.lookup_reference_parameter(name).is_some())
         {
             return Err(TypeError::Unsupported(
-                "UnsafePointer(to=...) through a 'ref' binding is not supported yet".to_string(),
+                "Pointer(to=...) through a 'ref' binding is not supported yet".to_string(),
             ));
         }
         let place = self.origin_place(value).map_err(|error| match error {
             TypeError::UndefinedVariable(_) => error,
-            _ => TypeError::Unsupported(
-                "UnsafePointer(to=...) requires a place expression".to_string(),
-            ),
+            _ => TypeError::Unsupported("Pointer(to=...) requires a place expression".to_string()),
         })?;
         let element = self.infer(value)?;
         let mutable = self.owner_is_mutable(place.root);

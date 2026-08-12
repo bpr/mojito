@@ -752,6 +752,7 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::Uninitialized
+        | ExprKind::EmptySubscript
         | ExprKind::TypeValue(_)
         | ExprKind::TString { .. }
         | ExprKind::TypeApply { .. } => {}

@@ -723,8 +723,7 @@ fn mir_place_handle_ty(
                 crate::origin::Mutability::Immutable
             }),
             crate::origin::PointerOrigin::Param { mutability, .. } => Some(*mutability),
-            crate::origin::PointerOrigin::Legacy
-            | crate::origin::PointerOrigin::Static
+            crate::origin::PointerOrigin::Static
             | crate::origin::PointerOrigin::Untracked { .. }
             | crate::origin::PointerOrigin::UnsafeAny { .. } => None,
         },

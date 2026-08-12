@@ -770,6 +770,14 @@ impl Checker {
             ExprKind::Uninitialized => Err(TypeError::InvariantViolation(
                 "uninitialized marker reached expression inference".to_string(),
             )),
+            // The marker index of `value[]` is consumed by the pointer subscript
+            // paths; reaching ordinary inference means a non-pointer receiver
+            // (or a bare use) asked for the dereference spelling.
+            ExprKind::EmptySubscript => Err(TypeError::Unsupported(
+                "an empty subscript ('value[]') is the pointer dereference; a \
+                 non-pointer subscript requires an index argument"
+                    .to_string(),
+            )),
             ExprKind::TypeValue(_) => Err(TypeError::Unsupported(
                 "function types as compile-time values".to_string(),
             )),

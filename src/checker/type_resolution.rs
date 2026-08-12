@@ -339,8 +339,11 @@ impl Checker {
                 {
                     return self.generated_tuple_forward_type(name, args);
                 }
-                if matches!(name.as_str(), "UnsafePointer" | "Pointer") {
-                    return self.pointer_type(args);
+                if matches!(
+                    name.as_str(),
+                    "UnsafePointer" | "Pointer" | "MutPointer" | "ImmPointer"
+                ) {
+                    return self.pointer_type(name, args);
                 }
                 return Err(TypeError::UnknownType(name.clone()));
             }
@@ -1376,13 +1379,20 @@ impl Checker {
         ))
     }
 
-    /// Resolve Mojito's legacy `UnsafePointer[T]` spelling or current Mojo's
-    /// origin-bearing `UnsafePointer[T, origin]`.  The inferred mutability
-    /// parameter is intentionally absent from the user-facing argument list.
-    pub(super) fn pointer_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
+    /// Resolve current Mojo's `Pointer[T, origin]` (also spelled through the
+    /// deprecated `UnsafePointer` alias and the mutability-fixing `MutPointer`/
+    /// `ImmPointer` aliases) or the one-argument `Pointer[T]` compatibility
+    /// spelling, which resolves to the mutable untracked origin of heap
+    /// allocations. The inferred mutability parameter is intentionally absent
+    /// from the user-facing argument list.
+    pub(super) fn pointer_type(
+        &self,
+        name: &str,
+        args: &[crate::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
         if !matches!(args.len(), 1 | 2) {
             return Err(TypeError::WrongTypeArgCount {
-                name: "UnsafePointer".to_string(),
+                name: name.to_string(),
                 expected: 2,
                 got: args.len(),
             });
@@ -1397,7 +1407,7 @@ impl Checker {
                 return Err(TypeError::TypeMismatch {
                     expected: "a type".to_string(),
                     found: "a value".to_string(),
-                    context: "UnsafePointer element type".to_string(),
+                    context: format!("{name} element type"),
                 });
             }
             crate::ast::ParamArg::Named { .. } => {
@@ -1407,10 +1417,34 @@ impl Checker {
             }
         };
         let origin = if args.len() == 1 {
-            crate::origin::PointerOrigin::Legacy
+            crate::origin::PointerOrigin::Untracked {
+                mutable: name != "ImmPointer",
+            }
         } else {
             self.pointer_origin_arg(&args[1])?
         };
+        // The mutability-fixing aliases constrain the origin argument's
+        // statically known permission.
+        let required = match name {
+            "MutPointer" => Some(true),
+            "ImmPointer" => Some(false),
+            _ => None,
+        };
+        if let (Some(required), Some(actual)) = (required, origin.statically_mutable())
+            && required != actual
+        {
+            return Err(TypeError::TypeMismatch {
+                expected: format!(
+                    "an origin with {} permission",
+                    if required { "mutable" } else { "immutable" }
+                ),
+                found: format!(
+                    "{} origin",
+                    if actual { "a mutable" } else { "an immutable" }
+                ),
+                context: format!("{name} origin"),
+            });
+        }
         Ok(Ty::Pointer {
             element: Box::new(elem),
             origin,
@@ -1454,7 +1488,7 @@ impl Checker {
                 return Err(TypeError::TypeMismatch {
                     expected: "Self.origin or a concrete Origin value".to_string(),
                     found: "a non-origin parameter argument".to_string(),
-                    context: "UnsafePointer origin".to_string(),
+                    context: "Pointer origin".to_string(),
                 });
             }
         };

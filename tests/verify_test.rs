@@ -254,13 +254,13 @@ fn verifier_checks_make_ref_capability_types() {
             0,
             Ty::Pointer {
                 element: Box::new(Ty::Int),
-                origin: mojito::PointerOrigin::Legacy,
+                origin: mojito::PointerOrigin::Untracked { mutable: true },
             },
         )],
     );
     expect_finding(
         &program(raw_pointer),
-        "MakeRef destination has non-reference-capability type UnsafePointer",
+        "MakeRef destination has non-reference-capability type Pointer",
     );
 
     let tracked_pointer = function(
@@ -780,7 +780,7 @@ fn verifier_rejects_an_invalid_constant_tuple_projection() {
 fn verifier_rejects_malformed_dynamic_place_projections() {
     let pointer = Ty::Pointer {
         element: Box::new(Ty::Int),
-        origin: mojito::PointerOrigin::Legacy,
+        origin: mojito::PointerOrigin::Untracked { mutable: true },
     };
 
     let mut wrong_element = MirPlace::root(0, Some(pointer.clone()));

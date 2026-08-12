@@ -2,12 +2,14 @@
 # overloads for copy (deep-copy the buffer) and move (relocate). Copyable
 # conformance plus the copy initializer gives the type value semantics.
 # would alias the buffer — the wrong value semantics.
+from std.memory import unsafe_alloc
+
 struct Buf:
     var data: UnsafePointer[Int]
     var n: Int
 
     def __init__(out self, n: Int):
-        self.data = UnsafePointer[Int].alloc(n)
+        self.data = unsafe_alloc[Int](n)
         self.n = n
         var i: Int = 0
         while i < n:
@@ -16,7 +18,7 @@ struct Buf:
 
     def __init__(out self, *, copy: Self):
         self.n = copy.n
-        self.data = UnsafePointer[Int].alloc(copy.n)
+        self.data = unsafe_alloc[Int](copy.n)
         var i: Int = 0
         while i < copy.n:
             self.data[i] = copy.data[i]

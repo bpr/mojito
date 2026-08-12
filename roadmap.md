@@ -20,7 +20,9 @@ exact numeric literals, type/value/origin generics and heterogeneous packs,
 scope-stable and lexical nested-pack specialization, refined and conditional
 traits, recursively lifted typed closure environments, linear whole-pack
 forwarding, generic-anonymous callable contracts, symbolic callable defaults,
-residual callable specialization, origin-bearing references and unsafe pointers,
+residual callable specialization, origin-bearing references and current-model
+unsafe pointers (the `unsafe_*` vocabulary, empty-`[]` dereference, and
+layout-based linear `std.memory` allocation),
 collection-owned interior-origin generations, explicit lifecycle semantics, and
 a self-hosted proof-subset standard library. Method-dispatched nominal
 subscripts retain ordinary checked method selection in one complete verified
@@ -98,17 +100,15 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **Current pointer/allocation model (nightly §4)** — `Pointer`/
-  `MutPointer`/`ImmPointer`, empty `ptr[]` dereference, the `unsafe_*`
-  operation vocabulary, and layout-based allocation
-  (`alloc(Layout[T](count))` → `Allocation[T]`/`ThinAllocation[T]`,
-  `dealloc(allocation^)`); retire the legacy static
-  `UnsafePointer[T].alloc[_aligned]` surface the head rejects (this also
-  resolves the `pointers.unsafe` divergence row). Lower onto the existing
-  typed pointer MIR, allocation identities, and explicit-destroy machinery —
-  no second allocation representation. Then grow `UnsafeMaybeUninit` around
-  the current `unsafe_write`/`unsafe_assume_init`/`unsafe_deinit`/
-  `unsafe_forget` vocabulary.
+- [ ] **`UnsafeMaybeUninit` inline-uninit storage** — grow `UnsafeMaybeUninit`
+  around the current `unsafe_write`/overloaded `unsafe_assume_init`/
+  `unsafe_deinit`/`unsafe_forget` vocabulary (upstream
+  [`b324feea`](https://github.com/modular/modular/commit/b324feeaa16bc13a12c0200164d1878fcfa64a87)).
+  Split from the completed pointer/allocation migration because upstream's
+  type is *inline* possibly-uninitialized storage: the VM's uninitialized
+  tombstones exist only in the heap arena today, so a faithful port needs a
+  new inline-uninit field capability across the checker, drop elaboration,
+  and the VM rather than another spelling over heap slots.
 - [ ] **Views and strict bounds (nightly §5)** — `Span` and canonical
   `StringSpan` (with `Imm`/`Mut` aliases); contiguous List/Span/String slices
   reject negative, out-of-range, or reversed bounds instead of normalizing;

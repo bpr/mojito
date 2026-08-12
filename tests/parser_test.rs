@@ -1555,6 +1555,32 @@ fn parses_subscript_as_index() {
 }
 
 #[test]
+fn parses_empty_subscript_as_pointer_dereference_marker() {
+    // `p[]` is the pointer-dereference subscript: the index child is the
+    // dedicated marker, distinct from a source `p[None]` index expression.
+    assert!(matches!(
+        parse_expr("p[]").kind,
+        ExprKind::Index { object, index }
+            if matches!(object.kind, ExprKind::Identifier(ref name) if name == "p")
+                && matches!(index.kind, ExprKind::EmptySubscript)
+    ));
+    // `p[None]` is not a dereference: the bracket reads as compile-time
+    // parameter application (rejected later in value position), never the
+    // marker.
+    assert!(matches!(
+        parse_expr("p[None]").kind,
+        ExprKind::TypeApply { .. }
+    ));
+    // The marker composes as an ordinary suffix: deref of an offset call.
+    assert!(matches!(
+        parse_expr("p.unsafe_offset(1)[]").kind,
+        ExprKind::Index { object, index }
+            if matches!(object.kind, ExprKind::MethodCall { .. })
+                && matches!(index.kind, ExprKind::EmptySubscript)
+    ));
+}
+
+#[test]
 fn distinguishes_origin_specialization_from_runtime_indexing() {
     let specialized = parse_expr("borrow[origin_of(value)]");
     match specialized.kind {

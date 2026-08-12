@@ -11,6 +11,8 @@
 # hand-maintained essentials classifier plus arithmetic Hangul, with GB11
 # simplified to "never break after ZWJ" and GB9b (Prepend) omitted.
 
+from std.memory import unsafe_alloc
+
 from std.collections.list import List
 from std.optional import Optional
 
@@ -27,12 +29,12 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
         # convert wherever the nominal String is expected.
         self.size = 0
         self.cap = 1
-        self.data = UnsafePointer[Byte].alloc(self.cap)
+        self.data = unsafe_alloc[Byte](self.cap)
 
     def __init__(out self, *, copy: Self):
         self.size = copy.size
         self.cap = copy.cap
-        self.data = UnsafePointer[Byte].alloc(self.cap)
+        self.data = unsafe_alloc[Byte](self.cap)
         var i = 0
         while i < copy.size:
             self.data[i] = copy.data[i]
@@ -47,7 +49,7 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
         self.data = move.data^
 
     def __deinit__(deinit self):
-        self.data.free()
+        self.data.unsafe_free()
 
     def __len__(self) -> Int:
         return self.size
@@ -92,8 +94,8 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
 
     def __add__(self, other: Self) -> Self:
         var result = String("")
-        result.data.free()
-        result.data = UnsafePointer[Byte].alloc(self.size + other.size)
+        result.data.unsafe_free()
+        result.data = unsafe_alloc[Byte](self.size + other.size)
         result.size = self.size + other.size
         result.cap = result.size
         var i = 0
@@ -107,7 +109,7 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
         return result^
 
     def __iadd__(mut self, other: Self):
-        var data = UnsafePointer[Byte].alloc(self.size + other.size)
+        var data = unsafe_alloc[Byte](self.size + other.size)
         var i = 0
         while i < self.size:
             data[i] = self.data[i]
@@ -116,7 +118,7 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
         while j < other.size:
             data[self.size + j] = other.data[j]
             j += 1
-        self.data.free()
+        self.data.unsafe_free()
         self.data = data
         self.size = self.size + other.size
         self.cap = self.size
@@ -490,8 +492,8 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
                 count += 1
                 probe += step
         var result = String("")
-        result.data.free()
-        result.data = UnsafePointer[Byte].alloc(count)
+        result.data.unsafe_free()
+        result.data = unsafe_alloc[Byte](count)
         result.size = count
         result.cap = count
         var source = start
@@ -504,8 +506,8 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
 
     def _with_bytes(self, start: Int, count: Int) -> Self:
         var result = String("")
-        result.data.free()
-        result.data = UnsafePointer[Byte].alloc(count)
+        result.data.unsafe_free()
+        result.data = unsafe_alloc[Byte](count)
         result.size = count
         result.cap = count
         var i = 0
@@ -565,27 +567,27 @@ struct Codepoint(
     @staticmethod
     def _encode_utf8(scalar: Int) -> String:
         var result = String("")
-        result.data.free()
+        result.data.unsafe_free()
         if scalar < 0x80:
-            result.data = UnsafePointer[Byte].alloc(1)
+            result.data = unsafe_alloc[Byte](1)
             result.size = 1
             result.cap = 1
             result.data[0] = Byte(scalar)
         elif scalar < 0x800:
-            result.data = UnsafePointer[Byte].alloc(2)
+            result.data = unsafe_alloc[Byte](2)
             result.size = 2
             result.cap = 2
             result.data[0] = Byte(192 + scalar // 64)
             result.data[1] = Byte(128 + scalar % 64)
         elif scalar < 0x10000:
-            result.data = UnsafePointer[Byte].alloc(3)
+            result.data = unsafe_alloc[Byte](3)
             result.size = 3
             result.cap = 3
             result.data[0] = Byte(224 + scalar // 4096)
             result.data[1] = Byte(128 + (scalar // 64) % 64)
             result.data[2] = Byte(128 + scalar % 64)
         else:
-            result.data = UnsafePointer[Byte].alloc(4)
+            result.data = unsafe_alloc[Byte](4)
             result.size = 4
             result.cap = 4
             result.data[0] = Byte(240 + scalar // 262144)

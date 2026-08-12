@@ -4337,16 +4337,181 @@ fn unsafe_pointer_typing() {
 }
 
 #[test]
-fn compiler_private_pointer_storage_methods_are_not_user_visible() {
+fn pointer_names_resolve_to_one_builtin_type() {
+    // `Pointer` and the deprecated `UnsafePointer` alias are interchangeable,
+    // and the one-argument spelling is the mutable untracked origin.
+    ok(
+        "def main():\n    var p: Pointer[Int, MutUntrackedOrigin] = UnsafePointer[Int].alloc(1)\n    p[0] = 1\n    var q: UnsafePointer[Int] = p\n    var r: Pointer[Int] = q\n    r.free()\n",
+    );
+    // `Pointer(to=x)` is the current spelling of the place-pointer constructor.
+    ok("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[0])\n");
+    // The mutability-fixing aliases accept a matching origin argument.
+    assert!(check_source(
+        "struct MutView:\n    var ptr: MutPointer[Int, MutUntrackedOrigin]\n\nstruct ImmView:\n    var ptr: ImmPointer[Int, ImmutUntrackedOrigin]\n"
+    )
+    .is_ok());
+    // …and reject a statically known mismatched one.
+    assert!(matches!(
+        check_source("struct Bad:\n    var ptr: MutPointer[Int, ImmutUntrackedOrigin]\n"),
+        Err(TypeError::TypeMismatch { .. })
+    ));
+    assert!(matches!(
+        check_source("struct Bad:\n    var ptr: ImmPointer[Int, MutUntrackedOrigin]\n"),
+        Err(TypeError::TypeMismatch { .. })
+    ));
+}
+
+#[test]
+fn empty_subscript_dereferences_a_pointer() {
+    // `p[]` reads and writes the pointee at offset 0, on heap and place
+    // origins alike.
+    ok(
+        "def main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[] = 41\n    p[] += 1\n    print(p[])\n    p.free()\n",
+    );
+    ok("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[])\n    p[] = 7\n");
+    // A non-pointer receiver rejects the dereference spelling…
+    assert!(matches!(
+        err("def main():\n    var xs: List[Int] = [1]\n    print(xs[])\n"),
+        TypeError::Unsupported(message) if message.contains("is not a pointer")
+    ));
+    // …and `p[None]` is an ordinary (rejected) index, not a dereference.
+    assert!(matches!(
+        err("def main():\n    var p = UnsafePointer[Int].alloc(1)\n    print(p[None])\n"),
+        TypeError::TypeMismatch { .. }
+    ));
+    // The dereference store still requires mutable provenance.
+    assert!(matches!(
+        err("def f(x: Int):\n    var p = Pointer(to=x)\n    p[] = 1\n\ndef main():\n    f(3)\n"),
+        TypeError::Unsupported(message) if message.contains("immutable origin")
+    ));
+}
+
+#[test]
+fn untracked_immutable_pointer_rejects_writes() {
+    // Reads through an immutable untracked pointer stay ordinary…
+    ok(
+        "def f(p: ImmPointer[Int, ImmutUntrackedOrigin]):\n    print(p[0])\n\ndef main():\n    print(1)\n",
+    );
+    // …but writes require mutable provenance, exactly like place origins
+    // (through a `var` binding so binding mutability doesn't reject first).
+    assert!(matches!(
+        err(
+            "def f(p: ImmPointer[Int, ImmutUntrackedOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
+        ),
+        TypeError::Unsupported(message) if message.contains("immutable origin")
+    ));
+    assert!(matches!(
+        err(
+            "def f(p: UnsafePointer[Int, StaticConstantOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
+        ),
+        TypeError::Unsupported(message) if message.contains("immutable origin")
+    ));
+}
+
+#[test]
+fn unsafe_pointer_method_vocabulary_typechecks() {
+    // The public unsafe_* vocabulary round-trips on a heap pointer, chaining
+    // through unsafe_offset receivers.
+    ok(
+        "def main():\n    var p = UnsafePointer[Int].alloc(3)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[])\n    var taken = p.unsafe_offset(1).unsafe_take_pointee()\n    print(taken)\n    p.unsafe_deinit_pointee()\n    p.unsafe_free()\n",
+    );
+    // `copy=` leaves the source usable; a mutable place origin writes through.
+    ok(
+        "def main():\n    var p = UnsafePointer[Int].alloc(1)\n    var x = 3\n    p.unsafe_write(copy=x)\n    print(x, p[])\n    p.unsafe_free()\n",
+    );
+    ok(
+        "def main():\n    var x = 1\n    var q = Pointer(to=x)\n    q.unsafe_write(9)\n    print(x)\n",
+    );
+    // Arithmetic stays rejected on origin-bearing pointers.
+    assert!(matches!(
+        err(
+            "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = p.unsafe_offset(1)\n"
+        ),
+        TypeError::Unsupported(message) if message.contains("arithmetic and comparison")
+    ));
+    // Pointee take/deinit require the allocation-owning untracked origin.
+    assert!(matches!(
+        err(
+            "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var v = p.unsafe_take_pointee()\n"
+        ),
+        TypeError::Unsupported(message) if message.contains("mutable untracked origin")
+    ));
+    // Writes require mutable provenance.
+    assert!(matches!(
+        err(
+            "def f(x: Int):\n    var p = Pointer(to=x)\n    p.unsafe_write(1)\n\ndef main():\n    f(3)\n"
+        ),
+        TypeError::Unsupported(message) if message.contains("immutable origin")
+    ));
+    // `unsafe_deinit_pointee` requires a Deinitable element, and
+    // `unsafe_write(copy=…)` a Copyable one (a linear struct is neither).
+    // The element is spelled through a generic application because a bare
+    // user-struct name in a bracket parameter list parses as runtime indexing.
+    assert!(matches!(
+        err(
+            "@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = UnsafePointer[Linear[Int]].alloc(1)\n    p.unsafe_deinit_pointee()\n",
+        ),
+        TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Deinitable"
+    ));
+    assert!(matches!(
+        err(
+            "@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = UnsafePointer[Linear[Int]].alloc(1)\n    var v = Linear[Int]()\n    p.unsafe_write(copy=v)\n    v^.finish()\n    p.unsafe_free()\n",
+        ),
+        TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Copyable"
+    ));
+    // `unsafe_free` matches free()'s origin restriction.
+    assert!(matches!(
+        err("def main():\n    var x = 1\n    var p = Pointer(to=x)\n    p.unsafe_free()\n"),
+        TypeError::Unsupported(message) if message.contains("does not own an allocation")
+    ));
+}
+
+#[test]
+fn pointer_keyword_subscript_reads() {
+    // `ptr[unsafe_offset=i]` is the keyword spelling of indexed dereference.
+    ok(
+        "def main():\n    var p = UnsafePointer[Int].alloc(2)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[unsafe_offset=1])\n    p.unsafe_free()\n",
+    );
+    // A place-origin pointer accepts only the constant offset 0.
+    ok("def main():\n    var x = 1\n    var q = Pointer(to=x)\n    print(q[unsafe_offset=0])\n");
+    assert!(matches!(
+        err(
+            "def main():\n    var x = 1\n    var q = Pointer(to=x)\n    print(q[unsafe_offset=1])\n"
+        ),
+        TypeError::Unsupported(message) if message.contains("only offset 0")
+    ));
+    // The keyword selector is exact…
+    assert!(matches!(
+        err("def main():\n    var p = UnsafePointer[Int].alloc(1)\n    print(p[offset=0])\n"),
+        TypeError::Unsupported(message) if message.contains("unsafe_offset=i")
+    ));
+    // …and keyword subscripts stay read-only (stores use `ptr[i] = v` or
+    // `unsafe_write`).
+    assert!(matches!(
+        err("def main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[unsafe_offset=0] = 1\n"),
+        TypeError::Unsupported(message) if message.contains("read-only")
+    ));
+}
+
+#[test]
+fn retired_pointer_storage_method_spellings_stay_gone() {
+    // The former compiler-private raw-slot spellings were replaced by
+    // unsafe_offset(i).unsafe_take_pointee()/unsafe_deinit_pointee().
     for method in ["take", "destroy"] {
         let source = format!(
             "def main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[0] = 7\n    var result = p.{method}(0)\n"
         );
         assert!(
             matches!(err(&source), TypeError::NoSuchMethod { method: ref found, .. } if found == method),
-            "ordinary source unexpectedly acquired UnsafePointer.{method}"
+            "source unexpectedly acquired Pointer.{method}"
         );
     }
+    // The pre-rename dangling spelling rejects with the rename hint.
+    assert!(matches!(
+        err("def main():\n    var p = UnsafePointer[Int].dangling()\n"),
+        TypeError::Unsupported(message) if message.contains("unsafe_dangling")
+    ));
+    ok("def main():\n    var p = Pointer[Int].unsafe_dangling()\n    print(1)\n");
 }
 
 #[test]

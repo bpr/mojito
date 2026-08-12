@@ -605,7 +605,7 @@ impl VmBackend {
             } => {
                 let Value::Pointer { allocation, offset } = regs[pointer.0 as usize] else {
                     return Err(RuntimeError::TypeError(
-                        "vm: compiler-private storage take requires UnsafePointer".to_string(),
+                        "vm: compiler-private storage take requires Pointer".to_string(),
                     ));
                 };
                 let index = value_as_index(&regs[index.0 as usize])?;
@@ -619,7 +619,7 @@ impl VmBackend {
             } => {
                 let Value::Pointer { allocation, offset } = regs[pointer.0 as usize] else {
                     return Err(RuntimeError::TypeError(
-                        "vm: compiler-private storage destroy requires UnsafePointer".to_string(),
+                        "vm: compiler-private storage destroy requires Pointer".to_string(),
                     ));
                 };
                 let index = value_as_index(&regs[index.0 as usize])?;

@@ -419,6 +419,15 @@ impl<'a> Elab<'a> {
         for p in params {
             subs.remove(&p.name);
         }
+        // The declaration's own compile-time parameters shadow same-named
+        // module constants everywhere in the clone. The body is materialized
+        // as a bare statement list (no `Def` wrapper to shadow through), so a
+        // kept-symbolic type parameter must not be replaced by an unrelated
+        // outer constant; evaluated value parameters re-enter `subs` with
+        // their concrete arguments below.
+        for tp in type_params {
+            subs.remove(tp.name.trim_start_matches('*'));
+        }
         let mut kept_type_params = Vec::new();
         let mut type_substitutions: HashMap<String, Type> = HashMap::new();
         let mut specialized_params = params.clone();

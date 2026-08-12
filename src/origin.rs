@@ -214,13 +214,13 @@ pub enum Mutability {
     Param(OriginParamId),
 }
 
-/// Provenance retained by an origin-bearing unsafe pointer type.  `Legacy`
-/// represents Mojito's one-argument compatibility spelling; all current-Mojo
+/// Provenance retained by an origin-bearing unsafe pointer type. The
+/// one-argument `Pointer[T]` compatibility spelling resolves to the mutable
+/// untracked origin (`MutUntrackedOrigin`, the origin of heap allocations); all
 /// spellings remain explicit through checked HIR/MIR and are erased only by the
 /// VM value representation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PointerOrigin {
-    Legacy,
     Place {
         place: OriginPlace,
         mutable: bool,
@@ -240,16 +240,33 @@ pub enum PointerOrigin {
 
 impl PointerOrigin {
     /// The loan-tracked [`Origin`] a pointer provenance corresponds to, when it
-    /// designates checked storage. `Legacy`, `Static`, `Untracked`, and
-    /// `UnsafeAny` pointers carry no owner loan.
+    /// designates checked storage. `Static`, `Untracked`, and `UnsafeAny`
+    /// pointers carry no owner loan.
     pub fn as_origin(&self) -> Option<Origin> {
         match self {
             PointerOrigin::Place { place, .. } => Some(Origin::Place(place.clone())),
             PointerOrigin::Param { id, .. } => Some(Origin::Param(*id)),
-            PointerOrigin::Legacy
-            | PointerOrigin::Static
+            PointerOrigin::Static
             | PointerOrigin::Untracked { .. }
             | PointerOrigin::UnsafeAny { .. } => None,
+        }
+    }
+
+    /// Whether writes through the pointer are permitted, when that is statically
+    /// known. A symbolic parameter mutability returns `None`: storage coercion
+    /// only admits mutable places into fields whose declared mutability is not
+    /// explicitly immutable.
+    pub fn statically_mutable(&self) -> Option<bool> {
+        match self {
+            PointerOrigin::Place { mutable, .. }
+            | PointerOrigin::Untracked { mutable }
+            | PointerOrigin::UnsafeAny { mutable } => Some(*mutable),
+            PointerOrigin::Static => Some(false),
+            PointerOrigin::Param { mutability, .. } => match mutability {
+                Mutability::Mutable => Some(true),
+                Mutability::Immutable => Some(false),
+                Mutability::Param(_) => None,
+            },
         }
     }
 }

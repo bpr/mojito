@@ -1,3 +1,5 @@
+from std.memory import unsafe_alloc
+
 from std.collections.dict import Dict
 
 @fieldwise_init
@@ -20,7 +22,7 @@ def observe(ref value: Int):
     print(value)
 
 def main() raises:
-    var data = UnsafePointer[Int, MutUntrackedOrigin].alloc(1)
+    var data = unsafe_alloc[Int](1)
     data[0] = 40
     var values = {"a": Buffer(data)}
     var cursor = Cursor(0)

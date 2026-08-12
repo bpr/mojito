@@ -1,10 +1,12 @@
 # LayoutTensor is a layout-aware view over a caller-managed buffer: the
 # compile-time layout folds into the specialization, and row- versus
 # col-major layouts map the same coordinates to different flat offsets.
+from std.memory import unsafe_alloc
+
 from layout import IntTuple, Layout, LayoutTensor
 
 def main():
-    var data = UnsafePointer[Scalar[DType.float32]].alloc(6)
+    var data = unsafe_alloc[Scalar[DType.float32]](6)
     var k = 0
     while k < 6:
         data[k] = Scalar[DType.float32](k)

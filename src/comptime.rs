@@ -725,6 +725,7 @@ fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<String>) {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::Uninitialized
+        | ExprKind::EmptySubscript
         | ExprKind::Identifier(_) => {}
         ExprKind::TypeValue(ty) => collect_vm_ctfe_type_calls(ty, calls),
     }

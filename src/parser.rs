@@ -2880,10 +2880,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect(Token::LBracket, "Expected '['")?;
         if matches!(self.peek_token()?, Some(Token::RBracket)) {
             self.next_token()?;
+            // Empty brackets are the pointer-dereference subscript `p[]`. The
+            // marker is distinct from `ExprKind::None` so `p[None]` stays an
+            // ordinary (rejected) index expression.
             return Ok(self.node(
                 ExprKind::Index {
                     object: Box::new(object),
-                    index: Box::new(Expr::new(ExprKind::None, self.last_span)),
+                    index: Box::new(Expr::new(ExprKind::EmptySubscript, self.last_span)),
                 },
                 start,
             ));

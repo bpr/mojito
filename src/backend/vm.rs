@@ -106,13 +106,12 @@ impl VmBackend {
     fn heap_alloc(&mut self, n: i64, alignment: i64) -> Result<Value, RuntimeError> {
         if n < 0 {
             return Err(RuntimeError::TypeError(
-                "vm: UnsafePointer.alloc count must be non-negative".to_string(),
+                "vm: Pointer allocation count must be non-negative".to_string(),
             ));
         }
         if alignment <= 0 || !(alignment as u64).is_power_of_two() {
             return Err(RuntimeError::TypeError(
-                "vm: UnsafePointer allocation alignment must be a positive power of two"
-                    .to_string(),
+                "vm: Pointer allocation alignment must be a positive power of two".to_string(),
             ));
         }
         self.heap.push(HeapAllocation {
@@ -137,26 +136,26 @@ impl VmBackend {
     ) -> Result<(usize, usize), RuntimeError> {
         if allocation == 0 {
             return Err(RuntimeError::TypeError(
-                "vm: dereference of dangling UnsafePointer".to_string(),
+                "vm: dereference of dangling Pointer".to_string(),
             ));
         }
-        let allocation_index = usize::try_from(allocation - 1).map_err(|_| {
-            RuntimeError::TypeError("vm: invalid UnsafePointer provenance".to_string())
-        })?;
-        let region = self.heap.get(allocation_index).ok_or_else(|| {
-            RuntimeError::TypeError("vm: invalid UnsafePointer provenance".to_string())
-        })?;
+        let allocation_index = usize::try_from(allocation - 1)
+            .map_err(|_| RuntimeError::TypeError("vm: invalid Pointer provenance".to_string()))?;
+        let region = self
+            .heap
+            .get(allocation_index)
+            .ok_or_else(|| RuntimeError::TypeError("vm: invalid Pointer provenance".to_string()))?;
         if !region.live {
             return Err(RuntimeError::TypeError(
-                "vm: use after UnsafePointer.free()".to_string(),
+                "vm: use after Pointer deallocation".to_string(),
             ));
         }
-        let i = base.checked_add(offset).ok_or_else(|| {
-            RuntimeError::TypeError("vm: UnsafePointer offset overflow".to_string())
-        })?;
+        let i = base
+            .checked_add(offset)
+            .ok_or_else(|| RuntimeError::TypeError("vm: Pointer offset overflow".to_string()))?;
         if i < 0 || i as usize >= region.slots.len() {
             return Err(RuntimeError::TypeError(
-                "vm: UnsafePointer access out of bounds".to_string(),
+                "vm: Pointer access out of bounds".to_string(),
             ));
         }
         Ok((allocation_index, i as usize))
@@ -171,12 +170,10 @@ impl VmBackend {
         let region = self
             .heap
             .get_mut((allocation - 1) as usize)
-            .ok_or_else(|| {
-                RuntimeError::TypeError("vm: invalid UnsafePointer provenance".to_string())
-            })?;
+            .ok_or_else(|| RuntimeError::TypeError("vm: invalid Pointer provenance".to_string()))?;
         if !region.live {
             return Err(RuntimeError::TypeError(
-                "vm: double free of UnsafePointer allocation".to_string(),
+                "vm: double free of Pointer allocation".to_string(),
             ));
         }
         region.live = false;
@@ -191,7 +188,7 @@ impl VmBackend {
         let (region, slot) = self.heap_index(allocation, base, offset)?;
         match &self.heap[region].slots[slot] {
             Value::Moved => Err(RuntimeError::TypeError(
-                "vm: read of uninitialized UnsafePointer storage".to_string(),
+                "vm: read of uninitialized Pointer storage".to_string(),
             )),
             value => Ok(value.clone()),
         }
@@ -210,7 +207,7 @@ impl VmBackend {
         let value = std::mem::replace(&mut self.heap[region].slots[slot], Value::Moved);
         if matches!(value, Value::Moved) {
             Err(RuntimeError::TypeError(
-                "vm: take or destroy of uninitialized UnsafePointer storage".to_string(),
+                "vm: take or destroy of uninitialized Pointer storage".to_string(),
             ))
         } else {
             Ok(value)
@@ -292,7 +289,7 @@ impl VmBackend {
             ) => {
                 let delta = delta.wrapping_signed(64).ok_or_else(|| {
                     RuntimeError::TypeError(
-                        "vm: UnsafePointer offset cannot materialize as Int".to_string(),
+                        "vm: Pointer offset cannot materialize as Int".to_string(),
                     )
                 })?;
                 let offset = if op == InfixOp::Sub {
@@ -301,7 +298,7 @@ impl VmBackend {
                     offset.checked_add(delta)
                 }
                 .ok_or_else(|| {
-                    RuntimeError::TypeError("vm: UnsafePointer offset overflow".to_string())
+                    RuntimeError::TypeError("vm: Pointer offset overflow".to_string())
                 })?;
                 return Ok(Value::Pointer {
                     allocation: *allocation,
@@ -319,7 +316,7 @@ impl VmBackend {
                     offset.checked_add(*delta)
                 }
                 .ok_or_else(|| {
-                    RuntimeError::TypeError("vm: UnsafePointer offset overflow".to_string())
+                    RuntimeError::TypeError("vm: Pointer offset overflow".to_string())
                 })?;
                 return Ok(Value::Pointer {
                     allocation: *allocation,
@@ -1515,15 +1512,15 @@ impl VmBackend {
             Value::Simd { dtype, lanes } => {
                 crate::runtime::simd_method(*dtype, lanes, method, &args)
             }
-            // `UnsafePointer` methods: `free()` releases the allocation (a no-op in
+            // `Pointer` methods: `free()` releases the allocation (a no-op in
             // the arena model — the arena never reclaims).
             Value::Pointer { allocation, offset } => match method {
-                "free" => {
+                "free" | "unsafe_free" => {
                     self.heap_free(*allocation, *offset)?;
                     Ok(Value::None)
                 }
                 _ => Err(RuntimeError::Unsupported(format!(
-                    "vm: UnsafePointer has no method '{method}'"
+                    "vm: Pointer has no method '{method}'"
                 ))),
             },
             Value::Struct { name, .. }
@@ -2085,7 +2082,7 @@ impl VmBackend {
                 let alignment = crate::runtime::value_as_index(&args[1])?;
                 self.heap_alloc(n, alignment)
             }
-            "UnsafePointer.dangling" => {
+            "UnsafePointer.unsafe_dangling" | "Pointer.unsafe_dangling" => {
                 if !args.is_empty() {
                     return Err(RuntimeError::ArityMismatch {
                         name: name.to_string(),

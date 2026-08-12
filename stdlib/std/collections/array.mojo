@@ -1,9 +1,11 @@
 # A self-hosted fixed-size Array.  Every slot in `[0, length)` is initialized
 # for the whole life of the value; the private `_size` field only diverges from
 # `Self.length` when owned iteration moves the storage out, so `__deinit__`
-# loops to `_size`, not the comptime length.  `UnsafePointer.take(index)` and
-# `destroy(index)` are compiler-private unsafe operations used only by the
-# bundled core library.
+# loops to `_size`, not the comptime length.  `unsafe_offset(i).unsafe_take_pointee()` and
+# `unsafe_offset(i).unsafe_deinit_pointee()` are the public raw-pointer
+# vocabulary over storage this Array owns.
+
+from std.memory import unsafe_alloc
 
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
@@ -55,16 +57,16 @@ struct _ArrayOwnedIter[T: AnyType](
     ):
         if self.index >= self.size:
             raise StopIteration()
-        var result = self.data.take(self.index)
+        var result = self.data.unsafe_offset(self.index).unsafe_take_pointee()
         self.index += 1
         return result^
 
     def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
         var i = self.index
         while i < self.size:
-            self.data.destroy(i)
+            self.data.unsafe_offset(i).unsafe_deinit_pointee()
             i += 1
-        self.data.free()
+        self.data.unsafe_free()
 
 struct Array[T: AnyType, length: Int](
     Copyable where conforms_to(T, Copyable),
@@ -88,7 +90,7 @@ struct Array[T: AnyType, length: Int](
         out self, var *values: Self.T, __list_literal__: NoneType
     ) where conforms_to(Self.T, Movable):
         self._size = Self.length
-        self.data = UnsafePointer[Self.T].alloc(Self.length)
+        self.data = unsafe_alloc[Self.T](Self.length)
         var i = 0
         for var value in values^:
             self.data[i] = value^
@@ -96,7 +98,7 @@ struct Array[T: AnyType, length: Int](
 
     def __init__(out self, *, fill: Self.T) where conforms_to(Self.T, Copyable):
         self._size = Self.length
-        self.data = UnsafePointer[Self.T].alloc(Self.length)
+        self.data = unsafe_alloc[Self.T](Self.length)
         var i = 0
         while i < Self.length:
             self.data[i] = fill
@@ -104,7 +106,7 @@ struct Array[T: AnyType, length: Int](
 
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self._size = copy._size
-        self.data = UnsafePointer[Self.T].alloc(Self.length)
+        self.data = unsafe_alloc[Self.T](Self.length)
         var i = 0
         while i < copy._size:
             self.data[i] = copy.data[i]
@@ -120,9 +122,9 @@ struct Array[T: AnyType, length: Int](
     def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
         var i = 0
         while i < self._size:
-            self.data.destroy(i)
+            self.data.unsafe_offset(i).unsafe_deinit_pointee()
             i += 1
-        self.data.free()
+        self.data.unsafe_free()
 
     def __len__(self) -> Int:
         return Self.length
@@ -167,7 +169,7 @@ struct Array[T: AnyType, length: Int](
         Self.T, Movable
     ) and conforms_to(Self.T, Deinitable):
         var result = _ArrayOwnedIter[Self.T](self.data, self._size)
-        self.data = UnsafePointer[Self.T].alloc(0)
+        self.data = unsafe_alloc[Self.T](0)
         self._size = 0
         return result^
 

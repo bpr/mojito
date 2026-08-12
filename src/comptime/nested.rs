@@ -830,7 +830,8 @@ impl NestedMono {
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
             | ExprKind::None
-            | ExprKind::Uninitialized => {}
+            | ExprKind::Uninitialized
+            | ExprKind::EmptySubscript => {}
         }
     }
 
@@ -1414,7 +1415,8 @@ impl NestedMono {
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
             | ExprKind::None
-            | ExprKind::Uninitialized => Ok(()),
+            | ExprKind::Uninitialized
+            | ExprKind::EmptySubscript => Ok(()),
         }
     }
 

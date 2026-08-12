@@ -8,6 +8,90 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Pointer/allocation model closure (nightly §4): the bundled collections,
+  String, and fixtures now allocate through `std.memory` (`unsafe_alloc` +
+  `unsafe_free`), the compiler-private `take(i)`/`destroy(i)` pointer methods
+  are deleted in favor of their public `unsafe_offset(i).unsafe_take_pointee()`
+  / `unsafe_deinit_pointee()` replacements (the `PointerStorageTake`/`Destroy`
+  MIR operations are unchanged), the static-alloc heap primitive is narrowed
+  to `std/memory.mojo` alone, and `Pointer[T].unsafe_dangling()` replaces the
+  removed `dangling()` spelling (rename hint on the old name). The
+  `pointers.unsafe` parity row moves from divergence to subset with the
+  remaining upstream surface (address spaces, SIMD load/store families,
+  casts, `ManagedAllocation`, `Layout.alignment()`) recorded as deferred;
+  `current-pointer-allocation` becomes a shared differential run case and
+  the static-alloc rejection gains a reject case. Test threads get a
+  16 MiB stack via `.cargo/config.toml` — checker recursion depth scales
+  with the linked program, and the grown prelude pushed two
+  subscript-contract tests past the old 2 MiB default. Fixed a
+  pre-existing specializer bug this migration exposed: a module-level
+  `comptime` constant substituted into a same-named type parameter retained
+  on a specialized generic def clone (the clone body is materialized as a
+  bare statement list, so the declaration's own compile-time parameter
+  names must be removed from the substitution); with prelude-linked
+  `unsafe_alloc[T]`, any user constant named `T` used to corrupt its
+  `Pointer[T, MutUntrackedOrigin]` annotation.
+
+- Layout-based allocation (nightly §4): new self-hosted `std.memory` module
+  with `Layout[T]` (`count=`/`alignment=` keyword construction, `count()`),
+  linear `ThinAllocation[T]`/`Allocation[T]` (`Deinitable where False` +
+  `@explicit_destroy` — implicit drop is a checker error), `unsafe_ptr()`,
+  `layout()`, `into_thin()`, `unsafe_leak()`, `unsafe_with_layout()`, free
+  `alloc(Layout[T](count=n)) -> Allocation[T]` (prelude-exported),
+  `dealloc(allocation^)`, and raw `unsafe_alloc[T](count, alignment=…)`.
+  The legacy static `UnsafePointer[T].alloc[_aligned]` surface is retired
+  from user code with a migration-hint diagnostic; it survives only as the
+  compiler-private heap primitive inside bundled standard-library sources
+  (fixtures and linked tests migrated to the current vocabulary). Alignment
+  0 means natural element alignment; `Layout.alignment()` is deferred until
+  an `align_of` builtin exists, and `unsafe_ptr()` returns an untracked
+  origin (`origin_of(field)` pointer results are not yet expressible).
+
+- Keyword pointer subscript (nightly §4): `ptr[unsafe_offset=i]` reads the
+  pointee at offset `i` — current Mojo's replacement spelling for the
+  deprecated positional `ptr[i]` read, which stays accepted as a bridge.
+  It lowers exactly like the positional read (place substitution or handle
+  read on origin-bearing pointers, the pointer-intrinsic `Index` otherwise);
+  keyword subscripts remain read-only, so stores keep `ptr[i] = v` and
+  `unsafe_write`.
+
+- The `unsafe_*` pointer operation vocabulary (nightly §4): `unsafe_offset(i)`
+  (provenance-preserving arithmetic), `unsafe_write(value)` and
+  `unsafe_write(copy=v)` (move/copy pointee initialization at offset 0 —
+  the first keyword-accepting builtin pointer method), `unsafe_take_pointee()`
+  and `unsafe_deinit_pointee()` (zero-argument public forms of the raw
+  initialized-slot operations, fixed to offset 0 and gated to
+  allocation-owning untracked pointers; deinit requires a Deinitable
+  element), and `unsafe_free()` (`free()` stays accepted as upstream's
+  deprecated bridge). Writes work through place-origin pointers with mutable
+  provenance too, reusing the `ptr[] = v` store lowering; chained
+  `p.unsafe_offset(i).unsafe_write(x)` receivers store through a synthetic
+  binding. All lower onto existing MIR operations — no schema changes.
+
+- Empty-subscript pointer dereference (nightly §4): `ptr[]` reads, and
+  `ptr[] = e` / `ptr[] += e` write, the pointee — offset-0 access on heap
+  pointers and direct pointee access on `Pointer(to=place)` handles. The
+  parser emits a dedicated marker for empty brackets (grammar: the subscript
+  argument list may now be empty), so a source `p[None]` can never pose as a
+  dereference, and a non-pointer receiver rejects with a contextual
+  empty-subscript error instead of dispatching an accessor.
+
+- Pointer naming and origin unification (nightly §4, first slice): `Pointer` is
+  now the canonical spelling of the builtin pointer type — type display,
+  runtime value display, and every checker/VM diagnostic say `Pointer`, while
+  `UnsafePointer` stays accepted as upstream's deprecated alias (internal
+  callable mangling intentionally keeps the stable `UnsafePointer$…` identity).
+  The internal `Legacy` pointer provenance is retired: the one-argument
+  `Pointer[T]`/`UnsafePointer[T]` spelling now resolves to
+  `MutUntrackedOrigin`, the origin of heap allocations, so heap pointers type
+  as `Pointer[T, MutUntrackedOrigin]` exactly like upstream's `unsafe_alloc`
+  result. New `MutPointer`/`ImmPointer` aliases validate a statically known
+  origin mutability and reject a mismatch; `Pointer(to=place)` joins
+  `UnsafePointer(to=place)` as the place-pointer constructor spelling; and
+  writes through any statically immutable provenance (untracked, unsafe-any,
+  or static, in addition to the existing place/param rejections) now reject at
+  the checker.
+
 - Lifecycle-predicate rename alignment (post-pin follow-up to nightly §0):
   the comptime predicates are now spelled `IsTriviallyMovable[T]`/
   `IsTriviallyCopyable[T]`/`IsTriviallyDeinitable[T]`, matching upstream

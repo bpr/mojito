@@ -2560,6 +2560,17 @@ fn is_bundled_collection_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/collections/array.mojo")
 }
 
+/// Static `UnsafePointer[T].alloc[_aligned]` is the compiler's heap primitive,
+/// retired from source-language API by the current layout-based model (the
+/// audited head rejects it). `std/memory.mojo` is the single bundled crossing;
+/// every other module — stdlib included — allocates through `std.memory`.
+fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
+    let (Some(manifest), Some(source)) = (option_env!("CARGO_MANIFEST_DIR"), source) else {
+        return false;
+    };
+    Path::new(source) == Path::new(manifest).join("stdlib").join("std/memory.mojo")
+}
+
 /// Select the current Mojo parameter-index hook first, while retaining the
 /// earlier spelling as an intentional source-compatibility fallback.
 fn dependent_index_accessor_family(info: &StructInfo) -> Option<DependentIndexAccessorFamily> {

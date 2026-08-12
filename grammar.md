@@ -606,7 +606,8 @@ primary:
     | primary '.' NAME                   # field access / value-parameter read (Self.n)
     | atom [param_args] '(' [args] ')'   # call/construction, optionally with explicit params
     | NAME param_args                    # parameterized type or explicitly specialized function value
-    | primary '[' ','.subscript_arg+ ']' # index/slice arguments; one or many
+    | primary '[' ','.subscript_arg* ']' # index/slice arguments; empty brackets
+                                         # (`p[]`) are the pointer dereference
     | primary '^'                        # transfer sigil; lowered and ownership-checked as a move
     | atom
 atom:
@@ -1033,25 +1034,49 @@ protocol conformances are synthesized conditionally from its elements.
   each destination. Tuple does not currently declare the runtime `Iterable`
   protocol; compile-time pack/tuple iteration is a separate elaboration path.
 
-`UnsafePointer[T]` is the built-in low-level pointer — a handle to contiguous heap
-storage of element type `T`. Unlike the value-type collections, a pointer **aliases**:
+`Pointer[T, origin]` is the built-in low-level pointer — a handle to contiguous
+heap storage of element type `T`. `UnsafePointer` is its deprecated upstream
+alias; `MutPointer`/`ImmPointer` fix the origin argument's mutability; the
+one-argument `Pointer[T]` spelling resolves to `MutUntrackedOrigin`, the origin
+of heap allocations. Unlike the value-type collections, a pointer **aliases**:
 copying it preserves allocation identity and the typed element offset, so two copies
 refer to the *same* storage (this is what lets
 a value-type struct own mutable heap storage, e.g. a self-hosted `List`).
 
-- **Allocation**: `UnsafePointer[T].alloc(n)` or
-  `UnsafePointer[T].alloc_aligned(n, alignment)` (static methods on the parameterized type —
-  the `Name[T]` receiver is a `TypeApply` expression) reserves `n` uninitialized slots and
-  returns a pointer to the base.
-- **Load / store**: `ptr[i]` reads, `ptr[i] = e` (and `ptr[i] += e`) writes the pointee at
-  offset `i` (an `Int`); `e` must be a `T`.
+- **Allocation** is layout-based through `std.memory`:
+  `alloc(Layout[T](count=n))` (with optional `alignment=`) returns an
+  `Allocation[T]` owning its storage through a `ThinAllocation[T]`;
+  `allocation.unsafe_ptr()` exposes the raw pointer and `dealloc(allocation^)`
+  releases it. Both owners are linear (`Deinitable where False`): implicit
+  drop is a checker error. `unsafe_alloc[T](n, alignment=…)` is the
+  raw-pointer migration spelling; `alloc` is a prelude name, the rest import
+  from `std.memory`. The legacy static `UnsafePointer[T].alloc[_aligned]`
+  surface is rejected in user code with a migration hint — it survives only
+  as the compiler-private heap primitive inside bundled stdlib sources.
+- **Dereference**: the empty subscript `ptr[]` reads, and `ptr[] = e` (and
+  `ptr[] += e`) writes, the pointee at offset 0 — current Mojo's direct
+  dereference spelling. Empty brackets on a non-pointer value are a checker
+  error, and `p[None]` is not a dereference.
+- **Load / store**: `ptr[unsafe_offset=i]` reads the pointee at offset `i`
+  (current Mojo's keyword spelling; keyword subscripts stay read-only —
+  stores go through `ptr[i] = e` or `unsafe_write`). Positional `ptr[i]`
+  reads, and `ptr[i] = e` (and `ptr[i] += e`) writes, the pointee at offset
+  `i` (an `Int`; the positional read is upstream-deprecated); `e` must be a `T`.
+- **`unsafe_*` operations** (current Mojo's vocabulary): `unsafe_offset(i)` is
+  provenance-preserving element arithmetic; `unsafe_write(value)` moves — and
+  `unsafe_write(copy=v)` copies — a value into the pointee at offset 0;
+  `unsafe_take_pointee()` moves the initialized pointee out (leaving the slot
+  uninitialized); `unsafe_deinit_pointee()` destroys it (element must be
+  `Deinitable`); `unsafe_free()` releases the allocation.
 - **Arithmetic/comparison**: `ptr + i` and `ptr - i` preserve provenance;
   subtracting pointers from the same allocation returns their element distance.
   Equality compares allocation identity and offset.
-- **`free()`**: invalidates the allocation and every alias. Non-base frees,
+- **`free()`** (deprecated upstream alias of `unsafe_free()`): invalidates the
+  allocation and every alias. Non-base frees,
   double frees, use-after-free, and out-of-allocation access are runtime errors.
-- **Dangling**: `UnsafePointer[T].dangling()` creates a non-null placeholder that
-  can be stored but not dereferenced or freed.
+- **Dangling**: `Pointer[T].unsafe_dangling()` creates a non-null placeholder
+  that can be stored but not dereferenced or freed (the pre-rename
+  `dangling()` spelling rejects with a rename hint).
 
 ## Tokens (lexical structure)
 

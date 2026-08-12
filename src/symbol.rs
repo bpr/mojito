@@ -462,7 +462,11 @@ fn ty_raw(ty: &Ty) -> String {
             result
         }
         // Pointer origins affect checking/lifetimes but erase from the runtime
-        // callable ABI, just like origin parameters on `ref` arguments.
+        // callable ABI, just like origin parameters on `ref` arguments. The
+        // mangled spelling deliberately stays `UnsafePointer$` while the
+        // user-facing name is `Pointer`: this string is internal callable
+        // identity, and renaming it would churn every symbol golden for no
+        // user-visible gain.
         Ty::Pointer { element, .. } => format!("UnsafePointer${}", ty_raw(element)),
         // Application arguments participate in the mangled identity (so
         // `IteratorType[a]` and `IteratorType[b]` are distinct), except origins,

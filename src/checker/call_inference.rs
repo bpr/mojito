@@ -193,7 +193,7 @@ impl Checker {
                             .to_string(),
                     });
                 }
-                "UnsafePointer" if !kwargs.is_empty() => {
+                "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
                     return self.infer_pointer_to(span, param_args, args, kwargs);
                 }
                 _ if !kwargs.is_empty() => {

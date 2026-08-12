@@ -110,7 +110,8 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
         | ExprKind::Str(_)
-        | ExprKind::None => {}
+        | ExprKind::None
+        | ExprKind::EmptySubscript => {}
         ExprKind::TString { parts, .. } => {
             for part in parts {
                 if let crate::ast::TStringPart::Expr(value) = part {
@@ -1106,6 +1107,7 @@ impl PackRewriter {
             | ExprKind::Str(_)
             | ExprKind::None
             | ExprKind::Uninitialized
+            | ExprKind::EmptySubscript
             | ExprKind::Identifier(_) => {}
         }
     }
@@ -1845,7 +1847,8 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
         | ExprKind::Str(_)
-        | ExprKind::None => {}
+        | ExprKind::None
+        | ExprKind::EmptySubscript => {}
         ExprKind::TString { parts, .. } => {
             for part in parts {
                 if let crate::ast::TStringPart::Expr(value) = part {

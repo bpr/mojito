@@ -1481,8 +1481,7 @@ impl Checker {
                     // bridges its entries List to the replace-on-lookup `value`
                     // generation. Callers inherit the public region, never the
                     // implementation storage origin. Keep this privilege at the
-                    // return boundary alongside the private List take/destroy
-                    // gate, and restrict it to compiler-shipped source paths.
+                    // return boundary, restricted to compiler-shipped source paths.
                     let bundled_collection_interior_bridge =
                         self.self_ty.as_ref().is_some_and(|ty| {
                             list_element(ty).is_some()

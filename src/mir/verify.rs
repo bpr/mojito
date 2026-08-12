@@ -855,8 +855,7 @@ fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
                 PointerOrigin::Param { mutability, .. } => {
                     ReferencePermission::from_mutability(*mutability)
                 }
-                PointerOrigin::Legacy
-                | PointerOrigin::Static
+                PointerOrigin::Static
                 | PointerOrigin::Untracked { .. }
                 | PointerOrigin::UnsafeAny { .. } => return None,
             };
@@ -2583,10 +2582,10 @@ fn verify_instruction(
             match reg_ty(pointer) {
                 Some(Ty::Pointer {
                     element: actual,
-                    origin: crate::origin::PointerOrigin::Legacy,
+                    origin: crate::origin::PointerOrigin::Untracked { mutable: true },
                 }) if types_compatible(actual, element) => {}
                 Some(found) => errors.push(format!(
-                    "{prefix}: compiler-private pointer storage operation expects UnsafePointer[{element}], got {found}"
+                    "{prefix}: compiler-private pointer storage operation expects Pointer[{element}, MutUntrackedOrigin], got {found}"
                 )),
                 None => {}
             }

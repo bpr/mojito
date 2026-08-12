@@ -837,6 +837,9 @@ impl Flatten<'_> {
             ExprKind::Str(s) => self.constant(e, Const::Str(s.clone())),
             ExprKind::None => self.constant(e, Const::None),
             ExprKind::Uninitialized => self.constant(e, Const::None),
+            // The `p[]` dereference marker: the checker validated the pointer
+            // receiver, and offset 0 is the whole lowering.
+            ExprKind::EmptySubscript => self.constant(e, Const::Int(0)),
             ExprKind::Spread(_) => {
                 let dest = self.fresh(span(e), None);
                 self.emit(MirInstr::Unsupported(
@@ -1556,10 +1559,14 @@ impl Flatten<'_> {
                 );
                 if let Some((take, element)) = pointer_storage {
                     let pointer = self.expr(object);
-                    let index = self.expr(
-                        args.first()
-                            .expect("checked pointer storage operation has one index"),
-                    );
+                    // Compiler-private `take(i)`/`destroy(i)` pass the slot
+                    // index; the public zero-argument pointee operations
+                    // (`unsafe_take_pointee`/`unsafe_deinit_pointee`) fix it
+                    // to the dereference offset 0.
+                    let index = match args.first() {
+                        Some(index) => self.expr(index),
+                        None => self.constant(e, Const::Int(0)),
+                    };
                     debug_assert!(kwargs.is_empty());
                     let dest = self.fresh(span(e), None);
                     self.emit(if take {
@@ -1576,6 +1583,86 @@ impl Flatten<'_> {
                             index,
                             element,
                         }
+                    });
+                    return dest;
+                }
+                // `pointer.unsafe_offset(i)` is provenance-preserving element
+                // arithmetic: the ordinary pointer `+` operation.
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(adjustment, crate::SemanticAdjustment::PointerOffset)
+                }) {
+                    let pointer = self.expr(object);
+                    let offset = self.expr(
+                        args.first()
+                            .expect("checked unsafe_offset has one argument"),
+                    );
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::BinOp {
+                        op: crate::ast::InfixOp::Add,
+                        dest,
+                        a: pointer,
+                        b: offset,
+                        resolved: None,
+                    });
+                    return dest;
+                }
+                // `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`
+                // initializes the pointee at offset 0 — the same store family
+                // as `pointer[] = value`. An origin-bearing pointer writes its
+                // source place (owner substitution when stably bound, else
+                // through the runtime handle); a heap pointer stores through a
+                // synthetic binding so chained receivers stay expressible.
+                let pointer_write = self.checked_adjustments(e).into_iter().find_map(
+                    |adjustment| match adjustment {
+                        crate::SemanticAdjustment::PointerWrite { element, copy } => {
+                            Some((element, copy))
+                        }
+                        _ => None,
+                    },
+                );
+                if let Some((element, copy)) = pointer_write {
+                    let value_expr = args
+                        .first()
+                        .or_else(|| kwargs.first().map(|keyword| &keyword.value))
+                        .expect("checked unsafe_write has one value");
+                    let mut src = self.expr(value_expr);
+                    if copy {
+                        let copied = self.fresh_typed(span(e), None, element.clone());
+                        self.emit(MirInstr::CopyValue {
+                            dest: copied,
+                            value: src,
+                        });
+                        src = copied;
+                    }
+                    if let Some(target) = self.pointer_deref_place(object) {
+                        self.emit(MirInstr::Store { place: target, src });
+                    } else if self.is_origin_bearing_pointer(object) {
+                        let reference = self.expr(object);
+                        self.emit(MirInstr::WriteRef {
+                            reference,
+                            value: src,
+                        });
+                    } else {
+                        let pointer = self.expr(object);
+                        let pointer_ty = self.checked_ty(object);
+                        let var = self.fresh_var();
+                        if let Some(ty) = pointer_ty.clone() {
+                            self.var_types.insert(var, ty);
+                        }
+                        self.emit(MirInstr::DefVar {
+                            var,
+                            src: pointer,
+                            binding_ty: pointer_ty.clone(),
+                        });
+                        let index = self.constant(e, Const::Int(0));
+                        let mut place = MirPlace::root(var, pointer_ty);
+                        place.project(Proj::Index(index), element.clone());
+                        self.emit(MirInstr::Store { place, src });
+                    }
+                    let dest = self.fresh_typed(span(e), None, Ty::None);
+                    self.emit(MirInstr::Const {
+                        dest,
+                        k: Const::None,
                     });
                     return dest;
                 }
@@ -2156,6 +2243,41 @@ impl Flatten<'_> {
                 d
             }
             ExprKind::MultiIndex { object, args } => {
+                // `ptr[unsafe_offset=i]` — the keyword spelling of pointer
+                // indexed dereference — lowers exactly like `ptr[i]`: place
+                // substitution or handle read for origin-bearing pointers,
+                // else the pointer-intrinsic `Index` read.
+                if matches!(self.checked_ty(object), Some(Ty::Pointer { .. }))
+                    && let [crate::ast::SubscriptArg::Keyword { name, value }] = args.as_slice()
+                    && name == "unsafe_offset"
+                {
+                    if let Some(place) = self.pointer_deref_place(object) {
+                        let d = self.fresh(span(e), Some(place.root));
+                        self.emit(MirInstr::LoadPlace { dest: d, place });
+                        return d;
+                    }
+                    if self.is_origin_bearing_pointer(object) {
+                        let reference = self.expr(object);
+                        let d = self.fresh(span(e), None);
+                        self.emit(MirInstr::ReadRef { dest: d, reference });
+                        return d;
+                    }
+                    let base = self.expr(object);
+                    let base_place = self.simple_place(object);
+                    let (idx, index_place) = self.lower_call_argument(value);
+                    let intrinsic = self.intrinsic_index_dispatch(object);
+                    let d = self.fresh(span(e), None);
+                    self.emit(MirInstr::Index {
+                        dest: d,
+                        base,
+                        index: idx,
+                        base_place,
+                        index_place,
+                        call: None,
+                        intrinsic,
+                    });
+                    return d;
+                }
                 let has_call = self.checked_call_contract(e).is_some();
                 let (object, object_place) = if has_call {
                     self.lower_call_receiver(object)

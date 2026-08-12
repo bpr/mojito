@@ -296,7 +296,7 @@ impl fmt::Display for Value {
             }
             Value::Error(msg) => write!(f, "Error({:?})", msg),
             Value::Pointer { allocation, offset } => {
-                write!(f, "UnsafePointer({allocation:#x}+{offset})")
+                write!(f, "Pointer({allocation:#x}+{offset})")
             }
             Value::Ref { frame, slot, .. } => write!(f, "<ref {frame}:{slot}>"),
             Value::Moved => write!(f, "<moved>"),
@@ -351,7 +351,7 @@ pub(crate) fn type_name(value: &Value) -> String {
             }
         }
         Value::Error(_) => "Error".to_string(),
-        Value::Pointer { .. } => "UnsafePointer".to_string(),
+        Value::Pointer { .. } => "Pointer".to_string(),
         Value::Ref { .. } => "ref".to_string(),
         Value::Moved => "<moved>".to_string(),
         Value::ComptimeList(_) => "<comptime-list>".to_string(),
