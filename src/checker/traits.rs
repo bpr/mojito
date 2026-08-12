@@ -1930,12 +1930,12 @@ impl Checker {
         }
     }
 
-    /// The `Trivially{Movable,Copyable,Deinitable}[T]` predicate: the base
-    /// capability holds AND the corresponding lifecycle operation is
-    /// compiler-generated (no user `__moveinit__`/`__copyinit__`/`__deinit__`
-    /// or named destructor for the queried facet) AND every field is
-    /// recursively trivial — a bitwise move/copy or a no-op destructor,
-    /// matching upstream `std.traits` at the audited head.
+    /// The `IsTrivially{Movable,Copyable,Deinitable}[T]` predicate: the type
+    /// conforms to `TrivialRegisterPassable`, OR the base capability holds AND
+    /// the corresponding lifecycle operation is compiler-generated (no user
+    /// `__moveinit__`/`__copyinit__`/`__deinit__` or named destructor for the
+    /// queried facet) AND every field is recursively trivial — a bitwise
+    /// move/copy or a no-op destructor, matching upstream `std.traits`.
     pub(super) fn is_trivially(&self, kind: crate::types::TrivialLifecycle, ty: &Ty) -> bool {
         let mut visiting = std::collections::HashSet::new();
         self.trivial_lifecycle(kind, ty, &mut visiting)
@@ -1948,6 +1948,25 @@ impl Checker {
         visiting: &mut std::collections::HashSet<String>,
     ) -> bool {
         use crate::types::TrivialLifecycle;
+        // The first upstream disjunct: `conforms_to(T, TrivialRegisterPassable)`.
+        // The general `conforms_to` treats marker traits shallowly (everything
+        // conforms), so consult only a declared conformance or a parameter
+        // bound; primitives already prove triviality structurally below.
+        let trp_conforms = match ty {
+            Ty::Struct(name, args) => {
+                self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
+            }
+            Ty::Param { bounds, .. } => {
+                bounds
+                    .iter()
+                    .any(|bound| bound == "TrivialRegisterPassable")
+                    || self.has_assumed_conformance(ty, "TrivialRegisterPassable")
+            }
+            _ => false,
+        };
+        if trp_conforms {
+            return true;
+        }
         let base_holds = match kind {
             TrivialLifecycle::Movable => self.is_movable(ty),
             TrivialLifecycle::Copyable => self.is_copyable(ty),

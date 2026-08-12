@@ -483,7 +483,7 @@ impl ConformanceOracle {
         }
     }
 
-    /// Answer a `Trivially{Movable,Copyable,Deinitable}[T]` comptime predicate.
+    /// Answer an `IsTrivially{Movable,Copyable,Deinitable}[T]` comptime predicate.
     pub(crate) fn trivially(&self, kind: crate::types::TrivialLifecycle, ty: &Ty) -> bool {
         self.checker.is_trivially(kind, ty)
     }

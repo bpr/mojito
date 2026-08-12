@@ -883,12 +883,12 @@ intrinsics. Ordinary lexical bindings still shadow an implicit name.
   nominal `__len__` method (including List, Set, Dict, Range, and Tuple) → `Int`.
 - `List[T]()` / `List[T](a, b, …)` / `List(a, b, …)` — call a concrete
   specialization of the nominal prelude `List` struct (see **Collections**).
-- `TriviallyMovable[T]` / `TriviallyCopyable[T]` / `TriviallyDeinitable[T]` —
-  Bool-valued compile-time predicates (not traits): the base lifecycle
-  capability holds and the corresponding operation is compiler-generated with
-  recursively trivial fields. Usable in `comptime` control and bindings,
-  `where` clauses, and conformance conditions; rejected as type-parameter
-  bounds.
+- `IsTriviallyMovable[T]` / `IsTriviallyCopyable[T]` / `IsTriviallyDeinitable[T]`
+  — Bool-valued compile-time predicates (not traits): the type conforms to
+  `TrivialRegisterPassable`, or the base lifecycle capability holds and the
+  corresponding operation is compiler-generated with recursively trivial
+  fields. Usable in `comptime` control and bindings, `where` clauses, and
+  conformance conditions; rejected as type-parameter bounds.
 
 ## Numbers
 

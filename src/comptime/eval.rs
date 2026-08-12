@@ -86,7 +86,7 @@ impl<'a> Elab<'a> {
                 }
             }
             ExprKind::Index { object, index } => {
-                // `TriviallyCopyable[Plain]`: a single non-scalar bracket
+                // `IsTriviallyCopyable[Plain]`: a single non-scalar bracket
                 // argument parses as runtime indexing, so the predicate is
                 // recognized here as well as on the TypeApply path.
                 if let ExprKind::Identifier(name) = &object.kind

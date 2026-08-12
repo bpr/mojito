@@ -499,12 +499,12 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
     const TRAITS: &[&str] = &[
         "AnyType",
         "Movable",
-        "TriviallyMovable",
+        "IsTriviallyMovable",
         "Copyable",
         "ImplicitlyCopyable",
-        "TriviallyCopyable",
+        "IsTriviallyCopyable",
         "Deinitable",
-        "TriviallyDeinitable",
+        "IsTriviallyDeinitable",
     ];
     const ORIGIN: &[&str] = &[
         "Origin",

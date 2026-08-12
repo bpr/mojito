@@ -448,10 +448,11 @@ pub enum ConstraintOperand {
     Type(Ty),
 }
 
-/// The lifecycle facet queried by the `Trivially{Movable,Copyable,Deinitable}[T]`
-/// comptime predicates: the base capability holds and the corresponding
-/// lifecycle operation is compiler-generated with recursively trivial fields
-/// (a bitwise move/copy or a no-op destructor).
+/// The lifecycle facet queried by the
+/// `IsTrivially{Movable,Copyable,Deinitable}[T]` comptime predicates: the type
+/// conforms to `TrivialRegisterPassable`, or the base capability holds and the
+/// corresponding lifecycle operation is compiler-generated with recursively
+/// trivial fields (a bitwise move/copy or a no-op destructor).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrivialLifecycle {
     Movable,
@@ -459,14 +460,14 @@ pub enum TrivialLifecycle {
     Deinitable,
 }
 
-/// Recognize a `Trivially*` comptime-predicate name. These are Bool-valued
+/// Recognize an `IsTrivially*` comptime-predicate name. These are Bool-valued
 /// predicates, not traits: they are valid in `where` clauses, conformance
 /// conditions, and `comptime if`, but not as type-parameter bounds.
 pub fn trivial_predicate_name(name: &str) -> Option<TrivialLifecycle> {
     match name {
-        "TriviallyMovable" => Some(TrivialLifecycle::Movable),
-        "TriviallyCopyable" => Some(TrivialLifecycle::Copyable),
-        "TriviallyDeinitable" => Some(TrivialLifecycle::Deinitable),
+        "IsTriviallyMovable" => Some(TrivialLifecycle::Movable),
+        "IsTriviallyCopyable" => Some(TrivialLifecycle::Copyable),
+        "IsTriviallyDeinitable" => Some(TrivialLifecycle::Deinitable),
         _ => None,
     }
 }
@@ -485,7 +486,7 @@ pub enum GenericConstraint {
         param: String,
         trait_name: String,
     },
-    /// `Trivially{Movable,Copyable,Deinitable}[operand]`.
+    /// `IsTrivially{Movable,Copyable,Deinitable}[operand]`.
     Trivial(TrivialLifecycle, ConstraintOperand),
     Eq(ConstraintOperand, ConstraintOperand),
     Ne(ConstraintOperand, ConstraintOperand),

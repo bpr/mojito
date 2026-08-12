@@ -45,9 +45,19 @@ sources should use current canonical spellings.
 
 Status 2026-08-09: DONE — canonical `Deinitable`/`__deinit__` vocabulary with
 parse-time normalization of the deprecated spellings, effective conditional
-`Movable`, the three `Trivially*` predicates (semantics pinned from the
+`Movable`, the three lifecycle predicates (semantics pinned from the
 audited `std/traits/*.mojo` sources), and the `std.traits`/`std.origin`
 module homes (export lists mirroring the audited upstream surface).
+
+Post-pin spot alignment 2026-08-11: one day after the audit pin, upstream
+[`22b5036987`](https://github.com/modular/modular/commit/22b5036987b33d3724dd5c3a495112f684bf8fc4)
+hard-renamed the predicates to `IsTriviallyMovable`/`IsTriviallyCopyable`/
+`IsTriviallyDeinitable` (no deprecated aliases) and made
+`conforms_to(T, TrivialRegisterPassable)` a sufficient first disjunct. Mojito
+follows both: the `Is`-prefixed spellings are the only ones that resolve
+(compiler recognition, `std.traits` exports, and diagnostics), and a declared
+`TrivialRegisterPassable` conformance or bound satisfies the predicates ahead
+of the structural check.
 
 Canonicalize `Deinitable` and `__deinit__` through syntax, checked traits, MIR
 drop metadata, VM dispatch, the proof standard library, and documentation.
@@ -58,7 +68,8 @@ default for ordinary structs, but it ignores `Movable where False` and other
 conditional opt-outs. Make those constraints effective. Add the current
 `TriviallyMovable[T]`, `TriviallyCopyable[T]`, and
 `TriviallyDeinitable[T]` comptime predicates after the canonical trait facts
-exist. Move explicit bundled imports to the canonical `std.traits` home; move
+exist (upstream has since `Is`-prefixed them; see the spot alignment above).
+Move explicit bundled imports to the canonical `std.traits` home; move
 `Origin` imports to `std.origin`. Prelude re-exports may remain compatibility
 bridges. The module moves are recorded by
 [`84bc36ac`](https://github.com/modular/modular/commit/84bc36aceb0f4c93efefd9fda1a6e9cdd5d56782)

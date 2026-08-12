@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Lifecycle-predicate rename alignment (post-pin follow-up to nightly §0):
+  the comptime predicates are now spelled `IsTriviallyMovable[T]`/
+  `IsTriviallyCopyable[T]`/`IsTriviallyDeinitable[T]`, matching upstream
+  `22b5036987` (one day after the `ae386d1b204` audit pin), which
+  hard-renamed them with no deprecated aliases — the pre-rename `Trivially*`
+  spellings no longer resolve anywhere (compiler recognition, `std.traits`
+  exports, diagnostics). The same upstream change made
+  `conforms_to(T, TrivialRegisterPassable)` a sufficient first disjunct:
+  a declared `TrivialRegisterPassable` conformance or parameter bound now
+  satisfies the predicates ahead of the structural check (which continues to
+  prove primitives and ordinary structs). The shallow builtin-marker
+  `conforms_to` default is deliberately not consulted for that disjunct.
+
 - Fixed-size `Array[T, length]` and the list-display retarget (nightly §3): a
   new prelude-exported, self-hosted `std.collections.array.Array` declares
   conditional `Copyable`/`Movable`/`Deinitable`/`Equatable`/`Iterable`/

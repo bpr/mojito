@@ -507,7 +507,7 @@ impl Checker {
                 }
                 GenericConstraint::Trivial(kind, self.trivial_predicate_operand(&args[0])?)
             }
-            // A single non-scalar bracket argument (`TriviallyMovable[T]`)
+            // A single non-scalar bracket argument (`IsTriviallyMovable[T]`)
             // parses as runtime indexing; recognize the predicate here too.
             ExprKind::Index { object, index }
                 if matches!(
@@ -598,7 +598,7 @@ impl Checker {
         })
     }
 
-    /// The single type argument of a `Trivially*` predicate: a bare name is a
+    /// The single type argument of an `IsTrivially*` predicate: a bare name is a
     /// generic parameter (mirroring `conforms_to`'s param-only operand) unless
     /// it names a scalar; any other annotation resolves as a concrete type.
     fn trivial_predicate_operand(
@@ -615,7 +615,7 @@ impl Checker {
             crate::ast::ParamArg::Type(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
             crate::ast::ParamArg::Named { .. } => {
                 return Err(TypeError::Unsupported(
-                    "a Trivially* predicate takes a positional type argument".to_string(),
+                    "an IsTrivially* predicate takes a positional type argument".to_string(),
                 ));
             }
         })

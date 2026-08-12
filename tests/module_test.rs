@@ -837,7 +837,7 @@ fn std_traits_and_std_origin_export_builtin_identities() {
     // Named imports resolve and the names stay usable as bounds/binders.
     let main = d.write(
         "main.mojo",
-        "from std.traits import Deinitable, Movable, TriviallyCopyable\nfrom std.origin import Origin\n\nstruct Res(Movable, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def close(deinit self):\n        print(\"closed\", self.id)\n\ndef borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef main():\n    var r = Res(1)\n    r^.close()\n    var x = 40\n    ref y = borrow(x)\n    y += 2\n    print(x)\n    comptime if TriviallyCopyable[Int]:\n        print(\"trivial int\")\n",
+        "from std.traits import Deinitable, Movable, IsTriviallyCopyable\nfrom std.origin import Origin\n\nstruct Res(Movable, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def close(deinit self):\n        print(\"closed\", self.id)\n\ndef borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef main():\n    var r = Res(1)\n    r^.close()\n    var x = 40\n    ref y = borrow(x)\n    y += 2\n    print(x)\n    comptime if IsTriviallyCopyable[Int]:\n        print(\"trivial int\")\n",
     );
     assert_eq!(run(&main).expect("run"), "closed 1\n42\ntrivial int\n");
 
@@ -863,6 +863,17 @@ fn std_traits_and_std_origin_export_builtin_identities() {
     let error = run(&unknown).expect_err("unknown import must fail");
     assert!(
         error.contains("no declaration named 'NotAThing'"),
+        "unexpected error: {error}"
+    );
+
+    // The pre-rename predicate spelling is gone upstream and stays gone here.
+    let renamed = d.write(
+        "renamed.mojo",
+        "from std.traits import TriviallyMovable\n\ndef main():\n    pass\n",
+    );
+    let error = run(&renamed).expect_err("old predicate spelling must fail");
+    assert!(
+        error.contains("no declaration named 'TriviallyMovable'"),
         "unexpected error: {error}"
     );
 }

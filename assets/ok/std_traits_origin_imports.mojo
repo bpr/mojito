@@ -1,6 +1,6 @@
 # Explicit imports from the canonical `std.traits`/`std.origin` module homes
 # resolve to the compiler builtins and run end-to-end.
-from std.traits import Deinitable, Movable, TriviallyDeinitable
+from std.traits import Deinitable, Movable, IsTriviallyDeinitable
 from std.origin import Origin
 
 struct Res(Movable, Deinitable where False):
@@ -22,5 +22,5 @@ def main():
     ref y = borrow(x)
     y += 2
     print(x)
-    comptime if not TriviallyDeinitable[String]:
+    comptime if not IsTriviallyDeinitable[String]:
         print("string deinit nontrivial")

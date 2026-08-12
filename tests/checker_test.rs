@@ -4876,7 +4876,7 @@ fn trivially_predicates_serve_where_clauses_but_not_bounds() {
     // A where clause selects on triviality through the checked seam.
     let custom = "struct Custom(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x\n\n";
     let generic =
-        "def bitwise[T: Copyable](value: T) -> Int where TriviallyCopyable[T]:\n    return 1\n\n";
+        "def bitwise[T: Copyable](value: T) -> Int where IsTriviallyCopyable[T]:\n    return 1\n\n";
     ok(&format!(
         "{generic}def main():\n    var chosen = bitwise(42)\n"
     ));
@@ -4889,8 +4889,27 @@ fn trivially_predicates_serve_where_clauses_but_not_bounds() {
 
     // The predicate names are not traits: a bound spelling stays rejected.
     assert!(matches!(
-        err("def f[T: TriviallyMovable](value: T) -> Int:\n    return 1\n"),
-        TypeError::UnknownTrait(name) if name == "TriviallyMovable"
+        err("def f[T: IsTriviallyMovable](value: T) -> Int:\n    return 1\n"),
+        TypeError::UnknownTrait(name) if name == "IsTriviallyMovable"
+    ));
+}
+
+#[test]
+fn trivial_register_passable_bound_serves_trivially_where_clauses() {
+    // The predicate's first disjunct — `conforms_to(T, TrivialRegisterPassable)`
+    // — proves triviality from the bound alone.
+    ok(
+        "def f[T: TrivialRegisterPassable](value: T) -> Int where IsTriviallyMovable[T]:\n    return 1\n\ndef main():\n    var chosen = f(42)\n",
+    );
+}
+
+#[test]
+fn pre_rename_trivially_spelling_is_not_a_where_proposition() {
+    // The old spelling is gone upstream with no deprecated alias; it no longer
+    // reads as a predicate anywhere, including where clauses.
+    assert!(matches!(
+        err("def f[T: Copyable](value: T) -> Int where TriviallyCopyable[T]:\n    return 1\n\ndef main():\n    var chosen = f(42)\n"),
+        TypeError::Unsupported(reason) if reason == "unsupported generic where proposition"
     ));
 }
 

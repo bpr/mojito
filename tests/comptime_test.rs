@@ -981,7 +981,7 @@ fn conflicting_unrolled_inferred_calls_keep_the_abstract_path() {
 
 #[test]
 fn trivially_predicates_fold_in_comptime_control() {
-    let src = "struct Plain(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Custom(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x + 100\n\ndef main():\n    comptime if TriviallyCopyable[Int]:\n        print(\"int trivial\")\n    comptime if TriviallyCopyable[Plain]:\n        print(\"plain trivial\")\n    comptime if not TriviallyCopyable[Custom]:\n        print(\"custom user copy\")\n    comptime if TriviallyDeinitable[Plain]:\n        print(\"plain deinit trivial\")\n    comptime if not TriviallyDeinitable[String]:\n        print(\"string deinit nontrivial\")\n    comptime if TriviallyMovable[Plain]:\n        print(\"plain move trivial\")\n";
+    let src = "struct Plain(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Custom(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x + 100\n\ndef main():\n    comptime if IsTriviallyCopyable[Int]:\n        print(\"int trivial\")\n    comptime if IsTriviallyCopyable[Plain]:\n        print(\"plain trivial\")\n    comptime if not IsTriviallyCopyable[Custom]:\n        print(\"custom user copy\")\n    comptime if IsTriviallyDeinitable[Plain]:\n        print(\"plain deinit trivial\")\n    comptime if not IsTriviallyDeinitable[String]:\n        print(\"string deinit nontrivial\")\n    comptime if IsTriviallyMovable[Plain]:\n        print(\"plain move trivial\")\n";
     assert_eq!(
         run(src).expect("run"),
         "int trivial\nplain trivial\ncustom user copy\nplain deinit trivial\nstring deinit nontrivial\nplain move trivial\n"
@@ -992,12 +992,34 @@ fn trivially_predicates_fold_in_comptime_control() {
 fn trivially_predicates_recurse_through_fields() {
     // A field whose type defines a user copy constructor defeats the outer
     // struct's triviality even though the outer struct synthesizes its copy.
-    let src = "struct Custom(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x\n\n@fieldwise_init\nstruct Outer(Copyable):\n    var inner: Custom\n\n@fieldwise_init\nstruct Simple(Copyable):\n    var a: Int\n    var b: Bool\n\ndef main():\n    comptime if not TriviallyCopyable[Outer]:\n        print(\"outer nontrivial\")\n    comptime if TriviallyCopyable[Simple]:\n        print(\"simple trivial\")\n";
+    let src = "struct Custom(Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x\n\n@fieldwise_init\nstruct Outer(Copyable):\n    var inner: Custom\n\n@fieldwise_init\nstruct Simple(Copyable):\n    var a: Int\n    var b: Bool\n\ndef main():\n    comptime if not IsTriviallyCopyable[Outer]:\n        print(\"outer nontrivial\")\n    comptime if IsTriviallyCopyable[Simple]:\n        print(\"simple trivial\")\n";
     assert_eq!(run(src).expect("run"), "outer nontrivial\nsimple trivial\n");
 }
 
 #[test]
 fn trivially_predicate_binds_as_comptime_value() {
-    let src = "def main():\n    comptime trivially = TriviallyMovable[Int]\n    print(trivially)\n";
+    let src =
+        "def main():\n    comptime trivially = IsTriviallyMovable[Int]\n    print(trivially)\n";
     assert_eq!(run(src).expect("run"), "True\n");
+}
+
+#[test]
+fn trivial_register_passable_conformance_satisfies_the_predicates() {
+    // The predicate is `conforms_to(T, TrivialRegisterPassable)` OR the
+    // structural check: a declared conformance wins even when a user copy
+    // constructor defeats the compiler-generated-lifecycle requirement.
+    let src = "struct P(TrivialRegisterPassable, Copyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x + 1\n\ndef main():\n    comptime if IsTriviallyCopyable[P]:\n        print(\"trp trivial\")\n";
+    assert_eq!(run(src).expect("run"), "trp trivial\n");
+}
+
+#[test]
+fn pre_rename_trivially_spelling_no_longer_resolves() {
+    // Upstream renamed the predicates without deprecated aliases, so the old
+    // spelling is an ordinary unknown name.
+    let src = "def main():\n    comptime if TriviallyCopyable[Int]:\n        print(\"trivial\")\n";
+    let error = run(src).expect_err("old spelling must fail");
+    assert!(
+        error.contains("'TriviallyCopyable' is not a compile-time type"),
+        "unexpected error: {error}"
+    );
 }
