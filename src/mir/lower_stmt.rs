@@ -482,6 +482,16 @@ impl Flatten<'_> {
             }
             ExprKind::Index { object, index } => {
                 let mut p = self.place(object);
+                // Compiler-private inline uninit storage: `storage[0]` is the
+                // payload place (`Proj::UninitPayload`), not a dynamic index.
+                let object_ty = self.checked_ty(object);
+                if let Some(element) = object_ty
+                    .as_ref()
+                    .and_then(crate::types::uninit_storage_element)
+                {
+                    p.project(Proj::UninitPayload, element.clone());
+                    return p;
+                }
                 let idx = self.expr(index); // evaluated once, before the store
                 if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
                     p.project(Proj::Index(idx), ty);

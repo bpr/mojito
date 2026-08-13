@@ -455,6 +455,10 @@ impl ConformanceOracle {
             let saved_type_params =
                 std::mem::replace(&mut checker.enclosing_type_params, type_params.clone());
             let saved_self_ty = checker.self_ty.replace(self_ty);
+            let saved_bundled = std::mem::replace(
+                &mut checker.bundled_stdlib_declaration,
+                is_bundled_stdlib_source(statement.module.as_deref()),
+            );
             let field_types = fields
                 .iter()
                 .map(|field| {
@@ -466,6 +470,7 @@ impl ConformanceOracle {
             checker.self_decls = saved_self_decls;
             checker.enclosing_type_params = saved_type_params;
             checker.self_ty = saved_self_ty;
+            checker.bundled_stdlib_declaration = saved_bundled;
             if let Some(info) = checker.structs.get_mut(name) {
                 info.fields = field_types?;
             }
@@ -604,6 +609,11 @@ pub struct Checker {
     /// a reference-valued field, assigning a reference here stores its handle;
     /// later assignments write through the established handle instead.
     self_initializing: bool,
+    /// The declaration currently being checked comes from the bundled
+    /// standard-library crossing module (`stdlib/std/memory.mojo`). Only such
+    /// declarations may name compiler-private storage types (`__UninitStorage`)
+    /// in sourceless type-annotation positions.
+    bundled_stdlib_declaration: bool,
     /// Source-span to lowered callee for calls whose source name denotes an
     /// overload set. Interior mutability keeps expression inference usable from
     /// read-only helper methods while still recording resolution facts.
@@ -785,6 +795,7 @@ impl Checker {
             comptime_aliases: HashMap::new(),
             self_mutable: false,
             self_initializing: false,
+            bundled_stdlib_declaration: false,
             overload_targets: RefCell::new(HashMap::new()),
             generic_instantiations: RefCell::new(HashMap::new()),
             transfer_frames: RefCell::new(Vec::new()),
@@ -2028,6 +2039,18 @@ fn guaranteed_conformance_atoms(
                 output.push(atom);
             }
         }
+        // `where IsTrivially*[T]` guarantees the facet (and, through the
+        // assumption table's implications, the base capability) inside the
+        // body, recorded under the predicate's spelling.
+        GenericConstraint::Trivial(kind, crate::types::ConstraintOperand::Param(param)) => {
+            let atom = (
+                param.clone(),
+                crate::types::trivial_predicate_spelling(*kind).to_string(),
+            );
+            if !output.contains(&atom) {
+                output.push(atom);
+            }
+        }
         GenericConstraint::And(left, right) => {
             guaranteed_conformance_atoms(left, output);
             guaranteed_conformance_atoms(right, output);
@@ -2312,8 +2335,8 @@ fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String
     let signature = crate::symbol::SignatureKey::from_tys(signature_types)
         .with_kw_variadic(sig.kw_variadic.as_deref())
         .with_keyword_names(keyword_names);
-    if method == "__iter__" {
-        crate::symbol::iterator_method_symbol(type_name, sig.self_convention, &signature)
+    if crate::symbol::receiver_overloaded_method(method) {
+        crate::symbol::receiver_method_symbol(type_name, method, sig.self_convention, &signature)
     } else {
         crate::symbol::method_symbol(type_name, method, &signature)
     }
@@ -2930,6 +2953,7 @@ fn select_callable_overload(
 fn select_method_overload(
     _method: &str,
     matches: Vec<MethodCallResolution>,
+    receiver_transferred: Option<bool>,
 ) -> Result<MethodCallResolution, OverloadSelect> {
     let best = matches
         .iter()
@@ -2941,10 +2965,27 @@ fn select_method_overload(
         .filter(|candidate| candidate.conversion_score == best)
         .collect::<Vec<_>>();
     if best_matches.len() == 1 {
-        Ok(best_matches.remove(0))
-    } else {
-        Err(OverloadSelect::Ambiguous)
+        return Ok(best_matches.remove(0));
     }
+    // Current Mojo overloads some methods purely on the receiver convention
+    // (a consuming `x^.m()` beside a borrowing `x.m()` — see
+    // `symbol::receiver_overloaded_method`). Argument scoring cannot separate
+    // those, so an otherwise tied set falls back to the call's explicit
+    // receiver transfer. Only an exact single survivor resolves; anything
+    // else stays ambiguous. The implicitly-copyable place satisfying a sole
+    // deinit overload is unaffected — that path never reaches a tie.
+    if let Some(transferred) = receiver_transferred {
+        let survivors: Vec<usize> = best_matches
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate.consumes_receiver == transferred)
+            .map(|(index, _)| index)
+            .collect();
+        if let [index] = survivors.as_slice() {
+            return Ok(best_matches.remove(*index));
+        }
+    }
+    Err(OverloadSelect::Ambiguous)
 }
 
 fn overload_candidates(existing: &Ty, new_ty: &Ty) -> Option<Vec<Ty>> {

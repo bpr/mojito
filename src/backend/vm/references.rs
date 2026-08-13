@@ -35,6 +35,7 @@ impl VmBackend {
                 }
                 Proj::ConstIndex(index) => RefProjection::Index(*index),
                 Proj::Variant(index) => RefProjection::Variant(*index),
+                Proj::UninitPayload => RefProjection::UninitPayload,
             });
         }
         Ok(Value::Ref {
@@ -318,6 +319,13 @@ impl VmBackend {
         )? {
             return Ok(());
         }
+        if write_uninit_payload(
+            &mut self.frames[owner_index].variables[*slot],
+            projection,
+            value.clone(),
+        )? {
+            return Ok(());
+        }
         let root_type = crate::runtime::type_name(&self.frames[owner_index].variables[*slot]);
         *navigate_reference_mut(&mut self.frames[owner_index].variables[*slot], projection)
             .map_err(|error| {
@@ -410,6 +418,12 @@ impl VmBackend {
                     .map(|capture| capture.value.clone())
                     .ok_or_else(|| {
                         RuntimeError::TypeError("closure capture index out of bounds".to_string())
+                    })?,
+                (RefProjection::UninitPayload, Value::UninitStorage(payload)) => *payload
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError(
+                            "vm: read of uninitialized UnsafeMaybeUninit storage".to_string(),
+                        )
                     })?,
                 // Offset-0 identity deref of an origin-erased single-pointee
                 // `to=place` pointer. `UnsafePointer(to=v)` lowers to a `Value::Ref`
@@ -522,6 +536,14 @@ impl VmBackend {
                             .unwrap_or_else(|| "<invalid>".to_string())
                     )));
                 }
+                // An initialized payload is ordinary frame-local storage to
+                // scan through; an uninitialized one has no heap boundary
+                // beyond it — the frame-local write/read logic decides whether
+                // the access initializes (a final raw write) or traps.
+                (RefProjection::UninitPayload, Value::UninitStorage(Some(payload))) => {
+                    value = *payload;
+                }
+                (RefProjection::UninitPayload, Value::UninitStorage(None)) => return Ok(None),
                 _ => return Ok(None),
             }
         }
@@ -546,6 +568,9 @@ impl VmBackend {
             return Ok(());
         }
         if write_simd_reference_lane(root, projection, value.clone())? {
+            return Ok(());
+        }
+        if write_uninit_payload(root, projection, value.clone())? {
             return Ok(());
         }
         let root_type = crate::runtime::type_name(root);
@@ -590,6 +615,13 @@ impl VmBackend {
         )? {
             return Ok(());
         }
+        if write_uninit_payload(
+            &mut self.heap[region].slots[slot],
+            projection,
+            value.clone(),
+        )? {
+            return Ok(());
+        }
         let root_type = crate::runtime::type_name(&self.heap[region].slots[slot]);
         *navigate_reference_mut(&mut self.heap[region].slots[slot], projection).map_err(
             |error| {
@@ -624,6 +656,7 @@ impl VmBackend {
                 }
                 Proj::ConstIndex(index) => RefProjection::Index(*index),
                 Proj::Variant(index) => RefProjection::Variant(*index),
+                Proj::UninitPayload => RefProjection::UninitPayload,
             });
         }
         Ok(Some(Value::Ref {
@@ -657,6 +690,7 @@ fn navigate_reference_step<'a>(value: &'a Value, segment: &RefProjection) -> Opt
         (RefProjection::Capture(index), Value::Closure { captures, .. }) => {
             captures.get(*index).map(|capture| &capture.value)
         }
+        (RefProjection::UninitPayload, Value::UninitStorage(payload)) => payload.as_deref(),
         _ => None,
     }
 }

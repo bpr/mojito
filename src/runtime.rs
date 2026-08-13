@@ -89,6 +89,11 @@ pub enum Value {
     /// use-after-move surfaces as a loud runtime error (a defensive check — the
     /// ownership analysis already rejects it statically), and a no-op to drop.
     Moved,
+    /// Inline possibly-uninitialized storage (`UnsafeMaybeUninit`'s field):
+    /// `None` is uninitialized, `Some` holds the raw payload. Dropping one is
+    /// a no-op regardless of contents — the payload leaks by design, matching
+    /// upstream's no-op destructor — and reading/taking the `None` state traps.
+    UninitStorage(Option<Box<Value>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +103,9 @@ pub enum RefProjection {
     Variant(usize),
     /// One owned slot in a closure's declaration-created environment.
     Capture(usize),
+    /// The payload of a [`Value::UninitStorage`] slot; reading it while the
+    /// storage is uninitialized traps.
+    UninitPayload,
 }
 
 /// One slot in a lifted closure's environment. Reference captures retain their
@@ -215,6 +223,7 @@ impl PartialEq for Value {
                     projection: bp,
                 },
             ) => af == bf && as_ == bs && ap == bp,
+            (Value::UninitStorage(a), Value::UninitStorage(b)) => a == b,
             _ => false,
         }
     }
@@ -300,6 +309,8 @@ impl fmt::Display for Value {
             }
             Value::Ref { frame, slot, .. } => write!(f, "<ref {frame}:{slot}>"),
             Value::Moved => write!(f, "<moved>"),
+            Value::UninitStorage(None) => write!(f, "<uninit>"),
+            Value::UninitStorage(Some(value)) => write!(f, "<uninit-storage {value}>"),
             Value::ComptimeList(items) => {
                 write!(f, "<comptime-list [")?;
                 for (i, item) in items.iter().enumerate() {
@@ -354,6 +365,7 @@ pub(crate) fn type_name(value: &Value) -> String {
         Value::Pointer { .. } => "Pointer".to_string(),
         Value::Ref { .. } => "ref".to_string(),
         Value::Moved => "<moved>".to_string(),
+        Value::UninitStorage(_) => "__UninitStorage".to_string(),
         Value::ComptimeList(_) => "<comptime-list>".to_string(),
         Value::Tuple(items) => {
             let elems: Vec<String> = items.iter().map(type_name).collect();

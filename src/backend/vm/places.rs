@@ -44,6 +44,13 @@ pub(super) fn store_place(
                 let idx = value_as_index(&regs[ireg.0 as usize])?;
                 return crate::runtime::set_simd_lane(*dtype, lanes, idx, value);
             }
+            // A final payload write initializes-or-overwrites inline uninit
+            // storage without running any destructor: `unsafe_write` leaks a
+            // previously initialized payload by design.
+            if let (Proj::UninitPayload, Value::UninitStorage(payload)) = (last, &mut *slot) {
+                *payload = Some(Box::new(value));
+                return Ok(());
+            }
             *nav_step(slot, last, regs)? = value;
             Ok(())
         }
@@ -150,6 +157,16 @@ fn nav_step<'a>(
             _ => Err(RuntimeError::TypeError(
                 "Variant projection on a non-Variant value".to_string(),
             )),
+        },
+        Proj::UninitPayload => match slot {
+            Value::UninitStorage(Some(payload)) => Ok(payload.as_mut()),
+            Value::UninitStorage(None) => Err(RuntimeError::TypeError(
+                "vm: read of uninitialized UnsafeMaybeUninit storage".to_string(),
+            )),
+            other => Err(RuntimeError::TypeError(format!(
+                "payload projection on non-uninit-storage {}",
+                crate::runtime::type_name(other)
+            ))),
         },
     }
 }

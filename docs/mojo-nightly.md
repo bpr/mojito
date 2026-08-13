@@ -200,9 +200,16 @@ The canonical source is in upstream
 and [`alloc.mojo`](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/stdlib/std/memory/alloc.mojo);
 the current contract is summarized in the
 [pointer manual](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/manual/pointers/using-pointers.mdx).
-Grow `UnsafeMaybeUninit` afterward around the current `unsafe_write`, overloaded
-`unsafe_assume_init`, `unsafe_deinit`, and `unsafe_forget` vocabulary from
-[`b324feea`](https://github.com/modular/modular/commit/b324feeaa16bc13a12c0200164d1878fcfa64a87).
+The `UnsafeMaybeUninit` growth from
+[`b324feea`](https://github.com/modular/modular/commit/b324feeaa16bc13a12c0200164d1878fcfa64a87)
+is done: inline-uninit storage (a new VM capability, not a heap-slot spelling)
+carries the `unsafe_write`, overloaded `unsafe_assume_init`, `unsafe_deinit`,
+and `unsafe_forget` vocabulary with upstream's conformances and triviality
+facts; reading/taking uninitialized storage traps deterministically where
+upstream leaves it undefined. Recorded subset gaps: `zeroed()` (no byte-level
+value model) and `unsafe_ptr()` (blocked on `origin_of(self)` as a Pointer
+origin argument and `Pointer(to=…)` through `ref` bindings; the `ref self`
+`unsafe_assume_init` covers borrowed access).
 
 ### 5. Replace copied/clamped slices with current views and bounds
 

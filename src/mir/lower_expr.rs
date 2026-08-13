@@ -1064,6 +1064,23 @@ impl Flatten<'_> {
                     self.emit(MirInstr::MakeRef { dest, place });
                     return dest;
                 }
+                // Compiler-private inline uninit-storage construction:
+                // uninitialized, or holding a moved initial payload.
+                if let Some(init) = self
+                    .checked_adjustments(e)
+                    .into_iter()
+                    .find_map(|adjustment| match adjustment {
+                        crate::SemanticAdjustment::UninitStorageMake { init, .. } => Some(init),
+                        _ => None,
+                    })
+                {
+                    let init = init.then(|| {
+                        self.expr(args.first().expect("checked storage construction payload"))
+                    });
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::UninitStorage { dest, init });
+                    return dest;
+                }
                 if let Some(crate::SemanticAdjustment::ConstructVariant {
                     alternatives,
                     index,
@@ -1622,6 +1639,61 @@ impl Flatten<'_> {
                         }
                     });
                     return dest;
+                }
+                // Compiler-private inline uninit storage (`UnsafeMaybeUninit`'s
+                // field). `unsafe_write` stores through the payload projection
+                // — the place is opaque to drop elaboration, so a previously
+                // written payload is overwritten raw (it leaks by design).
+                // `take`/`destroy` consume the transferred storage value.
+                let uninit_storage = self.checked_adjustments(e).into_iter().find_map(
+                    |adjustment| match adjustment {
+                        crate::SemanticAdjustment::UninitStorageWrite { element } => {
+                            Some((UninitStorageOp::Write, element))
+                        }
+                        crate::SemanticAdjustment::UninitStorageTake { element } => {
+                            Some((UninitStorageOp::Take, element))
+                        }
+                        crate::SemanticAdjustment::UninitStorageDestroy { element } => {
+                            Some((UninitStorageOp::Destroy, element))
+                        }
+                        _ => None,
+                    },
+                );
+                if let Some((op, element)) = uninit_storage {
+                    debug_assert!(kwargs.is_empty());
+                    match op {
+                        UninitStorageOp::Write => {
+                            let src = self
+                                .expr(args.first().expect("checked unsafe_write has one value"));
+                            let mut place = self.place(object);
+                            place.project(Proj::UninitPayload, element);
+                            self.emit(MirInstr::Store { place, src });
+                            let dest = self.fresh_typed(span(e), None, Ty::None);
+                            self.emit(MirInstr::Const {
+                                dest,
+                                k: Const::None,
+                            });
+                            return dest;
+                        }
+                        UninitStorageOp::Take | UninitStorageOp::Destroy => {
+                            let storage = self.expr(object);
+                            let dest = self.fresh(span(e), None);
+                            self.emit(if matches!(op, UninitStorageOp::Take) {
+                                MirInstr::UninitStorageTake {
+                                    dest,
+                                    storage,
+                                    element,
+                                }
+                            } else {
+                                MirInstr::UninitStorageDestroy {
+                                    dest,
+                                    storage,
+                                    element,
+                                }
+                            });
+                            return dest;
+                        }
+                    }
                 }
                 // `pointer.unsafe_offset(i)` is provenance-preserving element
                 // arithmetic: the ordinary pointer `+` operation.
@@ -2872,4 +2944,11 @@ impl Flatten<'_> {
         });
         dest
     }
+}
+
+/// The checked inline uninit-storage method being lowered.
+enum UninitStorageOp {
+    Write,
+    Take,
+    Destroy,
 }

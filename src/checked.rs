@@ -491,6 +491,28 @@ pub enum SemanticAdjustment {
     /// `pointer.unsafe_offset(i)`: provenance-preserving element arithmetic,
     /// lowered as the ordinary pointer `+` operation.
     PointerOffset,
+    /// Construct compiler-private inline uninit storage (`__UninitStorage[T]()`
+    /// or `__UninitStorage[T](value^)`). Only bundled standard-library sources
+    /// may acquire this adjustment.
+    UninitStorageMake {
+        element: Ty,
+        init: bool,
+    },
+    /// `storage.unsafe_write(value)`: initialize-or-overwrite the inline
+    /// payload without destroying a previous value (it leaks by design).
+    UninitStorageWrite {
+        element: Ty,
+    },
+    /// `storage^.take()`: move the payload out of consumed inline uninit
+    /// storage; traps at the VM if the storage is uninitialized.
+    UninitStorageTake {
+        element: Ty,
+    },
+    /// `storage^.destroy()`: run the payload's destructor and consume the
+    /// inline storage; traps at the VM if the storage is uninitialized.
+    UninitStorageDestroy {
+        element: Ty,
+    },
     /// `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`: initialize the
     /// pointee at offset 0 with a moved (or copied) value, lowered onto the
     /// same store family as `pointer[] = value`.

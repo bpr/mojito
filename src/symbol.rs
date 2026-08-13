@@ -163,6 +163,26 @@ pub fn method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -> Strin
     format!("{type_name}.{method}{}", sig.suffix())
 }
 
+/// Methods whose callable identity includes the receiver convention: current
+/// Mojo overloads them purely on the receiver (borrowed vs owned `__iter__`,
+/// `ref` vs `deinit` `unsafe_assume_init`) with identical explicit parameters,
+/// so the convention participates in registration and symbol mangling.
+pub fn receiver_overloaded_method(method: &str) -> bool {
+    matches!(method, "__iter__" | "unsafe_assume_init")
+}
+
+/// Convention-qualified symbol for a receiver-overloaded method (see
+/// [`receiver_overloaded_method`]): identical explicit parameters are
+/// disambiguated by the receiver convention.
+pub fn receiver_method_symbol(
+    type_name: &str,
+    method: &str,
+    convention: Option<ArgConvention>,
+    sig: &SignatureKey,
+) -> String {
+    method_symbol(type_name, method, &sig.with_receiver(convention))
+}
+
 /// Convention-qualified symbol for `__iter__` overloads. Current Mojo permits
 /// borrowed and owned `__iter__` methods with identical explicit parameters;
 /// receiver convention is therefore part of this method's callable identity.
@@ -171,7 +191,7 @@ pub fn iterator_method_symbol(
     convention: Option<ArgConvention>,
     sig: &SignatureKey,
 ) -> String {
-    method_symbol(type_name, "__iter__", &sig.with_receiver(convention))
+    receiver_method_symbol(type_name, "__iter__", convention, sig)
 }
 
 /// Convention-qualified abstract `__iter__` symbol for a bounded generic
@@ -333,10 +353,14 @@ pub fn lowered_method_name(
     if sets.method_is_overloaded(source_name, params.len()) {
         let signature = signature_from_ast(params, type_params, &sets.comptimes)
             .with_keyword_names(keyword_only_names(params, keyword_only));
-        if let Some(type_name) = source_name.strip_suffix(".__iter__") {
-            iterator_method_symbol(type_name, self_convention, &signature)
-        } else {
-            format!("{source_name}{}", signature.suffix())
+        match source_name
+            .rsplit_once('.')
+            .filter(|(_, method)| receiver_overloaded_method(method))
+        {
+            Some((type_name, method)) => {
+                receiver_method_symbol(type_name, method, self_convention, &signature)
+            }
+            None => format!("{source_name}{}", signature.suffix()),
         }
     } else {
         source_name.to_string()

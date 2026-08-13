@@ -40,6 +40,7 @@ impl VmBackend {
                             as usize),
                         Proj::ConstIndex(index) => RefProjection::Index(*index),
                         Proj::Variant(index) => RefProjection::Variant(*index),
+                        Proj::UninitPayload => RefProjection::UninitPayload,
                     });
                 }
                 regs[dest.0 as usize] = Value::Ref {
@@ -624,6 +625,22 @@ impl VmBackend {
                 };
                 let index = value_as_index(&regs[index.0 as usize])?;
                 self.heap_destroy(prog, allocation, offset, index)?;
+                regs[dest.0 as usize] = Value::None;
+            }
+            MirInstr::UninitStorage { dest, init } => {
+                let payload = init
+                    .map(|register| std::mem::replace(&mut regs[register.0 as usize], Value::Moved))
+                    .map(Box::new);
+                regs[dest.0 as usize] = Value::UninitStorage(payload);
+            }
+            MirInstr::UninitStorageTake { dest, storage, .. } => {
+                let storage = std::mem::replace(&mut regs[storage.0 as usize], Value::Moved);
+                regs[dest.0 as usize] = Self::uninit_storage_payload(storage, "take")?;
+            }
+            MirInstr::UninitStorageDestroy { dest, storage, .. } => {
+                let storage = std::mem::replace(&mut regs[storage.0 as usize], Value::Moved);
+                let payload = Self::uninit_storage_payload(storage, "destroy")?;
+                self.drop_value(prog, payload)?;
                 regs[dest.0 as usize] = Value::None;
             }
             MirInstr::GetField { dest, base, field } => {

@@ -2024,6 +2024,9 @@ fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::VariantTake { .. }
         | MirInstr::PointerStorageTake { .. }
         | MirInstr::PointerStorageDestroy { .. }
+        | MirInstr::UninitStorage { .. }
+        | MirInstr::UninitStorageTake { .. }
+        | MirInstr::UninitStorageDestroy { .. }
         | MirInstr::MakeSimd { .. }
         | MirInstr::SimdCast { .. }
         | MirInstr::SimdShuffle { .. }
@@ -2776,6 +2779,10 @@ enum Key {
     Index,
     ConstIndex(usize),
     Variant(usize),
+    /// Payload of compiler-private inline uninit storage. The payload is
+    /// opaque to ownership tracking (all access is explicitly unsafe), so the
+    /// key exists only to keep place paths total; it overlaps itself.
+    UninitPayload,
 }
 
 fn keys_overlap(left: &Key, right: &Key) -> bool {
@@ -2796,6 +2803,7 @@ fn place_path(place: &MirPlace) -> Vec<Key> {
             Proj::Index(_) => Key::Index,
             Proj::ConstIndex(index) => Key::ConstIndex(*index),
             Proj::Variant(index) => Key::Variant(*index),
+            Proj::UninitPayload => Key::UninitPayload,
         })
         .collect()
 }
@@ -2820,6 +2828,7 @@ fn place_display(root: &str, path: &[Key]) -> String {
                 s.push_str(&index.to_string());
                 s.push(']');
             }
+            Key::UninitPayload => s.push_str("[payload]"),
         }
     }
     s

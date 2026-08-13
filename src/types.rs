@@ -206,6 +206,11 @@ pub const TSTRING_TYPE_NAME: &str = "TString";
 
 pub const RANGE_TYPE_NAME: &str = "Range";
 
+/// Compiler-private inline possibly-uninitialized storage, the field type of
+/// `UnsafeMaybeUninit`. An unregistered nominal: resolvable only from bundled
+/// standard-library sources, with every capability special-cased explicitly.
+pub const UNINIT_STORAGE_TYPE_NAME: &str = "__UninitStorage";
+
 /// Construct a nominal standard-library type from ordinary type arguments.
 pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
     Ty::Struct(name.into(), arguments.into_iter().map(TyArg::Ty).collect())
@@ -243,6 +248,22 @@ pub fn array_element(ty: &Ty) -> Option<&Ty> {
         return None;
     }
     let [TyArg::Ty(element), TyArg::Val(_)] = arguments.as_slice() else {
+        return None;
+    };
+    Some(element)
+}
+
+/// The payload type of compiler-private inline uninit storage
+/// (`__UninitStorage[T]`), including specialization-mangled instantiations.
+pub fn uninit_storage_element(ty: &Ty) -> Option<&Ty> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    if name != UNINIT_STORAGE_TYPE_NAME && !name.ends_with(&format!("${UNINIT_STORAGE_TYPE_NAME}"))
+    {
+        return None;
+    }
+    let [TyArg::Ty(element)] = arguments.as_slice() else {
         return None;
     };
     Some(element)
@@ -469,6 +490,17 @@ pub fn trivial_predicate_name(name: &str) -> Option<TrivialLifecycle> {
         "IsTriviallyCopyable" => Some(TrivialLifecycle::Copyable),
         "IsTriviallyDeinitable" => Some(TrivialLifecycle::Deinitable),
         _ => None,
+    }
+}
+
+/// The predicate spelling of a [`TrivialLifecycle`] facet — the inverse of
+/// [`trivial_predicate_name`], used to record a `where IsTrivially*[T]` fact
+/// as a body-side assumption and to look it up during capability queries.
+pub fn trivial_predicate_spelling(kind: TrivialLifecycle) -> &'static str {
+    match kind {
+        TrivialLifecycle::Movable => "IsTriviallyMovable",
+        TrivialLifecycle::Copyable => "IsTriviallyCopyable",
+        TrivialLifecycle::Deinitable => "IsTriviallyDeinitable",
     }
 }
 

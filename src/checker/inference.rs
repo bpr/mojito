@@ -1875,6 +1875,63 @@ impl Checker {
 
     /// Type a `List` construction: `List[T](args)` (explicit element type) or
     /// `List(args)` (element type inferred from the arguments — non-empty).
+    /// Type compiler-private inline uninit-storage construction:
+    /// `__UninitStorage[T]()` produces uninitialized storage,
+    /// `__UninitStorage[T](value^)` moves an initial payload in. Reachable
+    /// only from the bundled crossing module (`UnsafeMaybeUninit`'s bodies).
+    pub(super) fn infer_uninit_storage_construction(
+        &self,
+        span: SourceSpan,
+        param_args: &[crate::ast::ParamArg],
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
+        let name = crate::types::UNINIT_STORAGE_TYPE_NAME;
+        if !self.bundled_stdlib_declaration {
+            return Err(TypeError::Unsupported(format!(
+                "'{name}' is compiler-private storage; use UnsafeMaybeUninit from std.memory"
+            )));
+        }
+        if param_args.len() != 1 {
+            return Err(TypeError::WrongTypeArgCount {
+                name: name.to_string(),
+                expected: 1,
+                got: param_args.len(),
+            });
+        }
+        let element = self.tuple_element_types(param_args)?.remove(0);
+        match args {
+            [] => {}
+            [initializer] => {
+                let found = self.infer(initializer)?;
+                if !coerces(&found, &element) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: element.to_string(),
+                        found: found.to_string(),
+                        context: format!("initial payload of '{name}'"),
+                    });
+                }
+            }
+            _ => {
+                return Err(TypeError::ArityMismatch {
+                    name: name.to_string(),
+                    expected: 1,
+                    got: args.len(),
+                });
+            }
+        }
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            crate::checked::SemanticAdjustment::UninitStorageMake {
+                element: element.clone(),
+                init: !args.is_empty(),
+            },
+        );
+        Ok(Ty::Struct(
+            name.to_string(),
+            vec![crate::types::TyArg::Ty(element)],
+        ))
+    }
+
     pub(super) fn infer_list_construction(
         &self,
         param_args: &[crate::ast::ParamArg],

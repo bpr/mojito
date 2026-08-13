@@ -405,6 +405,10 @@ impl Checker {
             ),
             self_decls: std::mem::replace(&mut self.self_decls, decls),
             self_ty: self.self_ty.replace(self_ty.clone()),
+            bundled_stdlib: std::mem::replace(
+                &mut self.bundled_stdlib_declaration,
+                super::is_bundled_stdlib_source(declaration.module.as_deref()),
+            ),
         };
         Ok((self_ty, saved))
     }
@@ -414,6 +418,7 @@ impl Checker {
         self.enclosing_type_params = saved.type_params;
         self.self_ty = saved.self_ty;
         self.allow_generated_tuple_forward_types = saved.forward_types;
+        self.bundled_stdlib_declaration = saved.bundled_stdlib;
     }
 
     /// Resolve field, associated-member, and callable-conformance types into
@@ -649,7 +654,7 @@ impl Checker {
             let overloads = info.methods.entry(method_name.to_string()).or_default();
             if overloads.iter().any(|existing| {
                 same_method_shape(existing, &sig)
-                    && (method_name != "__iter__"
+                    && (!crate::symbol::receiver_overloaded_method(method_name)
                         || existing.self_convention == sig.self_convention)
             }) {
                 return Err(TypeError::Redeclaration(method_name.to_string()));
@@ -1553,6 +1558,9 @@ impl Checker {
                         || matches!(
                             (available.as_str(), required),
                             ("ImplicitlyCopyable", "Copyable")
+                                | ("IsTriviallyCopyable", "Copyable" | "ImplicitlyCopyable")
+                                | ("IsTriviallyMovable", "Movable")
+                                | ("IsTriviallyDeinitable", "Deinitable")
                         ))
             })
         })
@@ -1822,14 +1830,16 @@ impl Checker {
             Ty::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.is_copyable(alternative)),
-            Ty::Struct(name, _) => self
+            Ty::Struct(name, args) => self
                 .structs
                 .get(name)
                 .map(|s| {
-                    s.conforms
-                        .iter()
-                        .any(|c| matches!(c.as_str(), "Copyable" | "ImplicitlyCopyable"))
-                        || s.methods.contains_key("__copyinit__")
+                    s.conforms.iter().any(|c| {
+                        matches!(c.as_str(), "Copyable" | "ImplicitlyCopyable")
+                            && s.conformance_conditions.get(c).is_none_or(|condition| {
+                                self.eval_conformance_condition(s, args, condition)
+                            })
+                    }) || s.methods.contains_key("__copyinit__")
                 })
                 .unwrap_or(true),
             Ty::Param { bounds, .. } => bounds
@@ -1858,6 +1868,12 @@ impl Checker {
         if crate::types::tstring_elements(ty).is_some() {
             return false;
         }
+        // Compiler-private inline uninit storage copies its raw bits; the
+        // `UnsafeMaybeUninit` header conditions gate the public copy on the
+        // payload's triviality.
+        if crate::types::uninit_storage_element(ty).is_some() {
+            return true;
+        }
         match ty {
             Ty::ComptimeList(element) => self.is_implicitly_copyable(element),
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
@@ -1866,9 +1882,13 @@ impl Checker {
             Ty::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.is_implicitly_copyable(alternative)),
-            Ty::Struct(name, _) => self.structs.get(name).is_some_and(|s| {
-                s.conforms.iter().any(|c| c == "ImplicitlyCopyable")
-                    && self.struct_implicitly_copyable_conformance_ok(name)
+            Ty::Struct(name, args) => self.structs.get(name).is_some_and(|s| {
+                s.conforms.iter().any(|c| {
+                    c == "ImplicitlyCopyable"
+                        && s.conformance_conditions.get(c).is_none_or(|condition| {
+                            self.eval_conformance_condition(s, args, condition)
+                        })
+                }) && self.struct_implicitly_copyable_conformance_ok(name)
             }),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "ImplicitlyCopyable"),
             // An abstract associated type is implicitly copyable only when its
@@ -1948,6 +1968,11 @@ impl Checker {
         visiting: &mut std::collections::HashSet<String>,
     ) -> bool {
         use crate::types::TrivialLifecycle;
+        // A `where IsTrivially*[T]` clause on the enclosing body guarantees
+        // the facet for the parameter it names.
+        if self.has_assumed_conformance(ty, crate::types::trivial_predicate_spelling(kind)) {
+            return true;
+        }
         // The first upstream disjunct: `conforms_to(T, TrivialRegisterPassable)`.
         // The general `conforms_to` treats marker traits shallowly (everything
         // conforms), so consult only a declared conformance or a parameter
@@ -1975,6 +2000,18 @@ impl Checker {
         if !base_holds {
             return false;
         }
+        // Compiler-private inline uninit storage: its destructor is always a
+        // no-op (the payload deliberately leaks), while move/copy triviality
+        // is the payload's — matching upstream `UnsafeMaybeUninit`'s comptime
+        // lifecycle facts.
+        if let Some(element) = crate::types::uninit_storage_element(ty) {
+            return match kind {
+                TrivialLifecycle::Deinitable => true,
+                TrivialLifecycle::Movable | TrivialLifecycle::Copyable => {
+                    self.trivial_lifecycle(kind, element, visiting)
+                }
+            };
+        }
         match ty {
             Ty::ComptimeList(element) => self.trivial_lifecycle(kind, element, visiting),
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
@@ -1983,7 +2020,7 @@ impl Checker {
             Ty::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.trivial_lifecycle(kind, alternative, visiting)),
-            Ty::Struct(name, _) => {
+            Ty::Struct(name, args) => {
                 if !visiting.insert(name.clone()) {
                     // A cycle can only occur through indirection; the pointer
                     // value itself is trivial.
@@ -1998,11 +2035,14 @@ impl Checker {
                                 || !info.explicit_destructors.is_empty()
                         }
                     };
+                    // Fields are stored at the declaration's parameters;
+                    // recurse at this instantiation's arguments so a generic
+                    // payload field answers for the concrete element.
                     !user_defeats
-                        && info
-                            .fields
-                            .iter()
-                            .all(|(_, field_ty)| self.trivial_lifecycle(kind, field_ty, visiting))
+                        && info.fields.iter().all(|(_, field_ty)| {
+                            let field_ty = substitute_at(field_ty, &info.decls, args);
+                            self.trivial_lifecycle(kind, &field_ty, visiting)
+                        })
                 });
                 visiting.remove(name);
                 result
@@ -2269,6 +2309,7 @@ struct SavedStructScope {
     type_params: Vec<crate::ast::TypeParam>,
     self_decls: Vec<ParamDecl>,
     self_ty: Option<Ty>,
+    bundled_stdlib: bool,
 }
 
 /// The resolved member types of one struct declaration: fields, associated

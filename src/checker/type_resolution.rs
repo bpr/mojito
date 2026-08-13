@@ -287,6 +287,27 @@ impl Checker {
                 if name == "__RuntimeTuple" {
                     return self.tuple_element_types(args).map(Ty::Tuple);
                 }
+                // Compiler-private inline uninit storage (`UnsafeMaybeUninit`'s
+                // field), reachable only from the bundled crossing module.
+                if name == crate::types::UNINIT_STORAGE_TYPE_NAME {
+                    if !self.bundled_stdlib_declaration {
+                        return Err(TypeError::Unsupported(format!(
+                            "'{name}' is compiler-private storage; use UnsafeMaybeUninit from std.memory"
+                        )));
+                    }
+                    if args.len() != 1 {
+                        return Err(TypeError::WrongTypeArgCount {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                        });
+                    }
+                    let element = self.tuple_element_types(args)?.remove(0);
+                    return Ok(Ty::Struct(
+                        name.clone(),
+                        vec![crate::types::TyArg::Ty(element)],
+                    ));
+                }
                 if name == "_" && args.is_empty() {
                     return Ok(Ty::Infer);
                 }

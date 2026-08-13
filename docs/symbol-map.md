@@ -79,8 +79,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   checker, `checked.rs`, and `mir/nested.rs`.
 - `checker/indexing.rs` owns place validation, subscript/index inference and
   assignment, pointer offset/write checks, and member access.
-- `checker/method_calls.rs` owns method-call inference, overload scoring, and
-  static/pointer/List/Tuple method inference.
+- `checker/method_calls.rs` owns method-call inference, overload scoring
+  (score ties on receiver-overloaded methods break by the call's explicit `^`
+  transfer), and static/pointer/uninit-storage/List/Tuple method inference
+  (`infer_uninit_storage_method` types the compiler-private
+  `__UninitStorage[T]` write/take/destroy crossings behind
+  `UnsafeMaybeUninit`).
 - `checker/call_inference.rs` owns free-function and callable-value call
   inference (`infer_call`, generic-call instantiation).
 - `checker/type_resolution.rs` resolves source annotations into checked `Ty`
@@ -158,7 +162,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `backend/vm/exec.rs` owns the `exec_instr` instruction dispatcher and
   `try`-region execution.
 - `backend/vm/calls.rs` turns `CallSlots` into runtime values and frame slots.
-- `backend/vm/places.rs` navigates projected runtime storage.
+- `backend/vm/places.rs` navigates projected runtime storage, including the
+  `UninitPayload` projection into inline uninit storage (a final payload store
+  initializes-or-overwrites raw; reads trap while uninitialized).
 - `comptime.rs` owns the `Elab` elaboration driver (`block`/`stmt`), type
   resolution, and the free-function/`Mono` support code; `Elab`'s remaining
   methods are split across `impl<'a> Elab<'a>` blocks in the submodules below.

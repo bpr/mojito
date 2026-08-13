@@ -100,15 +100,6 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **`UnsafeMaybeUninit` inline-uninit storage** — grow `UnsafeMaybeUninit`
-  around the current `unsafe_write`/overloaded `unsafe_assume_init`/
-  `unsafe_deinit`/`unsafe_forget` vocabulary (upstream
-  [`b324feea`](https://github.com/modular/modular/commit/b324feeaa16bc13a12c0200164d1878fcfa64a87)).
-  Split from the completed pointer/allocation migration because upstream's
-  type is *inline* possibly-uninitialized storage: the VM's uninitialized
-  tombstones exist only in the heap arena today, so a faithful port needs a
-  new inline-uninit field capability across the checker, drop elaboration,
-  and the VM rather than another spelling over heap slots.
 - [ ] **Views and strict bounds (nightly §5)** — `Span` and canonical
   `StringSpan` (with `Imm`/`Mut` aliases); contiguous List/Span/String slices
   reject negative, out-of-range, or reversed bounds instead of normalizing;

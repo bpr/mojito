@@ -1053,6 +1053,24 @@ impl Checker {
                 ))),
             };
         }
+        // Compiler-private inline uninit storage: `storage[0]` designates the
+        // payload place (upstream's `self._array[0]`), assuming initialization
+        // — an uninitialized payload traps at the VM. Bundled-crossing only.
+        if let Some(element) = crate::types::uninit_storage_element(&obj_ty) {
+            if !self.bundled_stdlib_declaration {
+                return Err(TypeError::Unsupported(format!(
+                    "'{}' is compiler-private storage; use UnsafeMaybeUninit from std.memory",
+                    crate::types::UNINIT_STORAGE_TYPE_NAME
+                )));
+            }
+            if !matches!(&index.kind, ExprKind::Int(literal) if literal.to_i64() == Some(0)) {
+                return Err(TypeError::Unsupported(
+                    "inline uninit storage holds a single payload; index it as 'storage[0]'"
+                        .to_string(),
+                ));
+            }
+            return Ok(element.clone());
+        }
         self.prepare_index_argument(&obj_ty, index, "__getitem__", 0)?;
         // A generated Tuple declaration may occur later than the generic body
         // currently being checked (the bundled List slice overload is one such

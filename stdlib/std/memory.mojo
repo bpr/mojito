@@ -82,6 +82,42 @@ def unsafe_alloc[T: AnyType](count: Int, *, alignment: Int = 0) -> Pointer[T, Mu
     return _RawAlloc[T](count, alignment).ptr
 
 
+# Inline possibly-uninitialized storage for one T. Every method is unsafe:
+# the caller tracks whether the memory is initialized. The destructor is a
+# no-op — discarding an initialized value leaks it (call unsafe_deinit()
+# first); moving/copying transfers the raw bits, so both are available only
+# for trivially movable/copyable payloads. The compiler traps deterministically
+# where upstream leaves undefined behavior (reading uninitialized storage).
+struct UnsafeMaybeUninit[T: AnyType](
+    Defaultable,
+    Movable where IsTriviallyMovable[T],
+    ImplicitlyCopyable where IsTriviallyCopyable[T],
+    RegisterPassable where conforms_to(T, RegisterPassable),
+):
+    var _storage: __UninitStorage[Self.T]
+
+    def __init__(out self):
+        self._storage = __UninitStorage[Self.T]()
+
+    def __init__(out self, var value: Self.T, /) where conforms_to(Self.T, Movable):
+        self._storage = __UninitStorage[Self.T](value^)
+
+    def unsafe_write(mut self, var value: Self.T, /) where conforms_to(Self.T, Movable):
+        self._storage.unsafe_write(value^)
+
+    def unsafe_assume_init(deinit self) -> Self.T where conforms_to(Self.T, Movable):
+        return self._storage^.take()
+
+    def unsafe_assume_init(ref self) -> ref[origin_of(self)] Self.T:
+        return self._storage[0]
+
+    def unsafe_deinit(deinit self) where conforms_to(Self.T, Deinitable):
+        self._storage^.destroy()
+
+    def unsafe_forget(deinit self):
+        pass
+
+
 # The single crossing to the compiler's heap primitive. A constructor rather
 # than a free helper because expression-position `UnsafePointer[T]` with a
 # bare generic parameter parses as runtime indexing; `Self.T` in a struct

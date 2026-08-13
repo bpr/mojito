@@ -196,6 +196,13 @@ impl Checker {
                 "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
                     return self.infer_pointer_to(span, param_args, args, kwargs);
                 }
+                // Compiler-private inline uninit storage: `__UninitStorage[T]()`
+                // (uninitialized) or `__UninitStorage[T](value^)` (initialized),
+                // reachable only from the bundled crossing module.
+                _ if name == crate::types::UNINIT_STORAGE_TYPE_NAME => {
+                    reject_kwargs(kwargs)?;
+                    return self.infer_uninit_storage_construction(span, param_args, args);
+                }
                 _ if !kwargs.is_empty() => {
                     return Err(TypeError::BadCall {
                         func: name.to_string(),

@@ -56,6 +56,9 @@ pub(crate) fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>
         | MirInstr::MethodCall { dest, .. }
         | MirInstr::PointerStorageTake { dest, .. }
         | MirInstr::PointerStorageDestroy { dest, .. }
+        | MirInstr::UninitStorage { dest, .. }
+        | MirInstr::UninitStorageTake { dest, .. }
+        | MirInstr::UninitStorageDestroy { dest, .. }
         | MirInstr::GetField { dest, .. }
         | MirInstr::Index { dest, .. }
         | MirInstr::Slice { dest, .. }
@@ -218,6 +221,9 @@ pub(crate) fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg
         | MirInstr::PointerStorageDestroy { pointer, index, .. } => {
             out.extend([*pointer, *index]);
         }
+        MirInstr::UninitStorage { init, .. } => out.extend(init.iter().copied()),
+        MirInstr::UninitStorageTake { storage, .. }
+        | MirInstr::UninitStorageDestroy { storage, .. } => out.push(*storage),
         MirInstr::GetField { base, .. } => out.push(*base),
         MirInstr::Index {
             base,
@@ -2609,6 +2615,57 @@ fn verify_instruction(
                 ));
             }
         }
+        MirInstr::UninitStorage { dest, init } => {
+            if let Some(found) = reg_ty(dest)
+                && crate::types::uninit_storage_element(found).is_none()
+            {
+                errors.push(format!(
+                    "{prefix}: inline uninit storage construction has type {found}, expected {}",
+                    crate::types::UNINIT_STORAGE_TYPE_NAME
+                ));
+            }
+            if let Some(init) = init
+                && let Some(element) = reg_ty(dest).and_then(crate::types::uninit_storage_element)
+                && let Some(found) = reg_ty(init)
+                && !types_compatible(found, element)
+            {
+                errors.push(format!(
+                    "{prefix}: inline uninit storage payload has type {found}, expected {element}"
+                ));
+            }
+        }
+        MirInstr::UninitStorageTake {
+            dest,
+            storage,
+            element,
+        }
+        | MirInstr::UninitStorageDestroy {
+            dest,
+            storage,
+            element,
+        } => {
+            if let Some(found) = reg_ty(storage)
+                && !crate::types::uninit_storage_element(found)
+                    .is_some_and(|actual| types_compatible(actual, element))
+            {
+                errors.push(format!(
+                    "{prefix}: inline uninit storage operation expects {}[{element}], got {found}",
+                    crate::types::UNINIT_STORAGE_TYPE_NAME
+                ));
+            }
+            let expected = if matches!(instruction, MirInstr::UninitStorageTake { .. }) {
+                element
+            } else {
+                &Ty::None
+            };
+            if let Some(found) = reg_ty(dest)
+                && !types_compatible(found, expected)
+            {
+                errors.push(format!(
+                    "{prefix}: inline uninit storage result has type {found}, expected {expected}"
+                ));
+            }
+        }
         MirInstr::Call {
             func: FuncRef(callee),
             args,
@@ -3686,6 +3743,21 @@ fn verify_place(
                         "{prefix} place projects variant alternative {index} out of {}",
                         alternatives.len()
                     ));
+                }
+            }
+            Proj::UninitPayload => {
+                if let Some(base) = &current {
+                    match crate::types::uninit_storage_element(base) {
+                        Some(element) if !types_compatible(projected, element) => {
+                            errors.push(format!(
+                                "{prefix} place uninit payload typed {projected}, declared {element}"
+                            ));
+                        }
+                        Some(_) => {}
+                        None => errors.push(format!(
+                            "{prefix} payload projection requires compiler-private inline uninit storage, got {base}"
+                        )),
+                    }
                 }
             }
         }

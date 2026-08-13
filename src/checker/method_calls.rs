@@ -116,15 +116,16 @@ impl Checker {
                 }
             }
             if !matches.is_empty() {
-                let selected =
-                    select_method_overload(method, matches).map_err(|kind| TypeError::BadCall {
+                let selected = select_method_overload(method, matches, None).map_err(|kind| {
+                    TypeError::BadCall {
                         func: format!("{sname}.{method}"),
                         reason: match kind {
                             OverloadSelect::NoMatch => "no overload matches the supplied arguments",
                             OverloadSelect::Ambiguous => "ambiguous overloaded call",
                         }
                         .to_string(),
-                    })?;
+                    }
+                })?;
                 self.record_selected_method_conversions(method, &selected, args, kwargs)?;
                 if let Some(target) = selected.lowered_name {
                     self.overload_targets
@@ -393,6 +394,13 @@ impl Checker {
         {
             return self.infer_pointer_method(&span, method, elem, origin, args, kwargs);
         }
+        // Compiler-private inline uninit storage (`UnsafeMaybeUninit`'s field):
+        // the write/take/destroy crossing vocabulary.
+        if let Some(element) = crate::types::uninit_storage_element(&obj_ty) {
+            let element = element.clone();
+            reject_kwargs(kwargs)?;
+            return self.infer_uninit_storage_method(&span, object, method, &element, args);
+        }
         // Resolve the method to a concrete signature (params + return + whether
         // it mutates `self`) for this receiver, substituting the receiver's type
         // arguments (struct) or `Self` (a bounded type parameter's trait method).
@@ -523,7 +531,12 @@ impl Checker {
                                 });
                             }
                         }
-                        select_method_overload(method, matches).map(Some)
+                        select_method_overload(
+                            method,
+                            matches,
+                            Some(matches!(object.kind, ExprKind::Transfer(_))),
+                        )
+                        .map(Some)
                     }
                     None => Ok(None),
                 }
@@ -634,7 +647,12 @@ impl Checker {
                         param_decls: sig.decls.clone(),
                     });
                 }
-                select_method_overload(method, matches).map(Some)
+                select_method_overload(
+                    method,
+                    matches,
+                    Some(matches!(object.kind, ExprKind::Transfer(_))),
+                )
+                .map(Some)
             }
             // `x.__hash__()` on a concrete built-in hashable type (`Int`, `String`,
             // …) is an intrinsic returning `UInt` — lets a key struct combine
@@ -1844,6 +1862,98 @@ impl Checker {
                     origin: origin.clone(),
                 }
                 .to_string(),
+                method: method.to_string(),
+            }),
+        }
+    }
+
+    /// Type a compiler-private inline uninit-storage method
+    /// (`__UninitStorage[T]`'s `unsafe_write`/`take`/`destroy`), reachable
+    /// only from the bundled crossing module. `take` and `destroy` consume
+    /// their receiver, so they require an explicit `^` transfer; `unsafe_write`
+    /// deliberately performs no lifecycle check on (and no drop of) a
+    /// previously written payload — it leaks by design, like upstream.
+    fn infer_uninit_storage_method(
+        &self,
+        span: &SourceSpan,
+        object: &Expr,
+        method: &str,
+        element: &Ty,
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
+        if !self.bundled_stdlib_declaration {
+            return Err(TypeError::Unsupported(format!(
+                "'{}' is compiler-private storage; use UnsafeMaybeUninit from std.memory",
+                crate::types::UNINIT_STORAGE_TYPE_NAME
+            )));
+        }
+        let storage_display = || format!("{}[{element}]", crate::types::UNINIT_STORAGE_TYPE_NAME);
+        match method {
+            "unsafe_write" => {
+                if args.len() != 1 {
+                    return Err(TypeError::ArityMismatch {
+                        name: method.to_string(),
+                        expected: 1,
+                        got: args.len(),
+                    });
+                }
+                let found = self.infer(&args[0])?;
+                if !coerces(&found, element) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: element.to_string(),
+                        found: found.to_string(),
+                        context: format!("argument to '{method}'"),
+                    });
+                }
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    crate::checked::SemanticAdjustment::UninitStorageWrite {
+                        element: element.clone(),
+                    },
+                );
+                Ok(Ty::None)
+            }
+            "take" | "destroy" => {
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: method.to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                if !matches!(object.kind, ExprKind::Transfer(_)) {
+                    return Err(TypeError::Unsupported(format!(
+                        "{method}() consumes its storage; transfer it explicitly (`storage^.{method}()`)"
+                    )));
+                }
+                if method == "destroy" && !self.is_deinitable(element) {
+                    return Err(TypeError::TraitNotSatisfied {
+                        param: "T".to_string(),
+                        ty: element.to_string(),
+                        trait_name: "Deinitable".to_string(),
+                        reason: self.trait_failure_reason(element, "Deinitable"),
+                    });
+                }
+                let adjustment = if method == "take" {
+                    crate::checked::SemanticAdjustment::UninitStorageTake {
+                        element: element.clone(),
+                    }
+                } else {
+                    crate::checked::SemanticAdjustment::UninitStorageDestroy {
+                        element: element.clone(),
+                    }
+                };
+                self.operation_adjustments
+                    .borrow_mut()
+                    .insert(span.clone(), adjustment);
+                Ok(if method == "take" {
+                    element.clone()
+                } else {
+                    Ty::None
+                })
+            }
+            _ => Err(TypeError::NoSuchMethod {
+                object_type: storage_display(),
                 method: method.to_string(),
             }),
         }

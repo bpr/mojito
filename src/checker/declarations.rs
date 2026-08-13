@@ -1218,18 +1218,21 @@ impl Checker {
                         });
                     }
                 }
-                let selected = select_method_overload("__init__", matches).map_err(|kind| {
-                    TypeError::BadCall {
-                        func: name.to_string(),
-                        reason: match kind {
-                            OverloadSelect::NoMatch => {
-                                "no constructor overload matches the supplied arguments"
+                let selected =
+                    select_method_overload("__init__", matches, None).map_err(|kind| {
+                        TypeError::BadCall {
+                            func: name.to_string(),
+                            reason: match kind {
+                                OverloadSelect::NoMatch => {
+                                    "no constructor overload matches the supplied arguments"
+                                }
+                                OverloadSelect::Ambiguous => {
+                                    "ambiguous overloaded constructor call"
+                                }
                             }
-                            OverloadSelect::Ambiguous => "ambiguous overloaded constructor call",
+                            .to_string(),
                         }
-                        .to_string(),
-                    }
-                })?;
+                    })?;
                 if let Some(target) = &selected.lowered_name {
                     self.overload_targets
                         .borrow_mut()

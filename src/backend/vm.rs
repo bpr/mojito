@@ -225,6 +225,25 @@ impl VmBackend {
         self.drop_value(prog, value)
     }
 
+    /// Move the payload out of a consumed inline uninit-storage value
+    /// (`UnsafeMaybeUninit`'s field). Upstream leaves this undefined behavior;
+    /// the VM traps deterministically, mirroring the heap arena's tombstones.
+    pub(super) fn uninit_storage_payload(
+        storage: Value,
+        operation: &str,
+    ) -> Result<Value, RuntimeError> {
+        match storage {
+            Value::UninitStorage(Some(payload)) => Ok(*payload),
+            Value::UninitStorage(None) => Err(RuntimeError::TypeError(format!(
+                "vm: {operation} of uninitialized UnsafeMaybeUninit storage"
+            ))),
+            other => Err(RuntimeError::TypeError(format!(
+                "vm: {operation} requires inline uninit storage, found {}",
+                crate::runtime::type_name(&other)
+            ))),
+        }
+    }
+
     /// Execute a function for its return value only. `value_params` reifies a
     /// value-parameterized generic function's comptime arguments (empty otherwise).
     fn call_function(
@@ -3044,6 +3063,22 @@ fn navigate_reference_mut<'a>(
                     ));
                 }
             },
+            // References into inline uninit storage come only from
+            // `unsafe_assume_init(ref self)`, which asserts initialization —
+            // an uninitialized payload traps rather than lazily initializing.
+            RefProjection::UninitPayload => match value {
+                Value::UninitStorage(Some(payload)) => payload.as_mut(),
+                Value::UninitStorage(None) => {
+                    return Err(RuntimeError::TypeError(
+                        "vm: read of uninitialized UnsafeMaybeUninit storage".to_string(),
+                    ));
+                }
+                _ => {
+                    return Err(RuntimeError::TypeError(
+                        "payload projection on a non-uninit-storage value".to_string(),
+                    ));
+                }
+            },
         };
     }
     Ok(value)
@@ -3118,6 +3153,27 @@ fn write_simd_reference_lane(
         return Ok(false);
     };
     crate::runtime::set_simd_lane(*dtype, lanes, *index as i64, value)?;
+    Ok(true)
+}
+
+/// Store through a flattened reference whose final projection is the payload
+/// of inline uninit storage: the write initializes-or-overwrites the payload
+/// raw — no destructor runs and no initialization is required (`unsafe_write`
+/// leaks a previous payload by design). Interior (non-final) payload steps
+/// keep the ordinary navigator's initialized-payload requirement.
+fn write_uninit_payload(
+    root: &mut Value,
+    projection: &[RefProjection],
+    value: Value,
+) -> Result<bool, RuntimeError> {
+    let Some((RefProjection::UninitPayload, prefix)) = projection.split_last() else {
+        return Ok(false);
+    };
+    let parent = navigate_reference_mut(root, prefix)?;
+    let Value::UninitStorage(payload) = parent else {
+        return Ok(false);
+    };
+    *payload = Some(Box::new(value));
     Ok(true)
 }
 
@@ -3209,5 +3265,67 @@ mod pointer_storage_tests {
         vm.heap_destroy(&empty_program(), allocation, offset, 0)
             .expect("initialized destroy");
         assert!(vm.heap_read(allocation, offset, 0).is_err());
+    }
+
+    #[test]
+    fn uninit_storage_payload_take_and_traps() {
+        assert_eq!(
+            VmBackend::uninit_storage_payload(
+                Value::UninitStorage(Some(Box::new(Value::Int(7)))),
+                "take"
+            )
+            .expect("initialized take"),
+            Value::Int(7)
+        );
+        let uninitialized = VmBackend::uninit_storage_payload(Value::UninitStorage(None), "take");
+        assert!(
+            uninitialized.as_ref().is_err_and(|error| error
+                .to_string()
+                .contains("uninitialized UnsafeMaybeUninit")),
+            "expected uninitialized trap, got {uninitialized:?}"
+        );
+        assert!(VmBackend::uninit_storage_payload(Value::Int(1), "take").is_err());
+    }
+
+    #[test]
+    fn uninit_payload_store_initializes_and_overwrites_without_drop() {
+        let place = |root_ty: Ty| {
+            let mut place = MirPlace::root(0, Some(root_ty));
+            place.project(Proj::UninitPayload, Ty::Int);
+            place
+        };
+        let storage_ty = Ty::Struct(
+            crate::types::UNINIT_STORAGE_TYPE_NAME.to_string(),
+            vec![crate::types::TyArg::Ty(Ty::Int)],
+        );
+        let mut vars = vec![Value::UninitStorage(None)];
+
+        // Reading the payload of uninitialized storage traps.
+        assert!(load_place(&mut vars, &[], &place(storage_ty.clone())).is_err());
+
+        // A final payload store initializes the slot...
+        store_place(&mut vars, &[], &place(storage_ty.clone()), Value::Int(1))
+            .expect("initializing store");
+        assert_eq!(
+            load_place(&mut vars, &[], &place(storage_ty.clone())).expect("initialized read"),
+            Value::Int(1)
+        );
+        // ...and a second store overwrites raw, without touching the old payload.
+        store_place(&mut vars, &[], &place(storage_ty), Value::Int(2)).expect("raw overwrite");
+        assert_eq!(vars[0], Value::UninitStorage(Some(Box::new(Value::Int(2)))));
+    }
+
+    #[test]
+    fn uninit_storage_drops_as_a_leaky_no_op() {
+        // Discarding storage that still holds a payload must not run any
+        // destructor: upstream UnsafeMaybeUninit leaks by design.
+        let mut vm = VmBackend::default();
+        vm.drop_value(
+            &empty_program(),
+            Value::UninitStorage(Some(Box::new(Value::Str("leaked".to_string())))),
+        )
+        .expect("no-op drop");
+        vm.drop_value(&empty_program(), Value::UninitStorage(None))
+            .expect("no-op drop of uninitialized storage");
     }
 }

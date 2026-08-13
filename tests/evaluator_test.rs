@@ -1692,3 +1692,24 @@ fn ref_param_also_writes_back() {
     );
     assert_eq!(ev, "42\n");
 }
+
+#[test]
+fn unsafe_maybe_uninit_leak_semantics() {
+    // The exact destructor trace: unsafe_deinit runs the payload destructor;
+    // a plain discard, unsafe_forget, and an overwriting unsafe_write leak
+    // (never running it); a taken payload drops normally at its last use.
+    let ev = output(
+        "from std.memory import UnsafeMaybeUninit\n\nstruct Recorder(Movable, Deinitable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"deinit\", self.id)\n\ndef main():\n    var a = UnsafeMaybeUninit[Recorder](Recorder(1))\n    a^.unsafe_deinit()\n    var b = UnsafeMaybeUninit[Recorder](Recorder(2))\n    _ = b^\n    var c = UnsafeMaybeUninit[Recorder](Recorder(3))\n    c^.unsafe_forget()\n    var d = UnsafeMaybeUninit[Recorder]()\n    d.unsafe_write(Recorder(4))\n    d.unsafe_write(Recorder(5))\n    var got = d^.unsafe_assume_init()\n    print(\"got\", got.id)\n",
+    );
+    assert_eq!(ev, "deinit 1\ndeinit 5\ngot 5\n");
+}
+
+#[test]
+fn unsafe_maybe_uninit_receiver_overloads_in_one_program() {
+    // The deinit/ref unsafe_assume_init pair resolves by receiver transfer
+    // and both lower to distinct convention-qualified symbols.
+    let ev = output(
+        "from std.memory import UnsafeMaybeUninit\n\ndef main():\n    var a = UnsafeMaybeUninit[Int](7)\n    print(a.unsafe_assume_init())\n    print(a^.unsafe_assume_init())\n",
+    );
+    assert_eq!(ev, "7\n7\n");
+}

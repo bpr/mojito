@@ -167,6 +167,10 @@ pub enum Proj {
     /// Payload of a checked `Variant` alternative.  The tag is static; runtime
     /// navigation traps if the active alternative differs.
     Variant(usize),
+    /// Payload of compiler-private inline uninit storage (`__UninitStorage`).
+    /// A final-step write initializes-or-overwrites without dropping the old
+    /// payload; reads trap while the storage is uninitialized.
+    UninitPayload,
 }
 
 /// A writable location: a root variable plus a chain of projections
@@ -494,6 +498,27 @@ pub enum MirInstr {
         dest: Reg,
         pointer: Reg,
         index: Reg,
+        element: Ty,
+    },
+    /// Construct compiler-private inline possibly-uninitialized storage
+    /// (`UnsafeMaybeUninit`'s field): uninitialized when `init` is absent,
+    /// holding the moved payload otherwise.
+    UninitStorage {
+        dest: Reg,
+        init: Option<Reg>,
+    },
+    /// Move the payload out of consumed inline uninit storage. Traps if the
+    /// storage is uninitialized (upstream UB, deterministic here).
+    UninitStorageTake {
+        dest: Reg,
+        storage: Reg,
+        element: Ty,
+    },
+    /// Destroy the payload of consumed inline uninit storage (runs the
+    /// element's destructor). Traps if the storage is uninitialized.
+    UninitStorageDestroy {
+        dest: Reg,
+        storage: Reg,
         element: Ty,
     },
     /// Struct/field *read* `base.field` inside an rvalue (name-based; the backend
