@@ -142,6 +142,75 @@ pub(super) fn check_receiver_aliasing(
     Ok(())
 }
 
+/// Read-convention place arguments a call may bind by borrow instead of the
+/// implicit `__copyinit__` read. An argument qualifies when its effective
+/// convention is a shared read, it names a place, and no exclusive access
+/// (a `mut`/`ref` slot, a `^` transfer, or a `mut`/`ref` receiver) overlaps
+/// that place in the same call — the overlap case must keep the implicit copy
+/// that lets `check_call_aliasing` accept it, never a shallow alias of storage
+/// the callee mutates.
+pub(super) fn borrowable_read_arguments(
+    slots: &[ArgSlot],
+    conventions: &[Option<ArgConvention>],
+    args: &[Expr],
+    kwargs: &[crate::ast::KwArg],
+    receiver: Option<(&Expr, Option<ArgConvention>)>,
+) -> Vec<SourceSpan> {
+    let argument = |slot: &ArgSlot| match slot {
+        ArgSlot::Positional(position) => Some(&args[*position]),
+        ArgSlot::Keyword(position) => Some(&kwargs[*position].value),
+        ArgSlot::Default => None,
+    };
+    let mut exclusive: Vec<(&str, Vec<PlaceSeg>)> = Vec::new();
+    for (index, slot) in slots.iter().enumerate() {
+        let Some(arg) = argument(slot) else { continue };
+        let place = match &arg.kind {
+            ExprKind::Transfer(inner) => place_path(inner),
+            _ if matches!(
+                conventions.get(index),
+                Some(Some(ArgConvention::Mut | ArgConvention::Ref))
+            ) =>
+            {
+                place_path(arg)
+            }
+            _ => None,
+        };
+        if let Some(place) = place {
+            exclusive.push(place);
+        }
+    }
+    if let Some((object, convention)) = receiver
+        && matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
+        && let Some(place) = place_path(object)
+    {
+        exclusive.push(place);
+    }
+    let mut borrowable = Vec::new();
+    for (index, slot) in slots.iter().enumerate() {
+        if !matches!(
+            conventions.get(index),
+            Some(None | Some(ArgConvention::Read))
+        ) {
+            continue;
+        }
+        let Some(arg) = argument(slot) else { continue };
+        if !is_place_expr(arg) {
+            continue;
+        }
+        let Some((root, path)) = place_path(arg) else {
+            continue;
+        };
+        if exclusive
+            .iter()
+            .any(|(er, ep)| *er == root && places_overlap(ep, &path))
+        {
+            continue;
+        }
+        borrowable.push(arg.source_span());
+    }
+    borrowable
+}
+
 /// One step of a place's projection path (used by the place-sensitive borrow
 /// check). A dynamic `Index` is treated conservatively — it may alias any index.
 pub(super) enum PlaceSeg {

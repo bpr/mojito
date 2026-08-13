@@ -1001,6 +1001,15 @@ impl Checker {
             args,
             kwargs,
         )?;
+        self.borrowed_read_call_places
+            .borrow_mut()
+            .extend(borrowable_read_arguments(
+                &resolved.slots,
+                &effective_conventions,
+                args,
+                kwargs,
+                Some((object, resolved.self_convention)),
+            ));
         let reference_result = if let Some(signature) = &resolved.ref_return {
             let actual: Vec<_> = resolved
                 .slots

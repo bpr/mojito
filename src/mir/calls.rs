@@ -14,18 +14,34 @@ impl Flatten<'_> {
     /// nominal accessor-produced reference uses the same hidden handle slot as
     /// a chained method receiver.
     pub(super) fn lower_call_argument(&mut self, expression: &Expr) -> (Reg, Option<MirPlace>) {
-        let retains_place = self
-            .checked_adjustments(expression)
+        let adjustments = self.checked_adjustments(expression);
+        let retains_place = adjustments
             .iter()
             .any(|adjustment| matches!(adjustment, crate::SemanticAdjustment::RetainCallPlace));
         if !retains_place {
+            if adjustments.iter().any(|adjustment| {
+                matches!(adjustment, crate::SemanticAdjustment::BorrowReadArgument)
+            }) && let Some(register) = self.lower_borrowed_read_argument(expression)
+            {
+                // Deliberately no retained place: the analysis treats retained
+                // call places as exclusive writes and the VM's write-back
+                // binding is keyed to `mut`/`ref` parameters. Owner liveness
+                // through the call comes from the register's place provenance.
+                return (register, None);
+            }
             return (self.expr(expression), None);
         }
 
         // A pure root/field place needs no emitted projection state, so keep
         // the existing expression lowering (notably its reference-field
-        // handling) and attach the place afterward.
+        // handling) and attach the place afterward. A bare aggregate variable
+        // is read shallowly instead: the VM rebinds a `mut`/`ref` parameter to
+        // the caller place, so a `UseVar` lifecycle copy here would run a user
+        // `__copyinit__` only to discard the result.
         if let Some(place) = self.simple_place(expression) {
+            if let Some(register) = self.lower_borrowed_read_argument(expression) {
+                return (register, Some(place));
+            }
             return (self.expr(expression), Some(place));
         }
 
@@ -696,5 +712,63 @@ impl Flatten<'_> {
             self.emit_interior_invalidations(&argument.value, None);
         }
         self.emit_interior_invalidations(call, None);
+    }
+
+    /// Bind a borrowed actual as a shallow place read — the read
+    /// method-receiver model — instead of the `UseVar` lifecycle copy, so a
+    /// user `__copyinit__` never runs for the pass itself. Serves both
+    /// checker-marked `BorrowReadArgument` reads and retained `mut`/`ref`
+    /// places, whose bound value the VM replaces with a caller-place
+    /// reference before the callee runs. Restricted
+    /// to a bare aggregate-typed variable whose special identifier lowerings
+    /// (callable references, closures, pointer handles, alias slots, checked
+    /// value copies) don't apply; everything else falls back to ordinary
+    /// expression lowering. Scalars also fall back: their register copy has no
+    /// user-observable lifecycle, and keeping `UseVar` preserves their pinned
+    /// ASAP destruction, which aggregate `LoadPlace` results deliberately
+    /// trade for owner retention through the call.
+    fn lower_borrowed_read_argument(&mut self, expression: &Expr) -> Option<Reg> {
+        let ExprKind::Identifier(name) = &expression.kind else {
+            return None;
+        };
+        if self.resolved_callable(expression).is_some()
+            || self.nested_info(expression).is_some()
+            || self.is_origin_bearing_pointer(expression)
+            || (!self.vars.iter().any(|candidate| candidate == name)
+                && self.overloads.is_function(name))
+        {
+            return None;
+        }
+        if self
+            .checked_adjustments(expression)
+            .iter()
+            .any(|adjustment| matches!(adjustment, crate::SemanticAdjustment::CopyPlaceValue))
+        {
+            return None;
+        }
+        let ty = self.checked_ty(expression)?;
+        if !matches!(
+            ty,
+            Ty::Struct(..)
+                | Ty::Tuple(_)
+                | Ty::RuntimePack(_)
+                | Ty::Variant(_)
+                | Ty::Param { .. }
+                | Ty::Assoc { .. }
+        ) {
+            return None;
+        }
+        let var = self.expression_var(name, expression);
+        if self.aliases.contains_key(&var) || self.runtime_aliases.contains(&var) {
+            return None;
+        }
+        let place = self.simple_place(expression)?;
+        let dest = self.fresh_typed(
+            expression.source_span(),
+            Some(place.root),
+            place.ty.clone().unwrap_or(ty),
+        );
+        self.emit(MirInstr::LoadPlace { dest, place });
+        Some(dest)
     }
 }

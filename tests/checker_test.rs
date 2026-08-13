@@ -4615,6 +4615,22 @@ fn hashable_bound_permits_hash() {
 }
 
 #[test]
+fn copyable_bound_permits_copy() {
+    // Current Mojo's `Copyable` trait carries a default `copy(self) -> Self`,
+    // so `x.copy()` type-checks on an opaque `T: Copyable` (elaboration
+    // synthesizes the concrete method on every conforming struct).
+    ok("def dup[T: Copyable](x: T) -> T:\n    var c = x.copy()\n    return c^\n");
+}
+
+#[test]
+fn unbounded_parameter_does_not_permit_copy() {
+    assert!(matches!(
+        err("def dup[T: Movable](x: T) -> T:\n    var c = x.copy()\n    return c^\n"),
+        TypeError::NoSuchMethod { .. }
+    ));
+}
+
+#[test]
 fn hashable_bound_does_not_permit_equality() {
     // Design decision: `Hashable` does *not* imply `Equatable` — `==` on a
     // `K: Hashable` (without an `Equatable` bound) is a `BadOperator` (Phase 6).

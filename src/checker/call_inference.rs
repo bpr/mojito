@@ -319,6 +319,7 @@ impl Checker {
                 let saved_conversions = self.implicit_conversions.borrow().clone();
                 let saved_invalidations = self.interior_invalidations.borrow().clone();
                 let saved_call_place_uses = self.call_place_uses.borrow().clone();
+                let saved_borrowed_read_places = self.borrowed_read_call_places.borrow().clone();
                 if let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
                     name,
                     param_args,
@@ -395,6 +396,7 @@ impl Checker {
                 *self.implicit_conversions.borrow_mut() = saved_conversions;
                 *self.interior_invalidations.borrow_mut() = saved_invalidations;
                 *self.call_place_uses.borrow_mut() = saved_call_place_uses;
+                *self.borrowed_read_call_places.borrow_mut() = saved_borrowed_read_places;
             }
             return match select_callable_overload(matches) {
                 Ok((ret, target, error)) => {
@@ -835,6 +837,15 @@ impl Checker {
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
         check_call_aliasing(&slots, &effective_conventions, &copied_reads, args, kwargs)?;
+        self.borrowed_read_call_places
+            .borrow_mut()
+            .extend(borrowable_read_arguments(
+                &slots,
+                &effective_conventions,
+                args,
+                kwargs,
+                None,
+            ));
 
         let result = return_ref
             .map(|mut reference| {
@@ -1065,6 +1076,15 @@ impl Checker {
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
         check_call_aliasing(&slots, &effective_conventions, &copied_reads, args, kwargs)?;
+        self.borrowed_read_call_places
+            .borrow_mut()
+            .extend(borrowable_read_arguments(
+                &slots,
+                &effective_conventions,
+                args,
+                kwargs,
+                None,
+            ));
         let referent = self.canonicalize_public_tuple_types(resolve(ret)?);
         let result = return_ref
             .map(|mut reference| {

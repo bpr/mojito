@@ -2170,6 +2170,18 @@ impl Checker {
         if method == "__hash__" && argc == 0 && bounds.iter().any(|b| b == "Hashable") {
             methods.push(MethodSig::intrinsic(vec![], Ty::UInt));
         }
+        // Current Mojo's `Copyable` trait carries a non-overridable default
+        // `copy(self) -> Self`; elaboration synthesizes the concrete method on
+        // every conforming struct, and a Copyable-bounded parameter resolves
+        // the same contract here.
+        if method == "copy"
+            && argc == 0
+            && bounds
+                .iter()
+                .any(|b| matches!(b.as_str(), "Copyable" | "ImplicitlyCopyable"))
+        {
+            methods.push(MethodSig::intrinsic(vec![], Ty::SelfType));
+        }
         // The built-in numeric-rounding traits contribute a `-> Self` dunder
         // (roadmap milestone 7), used by the self-hosted `math` module: `Floorable`/
         // `Ceilable`/`Truncable` a nullary `__floor__`/`__ceil__`/`__trunc__`,

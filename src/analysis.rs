@@ -808,7 +808,25 @@ fn transfer_register_loans(
     // the generation closure above cannot discover it.  Retain the storage root
     // through every SSA consumer of the handle; `through` additionally keeps a
     // substituted reference binding alive when the place was reached via one.
-    if let MirInstr::MakeRef { place, .. } = instruction {
+    //
+    // `LoadPlace` needs the same retention for a different reason: it reads the
+    // place shallowly, so a pointer-owning (lifecycle) result register aliases
+    // the root's storage until a `CopyValue` runs the copy lifecycle or a
+    // consuming call finishes. Dropping the root between the load and that
+    // consumer would free storage the pending register still references. A
+    // scalar read owns its value outright and keeps the pre-existing ASAP
+    // destruction point; only an aggregate (or unknown-typed) result retains.
+    let retained_place = match instruction {
+        MirInstr::MakeRef { place, .. } => Some(place),
+        MirInstr::LoadPlace { dest, place } => place
+            .ty
+            .as_ref()
+            .or_else(|| register_types.get(&dest.0))
+            .is_none_or(may_alias_owned_storage)
+            .then_some(place),
+        _ => None,
+    };
+    if let Some(place) = retained_place {
         owners.insert(place.root);
         if let Some(reference) = place.through {
             owners.insert(reference);
@@ -849,23 +867,67 @@ fn transfer_register_loans(
         } => Some(place),
         _ => None,
     };
+    let mut reference_seeded = BTreeSet::new();
     if let Some(place) = reference_subscript_place {
-        owners.insert(place.root);
+        reference_seeded.insert(place.root);
         if let Some(reference) = place.through {
-            owners.insert(reference);
+            reference_seeded.insert(reference);
         }
     }
+    owners.extend(reference_seeded.iter().copied());
 
+    // A call-family result is a fresh independent value — a return runs the
+    // copy/move lifecycle out of the callee frame — so operand provenance is
+    // consumed at the call (the roots are uses at this exact point) and does
+    // not flow into the result. Only the explicit reference-result seeding
+    // above (a callee-produced handle into caller storage) carries through.
+    let call_result = matches!(
+        instruction,
+        MirInstr::Call { .. }
+            | MirInstr::CallIndirect { .. }
+            | MirInstr::MethodCall { .. }
+            | MirInstr::Index { .. }
+            | MirInstr::Slice { .. }
+            | MirInstr::MultiIndex { .. }
+            | MirInstr::BinOp {
+                resolved: Some(_),
+                ..
+            }
+    );
+    let result_owners = if call_result {
+        &reference_seeded
+    } else {
+        &owners
+    };
     let mut results = Vec::new();
     crate::mir::verify::instruction_result_regs(instruction, &mut results);
     for result in results {
-        if owners.is_empty() {
+        if result_owners.is_empty() {
             registers.owners.remove(&result.0);
         } else {
-            registers.owners.insert(result.0, owners.clone());
+            registers.owners.insert(result.0, result_owners.clone());
         }
     }
     owners.into_iter().collect()
+}
+
+/// Whether a shallowly read value of this type can alias heap storage owned by
+/// its source place — an aggregate whose fields may hold owning pointers (the
+/// self-hosted `String`/`List` shape). Scalars and compile-time values own
+/// their bits; a bare `Pointer` read aliases by design (the `unsafe_*`
+/// vocabulary makes its lifetime the user's obligation).
+fn may_alias_owned_storage(ty: &crate::types::Ty) -> bool {
+    use crate::types::Ty;
+    matches!(
+        ty,
+        Ty::Struct(..)
+            | Ty::Tuple(_)
+            | Ty::RuntimePack(_)
+            | Ty::Variant(_)
+            | Ty::ComptimeList(_)
+            | Ty::Param { .. }
+            | Ty::Assoc { .. }
+    )
 }
 
 fn register_loan_uses(

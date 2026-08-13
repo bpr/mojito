@@ -853,8 +853,11 @@ impl Flatten<'_> {
             }
 
             // --- Variable reads ------------------------------------------------
-            // A bare read defaults to `Copy`; a call site refines it to
-            // `Borrow*`/`Move` per the callee's convention (Stage 6).
+            // A bare read defaults to `Copy` — the lifecycle copy for owned
+            // storage. Consuming conventions keep it; a read-convention call
+            // argument is instead bound as a shallow place read where the
+            // checker marked `BorrowReadArgument` (`lower_call_argument`), and
+            // `x^` lowers as `Move` below.
             ExprKind::Identifier(name) => {
                 if let Some(target) = self.resolved_callable(e) {
                     return self.constant(e, Const::Function(target));
@@ -1184,7 +1187,41 @@ impl Flatten<'_> {
                 // syntactically simple copied argument remains eligible for
                 // ASAP destruction after its value has been evaluated.
                 let (regs, arg_places) = self.lower_call_arguments(args);
-                let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
+                // A copy construction (`Name(copy=place)`) binds its single
+                // keyword to the copy constructor's borrowed `copy: Self`
+                // parameter. Read a place source shallowly and retain it:
+                // `construct_via_copy` runs `__copyinit__` on the live source
+                // exactly once, where an ordinary value read would run the
+                // user's copy constructor a second time for the argument
+                // itself — observable through its side effects.
+                let copy_construction_source = (args.is_empty()
+                    && kwargs.len() == 1
+                    && kwargs[0].name == "copy"
+                    && matches!(
+                        self.checked_ty(e),
+                        Some(Ty::Struct(constructed, _)) if constructed == *name
+                    ))
+                .then(|| self.simple_place(&kwargs[0].value))
+                .flatten();
+                let (kw, kwarg_places) = if let Some(place) = copy_construction_source {
+                    let source_expr = &kwargs[0].value;
+                    let source = self.fresh_typed(
+                        span(source_expr),
+                        Some(place.root),
+                        place
+                            .ty
+                            .clone()
+                            .or_else(|| self.checked_ty(source_expr))
+                            .unwrap_or(Ty::Error),
+                    );
+                    self.emit(MirInstr::LoadPlace {
+                        dest: source,
+                        place: place.clone(),
+                    });
+                    (vec![("copy".to_string(), source)], vec![Some(place)])
+                } else {
+                    self.lower_call_keywords(kwargs)
+                };
                 // The prelude rewrite renames every use of `String`, including
                 // the builtin Writable conversion the checker typed as the
                 // compile-time string; route those back to the VM's

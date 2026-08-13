@@ -393,11 +393,12 @@ pub(crate) fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> 
 /// This is a crate-internal staging seam: ordinary callers use [`elaborate`],
 /// and the compiler's discovery loop supplies requests here.
 pub(crate) fn elaborate_with_requests(
-    program: Vec<Stmt>,
+    mut program: Vec<Stmt>,
     tuple_requests: &[TupleSpecializationRequest],
     tstring_requests: &[TStringSpecializationRequest],
     def_requests: &[DefSpecializationRequest],
 ) -> Result<Vec<Stmt>, ComptimeError> {
+    synthesize_copyable_copy(&mut program);
     let conformance =
         crate::checker::ConformanceOracle::from_program(&program).map_err(|error| {
             ComptimeError::NotComptime(format!(
@@ -463,6 +464,91 @@ pub(crate) fn elaborate_with_requests(
     // overwritten by the uniform module stamp above.
     elab.monomorphize_nested_program(&mut result)?;
     Ok(result)
+}
+
+/// Materialize the `Copyable` trait's default `copy` method (current Mojo:
+/// `def copy(self) -> Self: return Self(copy=self)`; overriding it is not
+/// allowed). Mojito models the built-in traits structurally, so every struct
+/// declaring `Copyable` — directly or through `ImplicitlyCopyable` — gains the
+/// method here as ordinary source AST, keeping the checker, HIR, MIR, and VM on
+/// their existing method and constructor paths. A struct with an explicit copy
+/// constructor delegates to it (propagating its raising effect); a fieldwise
+/// Copyable struct returns `self`, a copying use that runs the fieldwise copy
+/// lifecycle. A conditional conformance carries its predicate over as the
+/// method's `where` clause. Structs that already spell `copy` keep their own
+/// (the self-hosted collections predate this synthesis).
+fn synthesize_copyable_copy(program: &mut [Stmt]) {
+    for statement in program {
+        let span = statement.span;
+        let StmtKind::Struct {
+            name,
+            conforms,
+            conformance_conditions,
+            methods,
+            ..
+        } = &mut statement.kind
+        else {
+            continue;
+        };
+        let copyable = |conformance: &String| {
+            matches!(conformance.as_str(), "Copyable" | "ImplicitlyCopyable")
+        };
+        if !conforms.iter().any(copyable) || methods.iter().any(|m| m.name == "copy") {
+            continue;
+        }
+        let copy_constructor = methods
+            .iter()
+            .find(|m| crate::symbol::lifecycle_method_name(m) == "__copyinit__");
+        let (result, raises, raises_type) = match copy_constructor {
+            Some(constructor) => (
+                Expr::new(
+                    ExprKind::Call {
+                        name: name.clone(),
+                        param_args: Vec::new(),
+                        args: Vec::new(),
+                        kwargs: vec![crate::ast::KwArg {
+                            name: "copy".to_string(),
+                            value: Expr::new(ExprKind::Identifier("self".to_string()), span),
+                        }],
+                    },
+                    span,
+                ),
+                constructor.raises,
+                constructor.raises_type.clone(),
+            ),
+            None => (
+                Expr::new(ExprKind::Identifier("self".to_string()), span),
+                false,
+                None,
+            ),
+        };
+        let where_clauses = conformance_conditions
+            .iter()
+            .find(|(trait_name, _)| trait_name == "Copyable")
+            .or_else(|| {
+                conformance_conditions
+                    .iter()
+                    .find(|(trait_name, _)| trait_name == "ImplicitlyCopyable")
+            })
+            .map(|(_, condition)| vec![condition.clone()])
+            .unwrap_or_default();
+        methods.push(crate::ast::Method {
+            name: "copy".to_string(),
+            type_params: Vec::new(),
+            has_self: true,
+            self_convention: None,
+            self_origin: None,
+            decorators: Vec::new(),
+            params: Vec::new(),
+            positional_only: None,
+            keyword_only: None,
+            raises,
+            raises_type,
+            ret: Some(Type::SelfType),
+            where_clauses,
+            body: vec![mk(StmtKind::Return(Some(result)), span)],
+        });
+    }
 }
 
 /// Collect bare free-function callees from an expression. This is a declaration

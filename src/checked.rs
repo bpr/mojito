@@ -375,6 +375,13 @@ pub enum SemanticAdjustment {
     /// semantics. Ordinary copied arguments intentionally omit this marker so
     /// ASAP destruction may still occur after argument evaluation.
     RetainCallPlace,
+    /// The read-convention sibling of `RetainCallPlace`: this actual argument
+    /// is a shared read of a place no exclusive access overlaps within the
+    /// call, so lowering may bind it as a shallow place read instead of the
+    /// implicit `__copyinit__` copy. Arguments overlapping a `mut`/`ref`/`^`
+    /// access in the same call intentionally omit this marker — their implicit
+    /// copy is what makes the call's exclusivity check pass.
+    BorrowReadArgument,
     /// Concrete owner accesses performed by a callable environment during this
     /// call. The checker derives these from the selected callable and any
     /// non-escaping callable arguments; MIR translates stable owner identities
@@ -864,6 +871,7 @@ impl CheckedProgram {
         reference_value_uses: HashMap<SourceSpan, bool>,
         copy_place_value_uses: HashSet<SourceSpan>,
         call_place_uses: HashSet<SourceSpan>,
+        borrowed_read_call_places: HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: HashSet<SourceSpan>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
@@ -889,6 +897,7 @@ impl CheckedProgram {
             &reference_value_uses,
             &copy_place_value_uses,
             &call_place_uses,
+            &borrowed_read_call_places,
             &implicitly_copied_consuming_receivers,
         );
         let declarations = build_checked_declarations(
@@ -1025,6 +1034,7 @@ fn build_checked_expressions(
     reference_value_uses: &HashMap<SourceSpan, bool>,
     copy_place_value_uses: &HashSet<SourceSpan>,
     call_place_uses: &HashSet<SourceSpan>,
+    borrowed_read_call_places: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
     struct Builder<'a> {
@@ -1051,6 +1061,7 @@ fn build_checked_expressions(
         reference_value_uses: &'a HashMap<SourceSpan, bool>,
         copy_place_value_uses: &'a HashSet<SourceSpan>,
         call_place_uses: &'a HashSet<SourceSpan>,
+        borrowed_read_call_places: &'a HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
     }
     impl Builder<'_> {
@@ -1282,6 +1293,9 @@ fn build_checked_expressions(
             }
             if self.call_place_uses.contains(&span) {
                 adjustments.push(SemanticAdjustment::RetainCallPlace);
+            }
+            if self.borrowed_read_call_places.contains(&span) {
+                adjustments.push(SemanticAdjustment::BorrowReadArgument);
             }
             if self.implicitly_copied_consuming_receivers.contains(&span) {
                 adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
@@ -1545,6 +1559,7 @@ fn build_checked_expressions(
         reference_value_uses,
         copy_place_value_uses,
         call_place_uses,
+        borrowed_read_call_places,
         implicitly_copied_consuming_receivers,
     };
     builder.block(statements);

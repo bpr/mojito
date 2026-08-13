@@ -423,3 +423,130 @@ fn borrowed_comprehension_over_a_temporary_drops_the_source_once() {
     assert_eq!(out, "drop numbers 3\nlen 3\n");
     assert_eq!(out.matches("drop numbers").count(), 1);
 }
+
+const COPYABLE_FOO: &str = "struct Foo(Copyable):\n    var s: String\n\n    def __init__(out self, s: String):\n        self.s = s\n\n    def __init__(out self, *, copy: Self):\n        print(\"copying value\")\n        self.s = copy.s\n\n";
+
+#[test]
+fn copyable_conformance_synthesizes_the_copy_method() {
+    // Current Mojo's `Copyable` trait carries a default `copy()` that
+    // delegates to the `__init__(out self, *, copy: Self)` copy constructor;
+    // elaboration synthesizes it, so `.copy()` resolves and the user's copy
+    // constructor runs exactly once per copy.
+    let src = format!(
+        "{COPYABLE_FOO}def main():\n    var a = Foo(\"Hello\")\n    var b = a.copy()\n    print(b.s)\n"
+    );
+    assert_eq!(vm(&src), "copying value\nHello\n");
+}
+
+#[test]
+fn copy_construction_reads_its_source_without_a_second_copy() {
+    // `Foo(copy=a)` binds `a` to the borrowed `copy: Self` parameter: the
+    // constructor body is the only copy that runs — an owning value read of
+    // the argument would run the user's copy constructor a second time.
+    let src = format!(
+        "{COPYABLE_FOO}def main():\n    var a = Foo(\"Hello\")\n    var b = Foo(copy=a)\n    print(a.s)\n    print(b.s)\n"
+    );
+    assert_eq!(vm(&src), "copying value\nHello\nHello\n");
+}
+
+#[test]
+fn fieldwise_copyable_struct_synthesizes_copy_without_a_constructor() {
+    // No explicit copy constructor: the synthesized `copy()` falls back to
+    // the fieldwise copy lifecycle.
+    let src = "@fieldwise_init\nstruct Point(ImplicitlyCopyable):\n    var x: Int\n    var y: Int\n\ndef main():\n    var p = Point(5, 10)\n    var q = p.copy()\n    print(q.x)\n    print(q.y)\n";
+    assert_eq!(vm(src), "5\n10\n");
+}
+
+#[test]
+fn aggregate_field_read_keeps_its_owner_alive_until_the_copy_runs() {
+    // `a.s` loads a shallow alias of the field; the owner's ASAP drop must
+    // wait for the `CopyValue` that runs the String's copy lifecycle, or the
+    // copy would read freed buffer storage.
+    let src = "struct Holder:\n    var s: String\n    def __init__(out self, s: String):\n        self.s = s\n\ndef main():\n    var a = Holder(String(\"Hello\"))\n    var t = a.s\n    print(t)\n";
+    assert_eq!(vm(src), "Hello\n");
+}
+
+#[test]
+fn read_argument_binds_by_borrow_without_a_copy() {
+    // A read-convention argument is a borrow, not a copy: only the `return`
+    // runs the user's copy constructor. Before the borrow-read lowering the
+    // argument pass itself ran `__copyinit__` a second time.
+    let src = format!(
+        "{COPYABLE_FOO}def ret(value: Foo) -> Foo:\n    return value\n\ndef main():\n    var a = Foo(\"Hello\")\n    var b = ret(a)\n    print(b.s)\n"
+    );
+    let out = vm(&src);
+    assert_eq!(
+        out.matches("copying value").count(),
+        1,
+        "only the return copies"
+    );
+    assert_eq!(out, "copying value\nHello\n");
+}
+
+#[test]
+fn generic_read_argument_binds_by_borrow_without_a_copy() {
+    // Upstream's `copy_return` example: the specialization path must borrow
+    // the read argument exactly like the concrete one.
+    let src = format!(
+        "{COPYABLE_FOO}def copy_return[T: Copyable](value: T) -> T:\n    return value\n\ndef main():\n    var a = Foo(\"Hello\")\n    var b = copy_return(a)\n    print(b.s)\n"
+    );
+    assert_eq!(vm(&src), "copying value\nHello\n");
+}
+
+#[test]
+fn two_shared_read_arguments_stay_legal_and_copy_free() {
+    let src = format!(
+        "{COPYABLE_FOO}def both(left: Foo, right: Foo):\n    print(left.s, right.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    both(a, a)\n"
+    );
+    assert_eq!(vm(&src), "Hello Hello\n");
+}
+
+#[test]
+fn read_argument_overlapping_a_mut_argument_keeps_the_implicit_copy() {
+    // Within-call exclusivity accepts `f(a, a)` with a `mut` slot only because
+    // the read is implicitly copied; that copy must survive the borrow-read
+    // lowering (the borrowed value would otherwise observe the mutation). The
+    // `mut` pass itself is a rebound caller place and runs no copy.
+    let src = format!(
+        "{COPYABLE_FOO}def bump(mut x: Foo, y: Foo):\n    x.s = \"changed\"\n    print(y.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    bump(a, a)\n    print(a.s)\n"
+    );
+    let out = vm(&src);
+    assert_eq!(
+        out.matches("copying value").count(),
+        1,
+        "only the read copies"
+    );
+    assert_eq!(out, "copying value\nHello\nchanged\n");
+}
+
+#[test]
+fn var_argument_still_copies_a_live_source_once() {
+    let src = format!(
+        "{COPYABLE_FOO}def consume(var t: Foo):\n    print(\"consumed\", t.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    consume(a)\n    print(a.s)\n"
+    );
+    let out = vm(&src);
+    assert_eq!(out.matches("copying value").count(), 1);
+    assert_eq!(out, "copying value\nconsumed Hello\nHello\n");
+}
+
+#[test]
+fn mut_argument_rebinds_the_caller_place_without_a_copy() {
+    // A `mut` parameter binds the caller's storage by reference; lowering the
+    // actual as a lifecycle copy would run `__copyinit__` only to discard the
+    // result when the VM rebinds the slot.
+    let src = format!(
+        "{COPYABLE_FOO}def rename(mut x: Foo):\n    x.s = \"changed\"\n\ndef main():\n    var a = Foo(\"Hello\")\n    rename(a)\n    print(a.s)\n"
+    );
+    assert_eq!(vm(&src), "changed\n");
+}
+
+#[test]
+fn read_borrowed_owner_outlives_the_call() {
+    // The borrowed argument keeps its owner alive through the call; the
+    // caller's ASAP drop runs right after the call — its last use — not
+    // between argument evaluation and the call.
+    let src = format!(
+        "{RES}def peek(t: Res):\n    print(\"peek\", t.id)\n\ndef main():\n    var t = Res(2)\n    peek(t)\n    print(\"after call\")\n"
+    );
+    assert_eq!(vm(&src), "peek 2\ndel 2\nafter call\n");
+}
