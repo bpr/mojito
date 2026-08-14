@@ -8,17 +8,23 @@
 
 from std.collections.list import List
 
+from std.iterable import Iterable, Iterator, StopIteration
+
 from std.os import abort
 
 
 struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
-    ImplicitlyCopyable, Movable
+    ImplicitlyCopyable, Iterable where conforms_to(T, Copyable), Movable
 ):
     comptime Element = Self.T
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _SpanIter[Self.T]
 
     var _data: Pointer[Self.T, Self.origin._get_owned_interior["element"]]
     var _size: Int
 
+    @implicit
     def __init__(out self, ref [origin] list: List[Self.T]):
         self._data = list.data.origin_cast[
             origin._get_owned_interior["element"]
@@ -27,6 +33,13 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
 
     def __len__(self) -> Int:
         return self._size
+
+    # Borrowed iteration yields element references like List's (write-through
+    # on a mutable source); the iterator borrows the span itself, whose loans
+    # keep the underlying List alive.
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        ref source = self
+        return _SpanIter[Self.T](source, 0)
 
     def __getitem__(ref self, index: Int) -> ref[
         origin._get_owned_interior["element"]
@@ -48,3 +61,29 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
         result._data = result._data.unsafe_offset(start)
         result._size = end - start
         return result^
+
+
+# The borrowed Span iterator: borrows its source span (whose loans keep the
+# underlying List alive) and yields element references at the span's
+# interior-generation granularity, so structural mutation of the source
+# during iteration invalidates the yielded references.
+@fieldwise_init
+struct _SpanIter[
+    iterable_mut: Bool, //, T: Movable, iterable_origin: Origin[mut=iterable_mut]
+](Iterator where conforms_to(T, Copyable)):
+    comptime Element = Self.T
+
+    var src: ref[iterable_origin] Span[Self.T]
+    var index: Int
+
+    def __len__(self) -> Int:
+        return len(self.src) - self.index
+
+    def __next__(mut self) raises StopIteration -> ref[
+        iterable_origin._get_owned_interior["element"]
+    ] Self.T where conforms_to(Self.T, Copyable):
+        if self.index >= len(self.src):
+            raise StopIteration()
+        var r = self.index
+        self.index += 1
+        return self.src[r]

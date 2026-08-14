@@ -3224,3 +3224,93 @@ fn function_value_reference_retains_the_bound_generic_template() {
         "{names:?}"
     );
 }
+
+#[test]
+fn subtree_loan_shapes_verify_terminal_only() {
+    // A subtree-origin pointer binding establishes a loan whose interior
+    // path may end in — but never continue past — the subtree segment, and
+    // transfer destination domains never carry one.
+    let src = "@fieldwise_init\nstruct Buf:\n    var value: Int\n\n    def view(ref self) -> Pointer[Int, origin_of(self)._subtree]:\n        return UnsafePointer(to=self.value).origin_cast[\n            origin_of(self)._subtree\n        ]()\n\ndef main():\n    var b = Buf(3)\n    var p = b.view()\n    print(p[])\n";
+    let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    assert!(mojito::mir::verify::verify(&mir).is_empty());
+
+    fn establish_loans(program: &mut mojito::mir::MirProgram) -> &mut mojito::mir::MirInstr {
+        program
+            .functions
+            .iter_mut()
+            .find(|(name, _)| name == "main")
+            .expect("main lowered")
+            .1
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instrs)
+            .find(|instruction| matches!(instruction, MirInstr::EstablishLoans { .. }))
+            .expect("subtree binding establishes loans")
+    }
+
+    // A non-terminal subtree segment is a malformed origin path.
+    {
+        let MirInstr::EstablishLoans { loans, .. } = establish_loans(&mut mir) else {
+            unreachable!("filtered to EstablishLoans")
+        };
+        let loan = loans.first_mut().expect("subtree loan present");
+        let interior = loan
+            .interior
+            .get_or_insert_with(|| mojito::mir::MirInteriorOrigin {
+                root: loan.place.root,
+                path: vec![mojito::origin::OriginSeg::Subtree],
+            });
+        interior.path = vec![
+            mojito::origin::OriginSeg::Subtree,
+            mojito::origin::OriginSeg::Interior("element".to_string()),
+        ];
+    }
+    let errors = mojito::mir::verify::verify(&mir);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("non-terminal subtree segment")),
+        "the verifier must reject a non-terminal subtree segment: {errors:?}"
+    );
+
+    // A terminal subtree segment is the accepted conservative shape.
+    {
+        let MirInstr::EstablishLoans { loans, .. } = establish_loans(&mut mir) else {
+            unreachable!("filtered to EstablishLoans")
+        };
+        let interior = loans
+            .first_mut()
+            .and_then(|loan| loan.interior.as_mut())
+            .expect("interior installed above");
+        interior.path = vec![mojito::origin::OriginSeg::Subtree];
+    }
+    assert!(mojito::mir::verify::verify(&mir).is_empty());
+
+    // Transfer destination domains name exact generations, never subtree.
+    {
+        let MirInstr::EstablishLoans {
+            reference,
+            dest_interior,
+            ..
+        } = establish_loans(&mut mir)
+        else {
+            unreachable!("filtered to EstablishLoans")
+        };
+        *dest_interior = Some(mojito::mir::MirInteriorOrigin {
+            root: *reference,
+            path: vec![mojito::origin::OriginSeg::Subtree],
+        });
+    }
+    let errors = mojito::mir::verify::verify(&mir);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("destination domain contains a subtree segment")),
+        "the verifier must reject a subtree transfer destination: {errors:?}"
+    );
+}

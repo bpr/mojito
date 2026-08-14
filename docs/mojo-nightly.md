@@ -222,10 +222,12 @@ uncatchable `os.abort` trap, byte endpoints on codepoint boundaries);
 positional String slicing rejects with a keyword-slice hint; strided List
 slicing keeps `StridedSlice.indices()` normalization; String/StringSpan/
 StringLiteral iteration yields grapheme-cluster StringSpan views; and
-`StringSlice` stays a never-emitted alias. Follow-ups (probed in
-`conformance/probes/`): the `Imm`/`Mut` alias spellings, Span borrowed
-iteration, and the upstream fate of positional String and StringLiteral
-slicing. The original specification:
+`StringSlice` stays a never-emitted alias. Span borrowed iteration landed
+with the §7 pass (`_SpanIter` on the origin-parameterized protocol, element
+references with write-through). Remaining follow-ups (probed in
+`conformance/probes/`): the `Imm`/`Mut` alias spellings and the upstream
+fate of positional String and StringLiteral slicing. The original
+specification:
 
 Introduce `Span` and canonical `StringSpan` views (with `Imm`/`Mut` aliases).
 Contiguous List and Span slices, String `byte=`/`codepoint=` slices, and
@@ -286,6 +288,27 @@ or remove Mojito's owned-iteration extension for non-`Deinitable` elements where
 current Mojo requires `Movable & Deinitable`.
 
 ### 7. Add subtree-origin safety and temporary-origin inference
+
+Status 2026-08-14: DONE. `origin._subtree` is accepted in Pointer origin
+arguments and `origin_cast` targets (terminal-only; `ref [...]` clauses
+reject — the wider upstream surface is pinned by
+`conformance/probes/subtree_origin_surface.mojo`), carried as a terminal
+`OriginSeg::Subtree`/`subtree` flag through checked HIR and verified MIR,
+with the conservative semantics live in the ownership analysis: staleness
+on mutation at, above, or below the base; first-write self-invalidation of
+a mutable subtree reference; and consume-time interior liveness (which
+Mojito's use-before-transfer architecture already enforced — pinned by
+fixtures, no compiler change). `Pointer(to=…)` through a `ref` binding
+mints subtree provenance. Temporary-origin inference landed as the
+`@implicit` `ref [origin]` constructor channel: a `List` passes directly
+where a `Span` is expected (arguments, bindings, returns), the conversion
+result borrowing its source like the explicit construction; a bare list
+literal stays a recorded subset gap (it types as `Array` — probed by
+`conformance/probes/implicit_span_conversion.mojo`). A whole-variable move
+now invalidates the interior generations rooted at the moved variable
+(the owner-side dual of consume liveness), which also makes the tracked
+`Allocation.unsafe_ptr()` reject use-after-dealloc statically. The
+original specification:
 
 Keep Mojito's existing named interior generations; they model precise
 collection-owned storage. Add the audited dev branch's experimental

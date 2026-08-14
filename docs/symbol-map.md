@@ -99,9 +99,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (builtin type-argument forms, dependent/associated projection, and generic
   comptime alias expansion via `resolve_comptime_alias`). It also owns pointer
   origin arguments (`pointer_origin_arg`/`pointer_origin_expr`: origin
-  parameters, `origin_of(place)`, and `._get_owned_interior["tag"]`
-  projections in both annotation and expression shapes — the multi-element
-  pointer marker) and the annotation alias table (`StringSlice` →
+  parameters, `origin_of(place)`, `._get_owned_interior["tag"]` projections
+  in both annotation and expression shapes — the multi-element pointer
+  marker — and the terminal conservative `._subtree` projection via
+  `append_subtree`) and the annotation alias table (`StringSlice` →
   `StringSpan`, `MutPointer`/`ImmPointer`).
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
   (nominal and built-in), and type-capability queries (`is_deinitable`,

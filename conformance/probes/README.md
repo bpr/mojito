@@ -36,6 +36,9 @@ them after every re-pin.
 | `owned_pointer_surface.mojo` | OwnedPointer's constructor set, `p[]` dereference (Mojito subset gap), `unsafe_ptr` signature, prelude visibility? | rejects `p[]` (raw-pointer-only empty subscript) |
 | `owned_iteration_family.mojo` | Which collections declare `IterableOwned` at the head (Mojito: List/Array/Optional only)? | rejects Set owned iteration |
 | `unsafe_maybe_uninit_take.mojo` | The head's name for the mut-receiver UnsafeMaybeUninit take (Mojito: `unsafe_take`)? | runs, prints `5` / `6` |
+| `subtree_origin_surface.mojo` | Where is `._subtree` legal (ref clauses? — Mojito: Pointer/origin_cast only), and the terminal-projection + second-write diagnostics? | runs, prints `4` (first write legal) |
+| `implicit_span_conversion.mojo` | Which spellings convert to a Span parameter (named List / bare literal), and is the converted span writable? | runs, prints `30`; literals stay a gap |
+| `span_iteration_yield.mojo` | Does span iteration yield references (write-through) or copies, and the during-iteration-mutation diagnostic family? | runs, prints `23` |
 
 ## Re-probes of enforced claims (evidence from the `609afcd0735` pin)
 

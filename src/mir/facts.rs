@@ -77,6 +77,30 @@ impl Flatten<'_> {
     /// contain more than one reference-valued field, so this must remain plural:
     /// keeping only the first borrow makes later fields dangling-capable.
     pub(super) fn aggregate_borrows(&mut self, expression: &Expr) -> Vec<MirLoan> {
+        // A view-constructor implicit conversion borrows its source place:
+        // the conversion result carries the same whole-place loan the
+        // explicit construction's `BorrowRefArguments` records.
+        if let Some(crate::SemanticAdjustment::BorrowConversionSource { mutable }) = self
+            .checked_adjustments(expression)
+            .into_iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    crate::SemanticAdjustment::BorrowConversionSource { .. }
+                )
+            })
+            && matches!(
+                expression.kind,
+                ExprKind::Identifier(_) | ExprKind::Member { .. }
+            )
+        {
+            let place = self.place(expression);
+            return vec![MirLoan {
+                place,
+                mutable,
+                interior: None,
+            }];
+        }
         let borrow = self
             .checked_adjustments(expression)
             .into_iter()
@@ -188,7 +212,9 @@ impl Flatten<'_> {
                 }
                 // A checked pointer construction loans exactly its source
                 // place, with the mutability the checker inferred from the
-                // owner binding.
+                // owner binding. A construction through a `ref` binding
+                // carries a subtree origin instead: its loan is the lazy
+                // generation domain rooted at the reference's owner.
                 if let Some(crate::SemanticAdjustment::PointerToPlace { mutable }) = self
                     .checked_adjustments(expression)
                     .into_iter()
@@ -196,6 +222,14 @@ impl Flatten<'_> {
                         matches!(adjustment, crate::SemanticAdjustment::PointerToPlace { .. })
                     })
                 {
+                    if let Some(Ty::Pointer {
+                        origin: crate::origin::PointerOrigin::Place { place, .. },
+                        ..
+                    }) = self.checked_ty(expression)
+                        && matches!(place.path.last(), Some(crate::origin::OriginSeg::Subtree))
+                    {
+                        return self.pointer_place_loan(place.clone(), mutable);
+                    }
                     let place = self.place(
                         &kwargs
                             .first()
@@ -305,7 +339,7 @@ impl Flatten<'_> {
         let mir_place = MirPlace::root(root, self.var_types.get(&root).cloned());
         let interior = matches!(
             place.path.last(),
-            Some(crate::origin::OriginSeg::Interior(_))
+            Some(crate::origin::OriginSeg::Interior(_)) | Some(crate::origin::OriginSeg::Subtree)
         )
         .then(|| self.mir_interior_origin(&place, Some(root)))
         .flatten();

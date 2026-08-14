@@ -919,6 +919,15 @@ impl Flatten<'_> {
         if !self.is_origin_bearing_pointer(object) || self.reassigned_names.contains(name) {
             return None;
         }
+        // A subtree origin deliberately forgets which exact descendant the
+        // pointer designates, so its loan place cannot substitute for the
+        // deref target; the runtime handle carries the true projection.
+        if matches!(
+            self.checked_ty(object),
+            Some(Ty::Pointer { origin, .. }) if origin.subtree()
+        ) {
+            return None;
+        }
         let var = self.expression_var(name, object);
         let loans = self.aggregate_loans.get(&var)?;
         let [loan] = loans.as_slice() else {

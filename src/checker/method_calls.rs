@@ -1236,7 +1236,9 @@ impl Checker {
         use crate::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
         let Ty::Pointer {
             element,
-            origin: PointerOrigin::SelfPlace { interior, .. },
+            origin: PointerOrigin::SelfPlace {
+                interior, subtree, ..
+            },
         } = &ty
         else {
             return ty;
@@ -1249,6 +1251,9 @@ impl Checker {
                 for tag in interior {
                     place.path.push(OriginSeg::Interior(tag.clone()));
                 }
+                if *subtree {
+                    place.path.push(OriginSeg::Subtree);
+                }
                 PointerOrigin::Place {
                     place,
                     mutable: matches!(reference.mutability, Mutability::Mutable),
@@ -1258,6 +1263,7 @@ impl Checker {
                 id,
                 mutability: reference.mutability,
                 interior: interior.clone(),
+                subtree: *subtree,
             },
             _ => return ty,
         };

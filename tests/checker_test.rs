@@ -3592,10 +3592,11 @@ fn pointer_to_place_requires_a_single_to_keyword_place() {
         err("def main():\n    var x = 1\n    var p = UnsafePointer[Int](to=x)\n"),
         TypeError::Unsupported(message) if message.contains("explicit type")
     ));
-    assert!(matches!(
-        err("def main():\n    var x = 1\n    ref alias = x\n    var p = UnsafePointer(to=alias)\n"),
-        TypeError::Unsupported(message) if message.contains("'ref' binding")
-    ));
+    // A `ref` binding is a legal source: the minted pointer carries the
+    // conservative subtree of the reference's origin (nightly §7).
+    ok(
+        "def main():\n    var x = 1\n    ref alias = x\n    var p = UnsafePointer(to=alias)\n    print(p[])\n",
+    );
 }
 
 #[test]

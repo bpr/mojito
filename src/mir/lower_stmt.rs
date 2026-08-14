@@ -1946,18 +1946,22 @@ impl Flatten<'_> {
                     return;
                 }
                 let (src, _) = self.lower_assignment_value(place, value);
-                self.emit_interior_invalidations(place, None);
                 // A store through an origin-bearing pointer writes its source
                 // place; the checker fixed the offset to 0 and required
                 // mutable provenance. A stably bound pointer substitutes the
-                // owner place; otherwise the store goes through the handle.
+                // owner place; otherwise the store goes through the handle —
+                // loaded before the invalidation boundary, so a first write
+                // through a subtree pointer uses its still-live generation and
+                // only later uses observe the self-invalidation.
                 if let ExprKind::Index { object, .. } = &place.kind {
                     if let Some(target) = self.pointer_deref_place(object) {
+                        self.emit_interior_invalidations(place, None);
                         self.emit(MirInstr::Store { place: target, src });
                         return;
                     }
                     if self.is_origin_bearing_pointer(object) {
                         let reference = self.expr(object);
+                        self.emit_interior_invalidations(place, None);
                         self.emit(MirInstr::WriteRef {
                             reference,
                             value: src,
@@ -1965,6 +1969,7 @@ impl Flatten<'_> {
                         return;
                     }
                 }
+                self.emit_interior_invalidations(place, None);
                 let p = self.place(place);
                 let stores_reference = matches!(p.ty, Some(Ty::Ref(_)))
                     && self.checked_adjustments(value).iter().any(|adjustment| {

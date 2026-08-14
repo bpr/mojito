@@ -290,6 +290,7 @@ pub(crate) fn check_program_with_materialized_callables(
         checker.generic_instantiations.into_inner(),
         checker.call_transfers.into_inner(),
         checker.implicit_conversions.into_inner(),
+        checker.conversion_source_borrows.into_inner(),
         checker.declaration_types.into_inner(),
         checker.generic_parameters.into_inner(),
         checker.expression_types.into_inner(),
@@ -654,6 +655,12 @@ pub struct Checker {
     /// abort the region itself.
     raise_observation_frames: RefCell<Vec<(usize, bool)>>,
     implicit_conversions: RefCell<HashMap<SourceSpan, String>>,
+    /// Sites in `implicit_conversions` whose selected constructor borrows its
+    /// single argument through a `ref [origin]` parameter: the conversion
+    /// result borrows the source place (temporary-origin inference). The
+    /// value is the loan mutability, solved like the explicit construction
+    /// path's `BorrowRefArguments`.
+    conversion_source_borrows: RefCell<HashMap<SourceSpan, bool>>,
     simd_constructions: RefCell<HashMap<SourceSpan, (Dtype, i64)>>,
     /// Checked operation decisions — `Variant` construction/tag/projection/
     /// update and origin-bearing pointer construction — keyed by the source
@@ -807,6 +814,7 @@ impl Checker {
             transferred_origins: RefCell::new(HashMap::new()),
             raise_observation_frames: RefCell::new(Vec::new()),
             implicit_conversions: RefCell::new(HashMap::new()),
+            conversion_source_borrows: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
             tuple_unpack_plans: RefCell::new(HashMap::new()),
@@ -1334,7 +1342,17 @@ impl Checker {
         Ok(())
     }
 
-    fn implicit_conversion_target(&self, from: &Ty, to: &Ty) -> Result<Option<String>, TypeError> {
+    /// The selected `@implicit` constructor for a conversion, when one
+    /// applies. The second component is `Some(loan mutability)` when that
+    /// constructor borrows its argument through a `ref [origin]` parameter (a
+    /// view construction): the caller records the source borrow so the
+    /// conversion result's origin refines to the source expression's place
+    /// (temporary-origin inference).
+    fn implicit_conversion_target(
+        &self,
+        from: &Ty,
+        to: &Ty,
+    ) -> Result<Option<(String, Option<bool>)>, TypeError> {
         let Ty::Struct(name, args) = to else {
             return Ok(None);
         };
@@ -1358,11 +1376,19 @@ impl Checker {
             .collect::<Vec<_>>();
         match matches.as_slice() {
             [] => Ok(None),
-            [sig] => Ok(Some(if constructors.len() == 1 {
-                name.clone()
-            } else {
-                method_lowered_name(name, "__init__", sig)
-            })),
+            [sig] => {
+                let target = if constructors.len() == 1 {
+                    name.clone()
+                } else {
+                    method_lowered_name(name, "__init__", sig)
+                };
+                let source_borrow = sig
+                    .ref_params
+                    .first()
+                    .and_then(|signature| signature.as_ref())
+                    .map(|signature| signature.mutability == crate::origin::SigMutability::Mutable);
+                Ok(Some((target, source_borrow)))
+            }
             _ => Err(TypeError::BadCall {
                 func: name.clone(),
                 reason: format!("ambiguous implicit conversion from '{from}' to '{to}'"),
@@ -1381,13 +1407,29 @@ impl Checker {
         from: &Ty,
         to: &Ty,
     ) -> Result<bool, TypeError> {
-        let Some(target) = self.implicit_conversion_target(from, to)? else {
+        let Some((target, source_borrow)) = self.implicit_conversion_target(from, to)? else {
             return Ok(false);
         };
-        self.implicit_conversions
-            .borrow_mut()
-            .insert(expression.source_span(), target);
+        self.record_selected_conversion(expression, target, source_borrow);
         Ok(true)
+    }
+
+    /// Install one selected converting constructor plus, for a `ref`-parameter
+    /// (view) constructor, the source-borrow fact that refines the conversion
+    /// temporary's origin to the source expression's place.
+    fn record_selected_conversion(
+        &self,
+        expression: &Expr,
+        target: String,
+        source_borrow: Option<bool>,
+    ) {
+        let span = expression.source_span();
+        if let Some(mutable) = source_borrow {
+            self.conversion_source_borrows
+                .borrow_mut()
+                .insert(span.clone(), mutable);
+        }
+        self.implicit_conversions.borrow_mut().insert(span, target);
     }
 
     fn record_implicit_conversion(
@@ -1431,12 +1473,10 @@ impl Checker {
             self.record_literal_materializations(expression, from, to)?;
             return Ok(true);
         }
-        let Some(target) = self.implicit_conversion_target(from, to)? else {
+        let Some((target, source_borrow)) = self.implicit_conversion_target(from, to)? else {
             return Ok(false);
         };
-        self.implicit_conversions
-            .borrow_mut()
-            .insert(expression.source_span(), target);
+        self.record_selected_conversion(expression, target, source_borrow);
         Ok(true)
     }
 

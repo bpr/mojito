@@ -1811,3 +1811,43 @@ fn container_family_owning_apis_execute() {
         "close 1\nclose 2\ndisplaced 10\nfresh False\ncleared 2 20\ncleared 1 11\nlen 0\nset displaced 7\ntorn 7\n"
     );
 }
+
+#[test]
+fn span_implicit_conversion_binding_stales_on_source_mutation() {
+    // An annotated binding that implicitly converts a List to a Span carries
+    // the same source loan as the explicit `Span(xs)` construction, so
+    // structural mutation while the converted view lives rejects. (Linked
+    // stdlib only — Span has no link-free raw-seam twin.)
+    let src = "def main():\n    var xs = List[Int]()\n    xs.append(10)\n    var s: Span[Int] = xs\n    xs.append(20)\n    print(s[0])\n";
+    let err = run_compiled(src).expect_err("mutating the converted view's source rejects");
+    assert!(
+        err.contains("conflicts with live reference"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn allocation_tracked_pointer_stales_on_dealloc() {
+    // The tracked `Allocation.unsafe_ptr()` pointer roots an interior
+    // generation at the owning Allocation: moving the Allocation into
+    // `dealloc` stales it, so use-after-free rejects statically instead of
+    // trapping in the VM. (Linked stdlib only — no raw-seam twin.)
+    let src = "from std.memory import Layout, dealloc\n\ndef main():\n    var a = alloc(Layout[Int](count=2))\n    var p = a.unsafe_ptr()\n    p.unsafe_write(5)\n    dealloc(a^)\n    print(p[])\n";
+    let err = run_compiled(src).expect_err("use after dealloc rejects");
+    assert!(
+        err.contains("invalidated interior reference"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn span_iteration_rejects_source_mutation() {
+    // Structural mutation of the List during span iteration conflicts with
+    // the live view (the span's whole-place ctor loan).
+    let src = "def main():\n    var xs = List[Int]()\n    xs.append(1)\n    var sp = Span(xs)\n    for x in sp:\n        xs.append(x)\n";
+    let err = run_compiled(src).expect_err("mutating the source during span iteration rejects");
+    assert!(
+        err.contains("conflicts with live reference"),
+        "unexpected error: {err}"
+    );
+}

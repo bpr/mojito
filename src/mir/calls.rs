@@ -19,9 +19,14 @@ impl Flatten<'_> {
             .iter()
             .any(|adjustment| matches!(adjustment, crate::SemanticAdjustment::RetainCallPlace));
         if !retains_place {
+            // An implicit conversion supersedes the shallow-read shortcut:
+            // the ordinary lowering emits the converting constructor (which
+            // performs its own source borrow), and the callee receives the
+            // constructed value rather than the raw source aggregate.
             if adjustments.iter().any(|adjustment| {
                 matches!(adjustment, crate::SemanticAdjustment::BorrowReadArgument)
-            }) && let Some(register) = self.lower_borrowed_read_argument(expression)
+            }) && self.implicit_conversion(expression).is_none()
+                && let Some(register) = self.lower_borrowed_read_argument(expression)
             {
                 // Deliberately no retained place: the analysis treats retained
                 // call places as exclusive writes and the VM's write-back
@@ -620,10 +625,12 @@ impl Flatten<'_> {
         self.checked_reference_places(expression)
             .into_iter()
             .filter(|place| {
-                place
-                    .path
-                    .iter()
-                    .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
+                place.path.iter().any(|segment| {
+                    matches!(
+                        segment,
+                        crate::origin::OriginSeg::Interior(_) | crate::origin::OriginSeg::Subtree
+                    )
+                })
             })
             .collect()
     }

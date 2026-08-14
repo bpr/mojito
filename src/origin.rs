@@ -34,6 +34,13 @@ pub enum OriginSeg {
     /// mutating its base starts a new generation without making ordinary reads
     /// of the base conflict with references into the old generation.
     Interior(String),
+    /// The conservative subtree form (`origin._subtree`): the base place or
+    /// any origin formed by field/interior projections beneath it. Always the
+    /// terminal segment of a path. For overlap it is a wildcard over every
+    /// descendant, and unlike `Interior` its generation is invalidated by a
+    /// mutation anywhere at or below the base — including a write through the
+    /// subtree reference itself, which self-invalidates after its first write.
+    Subtree,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -73,6 +80,7 @@ impl std::fmt::Display for Origin {
                         OriginSeg::Field(name) => write!(f, ".{name}")?,
                         OriginSeg::AnyIndex => write!(f, "[_]")?,
                         OriginSeg::Interior(tag) => write!(f, ".<{tag}>")?,
+                        OriginSeg::Subtree => write!(f, "~")?,
                     }
                 }
                 write!(f, ")")
@@ -234,6 +242,10 @@ pub enum PointerOrigin {
         /// so the concrete origin ends in `OriginSeg::Interior` and offset
         /// dereferences stay legal after monomorphized replay.
         interior: Vec<String>,
+        /// A trailing `._subtree` projection: substitution appends a terminal
+        /// `OriginSeg::Subtree` after the interior tags. A subtree pointer is
+        /// a conservative single reference, never a multi-element domain.
+        subtree: bool,
     },
     /// `origin_of(self)` (optionally interior-projected) in a method
     /// signature or body: the receiver's own place, symbolic until a call
@@ -243,6 +255,8 @@ pub enum PointerOrigin {
     SelfPlace {
         mutability: Mutability,
         interior: Vec<String>,
+        /// A trailing `._subtree` projection (see [`PointerOrigin::Param`]).
+        subtree: bool,
     },
     Static,
     Untracked {
@@ -282,8 +296,30 @@ impl PointerOrigin {
             PointerOrigin::Place { place, .. } => {
                 matches!(place.path.last(), Some(OriginSeg::Interior(_)))
             }
-            PointerOrigin::Param { interior, .. } | PointerOrigin::SelfPlace { interior, .. } => {
-                !interior.is_empty()
+            PointerOrigin::Param {
+                interior, subtree, ..
+            }
+            | PointerOrigin::SelfPlace {
+                interior, subtree, ..
+            } => !interior.is_empty() && !subtree,
+            PointerOrigin::Static
+            | PointerOrigin::Untracked { .. }
+            | PointerOrigin::UnsafeAny { .. } => false,
+        }
+    }
+
+    /// Whether this provenance ends in the conservative `._subtree` projection.
+    /// A subtree pointer designates its root or any descendant, so nothing may
+    /// re-derive an exact place from its origin: dereferences go through the
+    /// runtime handle, and its generation stales on any mutation at or below
+    /// the root.
+    pub fn subtree(&self) -> bool {
+        match self {
+            PointerOrigin::Place { place, .. } => {
+                matches!(place.path.last(), Some(OriginSeg::Subtree))
+            }
+            PointerOrigin::Param { subtree, .. } | PointerOrigin::SelfPlace { subtree, .. } => {
+                *subtree
             }
             PointerOrigin::Static
             | PointerOrigin::Untracked { .. }
@@ -424,7 +460,9 @@ pub fn places_overlap(left: &OriginPlace, right: &OriginPlace) -> bool {
         return false;
     }
     left.path.iter().zip(&right.path).all(|(a, b)| {
-        a == b || matches!(a, OriginSeg::AnyIndex) || matches!(b, OriginSeg::AnyIndex)
+        a == b
+            || matches!(a, OriginSeg::AnyIndex | OriginSeg::Subtree)
+            || matches!(b, OriginSeg::AnyIndex | OriginSeg::Subtree)
     })
 }
 
@@ -577,5 +615,25 @@ mod tests {
         let values = OriginSeg::Interior("value".into());
         assert!(place(1, &[]).overlaps(&place(1, std::slice::from_ref(&elements))));
         assert!(!place(1, &[elements]).overlaps(&place(1, &[values])));
+    }
+
+    #[test]
+    fn subtree_overlaps_every_descendant_of_its_base() {
+        let field_a = OriginSeg::Field("a".into());
+        let field_b = OriginSeg::Field("b".into());
+        let subtree_at_a = place(1, &[field_a.clone(), OriginSeg::Subtree]);
+        // The base itself, and anything below it, overlaps the subtree.
+        assert!(subtree_at_a.overlaps(&place(1, std::slice::from_ref(&field_a))));
+        assert!(subtree_at_a.overlaps(&place(
+            1,
+            &[field_a.clone(), field_b.clone(), OriginSeg::AnyIndex]
+        )));
+        assert!(subtree_at_a.overlaps(&place(
+            1,
+            &[field_a.clone(), OriginSeg::Interior("element".into())]
+        )));
+        // A sibling path and a foreign root stay disjoint.
+        assert!(!subtree_at_a.overlaps(&place(1, std::slice::from_ref(&field_b))));
+        assert!(!subtree_at_a.overlaps(&place(2, &[field_a])));
     }
 }

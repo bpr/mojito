@@ -1501,6 +1501,16 @@ impl Checker {
             crate::ast::ParamArg::Value(expression) => {
                 return self.pointer_origin_expr(expression);
             }
+            // `origin._subtree` in type-annotation position parses as an
+            // associated member of the origin base; expression positions
+            // route through `pointer_origin_expr` instead.
+            crate::ast::ParamArg::Type(SourceType::Assoc { base, name, args })
+                if name == "_subtree" && args.is_empty() =>
+            {
+                let origin =
+                    self.pointer_origin_arg(&crate::ast::ParamArg::Type((**base).clone()))?;
+                return append_subtree(origin);
+            }
             // `Self.origin._get_owned_interior["tag"]` in type-annotation
             // position parses as an indexed projection over an associated
             // member of the origin parameter; expression positions route
@@ -1571,6 +1581,10 @@ impl Checker {
             let origin = self.pointer_origin_expr(base)?;
             return append_interior_tag(origin, tag);
         }
+        if let Some(base) = super::origins::subtree_origin_syntax(expression) {
+            let origin = self.pointer_origin_expr(base)?;
+            return append_subtree(origin);
+        }
         match &expression.kind {
             // `Self.origin` spelled in expression position (a projection base).
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
@@ -1596,6 +1610,7 @@ impl Checker {
                     return Ok(PointerOrigin::SelfPlace {
                         mutability: Mutability::Param(crate::origin::OriginParamId(0)),
                         interior: Vec::new(),
+                        subtree: false,
                     });
                 }
                 let reference = self.reference_actual(&args[0])?;
@@ -1608,6 +1623,7 @@ impl Checker {
                         id,
                         mutability: reference.mutability,
                         interior: Vec::new(),
+                        subtree: false,
                     }),
                     other => Err(TypeError::Unsupported(format!(
                         "origin_of over {other:?} is not a supported Pointer origin argument"
@@ -1648,6 +1664,7 @@ impl Checker {
             id,
             mutability,
             interior: Vec::new(),
+            subtree: false,
         })
     }
 
@@ -1916,6 +1933,9 @@ fn append_interior_tag(
     tag: &str,
 ) -> Result<crate::origin::PointerOrigin, TypeError> {
     use crate::origin::{OriginSeg, PointerOrigin};
+    if origin_has_subtree_tail(&origin) {
+        return Err(subtree_is_terminal_error());
+    }
     match &mut origin {
         PointerOrigin::Param { interior, .. } | PointerOrigin::SelfPlace { interior, .. } => {
             interior.push(tag.to_string());
@@ -1932,4 +1952,49 @@ fn append_interior_tag(
         }
     }
     Ok(origin)
+}
+
+/// Append the conservative `._subtree` projection to a tracked pointer origin.
+/// Subtree is terminal: nothing projects below it, including another
+/// `._subtree`. Untracked provenances have no place to project into.
+fn append_subtree(
+    mut origin: crate::origin::PointerOrigin,
+) -> Result<crate::origin::PointerOrigin, TypeError> {
+    use crate::origin::{OriginSeg, PointerOrigin};
+    if origin_has_subtree_tail(&origin) {
+        return Err(subtree_is_terminal_error());
+    }
+    match &mut origin {
+        PointerOrigin::Param { subtree, .. } | PointerOrigin::SelfPlace { subtree, .. } => {
+            *subtree = true;
+        }
+        PointerOrigin::Place { place, .. } => {
+            place.path.push(OriginSeg::Subtree);
+        }
+        _ => {
+            return Err(TypeError::TypeMismatch {
+                expected: "an origin parameter or origin_of(place) base".to_string(),
+                found: "an untracked origin".to_string(),
+                context: "'_subtree' origin projection".to_string(),
+            });
+        }
+    }
+    Ok(origin)
+}
+
+fn origin_has_subtree_tail(origin: &crate::origin::PointerOrigin) -> bool {
+    use crate::origin::{OriginSeg, PointerOrigin};
+    match origin {
+        PointerOrigin::Param { subtree, .. } | PointerOrigin::SelfPlace { subtree, .. } => *subtree,
+        PointerOrigin::Place { place, .. } => {
+            matches!(place.path.last(), Some(OriginSeg::Subtree))
+        }
+        _ => false,
+    }
+}
+
+fn subtree_is_terminal_error() -> TypeError {
+    TypeError::Unsupported(
+        "'_subtree' is a terminal origin projection: nothing can be projected below it".to_string(),
+    )
 }

@@ -8,6 +8,46 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The experimental conservative subtree origin (nightly §7): `origin._subtree`
+  is accepted in Pointer origin arguments and `origin_cast` targets — over
+  origin parameters, `origin_of(...)` places, and interior projections, but
+  strictly terminal and rejected in `ref [...]` clauses — carried through
+  checked HIR and verified MIR as a terminal path segment. A subtree pointer
+  designates its base or any descendant: it is never multi-element, its
+  generation stales on mutation at, above, or below the base (across
+  branches, loops, and `try` regions), and a write through a mutable subtree
+  pointer succeeds once and invalidates the pointer for every later use
+  (current Mojo's first-write rule). `Pointer(to=…)` through a `ref` binding
+  — a local `ref` or a `ref` parameter — now mints exactly this provenance
+  instead of rejecting.
+
+- Temporary-origin inference (nightly §7): an `@implicit` constructor may
+  take a single `ref [origin]` parameter, and the selected conversion then
+  borrows its source place so the temporary's origin refines to the source.
+  Span's List constructor is `@implicit`, so a `List` passes directly where
+  a `Span` is expected — call arguments, annotated bindings, and returns —
+  with the same loan, conflict, and escape behavior as the explicit
+  construction (a bare list literal stays a recorded subset gap: it types
+  as fixed-size `Array`).
+
+- Span borrowed iteration: Span is `Iterable where conforms_to(T, Copyable)`
+  through the origin-parameterized protocol (`_SpanIter`), yielding element
+  references — `for x in span` reads, `for ref x` writes through to the
+  underlying List, sub-slice views iterate their own window, and structural
+  source mutation during iteration rejects.
+
+### Changed
+
+- `Allocation.unsafe_ptr()` is tracked: it returns the Allocation's
+  `element` interior-generation origin instead of `MutUntrackedOrigin`, so
+  the owner stays alive through the pointer's uses and use-after-free
+  rejects statically (`ThinAllocation.unsafe_ptr()` remains the raw
+  untracked escape hatch). Supporting this, a whole-variable move —
+  `dealloc(a^)`, any `var` argument, a rebind — now invalidates every
+  interior generation rooted at the moved variable (the owner-side dual of
+  the consume-time interior-liveness rule, which Mojito's architecture
+  already enforced and this pass pins with fixtures).
+
 - A minimal `OwnedPointer[T]` owning smart pointer in `std.memory`
   (nightly §6), with current Mojo's naming from day one: value and
   `init_with=` placement construction, `into_inner(deinit self)`, an

@@ -543,9 +543,47 @@ impl Checker {
             && (matches!(self.lookup(name), Some(Ty::Ref(_)))
                 || self.lookup_reference_parameter(name).is_some())
         {
-            return Err(TypeError::Unsupported(
-                "Pointer(to=...) through a 'ref' binding is not supported yet".to_string(),
-            ));
+            // A `ref` binding names a borrowed region, not owned storage, so
+            // the minted pointer's provenance is the conservative subtree of
+            // the reference's origin: the referent is that base or some
+            // descendant of it. Subtree staleness (any mutation at or below
+            // the base, and the first-write rule) replaces the exact-place
+            // loan the owned case gets.
+            use crate::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
+            let reference = self.reference_actual(value)?;
+            let origin = match reference.origin {
+                Origin::Place(mut place) => {
+                    let mutable = matches!(reference.mutability, Mutability::Mutable);
+                    place.path.push(OriginSeg::Subtree);
+                    PointerOrigin::Place { place, mutable }
+                }
+                Origin::Param(id) => PointerOrigin::Param {
+                    id,
+                    mutability: reference.mutability,
+                    interior: Vec::new(),
+                    subtree: true,
+                },
+                Origin::SelfParam => PointerOrigin::SelfPlace {
+                    mutability: reference.mutability,
+                    interior: Vec::new(),
+                    subtree: true,
+                },
+                other => {
+                    return Err(TypeError::Unsupported(format!(
+                        "Pointer(to=...) through a 'ref' binding requires a place or \
+                         origin-parameter referent; a {other} origin is not supported"
+                    )));
+                }
+            };
+            let mutable = origin.statically_mutable() == Some(true);
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                crate::checked::SemanticAdjustment::PointerToPlace { mutable },
+            );
+            return Ok(Ty::Pointer {
+                element: reference.referent,
+                origin,
+            });
         }
         let place = self.origin_place(value).map_err(|error| match error {
             TypeError::UndefinedVariable(_) => error,

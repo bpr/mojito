@@ -1940,6 +1940,17 @@ fn verify_instruction(
                         "{prefix}: loan destination domain has an empty interior path"
                     ));
                 }
+                // Transfer destinations name exact interior generations; the
+                // conservative subtree form never designates a store target.
+                if domain
+                    .path
+                    .iter()
+                    .any(|segment| matches!(segment, crate::origin::OriginSeg::Subtree))
+                {
+                    errors.push(format!(
+                        "{prefix}: loan destination domain contains a subtree segment"
+                    ));
+                }
             }
             for loan in loans {
                 let Some(origin) = &loan.interior else {
@@ -1951,11 +1962,26 @@ fn verify_instruction(
                         origin.root
                     ));
                 }
-                if !origin
+                // A domain loan names either a named interior generation or
+                // the conservative subtree form; subtree is terminal.
+                if let Some(position) = origin
                     .path
                     .iter()
-                    .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
+                    .position(|segment| matches!(segment, crate::origin::OriginSeg::Subtree))
+                    && position != origin.path.len() - 1
                 {
+                    errors.push(format!(
+                        "{prefix}: interior loan origin rooted at slot {} has a non-terminal \
+                         subtree segment",
+                        origin.root
+                    ));
+                }
+                if !origin.path.iter().any(|segment| {
+                    matches!(
+                        segment,
+                        crate::origin::OriginSeg::Interior(_) | crate::origin::OriginSeg::Subtree
+                    )
+                }) {
                     errors.push(format!(
                         "{prefix}: interior loan origin rooted at slot {} has no interior segment",
                         origin.root

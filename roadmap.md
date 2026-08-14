@@ -22,9 +22,13 @@ traits, recursively lifted typed closure environments, linear whole-pack
 forwarding, generic-anonymous callable contracts, symbolic callable defaults,
 residual callable specialization, origin-bearing references and current-model
 unsafe pointers (the `unsafe_*` vocabulary, empty-`[]` dereference,
-layout-based linear `std.memory` allocation, and multi-element
-interior-domain origins carrying the borrowed `Span`/`StringSpan` views with
-current Mojo's strict slice bounds and grapheme-cluster iteration),
+layout-based linear `std.memory` allocation with a tracked
+`Allocation.unsafe_ptr()`, multi-element interior-domain origins carrying
+the borrowed `Span`/`StringSpan` views — with current Mojo's strict slice
+bounds, grapheme-cluster and Span element iteration, and the `@implicit`
+List-to-Span conversion whose temporary refines its origin to the source —
+and the experimental conservative `Origin._subtree` form, including
+`Pointer(to=…)` through `ref` bindings),
 collection-owned interior-origin generations, explicit lifecycle semantics, and
 a self-hosted proof-subset standard library. Method-dispatched nominal
 subscripts retain ordinary checked method selection in one complete verified
@@ -100,13 +104,6 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **Subtree origins and temporary-origin inference (nightly §7)** —
-  follows the container work; the audited stdlib does not yet depend on it.
-  - add the experimental `Origin._subtree` as a separate conservative origin
-    form beside the existing named interior generations
-  - allow an origin-bearing `@implicit` conversion result to refine its
-    origin from a register temporary
-  - carry both facts explicitly through checked HIR and verified MIR
 - [ ] **Scalar, SIMD, range, and generic vocabulary (nightly §8)** — the
   SIMD half of the section is complete (`SIMDLength` landed; invalid widths
   already reject at checked elaboration).

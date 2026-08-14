@@ -1577,6 +1577,26 @@ fn transfer_interior_instruction(
         MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
             remove_active_interior_reference(state, *var);
         }
+        // Moving a variable out relocates the storage its interior
+        // generations designate (a `var` argument like `dealloc(a^)`, a
+        // whole-variable rebind): every generation rooted at it becomes
+        // stale, so a use-after-free through a tracked pointer rejects
+        // statically instead of trapping in the VM. (Whole-place loans
+        // already make such moves conflict eagerly; interior-domain loans
+        // are non-exclusive and need this lazy channel.)
+        MirInstr::UseVar {
+            dest,
+            var,
+            mode: crate::mir::UseMode::Move,
+        } => {
+            invalidate_generations_rooted_at(state, *var, generations, || span_for_reg(f, *dest));
+            remove_active_interior_reference(state, *var);
+        }
+        MirInstr::MovePlace { dest, place } if place.proj.is_empty() => {
+            invalidate_generations_rooted_at(state, place.root, generations, || {
+                span_for_reg(f, *dest)
+            });
+        }
         MirInstr::EstablishLoans {
             reference, marker, ..
         } => {
@@ -1593,14 +1613,24 @@ fn transfer_interior_instruction(
         } => {
             let at = span_for_reg(f, *marker);
             for (reference, active) in &state.active {
-                if Some(*reference) == *except {
-                    continue;
-                }
+                let excepted = Some(*reference) == *except;
                 for generation_id in active {
                     let Some(generation) = generations.get(generation_id) else {
                         continue;
                     };
                     let Some(origin) = generation.origins.iter().find(|origin| {
+                        // A mutation through the excepted handle preserves that
+                        // handle's own generation — except when it is a subtree
+                        // generation, which self-invalidates on any write below
+                        // its base, its own included.
+                        if excepted
+                            && !matches!(
+                                origin.path.last(),
+                                Some(crate::origin::OriginSeg::Subtree)
+                            )
+                        {
+                            return false;
+                        }
                         interior_origin_invalidated_by(origin, base, *include_base_generation)
                     }) else {
                         continue;
@@ -1619,6 +1649,35 @@ fn transfer_interior_instruction(
         }
         MirInstr::Raise { .. } => state.reachable = false,
         _ => {}
+    }
+}
+
+/// Mark every active generation whose origin roots at `root` as invalidated:
+/// the root's storage was moved away or destroyed.
+fn invalidate_generations_rooted_at(
+    state: &mut InteriorState,
+    root: VarId,
+    generations: &BTreeMap<u32, InteriorGeneration>,
+    at: impl Fn() -> crate::SourceSpan,
+) {
+    for active in state.active.values() {
+        for generation_id in active {
+            let Some(generation) = generations.get(generation_id) else {
+                continue;
+            };
+            let Some(origin) = generation.origins.iter().find(|origin| origin.root == root) else {
+                continue;
+            };
+            if !state.invalidated.contains_key(generation_id) {
+                state.invalidated.insert(
+                    *generation_id,
+                    InteriorInvalidationState {
+                        at: at(),
+                        origin: origin.clone(),
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -2006,19 +2065,36 @@ fn interior_origin_invalidated_by(
     base: &MirInteriorOrigin,
     include_base_generation: bool,
 ) -> bool {
-    if origin.root != base.root || base.path.len() > origin.path.len() {
+    if origin.root != base.root {
+        return false;
+    }
+    // A subtree generation designates its base or any descendant, so a
+    // mutation anywhere at, above, or below that base stales it — including a
+    // write through the subtree reference itself (the base then carries the
+    // subtree tail), which is the first-write self-invalidation rule.
+    let subtree = matches!(origin.path.last(), Some(crate::origin::OriginSeg::Subtree));
+    if !subtree && base.path.len() > origin.path.len() {
         return false;
     }
     let prefix_matches = base.path.iter().zip(&origin.path).all(|(left, right)| {
         left == right
-            || matches!(left, crate::origin::OriginSeg::AnyIndex)
-            || matches!(right, crate::origin::OriginSeg::AnyIndex)
+            || matches!(
+                left,
+                crate::origin::OriginSeg::AnyIndex | crate::origin::OriginSeg::Subtree
+            )
+            || matches!(
+                right,
+                crate::origin::OriginSeg::AnyIndex | crate::origin::OriginSeg::Subtree
+            )
     });
-    prefix_matches
-        && (include_base_generation
-            || origin.path[base.path.len()..]
-                .iter()
-                .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_))))
+    if !prefix_matches {
+        return false;
+    }
+    subtree
+        || include_base_generation
+        || origin.path[base.path.len()..]
+            .iter()
+            .any(|segment| matches!(segment, crate::origin::OriginSeg::Interior(_)))
 }
 
 /// Every reference variable semantically consumed by an instruction, paired
@@ -2235,6 +2311,7 @@ fn interior_origin_display(f: &MirFunction, origin: &MirInteriorOrigin) -> Strin
                 display.push_str(tag);
                 display.push_str("\"]");
             }
+            crate::origin::OriginSeg::Subtree => display.push('~'),
         }
     }
     display
@@ -2622,7 +2699,9 @@ fn loan_accesses(
                 crate::origin::OriginSeg::Field(field) => {
                     place.proj.push(Proj::Field(field.clone()));
                 }
-                crate::origin::OriginSeg::AnyIndex | crate::origin::OriginSeg::Interior(_) => break,
+                crate::origin::OriginSeg::AnyIndex
+                | crate::origin::OriginSeg::Interior(_)
+                | crate::origin::OriginSeg::Subtree => break,
             }
         }
         (

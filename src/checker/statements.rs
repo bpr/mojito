@@ -730,6 +730,9 @@ impl Checker {
                             )
                         })?;
                     self.implicit_conversions.borrow_mut().remove(&value_source);
+                    self.conversion_source_borrows
+                        .borrow_mut()
+                        .remove(&value_source);
                     self.expression_types.borrow_mut().remove(&value_source);
                     if matches!(
                         self.operation_adjustments.borrow().get(&value_source),
@@ -1440,6 +1443,16 @@ impl Checker {
                     None if self.named_result_context.last() == Some(&true) => expected.clone(),
                     None => Ty::None,
                 };
+                // Record the return-position conversion before the escape
+                // check: a view-constructor implicit conversion installs the
+                // source-borrow fact that makes `aggregate_origins` see the
+                // frame-local loan behind the converted spelling.
+                let compatible = match expr {
+                    Some(expression) => {
+                        self.record_implicit_conversion(expression, &found, expected)?
+                    }
+                    None => self.value_coerces(&found, expected),
+                };
                 if let Some(expression) = expr
                     && !matches!(expected, Ty::Ref(_))
                     && (self.type_may_carry_loans(expected) || self.type_may_carry_loans(&found))
@@ -1521,12 +1534,6 @@ impl Checker {
                 {
                     return Err(TypeError::ClosureEscape);
                 }
-                let compatible = match expr {
-                    Some(expression) => {
-                        self.record_implicit_conversion(expression, &found, expected)?
-                    }
-                    None => self.value_coerces(&found, expected),
-                };
                 if !compatible {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),

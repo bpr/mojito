@@ -55,8 +55,17 @@ struct Allocation[T: AnyType](Movable, Deinitable where False):
         self._alloc = _alloc^
         self._layout = _layout
 
-    def unsafe_ptr(self) -> Pointer[Self.T, MutUntrackedOrigin]:
-        return self._alloc.unsafe_ptr()
+    # The tracked accessor: the interior-generation origin keeps the owning
+    # Allocation alive while the pointer is used and stales the pointer when
+    # the Allocation is consumed (dealloc/into_thin/unsafe_leak), so
+    # use-after-free rejects statically. `ThinAllocation.unsafe_ptr` remains
+    # the raw untracked escape hatch.
+    def unsafe_ptr(ref self) -> Pointer[
+        Self.T, origin_of(self)._get_owned_interior["element"]
+    ]:
+        return self._alloc._ptr.origin_cast[
+            origin_of(self)._get_owned_interior["element"]
+        ]()
 
     def layout(self) -> Layout[Self.T]:
         return self._layout

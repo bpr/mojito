@@ -806,6 +806,31 @@ aggregate-origin walks. The loans are whole-place and shared, so reads
 coexist while structural mutation of the source conflicts with any live
 view.
 
+The **conservative subtree form** (`origin._subtree`, current Mojo's
+experimental `Origin._subtree`) is a third origin shape beside precise
+places and named interior generations: a terminal `OriginSeg::Subtree` on a
+place path (or the `subtree` flag on a symbolic `Param`/`SelfPlace` pointer
+origin, appended to the solved place after the interior tags). It
+deliberately forgets which descendant of its base the pointer designates,
+which drives every rule downstream. It is single-element (`multi_element()`
+is false, offsets reject), the deref-place substitution refuses it
+(`pointer_deref_place` — the runtime handle carries the true projection, so
+the checked origin must never re-derive one), and for overlap the terminal
+segment is a wildcard over every descendant. Its loan is a lazy interior
+generation whose staleness predicate (`interior_origin_invalidated_by`)
+drops both directional requirements the named-generation rule keeps: a
+mutation base above, at, or below the subtree base invalidates it, and no
+`Interior` segment is required below the mutation base. First-write
+self-invalidation costs no new dataflow state: a pointer store records an
+invalidation at the pointer's own source place with no protected handle,
+that base carries the subtree tail, and because use-checking runs before
+the transfer function the writing instruction still sees the live
+generation while every later use observes the invalidation. The `except`
+handle that ordinarily protects a reference from its own mutation is
+carved out for subtree generations for the same reason. MIR verify accepts
+a domain loan whose path ends in — but never continues past — the subtree
+segment, and rejects subtree segments in transfer destination domains.
+
 ## Stage 4: HIR CFG Lowering
 
 Module:

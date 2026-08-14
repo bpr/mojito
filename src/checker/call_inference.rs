@@ -97,7 +97,8 @@ impl Checker {
         name: &str,
     ) -> Result<Ty, TypeError> {
         let nominal = Ty::Struct(name.to_string(), Vec::new());
-        let Some(target) = self.implicit_conversion_target(&Ty::StringLiteral, &nominal)? else {
+        let Some((target, _)) = self.implicit_conversion_target(&Ty::StringLiteral, &nominal)?
+        else {
             return Ok(Ty::StringLiteral);
         };
         self.overload_targets
@@ -114,7 +115,8 @@ impl Checker {
     /// stdlib constructor is unavailable (an unlinked seam).
     pub(super) fn nominal_string_wrap(&self, span: SourceSpan) -> Result<Ty, TypeError> {
         let nominal = Ty::Struct(crate::symbol::STDLIB_STRING_STRUCT.to_string(), Vec::new());
-        let Some(target) = self.implicit_conversion_target(&Ty::StringLiteral, &nominal)? else {
+        let Some((target, _)) = self.implicit_conversion_target(&Ty::StringLiteral, &nominal)?
+        else {
             return Ok(Ty::StringLiteral);
         };
         self.implicit_conversions.borrow_mut().insert(span, target);
@@ -350,6 +352,7 @@ impl Checker {
             let mut availability_failures = Vec::new();
             for (index, candidate) in candidates.iter().enumerate() {
                 let saved_conversions = self.implicit_conversions.borrow().clone();
+                let saved_conversion_borrows = self.conversion_source_borrows.borrow().clone();
                 let saved_invalidations = self.interior_invalidations.borrow().clone();
                 let saved_call_place_uses = self.call_place_uses.borrow().clone();
                 let saved_borrowed_read_places = self.borrowed_read_call_places.borrow().clone();
@@ -427,6 +430,7 @@ impl Checker {
                     }
                 }
                 *self.implicit_conversions.borrow_mut() = saved_conversions;
+                *self.conversion_source_borrows.borrow_mut() = saved_conversion_borrows;
                 *self.interior_invalidations.borrow_mut() = saved_invalidations;
                 *self.call_place_uses.borrow_mut() = saved_call_place_uses;
                 *self.borrowed_read_call_places.borrow_mut() = saved_borrowed_read_places;

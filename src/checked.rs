@@ -350,6 +350,15 @@ pub enum SemanticAdjustment {
     BorrowRefArguments {
         arguments: Vec<(usize, bool)>,
     },
+    /// An `@implicit` conversion whose selected constructor borrows its single
+    /// argument through a `ref [origin]` parameter (a view construction): the
+    /// conversion result borrows the source expression's place, refining the
+    /// temporary's origin to its source (temporary-origin inference). Pairs
+    /// with the `ImplicitConversion` fact at the same site and mirrors the
+    /// explicit construction path's `BorrowRefArguments` loan.
+    BorrowConversionSource {
+        mutable: bool,
+    },
     /// A subscript result that is itself a borrowed view (a Span
     /// sub-slice): the result binding inherits its receiver's loans.
     BorrowViewResult,
@@ -893,6 +902,7 @@ impl CheckedProgram {
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
         call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
+        conversion_source_borrows: HashMap<SourceSpan, bool>,
         checked_types: HashMap<AnnotationSite, Ty>,
         generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
         expression_types: HashMap<SourceSpan, Ty>,
@@ -938,6 +948,7 @@ impl CheckedProgram {
             &interior_invalidations,
             &overload_targets,
             &implicit_conversions,
+            &conversion_source_borrows,
             &explicit_destroy_calls,
             &reference_value_uses,
             &copy_place_value_uses,
@@ -1075,6 +1086,7 @@ fn build_checked_expressions(
     interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
     calls: &HashMap<SourceSpan, String>,
     conversions: &HashMap<SourceSpan, String>,
+    conversion_source_borrows: &HashMap<SourceSpan, bool>,
     explicit_destroy: &HashSet<SourceSpan>,
     reference_value_uses: &HashMap<SourceSpan, bool>,
     copy_place_value_uses: &HashSet<SourceSpan>,
@@ -1102,6 +1114,7 @@ fn build_checked_expressions(
         interior_invalidations: &'a HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         calls: &'a HashMap<SourceSpan, String>,
         conversions: &'a HashMap<SourceSpan, String>,
+        conversion_source_borrows: &'a HashMap<SourceSpan, bool>,
         explicit_destroy: &'a HashSet<SourceSpan>,
         reference_value_uses: &'a HashMap<SourceSpan, bool>,
         copy_place_value_uses: &'a HashSet<SourceSpan>,
@@ -1318,6 +1331,10 @@ fn build_checked_expressions(
                     });
                 } else {
                     adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
+                    if let Some(mutable) = self.conversion_source_borrows.get(&span) {
+                        adjustments
+                            .push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
+                    }
                 }
             }
             if matches!(expression.kind, Transfer(_)) {
@@ -1603,6 +1620,7 @@ fn build_checked_expressions(
         interior_invalidations,
         calls,
         conversions,
+        conversion_source_borrows,
         explicit_destroy,
         reference_value_uses,
         copy_place_value_uses,

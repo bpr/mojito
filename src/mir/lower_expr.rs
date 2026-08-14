@@ -735,16 +735,32 @@ impl Flatten<'_> {
             return dest;
         }
         if let Some(target) = self.implicit_conversion(e) {
+            // A view-constructor conversion (`BorrowConversionSource`) binds
+            // its `ref [origin]` parameter to the source's caller place, and
+            // the result register keeps the source root's provenance so the
+            // borrowed owner stays live across the consuming expression.
+            let source_place = self
+                .checked_adjustments(e)
+                .iter()
+                .any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        crate::SemanticAdjustment::BorrowConversionSource { .. }
+                    )
+                })
+                .then(|| self.simple_place(e))
+                .flatten();
             let argument = self.expr_unconverted(e);
             // The conversion result is the constructed type, not the source
             // expression's checked type; targets are concrete constructors.
+            let provenance = source_place.as_ref().map(|place| place.root);
             let dest = match target.split(".__init__").next() {
                 Some(constructed) if !constructed.is_empty() => self.fresh_typed(
                     span(e),
-                    None,
+                    provenance,
                     Ty::Struct(constructed.to_string(), Vec::new()),
                 ),
-                _ => self.fresh(span(e), None),
+                _ => self.fresh(span(e), provenance),
             };
             self.emit(MirInstr::Call {
                 dest,
@@ -752,11 +768,49 @@ impl Flatten<'_> {
                 raises: None,
                 args: vec![argument],
                 kwargs: Vec::new(),
-                arg_places: vec![None],
+                arg_places: vec![source_place.clone()],
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
             });
+            if source_place.is_some() {
+                // A view-constructor conversion result borrows its source: bind
+                // the temporary into a hidden retained slot whose loan keeps
+                // the source alive (and conflict-checked) until the consuming
+                // expression's last use of the view — the same persistent
+                // representation an explicit `var sp = Span(xs)` binding gets.
+                let loans = self.aggregate_borrows(e);
+                if !loans.is_empty() {
+                    let view_ty = self.f.reg_types.get(&dest.0).cloned();
+                    let variable = self.var(&format!("$conv_view_r{}", dest.0));
+                    if let Some(ty) = view_ty.clone() {
+                        self.var_types.insert(variable, ty);
+                    }
+                    self.emit(MirInstr::DefVar {
+                        var: variable,
+                        src: dest,
+                        binding_ty: view_ty.clone(),
+                    });
+                    let marker = self.fresh_typed(span(e), Some(loans[0].place.root), Ty::None);
+                    self.emit(MirInstr::EstablishLoans {
+                        reference: variable,
+                        loans: loans.clone(),
+                        marker,
+                        dest_interior: None,
+                    });
+                    self.aggregate_loans.insert(variable, loans);
+                    let read = match view_ty {
+                        Some(ty) => self.fresh_typed(span(e), Some(variable), ty),
+                        None => self.fresh(span(e), Some(variable)),
+                    };
+                    self.emit(MirInstr::UseVar {
+                        dest: read,
+                        var: variable,
+                        mode: UseMode::Copy,
+                    });
+                    return read;
+                }
+            }
             return dest;
         }
         if let Some(target) = self.literal_materialization(e) {

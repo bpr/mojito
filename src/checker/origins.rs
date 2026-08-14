@@ -1265,6 +1265,26 @@ pub(super) fn interior_origin_syntax(expr: &Expr) -> Option<(&Expr, &str)> {
     (field == "_get_owned_interior").then_some((base, name.as_str()))
 }
 
+/// Recognize the experimental conservative-origin spelling `base._subtree`
+/// (current Mojo's `Origin._subtree` member). Like `_get_owned_interior`, it is
+/// accepted only in origin positions — this pass, Pointer origin arguments and
+/// `origin_cast` targets; `ref [...]` clauses reject it explicitly.
+pub(super) fn subtree_origin_syntax(expr: &Expr) -> Option<&Expr> {
+    let ExprKind::Member { object, field } = &expr.kind else {
+        return None;
+    };
+    (field == "_subtree").then_some(object)
+}
+
+/// The uniform rejection for `._subtree` in origin positions outside the
+/// accepted first-pass surface.
+pub(super) fn reject_subtree_origin_here(context: &str) -> TypeError {
+    TypeError::Unsupported(format!(
+        "'_subtree' origins are supported only as Pointer origin arguments and \
+         origin_cast targets, not in {context}"
+    ))
+}
+
 /// The declaration-level immutable-origin cast `Origin[mut=False].cast_from[o]`
 /// — current Mojo's spelling for pinning a reference result's capability to
 /// read-only independent of the origin parameter's own `mut=`. Returns the
@@ -1324,6 +1344,9 @@ pub(super) fn validate_origin_expr(
     }
     if let Some((base, _)) = interior_origin_syntax(expr) {
         return validate_origin_expr(base, origin_params, value_params);
+    }
+    if subtree_origin_syntax(expr).is_some() {
+        return Err(reject_subtree_origin_here("a reference origin clause"));
     }
     match &expr.kind {
         ExprKind::Identifier(name)
@@ -1468,6 +1491,9 @@ pub(super) fn lower_ref_sig(
             }
             None => expression,
         };
+        if subtree_origin_syntax(expression).is_some() {
+            return Err(reject_subtree_origin_here("a reference origin clause"));
+        }
         if let Some((base_expression, name)) = interior_origin_syntax(expression) {
             let base = lower_sig_origin_expression(base_expression, type_params, params)?;
             // A projection off a named origin parameter carries that
@@ -1613,6 +1639,9 @@ pub(super) fn lower_sig_origin_expression(
     params: &[&FnParam],
 ) -> Result<crate::origin::SigOrigin, TypeError> {
     use crate::origin::SigOrigin;
+    if subtree_origin_syntax(expression).is_some() {
+        return Err(reject_subtree_origin_here("a reference origin clause"));
+    }
     if let Some((base, name)) = interior_origin_syntax(expression) {
         return Ok(SigOrigin::Projected(
             Box::new(lower_sig_origin_expression(base, type_params, params)?),
@@ -2771,6 +2800,19 @@ impl Checker {
                     into.push(value);
                 }
             }
+        }
+
+        // A view-constructor implicit conversion produces a value borrowing
+        // its source place: the conversion result carries that origin exactly
+        // like the explicit construction's `ref [origin]` argument does, so
+        // escape and staleness checks see through the implicit spelling.
+        if self
+            .conversion_source_borrows
+            .borrow()
+            .contains_key(&expression.source_span())
+            && let Ok(place) = self.origin_place(expression)
+        {
+            return vec![Origin::Place(place)];
         }
 
         match &expression.kind {

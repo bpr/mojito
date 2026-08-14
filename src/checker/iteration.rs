@@ -235,7 +235,7 @@ impl Checker {
         }
         let nominal = Ty::Struct(crate::symbol::STDLIB_STRING_STRUCT.to_string(), Vec::new());
         match self.implicit_conversion_target(&Ty::StringLiteral, &nominal) {
-            Ok(Some(target)) => {
+            Ok(Some((target, _))) => {
                 self.implicit_conversions
                     .borrow_mut()
                     .insert(iter.source_span(), target);

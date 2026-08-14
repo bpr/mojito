@@ -261,6 +261,11 @@ which pins the reference's capability to read-only independent of the inner
 origin parameter's own `mut=` (the upgrade direction is rejected). Named
 `Origin[mut=...]` parameters and the `//` infer-only marker are likewise
 retained; signature-level origin inference and substitution remain deferred.
+Origin positions also recognize two member projections as ordinary member
+syntax (no dedicated productions): `base._get_owned_interior["tag"]` names a
+collection-owned interior generation, and the terminal `base._subtree` names
+the experimental conservative subtree form — accepted in `Pointer` origin
+arguments and `origin_cast` targets, rejected in `ref [...]` clauses.
 An optional `params_decl` list (see **Parameterization** below) makes the
 function generic: its type/value parameters are in scope as bare `NAME`s in the
 signature and body (e.g. `def first[T: Copyable & Movable](p: Pair[T]) -> T`, or

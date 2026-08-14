@@ -789,6 +789,17 @@ impl Checker {
             .decorators
             .iter()
             .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "implicit");
+        // The single argument is ordinarily a plain value; a `ref`-convention
+        // parameter with an origin clause is also accepted (a view
+        // constructor — current Mojo's origin-refining implicit conversion).
+        let implicit_convention_ok = match &m.params.first().and_then(|p| p.convention) {
+            None => true,
+            Some(ArgConvention::Ref) => m
+                .params
+                .first()
+                .is_some_and(|parameter| parameter.origin.is_some()),
+            Some(_) => false,
+        };
         if is_implicit
             && (m.name != "__init__"
                 || !m.has_self
@@ -796,12 +807,13 @@ impl Checker {
                 || m.params.len() != 1
                 || m.params[0].kind != crate::ast::ParamKind::Regular
                 || m.params[0].default.is_some()
-                || m.params[0].convention.is_some()
+                || !implicit_convention_ok
                 || m.ret.is_some()
                 || m.raises)
         {
             return Err(TypeError::Unsupported(
-                "@implicit requires a non-raising single-argument '__init__(out self, value: T)'"
+                "@implicit requires a non-raising single-argument '__init__(out self, value: T)' \
+                 (the argument may be a 'ref [origin]' parameter)"
                     .to_string(),
             ));
         }
