@@ -228,6 +228,21 @@ pub enum PointerOrigin {
     Param {
         id: OriginParamId,
         mutability: Mutability,
+        /// Interior-generation tags projected below the parameter's place
+        /// (`origin._get_owned_interior["tag"]`). A non-empty path marks a
+        /// multi-element domain: substitution appends it to the solved place,
+        /// so the concrete origin ends in `OriginSeg::Interior` and offset
+        /// dereferences stay legal after monomorphized replay.
+        interior: Vec<String>,
+    },
+    /// `origin_of(self)` (optionally interior-projected) in a method
+    /// signature or body: the receiver's own place, symbolic until a call
+    /// site rebases it onto the concrete receiver. Both the declared return
+    /// annotation and the body's `origin_cast` target resolve to this same
+    /// form, so return coercion compares equal without a bound `self` place.
+    SelfPlace {
+        mutability: Mutability,
+        interior: Vec<String>,
     },
     Static,
     Untracked {
@@ -246,9 +261,33 @@ impl PointerOrigin {
         match self {
             PointerOrigin::Place { place, .. } => Some(Origin::Place(place.clone())),
             PointerOrigin::Param { id, .. } => Some(Origin::Param(*id)),
+            PointerOrigin::SelfPlace { .. } => Some(Origin::SelfParam),
             PointerOrigin::Static
             | PointerOrigin::Untracked { .. }
             | PointerOrigin::UnsafeAny { .. } => None,
+        }
+    }
+
+    /// Whether this tracked provenance designates a multi-element domain,
+    /// making non-zero offset dereferences legal: a place or origin
+    /// parameter projected into an interior-generation segment
+    /// (collection-owned element storage). The projection also fixes the
+    /// runtime representation — a multi-element pointer is allocation
+    /// arithmetic over heap storage, never a single-place frame/slot handle
+    /// — so it must be statically visible on the type, and the VM's arena
+    /// bounds check remains the dynamic backstop. Untracked/static
+    /// provenances never reach the offset rule.
+    pub fn multi_element(&self) -> bool {
+        match self {
+            PointerOrigin::Place { place, .. } => {
+                matches!(place.path.last(), Some(OriginSeg::Interior(_)))
+            }
+            PointerOrigin::Param { interior, .. } | PointerOrigin::SelfPlace { interior, .. } => {
+                !interior.is_empty()
+            }
+            PointerOrigin::Static
+            | PointerOrigin::Untracked { .. }
+            | PointerOrigin::UnsafeAny { .. } => false,
         }
     }
 
@@ -262,7 +301,8 @@ impl PointerOrigin {
             | PointerOrigin::Untracked { mutable }
             | PointerOrigin::UnsafeAny { mutable } => Some(*mutable),
             PointerOrigin::Static => Some(false),
-            PointerOrigin::Param { mutability, .. } => match mutability {
+            PointerOrigin::Param { mutability, .. }
+            | PointerOrigin::SelfPlace { mutability, .. } => match mutability {
                 Mutability::Mutable => Some(true),
                 Mutability::Immutable => Some(false),
                 Mutability::Param(_) => None,

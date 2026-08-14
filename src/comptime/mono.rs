@@ -825,6 +825,9 @@ impl<'a> Elab<'a> {
                         }
                         crate::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
+                        }
+                        | crate::ast::SubscriptArg::KeywordSlice {
+                            lower, upper, step, ..
                         } => {
                             for value in [lower, upper, step].into_iter().flatten() {
                                 self.mono_expr(value, consts, mono)?;

@@ -229,6 +229,9 @@ fn check_expr(
                     }
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
+                    }
+                    | crate::ast::SubscriptArg::KeywordSlice {
+                        lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
                             check_expr(value, env, comprehension_bindings, types)?;

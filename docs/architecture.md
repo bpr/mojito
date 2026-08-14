@@ -780,6 +780,32 @@ This early borrow check complements, rather than replaces, MIR ownership
 analysis. The checker handles local aliasing at call boundaries; MIR analysis
 handles move state across control flow.
 
+### Multi-Element Pointer Origins And View Loans
+
+An origin-bearing pointer to a precise place designates exactly one value and
+dereferences only at offset 0. A pointer origin **projected into an
+interior-generation domain** (`origin._get_owned_interior["tag"]`, whether a
+concrete place tail or a projected origin parameter) is the multi-element
+form: offsets are legal (the VM's arena bounds check is the dynamic
+backstop), the projection is part of the type so the discriminator also fixes
+the runtime representation (allocation arithmetic, never a frame/slot
+handle), and the origin's loan engages the ordinary interior-generation
+staleness machinery. `origin_cast` rebinds provenance without a runtime
+operation (lowering forwards the receiver register; MIR verify compares
+pointer ABI modulo origin) and never upgrades a statically immutable
+capability.
+
+Borrowed views (`Span`, `StringSpan`) are pointer-plus-length structs over
+that capability. Their loans flow through three checked channels: a
+constructor's `ref [origin]` parameter records `BorrowRefArguments` (the
+binding loans each lent place), a view-typed subscript result records
+`BorrowViewResult` (the result inherits the receiver's loans, falling back
+to the receiver's own place for a plain owner), and `origin_cast`/
+`unsafe_offset` results carry their rebound or forwarded origins through the
+aggregate-origin walks. The loans are whole-place and shared, so reads
+coexist while structural mutation of the source conflicts with any live
+view.
+
 ## Stage 4: HIR CFG Lowering
 
 Module:

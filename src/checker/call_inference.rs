@@ -210,6 +210,32 @@ impl Checker {
                     });
                 }
                 "print" => return self.infer_print(args),
+                // Compiler-private crossing for `std.os.abort`: an uncatchable
+                // VM trap carrying a nominal String message. Typed as returning
+                // None — the call never returns at runtime, and stdlib call
+                // sites keep a normal control-flow path after it rather than
+                // relying on bottom-type flow analysis.
+                "_mojito_abort" => {
+                    let tys = self.builtin_args("_mojito_abort", 1, args)?;
+                    match &tys[0] {
+                        // A literal message avoids an os-module import cycle
+                        // for stdlib-internal trap sites; the VM reads either
+                        // spelling.
+                        Ty::StringLiteral => return Ok(Ty::None),
+                        Ty::Struct(name, targs)
+                            if targs.is_empty() && crate::symbol::is_stdlib_string_struct(name) =>
+                        {
+                            return Ok(Ty::None);
+                        }
+                        other => {
+                            return Err(TypeError::TypeMismatch {
+                                expected: "String".to_string(),
+                                found: other.to_string(),
+                                context: "argument to '_mojito_abort'".to_string(),
+                            });
+                        }
+                    }
+                }
                 "String" => return self.infer_stringify(args),
                 "repr" => {
                     let tys = self.builtin_args("repr", 1, args)?;

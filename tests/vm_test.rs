@@ -1242,11 +1242,109 @@ fn tuple_comparable_conformance_survives_discovery_and_specialization() {
 
 #[test]
 fn slice_subscript_runs() {
-    // List + String slicing with optional bounds, steps, negative indices, reversal.
-    let src = "def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4, 5]\n    print(xs[1:4])\n    print(xs[::2])\n    print(xs[::-1])\n    print(xs[-2:])\n    var s: StringLiteral = \"hello\"\n    print(s[1:4])\n    print(s[::-1])\n";
+    // List + String slicing: strict contiguous bounds, strided normalization
+    // (optional bounds, negative indices, reversal), StringLiteral slices.
+    let src = "def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4, 5]\n    print(xs[1:4])\n    print(xs[::2])\n    print(xs[::-1])\n    print(xs[-2::1])\n    var s: StringLiteral = \"hello\"\n    print(s[1:4])\n    print(s[::-1])\n";
     assert_eq!(
         run_compiled(src).expect("compile nominal List slice overloads"),
         "[1, 2, 3]\n[0, 2, 4]\n[5, 4, 3, 2, 1, 0]\n[4, 5]\nell\nolleh\n"
+    );
+}
+
+#[test]
+fn contiguous_list_slice_bounds_abort() {
+    // Strict contiguous bounds: negative, out-of-range, and reversed bounds
+    // abort instead of normalizing through `Slice.indices()`.
+    for slice in ["[-2:]", "[0:9]", "[3:1]"] {
+        let src =
+            format!("def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4]\n    print(xs{slice})\n");
+        let err = run_compiled(&src).expect_err("strict contiguous bounds abort");
+        assert!(
+            err.contains("abort: List slice bounds out of range"),
+            "unexpected error for {slice}: {err}"
+        );
+    }
+}
+
+#[test]
+fn abort_is_not_catchable() {
+    // `os.abort` is an uncatchable trap: `try`/`except` observes only raised
+    // errors, so the abort propagates to the top.
+    let src = "from os import abort\n\ndef main():\n    try:\n        abort(\"boom\")\n        print(\"unreachable\")\n    except e:\n        print(\"caught\", e)\n";
+    let err = run_compiled(src).expect_err("abort escapes try/except");
+    assert!(err.contains("abort: boom"), "unexpected error: {err}");
+}
+
+#[test]
+fn string_mutation_during_grapheme_iteration_rejects() {
+    // Grapheme iteration borrows the String for the whole loop: mutating it
+    // inside the body is rejected.
+    let src = "def main():\n    var s = String(\"abc\")\n    for g in s:\n        s += \"!\"\n        print(g)\n";
+    let err = run_compiled(src).expect_err("mutation during iteration rejects");
+    assert!(
+        err.contains("conflicts with live reference"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn string_view_conflicts_with_source_mutation() {
+    // A live StringSpan holds a shared loan on its source String: mutating
+    // the String while any view is alive is rejected.
+    let src = "def main():\n    var s = String(\"hello\")\n    var v = s[byte=1:3]\n    s += \"!\"\n    print(v)\n";
+    let err = run_compiled(src).expect_err("mutation under a live view rejects");
+    assert!(
+        err.contains("conflicts with live reference"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn string_slice_alias_resolves_to_string_span() {
+    // `StringSlice` stays accepted as an upstream compatibility alias for
+    // the canonical StringSpan in annotations.
+    let src = "def main():\n    var s = String(\"hello\")\n    var v: StringSlice = s[byte=1:3]\n    print(v)\n";
+    assert_eq!(
+        run_compiled(src).expect("compile the StringSlice alias"),
+        "el\n"
+    );
+}
+
+#[test]
+fn span_conflicts_with_source_mutation() {
+    // A live Span holds a shared loan on its source List: a structural
+    // mutation of the List while any view is alive is rejected.
+    let src = "def main():\n    var xs: List[Int] = [1, 2, 3]\n    var sp = Span(xs)\n    xs.append(4)\n    print(sp[0])\n";
+    let err = run_compiled(src).expect_err("mutation under a live span rejects");
+    assert!(
+        err.contains("conflicts with live reference"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn span_subslice_keeps_the_source_borrowed() {
+    // A sub-span carries the same loan as its parent view: mutating the
+    // source while only the sub-span is alive still conflicts.
+    let src = "def main():\n    var xs: List[Int] = [1, 2, 3, 4]\n    var sub = Span(xs)[1:3]\n    xs.append(5)\n    print(sub[0])\n";
+    let err = run_compiled(src).expect_err("sub-span keeps the loan");
+    assert!(
+        err.contains("conflicts with live reference"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn list_unsafe_ptr_stales_after_append() {
+    // The linked `List.unsafe_ptr()` pointer carries the element
+    // interior-generation loan: append starts a new generation, so a later
+    // use of the pointer is rejected. (The link-free twin of this contract is
+    // assets/ownership_error/interior_pointer_stale_after_mutation.mojo.)
+    let src = "def main():\n    var xs: List[Int] = [10, 20, 30]\n    var p = xs.unsafe_ptr()\n    xs.append(40)\n    print(p[0])\n";
+    let err = run_compiled(src).expect_err("stale interior pointer rejects");
+    assert!(
+        err.contains("invalidated interior reference"),
+        "unexpected error: {err}"
     );
 }
 

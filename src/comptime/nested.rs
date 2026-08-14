@@ -747,6 +747,9 @@ impl NestedMono {
                         }
                         crate::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
+                        }
+                        | crate::ast::SubscriptArg::KeywordSlice {
+                            lower, upper, step, ..
                         } => {
                             for value in [lower, upper, step].into_iter().flatten() {
                                 self.qualify_expression(value);
@@ -1332,6 +1335,9 @@ impl NestedMono {
                             self.scan_expression(elab, value, runtime_packs)?
                         }
                         crate::ast::SubscriptArg::Slice {
+                            lower, upper, step, ..
+                        }
+                        | crate::ast::SubscriptArg::KeywordSlice {
                             lower, upper, step, ..
                         } => {
                             for value in [lower, upper, step].into_iter().flatten() {

@@ -2907,6 +2907,26 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 if matches!(self.peek_token()?, Some(Token::Assign)) {
                     let name = param_argument_name(&argument)?;
                     self.next_token()?;
+                    // A ':' directly after '=' is a keyword slice with an
+                    // omitted lower bound (`s[byte=:b]`).
+                    if matches!(self.peek_token()?, Some(Token::Colon)) {
+                        let (upper, step, explicit_step) = self.parse_slice_components()?;
+                        items.push(ParsedBracketItem::KeywordSlice {
+                            name,
+                            lower: None,
+                            upper,
+                            step,
+                            explicit_step,
+                        });
+                        if !matches!(self.peek_token()?, Some(Token::Comma)) {
+                            break;
+                        }
+                        self.next_token()?;
+                        if matches!(self.peek_token()?, Some(Token::RBracket)) {
+                            break;
+                        }
+                        continue;
+                    }
                     argument = crate::ast::ParamArg::Named {
                         name,
                         value: Box::new(crate::ast::ParamArg::Value(
@@ -2915,22 +2935,40 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     };
                 }
                 if matches!(self.peek_token()?, Some(Token::Colon)) {
-                    let lower = match argument {
-                        crate::ast::ParamArg::Value(value) => Some(Box::new(value)),
+                    match argument {
+                        crate::ast::ParamArg::Value(value) => {
+                            let (upper, step, explicit_step) = self.parse_slice_components()?;
+                            items.push(ParsedBracketItem::Slice {
+                                lower: Some(Box::new(value)),
+                                upper,
+                                step,
+                                explicit_step,
+                            });
+                        }
+                        // `s[byte=a:b]` — a keyword slice whose lower bound
+                        // was parsed as the keyword argument's value.
+                        crate::ast::ParamArg::Named { name, value }
+                            if matches!(value.as_ref(), crate::ast::ParamArg::Value(_)) =>
+                        {
+                            let crate::ast::ParamArg::Value(lower) = *value else {
+                                unreachable!("guard established a value argument");
+                            };
+                            let (upper, step, explicit_step) = self.parse_slice_components()?;
+                            items.push(ParsedBracketItem::KeywordSlice {
+                                name,
+                                lower: Some(Box::new(lower)),
+                                upper,
+                                step,
+                                explicit_step,
+                            });
+                        }
                         _ => {
                             return Err(ParseError::UnexpectedToken(
                                 Token::Colon,
                                 "a slice bound must be an expression".into(),
                             ));
                         }
-                    };
-                    let (upper, step, explicit_step) = self.parse_slice_components()?;
-                    items.push(ParsedBracketItem::Slice {
-                        lower,
-                        upper,
-                        step,
-                        explicit_step,
-                    });
+                    }
                 } else {
                     items.push(ParsedBracketItem::Param(argument));
                 }
@@ -2946,9 +2984,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         self.expect(Token::RBracket, "Expected ']' after a subscript")?;
 
-        let contains_slice = items
-            .iter()
-            .any(|item| matches!(item, ParsedBracketItem::Slice { .. }));
+        let contains_slice = items.iter().any(|item| {
+            matches!(
+                item,
+                ParsedBracketItem::Slice { .. } | ParsedBracketItem::KeywordSlice { .. }
+            )
+        });
         if matches!(self.peek_token()?, Some(Token::LParen)) {
             if contains_slice {
                 return Err(ParseError::UnexpectedToken(
@@ -2960,7 +3001,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 .into_iter()
                 .map(|item| match item {
                     ParsedBracketItem::Param(argument) => argument,
-                    ParsedBracketItem::Slice { .. } => unreachable!(),
+                    ParsedBracketItem::Slice { .. } | ParsedBracketItem::KeywordSlice { .. } => {
+                        unreachable!()
+                    }
                 })
                 .collect();
             self.next_token()?;
@@ -3007,6 +3050,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         step,
                         explicit_step,
                     },
+                    ParsedBracketItem::KeywordSlice {
+                        name,
+                        lower,
+                        upper,
+                        step,
+                        explicit_step,
+                    } => SubscriptArg::KeywordSlice {
+                        name,
+                        lower,
+                        upper,
+                        step,
+                        explicit_step,
+                    },
                 });
             }
             if let [
@@ -3042,7 +3098,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             .into_iter()
             .map(|item| match item {
                 ParsedBracketItem::Param(argument) => argument,
-                ParsedBracketItem::Slice { .. } => unreachable!(),
+                ParsedBracketItem::Slice { .. } | ParsedBracketItem::KeywordSlice { .. } => {
+                    unreachable!()
+                }
             })
             .collect();
 
@@ -3396,6 +3454,13 @@ enum Precedence {
 enum ParsedBracketItem {
     Param(crate::ast::ParamArg),
     Slice {
+        lower: Option<Box<Expr>>,
+        upper: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,
+        explicit_step: bool,
+    },
+    KeywordSlice {
+        name: String,
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,

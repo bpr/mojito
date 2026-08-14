@@ -403,6 +403,16 @@ pub enum SubscriptArg {
         step: Option<Box<Expr>>,
         explicit_step: bool,
     },
+    /// `name=lower:upper[:step]` — a keyword slice argument (`s[byte=a:b]`),
+    /// dispatched like [`SubscriptArg::Keyword`] with a slice-descriptor
+    /// value. Read-only, like every keyword subscript.
+    KeywordSlice {
+        name: String,
+        lower: Option<Box<Expr>>,
+        upper: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,
+        explicit_step: bool,
+    },
 }
 
 /// Internal call-AST marker for current Mojo's moved keyword-dictionary
@@ -1300,6 +1310,9 @@ pub(crate) fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                     }
                     SubscriptArg::Slice {
                         lower, upper, step, ..
+                    }
+                    | SubscriptArg::KeywordSlice {
+                        lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
                             lambdas_in_expr(value, out);
@@ -1548,6 +1561,9 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                                 self.expr(value)
                             }
                             SubscriptArg::Slice {
+                                lower, upper, step, ..
+                            }
+                            | SubscriptArg::KeywordSlice {
                                 lower, upper, step, ..
                             } => {
                                 for value in [lower, upper, step].into_iter().flatten() {
@@ -2071,6 +2087,9 @@ fn stamp_expr(expr: &mut Expr, source: &str) {
                         stamp_expr(value, source)
                     }
                     SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    }
+                    | SubscriptArg::KeywordSlice {
                         lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {

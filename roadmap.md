@@ -21,8 +21,10 @@ scope-stable and lexical nested-pack specialization, refined and conditional
 traits, recursively lifted typed closure environments, linear whole-pack
 forwarding, generic-anonymous callable contracts, symbolic callable defaults,
 residual callable specialization, origin-bearing references and current-model
-unsafe pointers (the `unsafe_*` vocabulary, empty-`[]` dereference, and
-layout-based linear `std.memory` allocation),
+unsafe pointers (the `unsafe_*` vocabulary, empty-`[]` dereference,
+layout-based linear `std.memory` allocation, and multi-element
+interior-domain origins carrying the borrowed `Span`/`StringSpan` views with
+current Mojo's strict slice bounds and grapheme-cluster iteration),
 collection-owned interior-origin generations, explicit lifecycle semantics, and
 a self-hosted proof-subset standard library. Method-dispatched nominal
 subscripts retain ordinary checked method selection in one complete verified
@@ -100,34 +102,28 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **Views and strict bounds (nightly §5)** — `Span` and canonical
-  `StringSpan` (with `Imm`/`Mut` aliases); contiguous List/Span/String slices
-  reject negative, out-of-range, or reversed bounds instead of normalizing;
-  byte endpoints on UTF-8 boundaries; grapheme-cluster `StringSpan` yields
-  from ordinary String iteration; strided List slicing keeps
-  `StridedSlice.indices()` normalization and copied results. Emit
-  `StringSpan`; accept `StringSlice` as an upstream compatibility alias.
-- [ ] **Linear containers and owning APIs (nightly §6)** — loosen
-  `Optional`/`Variant` to `AnyType` with `init_with=` placement construction
-  and `deinit_with`; `clear_with`, displacement-returning `insert`, and
-  consuming iteration by declared family; renames
-  (`Variant.take` → `unwrap`, `OwnedPointer.take` → `into_inner`);
-  quarantine or remove owned iteration for non-`Deinitable` elements where
-  the head requires `Movable & Deinitable`. (Depends on lifecycle
-  canonicalization; independent of Array and Pointer.)
-- [ ] **Subtree origins and temporary-origin inference (nightly §7)** — add
-  the experimental `Origin._subtree` as a separate conservative origin form
-  beside the existing named interior generations; allow an origin-bearing
-  `@implicit` conversion result to refine its origin from a register
-  temporary; carry both facts explicitly through checked HIR and verified
-  MIR. Follows the container work — the audited stdlib does not yet depend
-  on it.
-- [ ] **Scalar, SIMD, range, and generic vocabulary (nightly §8)** —
-  generalize the Int-only `Range` proof subset to the Int/Scalar family;
-  adopt `TypeList` `length`/`any`/`all` for variadic predicates; probe
-  Tuple's public `*Ts` parameter name for compatibility. The SIMD half of
-  the section is complete (`SIMDLength` landed; invalid widths already
-  reject at checked elaboration).
+- [ ] **Linear containers and owning APIs (nightly §6)** — depends on
+  lifecycle canonicalization; independent of Array and Pointer.
+  - loosen `Optional`/`Variant` to `AnyType` with `init_with=` placement
+    construction and `deinit_with`
+  - `clear_with`, displacement-returning `insert`, and consuming iteration
+    by declared family
+  - renames (`Variant.take` → `unwrap`, `OwnedPointer.take` → `into_inner`)
+  - quarantine or remove owned iteration for non-`Deinitable` elements where
+    the head requires `Movable & Deinitable`
+- [ ] **Subtree origins and temporary-origin inference (nightly §7)** —
+  follows the container work; the audited stdlib does not yet depend on it.
+  - add the experimental `Origin._subtree` as a separate conservative origin
+    form beside the existing named interior generations
+  - allow an origin-bearing `@implicit` conversion result to refine its
+    origin from a register temporary
+  - carry both facts explicitly through checked HIR and verified MIR
+- [ ] **Scalar, SIMD, range, and generic vocabulary (nightly §8)** — the
+  SIMD half of the section is complete (`SIMDLength` landed; invalid widths
+  already reject at checked elaboration).
+  - generalize the Int-only `Range` proof subset to the Int/Scalar family
+  - adopt `TypeList` `length`/`any`/`all` for variadic predicates
+  - probe Tuple's public `*Ts` parameter name for compatibility
 - [ ] **Pass close-out** — in order:
   1. Run the open-question probes and the re-probe list in
      [`conformance/probes/`](conformance/probes/) against the audited build;
@@ -143,30 +139,61 @@ specifications and upstream evidence), in this order:
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
+- [ ] **Fix the try-region reassignment wipe (correctness bug)** — a plain
+  reassignment of an *outer* variable inside a `try` body is destroyed by the
+  region's scope-exit cleanup, so the slot reads back as `None` after the
+  block. Fix before freezing MIR semantics into artifacts.
+  - Root cause: `region_cleanup_vars` (`src/analysis.rs`) collects every
+    `DefVar` in the region as a body-local to destroy, but a reassignment is
+    also a `DefVar` — the discriminator already exists (`binding_ty` is
+    `Some` only for an initializing declaration; reassignments carry `None`),
+    so the collection should keep declarations only. Audit
+    `fill_escape_cleanups`, which derives its base from the same
+    classification.
+  - Observable shapes (one cause, several symptoms): the value is lost after
+    the block; `finally` reads the wiped slot (cleanup runs before `finally`
+    on the normal edge); `break`/`continue`/`return` crossing the `try` after
+    the assignment lose it; a loop-carried accumulator assigned inside `try`
+    poisons the next iteration (`operator Add is not defined for None and
+    Int`); destructor-bearing values are destroyed early (no leak or double
+    drop observed — the slot just reads `None`). Assignments in
+    `except`/`else`/`finally` bodies, field writes, collection mutation,
+    reads inside the body, and `return` of the value from inside the body
+    are all unaffected.
+  - Add fixtures for each shape (plain rebinding, caught-path rebinding,
+    `finally` read, loop accumulator, escape jumps, nested `try`) and
+    un-work-around the stdlib sites that return inside `try` to dodge the
+    bug (`stdlib/std/string.mojo` keyword-slice methods and
+    `_GraphemeIter.__next__` note the pattern).
 - [ ] **Backend-ready MIR checkpoint** — confirm that checked declarations plus
   typed verified MIR are sufficient inputs, with no source-AST reconstruction,
-  before freezing a serialized schema. Retain any final verification witnesses
-  needed to validate abstract trait-dispatch signatures and checker-selected
-  `ref`-to-`read` convention narrowing without trusting an unavailable source
-  declaration or source binding-mutability fact. With bound-generic
-  monomorphization complete, the abstract-dispatch surface is reachable only
-  through the documented erased residue, and the concrete witness set to
-  re-confirm is: `verify_iterator_result_adapter` (abstract `Next`/`TryNext`
-  require the `CopyIteratorReference` adapter, concrete targets forbid it),
-  the `GetIter` undeclared-prepare tolerance (only the
-  `iterator_dispatch_symbol` spellings), the subscript abstract-target
-  tolerance (receiver-membership skipped, full contract still verified), the
-  `MethodCall` abstract-`__next__` adapter symmetry, `CallIndirect` abstract
-  `__call__$ov$…` validation against the stored callable contract (the home
-  of ref-to-read narrowing), and the direct-`Call` undeclared-callee
-  tolerance (which also covers builtins and may deserve an allowlist here).
-  Retain declared
-  conventions for variadic overflow parameters if the serialized ABI exposes
-  those conventions independently of their fixed-parameter prefix. Prove that
-  every `MirPlace::through` derives from its exact source capability/loan, check
-  `MirLoan::mutable` against that capability's permission, and cross-check each
-  canonical interior origin with its executable place and declared reference
-  origin before accepting assembled artifacts.
+  before freezing a serialized schema.
+  - Retain any final verification witnesses needed to validate abstract
+    trait-dispatch signatures and checker-selected `ref`-to-`read` convention
+    narrowing without trusting an unavailable source declaration or source
+    binding-mutability fact.
+  - With bound-generic monomorphization complete, the abstract-dispatch
+    surface is reachable only through the documented erased residue, and the
+    concrete witness set to re-confirm is:
+    1. `verify_iterator_result_adapter` (abstract `Next`/`TryNext` require
+       the `CopyIteratorReference` adapter, concrete targets forbid it)
+    2. the `GetIter` undeclared-prepare tolerance (only the
+       `iterator_dispatch_symbol` spellings)
+    3. the subscript abstract-target tolerance (receiver-membership skipped,
+       full contract still verified)
+    4. the `MethodCall` abstract-`__next__` adapter symmetry
+    5. `CallIndirect` abstract `__call__$ov$…` validation against the stored
+       callable contract (the home of ref-to-read narrowing)
+    6. the direct-`Call` undeclared-callee tolerance (which also covers
+       builtins and may deserve an allowlist here)
+  - Retain declared conventions for variadic overflow parameters if the
+    serialized ABI exposes those conventions independently of their
+    fixed-parameter prefix.
+  - Prove that every `MirPlace::through` derives from its exact source
+    capability/loan, check `MirLoan::mutable` against that capability's
+    permission, and cross-check each canonical interior origin with its
+    executable place and declared reference origin before accepting assembled
+    artifacts.
 - [ ] **Text format schema** — specify versioning, deterministic identifiers,
   declarations, blocks, instructions, constants, types, and source locations.
 - [ ] **Disassembler** — print every verified MIR program deterministically and
@@ -187,27 +214,34 @@ specifications and upstream evidence), in this order:
 - [ ] **Collection API parity** — grow List, Dict, HashDict, Set, HashSet, tuple,
   slice, optional/variant, and String result APIs
   (`replace`/`join`/`strip`/...) demand-first from conformance cases. For
-  `Variant`, finish `destroy_with`, representation writing, and fully generic
-  TypeList-driven conditional protocol synthesis rather than adding compiler
-  special cases for every standard-library method.
+  `Variant`, finish:
+  - `destroy_with`
+  - representation writing
+  - fully generic TypeList-driven conditional protocol synthesis rather than
+    adding compiler special cases for every standard-library method
 - [ ] **Layout and LayoutTensor growth** — the CPU core is landed (bundled
   `layout` package; DType and frozen-struct value parameters; see
-  `docs/features.md`). Grow demand-first: origin-parameterized borrowed
-  tensor views (needs multi-element origin-bearing pointers — today an
-  origin-bearing `UnsafePointer` designates a single place),
-  tile/slice/transpose views, SIMD `load/store[width]` on the landed SIMD
-  machinery, the layout algebra (`composition`/`coalesce`/
-  `blocked_product`/`logical_divide`), `idx2crd`, rank gating via layout
-  `where` predicates (comptime method evaluation on frozen struct values),
-  a public recursive `IntTuple`, and mixing type parameters with
-  DType/struct value parameters on one struct.
+  `docs/features.md`). Grow demand-first:
+  - origin-parameterized borrowed tensor views (the multi-element
+    origin-bearing pointer substrate landed with the nightly-§5 views work;
+    grow the tensor-view surface on it)
+  - tile/slice/transpose views
+  - SIMD `load/store[width]` on the landed SIMD machinery
+  - the layout algebra
+    (`composition`/`coalesce`/`blocked_product`/`logical_divide`)
+  - `idx2crd`
+  - rank gating via layout `where` predicates (comptime method evaluation on
+    frozen struct values)
+  - a public recursive `IntTuple`
+  - mixing type parameters with DType/struct value parameters on one struct
 - [ ] **Element-call dispatch for `value[i](args)`** — current Mojo dispatches
   the bare spelling as subscript-then-call on an indexable runtime value;
   Mojito parses it as compile-time parameter application and rejects with a
   parenthesization hint (a recorded subset gap pinned by
   `assets/type_error/callable_element_call_parses_as_parameter_application.mojo`).
-  Closing it needs checker re-dispatch of the non-callable-base shape plus a
-  subscript-then-indirect-call MIR lowering channel for `ExprKind::Call`.
+  Closing it needs:
+  - checker re-dispatch of the non-callable-base shape
+  - a subscript-then-indirect-call MIR lowering channel for `ExprKind::Call`
 - [ ] **HashSet growth and rehashing** — add load-factor growth while preserving
   deterministic behavior and value semantics.
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
@@ -222,7 +256,10 @@ specifications and upstream evidence), in this order:
 - [ ] **Compiled package artifacts** — define and load a versioned `.mojoc`
   representation without making modules first-class runtime values. Complete the
   per-directory resolution order around the already implemented source choices:
-  source package, `.mojoc`, source module, then legacy `.mojopkg`.
+  1. source package
+  2. `.mojoc`
+  3. source module
+  4. legacy `.mojopkg`
 - [ ] **Debugging metadata and inspection** — provide stack/source diagnostics,
   MIR inspection, and debugger-oriented value rendering.
 - [ ] **Testing tools** — provide Mojito-native assertions, expected-error tests,

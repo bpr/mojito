@@ -392,7 +392,8 @@ impl Checker {
             origin,
         } = &obj_ty
         {
-            return self.infer_pointer_method(&span, method, elem, origin, args, kwargs);
+            return self
+                .infer_pointer_method(&span, method, elem, origin, param_args, args, kwargs);
         }
         // Compiler-private inline uninit storage (`UnsafeMaybeUninit`'s field):
         // the write/take/destroy crossing vocabulary.
@@ -1189,6 +1190,7 @@ impl Checker {
                     crate::checked::SemanticAdjustment::CallableCaptureAccesses(captures.clone()),
                 );
             }
+            let return_type = self.rebase_self_place_pointer(resolved.return_type.clone(), object);
             self.selected_calls.borrow_mut().insert(
                 span,
                 crate::checked::CheckedCallContract {
@@ -1197,7 +1199,7 @@ impl Checker {
                     result_ty: reference_result
                         .clone()
                         .map(Ty::Ref)
-                        .unwrap_or_else(|| resolved.return_type.clone()),
+                        .unwrap_or_else(|| return_type.clone()),
                     result_adapter: resolved.result_adapter,
                     receiver_requires_place: matches!(
                         resolved.self_convention,
@@ -1215,7 +1217,47 @@ impl Checker {
         }
         Ok(reference_result
             .map(|reference| *reference.referent)
-            .unwrap_or(resolved.return_type))
+            .unwrap_or_else(|| self.rebase_self_place_pointer(resolved.return_type, object)))
+    }
+
+    /// Rebase a symbolic `origin_of(self)` pointer origin in a method result
+    /// onto the concrete receiver: the declared interior projection is
+    /// appended to the receiver's place, so the returned pointer carries the
+    /// receiver's interior-generation loan. Non-pointer results and
+    /// unresolvable receivers pass through unchanged.
+    fn rebase_self_place_pointer(&self, ty: Ty, receiver: &Expr) -> Ty {
+        use crate::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
+        let Ty::Pointer {
+            element,
+            origin: PointerOrigin::SelfPlace { interior, .. },
+        } = &ty
+        else {
+            return ty;
+        };
+        let Ok(reference) = self.reference_actual(receiver) else {
+            return ty;
+        };
+        let origin = match reference.origin {
+            Origin::Place(mut place) => {
+                for tag in interior {
+                    place.path.push(OriginSeg::Interior(tag.clone()));
+                }
+                PointerOrigin::Place {
+                    place,
+                    mutable: matches!(reference.mutability, Mutability::Mutable),
+                }
+            }
+            Origin::Param(id) => PointerOrigin::Param {
+                id,
+                mutability: reference.mutability,
+                interior: interior.clone(),
+            },
+            _ => return ty,
+        };
+        Ty::Pointer {
+            element: element.clone(),
+            origin,
+        }
     }
 
     /// Apply the implicit conversions selected while scoring one concrete method
@@ -1710,12 +1752,14 @@ impl Checker {
     /// vocabulary (offset, write, take/deinit pointee, free) plus the
     /// deprecated `free()` bridge. Indexed load/store remain ordinary public
     /// pointer subscript syntax.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn infer_pointer_method(
         &self,
         span: &SourceSpan,
         method: &str,
         elem: &Ty,
         origin: &crate::origin::PointerOrigin,
+        param_args: &[crate::ast::ParamArg],
         args: &[Expr],
         kwargs: &[crate::ast::KwArg],
     ) -> Result<Ty, TypeError> {
@@ -1724,12 +1768,60 @@ impl Checker {
         if !kwargs.is_empty() && method != "unsafe_write" {
             reject_kwargs(kwargs)?;
         }
+        // `origin_cast` takes its target origin as the sole compile-time
+        // parameter argument; no other pointer method is parameterized.
+        if !param_args.is_empty() && method != "origin_cast" {
+            return Err(TypeError::BadCall {
+                func: format!("Pointer.{method}"),
+                reason: "compile-time parameter arguments are not supported here".to_string(),
+            });
+        }
         match method {
+            // Provenance rebind (current Mojo's `origin_cast` vocabulary): the
+            // runtime value is unchanged; only the checked origin moves. The
+            // cast cannot upgrade a statically immutable capability.
+            "origin_cast" => {
+                let [target] = param_args else {
+                    return Err(TypeError::BadCall {
+                        func: "Pointer.origin_cast".to_string(),
+                        reason: "expected exactly one origin parameter argument".to_string(),
+                    });
+                };
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: "origin_cast".to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                let target = self.pointer_origin_arg(target)?;
+                // A parametric target mutability is not an upgrade: it
+                // resolves from the receiver at each concrete site.
+                if origin.statically_mutable() == Some(false)
+                    && target.statically_mutable() == Some(true)
+                {
+                    return Err(TypeError::Unsupported(
+                        "an origin cast cannot upgrade capability: the source Pointer \
+                         origin is immutable"
+                            .to_string(),
+                    ));
+                }
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    crate::checked::SemanticAdjustment::PointerOriginCast {
+                        origin: target.clone(),
+                    },
+                );
+                Ok(Ty::Pointer {
+                    element: Box::new(elem.clone()),
+                    origin: target,
+                })
+            }
             "unsafe_offset" => {
-                if origin.as_origin().is_some() {
+                if origin.as_origin().is_some() && !origin.multi_element() {
                     return Err(TypeError::Unsupported(
                         "pointer arithmetic and comparison are not supported on an \
-                         origin-bearing Pointer"
+                         origin-bearing Pointer to a single place"
                             .to_string(),
                     ));
                 }

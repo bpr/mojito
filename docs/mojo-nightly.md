@@ -207,11 +207,25 @@ carries the `unsafe_write`, overloaded `unsafe_assume_init`, `unsafe_deinit`,
 and `unsafe_forget` vocabulary with upstream's conformances and triviality
 facts; reading/taking uninitialized storage traps deterministically where
 upstream leaves it undefined. Recorded subset gaps: `zeroed()` (no byte-level
-value model) and `unsafe_ptr()` (blocked on `origin_of(self)` as a Pointer
-origin argument and `Pointer(to=…)` through `ref` bindings; the `ref self`
-`unsafe_assume_init` covers borrowed access).
+value model) and `UnsafeMaybeUninit.unsafe_ptr()` (the §5 views work landed
+`origin_of(self)` as a Pointer origin argument — with interior-generation
+projections and multi-element origin-bearing pointers, giving
+`List.unsafe_ptr()` — but `UnsafeMaybeUninit`'s single-slot accessor still
+awaits demand; the `ref self` `unsafe_assume_init` covers borrowed access).
 
 ### 5. Replace copied/clamped slices with current views and bounds
+
+Done except the follow-ups below: `Span(list)` and `StringSpan` are borrowed
+views over multi-element origin-bearing pointers; contiguous List/Span slices
+and String/StringSpan keyword slices are strict (violations abort through the
+uncatchable `os.abort` trap, byte endpoints on codepoint boundaries);
+positional String slicing rejects with a keyword-slice hint; strided List
+slicing keeps `StridedSlice.indices()` normalization; String/StringSpan/
+StringLiteral iteration yields grapheme-cluster StringSpan views; and
+`StringSlice` stays a never-emitted alias. Follow-ups (probed in
+`conformance/probes/`): the `Imm`/`Mut` alias spellings, Span borrowed
+iteration, and the upstream fate of positional String and StringLiteral
+slicing. The original specification:
 
 Introduce `Span` and canonical `StringSpan` views (with `Imm`/`Mut` aliases).
 Contiguous List and Span slices, String `byte=`/`codepoint=` slices, and

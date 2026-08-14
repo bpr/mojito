@@ -570,16 +570,18 @@ impl Checker {
                 let shared_argument_sources = if nominal_subscript {
                     match &place.kind {
                         ExprKind::Index { index, .. } => vec![index.source_span()],
-                        ExprKind::MultiIndex { args, .. } => args
-                            .iter()
-                            .filter_map(|argument| match argument {
-                                SubscriptArg::Index(index)
-                                | SubscriptArg::Keyword { value: index, .. } => {
-                                    Some(index.source_span())
-                                }
-                                SubscriptArg::Slice { .. } => None,
-                            })
-                            .collect(),
+                        ExprKind::MultiIndex { args, .. } => {
+                            args.iter()
+                                .filter_map(|argument| match argument {
+                                    SubscriptArg::Index(index)
+                                    | SubscriptArg::Keyword { value: index, .. } => {
+                                        Some(index.source_span())
+                                    }
+                                    SubscriptArg::Slice { .. }
+                                    | SubscriptArg::KeywordSlice { .. } => None,
+                                })
+                                .collect()
+                        }
                         ExprKind::Slice { .. } => Vec::new(),
                         _ => unreachable!("nominal subscript classification"),
                     }
@@ -1322,7 +1324,7 @@ impl Checker {
                 // The loop variable's type comes from the iterable: `Int` for a
                 // `range`, the element type for a `List`, or — for a user struct —
                 // the element type of its `__iter__()` iterator (`__next__`'s return).
-                let iter_ty = self.infer(iter)?;
+                let iter_ty = self.convert_literal_iterable(iter, self.infer(iter)?);
                 let source_mode = Self::iteration_mode(iter);
                 let (mut yielded_ty, mut protocol) =
                     self.iteration_protocol(&iter_ty, source_mode)?;

@@ -78,7 +78,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lambdas_in_stmt` are the shared lambda-discovery walkers used by the
   checker, `checked.rs`, and `mir/nested.rs`.
 - `checker/indexing.rs` owns place validation, subscript/index inference and
-  assignment, pointer offset/write checks, and member access.
+  assignment (including keyword slices and the `BorrowViewResult` marking for
+  view-typed slice results), pointer offset/write checks (the single-place
+  rule and its multi-element interior-domain lift), the positional
+  String-slice rejection hint, and member access.
 - `checker/method_calls.rs` owns method-call inference, overload scoring
   (score ties on receiver-overloaded methods break by the call's explicit `^`
   transfer), and static/pointer/uninit-storage/List/Tuple method inference
@@ -89,7 +92,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   inference (`infer_call`, generic-call instantiation).
 - `checker/type_resolution.rs` resolves source annotations into checked `Ty`
   (builtin type-argument forms, dependent/associated projection, and generic
-  comptime alias expansion via `resolve_comptime_alias`).
+  comptime alias expansion via `resolve_comptime_alias`). It also owns pointer
+  origin arguments (`pointer_origin_arg`/`pointer_origin_expr`: origin
+  parameters, `origin_of(place)`, and `._get_owned_interior["tag"]`
+  projections in both annotation and expression shapes — the multi-element
+  pointer marker) and the annotation alias table (`StringSlice` →
+  `StringSpan`, `MutPointer`/`ImmPointer`).
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
   (nominal and built-in), and type-capability queries (`is_deinitable`,
   `is_movable`, `is_copyable`, …). Deprecated lifecycle spellings

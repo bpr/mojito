@@ -709,6 +709,9 @@ impl fmt::Display for Ty {
                     crate::origin::PointerOrigin::Param { id, .. } => {
                         write!(f, ", origin#{}", id.0)?
                     }
+                    crate::origin::PointerOrigin::SelfPlace { .. } => {
+                        write!(f, ", origin_of(self)")?
+                    }
                     crate::origin::PointerOrigin::Static => write!(f, ", StaticConstantOrigin")?,
                     crate::origin::PointerOrigin::Untracked { mutable: true } => {
                         write!(f, ", MutUntrackedOrigin")?

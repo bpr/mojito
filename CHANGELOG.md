@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Views and strict bounds (nightly §5): `Span(list)` and `StringSpan` are
+  borrowed contiguous views — multi-element origin-bearing pointers (a new
+  origin capability: an interior-generation-projected pointer origin
+  legally addresses many elements, minted by the new `origin_cast` rebind
+  and `List.unsafe_ptr()`, staled by source mutation) plus a length, with
+  construction lending the source's place so mutation conflicts while any
+  view lives. Contiguous List/Span slices and the new String/StringSpan
+  `byte=`/`codepoint=`(/`grapheme=` on StringSpan) keyword slices are
+  strict: negative, out-of-range, or reversed bounds abort through the new
+  uncatchable `os.abort` trap, and byte endpoints must fall on UTF-8
+  codepoint boundaries; strided List slicing keeps `StridedSlice.indices()`
+  normalization and copied results. Positional String slicing (contiguous
+  and strided) now rejects with a keyword-slice hint (StringLiteral keeps
+  the builtin literal slice pending a probe), `StringSlice` is accepted as
+  a never-emitted alias of `StringSpan`, and ordinary String, StringSpan,
+  and StringLiteral iteration yields borrowed grapheme-cluster StringSpan
+  views. Keyword slices (`x[name=a:b]`, omitted bounds preserved) are a
+  general subscript form binding keyword-only slice-descriptor parameters;
+  `MirInstr::MultiIndex` keyword arguments now carry slice descriptors.
+  The `roadmap.md` task lists were also reformatted into nested bullets.
 - Pointer/allocation model closure (nightly §4): the bundled collections,
   String, and fixtures now allocate through `std.memory` (`unsafe_alloc` +
   `unsafe_free`), the compiler-private `take(i)`/`destroy(i)` pointer methods

@@ -31,7 +31,7 @@ impl Checker {
                 match clause {
                     crate::ast::ComprehensionClause::For { var, binding, iter } => {
                         self.register_named_bindings(iter)?;
-                        let iter_ty = self.infer(iter)?;
+                        let iter_ty = self.convert_literal_iterable(iter, self.infer(iter)?);
                         let source_mode = Self::iteration_mode(iter);
                         let (mut yielded_ty, mut protocol) =
                             self.iteration_protocol(&iter_ty, source_mode)?;
@@ -325,6 +325,9 @@ impl Checker {
                             self.register_named_bindings(value)?
                         }
                         crate::ast::SubscriptArg::Slice {
+                            lower, upper, step, ..
+                        }
+                        | crate::ast::SubscriptArg::KeywordSlice {
                             lower, upper, step, ..
                         } => {
                             for bound in [lower, upper, step].into_iter().flatten() {

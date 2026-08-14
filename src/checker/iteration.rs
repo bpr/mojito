@@ -224,6 +224,27 @@ impl Checker {
         Some(yielded)
     }
 
+    /// Convert a StringLiteral iterable into the nominal String temporary:
+    /// current Mojo's literal iteration yields grapheme-cluster StringSpan
+    /// views, so the literal takes the same owned-temporary path as any
+    /// other unplaced String source. Seams without the linked stdlib struct
+    /// keep the literal (and reject downstream).
+    pub(super) fn convert_literal_iterable(&self, iter: &Expr, iter_ty: Ty) -> Ty {
+        if iter_ty != Ty::StringLiteral {
+            return iter_ty;
+        }
+        let nominal = Ty::Struct(crate::symbol::STDLIB_STRING_STRUCT.to_string(), Vec::new());
+        match self.implicit_conversion_target(&Ty::StringLiteral, &nominal) {
+            Ok(Some(target)) => {
+                self.implicit_conversions
+                    .borrow_mut()
+                    .insert(iter.source_span(), target);
+                nominal
+            }
+            _ => iter_ty,
+        }
+    }
+
     /// Resolve a loop's complete iterator protocol.  In particular, owned
     /// iteration selects `__iter__(var self)` and never silently falls back to a
     /// borrowed `__iter__`.  The selected symbols cross the checked boundary so

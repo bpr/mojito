@@ -111,6 +111,22 @@ only from their authoritative `std` modules.
   the nested List setter's lifecycle contract. The bucket count remains fixed
   pending a rehashing follow-up.
 
+- `std/span.mojo` — the prelude-exported borrowed view `Span[mut: Bool, //,
+  T: Movable, origin: Origin[mut=mut]]`: a multi-element origin-bearing
+  pointer (`Pointer[T, origin._get_owned_interior["element"]]`) plus a
+  length, constructed from `ref [origin] list: List[T]` so the source stays
+  lent while any copy of the view lives. Element access is a reference
+  result with abort bounds; the strict `ContiguousSlice` overload returns a
+  sub-view; there is no strided slicing.
+- `std/os.mojo` — the `os` proof subset: `abort(message)`, the uncatchable
+  trap behind strict slice bounds, crossing to the VM through the
+  compiler-private `_mojito_abort` primitive (which stdlib-internal trap
+  sites call directly with a literal to avoid import cycles).
+- `std/string.mojo` also hosts `StringSpan[mut: Bool, //, origin]` (the
+  canonical string view; `StringSlice` is a never-emitted annotation alias)
+  and `_GraphemeIter`, the grapheme-cluster iterator behind ordinary
+  String/StringSpan/StringLiteral iteration.
+
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is
 public, matching Mojo's item-view element. Mapping views are eager snapshots

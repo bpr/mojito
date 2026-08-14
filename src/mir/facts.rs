@@ -159,6 +159,33 @@ impl Flatten<'_> {
         }
         match &expression.kind {
             ExprKind::Call { args, kwargs, .. } => {
+                // A view construction borrows the places its `ref [origin]`
+                // parameters bound (the checker recorded the argument
+                // indexes), so the stored aggregate keeps its source alive.
+                if let Some(crate::SemanticAdjustment::BorrowRefArguments { arguments }) = self
+                    .checked_adjustments(expression)
+                    .into_iter()
+                    .find(|adjustment| {
+                        matches!(
+                            adjustment,
+                            crate::SemanticAdjustment::BorrowRefArguments { .. }
+                        )
+                    })
+                {
+                    let loans = arguments
+                        .into_iter()
+                        .filter_map(|(index, mutable)| {
+                            args.get(index).map(|argument| MirLoan {
+                                place: self.place(argument),
+                                mutable,
+                                interior: None,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                }
                 // A checked pointer construction loans exactly its source
                 // place, with the mutability the checker inferred from the
                 // owner binding.
@@ -191,8 +218,102 @@ impl Flatten<'_> {
                 .iter()
                 .flat_map(|value| self.aggregate_borrows(value))
                 .collect(),
+            // A view-typed slice result (a Span sub-slice or a StringSpan
+            // keyword slice) inherits its receiver's loans.
+            ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                if self
+                    .checked_adjustments(expression)
+                    .iter()
+                    .any(|adjustment| {
+                        matches!(adjustment, crate::SemanticAdjustment::BorrowViewResult)
+                    })
+                {
+                    let loans = self.aggregate_borrows(object);
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                    // A receiver that is itself the owning place lends that
+                    // place to the view.
+                    if matches!(
+                        object.kind,
+                        ExprKind::Identifier(_) | ExprKind::Member { .. }
+                    ) {
+                        return vec![MirLoan {
+                            place: self.place(object),
+                            mutable: false,
+                            interior: None,
+                        }];
+                    }
+                }
+                Vec::new()
+            }
+            // An `origin_cast` result loans exactly its rebound target
+            // place; an interior-generation tail becomes the loan's interior
+            // domain so container mutation stales it without ordinary reads
+            // conflicting.
+            ExprKind::Invoke { .. } | ExprKind::MethodCall { .. } => {
+                let cast =
+                    self.checked_adjustments(expression)
+                        .into_iter()
+                        .find_map(|adjustment| match adjustment {
+                            crate::SemanticAdjustment::PointerOriginCast { origin } => Some(origin),
+                            _ => None,
+                        });
+                if let Some(crate::origin::PointerOrigin::Place { place, mutable }) = cast {
+                    return self.pointer_place_loan(place, mutable);
+                }
+                // A method whose selected contract returns an origin-bearing
+                // pointer (`xs.unsafe_ptr()`) loans that rebased place.
+                if let Some(contract) = self.checked_call_contract(expression)
+                    && let Ty::Pointer {
+                        origin: crate::origin::PointerOrigin::Place { place, mutable },
+                        ..
+                    } = &contract.result_ty
+                {
+                    return self.pointer_place_loan(place.clone(), *mutable);
+                }
+                // `unsafe_offset` preserves provenance: forward the receiver's
+                // loans onto the offset pointer.
+                if let (true, ExprKind::MethodCall { object, .. }) = (
+                    self.checked_adjustments(expression)
+                        .iter()
+                        .any(|adjustment| {
+                            matches!(adjustment, crate::SemanticAdjustment::PointerOffset)
+                        }),
+                    &expression.kind,
+                ) {
+                    return self.aggregate_borrows(object);
+                }
+                Vec::new()
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The loan an origin-bearing pointer's concrete place induces: rooted at
+    /// the owner's variable, with an interior-generation tail becoming the
+    /// loan's interior domain (container mutation stales it without ordinary
+    /// reads conflicting). An unmapped owner (no live variable) loans nothing.
+    fn pointer_place_loan(
+        &mut self,
+        place: crate::origin::OriginPlace,
+        mutable: bool,
+    ) -> Vec<MirLoan> {
+        let Some(root) = self.owner_vars.get(&place.root).copied() else {
+            return Vec::new();
+        };
+        let mir_place = MirPlace::root(root, self.var_types.get(&root).cloned());
+        let interior = matches!(
+            place.path.last(),
+            Some(crate::origin::OriginSeg::Interior(_))
+        )
+        .then(|| self.mir_interior_origin(&place, Some(root)))
+        .flatten();
+        vec![MirLoan {
+            place: mir_place,
+            mutable,
+            interior,
+        }]
     }
 
     /// One loan per reference capture (transitively through captured closure

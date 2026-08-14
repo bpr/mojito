@@ -16,7 +16,16 @@ from std.memory import unsafe_alloc
 from std.collections.list import List
 from std.optional import Optional
 
-struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
+from std.iterable import Iterable, Iterator, StopIteration
+
+struct String(
+    Comparable, Copyable, Equatable, Hashable, Iterable, Movable, Writable
+):
+    comptime Element = StringSpan
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _GraphemeIter
+
     var data: UnsafePointer[Byte]
     var size: Int
     var cap: Int
@@ -161,10 +170,10 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
         var start = 0
         var at = self._find_from(sep, start)
         while at >= 0:
-            parts.append(self[start:at])
+            parts.append(self._with_bytes(start, at - start))
             start = at + sep.size
             at = self._find_from(sep, start)
-        parts.append(self[start:self.size])
+        parts.append(self._with_bytes(start, self.size - start))
         return parts^
 
     # Naive forward byte search from byte offset `start`: the offset of the
@@ -250,6 +259,11 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
             index = self._next_grapheme_end(index)
             count += 1
         return count
+
+    # Ordinary String iteration yields borrowed grapheme-cluster StringSpan
+    # views (current Mojo).
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        return _GraphemeIter(StringSpan(self), 0)
 
     # UTF-8 leading-byte arithmetic: the sequence width a lead byte declares.
     def _sequence_width(self, lead: Int) raises -> Int:
@@ -471,38 +485,78 @@ struct String(Comparable, Copyable, Equatable, Hashable, Movable, Writable):
             return 12
         return 0
 
-    # Byte-wise, non-raising, like the builtin literal slice: `indices()`
-    # normalizes Python-style bounds (clamping, negative wrap, stride,
-    # reversal).  A cut inside a multibyte sequence keeps the raw bytes;
-    # codepoint/grapheme operations still validate lazily, and the literal
-    # read-back renders invalid sequences lossily.
-    def __getitem__(self, slice: Slice) -> Self:
-        var bounds = slice.indices(self.size)
-        var start = bounds[0]
-        var stop = bounds[1]
-        var step = bounds[2]
-        var count = 0
-        var probe = start
-        if step > 0:
-            while probe < stop:
-                count += 1
-                probe += step
-        else:
-            while probe > stop:
-                count += 1
-                probe += step
-        var result = String("")
-        result.data.unsafe_free()
-        result.data = unsafe_alloc[Byte](count)
-        result.size = count
-        result.cap = count
-        var source = start
-        var filled = 0
-        while filled < count:
-            result.data[filled] = self.data[source]
-            source += step
-            filled += 1
-        return result^
+    # Strict keyword slices (current Mojo bounds): positional String slicing
+    # was removed upstream, so byte and codepoint ranges are spelled
+    # explicitly and violations abort. Byte endpoints must fall on UTF-8
+    # codepoint boundaries; the result is a borrowed `StringSpan` view of
+    # this String's buffer.
+    def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan:
+        var start = byte.start.or_else(0)
+        var end = byte.end.or_else(self.size)
+        if start < 0 or end > self.size or start > end:
+            _mojito_abort("String byte slice bounds out of range")
+        if not self._is_codepoint_boundary(start):
+            _mojito_abort("String byte slice endpoint is not a codepoint boundary")
+        if not self._is_codepoint_boundary(end):
+            _mojito_abort("String byte slice endpoint is not a codepoint boundary")
+        var view = StringSpan(self)
+        view._data = view._data.unsafe_offset(start)
+        view._size = end - start
+        return view^
+
+    def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan:
+        try:
+            var total = self.codepoint_count()
+            var start = codepoint.start.or_else(0)
+            var end = codepoint.end.or_else(total)
+            if start < 0 or end > total or start > end:
+                _mojito_abort("String codepoint slice bounds out of range")
+            var start_byte = self._codepoint_offset(start)
+            var end_byte = self._codepoint_offset(end)
+            var view = StringSpan(self)
+            view._data = view._data.unsafe_offset(start_byte)
+            view._size = end_byte - start_byte
+            return view^
+        except e:
+            _mojito_abort("String buffer is not valid UTF-8")
+        # Unreachable: the abort above never returns.
+        var empty = StringSpan(self)
+        empty._size = 0
+        return empty^
+
+    # Whether `offset` falls between UTF-8 sequences (or at either buffer
+    # end): a continuation byte marks an interior position.
+    def _is_codepoint_boundary(self, offset: Int) -> Bool:
+        if offset == 0 or offset == self.size:
+            return True
+        var b = Int(self.data[offset])
+        if b < 128:
+            return True
+        return b >= 192
+
+    # The byte offset after `count` codepoints (strict: `count` must not
+    # exceed the codepoint count).
+    def _codepoint_offset(self, count: Int) raises -> Int:
+        var index = 0
+        var seen = 0
+        while seen < count:
+            if index >= self.size:
+                _mojito_abort("String codepoint slice bounds out of range")
+            var lead = Int(self.data[index])
+            index += self._sequence_width(lead)
+            seen += 1
+        return index
+
+    # The byte offset after `count` extended grapheme clusters (strict).
+    def _grapheme_offset(self, count: Int) raises -> Int:
+        var index = 0
+        var seen = 0
+        while seen < count:
+            if index >= self.size:
+                _mojito_abort("String grapheme slice bounds out of range")
+            index = self._next_grapheme_end(index)
+            seen += 1
+        return index
 
     def _with_bytes(self, start: Int, count: Int) -> Self:
         var result = String("")
@@ -631,3 +685,164 @@ struct Codepoint(
 
     def write_to(self, mut writer: Some[Writer]):
         writer.write(self._text)
+
+
+# A borrowed byte view over a String's UTF-8 buffer: current Mojo's
+# `StringSpan` (upstream also accepts the older `StringSlice` spelling;
+# Mojito emits `StringSpan`). Constructing it from a String lends the
+# String's place, so the source stays alive while any view lives and
+# mutation conflicts. Keyword indexing mirrors String's vocabulary, and the
+# strict keyword slices — including the grapheme slice String itself does
+# not offer — return sub-views of the same buffer. Codepoint- and
+# grapheme-level operations delegate through an eager `to_string()` copy
+# for decoding while the returned views stay borrowed from this buffer.
+struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
+    ImplicitlyCopyable, Iterable, Movable, Writable
+):
+    comptime Element = StringSpan
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _GraphemeIter
+
+    var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
+    var _size: Int
+
+    def __init__(out self, ref [origin] src: String):
+        self._data = src.data.origin_cast[
+            origin._get_owned_interior["bytes"]
+        ]()
+        self._size = src.size
+
+    # Ordinary StringSpan iteration also yields grapheme-cluster sub-views.
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        return _GraphemeIter(self, 0)
+
+    def __len__(self) -> Int:
+        return self._size
+
+    def to_string(self) -> String:
+        var result = String("")
+        result.data.unsafe_free()
+        result.data = unsafe_alloc[Byte](self._size)
+        result.size = self._size
+        result.cap = self._size
+        var i = 0
+        while i < self._size:
+            result.data[i] = self._data[i]
+            i += 1
+        return result^
+
+    def __getitem__(self, *, byte: Int) raises -> Byte:
+        if byte < 0:
+            raise Error("StringSpan byte index out of range")
+        if byte >= self._size:
+            raise Error("StringSpan byte index out of range")
+        return self._data[byte]
+
+    def __getitem__(self, *, codepoint: Int) raises -> Codepoint:
+        var text = self.to_string()
+        return text[codepoint=codepoint]
+
+    def __getitem__(self, *, grapheme: Int) raises -> String:
+        var text = self.to_string()
+        return text[grapheme=grapheme]
+
+    def codepoint_count(self) raises -> Int:
+        return self.to_string().codepoint_count()
+
+    def grapheme_count(self) raises -> Int:
+        return self.to_string().grapheme_count()
+
+    def __getitem__(self, *, byte: ContiguousSlice) -> Self:
+        var start = byte.start.or_else(0)
+        var end = byte.end.or_else(self._size)
+        if start < 0 or end > self._size or start > end:
+            _mojito_abort("StringSpan byte slice bounds out of range")
+        if not self._boundary(start):
+            _mojito_abort("StringSpan byte slice endpoint is not a codepoint boundary")
+        if not self._boundary(end):
+            _mojito_abort("StringSpan byte slice endpoint is not a codepoint boundary")
+        return self._sub_view(start, end)
+
+    def __getitem__(self, *, codepoint: ContiguousSlice) -> Self:
+        try:
+            var text = self.to_string()
+            var total = text.codepoint_count()
+            var start = codepoint.start.or_else(0)
+            var end = codepoint.end.or_else(total)
+            if start < 0 or end > total or start > end:
+                _mojito_abort("StringSpan codepoint slice bounds out of range")
+            return self._sub_view(
+                text._codepoint_offset(start), text._codepoint_offset(end)
+            )
+        except e:
+            _mojito_abort("StringSpan buffer is not valid UTF-8")
+        # Unreachable: the abort above never returns.
+        return self._sub_view(0, 0)
+
+    def __getitem__(self, *, grapheme: ContiguousSlice) -> Self:
+        try:
+            var text = self.to_string()
+            var total = text.grapheme_count()
+            var start = grapheme.start.or_else(0)
+            var end = grapheme.end.or_else(total)
+            if start < 0 or end > total or start > end:
+                _mojito_abort("StringSpan grapheme slice bounds out of range")
+            return self._sub_view(
+                text._grapheme_offset(start), text._grapheme_offset(end)
+            )
+        except e:
+            _mojito_abort("StringSpan buffer is not valid UTF-8")
+        # Unreachable: the abort above never returns.
+        return self._sub_view(0, 0)
+
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write(self.to_string())
+
+    def write_repr_to(self, mut writer: Some[Writer]):
+        self.to_string().write_repr_to(writer)
+
+    # A provenance-preserving sub-view over `[start, end)` of this buffer.
+    def _sub_view(self, start: Int, end: Int) -> Self:
+        var view = self
+        view._data = view._data.unsafe_offset(start)
+        view._size = end - start
+        return view^
+
+    # Whether `offset` falls between UTF-8 sequences (or at either end).
+    def _boundary(self, offset: Int) -> Bool:
+        if offset == 0 or offset == self._size:
+            return True
+        var b = Int(self._data[offset])
+        if b < 128:
+            return True
+        return b >= 192
+
+
+# The grapheme-cluster iterator behind ordinary String/StringSpan
+# iteration: each step yields the next extended grapheme cluster as a
+# borrowed StringSpan sub-view of the source buffer. The origin parameters
+# stay erased on the bundled template (like `_ListIter`); the loop site
+# retains the source loan through the iteration protocol.
+@fieldwise_init
+struct _GraphemeIter[
+    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+](Iterator):
+    comptime Element = StringSpan
+
+    var src: StringSpan
+    var index: Int
+
+    def __next__(mut self) raises StopIteration -> StringSpan:
+        if self.index >= len(self.src):
+            raise StopIteration()
+        var start = self.index
+        try:
+            var text = self.src.to_string()
+            var end = text._next_grapheme_end(start)
+            self.index = end
+            return self.src._sub_view(start, end)
+        except e:
+            _mojito_abort("String buffer is not valid UTF-8")
+        # Unreachable: the abort above never returns.
+        return self.src._sub_view(start, start)

@@ -869,9 +869,8 @@ impl VmBackend {
                         .map(|register| value_as_index(&regs[register.0 as usize]))
                         .transpose()
                 };
-                let mut arguments = Vec::with_capacity(args.len());
-                for argument in args {
-                    arguments.push(match argument {
+                let subscript_value = |argument: &MirSubscriptArg| -> Result<Value, RuntimeError> {
+                    Ok(match argument {
                         MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
                         MirSubscriptArg::Slice {
                             kind,
@@ -884,7 +883,11 @@ impl VmBackend {
                             end: bound(upper)?,
                             step: bound(step)?,
                         },
-                    });
+                    })
+                };
+                let mut arguments = Vec::with_capacity(args.len());
+                for argument in args {
+                    arguments.push(subscript_value(argument)?);
                 }
                 let call = call.as_ref().ok_or_else(|| {
                     RuntimeError::TypeError(
@@ -893,8 +896,8 @@ impl VmBackend {
                 })?;
                 let keyword_arguments = kwargs
                     .iter()
-                    .map(|(name, register)| (name.clone(), regs[register.0 as usize].clone()))
-                    .collect();
+                    .map(|(name, argument)| Ok((name.clone(), subscript_value(argument)?)))
+                    .collect::<Result<Vec<_>, RuntimeError>>()?;
                 let result = self.method_call(
                     prog,
                     MethodInvocation {

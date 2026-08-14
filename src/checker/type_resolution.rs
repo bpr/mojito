@@ -233,6 +233,13 @@ impl Checker {
                 {
                     return Ok(Ty::Struct(name.clone(), Vec::new()));
                 }
+                // Upstream compatibility alias: `StringSlice` resolves to the
+                // canonical `StringSpan` view (never emitted; diagnostics and
+                // display always spell `StringSpan`).
+                if name == "StringSlice" && self.structs.contains_key("StringSpan") {
+                    return self
+                        .ty_from_anno(&SourceType::Named("StringSpan".to_string(), args.clone()));
+                }
                 // Mojo exposes the compile-time `StringLiteral` type. Mojito
                 // materializes string literals directly as runtime strings, so
                 // it is represented by the existing string type.
@@ -1476,25 +1483,11 @@ impl Checker {
         &self,
         argument: &crate::ast::ParamArg,
     ) -> Result<crate::origin::PointerOrigin, TypeError> {
-        use crate::origin::{Mutability, OriginParamId, PointerOrigin};
+        use crate::origin::PointerOrigin;
 
         let constant = match argument {
             crate::ast::ParamArg::Type(SourceType::SelfParam(name)) => {
-                let (index, parameter) = self
-                    .enclosing_type_params
-                    .iter()
-                    .enumerate()
-                    .find(|(_, parameter)| {
-                        parameter.name == *name && parameter.bounds.as_slice() == ["Origin"]
-                    })
-                    .ok_or_else(|| TypeError::UnknownSelfParam(name.clone()))?;
-                let id = OriginParamId(index as u32);
-                let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
-                    Some(ExprKind::Bool(true)) => Mutability::Mutable,
-                    Some(ExprKind::Bool(false)) => Mutability::Immutable,
-                    _ => Mutability::Param(id),
-                };
-                return Ok(PointerOrigin::Param { id, mutability });
+                return self.enclosing_origin_param(name);
             }
             crate::ast::ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(name),
@@ -1504,6 +1497,44 @@ impl Checker {
                 if arguments.is_empty() =>
             {
                 name.as_str()
+            }
+            crate::ast::ParamArg::Value(expression) => {
+                return self.pointer_origin_expr(expression);
+            }
+            // `Self.origin._get_owned_interior["tag"]` in type-annotation
+            // position parses as an indexed projection over an associated
+            // member of the origin parameter; expression positions route
+            // through `pointer_origin_expr` instead.
+            crate::ast::ParamArg::Type(SourceType::IndexedProjection { base, index }) => {
+                let SourceType::Assoc {
+                    base: origin_base,
+                    name,
+                    args,
+                } = base.as_ref()
+                else {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "an interior origin projection".to_string(),
+                        found: "an indexed type projection".to_string(),
+                        context: "Pointer origin".to_string(),
+                    });
+                };
+                if name != "_get_owned_interior" || !args.is_empty() {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "'_get_owned_interior[\"tag\"]'".to_string(),
+                        found: format!("'{name}'"),
+                        context: "Pointer origin projection".to_string(),
+                    });
+                }
+                let ExprKind::Str(tag) = &index.kind else {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a compile-time tag string".to_string(),
+                        found: "a non-string index".to_string(),
+                        context: "interior origin projection".to_string(),
+                    });
+                };
+                let origin =
+                    self.pointer_origin_arg(&crate::ast::ParamArg::Type((**origin_base).clone()))?;
+                return append_interior_tag(origin, tag);
             }
             _ => {
                 return Err(TypeError::TypeMismatch {
@@ -1519,8 +1550,105 @@ impl Checker {
             "MutUnsafeAnyOrigin" => Ok(PointerOrigin::UnsafeAny { mutable: true }),
             "ImmutUnsafeAnyOrigin" => Ok(PointerOrigin::UnsafeAny { mutable: false }),
             "StaticConstantOrigin" => Ok(PointerOrigin::Static),
-            name => Err(TypeError::UndefinedVariable(name.to_string())),
+            name => self
+                .enclosing_origin_param(name)
+                .map_err(|_| TypeError::UndefinedVariable(name.to_string())),
         }
+    }
+
+    /// Resolve an expression-shaped `Pointer` origin argument: an
+    /// `._get_owned_interior["tag"]` projection over an origin parameter or
+    /// `origin_of(place)` observation. The projected tags become the
+    /// pointer's interior-generation domain — the marker that the pointer
+    /// legally designates multiple elements.
+    fn pointer_origin_expr(
+        &self,
+        expression: &Expr,
+    ) -> Result<crate::origin::PointerOrigin, TypeError> {
+        use crate::origin::{Mutability, Origin, PointerOrigin};
+
+        if let Some((base, tag)) = super::origins::interior_origin_syntax(expression) {
+            let origin = self.pointer_origin_expr(base)?;
+            return append_interior_tag(origin, tag);
+        }
+        match &expression.kind {
+            // `Self.origin` spelled in expression position (a projection base).
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+                self.enclosing_origin_param(field)
+            }
+            // A bare origin parameter name (function-head spelling).
+            ExprKind::Identifier(name) => self.enclosing_origin_param(name),
+            ExprKind::Call {
+                name,
+                args,
+                kwargs,
+                param_args,
+            } if name == "origin_of"
+                && kwargs.is_empty()
+                && param_args.is_empty()
+                && args.len() == 1 =>
+            {
+                // `origin_of(self)` stays symbolic whether or not a `self`
+                // place is bound, so a declared return annotation and the
+                // body's `origin_cast` target resolve to one comparable
+                // form; call sites rebase it onto the concrete receiver.
+                if matches!(&args[0].kind, ExprKind::Identifier(name) if name == "self") {
+                    return Ok(PointerOrigin::SelfPlace {
+                        mutability: Mutability::Param(crate::origin::OriginParamId(0)),
+                        interior: Vec::new(),
+                    });
+                }
+                let reference = self.reference_actual(&args[0])?;
+                match reference.origin {
+                    Origin::Place(place) => Ok(PointerOrigin::Place {
+                        place,
+                        mutable: matches!(reference.mutability, Mutability::Mutable),
+                    }),
+                    Origin::Param(id) => Ok(PointerOrigin::Param {
+                        id,
+                        mutability: reference.mutability,
+                        interior: Vec::new(),
+                    }),
+                    other => Err(TypeError::Unsupported(format!(
+                        "origin_of over {other:?} is not a supported Pointer origin argument"
+                    ))),
+                }
+            }
+            _ => Err(TypeError::TypeMismatch {
+                expected: "Self.origin, origin_of(place), or a builtin Origin value".to_string(),
+                found: "a runtime value".to_string(),
+                context: "Pointer origin".to_string(),
+            }),
+        }
+    }
+
+    /// Look up an enclosing `Origin`-bounded type parameter by name and
+    /// resolve its declared mutability.
+    fn enclosing_origin_param(
+        &self,
+        name: &str,
+    ) -> Result<crate::origin::PointerOrigin, TypeError> {
+        use crate::origin::{Mutability, OriginParamId, PointerOrigin};
+
+        let (index, parameter) = self
+            .enclosing_type_params
+            .iter()
+            .enumerate()
+            .find(|(_, parameter)| {
+                parameter.name == *name && parameter.bounds.as_slice() == ["Origin"]
+            })
+            .ok_or_else(|| TypeError::UnknownSelfParam(name.to_string()))?;
+        let id = OriginParamId(index as u32);
+        let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
+            Some(ExprKind::Bool(true)) => Mutability::Mutable,
+            Some(ExprKind::Bool(false)) => Mutability::Immutable,
+            _ => Mutability::Param(id),
+        };
+        Ok(PointerOrigin::Param {
+            id,
+            mutability,
+            interior: Vec::new(),
+        })
     }
 
     /// Resolve `Tuple[T1, …, Tn]` from its type arguments (each a type).
@@ -1778,4 +1906,30 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         Ty::Pointer { element, .. } => type_is_symbolic(element),
         Ty::Ref(reference) => type_is_symbolic(&reference.referent),
     }
+}
+
+/// Append an interior-generation tag to a tracked pointer origin — the
+/// resolution of a `._get_owned_interior["tag"]` projection in a `Pointer`
+/// origin argument. Untracked provenances have no place to project into.
+fn append_interior_tag(
+    mut origin: crate::origin::PointerOrigin,
+    tag: &str,
+) -> Result<crate::origin::PointerOrigin, TypeError> {
+    use crate::origin::{OriginSeg, PointerOrigin};
+    match &mut origin {
+        PointerOrigin::Param { interior, .. } | PointerOrigin::SelfPlace { interior, .. } => {
+            interior.push(tag.to_string());
+        }
+        PointerOrigin::Place { place, .. } => {
+            place.path.push(OriginSeg::Interior(tag.to_string()));
+        }
+        _ => {
+            return Err(TypeError::TypeMismatch {
+                expected: "an origin parameter or origin_of(place) base".to_string(),
+                found: "an untracked origin".to_string(),
+                context: "interior origin projection".to_string(),
+            });
+        }
+    }
+    Ok(origin)
 }

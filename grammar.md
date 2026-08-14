@@ -639,6 +639,9 @@ tuple_or_group:
 
 subscript_arg:
     | NAME '=' expression         # keyword subscript (`s[byte=i]`); value bases only
+    | NAME '=' [expression] ':' [expression] [':' [expression]]
+                                  # keyword slice (`s[byte=a:b]`); read-only like
+                                  # every keyword subscript
     | expression
     | [expression] ':' [expression] [':' [expression]]
 args: ','.arg+ [',']              # positional args/spread, then keyword args/forwarding
@@ -701,7 +704,10 @@ Notes:
   keyword subscript dispatching to a keyword-only `__getitem__`/`__setitem__`
   overload; over a capitalized type name (`Origin[mut=True]`,
   `SIMD[width=4]`), named brackets remain compile-time parameter
-  application.
+  application. A named argument whose value is a slice (`s[byte=a:b]`,
+  `s[byte=:b]`, `s[byte=::2]`) is a **keyword slice**: the slice becomes a
+  `ContiguousSlice`/`StridedSlice` descriptor bound to a keyword-only
+  `__getitem__` parameter, read-only like every keyword subscript.
   A slice preserves omitted bounds and whether a stride was written, selecting
   `ContiguousSlice` or `StridedSlice`; mixed/multiple arguments dispatch through
   variadic `__getitem__`/`__setitem__`. Nominal List slicing receives the same
@@ -994,7 +1000,10 @@ List is not an implicit copy.
 - **Slice read**: `xs[start:stop]` or `xs[start:stop:step]` preserves omitted,
   negative, and strided bounds in a `ContiguousSlice` or `StridedSlice`
   descriptor and invokes List's ordinary checked `__getitem__`; the bundled
-  proof API returns an eager `List[T]` copy.
+  proof API returns an eager `List[T]` copy. The contiguous overload is
+  strict — a negative, out-of-range, or reversed bound aborts (an uncatchable
+  trap) instead of normalizing; only strided slicing keeps
+  `StridedSlice.indices()` normalization.
 - **Iteration**: `for x in xs:` binds `x` to each element (type `T`).
 - **Mutation**: `xs[i] = e` (index assignment) and the mutating methods `append(e)`,
   `insert(i, e)`, `remove(e)` (removes the first equal element), `pop([i])` (removes and

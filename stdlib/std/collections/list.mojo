@@ -8,6 +8,8 @@ from std.memory import unsafe_alloc
 
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
+from std.os import abort
+
 @fieldwise_init
 struct _ListIter[
     iterable_mut: Bool, //, T: Movable, iterable_origin: Origin[mut=iterable_mut]
@@ -154,6 +156,17 @@ struct List[T: Movable](
     def __len__(self) -> Int:
         return self.size
 
+    # A borrowed multi-element pointer over the element storage (current
+    # Mojo's `unsafe_ptr` accessor). The interior-generation origin keeps the
+    # List alive and stales the pointer when a mutation starts a new
+    # generation.
+    def unsafe_ptr(ref self) -> Pointer[
+        Self.T, origin_of(self)._get_owned_interior["element"]
+    ]:
+        return self.data.origin_cast[
+            origin_of(self)._get_owned_interior["element"]
+        ]()
+
     def __getitem__(
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
@@ -183,6 +196,24 @@ struct List[T: Movable](
             while start > stop:
                 result.append(self.data[start])
                 start += step
+        return result^
+
+    # Strict contiguous slice (current Mojo bounds): negative, out-of-range,
+    # or reversed bounds abort instead of normalizing. Strided slicing keeps
+    # `StridedSlice.indices()` normalization through the `Slice` overload
+    # above; omitted bounds are preserved and default to the full extent.
+    def __getitem__(self, slice: ContiguousSlice) -> Self where conforms_to(
+        Self.T, Copyable
+    ):
+        var start = slice.start.or_else(0)
+        var end = slice.end.or_else(self.size)
+        if start < 0 or end > self.size or start > end:
+            abort("List slice bounds out of range")
+        var result = List[Self.T]()
+        var i = start
+        while i < end:
+            result.append(self.data[i])
+            i += 1
         return result^
 
     def __setitem__(mut self, index: Int, var value: Self.T) where conforms_to(

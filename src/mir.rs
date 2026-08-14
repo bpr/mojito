@@ -722,7 +722,8 @@ fn mir_place_handle_ty(
             } else {
                 crate::origin::Mutability::Immutable
             }),
-            crate::origin::PointerOrigin::Param { mutability, .. } => Some(*mutability),
+            crate::origin::PointerOrigin::Param { mutability, .. }
+            | crate::origin::PointerOrigin::SelfPlace { mutability, .. } => Some(*mutability),
             crate::origin::PointerOrigin::Static
             | crate::origin::PointerOrigin::Untracked { .. }
             | crate::origin::PointerOrigin::UnsafeAny { .. } => None,
@@ -892,12 +893,16 @@ fn reassigned_names(
 
 impl Flatten<'_> {
     /// Whether an expression's checked type is a pointer whose provenance
-    /// designates checked storage. Dereferencing such a pointer goes through
-    /// its frame/slot handle instead of allocation arithmetic.
+    /// designates a single checked place. Dereferencing such a pointer goes
+    /// through its frame/slot handle instead of allocation arithmetic. A
+    /// multi-element origin-bearing pointer (an interior-generation domain)
+    /// is heap storage: it keeps allocation arithmetic and carries its loan
+    /// on the binding instead.
     fn is_origin_bearing_pointer(&self, expression: &Expr) -> bool {
         matches!(
             self.checked_ty(expression),
-            Some(Ty::Pointer { origin, .. }) if origin.as_origin().is_some()
+            Some(Ty::Pointer { origin, .. })
+                if origin.as_origin().is_some() && !origin.multi_element()
         )
     }
 
@@ -1701,6 +1706,9 @@ fn expression_children(expression: &Expr) -> Vec<&Expr> {
                     crate::ast::SubscriptArg::Index(value)
                     | crate::ast::SubscriptArg::Keyword { value, .. } => children.push(value),
                     crate::ast::SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    }
+                    | crate::ast::SubscriptArg::KeywordSlice {
                         lower, upper, step, ..
                     } => {
                         children.extend([lower, upper, step].into_iter().flatten().map(Box::as_ref))

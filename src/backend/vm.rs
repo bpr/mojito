@@ -1910,6 +1910,21 @@ impl VmBackend {
                 self.output.push('\n');
                 Ok(Value::None)
             }
+            // The `std.os.abort` crossing: an uncatchable trap carrying the
+            // nominal String message (only `Raised` is catchable).
+            "_mojito_abort" => {
+                let message = match args.first() {
+                    Some(value @ Value::Struct { .. }) => {
+                        match self.string_struct_literal(value)? {
+                            Value::Str(text) => text,
+                            _ => unreachable!("the string bridge returns a builtin string"),
+                        }
+                    }
+                    Some(Value::Str(text)) => text.clone(),
+                    _ => String::new(),
+                };
+                Err(RuntimeError::Abort(message))
+            }
             "String" => Ok(Value::Str(match args.into_iter().next() {
                 Some(value) => self.format_value(prog, value, false)?,
                 None => String::new(),

@@ -2890,7 +2890,64 @@ impl Checker {
                 }
                 result
             }
+            // A view-typed slice result (a Span sub-slice or a StringSpan
+            // keyword slice) inherits its receiver's carried origins; a
+            // receiver that is itself the owning place lends that place.
+            ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                if matches!(
+                    self.operation_adjustments
+                        .borrow()
+                        .get(&expression.source_span()),
+                    Some(crate::checked::SemanticAdjustment::BorrowViewResult)
+                ) {
+                    let carried = self.aggregate_origins(object);
+                    if !carried.is_empty() {
+                        return carried;
+                    }
+                    if matches!(
+                        object.kind,
+                        ExprKind::Identifier(_) | ExprKind::Member { .. }
+                    ) && let Ok(place) = self.origin_place(object)
+                    {
+                        return vec![Origin::Place(place)];
+                    }
+                }
+                Vec::new()
+            }
             ExprKind::Invoke { args, kwargs, .. } | ExprKind::MethodCall { args, kwargs, .. } => {
+                // An `origin_cast` result carries exactly its rebound target
+                // origin, recorded by the checker when it typed the cast.
+                if let Some(crate::checked::SemanticAdjustment::PointerOriginCast { origin }) = self
+                    .operation_adjustments
+                    .borrow()
+                    .get(&expression.source_span())
+                {
+                    return origin
+                        .as_origin()
+                        .map(|origin| vec![origin])
+                        .unwrap_or_default();
+                }
+                // A method whose selected contract returns an origin-bearing
+                // pointer (`xs.unsafe_ptr()`) carries that rebased origin.
+                if let Some(contract) = self.selected_calls.borrow().get(&expression.source_span())
+                    && let Ty::Pointer { origin, .. } = &contract.result_ty
+                    && let Some(origin) = origin.as_origin()
+                {
+                    return vec![origin];
+                }
+                // `unsafe_offset` preserves provenance: the offset pointer
+                // carries whatever its receiver carried.
+                if let (
+                    Some(crate::checked::SemanticAdjustment::PointerOffset),
+                    ExprKind::MethodCall { object, .. },
+                ) = (
+                    self.operation_adjustments
+                        .borrow()
+                        .get(&expression.source_span()),
+                    &expression.kind,
+                ) {
+                    return self.aggregate_origins(object);
+                }
                 let mut result = Vec::new();
                 for argument in args {
                     append_unique(&mut result, self.aggregate_origins(argument));

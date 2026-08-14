@@ -247,7 +247,8 @@ impl Checker {
                 let mut descriptors = Vec::with_capacity(args.len());
                 for (position, argument) in args.iter().enumerate() {
                     match argument {
-                        SubscriptArg::Keyword { name, .. } => {
+                        SubscriptArg::Keyword { name, .. }
+                        | SubscriptArg::KeywordSlice { name, .. } => {
                             return Err(TypeError::Unsupported(format!(
                                 "keyword subscript assignment ('[{name}=…] = value') is not supported; keyword subscripts are read-only"
                             )));
@@ -435,7 +436,8 @@ impl Checker {
                 let mut descriptors = Vec::with_capacity(source.len());
                 for (position, argument) in source.iter().enumerate() {
                     match argument {
-                        SubscriptArg::Keyword { name, .. } => {
+                        SubscriptArg::Keyword { name, .. }
+                        | SubscriptArg::KeywordSlice { name, .. } => {
                             return Err(TypeError::Unsupported(format!(
                                 "keyword subscript assignment ('[{name}=…] = value') is not supported; keyword subscripts are read-only"
                             )));
@@ -775,6 +777,18 @@ impl Checker {
             {
                 object_type.clone()
             }
+            // Positional String slicing was removed in current Mojo (like
+            // bare positional `s[i]`): the byte or codepoint unit is spelled
+            // explicitly through a keyword slice.
+            Ty::Struct(name, arguments)
+                if arguments.is_empty() && crate::symbol::is_stdlib_string_struct(name) =>
+            {
+                return Err(TypeError::Unsupported(
+                    "String positional slicing was removed in current Mojo; spell the \
+                     unit explicitly: 's[byte=a:b]' or 's[codepoint=a:b]'"
+                        .to_string(),
+                ));
+            }
             Ty::Struct(..) | Ty::Param { .. } => {
                 let descriptor = self.synthetic_slice_descriptor(&span, kind);
                 self.infer_method_call(
@@ -786,6 +800,15 @@ impl Checker {
             }
             _ => return Err(TypeError::NotIndexable(object_type.to_string())),
         };
+        // A view-typed slice result (a Span sub-slice) stays borrowed from
+        // its receiver's sources: the result binding inherits the
+        // receiver's loans instead of owning fresh storage.
+        if self.type_carries_loans(&result) {
+            self.operation_adjustments.borrow_mut().insert(
+                span.clone(),
+                crate::checked::SemanticAdjustment::BorrowViewResult,
+            );
+        }
         self.subscript_descriptors
             .borrow_mut()
             .insert(span, (vec![Some(kind)], false));
@@ -863,6 +886,28 @@ impl Checker {
                     actual_arguments.push(self.synthetic_slice_descriptor(&span, kind));
                     descriptors.push(Some(kind));
                 }
+                // A keyword slice (`s[byte=a:b]`) binds a keyword-only
+                // slice-descriptor `__getitem__` parameter through the same
+                // structural call binding as a keyword subscript.
+                SubscriptArg::KeywordSlice {
+                    name,
+                    lower,
+                    upper,
+                    step,
+                    explicit_step,
+                } => {
+                    self.check_slice_bounds(lower.as_deref(), upper.as_deref(), step.as_deref())?;
+                    let kind = if *explicit_step {
+                        SliceKind::StridedSlice
+                    } else {
+                        SliceKind::ContiguousSlice
+                    };
+                    keyword_arguments.push(crate::ast::KwArg {
+                        name: name.clone(),
+                        value: self.synthetic_slice_descriptor(&span, kind),
+                    });
+                    descriptors.push(Some(kind));
+                }
             }
         }
         let result = self.infer_method_call(
@@ -871,6 +916,14 @@ impl Checker {
             "__getitem__",
             MethodCallArguments::ordinary(&actual_arguments, &keyword_arguments),
         )?;
+        // A view-typed subscript result (a StringSpan keyword slice) stays
+        // borrowed from its receiver's sources.
+        if self.type_carries_loans(&result) {
+            self.operation_adjustments.borrow_mut().insert(
+                span.clone(),
+                crate::checked::SemanticAdjustment::BorrowViewResult,
+            );
+        }
         self.subscript_descriptors
             .borrow_mut()
             .insert(span, (descriptors, false));
@@ -1405,15 +1458,18 @@ impl Checker {
         })
     }
 
-    /// An origin-bearing pointer designates exactly one checked value, so only
-    /// offset 0 can be dereferenced; any other offset would be out-of-provenance
-    /// access that Mojo leaves undefined.
+    /// An origin-bearing pointer to a precise place designates exactly one
+    /// checked value, so only offset 0 can be dereferenced; any other offset
+    /// would be out-of-provenance access that Mojo leaves undefined. A
+    /// multi-element provenance — an interior-generation domain or an origin
+    /// parameter — dereferences at any offset, with the VM's arena bounds
+    /// check as the dynamic backstop.
     pub(super) fn check_pointer_offset(
         &self,
         origin: &crate::origin::PointerOrigin,
         index: &Expr,
     ) -> Result<(), TypeError> {
-        if origin.as_origin().is_none() {
+        if origin.as_origin().is_none() || origin.multi_element() {
             return Ok(());
         }
         match self.eval_ct(index) {

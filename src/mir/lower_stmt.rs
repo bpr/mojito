@@ -1082,7 +1082,8 @@ impl Flatten<'_> {
                     .zip(&descriptors)
                     .enumerate()
                     .map(|(position, (argument, descriptor))| match argument {
-                        crate::ast::SubscriptArg::Keyword { .. } => {
+                        crate::ast::SubscriptArg::Keyword { .. }
+                        | crate::ast::SubscriptArg::KeywordSlice { .. } => {
                             unreachable!("keyword subscript assignment is rejected at checking")
                         }
                         crate::ast::SubscriptArg::Index(index) => {
@@ -1430,7 +1431,8 @@ impl Flatten<'_> {
                 .iter()
                 .zip(descriptors)
                 .map(|(argument, descriptor)| match argument {
-                    crate::ast::SubscriptArg::Keyword { .. } => {
+                    crate::ast::SubscriptArg::Keyword { .. }
+                    | crate::ast::SubscriptArg::KeywordSlice { .. } => {
                         unreachable!("keyword subscript assignment is rejected at checking")
                     }
                     crate::ast::SubscriptArg::Index(value) => {

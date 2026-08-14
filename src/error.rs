@@ -333,6 +333,11 @@ pub enum RuntimeError {
     /// A valid-Mojo construct that reaches a compiler/backend boundary whose
     /// semantics Mojito does not implement. Carries a feature description.
     Unsupported(String),
+    /// An uncatchable trap: `os.abort` under the CPU-default assertion
+    /// configuration (strict slice bounds, explicit assertion failures).
+    /// Unlike `Raised`, no `try`/`except` observes it; it always propagates
+    /// to the top and ends the program.
+    Abort(String),
 }
 
 impl fmt::Display for LexError {
@@ -693,6 +698,7 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::Raised(value) => write!(f, "unhandled error: {}", value),
             RuntimeError::Unsupported(what) => write!(f, "unsupported feature: {}", what),
+            RuntimeError::Abort(message) => write!(f, "abort: {}", message),
         }
     }
 }

@@ -2314,6 +2314,70 @@ fn single_comparison_stays_infix() {
 }
 
 #[test]
+fn parses_keyword_slice_subscripts() {
+    // A named bracket argument whose value is a slice is a keyword slice
+    // (a MultiIndex with one KeywordSlice argument), preserving omitted
+    // bounds and the explicit-stride marker.
+    assert_eq!(
+        parse_expr("s[byte=1:3]"),
+        Expr::from(ExprKind::MultiIndex {
+            object: ident("s"),
+            args: vec![mojito::ast::SubscriptArg::KeywordSlice {
+                name: "byte".to_string(),
+                lower: Some(int(1)),
+                upper: Some(int(3)),
+                step: None,
+                explicit_step: false,
+            }],
+        })
+    );
+    assert_eq!(
+        parse_expr("s[byte=:3]"),
+        Expr::from(ExprKind::MultiIndex {
+            object: ident("s"),
+            args: vec![mojito::ast::SubscriptArg::KeywordSlice {
+                name: "byte".to_string(),
+                lower: None,
+                upper: Some(int(3)),
+                step: None,
+                explicit_step: false,
+            }],
+        })
+    );
+    assert_eq!(
+        parse_expr("s[byte=::2]"),
+        Expr::from(ExprKind::MultiIndex {
+            object: ident("s"),
+            args: vec![mojito::ast::SubscriptArg::KeywordSlice {
+                name: "byte".to_string(),
+                lower: None,
+                upper: None,
+                step: Some(int(2)),
+                explicit_step: true,
+            }],
+        })
+    );
+    // Mixed with a positional index the subscript stays a MultiIndex in
+    // source order.
+    assert_eq!(
+        parse_expr("s[0, byte=1:]"),
+        Expr::from(ExprKind::MultiIndex {
+            object: ident("s"),
+            args: vec![
+                mojito::ast::SubscriptArg::Index(*int(0)),
+                mojito::ast::SubscriptArg::KeywordSlice {
+                    name: "byte".to_string(),
+                    lower: Some(int(1)),
+                    upper: None,
+                    step: None,
+                    explicit_step: false,
+                },
+            ],
+        })
+    );
+}
+
+#[test]
 fn parses_slice_subscripts() {
     assert_eq!(
         parse_expr("xs[1:2]"),

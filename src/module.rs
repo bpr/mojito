@@ -288,6 +288,9 @@ fn rewrite_expr(
                     }
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
+                    }
+                    | crate::ast::SubscriptArg::KeywordSlice {
+                        lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
                             rewrite_expr(value, names, namespaces);
@@ -1587,6 +1590,8 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.range", "range") => Some("range"),
         ("std.collections.string_dict", "StringDict") => Some("StringDict"),
         ("std.memory", "alloc") => Some("alloc"),
+        ("std.span", "Span") => Some("Span"),
+        ("std.string", "StringSpan") => Some("StringSpan"),
         _ => None,
     }
 }

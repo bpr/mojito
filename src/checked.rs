@@ -350,6 +350,16 @@ pub enum SemanticAdjustment {
     MaterializeLiteral(Ty),
     BorrowShared,
     BorrowMutable,
+    /// Constructor arguments bound to origin-solving `ref` parameters: the
+    /// constructed aggregate borrows each listed argument's place, so the
+    /// binding's loans keep the source alive (a view constructor's whole
+    /// contract). Entries are (positional argument index, loan mutability).
+    BorrowRefArguments {
+        arguments: Vec<(usize, bool)>,
+    },
+    /// A subscript result that is itself a borrowed view (a Span
+    /// sub-slice): the result binding inherits its receiver's loans.
+    BorrowViewResult,
     /// A place expression occurs in an ownership-producing context (binding,
     /// assignment, return, or another consuming slot) and was proven Copyable
     /// in the checker's active generic environment. MIR must materialize an
@@ -491,6 +501,13 @@ pub enum SemanticAdjustment {
     /// `pointer.unsafe_offset(i)`: provenance-preserving element arithmetic,
     /// lowered as the ordinary pointer `+` operation.
     PointerOffset,
+    /// `pointer.origin_cast[...]()`: a checked provenance rebind. The runtime
+    /// value is unchanged, so lowering forwards the receiver register; the
+    /// resolved target origin is retained so aggregate-origin bookkeeping can
+    /// carry the rebound loan without re-resolving the parameter argument.
+    PointerOriginCast {
+        origin: crate::origin::PointerOrigin,
+    },
     /// Construct compiler-private inline uninit storage (`__UninitStorage[T]()`
     /// or `__UninitStorage[T](value^)`). Only bundled standard-library sources
     /// may acquire this adjustment.
@@ -1231,6 +1248,9 @@ fn build_checked_expressions(
                             crate::ast::SubscriptArg::Index(value)
                             | crate::ast::SubscriptArg::Keyword { value, .. } => add(self, value),
                             crate::ast::SubscriptArg::Slice {
+                                lower, upper, step, ..
+                            }
+                            | crate::ast::SubscriptArg::KeywordSlice {
                                 lower, upper, step, ..
                             } => {
                                 for value in [lower, upper, step].into_iter().flatten() {

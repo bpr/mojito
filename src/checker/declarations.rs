@@ -1128,6 +1128,36 @@ impl Checker {
     /// Type a struct construction `Name[param_args](args)` (the fieldwise
     /// constructor). Type parameters are supplied explicitly or inferred from the
     /// field arguments; value parameters must be supplied explicitly.
+    /// Record the `ref [origin]` constructor-argument borrows for a
+    /// construction call: the constructed aggregate keeps each lent place
+    /// alive through the binding's loans (a view constructor's contract).
+    /// Positional slots only; keyword-bound reference parameters have no
+    /// current stdlib surface.
+    fn record_constructor_reference_borrows(
+        &self,
+        span: &SourceSpan,
+        ref_params: &[Option<crate::origin::RefSig>],
+        slots: &[ArgSlot],
+    ) {
+        let mut arguments = Vec::new();
+        for (parameter, signature) in ref_params.iter().enumerate() {
+            let Some(signature) = signature else { continue };
+            let Some(ArgSlot::Positional(index)) = slots.get(parameter) else {
+                continue;
+            };
+            arguments.push((
+                *index,
+                signature.mutability == crate::origin::SigMutability::Mutable,
+            ));
+        }
+        if !arguments.is_empty() {
+            self.operation_adjustments.borrow_mut().insert(
+                span.clone(),
+                crate::checked::SemanticAdjustment::BorrowRefArguments { arguments },
+            );
+        }
+    }
+
     pub(super) fn infer_construction(
         &self,
         span: SourceSpan,
@@ -1236,7 +1266,7 @@ impl Checker {
                 if let Some(target) = &selected.lowered_name {
                     self.overload_targets
                         .borrow_mut()
-                        .insert(span, target.clone());
+                        .insert(span.clone(), target.clone());
                 }
                 self.record_selected_method_conversions("__init__", &selected, args, kwargs)?;
                 // Constructor calls use the same reference-parameter handles as
@@ -1252,6 +1282,11 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
+                self.record_constructor_reference_borrows(
+                    &span,
+                    &selected.ref_params,
+                    &selected.slots,
+                );
                 for (index, slot) in selected.slots.iter().enumerate() {
                     let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
                         selected.conventions.get(index)
@@ -1324,6 +1359,7 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
+                self.record_constructor_reference_borrows(&span, &sig.ref_params, &slots);
                 return Ok(self.struct_instance_type(name, tyargs));
             }
             let decls = info.decls.clone();
@@ -1457,7 +1493,7 @@ impl Checker {
                 if overloaded {
                     self.overload_targets
                         .borrow_mut()
-                        .insert(span, method_lowered_name(name, "__init__", &sig));
+                        .insert(span.clone(), method_lowered_name(name, "__init__", &sig));
                 }
                 self.solve_call_origins(
                     &slots,
@@ -1467,6 +1503,7 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
+                self.record_constructor_reference_borrows(&span, &sig.ref_params, &slots);
                 return Ok(self.struct_instance_type(name, tyargs));
             }
             return Err(TypeError::BadCall {

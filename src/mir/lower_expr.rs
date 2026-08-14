@@ -1293,6 +1293,18 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                // `pointer.origin_cast[...]()` retypes provenance only: the
+                // runtime value is the receiver, unchanged, and the origin
+                // parameter argument never lowers (origins erase).
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        crate::SemanticAdjustment::PointerOriginCast { .. }
+                    )
+                }) && let ExprKind::Member { object, .. } = &callee.kind
+                {
+                    return self.expr(object);
+                }
                 // Parameterized SIMD methods (`v.cast[DType.<dt>]()`) carry
                 // their checker-resolved payload in the adjustment; the
                 // receiver is the member callee's object.
@@ -2416,7 +2428,27 @@ impl Flatten<'_> {
                             let (register, place) = self.lower_call_argument(value);
                             kwarg_places.push(place);
                             parameter_sources.push((value.source_span(), register));
-                            kwargs.push((name.clone(), register));
+                            kwargs.push((name.clone(), MirSubscriptArg::Index(register)));
+                            None
+                        }
+                        crate::ast::SubscriptArg::KeywordSlice {
+                            name,
+                            lower,
+                            upper,
+                            step,
+                            ..
+                        } => {
+                            kwarg_places.push(None);
+                            kwargs.push((
+                                name.clone(),
+                                MirSubscriptArg::Slice {
+                                    kind: descriptor
+                                        .expect("keyword slice argument has descriptor kind"),
+                                    lower: lower.as_ref().map(|value| self.expr(value)),
+                                    upper: upper.as_ref().map(|value| self.expr(value)),
+                                    step: step.as_ref().map(|value| self.expr(value)),
+                                },
+                            ));
                             None
                         }
                         crate::ast::SubscriptArg::Index(value) => {

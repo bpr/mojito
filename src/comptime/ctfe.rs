@@ -557,6 +557,9 @@ impl<'a> Elab<'a> {
                         }
                         crate::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
+                        }
+                        | crate::ast::SubscriptArg::KeywordSlice {
+                            lower, upper, step, ..
                         } => {
                             for value in [lower, upper, step].into_iter().flatten() {
                                 self.rewrite_vm_ctfe_expr(value, scope)?;
@@ -803,6 +806,9 @@ impl<'a> Elab<'a> {
                             self.vm_ctfe_safe_expr(value, visiting, needed)
                         }
                         crate::ast::SubscriptArg::Slice {
+                            lower, upper, step, ..
+                        }
+                        | crate::ast::SubscriptArg::KeywordSlice {
                             lower, upper, step, ..
                         } => [lower, upper, step]
                             .into_iter()

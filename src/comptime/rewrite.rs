@@ -182,6 +182,9 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     | crate::ast::SubscriptArg::Keyword { value, .. } => rewrite_expr(value, subs),
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
+                    }
+                    | crate::ast::SubscriptArg::KeywordSlice {
+                        lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
                             rewrite_expr(value, subs);
@@ -1032,6 +1035,9 @@ impl PackRewriter {
                             self.expand_expression(value)
                         }
                         crate::ast::SubscriptArg::Slice {
+                            lower, upper, step, ..
+                        }
+                        | crate::ast::SubscriptArg::KeywordSlice {
                             lower, upper, step, ..
                         } => {
                             for value in [lower, upper, step].into_iter().flatten() {
@@ -1920,6 +1926,9 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
                     crate::ast::SubscriptArg::Index(value)
                     | crate::ast::SubscriptArg::Keyword { value, .. } => retype_expr(value, subs),
                     crate::ast::SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    }
+                    | crate::ast::SubscriptArg::KeywordSlice {
                         lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {

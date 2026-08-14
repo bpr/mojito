@@ -787,6 +787,9 @@ fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<String>) {
                     }
                     crate::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
+                    }
+                    | crate::ast::SubscriptArg::KeywordSlice {
+                        lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
                             collect_vm_ctfe_expr_calls(value, calls);

@@ -279,11 +279,15 @@ pub(crate) fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg
             args,
             object_place,
             arg_places,
+            kwargs,
             call,
             ..
         } => {
             out.push(*object);
             for argument in args {
+                subscript_arg_regs(argument, out);
+            }
+            for (_, argument) in kwargs {
                 subscript_arg_regs(argument, out);
             }
             if let Some(object_place) = object_place {
@@ -380,6 +384,23 @@ fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     }
     if contains_type_param(found) || contains_type_param(expected) {
         return true;
+    }
+    // Pointer provenance erases from the runtime ABI: `origin_cast` retypes
+    // a pointer without any runtime operation (lowering forwards the
+    // receiver register), so ABI compatibility compares elements only. The
+    // checker and ownership analysis own origin discipline.
+    if let (
+        Ty::Pointer {
+            element: found_element,
+            ..
+        },
+        Ty::Pointer {
+            element: expected_element,
+            ..
+        },
+    ) = (found, expected)
+    {
+        return types_compatible(found_element, expected_element);
     }
     // A bare `Struct(name, [])` is the established erased spelling for a
     // receiver or synthesized construction of any instantiation of `name`.
@@ -858,7 +879,8 @@ fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
                         ReferencePermission::Immutable
                     }
                 }
-                PointerOrigin::Param { mutability, .. } => {
+                PointerOrigin::Param { mutability, .. }
+                | PointerOrigin::SelfPlace { mutability, .. } => {
                     ReferencePermission::from_mutability(*mutability)
                 }
                 PointerOrigin::Static
@@ -2419,7 +2441,7 @@ fn verify_instruction(
                 .collect::<Vec<_>>();
             let keyword_types = kwargs
                 .iter()
-                .map(|(_, register)| function.reg_types.get(&register.0).cloned())
+                .map(|(_, argument)| subscript_argument_ty(function, argument))
                 .collect::<Vec<_>>();
             if let Some(call) = call {
                 verify_subscript_call(
