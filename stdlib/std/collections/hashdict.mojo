@@ -99,7 +99,7 @@ struct HashDict[K: Hashable & Equatable & Copyable & Movable, V: Copyable & Mova
     def get(self, key: Self.K) -> Optional[Self.V]:
         var i: Int = self.find_index(key)
         if i >= 0:
-            return Optional[Self.V](self.entries._get_copy(i).value, True)
+            return Optional[Self.V](self.entries._get_copy(i).value)
         return Optional[Self.V]()
 
     def get(self, key: Self.K, default: Self.V) -> Self.V:

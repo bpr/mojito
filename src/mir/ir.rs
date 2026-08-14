@@ -649,6 +649,23 @@ pub enum MirInstr {
         index: usize,
         checked: bool,
     },
+    /// In-place placement replacement (`set(init_with=…)`): invoke the
+    /// zero-parameter `factory` callable value, store its result as the
+    /// payload selected by `index`, and destroy the previous payload.
+    VariantSetInitWith {
+        dest: Reg,
+        place: MirPlace,
+        index: usize,
+        factory: Reg,
+    },
+    /// Consuming teardown (`deinit_with`): destructure the moved variant
+    /// value and invoke the single-parameter consuming `handler` callable
+    /// value with the active payload, whatever its runtime tag.
+    VariantDeinitWith {
+        dest: Reg,
+        variant: Reg,
+        handler: Reg,
+    },
     /// Replace the active payload without destroying it, returning ownership of
     /// that previous payload to the caller.
     VariantReplace {

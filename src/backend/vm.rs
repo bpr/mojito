@@ -708,6 +708,59 @@ impl VmBackend {
         })
     }
 
+    /// Invoke a callable *value* (a plain function or a closure) with owned
+    /// positional arguments — the narrow synchronous channel used by the
+    /// Variant owning operations (`set(init_with=…)`, `deinit_with`), whose
+    /// handlers were checked to be non-raising with owned parameters only.
+    /// Nominal callable structs are not accepted here: their `__call__`
+    /// dispatch needs the full indirect-call contract.
+    fn invoke_callable_value(
+        &mut self,
+        prog: &Prog,
+        callable: Value,
+        arguments: Vec<Value>,
+        caller: (FrameId, usize, &mut Vec<Value>),
+    ) -> Result<Value, RuntimeError> {
+        let (function, captures) = match &callable {
+            Value::Function(function) => (function.clone(), Vec::new()),
+            Value::Closure { function, captures } => {
+                let mut materialized = Vec::with_capacity(captures.len());
+                for capture in captures {
+                    if capture.owned {
+                        return Err(RuntimeError::Unsupported(
+                            "vm: an owned-capture closure is not supported as a Variant \
+                             owning-operation handler"
+                                .to_string(),
+                        ));
+                    }
+                    materialized.push(capture.value.clone());
+                }
+                (function.clone(), materialized)
+            }
+            value => {
+                return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
+            }
+        };
+        let mut positional = captures;
+        positional.extend(arguments);
+        let index = prog
+            .index_of(&function)
+            .ok_or_else(|| RuntimeError::NotCallable(function.clone()))?;
+        // The caller-reachable channel keeps captured references into the
+        // invoking frame valid for the child call, exactly like the checked
+        // iterator calls.
+        let (frame_id, function_index, variables) = caller;
+        let (value, _, _) = self.call_frame_caller_reachable(
+            prog,
+            index,
+            positional,
+            frame_id,
+            function_index,
+            variables,
+        )?;
+        Ok(value)
+    }
+
     fn construct_via_copy(
         &mut self,
         prog: &Prog,
@@ -1695,7 +1748,18 @@ impl VmBackend {
                     };
                     d.mut_self_methods.contains(key)
                 });
-                if is_mut
+                // A named destructor (`deinit self`) also writes its final
+                // receiver state back: the caller's trailing consumption then
+                // destroys exactly the residual fields the body left, instead
+                // of a stale pre-call clone (which would re-drop moved fields
+                // and double-free drained pointer-backed containers).
+                let is_named_destructor = prog.mir.functions[fidx]
+                    .1
+                    .deinit_params
+                    .first()
+                    .copied()
+                    .unwrap_or(false);
+                if (is_mut || is_named_destructor)
                     && !ref_params.first().copied().unwrap_or(false)
                     && let Some(place) = recv_place
                 {
@@ -1811,8 +1875,25 @@ impl VmBackend {
             name
         };
         let arguments = bound
-            .map(|value| vec![Value::Int(value), Value::Bool(true)])
+            .map(|value| vec![Value::Int(value)])
             .unwrap_or_default();
+        // Optional's overloaded constructors include keyword-only forms
+        // (`init_with=`, `copy:`) at the same arity as the positional value
+        // constructor, so arity-based overload selection is ambiguous here.
+        // Select the unique positional (non-`$kw$`) overload explicitly.
+        let init = format!("{name}.__init__");
+        let expected_params = arguments.len() + 1;
+        let mut constructors = prog.mir.functions.iter().filter(|(fname, function)| {
+            crate::symbol::is_overload_of(fname, &init)
+                && function.n_params == expected_params
+                && !fname.contains("$kw$")
+        });
+        let target = constructors.next().map(|(fname, _)| fname.clone());
+        if let Some(target) = target
+            && constructors.next().is_none()
+        {
+            return self.construct_via_init(prog, &name, Some(&target), arguments, Vec::new(), &[]);
+        }
         self.call_named(prog, &name, arguments, Vec::new(), &[])
     }
 

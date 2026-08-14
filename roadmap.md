@@ -92,9 +92,7 @@ Governing rule: Mojito matches or subsets Mojo — it accepts what the audited
 head accepts, with extensions tolerable only as (a) temporary bridges tracking
 upstream's own deprecation state or (b) implementations of features on Mojo's
 own roadmap/proposals, citing the upstream evidence in the parity records and
-re-probed at every re-pin (e.g. the `_finish` named-destructor convention
-models the linear-types proposal; expected struct extensions would also
-qualify). The extension alignment sweep for the `ae386d1b204` audit is done
+re-probed at every re-pin (e.g. expected struct extensions would qualify). The extension alignment sweep for the `ae386d1b204` audit is done
 (see the changelog: `unified {...}`, bare `move:`, the competing `__setitem__`
 pair, `def(...)`-typed storage, captured-Origin specialization values, and
 unqualified stateful downward funargs now reject; `objs[0](args)` is recorded
@@ -102,15 +100,6 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **Linear containers and owning APIs (nightly §6)** — depends on
-  lifecycle canonicalization; independent of Array and Pointer.
-  - loosen `Optional`/`Variant` to `AnyType` with `init_with=` placement
-    construction and `deinit_with`
-  - `clear_with`, displacement-returning `insert`, and consuming iteration
-    by declared family
-  - renames (`Variant.take` → `unwrap`, `OwnedPointer.take` → `into_inner`)
-  - quarantine or remove owned iteration for non-`Deinitable` elements where
-    the head requires `Movable & Deinitable`
 - [ ] **Subtree origins and temporary-origin inference (nightly §7)** —
   follows the container work; the audited stdlib does not yet depend on it.
   - add the experimental `Origin._subtree` as a separate conservative origin
@@ -201,7 +190,6 @@ specifications and upstream evidence), in this order:
   slice, optional/variant, and String result APIs
   (`replace`/`join`/`strip`/...) demand-first from conformance cases. For
   `Variant`, finish:
-  - `destroy_with`
   - representation writing
   - fully generic TypeList-driven conditional protocol synthesis rather than
     adding compiler special cases for every standard-library method

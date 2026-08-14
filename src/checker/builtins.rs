@@ -490,6 +490,10 @@ pub(crate) fn callable_environment_coerces(
             CallableEnvironment::Thin | CallableEnvironment::Capturing(_),
             CallableEnvironment::Default,
         ) => true,
+        // A non-capturing callable satisfies every `capturing[...]` contract:
+        // its capture set is empty, a subset of any allowed origin set
+        // (upstream accepts a thin function for a capturing funarg).
+        (CallableEnvironment::Thin, CallableEnvironment::Capturing(_)) => true,
         (
             CallableEnvironment::Capturing(CaptureOriginSet::Concrete(_)),
             CallableEnvironment::Capturing(CaptureOriginSet::Infer | CaptureOriginSet::Param(_)),

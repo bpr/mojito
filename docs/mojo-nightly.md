@@ -246,6 +246,25 @@ and [`3e1a67e8`](https://github.com/modular/modular/commit/3e1a67e85ff445774155c
 
 ### 6. Align linear containers and owning APIs
 
+Status 2026-08-14: DONE — owned iteration tightened to the head's
+`Movable & Deinitable` bounds (the `_finish` linear-element extension is
+removed; linear variadic-pack forwarding remains); Optional rebuilt as the
+`T: AnyType` owning container with `init_with=` placement construction,
+`deinit_with`, `deinit_assert_empty`, linear-capable `map`/`and_then`, and
+Iterable (value-yielding borrowed iteration; `for ref` over Optional is a
+recorded subset gap) plus owned iteration; Variant renamed to
+`unwrap`/`unsafe_unwrap` with `set(init_with=…)`, an all-alternatives
+`Deinitable` gate on both `set` forms, and a tag-dispatched `deinit_with`;
+the family APIs (`deinit_with` on List/Array/Dict/Set/StringDict/Tuple,
+`clear_with` on Dict/Set, displacement-returning `insert` on
+Dict/Set/StringDict) landed; and a minimal `OwnedPointer` shipped with
+`into_inner` from day one. Deque and LinkedList do not exist in Mojito, and
+HashDict/HashSet stay outside the declared family. Exact upstream API
+shapes are pinned by the §6 probe set in `conformance/probes/` (handler
+conventions, drain order, `insert` semantics, `OwnedPointer`'s `p[]`
+dereference, the mut-receiver UnsafeMaybeUninit take, the owned-iteration
+declared family) — run them at the next re-pin.
+
 Lifecycle is the prerequisite here; the Optional and Variant work can land
 independently of Array and Pointer. Loosen both `Optional[T]` and
 `Variant[*Ts]` to `AnyType`, add their `init_with=` placement constructors,

@@ -1115,6 +1115,63 @@ impl VmBackend {
                 // instruction, so ownership of the payload is transferred out.
                 regs[dest.0 as usize] = value.as_ref().clone();
             }
+            MirInstr::VariantSetInitWith {
+                dest,
+                place,
+                index,
+                factory,
+            } => {
+                let old = load_place(vars, regs, place)?;
+                let Value::Variant { alternatives, .. } = &old else {
+                    return Err(RuntimeError::TypeError(format!(
+                        "Variant.set applied to {}",
+                        crate::runtime::type_name(&old)
+                    )));
+                };
+                let selected = alternatives.get(*index).cloned().ok_or_else(|| {
+                    RuntimeError::TypeError("Variant.set has an invalid checked tag".to_string())
+                })?;
+                let factory = regs[factory.0 as usize].clone();
+                let produced = self.invoke_callable_value(
+                    prog,
+                    factory,
+                    Vec::new(),
+                    (frame_id, function, vars),
+                )?;
+                let payload = crate::runtime::coerce_checked(produced, &selected);
+                let replacement = Value::Variant {
+                    alternatives: alternatives.clone(),
+                    index: *index,
+                    value: Box::new(payload),
+                };
+                self.store_at_place(prog, place, replacement, regs, vars)?;
+                self.drop_value(prog, old)?;
+                regs[dest.0 as usize] = Value::None;
+            }
+            MirInstr::VariantDeinitWith {
+                dest,
+                variant,
+                handler,
+            } => {
+                let Value::Variant { value, .. } = &regs[variant.0 as usize] else {
+                    return Err(RuntimeError::TypeError(format!(
+                        "Variant.deinit_with applied to {}",
+                        crate::runtime::type_name(&regs[variant.0 as usize])
+                    )));
+                };
+                // The receiver place was moved to a tombstone before this
+                // instruction; the handler consumes the payload under the
+                // runtime tag.
+                let payload = value.as_ref().clone();
+                let handler = regs[handler.0 as usize].clone();
+                self.invoke_callable_value(
+                    prog,
+                    handler,
+                    vec![payload],
+                    (frame_id, function, vars),
+                )?;
+                regs[dest.0 as usize] = Value::None;
+            }
             MirInstr::VariantSet {
                 dest,
                 place,

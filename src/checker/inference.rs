@@ -1228,6 +1228,22 @@ impl Checker {
         let ExprKind::Member { object, field } = &callee.kind else {
             return None;
         };
+        self.infer_variant_method(span, object, field, param_args, args, kwargs)
+    }
+
+    /// The shared Variant-intrinsic dispatch, reachable both from the
+    /// parameterized `Invoke(Member)` spelling (`v.unwrap[T]()`) and the
+    /// ordinary method-call spelling for parameterless operations
+    /// (`v^.deinit_with(handler)`).
+    pub(super) fn infer_variant_method(
+        &self,
+        span: SourceSpan,
+        object: &Expr,
+        field: &str,
+        param_args: &[crate::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
         let object_ty = match self.infer(object) {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
@@ -1236,25 +1252,69 @@ impl Checker {
             return None;
         };
         if !matches!(
-            field.as_str(),
+            field,
             "isa"
                 | "is_type_supported"
                 | "set"
-                | "take"
-                | "unsafe_take"
+                | "unwrap"
+                | "unsafe_unwrap"
                 | "replace"
                 | "unsafe_replace"
+                | "deinit_with"
         ) {
             return None;
         }
         Some((|| {
+            // `set(init_with=…)` is the keyword-selected placement form: the
+            // zero-parameter factory's result replaces the payload in place.
+            if field == "set"
+                && let [kwarg] = kwargs
+                && kwarg.name == "init_with"
+            {
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: "Variant.set".to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                let (index, alternative) = self.variant_alternative(&alternatives, param_args)?;
+                self.require_variant_set_deinitable(&alternatives)?;
+                self.check_place(object)?;
+                let factory = self.infer(&kwarg.value)?;
+                let factory_ok = matches!(
+                    &factory,
+                    Ty::Func {
+                        params,
+                        raises: false,
+                        ret,
+                        ..
+                    } if params.is_empty() && coerces(ret, &alternative)
+                );
+                if !factory_ok {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("def() -> {alternative}"),
+                        found: factory.to_string(),
+                        context: "'init_with' factory for 'Variant.set'".to_string(),
+                    });
+                }
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    crate::checked::SemanticAdjustment::VariantSetInitWith {
+                        alternatives,
+                        index,
+                    },
+                );
+                self.record_interior_invalidation(span, object);
+                return Ok(Ty::None);
+            }
             if !kwargs.is_empty() {
                 return Err(TypeError::BadCall {
                     func: format!("Variant.{field}"),
                     reason: "keyword arguments are not supported".to_string(),
                 });
             }
-            match field.as_str() {
+            match field {
                 "isa" => {
                     let (index, _) = self.variant_alternative(&alternatives, param_args)?;
                     if !args.is_empty() {
@@ -1308,6 +1368,7 @@ impl Checker {
                             got: args.len(),
                         });
                     }
+                    self.require_variant_set_deinitable(&alternatives)?;
                     self.check_place(object)?;
                     let actual = self.infer(&args[0])?;
                     if !self.record_implicit_conversion(&args[0], &actual, &alternative)? {
@@ -1328,7 +1389,7 @@ impl Checker {
                     self.record_interior_invalidation(span, object);
                     Ok(Ty::None)
                 }
-                "take" | "unsafe_take" => {
+                "unwrap" | "unsafe_unwrap" => {
                     let (index, alternative) =
                         self.variant_alternative(&alternatives, param_args)?;
                     if !args.is_empty() {
@@ -1349,11 +1410,40 @@ impl Checker {
                         crate::checked::SemanticAdjustment::VariantTake {
                             alternatives,
                             index,
-                            checked: field == "take",
+                            checked: field == "unwrap",
                         },
                     );
                     self.record_interior_invalidation(span, object);
                     Ok(alternative)
+                }
+                "deinit_with" => {
+                    if !param_args.is_empty() {
+                        return Err(TypeError::WrongTypeArgCount {
+                            name: "Variant.deinit_with".to_string(),
+                            expected: 0,
+                            got: param_args.len(),
+                        });
+                    }
+                    if args.len() != 1 {
+                        return Err(TypeError::ArityMismatch {
+                            name: "Variant.deinit_with".to_string(),
+                            expected: 1,
+                            got: args.len(),
+                        });
+                    }
+                    if !is_place_expr(object) {
+                        return Err(TypeError::BadCall {
+                            func: "Variant.deinit_with".to_string(),
+                            reason: "consuming receiver must be an owned place".to_string(),
+                        });
+                    }
+                    self.check_variant_deinit_handler(&alternatives, &args[0])?;
+                    self.operation_adjustments.borrow_mut().insert(
+                        span.clone(),
+                        crate::checked::SemanticAdjustment::VariantDeinitWith { alternatives },
+                    );
+                    self.record_interior_invalidation(span, object);
+                    Ok(Ty::None)
                 }
                 "replace" | "unsafe_replace" => {
                     if param_args.len() != 2 {
@@ -1428,6 +1518,115 @@ impl Checker {
                 _ => unreachable!("checked Variant operation"),
             }
         })())
+    }
+
+    /// `Variant.set` implicitly destroys the previous payload under a
+    /// statically unknown tag, so every alternative must be `Deinitable`
+    /// (§6's conditional lifecycle contract for in-place replacement).
+    fn require_variant_set_deinitable(&self, alternatives: &[Ty]) -> Result<(), TypeError> {
+        for alternative in alternatives {
+            if !self.is_deinitable(alternative) {
+                return Err(TypeError::TraitNotSatisfied {
+                    param: "Variant.set alternative".to_string(),
+                    ty: alternative.to_string(),
+                    trait_name: "Deinitable".to_string(),
+                    reason: self
+                        .trait_failure_reason(alternative, "Deinitable")
+                        .or(Some(
+                        "in-place replacement destroys the previous payload under a runtime tag"
+                            .to_string(),
+                    )),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate a `Variant.deinit_with` handler: one non-raising callable
+    /// consuming a single payload parameter and returning `None`. A generic
+    /// handler must admit every alternative under its declared parameter
+    /// bounds (the VM applies it type-erased per tag); a monomorphic handler
+    /// only covers a variant whose alternatives all coerce to its parameter.
+    fn check_variant_deinit_handler(
+        &self,
+        alternatives: &[Ty],
+        handler: &Expr,
+    ) -> Result<(), TypeError> {
+        let handler_ty = self.infer(handler)?;
+        let reject = |found: &Ty| TypeError::TypeMismatch {
+            expected: "def[T: AnyType](deinit element: T) handling every alternative".to_string(),
+            found: found.to_string(),
+            context: "'Variant.deinit_with' handler".to_string(),
+        };
+        match &handler_ty {
+            Ty::Func {
+                params,
+                conventions,
+                raises: false,
+                ret,
+                ..
+            } if params.len() == 1 && **ret == Ty::None => {
+                if !matches!(
+                    conventions.first(),
+                    Some(Some(
+                        crate::ast::ArgConvention::Deinit | crate::ast::ArgConvention::Var
+                    ))
+                ) {
+                    return Err(reject(&handler_ty));
+                }
+                for alternative in alternatives {
+                    if !coerces(alternative, &params[0]) {
+                        return Err(reject(&handler_ty));
+                    }
+                }
+                Ok(())
+            }
+            Ty::GenericFunc {
+                decls,
+                params,
+                conventions,
+                raises: false,
+                ret,
+                ..
+            } if params.len() == 1 && **ret == Ty::None => {
+                if !matches!(
+                    conventions.first(),
+                    Some(Some(
+                        crate::ast::ArgConvention::Deinit | crate::ast::ArgConvention::Var
+                    ))
+                ) {
+                    return Err(reject(&handler_ty));
+                }
+                let Ty::Param { name, .. } = &params[0] else {
+                    return Err(reject(&handler_ty));
+                };
+                let bounds = decls.iter().find_map(|decl| match decl {
+                    crate::types::ParamDecl::Type {
+                        name: decl_name,
+                        bounds,
+                        ..
+                    } if decl_name == name => Some(bounds.clone()),
+                    _ => None,
+                });
+                let Some(bounds) = bounds else {
+                    return Err(reject(&handler_ty));
+                };
+                for alternative in alternatives {
+                    for bound in &bounds {
+                        if !self.conforms_to(alternative, bound) {
+                            return Err(TypeError::TraitNotSatisfied {
+                                param: "Variant.deinit_with alternative".to_string(),
+                                ty: alternative.to_string(),
+                                trait_name: bound.clone(),
+                                reason: self.trait_failure_reason(alternative, bound),
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
+            other => Err(reject(other)),
+        }
     }
 
     pub(super) fn variant_alternative(

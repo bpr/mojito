@@ -98,10 +98,34 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     def bucket_count(self) -> Int:
         return self.nbuckets
 
+    # Displacement-returning insertion: replacing an existing key returns the
+    # previous value, a fresh key returns an empty Optional.
+    def insert(mut self, key: StringLiteral, value: Self.V) -> Optional[
+        Self.V
+    ] where conforms_to(Self.V, Deinitable):
+        var existing: Int = self.find_index(key)
+        if existing >= 0:
+            var displaced = Optional[Self.V](self.entries._get_copy(existing).value)
+            self.entries[existing] = DictEntry[StringLiteral, Self.V](key, value)
+            return displaced^
+        self[key] = value
+        return Optional[Self.V]()
+
+    # Consuming teardown: every entry is handed to the consuming handler; the
+    # bucket index holds only integers and drops with the shell.
+    def deinit_with(
+        deinit self,
+        elt_handler: def(deinit key: StringLiteral, deinit value: Self.V) capturing[_],
+        /,
+    ):
+        while len(self.entries) > 0:
+            var entry = self.entries.pop()
+            elt_handler(entry.key^, entry.value^)
+
     def get(self, key: StringLiteral) -> Optional[Self.V]:
         var i: Int = self.find_index(key)
         if i >= 0:
-            return Optional[Self.V](self.entries._get_copy(i).value, True)
+            return Optional[Self.V](self.entries._get_copy(i).value)
         return Optional[Self.V]()
 
     def get(self, key: StringLiteral, default: Self.V) -> Self.V:

@@ -73,7 +73,9 @@ pub(crate) fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>
         | MirInstr::VariantIs { dest, .. }
         | MirInstr::VariantGet { dest, .. }
         | MirInstr::VariantSet { dest, .. }
+        | MirInstr::VariantSetInitWith { dest, .. }
         | MirInstr::VariantTake { dest, .. }
+        | MirInstr::VariantDeinitWith { dest, .. }
         | MirInstr::VariantReplace { dest, .. }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(*dest),
@@ -318,6 +320,18 @@ pub(crate) fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg
             out.push(*variant)
         }
         MirInstr::VariantTake { variant, .. } => out.push(*variant),
+        MirInstr::VariantDeinitWith {
+            variant, handler, ..
+        } => {
+            out.push(*variant);
+            out.push(*handler);
+        }
+        MirInstr::VariantSetInitWith {
+            place: p, factory, ..
+        } => {
+            place(p, out);
+            out.push(*factory);
+        }
         MirInstr::VariantSet {
             place: p, value, ..
         } => {
@@ -3509,6 +3523,7 @@ fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
         | MirInstr::StoreRef { place, .. }
         | MirInstr::LoadPlace { place, .. }
         | MirInstr::VariantSet { place, .. }
+        | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
         | MirInstr::ConsumePlace { place, .. } => vec![place],
         MirInstr::MakeClosure { captures, .. } => {

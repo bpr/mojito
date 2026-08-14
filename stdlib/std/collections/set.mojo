@@ -1,5 +1,6 @@
 from std.collections.list import List, _ListIter
 from std.iterable import Iterable
+from std.optional import Optional
 
 struct Set[T: Equatable & Copyable & Movable](
     Copyable,
@@ -47,14 +48,37 @@ struct Set[T: Equatable & Copyable & Movable](
         if not (value in self):
             self.items.append(value^)
 
+    # Displacement-returning insertion: replacing an equal element returns the
+    # previously stored one, a fresh element returns an empty Optional.
+    def insert(mut self, var value: Self.T) -> Optional[Self.T] where conforms_to(
+        Self.T, Deinitable
+    ):
+        var i = self.items.index(value)
+        if i >= 0:
+            var displaced = Optional[Self.T](self.items._get_copy(i))
+            self.items[i] = value^
+            return displaced^
+        self.items.append(value^)
+        return Optional[Self.T]()
+
+    # Drain every element through the caller-supplied consuming handler,
+    # leaving the set empty and reusable.
+    def clear_with(mut self, elt_handler: def(deinit element: Self.T) capturing[_], /):
+        while len(self.items) > 0:
+            elt_handler(self.items.pop())
+
+    # Consuming teardown: `clear_with` under a consumed receiver.
+    def deinit_with(deinit self, elt_handler: def(deinit element: Self.T) capturing[_], /):
+        while len(self.items) > 0:
+            elt_handler(self.items.pop())
+
     def __len__(self) -> Int:
         return len(self.items)
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         # Construct the borrowed iterator directly: an explicit
         # `self.items.__iter__()` call is ambiguous between the borrowed and
-        # owned overloads now that owned iteration is not gated on
-        # `Deinitable` elements.
+        # owned List overloads.
         ref source = self.items
         return _ListIter[Self.T](source, 0)
 

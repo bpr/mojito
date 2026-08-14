@@ -1489,6 +1489,8 @@ impl Checker {
                             list_element(ty).is_some()
                                 || dict_elements(ty).is_some()
                                 || array_element(ty).is_some()
+                                || crate::types::optional_element(ty).is_some()
+                                || crate::types::owned_pointer_element(ty).is_some()
                         }) && is_bundled_collection_source(e.source.as_deref());
                     if !origin_is_within(&actual, &allowed) && !bundled_collection_interior_bridge {
                         return Err(TypeError::ReturnsReferenceToLocal);

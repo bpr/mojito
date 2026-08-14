@@ -266,7 +266,6 @@ impl Checker {
                     prepare: Vec::new(),
                     has_next: None,
                     next: None,
-                    finish: None,
                     exhaustion: None,
                 },
             )
@@ -282,6 +281,7 @@ impl Checker {
                 return Ok(builtin(Ty::Int));
             }
             if let Some(element) = list_element(ty).or_else(|| set_element(ty)) {
+                self.require_owned_iteration_element(mode, element)?;
                 return Ok(builtin(element.clone()));
             }
             if let Some((key, _)) = dict_elements(ty) {
@@ -339,7 +339,6 @@ impl Checker {
                                 crate::checked::CheckedResultAdapter::CopyIteratorReference,
                             ),
                         })),
-                        finish: None,
                         exhaustion: None,
                     },
                 ))
@@ -383,7 +382,7 @@ impl Checker {
             .methods
             .get("__iter__")
             .ok_or_else(|| no_method(c_ty, "__iter__"))?;
-        let matching = candidates
+        let convention_matched = candidates
             .iter()
             .filter(|sig| match mode {
                 IterationMode::Owned => sig.self_convention == Some(crate::ast::ArgConvention::Var),
@@ -392,9 +391,12 @@ impl Checker {
                     None | Some(crate::ast::ArgConvention::Read | crate::ast::ArgConvention::Ref)
                 ),
             })
+            .collect::<Vec<_>>();
+        let matching = convention_matched
+            .iter()
             .filter_map(|sig| {
                 self.instantiate_iteration_method(cname, cinfo, ctargs, sig)
-                    .map(|(ret, _, error)| (sig, ret, error))
+                    .map(|(ret, _, error)| (*sig, ret, error))
             })
             .collect::<Vec<_>>();
         let [(iter_sig, it_ty, iter_error)] = matching.as_slice() else {
@@ -403,6 +405,16 @@ impl Checker {
                     func: format!("{cname}.__iter__"),
                     reason: "ambiguous iterator receiver convention".to_string(),
                 });
+            }
+            // A declared owned `__iter__` whose `where` clause fails for this
+            // specialization is the element-bound rejection: current Mojo
+            // gates owned iteration on `Movable & Deinitable` elements.
+            if mode == IterationMode::Owned && !convention_matched.is_empty() {
+                return Err(TypeError::Unsupported(format!(
+                    "owned iteration over '{c_ty}' is unavailable for this specialization: \
+                     current Mojo requires 'Movable & Deinitable' elements, and the declared \
+                     '__iter__(var self)' where clause is not satisfied"
+                )));
             }
             return Err(TypeError::TypeMismatch {
                 expected: match mode {
@@ -518,7 +530,7 @@ impl Checker {
                     context: "iterator '__next__' exhaustion contract".to_string(),
                 });
             }
-            let finish = self.owned_iteration_finisher(mode, element, it_ty, iname, iinfo)?;
+            self.require_owned_iteration_element(mode, element)?;
             return Ok((
                 element.clone(),
                 crate::checked::IterationProtocol {
@@ -529,7 +541,6 @@ impl Checker {
                     prepare: vec![prepare_symbol],
                     has_next: None,
                     next: Some(Box::new(checked_next)),
-                    finish,
                     exhaustion: Some(exhaustion),
                 },
             ));
@@ -558,7 +569,7 @@ impl Checker {
                 context: "return type of iterator '__len__'".to_string(),
             });
         }
-        let finish = self.owned_iteration_finisher(mode, element, it_ty, iname, iinfo)?;
+        self.require_owned_iteration_element(mode, element)?;
         Ok((
             element.clone(),
             crate::checked::IterationProtocol {
@@ -567,7 +578,6 @@ impl Checker {
                 borrowed_origin: None,
                 yield_interior,
                 prepare: vec![prepare_symbol],
-                finish,
                 has_next: Some(
                     if iinfo
                         .methods
@@ -600,58 +610,25 @@ impl Checker {
         }
     }
 
-    /// Select the named destructor consuming an exhausted owned iterator
-    /// whose element type is not implicitly deletable. Such an iterator is
-    /// itself linear — its `__deinit__`, which would destroy residual elements,
-    /// is exactly the capability linearity withholds — so the loop's
-    /// exhaustion edge must consume it explicitly through a
-    /// `_finish(deinit self)` named destructor. `None` when an implicit drop
-    /// is correct: borrowed mode, a deletable element, or an iterator with
-    /// its own unconditional destructor.
-    fn owned_iteration_finisher(
+    /// Enforce current Mojo's owned-iteration element bounds: the consuming
+    /// loop implicitly destroys the current element on early exits and the
+    /// exhausted iterator's residual elements on every exit, so the yielded
+    /// element must be `Movable & Deinitable`. `Movable` is already demanded
+    /// by `Iterator.Element` and the binding plan; only `Deinitable` needs a
+    /// contextual check here.
+    fn require_owned_iteration_element(
         &self,
         mode: crate::checked::IterationMode,
         element: &Ty,
-        it_ty: &Ty,
-        iname: &str,
-        iinfo: &StructInfo,
-    ) -> Result<Option<Box<crate::checked::CheckedIteratorCall>>, TypeError> {
-        if !matches!(mode, crate::checked::IterationMode::Owned)
-            || self.is_deinitable(element)
-            || self.is_deinitable(it_ty)
-        {
-            return Ok(None);
+    ) -> Result<(), TypeError> {
+        if !matches!(mode, crate::checked::IterationMode::Owned) || self.is_deinitable(element) {
+            return Ok(());
         }
-        let candidates = iinfo.methods.get("_finish");
-        let finisher = candidates.into_iter().flatten().find(|signature| {
-            signature.has_self
-                && matches!(
-                    signature.self_convention,
-                    Some(crate::ast::ArgConvention::Deinit)
-                )
-                && signature.params.is_empty()
-                && !signature.raises
-        });
-        let Some(signature) = finisher else {
-            return Err(TypeError::Unsupported(format!(
-                "owned iteration over non-Deinitable '{element}' needs an explicitly \
-                 finishable iterator: '{iname}' has no implicit destructor for this element \
-                 and no '_finish(deinit self)' named destructor to consume the exhausted \
-                 iterator"
-            )));
-        };
-        let target = if candidates.is_some_and(|methods| methods.len() > 1) {
-            method_lowered_name(iname, "_finish", signature)
-        } else {
-            format!("{iname}._finish")
-        };
-        Ok(Some(Box::new(crate::checked::CheckedIteratorCall {
-            target,
-            result_ty: Ty::None,
-            reference_result: None,
-            raises: None,
-            result_adapter: None,
-        })))
+        let obligation = self.residual_obligation_suffix(element);
+        Err(TypeError::Unsupported(format!(
+            "owned iteration requires 'Movable & Deinitable' elements; non-Deinitable \
+             '{element}' cannot be consumed implicitly{obligation}"
+        )))
     }
 
     /// Instantiate one nullary iterator-protocol method exactly as an ordinary

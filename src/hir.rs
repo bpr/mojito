@@ -192,16 +192,6 @@ pub enum HirInstr {
         exhaustion: Ty,
         element_ty: Ty,
     },
-    /// Iterator protocol, exhaustion edge only: consume the exhausted iterator
-    /// through its checker-selected `_finish(deinit self)` named destructor.
-    /// Emitted in place of the exit [`HirInstr::Drop`] when the element type is
-    /// not implicitly deletable — such an iterator is itself linear (no
-    /// `__deinit__`), and the escape guard has already rejected every early exit,
-    /// so this edge is the loop's single teardown path.
-    FinishIter {
-        iter: VarId,
-        call: crate::checked::CheckedIteratorCall,
-    },
     /// Adapt one raw iterator result into the user-visible target. This executes
     /// only in the yielded body, so reference copies and value moves never run on
     /// the `StopIteration` edge. `iter` is the iterator-object slot whose source
@@ -1319,17 +1309,7 @@ impl Lower {
                 // also extends its liveness through the loop (no loan records the
                 // borrowing iterator's dependency yet), so it is not destroyed
                 // early and its `__deinit__` runs exactly once, after the loop.
-                // A linear-element owned iterator has no implicit destructor;
-                // its checker-selected named destructor consumes it instead,
-                // and the escape guard guarantees this edge is the only exit.
-                if let Some(finish) = &protocol.finish {
-                    self.push(HirInstr::FinishIter {
-                        iter: iter_var,
-                        call: (**finish).clone(),
-                    });
-                } else {
-                    self.push(HirInstr::Drop(iter_var));
-                }
+                self.push(HirInstr::Drop(iter_var));
                 if split_source && !borrowed {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so a liveness anchor at the exit keeps it live

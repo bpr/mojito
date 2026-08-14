@@ -263,13 +263,6 @@ pub struct IterationProtocol {
     pub prepare: Vec<String>,
     pub has_next: Option<String>,
     pub next: Option<Box<CheckedIteratorCall>>,
-    /// Named destructor consuming the exhausted iterator when the element
-    /// type is not implicitly deletable: such an iterator is itself linear
-    /// (its `__deinit__` would destroy residual elements), so the loop's
-    /// exhaustion edge calls this `_finish(deinit self)` target instead of
-    /// dropping the iterator slot. `None` whenever an implicit drop is
-    /// correct.
-    pub finish: Option<Box<CheckedIteratorCall>>,
     pub exhaustion: Option<Ty>,
 }
 
@@ -519,6 +512,19 @@ pub enum SemanticAdjustment {
     /// payload without destroying a previous value (it leaks by design).
     UninitStorageWrite {
         element: Ty,
+    },
+    /// `variant.set[T](init_with=factory)`: in-place placement replacement —
+    /// the zero-parameter factory's result becomes the new payload and the
+    /// previous payload is destroyed (all alternatives checked `Deinitable`).
+    VariantSetInitWith {
+        alternatives: Vec<Ty>,
+        index: usize,
+    },
+    /// `variant.deinit_with(handler)`: consume the variant, handing the
+    /// active payload to the single-parameter consuming handler under the
+    /// runtime tag (the handler was checked to admit every alternative).
+    VariantDeinitWith {
+        alternatives: Vec<Ty>,
     },
     /// `storage^.take()`: move the payload out of consumed inline uninit
     /// storage; traps at the VM if the storage is uninitialized.

@@ -65,7 +65,7 @@ fn self_hosted_generic_optional() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.optional import Optional\n\ndef main():\n    var a: Optional[Int] = Optional[Int](42, True)\n    var b: Optional[Int] = Optional[Int](0, False)\n    print(a.is_some(), a.or_else(-1))\n    print(b.is_some(), b.or_else(-1))\n",
+        "from std.optional import Optional\n\ndef main():\n    var a: Optional[Int] = Optional[Int](42)\n    var b: Optional[Int] = Optional[Int]()\n    print(a.is_some(), a.or_else(-1))\n    print(b.is_some(), b.or_else(-1))\n",
     );
     assert_eq!(run(&main).unwrap(), "True 42\nFalse -1\n");
 }

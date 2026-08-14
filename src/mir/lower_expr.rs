@@ -463,7 +463,6 @@ impl Flatten<'_> {
                         prepare: Vec::new(),
                         has_next: None,
                         next: None,
-                        finish: None,
                         exhaustion: None,
                     });
                 if let Some(origin) = &protocol.borrowed_origin {
@@ -586,40 +585,6 @@ impl Flatten<'_> {
                 self.comprehension_clauses(clauses, bindings, index + 1, plan);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = exit;
-                if let Some(finish) = &protocol.finish {
-                    // A linear-element owned comprehension source always
-                    // exhausts (comprehensions cannot break or return), so the
-                    // exit consumes the iterator through its named destructor,
-                    // mirroring the statement loop's exhaustion edge.
-                    let span = iter.source_span();
-                    let recv = match self.var_types.get(&iterator).cloned() {
-                        Some(ty) => self.fresh_typed(span.clone(), Some(iterator), ty),
-                        None => self.fresh(span.clone(), Some(iterator)),
-                    };
-                    self.emit(MirInstr::UseVar {
-                        dest: recv,
-                        var: iterator,
-                        mode: crate::mir::ir::UseMode::Move,
-                    });
-                    let dest = self.fresh_typed(span, None, finish.result_ty.clone());
-                    self.emit(MirInstr::MethodCall {
-                        dest,
-                        recv,
-                        method: "_finish".to_string(),
-                        resolved: Some(finish.target.clone()),
-                        raises: finish.raises.clone(),
-                        reference_result: finish.reference_result.clone(),
-                        result_adapter: finish.result_adapter,
-                        args: Vec::new(),
-                        kwargs: Vec::new(),
-                        recv_place: None,
-                        arg_places: Vec::new(),
-                        kwarg_places: Vec::new(),
-                        capture_accesses: Vec::new(),
-                        param_arg_regs: Vec::new(),
-                        param_decls: Vec::new(),
-                    });
-                }
                 if split_source && !borrowed {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so a liveness anchor at the exit keeps it live
@@ -1352,7 +1317,9 @@ impl Flatten<'_> {
                             crate::SemanticAdjustment::VariantIs { .. }
                                 | crate::SemanticAdjustment::VariantTypeSupported { .. }
                                 | crate::SemanticAdjustment::VariantSet { .. }
+                                | crate::SemanticAdjustment::VariantSetInitWith { .. }
                                 | crate::SemanticAdjustment::VariantTake { .. }
+                                | crate::SemanticAdjustment::VariantDeinitWith { .. }
                                 | crate::SemanticAdjustment::VariantReplace { .. }
                         )
                     })
@@ -1393,6 +1360,50 @@ impl Flatten<'_> {
                                 index,
                                 value,
                             });
+                            return dest;
+                        }
+                        crate::SemanticAdjustment::VariantSetInitWith { index, .. } => {
+                            let place = self
+                                .try_place(object)
+                                .expect("checked Variant.set receiver is a writable place");
+                            let factory = self.expr(
+                                &kwargs
+                                    .first()
+                                    .expect("checked Variant.set(init_with=) has one factory")
+                                    .value,
+                            );
+                            let dest = self.fresh(span(e), None);
+                            self.emit_interior_invalidations(e, None);
+                            self.emit(MirInstr::VariantSetInitWith {
+                                dest,
+                                place,
+                                index,
+                                factory,
+                            });
+                            self.emit_nested_closure_argument_keepalives(args, kwargs);
+                            return dest;
+                        }
+                        crate::SemanticAdjustment::VariantDeinitWith { .. } => {
+                            let place = self
+                                .try_place(object)
+                                .expect("checked Variant.deinit_with receiver is an owned place");
+                            let variant = self.fresh(span(object), None);
+                            self.emit(MirInstr::MovePlace {
+                                dest: variant,
+                                place,
+                            });
+                            let handler = self.expr(
+                                args.first()
+                                    .expect("checked Variant.deinit_with has one handler"),
+                            );
+                            let dest = self.fresh(span(e), None);
+                            self.emit_interior_invalidations(e, None);
+                            self.emit(MirInstr::VariantDeinitWith {
+                                dest,
+                                variant,
+                                handler,
+                            });
+                            self.emit_nested_closure_argument_keepalives(args, kwargs);
                             return dest;
                         }
                         crate::SemanticAdjustment::VariantTake { index, checked, .. } => {
@@ -1557,6 +1568,37 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                // The parameterless Variant owning operation
+                // (`v^.deinit_with(handler)`) is spelled as an ordinary method
+                // call rather than a parameterized invoke.
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        crate::SemanticAdjustment::VariantDeinitWith { .. }
+                    )
+                }) {
+                    let place = self
+                        .try_place(object)
+                        .expect("checked Variant.deinit_with receiver is an owned place");
+                    let variant = self.fresh(span(object), None);
+                    self.emit(MirInstr::MovePlace {
+                        dest: variant,
+                        place,
+                    });
+                    let handler = self.expr(
+                        args.first()
+                            .expect("checked Variant.deinit_with has one handler"),
+                    );
+                    let dest = self.fresh(span(e), None);
+                    self.emit_interior_invalidations(e, None);
+                    self.emit(MirInstr::VariantDeinitWith {
+                        dest,
+                        variant,
+                        handler,
+                    });
+                    self.emit_nested_closure_argument_keepalives(args, kwargs);
+                    return dest;
+                }
                 // A callable-typed FIELD invocation (`holder.callback(1)`)
                 // loads the stored value and calls indirectly; the callee
                 // place is the field's, so a closure environment stays
@@ -1892,7 +1934,12 @@ impl Flatten<'_> {
                         .and_then(|contract| contract.result_adapter),
                     args: regs,
                     kwargs: kw,
-                    recv_place: if explicit_destroy || implicitly_copied_receiver {
+                    // An explicit-destructor call keeps its receiver place:
+                    // the VM writes the callee's final `self` state back before
+                    // the trailing `ConsumeVar`/`ConsumePlace`, so residual
+                    // destruction sees what the named destructor left (moved
+                    // fields are tombstones, drained containers are empty).
+                    recv_place: if implicitly_copied_receiver {
                         None
                     } else {
                         recv_place

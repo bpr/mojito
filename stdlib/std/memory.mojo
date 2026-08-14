@@ -105,6 +105,19 @@ struct UnsafeMaybeUninit[T: AnyType](
     def unsafe_write(mut self, var value: Self.T, /) where conforms_to(Self.T, Movable):
         self._storage.unsafe_write(value^)
 
+    def unsafe_init_with(mut self, factory: def() capturing[_] -> Self.T, /):
+        # Placement construction: the factory's fresh result lands directly in
+        # the storage payload, so no `Movable` bound is required — nothing
+        # moves out of a named place.
+        self._storage.unsafe_write(factory())
+
+    def unsafe_take(mut self) -> Self.T where conforms_to(Self.T, Movable):
+        # Move the payload out and leave the storage uninitialized (unlike the
+        # consuming `unsafe_assume_init(deinit self)`, the slot survives).
+        var value = self._storage^.take()
+        self._storage = __UninitStorage[Self.T]()
+        return value^
+
     def unsafe_assume_init(deinit self) -> Self.T where conforms_to(Self.T, Movable):
         return self._storage^.take()
 
@@ -116,6 +129,48 @@ struct UnsafeMaybeUninit[T: AnyType](
 
     def unsafe_forget(deinit self):
         pass
+
+
+# An owning smart pointer over one heap slot: current Mojo's `OwnedPointer`
+# proof subset with its current naming from day one (`into_inner`, never the
+# pre-rename `take`). Deletion conformance is conditional on the pointee's,
+# so an `OwnedPointer` of a linear value is itself linear and must be
+# consumed through `into_inner`.
+struct OwnedPointer[T: AnyType](
+    Movable,
+    Deinitable where conforms_to(T, Deinitable),
+):
+    var _ptr: Pointer[Self.T, MutUntrackedOrigin]
+
+    def __init__(out self, var value: Self.T, /) where conforms_to(Self.T, Movable):
+        self._ptr = unsafe_alloc[Self.T](1)
+        self._ptr[0] = value^
+
+    def __init__(out self, *, init_with: def() capturing[_] -> Self.T):
+        # Placement construction: the factory result lands directly in the
+        # heap slot, so no `Movable` bound is required.
+        self._ptr = unsafe_alloc[Self.T](1)
+        self._ptr[0] = init_with()
+
+    # Upstream's borrowed dereference is the empty subscript (`p[]`), which
+    # Mojito reserves for raw pointers — a recorded subset gap. Borrowed
+    # access goes through `unsafe_ptr()[0]`: the interior-generation origin
+    # keeps the OwnedPointer alive and stales the view when it is consumed.
+    def unsafe_ptr(ref self) -> Pointer[
+        Self.T, origin_of(self)._get_owned_interior["element"]
+    ]:
+        return self._ptr.origin_cast[
+            origin_of(self)._get_owned_interior["element"]
+        ]()
+
+    def into_inner(deinit self) -> Self.T where conforms_to(Self.T, Movable):
+        var result = self._ptr.unsafe_take_pointee()
+        self._ptr.unsafe_free()
+        return result^
+
+    def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
+        self._ptr.unsafe_deinit_pointee()
+        self._ptr.unsafe_free()
 
 
 # The single crossing to the compiler's heap primitive. A constructor rather

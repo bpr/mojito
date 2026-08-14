@@ -149,6 +149,13 @@ impl Checker {
                 });
             }
         }
+        // Parameterless Variant intrinsics (`v^.deinit_with(handler)`) arrive
+        // as ordinary method calls rather than parameterized invokes.
+        if let Some(result) =
+            self.infer_variant_method(span.clone(), object, method, param_args, args, kwargs)
+        {
+            return result;
+        }
         let obj_ty = self.infer(object)?;
         if let Ty::Struct(name, _) = &obj_ty
             && !self.structs.contains_key(name)
@@ -2289,10 +2296,10 @@ impl Checker {
                 result.extend(other.into_iter().cloned());
                 Ok(nominal_tuple_type(result))
             }
-            "consume_elements" => {
+            "consume_elements" | "deinit_with" => {
                 if !args.is_empty() {
                     return Err(TypeError::ArityMismatch {
-                        name: "Tuple.consume_elements".to_string(),
+                        name: format!("Tuple.{method}"),
                         expected: 0,
                         got: args.len(),
                     });
@@ -2300,8 +2307,9 @@ impl Checker {
                 if is_place_expr(object) && !receiver_implicitly_copyable {
                     return Err(TypeError::NonCopyable {
                         ty: nominal_tuple_type(elements.to_vec()).to_string(),
-                        context: "consuming receiver of method 'consume_elements' must be transferred with '^'"
-                            .to_string(),
+                        context: format!(
+                            "consuming receiver of method '{method}' must be transferred with '^'"
+                        ),
                     });
                 }
                 let index_decl = ParamDecl::Value {
@@ -2346,7 +2354,7 @@ impl Checker {
                     constraints: Vec::new(),
                 }];
                 self.resolve_use_params(
-                    "Tuple.consume_elements",
+                    &format!("Tuple.{method}"),
                     &method_decls,
                     param_args,
                     &[],

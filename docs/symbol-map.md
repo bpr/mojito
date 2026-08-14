@@ -71,7 +71,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
   list/tuple/variant construction, and t-string typing (the lazy `TString`
-  element list and its snapshot capture policy). `check_lambda` runs a lambda
+  element list and its snapshot capture policy). `infer_variant_method` is the
+  shared Variant-intrinsic dispatch (`isa`/`is_type_supported`/`set` — both
+  value and `init_with=` placement forms — `unwrap`/`unsafe_unwrap`,
+  `replace`/`unsafe_replace`, and the consuming `deinit_with`), reached from
+  the parameterized `Invoke(Member)` spelling via `infer_variant_invoke` and
+  from ordinary method calls via `infer_method_call`. `check_lambda` runs a lambda
   expression's hidden definition through `check_def` during statement-root
   registration and caches the finalized function-value type under the
   expression span (the comprehension pattern); `ast::lambdas_in_expr`/

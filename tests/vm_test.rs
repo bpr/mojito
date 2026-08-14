@@ -1149,7 +1149,7 @@ fn raising_iter_normalization_propagates_to_the_enclosing_try() {
 
 #[test]
 fn slice_bounds_construct_nominal_optional_values() {
-    let source = "struct Optional[T: Movable]:\n    var value: Int\n    var present: Bool\n    def __init__(out self):\n        self.value = 0\n        self.present = False\n    def __init__(out self, value: Int, present: Bool):\n        self.value = value\n        self.present = present\n    def or_else(self, default: Int) -> Int:\n        if self.present:\n            return self.value\n        return default\n\ndef main():\n    var present = Slice(1, 4).start.or_else(9)\n    var absent = Slice(None, 4).start.or_else(9)\n    print(present, absent)\n";
+    let source = "struct Optional[T: Movable]:\n    var value: Int\n    var present: Bool\n    def __init__(out self):\n        self.value = 0\n        self.present = False\n    def __init__(out self, value: Int):\n        self.value = value\n        self.present = True\n    def or_else(self, default: Int) -> Int:\n        if self.present:\n            return self.value\n        return default\n\ndef main():\n    var present = Slice(1, 4).start.or_else(9)\n    var absent = Slice(None, 4).start.or_else(9)\n    print(present, absent)\n";
     assert_eq!(parity(source), "1 9\n");
 }
 
@@ -1765,4 +1765,49 @@ fn bound_generic_function_value_invokes_through_the_compiler() {
     // the template stays abstract and the indirect call retargets at runtime.
     let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    var callback: def(Int) -> Int = ident\n    print(callback(41))\n";
     assert_eq!(run_compiled(src).expect("function value runs"), "41\n");
+}
+
+#[test]
+fn unsafe_maybe_uninit_init_with_places_and_takes() {
+    // `unsafe_init_with` performs placement construction (the factory result
+    // lands directly in storage, no `Movable` bound), and the mut-receiver
+    // `unsafe_take` moves the payload out leaving the slot reusable.
+    let src = "from std.memory import UnsafeMaybeUninit\n\ndef main():\n    def make() -> Int:\n        return 7\n    var u = UnsafeMaybeUninit[Int]()\n    u.unsafe_init_with(make)\n    print(\"taken\", u.unsafe_take())\n    u.unsafe_write(9)\n    print(\"again\", u.unsafe_take())\n";
+    assert_eq!(
+        run_compiled(src).expect("uninit storage runs"),
+        "taken 7\nagain 9\n"
+    );
+}
+
+#[test]
+fn init_with_placement_supports_non_movable_payloads() {
+    // The factory constructs into its return slot and the result lands in
+    // storage without moving a named place, so a `Movable where False`
+    // payload place-constructs and reads back by reference.
+    let src = "from std.memory import UnsafeMaybeUninit\n\nstruct Pinned(Movable where False):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n\ndef main():\n    def make() -> Pinned:\n        return Pinned(3)\n    var u = UnsafeMaybeUninit[Pinned]()\n    u.unsafe_init_with(make)\n    ref v = u.unsafe_assume_init()\n    print(v.x)\n";
+    assert_eq!(
+        run_compiled(src).expect("non-movable placement runs"),
+        "3\n"
+    );
+}
+
+#[test]
+fn thin_callable_binds_to_a_capturing_contract() {
+    // A non-capturing callable satisfies a `capturing[_]` funarg contract:
+    // its capture set is empty, a subset of any allowed origin set.
+    let src = "def call0(f: def() capturing[_] -> Int) -> Int:\n    return f()\n\ndef main():\n    def make() -> Int:\n        return 7\n    print(call0(make))\n    print(call0(lambda () -> Int: 8))\n";
+    assert_eq!(run_compiled(src).expect("thin-to-capturing runs"), "7\n8\n");
+}
+
+#[test]
+fn container_family_owning_apis_execute() {
+    // The §6 owning family: linear-capable deinit_with (List over
+    // non-Deinitable elements), clear_with, and displacement-returning
+    // insert, with the caller's residual consumption seeing the drained
+    // write-back state (no double teardown).
+    let src = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    conns^.deinit_with(lambda (deinit element: Conn): element^.close())\n    var d: Dict[Int, Int] = {1: 10}\n    print(\"displaced\", d.insert(1, 11).or_else(-1))\n    print(\"fresh\", d.insert(2, 20).is_some())\n    d.clear_with(lambda (deinit key: Int, deinit value: Int): print(\"cleared\", key, value))\n    print(\"len\", len(d))\n    var s: Set[Int] = {7}\n    print(\"set displaced\", s.insert(7).or_else(-1))\n    s^.deinit_with(lambda (deinit element: Int): print(\"torn\", element))\n";
+    assert_eq!(
+        run_compiled(src).expect("family APIs run"),
+        "close 1\nclose 2\ndisplaced 10\nfresh False\ncleared 2 20\ncleared 1 11\nlen 0\nset displaced 7\ntorn 7\n"
+    );
 }

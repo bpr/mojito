@@ -29,6 +29,13 @@ them after every re-pin.
 | `keyword_slice_syntax_shape.mojo` | Is `s[byte=a:b]` the accepted spelling, returning a borrowed view? | runs, prints `ell 3` |
 | `span_alias_names.mojo` | Exact `Imm`/`Mut` view-alias spellings; does `StringSlice` still resolve? | runs via the `StringSlice` alias |
 | `string_literal_positional_slice.mojo` | Does StringLiteral keep normalizing positional slices? | runs, prints `ell` / `olleh` |
+| `optional_owning_surface.mojo` | Optional's exact owning surface: `is_some`/`__bool__`, the `init_with=` spelling, `take` bound/trap, reference- vs value-yielding iteration? | runs, prints `True True` / `7` / `7` |
+| `deinit_with_handler_shape.mojo` | `deinit_with`/`clear_with` handler shapes: funarg vs comptime parameter, `deinit` vs `var` elements, kv-pair vs entry for mappings, drain order? | runs; drains back-to-front |
+| `variant_owning_surface.mojo` | `unwrap` mismatch behavior, `set(init_with=…)` spelling, `deinit_with` handler genericity, the all-alternatives `Deinitable` gate on `set`? | runs, prints `5` / `consumed` |
+| `insert_displacement_semantics.mojo` | Displacement `insert`: return type, key retention, Set element replacement, position retention? | runs, prints `10` / `7` |
+| `owned_pointer_surface.mojo` | OwnedPointer's constructor set, `p[]` dereference (Mojito subset gap), `unsafe_ptr` signature, prelude visibility? | rejects `p[]` (raw-pointer-only empty subscript) |
+| `owned_iteration_family.mojo` | Which collections declare `IterableOwned` at the head (Mojito: List/Array/Optional only)? | rejects Set owned iteration |
+| `unsafe_maybe_uninit_take.mojo` | The head's name for the mut-receiver UnsafeMaybeUninit take (Mojito: `unsafe_take`)? | runs, prints `5` / `6` |
 
 ## Re-probes of enforced claims (evidence from the `609afcd0735` pin)
 

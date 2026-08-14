@@ -1,3 +1,6 @@
+# expect: requires 'Movable & Deinitable' elements
+from std.optional import Optional
+
 @explicit_destroy("close Conn")
 struct Conn(Movable, Deinitable where False):
     var id: Int
@@ -9,7 +12,6 @@ struct Conn(Movable, Deinitable where False):
         print("close", self.id)
 
 def main():
-    var conns: List[Conn] = [Conn(1), Conn(2), Conn(3)]
-    for var item in conns^:
+    var opt = Optional[Conn](init_with=lambda () -> Conn: Conn(1))
+    for var item in opt^:
         item^.close()
-    print("done")

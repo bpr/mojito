@@ -292,7 +292,7 @@ fn bundled_stdlib_root_supports_mojo_shaped_imports() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.optional import Optional\nfrom std.collections.list import List\n\ndef main():\n    var o: Optional[Int] = Optional[Int](9, True)\n    var xs: List[Int] = List[Int]()\n    xs.append(o.or_else(0))\n    print(xs[0])\n",
+        "from std.optional import Optional\nfrom std.collections.list import List\n\ndef main():\n    var o: Optional[Int] = Optional[Int](9)\n    var xs: List[Int] = List[Int]()\n    xs.append(o.or_else(0))\n    print(xs[0])\n",
     );
     assert_eq!(run(&main).unwrap(), "9\n");
 }

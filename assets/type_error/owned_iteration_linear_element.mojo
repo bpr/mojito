@@ -1,4 +1,4 @@
-# expect: residual elements would require explicit destruction (close Conn)
+# expect: requires 'Movable & Deinitable' elements
 @explicit_destroy("close Conn")
 struct Conn(Movable, Deinitable where False):
     var id: Int
@@ -9,13 +9,8 @@ struct Conn(Movable, Deinitable where False):
     def close(deinit self):
         print("close", self.id)
 
-def drain(var conns: List[Conn]) -> Int:
-    for var item in conns^:
-        if item.id == 2:
-            return item.id
-        item^.close()
-    return 0
-
 def main():
-    var conns = [Conn(1), Conn(2), Conn(3)]
-    print(drain(conns^))
+    var conns: List[Conn] = [Conn(1), Conn(2), Conn(3)]
+    for var item in conns^:
+        item^.close()
+    print("done")

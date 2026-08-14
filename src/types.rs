@@ -206,6 +206,8 @@ pub const TSTRING_TYPE_NAME: &str = "TString";
 
 pub const RANGE_TYPE_NAME: &str = "Range";
 
+pub const OPTIONAL_TYPE_NAME: &str = "Optional";
+
 /// Compiler-private inline possibly-uninitialized storage, the field type of
 /// `UnsafeMaybeUninit`. An unregistered nominal: resolvable only from bundled
 /// standard-library sources, with every capability special-cased explicitly.
@@ -283,6 +285,22 @@ pub fn set_type(element: Ty) -> Ty {
 
 pub fn set_element(ty: &Ty) -> Option<&Ty> {
     let arguments = nominal_type_arguments(ty, SET_TYPE_NAME)?;
+    let [element] = arguments.as_slice() else {
+        return None;
+    };
+    Some(*element)
+}
+
+pub fn optional_element(ty: &Ty) -> Option<&Ty> {
+    let arguments = nominal_type_arguments(ty, OPTIONAL_TYPE_NAME)?;
+    let [element] = arguments.as_slice() else {
+        return None;
+    };
+    Some(*element)
+}
+
+pub fn owned_pointer_element(ty: &Ty) -> Option<&Ty> {
+    let arguments = nominal_type_arguments(ty, "OwnedPointer")?;
     let [element] = arguments.as_slice() else {
         return None;
     };

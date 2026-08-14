@@ -603,6 +603,111 @@ fn ast_raw(
         ),
         Type::SelfType => "Self".to_string(),
         Type::MaterializedCallable(key) => key.clone(),
+        Type::Func { .. } => func_annotation_raw(ty),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Mirror `ty_raw`'s Display-based encoding of a resolved callable type
+/// (`def(T) capturing[_] -> U`) for a source `def(...)` annotation, so a
+/// callable-typed parameter produces the same overload suffix from the
+/// declaration (AST) side and the call (checked `Ty`) side. Inner types render
+/// as the checked Display does: bare parameter names without bounds and
+/// bracketed argument lists. Annotations this cannot mirror (value arguments,
+/// nominal names the linker qualifies) keep a stable source spelling that a
+/// qualified call-site type will not match — no worse than the previous
+/// Debug-format fallback, which embedded spans and never matched anything.
+fn func_annotation_raw(ty: &Type) -> String {
+    let Type::Func {
+        type_params,
+        params,
+        ret,
+        thin,
+        capturing,
+        raises,
+        ..
+    } = ty
+    else {
+        unreachable!("func_annotation_raw takes a Type::Func");
+    };
+    let mut s = String::from("def(");
+    for (index, param) in params.iter().enumerate() {
+        if index > 0 {
+            s.push_str(", ");
+        }
+        s.push_str(&annotation_display(&param.ty));
+    }
+    s.push(')');
+    if *thin {
+        s.push_str(" thin");
+    } else if let Some(spec) = capturing {
+        s.push_str(" capturing[");
+        match spec.as_slice() {
+            [] => {}
+            [
+                Expr {
+                    kind: ExprKind::Identifier(name),
+                    ..
+                },
+            ] if name == "_" => s.push('_'),
+            [
+                Expr {
+                    kind: ExprKind::Identifier(name),
+                    ..
+                },
+            ] => match type_params.iter().position(|parameter| {
+                parameter.name == *name && parameter.bounds.as_slice() == ["OriginSet"]
+            }) {
+                Some(index) => s.push_str(&format!("origin_set#{index}")),
+                None => s.push_str(name),
+            },
+            _ => s.push_str("..."),
+        }
+        s.push(']');
+    }
+    if *raises {
+        s.push_str(" raises");
+    }
+    s.push_str(" -> ");
+    s.push_str(&annotation_display(ret));
+    s
+}
+
+/// Render one annotation as the checked `Ty` Display would, for use inside
+/// [`func_annotation_raw`] only: parameters print bare (no bounds), nominal
+/// arguments print bracketed and comma-separated.
+fn annotation_display(ty: &Type) -> String {
+    match ty {
+        Type::Int => "Int".to_string(),
+        Type::UInt => "UInt".to_string(),
+        Type::Bool => "Bool".to_string(),
+        Type::Float64 => "Float64".to_string(),
+        Type::StringLiteral => "StringLiteral".to_string(),
+        Type::None => "None".to_string(),
+        Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
+            "String".to_string()
+        }
+        Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
+        Type::Named(name, args) => {
+            let mut s = name.clone();
+            if !args.is_empty() {
+                s.push('[');
+                for (index, argument) in args.iter().enumerate() {
+                    if index > 0 {
+                        s.push_str(", ");
+                    }
+                    match argument {
+                        ParamArg::Type(t) => s.push_str(&annotation_display(t)),
+                        other => s.push_str(&format!("{other:?}")),
+                    }
+                }
+                s.push(']');
+            }
+            s
+        }
+        Type::SelfParam(name) => name.clone(),
+        Type::SelfType => "Self".to_string(),
+        func @ Type::Func { .. } => func_annotation_raw(func),
         other => format!("{other:?}"),
     }
 }

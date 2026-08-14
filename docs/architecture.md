@@ -1397,7 +1397,9 @@ MakeVariant
 VariantIs
 VariantGet
 VariantSet
+VariantSetInitWith
 VariantTake
+VariantDeinitWith
 VariantReplace
 MakeSimd
 Raise
@@ -2265,26 +2267,23 @@ Consuming `for var item in collection^` moves the source once into the iterator
 slot. Each `Next` transfers one element, so the current loop binding and the
 residual iterator state have disjoint ownership. Normal exhaustion leaves no
 residual elements; return, raise, and `break` paths run the ordinary edge
-cleanup. The checker rejects an early exit when the element type is not
-`Deinitable`, because the residual state would otherwise conceal
-undischarged explicit-destroy obligations. That rejection covers every
-abandoning path: the syntactic body walk (break/return/raise), an observation
+cleanup, and the exit edge drops the iterator slot. Protocol-driven owned
+iteration carries current Mojo's element bounds: the yielded element must be
+`Movable & Deinitable`, enforced both by the bundled `__iter__(var self)`
+where clauses (an unavailable declaration rejects with the bound named) and
+by a checker gate over user-declared owned iterators, so the implicitly
+dropped iterator always has its residual-destroying `__deinit__` available.
+
+Variadic packs are not library iterators, and linear whole-pack forwarding
+remains supported under guaranteed exhaustion. For that channel the checker
+still rejects every abandoning path when the element type is not
+`Deinitable`: the syntactic body walk (break/return/raise), an observation
 frame that flags any raising call whose `try` handler sits outside the loop
 (callable bodies push barrier frames so nested `def`s never mark an enclosing
 loop; the frame records the `handled_raise_depth` at loop entry, so a `try`
 inside the body contains its error), and — in comprehensions — filter clauses
 over a linear binder, since a skipped element would be abandoned. Each
 diagnostic names the element's `@explicit_destroy` obligation.
-
-A linear-element owned iterator is itself linear: its `__deinit__`, which
-destroys residual elements, is conditional on element deletability. Protocol
-selection therefore records the iterator's `_finish(deinit self)` named
-destructor in `IterationProtocol.finish` (a linear iterator without one is
-rejected; an iterator with an unconditional destructor keeps the drop path),
-and the loop or comprehension exit emits `HirInstr::FinishIter` in place of
-the exit `Drop`, lowered to an ordinary moved-receiver `MethodCall` — the
-slot's move is the consumption drop elaboration sees, so a type with no drop
-glue needs none, and the buffer free runs as checked library code.
 
 ### Partial Move Tree
 
@@ -2383,7 +2382,17 @@ the whole-value `__deinit__` for every struct and recursively destroys only its
 initialized residual fields.
 
 A named explicit destructor is lowered as a call followed by `ConsumeVar` for a
-whole binding or `ConsumePlace` for a projected field.
+whole binding or `ConsumePlace` for a projected field. Drop elaboration treats a
+pending `ConsumeVar` as the variable's teardown — the variable stays live up to
+it and counts as moved there — so no competing ordinary `DropVar` is spliced
+between the call and the consumption (which would re-run the whole-value
+`__deinit__` the named destructor replaced). The call retains its receiver
+place, and the VM writes the callee's final `self` state back before the
+consumption runs, so residual-field destruction sees exactly what the body
+left: moved fields are tombstones (no re-drop), and a drained pointer-backed
+container field is empty rather than a stale pre-call clone (no double free).
+Consumption then destroys those residual fields in reverse order without the
+whole-value `__deinit__`.
 Because consumption occurs only after a successful return, a raising destructor
 leaves the source slot live on the exceptional edge so an `except` handler can
 invoke a fallback destructor.

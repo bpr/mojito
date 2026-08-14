@@ -66,17 +66,11 @@ struct _ListOwnedIter[T: Movable](
             i += 1
         self.data.unsafe_free()
 
-    def _finish(deinit self):
-        # Named destructor for the linear-element instantiation, which has no
-        # `__deinit__`: the compiler calls it on the loop's exhaustion edge, when
-        # every element has been moved out, so only the buffer remains.
-        self.data.unsafe_free()
-
 struct List[T: Movable](
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
     Iterable where conforms_to(T, Copyable),
-    IterableOwned,
+    IterableOwned where conforms_to(T, Deinitable),
     Movable,
     Writable where conforms_to(T, Writable),
 ):
@@ -261,6 +255,19 @@ struct List[T: Movable](
             i += 1
         self.size = 0
 
+    # Consuming teardown for any element: each element is handed to the
+    # caller-supplied consuming handler (no `Deinitable` requirement), then
+    # the buffer is freed. The caller's trailing consumption sees the drained
+    # write-back state, so only trivial residual fields remain.
+    def deinit_with(deinit self, elt_handler: def(deinit element: Self.T) capturing[_], /):
+        var i = 0
+        while i < self.size:
+            elt_handler(self.data.unsafe_offset(i).unsafe_take_pointee())
+            i += 1
+        self.data.unsafe_free()
+        self.size = 0
+        self.cap = 0
+
     def reverse(mut self):
         var left = 0
         var right = self.size - 1
@@ -301,7 +308,9 @@ struct List[T: Movable](
         ref source = self
         return _ListIter[Self.T](source, 0)
 
-    def __iter__(var self) -> _ListOwnedIter[Self.T]:
+    def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
+        Self.T, Deinitable
+    ):
         var result = _ListOwnedIter[Self.T](self.data, self.size)
         self.data = unsafe_alloc[Self.T](0)
         self.size = 0

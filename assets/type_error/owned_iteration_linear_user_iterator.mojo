@@ -1,4 +1,4 @@
-# expect: explicitly finishable iterator
+# expect: non-Deinitable 'Conn' cannot be consumed implicitly
 @fieldwise_init
 struct StopIteration:
     pass

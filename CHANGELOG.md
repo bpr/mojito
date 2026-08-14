@@ -6,8 +6,89 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Added
+
+- A minimal `OwnedPointer[T]` owning smart pointer in `std.memory`
+  (nightly §6), with current Mojo's naming from day one: value and
+  `init_with=` placement construction, `into_inner(deinit self)`, an
+  interior-generation `unsafe_ptr(ref self)` view, and a conditional
+  destructor (a linear pointee makes the OwnedPointer itself linear).
+  Upstream's `p[]` borrowed dereference is a recorded subset gap (the
+  empty subscript stays raw-pointer-only). The §6 probe set in
+  `conformance/probes/` pins every guessed API shape (handler
+  conventions and drain order, `insert` semantics, Optional/Variant
+  spellings, the owned-iteration declared family, the mut-receiver
+  UnsafeMaybeUninit take) for the next re-pin, closing the roadmap's
+  "Linear containers and owning APIs" checkbox.
+
+### Changed
+
+- The §6 owning family APIs land across the bundled containers:
+  linear-capable `deinit_with(deinit self, handler)` on List, Array, Dict,
+  Set, StringDict, and Tuple (the `consume_elements` family spelling);
+  `clear_with(mut self, handler)` on Dict and Set; and
+  displacement-returning `insert` (an `Optional` of the replaced value) on
+  Dict, Set, and StringDict. Handlers are `def(deinit …) capturing[_]`
+  funargs. Supporting this safely required completing the named-destructor
+  contract: an explicit-destructor call now retains its receiver place and
+  the VM writes the callee's final `self` state back before the trailing
+  consumption, so residual destruction sees moved-field tombstones and
+  drained containers instead of a stale pre-call clone (previously a moved
+  struct field double-dropped and a drained pointer-backed field would have
+  double-freed).
+
+- Variant aligns with current Mojo's owning surface (nightly §6): consuming
+  extraction is spelled `unwrap`/`unsafe_unwrap` (the pre-rename
+  `take`/`unsafe_take` reject as ordinary unknown members — no compat
+  bridge); both `set` forms require every alternative `Deinitable` (the
+  previous payload is destroyed under a runtime tag);
+  `set[T](init_with=factory)` performs in-place placement replacement; and
+  `deinit_with(handler)` is the linear-capable consuming teardown — a
+  monomorphic or generic consuming handler, checked to admit every
+  alternative, receives the payload under the runtime tag. The two owning
+  operations lower through the new `VariantSetInitWith`/`VariantDeinitWith`
+  MIR instructions (a deliberate §6 schema addition beside the existing
+  Variant family), executed by a narrow synchronous callable-value channel
+  in the VM. This folds roadmap §4's `Variant.destroy_with` item into the
+  §6 arc.
+
+- Optional is rebuilt as current Mojo's owning container (nightly §6):
+  `T: AnyType` over one owned heap slot with conditional
+  `Copyable`/`Movable`/`Deinitable`/`Iterable`/`IterableOwned` conformances,
+  `init_with=` placement construction (a factory result lands directly in
+  storage — no `Movable` requirement), `is_some`/`__bool__`/`or_else`/
+  `value`/`take`, linear-capable `deinit_with` and the `deinit_assert_empty`
+  named destructor, consuming `map`/`and_then`, and borrowed plus owned
+  iteration. The legacy `(value, present: Bool)` constructor is removed; the
+  VM's Slice-bound bridge now selects the unique positional constructor
+  overload. `UnsafeMaybeUninit` gains `unsafe_init_with` and the
+  mut-receiver `unsafe_take`.
+
+- Owned iteration now carries current Mojo's `Movable & Deinitable` element
+  bounds (nightly §6). The bundled List `__iter__(var self)`/`IterableOwned`
+  gained `Deinitable`-element where clauses, a linear-element specialization
+  rejects at iterator selection with the bound named, and a checker gate
+  covers user-declared owned iterators. The Mojito-only linear-element
+  extension — the `_finish(deinit self)` named-destructor convention, its
+  checked `IterationProtocol.finish` channel, and `HirInstr::FinishIter` —
+  is removed. Linear variadic-pack forwarding is unaffected: packs are not
+  library iterators, and the exhaustion guards (early-exit, raising-call,
+  and comprehension-filter rejections) still protect that channel.
+
 ### Fixed
 
+- A user-called named destructor (`value^.method()` with `deinit self`) no
+  longer re-runs the receiver's whole-value `__deinit__`: drop elaboration
+  now treats the lowered `ConsumeVar` as the variable's teardown instead of
+  splicing a competing ordinary drop after the call (silent for linear
+  receivers, a double-teardown for `Deinitable` ones).
+- A callable-typed parameter in an overloaded method now mangles its
+  overload suffix from the annotation's structural shape (mirroring the
+  checked callable Display) instead of a Debug dump embedding spans and
+  source paths, so declaration and call-site symbols agree — required for
+  the keyword-selected `__init__(*, init_with=…)` overload.
+- A thin (non-capturing) callable now satisfies `capturing[...]` value
+  contracts, matching upstream (its capture set is empty).
 - The try-region reassignment wipe: a plain reassignment of an outer
   variable inside a `try` body was collected as a body-local and destroyed
   by the region's scope-exit cleanup, so the slot read back as `None` after

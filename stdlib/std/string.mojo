@@ -610,7 +610,7 @@ struct Codepoint(
             return Optional[Codepoint]()
         var text = Codepoint._encode_utf8(scalar)
         return Optional[Codepoint](
-            Codepoint(scalar, text: text._as_string_literal()), True
+            Codepoint(scalar, text: text._as_string_literal())
         )
 
     # UTF-8-encode a valid Unicode scalar into a fresh String byte buffer:

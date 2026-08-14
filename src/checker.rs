@@ -2588,6 +2588,9 @@ fn is_bundled_collection_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/collections/dict.mojo")
         || source == stdlib.join("dict.mojo")
         || source == stdlib.join("std/collections/array.mojo")
+        || source == stdlib.join("std/optional.mojo")
+        || source == stdlib.join("optional.mojo")
+        || source == stdlib.join("std/memory.mojo")
 }
 
 /// Static `UnsafePointer[T].alloc[_aligned]` is the compiler's heap primitive,

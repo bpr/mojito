@@ -112,3 +112,12 @@ struct Tuple[*Ts: Movable](
         # field.  A user-facing `tuple[index]^` remains rejected.
         comptime for i in range(len(Ts)):
             elt_handler[i](self.storage[i]^)
+
+    # Current Mojo's family spelling for the same consuming teardown.
+    def deinit_with[
+        elt_handler: def[index: Int](
+            var element: Ts[index]
+        ) capturing
+    ](deinit self):
+        comptime for i in range(len(Ts)):
+            elt_handler[i](self.storage[i]^)

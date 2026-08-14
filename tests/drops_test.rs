@@ -550,3 +550,14 @@ fn read_borrowed_owner_outlives_the_call() {
     );
     assert_eq!(vm(&src), "peek 2\ndel 2\nafter call\n");
 }
+
+#[test]
+fn named_destructor_call_skips_the_whole_value_deinit() {
+    // `h^.finish()` consumes the receiver through its named destructor: the
+    // whole-value `__deinit__` must not re-run after the call (drop
+    // elaboration used to splice a competing `DropVar` over the lowered
+    // `ConsumeVar`), while residual fields still get their ordinary
+    // reverse-order destruction at the consumption point.
+    let src = "struct Item(Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __init__(out self, *, deinit move: Self):\n        self.id = move.id\n    def __deinit__(deinit self):\n        print(\"drop item\", self.id)\n\nstruct Holder(Movable):\n    var item: Item\n    def __init__(out self, id: Int):\n        self.item = Item(id)\n    def __deinit__(deinit self):\n        print(\"drop holder\", self.item.id)\n    def finish(deinit self):\n        print(\"finish\", self.item.id)\n\ndef main():\n    var h = Holder(1)\n    h^.finish()\n    print(\"done\")\n";
+    assert_eq!(vm(src), "finish 1\ndrop item 1\ndone\n");
+}

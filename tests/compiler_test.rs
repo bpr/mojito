@@ -213,7 +213,7 @@ fn variant_type_queries_take_and_replace_have_checked_ownership_semantics() {
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
-            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    print(value.is_type_supported[Int](), value.is_type_supported[Float64]())\n    var old = value.replace[String, Int](\"seven\")\n    print(old, value[String])\n    var taken = value.take[String]()\n    print(taken)\n    var unchecked = Variant[Int, String](9)\n    var unsafe_old = unchecked.unsafe_replace[String, Int](\"nine\")\n    var unsafe_taken = unchecked.unsafe_take[String]()\n    print(unsafe_old, unsafe_taken)\n",
+            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    print(value.is_type_supported[Int](), value.is_type_supported[Float64]())\n    var old = value.replace[String, Int](\"seven\")\n    print(old, value[String])\n    var taken = value.unwrap[String]()\n    print(taken)\n    var unchecked = Variant[Int, String](9)\n    var unsafe_old = unchecked.unsafe_replace[String, Int](\"nine\")\n    var unsafe_taken = unchecked.unsafe_unwrap[String]()\n    print(unsafe_old, unsafe_taken)\n",
             std::path::Path::new("/tmp/mojito_variant_take_replace.mojo"),
         )
         .expect("compile Variant take/replace operations");
@@ -224,7 +224,7 @@ fn variant_type_queries_take_and_replace_have_checked_ownership_semantics() {
 
     let unsupported = compiler
         .compile_source(
-            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    _ = value.take[Float64]()\n",
+            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    _ = value.unwrap[Float64]()\n",
             std::path::Path::new("/tmp/mojito_variant_unsupported_take.mojo"),
         )
         .expect_err("unsupported Variant operation arm must be rejected statically");
@@ -232,7 +232,7 @@ fn variant_type_queries_take_and_replace_have_checked_ownership_semantics() {
 
     let moved = compiler
         .compile_source(
-            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    _ = value.take[Int]()\n    print(value.isa[Int]())\n",
+            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    _ = value.unwrap[Int]()\n    print(value.isa[Int]())\n",
             std::path::Path::new("/tmp/mojito_variant_use_after_take.mojo"),
         )
         .expect_err("Variant.take consumes its receiver");
@@ -240,7 +240,7 @@ fn variant_type_queries_take_and_replace_have_checked_ownership_semantics() {
 
     let wrong_tag = compiler
         .compile_source(
-            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    _ = value.take[String]()\n",
+            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    _ = value.unwrap[String]()\n",
             std::path::Path::new("/tmp/mojito_variant_wrong_take_tag.mojo"),
         )
         .expect("a checked take validates its dynamic tag at runtime");
@@ -556,66 +556,69 @@ fn callable_struct_call_replays_transfer_effects() {
 }
 
 #[test]
-fn owned_iteration_of_linear_elements_requires_guaranteed_exhaustion() {
-    // "Owned iteration of linear elements": with the bundled owned iterator's
-    // `Deinitable` gates lifted, a linear List reaches the checker's
-    // residual-escape guard — the fully exhausting loop is accepted and
-    // executes (each element consumed by its named destructor), while the
-    // escaping twin rejects with the residual-obligation diagnostic instead
-    // of the old iterator-selection mismatch.
+fn owned_iteration_requires_deinitable_elements() {
+    // Current Mojo bounds owned iteration at `Movable & Deinitable` elements.
+    // A linear List rejects at iterator selection (the bundled
+    // `__iter__(var self)` where clause fails for the specialization), a user
+    // iterator yielding linear elements rejects at the element gate, and both
+    // reject regardless of exhaustion — the pre-alignment linear-element
+    // extension is gone.
     let compiler = Compiler::default();
     let exhaustive = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n";
-    let escaping = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n        break\n";
-    let program = compiler
-        .compile_unlinked(exhaustive)
-        .expect("linear exhaustive");
-    let execution = compiler.execute(&program).expect("execute");
-    assert_eq!(execution.output, "close 1\nclose 2\n");
-    let returning = escaping.replace("        break\n", "        return\n");
-    let raising = escaping.replace("        break\n", "        raise Exception()\n");
-    for source in [escaping.to_string(), returning, raising] {
+    let escaping = format!("{}        break\n", exhaustive);
+    for source in [exhaustive.to_string(), escaping] {
         let error = compiler
             .compile_unlinked(&source)
-            .expect_err("linear escaping");
+            .expect_err("linear owned iteration");
         let CompilerError::Type(mojito::TypeError::Unsupported(message)) = error else {
-            panic!("expected the residual-escape guard, got {error:?}");
+            panic!("expected the owned-iteration bound rejection, got {error:?}");
         };
-        assert!(message.contains("residual elements"));
-        // The rejection names the element's declared obligation.
-        assert!(message.contains("(close Conn)"), "{message}");
+        assert!(
+            message.contains("requires 'Movable & Deinitable' elements"),
+            "{message}"
+        );
     }
+
+    let user_iterator = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\nstruct Drain(Iterator, Movable):\n    comptime Element = Conn\n    var remaining: Int\n\n    def __init__(out self, remaining: Int):\n        self.remaining = remaining\n\n    def __next__(mut self) raises StopIteration -> Conn:\n        if self.remaining == 0:\n            raise StopIteration()\n        self.remaining -= 1\n        return Conn(self.remaining)\n\nstruct Bucket(Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def __iter__(var self) -> Drain:\n        return Drain(self.count)\n\ndef main():\n    var bucket = Bucket(2)\n    for var item in bucket^:\n        item^.close()\n";
+    let error = compiler
+        .compile_unlinked(user_iterator)
+        .expect_err("linear user iterator");
+    let CompilerError::Type(mojito::TypeError::Unsupported(message)) = error else {
+        panic!("expected the owned-iteration element gate, got {error:?}");
+    };
+    assert!(
+        message.contains("non-Deinitable 'Conn' cannot be consumed implicitly"),
+        "{message}"
+    );
+    // The rejection names the element's declared obligation.
+    assert!(message.contains("(close Conn)"), "{message}");
 }
 
 #[test]
-fn linear_owned_iteration_requires_a_finishable_iterator() {
-    // A user-defined owned iterator that is itself linear (no implicit
-    // destructor) and yields linear elements must offer the
-    // `_finish(deinit self)` named destructor so the loop's exhaustion edge
-    // can consume it; without one the protocol rejects contextually. The
-    // deletable-iterator twin needs no finisher: its plain drop is correct.
+fn owned_pack_iteration_still_forwards_linear_elements() {
+    // Variadic packs are not library iterators: linear whole-pack forwarding
+    // stays supported under guaranteed exhaustion, and the escape guard still
+    // rejects an abandoning exit with the element's obligation named.
     let compiler = Compiler::default();
-    let unfinishable = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\nstruct Drain(Iterator, Deinitable where False, Movable):\n    comptime Element = Conn\n    var remaining: Int\n\n    def __init__(out self, remaining: Int):\n        self.remaining = remaining\n\n    def __next__(mut self) raises StopIteration -> Conn:\n        if self.remaining == 0:\n            raise StopIteration()\n        self.remaining -= 1\n        return Conn(self.remaining)\n\nstruct Bucket(Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def __iter__(var self) -> Drain:\n        return Drain(self.count)\n\ndef main():\n    var bucket = Bucket(2)\n    for var item in bucket^:\n        item^.close()\n";
-    let error = compiler
-        .compile_unlinked(unfinishable)
-        .expect_err("unfinishable");
-    let CompilerError::Type(mojito::TypeError::Unsupported(message)) = error else {
-        panic!("expected the finisher requirement, got {error:?}");
-    };
-    assert!(
-        message.contains("explicitly finishable iterator"),
-        "{message}"
-    );
-    assert!(message.contains("'Drain'"), "{message}");
-
-    let deletable_iterator = unfinishable.replace(
-        "struct Drain(Iterator, Deinitable where False, Movable):",
-        "struct Drain(Iterator, Movable):",
-    );
+    let exhaustive = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef consume(var *conns: Conn):\n    for var item in conns^:\n        item^.close()\n\ndef main():\n    consume(Conn(1), Conn(2))\n";
     let program = compiler
-        .compile_unlinked(&deletable_iterator)
-        .expect("deletable iterator");
+        .compile_unlinked(exhaustive)
+        .expect("linear pack exhaustive");
     let execution = compiler.execute(&program).expect("execute");
-    assert_eq!(execution.output, "close 1\nclose 0\n");
+    assert_eq!(execution.output, "close 1\nclose 2\n");
+
+    let escaping = exhaustive.replace(
+        "        item^.close()\n",
+        "        item^.close()\n        break\n",
+    );
+    let error = compiler
+        .compile_unlinked(&escaping)
+        .expect_err("linear pack escaping");
+    let CompilerError::Type(mojito::TypeError::Unsupported(message)) = error else {
+        panic!("expected the residual-escape guard, got {error:?}");
+    };
+    assert!(message.contains("residual elements"), "{message}");
+    assert!(message.contains("(close Conn)"), "{message}");
 }
 
 #[test]

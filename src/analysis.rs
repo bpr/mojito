@@ -121,6 +121,7 @@ fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             uses
         }
         MirInstr::VariantSet { place, value, .. } => place_loan_uses(place, *value),
+        MirInstr::VariantSetInitWith { place, factory, .. } => place_loan_uses(place, *factory),
         MirInstr::VariantReplace { place, value, .. } => place_loan_uses(place, *value),
         MirInstr::LoadPlace { dest, place } => place_loan_uses(place, *dest),
         // Call arguments are evaluated into registers first, but mutable/ref
@@ -365,6 +366,11 @@ fn vars_moved(i: &MirInstr) -> Vec<VarId> {
             mode: UseMode::Move,
             ..
         } => vec![*var],
+        // A lowered explicit-destructor call already consumes the receiver
+        // slot (residual fields destroyed, whole-value `__deinit__` skipped);
+        // splicing an ordinary drop as well would run the destructor the
+        // named destructor replaced.
+        MirInstr::ConsumeVar { var } => vec![*var],
         // A declaration-time move capture transfers a whole root into the
         // closure owner. Projected captures leave a residual aggregate that
         // still needs its ordinary drop, so only whole-root moves suppress it.
@@ -478,6 +484,11 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
             }
             for (u, _) in var_uses(&instrs[i]) {
                 live.insert(u);
+            }
+            // Mirror `transfer_drop_liveness`: a pending `ConsumeVar` is the
+            // variable's teardown, so it stays live until then.
+            if let MirInstr::ConsumeVar { var } = &instrs[i] {
+                live.insert(*var);
             }
             live.extend(&register_loan_uses[b][i]);
             ordinary_live_before[i] = live.clone();
@@ -1111,6 +1122,11 @@ fn transfer_drop_liveness(instrs: &[MirInstr], mut live: HashSet<VarId>) -> Hash
         }
         for (u, _) in var_uses(instr) {
             live.insert(u);
+        }
+        // A pending `ConsumeVar` is the variable's teardown: keep it live up
+        // to that point so no earlier death splices a competing `DropVar`.
+        if let MirInstr::ConsumeVar { var } = instr {
+            live.insert(*var);
         }
     }
     live
@@ -2134,6 +2150,9 @@ fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::VariantReplace { place, value, .. } => {
             add_place(&mut uses, place, *value);
         }
+        MirInstr::VariantSetInitWith { place, factory, .. } => {
+            add_place(&mut uses, place, *factory);
+        }
         MirInstr::ConsumePlace { place, marker } => add_place(&mut uses, place, *marker),
         MirInstr::HasNext { dest, iter, .. }
         | MirInstr::Next { dest, iter, .. }
@@ -2168,6 +2187,7 @@ fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::VariantIs { .. }
         | MirInstr::VariantGet { .. }
         | MirInstr::VariantTake { .. }
+        | MirInstr::VariantDeinitWith { .. }
         | MirInstr::PointerStorageTake { .. }
         | MirInstr::PointerStorageDestroy { .. }
         | MirInstr::UninitStorage { .. }
@@ -2763,6 +2783,9 @@ fn loan_accesses(
         MirInstr::VariantSet { place, value, .. } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*value))]
         }
+        MirInstr::VariantSetInitWith { place, factory, .. } => {
+            vec![(place.clone(), LoanAccess::Write, span_for(*factory))]
+        }
         MirInstr::VariantReplace { place, value, .. } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*value))]
         }
@@ -3240,6 +3263,13 @@ fn place_uses(i: &MirInstr) -> Vec<(VarId, Vec<Key>, Touch, Reg)> {
             }
             vec![(place.root, path, Touch::WriteParent, *value)]
         }
+        MirInstr::VariantSetInitWith { place, factory, .. } => {
+            let mut path = place_path(place);
+            if matches!(place.proj.last(), Some(Proj::Field(_))) {
+                path.pop();
+            }
+            vec![(place.root, path, Touch::WriteParent, *factory)]
+        }
         MirInstr::VariantReplace { place, value, .. } => {
             let mut path = place_path(place);
             if matches!(place.proj.last(), Some(Proj::Field(_))) {
@@ -3288,6 +3318,7 @@ fn apply_effects(state: &mut [Node], i: &MirInstr) {
         MirInstr::Store { place, .. }
         | MirInstr::StoreRef { place, .. }
         | MirInstr::VariantSet { place, .. }
+        | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
             if matches!(
                 place.proj.last(),

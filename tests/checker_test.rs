@@ -653,15 +653,14 @@ fn checks_owned_iteration_and_collection_comprehensions() {
         "def main():\n    var xs = [x * x for x in range(5) if x % 2 == 0]\n    var s = {x % 3 for x in range(8)}\n    var d = {x: x * x for x in range(4)}\n    print(len(xs), len(s), d[3])\n",
     );
 
+    // Current Mojo bounds owned iteration at `Movable & Deinitable` elements:
+    // a linear List rejects even when the loop would exhaust the source.
     let linear = "@explicit_destroy(\"close Item\")\nstruct Linear(Deinitable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
-    ok(&format!(
-        "{linear}def main():\n    var values: List[Linear] = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n"
-    ));
     assert!(matches!(
         err(&format!(
-            "{linear}def main():\n    var values: List[Linear] = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n        break\n"
+            "{linear}def main():\n    var values: List[Linear] = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n"
         )),
-        TypeError::Unsupported(message) if message.contains("residual elements")
+        TypeError::Unsupported(message) if message.contains("requires 'Movable & Deinitable' elements")
     ));
 }
 
@@ -674,15 +673,14 @@ fn comprehension_binders_are_lexical_and_enforce_linear_cleanup() {
         "def main():\n    var values = [x for x in range(2) for x in range(x + 1)]\n    print(values)\n",
     );
 
+    // A linear-element List comprehension rejects at iterator selection: owned
+    // iteration requires `Movable & Deinitable` elements (current Mojo bounds).
     let linear = "@explicit_destroy(\"close Item\")\nstruct Item(Deinitable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
     assert!(matches!(
         err(&format!(
-            "{linear}def main():\n    var values: List[Item] = [Item(1)]\n    var result = [item.value for var item in values^]\n"
+            "{linear}def main():\n    var values: List[Item] = [Item(1)]\n    var result = [item^.close() for var item in values^]\n"
         )),
-        TypeError::ExplicitDestroy { var, .. } if var == "item"
-    ));
-    ok(&format!(
-        "{linear}def main():\n    var values: List[Item] = [Item(1)]\n    var result = [item^.close() for var item in values^]\n"
+        TypeError::Unsupported(message) if message.contains("requires 'Movable & Deinitable' elements")
     ));
 }
 
