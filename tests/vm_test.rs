@@ -379,6 +379,87 @@ fn break_continue_crossing_try_runs_with_finally() {
 }
 
 #[test]
+fn try_body_reassignment_survives_the_block() {
+    // A plain reassignment of an outer variable inside a `try` body is not a
+    // body-local: the region's scope-exit cleanup must not destroy it, on any
+    // exit edge (normal completion, caught raise, `finally`, escape jumps, or
+    // a nested region).
+    let may = "def may(x: Int) raises -> Int:\n    if x < 0:\n        raise Error(\"neg\")\n    return x\n\n";
+    let plain = format!(
+        "{may}def main():\n    var a = 0\n    try:\n        a = may(4)\n    except e:\n        pass\n    print(a)\n"
+    );
+    assert_eq!(parity(&plain), "4\n");
+    let caught = format!(
+        "{may}def main():\n    var a = 0\n    try:\n        a = may(-1)\n    except e:\n        a = 5\n    print(a)\n"
+    );
+    assert_eq!(parity(&caught), "5\n");
+    // Cleanup runs before `finally` on the normal edge; the reassigned value
+    // must still be readable there and after the block.
+    let fin = format!(
+        "{may}def main():\n    var a = 0\n    try:\n        a = may(4)\n    except e:\n        pass\n    finally:\n        print(\"fin\", a)\n    print(a)\n"
+    );
+    assert_eq!(parity(&fin), "fin 4\n4\n");
+    // A loop-carried accumulator assigned inside `try` must not poison the
+    // next iteration.
+    let acc = format!(
+        "{may}def main():\n    var acc = 0\n    for i in range(3):\n        try:\n            acc = acc + may(i)\n        except e:\n            pass\n    print(acc)\n"
+    );
+    assert_eq!(parity(&acc), "3\n");
+    // `break` crossing the `try` after the assignment keeps the value.
+    let brk = format!(
+        "{may}def main():\n    var a = 0\n    while True:\n        try:\n            a = may(7)\n            break\n        except e:\n            break\n    print(a)\n"
+    );
+    assert_eq!(parity(&brk), "7\n");
+    // `continue` crossing the `try` after the assignment keeps the value.
+    let cont = format!(
+        "{may}def main():\n    var a = 0\n    for i in range(3):\n        try:\n            a = a + may(1)\n            continue\n        except e:\n            pass\n    print(a)\n"
+    );
+    assert_eq!(parity(&cont), "3\n");
+    // An outer variable reassigned inside a nested `try` body survives both
+    // regions.
+    let nested = format!(
+        "{may}def main():\n    var a = 0\n    try:\n        try:\n            a = may(4)\n        except e:\n            pass\n    except e:\n        pass\n    print(a)\n"
+    );
+    assert_eq!(parity(&nested), "4\n");
+}
+
+#[test]
+fn try_body_drop_timing_is_preserved() {
+    // The `try` scope-exit cleanup still destroys genuine body-locals — and
+    // values only reachable from the body — at the region boundary, while a
+    // rebound outer variable that is read later survives to its ordinary death.
+    let noisy = "struct Noisy(Deinitable, Movable, Copyable):\n    var tag: Int\n    def __init__(out self, tag: Int):\n        self.tag = tag\n    def __deinit__(deinit self):\n        print(\"deinit\", self.tag)\n\ndef may(x: Int) raises -> Int:\n    if x < 0:\n        raise Error(\"neg\")\n    return x\n\n";
+    // A body-local is destroyed on the exceptional edge before the handler runs.
+    let local = format!(
+        "{noisy}def main():\n    try:\n        var n = Noisy(1)\n        var x = may(-1)\n    except e:\n        print(\"caught\")\n    print(\"after\")\n"
+    );
+    assert_eq!(parity(&local), "deinit 1\ncaught\nafter\n");
+    // The owned-iteration iterator variable is a body-local even though its
+    // defining `DefVar` is untyped: a raise mid-loop still destroys the
+    // remaining elements before the handler runs.
+    let iter = format!(
+        "{noisy}def make() -> List[Noisy]:\n    return [Noisy(1), Noisy(2)]\n\ndef main():\n    try:\n        for v in make():\n            var x = may(-1)\n    except e:\n        print(\"caught\")\n    print(\"after\")\n"
+    );
+    assert_eq!(
+        run_compiled(&iter).expect("iterator drop program runs"),
+        "deinit 1\ndeinit 2\ncaught\nafter\n"
+    );
+    // An outer variable rebound in the body and never observed again is still
+    // destroyed at the region boundary (region interiors get no
+    // per-instruction drops).
+    let dead = format!(
+        "{noisy}def main():\n    var n = Noisy(1)\n    try:\n        n = Noisy(2)\n    except e:\n        pass\n    print(\"done\")\n"
+    );
+    assert_eq!(parity(&dead), "deinit 1\ndeinit 2\ndone\n");
+    // A rebound outer variable that is read after the block keeps its value
+    // through the region boundary.
+    let live = format!(
+        "{noisy}def main():\n    var n = Noisy(1)\n    try:\n        n = Noisy(2)\n    except e:\n        pass\n    print(\"post\", n.tag)\n"
+    );
+    assert_eq!(parity(&live), "deinit 2\npost 2\n");
+}
+
+#[test]
 fn vm_reports_unsupported_features_cleanly() {
     // A remaining coverage gap must surface as a clean error, not a wrong answer or
     // a panic. `break`/`continue` crossing a `try` now works when the target loop is

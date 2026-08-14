@@ -278,26 +278,65 @@ fn place_loan_uses(place: &MirPlace, reg: Reg) -> Vec<(VarId, Reg)> {
     uses
 }
 
-/// The variables **defined** within a `try` region's blocks (a `DefVar` at any
-/// nesting), excluding those moved out with `^` — the body-local values to destroy
-/// when the body is left (the exceptional-edge / scope-exit cleanup).
-fn region_cleanup_vars(blocks: &[MirBlock]) -> Vec<VarId> {
-    let mut defined: Vec<VarId> = Vec::new();
+/// The variables **local** to a `try` region's blocks — those whose every
+/// `DefVar` in the whole function lies within the region (at any nesting),
+/// excluding those moved out with `^` — the body-local values to destroy when
+/// the body is left (the exceptional-edge / scope-exit cleanup). A reassignment
+/// is also a `DefVar`, so a variable declared outside the region and merely
+/// reassigned inside it has def sites beyond the region and must survive the
+/// exit; `function_defs` supplies the function-wide def counts to compare
+/// against.
+fn region_cleanup_vars(blocks: &[MirBlock], function_defs: &HashMap<VarId, usize>) -> Vec<VarId> {
+    let mut counts: HashMap<VarId, usize> = HashMap::new();
+    let mut order: Vec<VarId> = Vec::new();
     let mut moved: HashSet<VarId> = HashSet::new();
+    collect_region_defs(blocks, &mut counts, &mut order, &mut moved);
+    order.retain(|v| !moved.contains(v) && counts.get(v) == function_defs.get(v));
+    order
+}
+
+/// Count every `DefVar` write per variable across `blocks`, recursing into
+/// nested `try` sub-regions, recording first-def order and `^`-moved variables.
+/// Over a function's top-level blocks this yields the function-wide def counts
+/// that region-locality is judged against.
+fn collect_region_defs(
+    blocks: &[MirBlock],
+    counts: &mut HashMap<VarId, usize>,
+    order: &mut Vec<VarId>,
+    moved: &mut HashSet<VarId>,
+) {
     for b in blocks {
         for instr in &b.instrs {
-            if let Some(v) = var_def(instr)
-                && !defined.contains(&v)
-            {
-                defined.push(v);
+            if let Some(v) = var_def(instr) {
+                if !counts.contains_key(&v) {
+                    order.push(v);
+                }
+                *counts.entry(v).or_insert(0) += 1;
             }
             for v in vars_moved(instr) {
                 moved.insert(v);
             }
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = instr
+            {
+                collect_region_defs(body, counts, order, moved);
+                if let Some((_, h)) = handler {
+                    collect_region_defs(h, counts, order, moved);
+                }
+                if let Some(e) = orelse {
+                    collect_region_defs(e, counts, order, moved);
+                }
+                if let Some(fb) = finalbody {
+                    collect_region_defs(fb, counts, order, moved);
+                }
+            }
         }
     }
-    defined.retain(|v| !moved.contains(v));
-    defined
 }
 
 /// The variable a MIR instruction writes (a `DefVar`), if any.
@@ -372,6 +411,16 @@ fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
 
 fn elaborate_drops(f: &MirFunction) -> MirFunction {
     let nb = f.blocks.len();
+    // Function-wide `DefVar` counts (deep through `try` regions): the reference
+    // that region-locality — and therefore every `try` cleanup — is judged
+    // against. Inserted `DropVar`s add no defs, so the counts stay valid for
+    // the rebuilt blocks below.
+    let function_defs = {
+        let mut counts = HashMap::new();
+        let (mut order, mut moved) = (Vec::new(), HashSet::new());
+        collect_region_defs(&f.blocks, &mut counts, &mut order, &mut moved);
+        counts
+    };
     let loan_roots = drop_loan_generations(f);
     let generation_entries = loan_generation_block_entries(f);
     let generation_dests = loan_generation_dests(f);
@@ -467,7 +516,7 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
             let mut cloned = instr.clone();
             if let MirInstr::Try { .. } = &cloned {
                 let (mut rdef, mut rmov) = (HashSet::new(), HashSet::new());
-                try_region_defs(instr, &mut rdef, &mut rmov);
+                try_region_defs(instr, &function_defs, &mut rdef, &mut rmov);
                 // `finally` runs *after* every escape, so a variable it uses must
                 // survive the escape edge — exclude it (and the loop var, which the
                 // `finally` typically reads) from the escape cleanup.
@@ -489,6 +538,53 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
                     })
                     .collect();
                 fill_escape_cleanups(&mut cloned, &base, &effective_live_in);
+                // Region interiors get no per-instruction drop elaboration, so
+                // an outer variable rebound inside the body would escape
+                // destruction entirely once it is dead. Seed the scope-exit
+                // cleanup with the body-defined non-locals that cannot be
+                // observed after the body is left — dead on the normal
+                // continuation, unused by the handler/`else`/`finally`, and
+                // dead at every escape target. `set_try_cleanups` prepends the
+                // body-locals and keeps this seed.
+                if let MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    cleanup,
+                } = &mut cloned
+                {
+                    let mut counts = HashMap::new();
+                    let (mut order, mut moved) = (Vec::new(), HashSet::new());
+                    collect_region_defs(body, &mut counts, &mut order, &mut moved);
+                    let mut survivors = HashSet::new();
+                    if let Some((_, h)) = handler {
+                        survivors.extend(region_uses(h));
+                    }
+                    if let Some(e) = orelse {
+                        survivors.extend(region_uses(e));
+                    }
+                    if let Some(fb) = finalbody {
+                        survivors.extend(region_uses(fb));
+                    }
+                    let mut escape_targets = HashSet::new();
+                    try_escape_targets(instr, &mut escape_targets);
+                    *cleanup = order
+                        .into_iter()
+                        .filter(|v| {
+                            counts.get(v) != function_defs.get(v)
+                                && is_droppable_root(f, *v)
+                                && !moved.contains(v)
+                                && !live_after[i].contains(v)
+                                && !survivors.contains(v)
+                                && !escape_targets.iter().any(|t| {
+                                    effective_live_in
+                                        .get(*t)
+                                        .is_some_and(|live| live.contains(v))
+                                })
+                        })
+                        .collect();
+                }
             }
             new_instrs.push(cloned);
             let moved = vars_moved(instr);
@@ -599,7 +695,7 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
 
     // Fill each `try`'s exceptional-edge cleanup (the body-local values to destroy
     // when the body is left), recursing into nested regions.
-    set_try_cleanups(&mut blocks);
+    set_try_cleanups(&mut blocks, &function_defs);
 
     // A `deinit` parameter is *consumed*, not destroyed: the spliced teardown
     // for it must skip the value's whole-value `__deinit__` (its resources already
@@ -1034,10 +1130,53 @@ fn region_uses(blocks: &[MirBlock]) -> HashSet<VarId> {
     s
 }
 
-/// Collect the variables *defined* or `^`-moved anywhere in a `try`'s regions
-/// (recursively, through nested `try`s). Used to exclude a `try`'s own body-locals
-/// (handled by `Try.cleanup`) and moved-out values from the escape-edge cleanup.
-fn try_region_defs(try_instr: &MirInstr, defs: &mut HashSet<VarId>, moved: &mut HashSet<VarId>) {
+/// Collect the variables *local* to a `try`'s regions (every function-wide
+/// `DefVar` inside them, recursing through nested `try`s) and the `^`-moved
+/// variables. Used to exclude a `try`'s own region-locals (handled by
+/// `Try.cleanup`) and moved-out values from the escape-edge cleanup; an outer
+/// variable merely reassigned inside a region is *not* excluded, so the escape
+/// edge drops it exactly when it is dead at the target.
+fn try_region_defs(
+    try_instr: &MirInstr,
+    function_defs: &HashMap<VarId, usize>,
+    defs: &mut HashSet<VarId>,
+    moved: &mut HashSet<VarId>,
+) {
+    if let MirInstr::Try {
+        body,
+        handler,
+        orelse,
+        finalbody,
+        ..
+    } = try_instr
+    {
+        let mut regions: Vec<&Vec<MirBlock>> = vec![body];
+        if let Some((_, h)) = handler {
+            regions.push(h);
+        }
+        if let Some(e) = orelse {
+            regions.push(e);
+        }
+        if let Some(fb) = finalbody {
+            regions.push(fb);
+        }
+        let mut counts: HashMap<VarId, usize> = HashMap::new();
+        let mut order: Vec<VarId> = Vec::new();
+        for blocks in regions {
+            collect_region_defs(blocks, &mut counts, &mut order, moved);
+        }
+        defs.extend(
+            order
+                .into_iter()
+                .filter(|v| counts.get(v) == function_defs.get(v)),
+        );
+    }
+}
+
+/// Collect every `EscapeJump` target block (a function-level block id) inside a
+/// `try`'s regions, recursing through nested `try`s — the blocks whose live-in
+/// sets bound what the escape edges may still observe.
+fn try_escape_targets(try_instr: &MirInstr, targets: &mut HashSet<usize>) {
     if let MirInstr::Try {
         body,
         handler,
@@ -1059,13 +1198,10 @@ fn try_region_defs(try_instr: &MirInstr, defs: &mut HashSet<VarId>, moved: &mut 
         for blocks in regions {
             for b in blocks {
                 for instr in &b.instrs {
-                    if let Some(v) = var_def(instr) {
-                        defs.insert(v);
-                    }
-                    for v in vars_moved(instr) {
-                        moved.insert(v);
-                    }
-                    try_region_defs(instr, defs, moved);
+                    try_escape_targets(instr, targets);
+                }
+                if let MirTerm::EscapeJump { target, .. } = &b.term {
+                    targets.insert(*target);
                 }
             }
         }
@@ -1121,8 +1257,12 @@ fn fill_escape_cleanups(
 }
 
 /// Recursively fill every `MirInstr::Try`'s `cleanup` with the body's local
-/// variables (dropped when the body is left, normally or via a raise).
-fn set_try_cleanups(blocks: &mut [MirBlock]) {
+/// variables (dropped when the body is left, normally or via a raise);
+/// `function_defs` is the function-wide def count that locality is judged
+/// against. A cleanup seeded earlier (the liveness-guarded unobservable
+/// rebound variables from `elaborate_drops`) is kept, appended after the
+/// locals.
+fn set_try_cleanups(blocks: &mut [MirBlock], function_defs: &HashMap<VarId, usize>) {
     for b in blocks.iter_mut() {
         for instr in b.instrs.iter_mut() {
             if let MirInstr::Try {
@@ -1133,16 +1273,22 @@ fn set_try_cleanups(blocks: &mut [MirBlock]) {
                 cleanup,
             } = instr
             {
-                *cleanup = region_cleanup_vars(body);
-                set_try_cleanups(body);
+                let mut vars = region_cleanup_vars(body, function_defs);
+                for v in cleanup.drain(..) {
+                    if !vars.contains(&v) {
+                        vars.push(v);
+                    }
+                }
+                *cleanup = vars;
+                set_try_cleanups(body, function_defs);
                 if let Some((_, h)) = handler {
-                    set_try_cleanups(h);
+                    set_try_cleanups(h, function_defs);
                 }
                 if let Some(e) = orelse {
-                    set_try_cleanups(e);
+                    set_try_cleanups(e, function_defs);
                 }
                 if let Some(fb) = finalbody {
-                    set_try_cleanups(fb);
+                    set_try_cleanups(fb, function_defs);
                 }
             }
         }

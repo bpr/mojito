@@ -139,32 +139,18 @@ specifications and upstream evidence), in this order:
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
-- [ ] **Fix the try-region reassignment wipe (correctness bug)** — a plain
-  reassignment of an *outer* variable inside a `try` body is destroyed by the
-  region's scope-exit cleanup, so the slot reads back as `None` after the
-  block. Fix before freezing MIR semantics into artifacts.
-  - Root cause: `region_cleanup_vars` (`src/analysis.rs`) collects every
-    `DefVar` in the region as a body-local to destroy, but a reassignment is
-    also a `DefVar` — the discriminator already exists (`binding_ty` is
-    `Some` only for an initializing declaration; reassignments carry `None`),
-    so the collection should keep declarations only. Audit
-    `fill_escape_cleanups`, which derives its base from the same
-    classification.
-  - Observable shapes (one cause, several symptoms): the value is lost after
-    the block; `finally` reads the wiped slot (cleanup runs before `finally`
-    on the normal edge); `break`/`continue`/`return` crossing the `try` after
-    the assignment lose it; a loop-carried accumulator assigned inside `try`
-    poisons the next iteration (`operator Add is not defined for None and
-    Int`); destructor-bearing values are destroyed early (no leak or double
-    drop observed — the slot just reads `None`). Assignments in
-    `except`/`else`/`finally` bodies, field writes, collection mutation,
-    reads inside the body, and `return` of the value from inside the body
-    are all unaffected.
-  - Add fixtures for each shape (plain rebinding, caught-path rebinding,
-    `finally` read, loop accumulator, escape jumps, nested `try`) and
-    un-work-around the stdlib sites that return inside `try` to dodge the
-    bug (`stdlib/std/string.mojo` keyword-slice methods and
-    `_GraphemeIter.__next__` note the pattern).
+- [ ] **Per-instruction drop elaboration inside `try` regions** — region
+  interiors currently get whole-region drop granularity only (the `Try`
+  scope-exit cleanup plus a liveness-guarded seed for unobservable rebound
+  outer variables), not the per-instruction ASAP drops top-level blocks get.
+  Two residual gaps, settle before freezing MIR semantics into artifacts:
+  the *overwritten* value of an outer variable rebound inside a `try` body
+  never runs its destructor when the variable stays observable afterward
+  (the untyped `DefVar` replaces the slot silently), and a variable rebound
+  in an `except`/`else`/`finally` region that is dead afterward is never
+  dropped (the scope-exit cleanup runs before those regions). The fix is
+  running the ordinary death/`DropVar` elaboration over each region's
+  mini-CFG with live-out seeded from the enclosing block's liveness.
 - [ ] **Backend-ready MIR checkpoint** — confirm that checked declarations plus
   typed verified MIR are sufficient inputs, with no source-AST reconstruction,
   before freezing a serialized schema.

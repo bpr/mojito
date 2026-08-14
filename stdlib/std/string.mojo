@@ -505,24 +505,22 @@ struct String(
         return view^
 
     def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan:
+        var start_byte = 0
+        var end_byte = 0
         try:
             var total = self.codepoint_count()
             var start = codepoint.start.or_else(0)
             var end = codepoint.end.or_else(total)
             if start < 0 or end > total or start > end:
                 _mojito_abort("String codepoint slice bounds out of range")
-            var start_byte = self._codepoint_offset(start)
-            var end_byte = self._codepoint_offset(end)
-            var view = StringSpan(self)
-            view._data = view._data.unsafe_offset(start_byte)
-            view._size = end_byte - start_byte
-            return view^
+            start_byte = self._codepoint_offset(start)
+            end_byte = self._codepoint_offset(end)
         except e:
             _mojito_abort("String buffer is not valid UTF-8")
-        # Unreachable: the abort above never returns.
-        var empty = StringSpan(self)
-        empty._size = 0
-        return empty^
+        var view = StringSpan(self)
+        view._data = view._data.unsafe_offset(start_byte)
+        view._size = end_byte - start_byte
+        return view^
 
     # Whether `offset` falls between UTF-8 sequences (or at either buffer
     # end): a continuation byte marks an interior position.
@@ -765,6 +763,8 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return self._sub_view(start, end)
 
     def __getitem__(self, *, codepoint: ContiguousSlice) -> Self:
+        var start_byte = 0
+        var end_byte = 0
         try:
             var text = self.to_string()
             var total = text.codepoint_count()
@@ -772,15 +772,15 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             var end = codepoint.end.or_else(total)
             if start < 0 or end > total or start > end:
                 _mojito_abort("StringSpan codepoint slice bounds out of range")
-            return self._sub_view(
-                text._codepoint_offset(start), text._codepoint_offset(end)
-            )
+            start_byte = text._codepoint_offset(start)
+            end_byte = text._codepoint_offset(end)
         except e:
             _mojito_abort("StringSpan buffer is not valid UTF-8")
-        # Unreachable: the abort above never returns.
-        return self._sub_view(0, 0)
+        return self._sub_view(start_byte, end_byte)
 
     def __getitem__(self, *, grapheme: ContiguousSlice) -> Self:
+        var start_byte = 0
+        var end_byte = 0
         try:
             var text = self.to_string()
             var total = text.grapheme_count()
@@ -788,13 +788,11 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             var end = grapheme.end.or_else(total)
             if start < 0 or end > total or start > end:
                 _mojito_abort("StringSpan grapheme slice bounds out of range")
-            return self._sub_view(
-                text._grapheme_offset(start), text._grapheme_offset(end)
-            )
+            start_byte = text._grapheme_offset(start)
+            end_byte = text._grapheme_offset(end)
         except e:
             _mojito_abort("StringSpan buffer is not valid UTF-8")
-        # Unreachable: the abort above never returns.
-        return self._sub_view(0, 0)
+        return self._sub_view(start_byte, end_byte)
 
     def write_to(self, mut writer: Some[Writer]):
         writer.write(self.to_string())
@@ -837,12 +835,11 @@ struct _GraphemeIter[
         if self.index >= len(self.src):
             raise StopIteration()
         var start = self.index
+        var end = start
         try:
             var text = self.src.to_string()
-            var end = text._next_grapheme_end(start)
-            self.index = end
-            return self.src._sub_view(start, end)
+            end = text._next_grapheme_end(start)
         except e:
             _mojito_abort("String buffer is not valid UTF-8")
-        # Unreachable: the abort above never returns.
-        return self.src._sub_view(start, start)
+        self.index = end
+        return self.src._sub_view(start, end)

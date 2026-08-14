@@ -6,6 +6,21 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Fixed
+
+- The try-region reassignment wipe: a plain reassignment of an outer
+  variable inside a `try` body was collected as a body-local and destroyed
+  by the region's scope-exit cleanup, so the slot read back as `None` after
+  the block (also poisoning loop-carried accumulators, `finally` reads, and
+  `break`/`continue`/`return` crossing the `try`). `Try.cleanup` now keeps
+  the body's genuine locals — variables whose every definition lies within
+  the body region — plus rebound outer variables that are provably
+  unobservable after the block (so their values still run destructors at
+  the region boundary), and escape-edge cleanups drop a rebound outer
+  variable exactly when it is dead at the jump target. The
+  `stdlib/std/string.mojo` keyword-slice methods and `_GraphemeIter.__next__`
+  no longer need the return-inside-`try` workaround.
+
 ### Changed
 
 - Views and strict bounds (nightly §5): `Span(list)` and `StringSpan` are

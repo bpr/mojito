@@ -2417,10 +2417,17 @@ This keeps ASAP destruction precise across branches.
 
 ### Try Cleanup
 
-Try regions need cleanup for variables defined inside the body. The drop
-elaboration pass fills `MirInstr::Try.cleanup` so the VM can destroy body-local
-values when the body exits through normal completion, raise, return, break, or
-continue.
+Try regions need cleanup for the values only the body can still observe. The
+drop elaboration pass fills `MirInstr::Try.cleanup` so the VM can destroy them
+when the body exits through normal completion, raise, return, break, or
+continue. The set holds the body's *locals* — variables whose every `DefVar` in
+the function lies within the body region (a reassignment is also a `DefVar`, so
+an outer variable merely rebound inside the body is not a local and survives
+the exit) — plus the liveness-guarded rebound outer variables that cannot be
+observed after the body is left: dead on the normal continuation, unused by the
+handler/`else`/`finally` regions, and dead at every escape target. Region
+interiors get no per-instruction drop elaboration, so without that second set a
+dead rebound value would never run its destructor.
 
 `EscapeJump` also carries cleanup for cross-region loop escapes. This makes
 hidden try-region exits explicit enough for the VM to run destructors before
