@@ -383,15 +383,81 @@ fn vars_moved(i: &MirInstr) -> Vec<VarId> {
     }
 }
 
-/// Insert `DropVar`s at each variable's last use. A backward liveness dataflow
-/// finds where each variable dies (touched, then dead), and a forward rebuild
-/// splices a drop right after — skipping variables moved out with `^` (their new
-/// owner drops them) so nothing is double-dropped. At a shared death point,
-/// variables drop in reverse declaration order (descending `VarId`).
-///
-/// Conservative by design: it drops at a variable's last use *within a block* and
-/// leaks (rather than risk a double-free) on the branch edges where a value dies
-/// without being used — full drop elaboration across branches is future work.
+/// Whether executing this instruction can surface a caught
+/// `RuntimeError::Raised`, transferring control to an enclosing handler.
+/// Minimal allowlist of provably silent instructions; everything else — calls,
+/// subscripts, `Raise`, nested `Try`, ... — counts as a potential raise.
+/// Misclassifying silent→raising merely delays a drop to the `Try.cleanup`
+/// backstop; raising→silent could let a handler observe a vacated slot, so the
+/// allowlist stays minimal. (Non-`Raised` runtime errors abort the program, so
+/// drops are unobservable on those paths.)
+fn may_raise(instr: &MirInstr) -> bool {
+    !matches!(
+        instr,
+        MirInstr::DefVar { .. }
+            | MirInstr::UseVar { .. }
+            | MirInstr::DropVar { .. }
+            | MirInstr::ConsumeVar { .. }
+            | MirInstr::KeepAlive { .. }
+    )
+}
+
+/// Visit every instruction under `blocks`, recursing into `try` sub-regions.
+fn for_each_instr_deep(blocks: &[MirBlock], visit: &mut impl FnMut(&MirInstr)) {
+    for block in blocks {
+        for instr in &block.instrs {
+            visit(instr);
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = instr
+            {
+                for_each_instr_deep(body, visit);
+                if let Some((_, h)) = handler {
+                    for_each_instr_deep(h, visit);
+                }
+                if let Some(e) = orelse {
+                    for_each_instr_deep(e, visit);
+                }
+                if let Some(fb) = finalbody {
+                    for_each_instr_deep(fb, visit);
+                }
+            }
+        }
+    }
+}
+
+/// Mutable counterpart of [`for_each_instr_deep`].
+fn for_each_instr_deep_mut(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut MirInstr)) {
+    for block in blocks {
+        for instr in &mut block.instrs {
+            visit(instr);
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = instr
+            {
+                for_each_instr_deep_mut(body, visit);
+                if let Some((_, h)) = handler {
+                    for_each_instr_deep_mut(h, visit);
+                }
+                if let Some(e) = orelse {
+                    for_each_instr_deep_mut(e, visit);
+                }
+                if let Some(fb) = finalbody {
+                    for_each_instr_deep_mut(fb, visit);
+                }
+            }
+        }
+    }
+}
+
 /// Whether the value in variable `v` is dropped by *this* function: locals always;
 /// a consuming `var` parameter (the caller transferred it) yes; a borrowed parameter or
 /// `self` never (the caller owns a borrow; `self` is written back / would recurse).
@@ -415,6 +481,15 @@ fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
     }
 }
 
+/// Insert `DropVar`s at each variable's last use. A backward liveness dataflow
+/// finds where each variable dies (touched, then dead), and a forward rebuild
+/// splices a drop right after — skipping variables moved out with `^` (their new
+/// owner drops them) so nothing is double-dropped. At a shared death point,
+/// variables drop in reverse declaration order (descending `VarId`). Values that
+/// die on control-flow edges drop on the edge (splitting critical edges), and
+/// `try` region interiors get the same per-instruction and edge elaboration
+/// through [`elaborate_try_interior`], leaving the region cleanup lists as
+/// raise-edge/scope-exit backstops.
 fn elaborate_drops(f: &MirFunction) -> MirFunction {
     let nb = f.blocks.len();
     // Function-wide `DefVar` counts (deep through `try` regions): the reference
@@ -428,9 +503,20 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
         counts
     };
     let loan_roots = drop_loan_generations(f);
-    let generation_entries = loan_generation_block_entries(f);
     let generation_dests = loan_generation_dests(f);
-    let register_loan_uses = register_loan_uses(f, &generation_entries, &loan_roots);
+    let generation_entries = loan_generation_entries_over(
+        &f.blocks,
+        &LoanGenerationState::default(),
+        &generation_dests,
+    );
+    let (register_loan_uses, register_loan_entries) = register_loan_uses_over(
+        &f.blocks,
+        &generation_entries,
+        &RegisterLoanState::default(),
+        &loan_roots,
+        &generation_dests,
+        &f.reg_types,
+    );
     let generation_exits: Vec<LoanGenerationState> = f
         .blocks
         .iter()
@@ -467,6 +553,12 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
         .zip(&generation_entries)
         .map(|(live, generations)| effective_drop_liveness(live.clone(), generations, &loan_roots))
         .collect();
+    let region_ctx = RegionDropCtx {
+        f,
+        loan_roots: &loan_roots,
+        generation_dests: &generation_dests,
+        effective_live_in: &effective_live_in,
+    };
 
     // (1) Block-internal drops: replay each block, tracking the live set after each
     // instruction, and drop the variables that die at their last use in-block.
@@ -495,10 +587,20 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
         }
 
         let mut generation_state = generation_entries[b].clone();
+        let mut register_state = register_loan_entries[b].clone();
         let mut generation_before = Vec::with_capacity(instrs.len());
         let mut generation_after = Vec::with_capacity(instrs.len());
+        let mut register_before = Vec::with_capacity(instrs.len());
         for instr in instrs {
             generation_before.push(generation_state.clone());
+            register_before.push(register_state.clone());
+            transfer_register_loans(
+                &mut register_state,
+                &generation_state,
+                instr,
+                &loan_roots,
+                &f.reg_types,
+            );
             transfer_loan_generation(&mut generation_state, instr, &generation_dests);
             generation_after.push(generation_state.clone());
         }
@@ -549,14 +651,16 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
                     })
                     .collect();
                 fill_escape_cleanups(&mut cloned, &base, &effective_live_in);
-                // Region interiors get no per-instruction drop elaboration, so
-                // an outer variable rebound inside the body would escape
-                // destruction entirely once it is dead. Seed the scope-exit
-                // cleanup with the body-defined non-locals that cannot be
-                // observed after the body is left — dead on the normal
-                // continuation, unused by the handler/`else`/`finally`, and
-                // dead at every escape target. `set_try_cleanups` prepends the
-                // body-locals and keeps this seed.
+                // Raise-edge backstop for rebound outer variables: the
+                // per-instruction region drops below place each rebind's death
+                // on the *normal* path, so a value rebound in the body and
+                // unobservable after the block would still leak when a raise
+                // lands between the rebind and its in-region drop. Seed the
+                // scope-exit cleanup with the body-defined non-locals that
+                // cannot be observed after the body is left — dead on the
+                // normal continuation, unused by the handler/`else`/`finally`,
+                // and dead at every escape target. `set_try_cleanups` prepends
+                // the body-locals and keeps this seed.
                 if let MirInstr::Try {
                     body,
                     handler,
@@ -596,6 +700,29 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
                         })
                         .collect();
                 }
+                // Elaborate per-instruction/edge drops inside the regions,
+                // seeded from this walk's liveness at the `try`.
+                let body_entry_live = elaborate_try_interior(
+                    &region_ctx,
+                    &mut cloned,
+                    &ordinary_live_after[i],
+                    &HashSet::new(),
+                    &generation_before[i],
+                    &register_before[i],
+                );
+                // Entry-edge deaths: a value live into the `try` that no
+                // region path can observe (an unconditional silent rebind
+                // precedes every potential raise) dies immediately before it.
+                let entry_dead: Vec<VarId> = live_before[i]
+                    .iter()
+                    .copied()
+                    .filter(|v| {
+                        is_droppable_root(f, *v)
+                            && !rmov.contains(v)
+                            && !body_entry_live.contains(v)
+                    })
+                    .collect();
+                append_drops(&mut new_instrs, entry_dead);
             }
             new_instrs.push(cloned);
             let moved = vars_moved(instr);
@@ -719,15 +846,13 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
             (var as usize) < f.n_params
                 && f.deinit_params.get(var as usize).copied().unwrap_or(false)
         };
-        for block in &mut blocks {
-            for instr in &mut block.instrs {
-                if let MirInstr::DropVar { var } = instr
-                    && is_deinit_param(*var)
-                {
-                    *instr = MirInstr::ConsumeVar { var: *var };
-                }
+        for_each_instr_deep_mut(&mut blocks, &mut |instr| {
+            if let MirInstr::DropVar { var } = instr
+                && is_deinit_param(*var)
+            {
+                *instr = MirInstr::ConsumeVar { var: *var };
             }
-        }
+        });
     }
 
     MirFunction {
@@ -750,6 +875,561 @@ fn elaborate_drops(f: &MirFunction) -> MirFunction {
     }
 }
 
+/// Shared analysis inputs for elaborating drops inside `try` region mini-CFGs.
+struct RegionDropCtx<'a> {
+    f: &'a MirFunction,
+    /// Owner roots per loan generation, collected deep through regions.
+    loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
+    /// Destination domain per generation marker, collected deep.
+    generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
+    /// Top-level effective live-in sets, bounding `EscapeJump` targets.
+    effective_live_in: &'a [HashSet<VarId>],
+}
+
+/// Live-out seeds for one region's mini-CFG, per exit kind.
+struct RegionSeeds<'a> {
+    /// Live on the normal `FallOff` continuation.
+    fall_off: &'a HashSet<VarId>,
+    /// Live at every potentially-raising instruction: what the raise edge's
+    /// observer (handler, `finally`, or an enclosing handler) may still read.
+    raise: &'a HashSet<VarId>,
+    /// Live through `Return`/`ReturnWithCleanup`/`EscapeJump` exits — the
+    /// `finally` still runs after those edges leave the region.
+    finally_live: &'a HashSet<VarId>,
+    /// Top-level effective live-in sets, bounding `EscapeJump` targets.
+    effective_live_in: &'a [HashSet<VarId>],
+}
+
+/// Elaborate per-instruction and edge drops inside all four regions of one
+/// `Try` (in place), seeding each region's liveness from the enclosing walk's
+/// state at the instruction. Returns the body region's effective entry
+/// liveness so the caller can drop values no region path observes immediately
+/// before the `try`.
+fn elaborate_try_interior(
+    ctx: &RegionDropCtx,
+    try_instr: &mut MirInstr,
+    after: &HashSet<VarId>,
+    enclosing_raise: &HashSet<VarId>,
+    entry_generations: &LoanGenerationState,
+    entry_registers: &RegisterLoanState,
+) -> HashSet<VarId> {
+    let MirInstr::Try {
+        body,
+        handler,
+        orelse,
+        finalbody,
+        ..
+    } = try_instr
+    else {
+        return HashSet::new();
+    };
+
+    // The VM tears a crossing return's cleanup values down *after* the
+    // `finally`, so the `finalbody` region treats them as live-through.
+    let mut return_cleanup: HashSet<VarId> = HashSet::new();
+    collect_return_cleanups(body, &mut return_cleanup);
+    if let Some((_, h)) = handler {
+        collect_return_cleanups(h, &mut return_cleanup);
+    }
+    if let Some(e) = orelse {
+        collect_return_cleanups(e, &mut return_cleanup);
+    }
+    if let Some(fb) = finalbody {
+        collect_return_cleanups(fb, &mut return_cleanup);
+    }
+
+    // Handler/`else`/`finally` run after an arbitrary body prefix, so their
+    // loan pictures are the union of every state the body can reach — more
+    // retention than any single path, which at worst delays a drop to the
+    // cleanup backstops. No SSA handle survives into a region entered by raise
+    // or completion (each statement writes its registers before reading them),
+    // so those regions' register-loan entries are empty.
+    let body_any = region_any_generation_state(body, entry_generations, ctx.generation_dests);
+    let handler_any = handler
+        .as_ref()
+        .map(|(_, h)| region_any_generation_state(h, &body_any, ctx.generation_dests));
+    let orelse_any = orelse
+        .as_ref()
+        .map(|e| region_any_generation_state(e, &body_any, ctx.generation_dests));
+
+    // Regions elaborate in dependency order: `finally` first (its entry
+    // liveness seeds every other exit), then handler/`else`, then the body.
+    let fin_live = if let Some(fb) = finalbody {
+        let mut fall_off = after.clone();
+        fall_off.extend(return_cleanup.iter().copied());
+        let mut fin_entry = body_any.clone();
+        if let Some(state) = &handler_any {
+            fin_entry = join_loan_generation_states(fin_entry, state);
+        }
+        if let Some(state) = &orelse_any {
+            fin_entry = join_loan_generation_states(fin_entry, state);
+        }
+        let seeds = RegionSeeds {
+            fall_off: &fall_off,
+            raise: enclosing_raise,
+            finally_live: &fall_off,
+            effective_live_in: ctx.effective_live_in,
+        };
+        elaborate_region_drops(ctx, fb, &seeds, &fin_entry, &RegisterLoanState::default())
+    } else {
+        after.clone()
+    };
+
+    // A raise inside the handler or `else` is not caught by this `try`; it
+    // runs the `finally` and then propagates to the enclosing observer.
+    let mut outward_raise = fin_live.clone();
+    outward_raise.extend(enclosing_raise.iter().copied());
+
+    let handler_live = handler.as_mut().map(|(binding, h)| {
+        let seeds = RegionSeeds {
+            fall_off: &fin_live,
+            raise: &outward_raise,
+            finally_live: &fin_live,
+            effective_live_in: ctx.effective_live_in,
+        };
+        let mut live = elaborate_region_drops(
+            ctx,
+            h,
+            &seeds,
+            handler_any.as_ref().unwrap_or(&body_any),
+            &RegisterLoanState::default(),
+        );
+        // The VM writes the caught error into the binding slot, so its
+        // pre-raise content is never observable.
+        if let Some(bound) = binding {
+            live.remove(bound);
+        }
+        live
+    });
+    let orelse_live = orelse.as_mut().map(|e| {
+        let seeds = RegionSeeds {
+            fall_off: &fin_live,
+            raise: &outward_raise,
+            finally_live: &fin_live,
+            effective_live_in: ctx.effective_live_in,
+        };
+        elaborate_region_drops(
+            ctx,
+            e,
+            &seeds,
+            orelse_any.as_ref().unwrap_or(&body_any),
+            &RegisterLoanState::default(),
+        )
+    });
+
+    // Body: a raise lands in the handler when there is one (it catches every
+    // error), otherwise it runs the `finally` and propagates outward. Normal
+    // completion continues into `else` when present.
+    let body_raise = handler_live.unwrap_or(outward_raise);
+    let body_fall_off = orelse_live.unwrap_or_else(|| fin_live.clone());
+    let seeds = RegionSeeds {
+        fall_off: &body_fall_off,
+        raise: &body_raise,
+        finally_live: &fin_live,
+        effective_live_in: ctx.effective_live_in,
+    };
+    elaborate_region_drops(ctx, body, &seeds, entry_generations, entry_registers)
+}
+
+/// Run the ordinary death/`DropVar` elaboration over one region's mini-CFG —
+/// the same backward liveness, loan-aware death rule, and edge splitting the
+/// function's top-level blocks get — with live-outs seeded per exit kind and
+/// the raise seed applied at every potentially-raising instruction. Returns
+/// the region's effective entry liveness.
+fn elaborate_region_drops(
+    ctx: &RegionDropCtx,
+    blocks: &mut Vec<MirBlock>,
+    seeds: &RegionSeeds,
+    entry_generations: &LoanGenerationState,
+    entry_registers: &RegisterLoanState,
+) -> HashSet<VarId> {
+    let f = ctx.f;
+    let nb = blocks.len();
+    if nb == 0 {
+        return seeds.fall_off.clone();
+    }
+
+    let mut live_in: Vec<HashSet<VarId>> = vec![HashSet::new(); nb];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for b in (0..nb).rev() {
+            let live_out = region_block_live_out(blocks, b, &live_in, seeds);
+            let new_in = transfer_region_drop_liveness(&blocks[b].instrs, live_out, seeds.raise);
+            if new_in != live_in[b] {
+                live_in[b] = new_in;
+                changed = true;
+            }
+        }
+    }
+
+    let generation_entries =
+        loan_generation_entries_over(blocks, entry_generations, ctx.generation_dests);
+    let (register_uses, register_entries) = register_loan_uses_over(
+        blocks,
+        &generation_entries,
+        entry_registers,
+        ctx.loan_roots,
+        ctx.generation_dests,
+        &f.reg_types,
+    );
+    let generation_exits: Vec<LoanGenerationState> = blocks
+        .iter()
+        .zip(&generation_entries)
+        .map(|(block, entry)| {
+            let mut state = entry.clone();
+            for instruction in &block.instrs {
+                transfer_loan_generation(&mut state, instruction, ctx.generation_dests);
+            }
+            state
+        })
+        .collect();
+
+    let effective_entry =
+        effective_drop_liveness(live_in[0].clone(), &generation_entries[0], ctx.loan_roots);
+
+    // Block-internal drops: the top-level rebuild, over the region CFG.
+    for b in 0..nb {
+        let live_out = region_block_live_out(blocks, b, &live_in, seeds);
+        let instrs = std::mem::take(&mut blocks[b].instrs);
+        let mut live = live_out;
+        let mut ordinary_live_after = vec![HashSet::new(); instrs.len()];
+        let mut ordinary_live_before = vec![HashSet::new(); instrs.len()];
+        for i in (0..instrs.len()).rev() {
+            ordinary_live_after[i] = live.clone();
+            if let Some(d) = var_def(&instrs[i]) {
+                live.remove(&d);
+            }
+            for (u, _) in var_uses(&instrs[i]) {
+                live.insert(u);
+            }
+            if let MirInstr::ConsumeVar { var } = &instrs[i] {
+                live.insert(*var);
+            }
+            live.extend(&register_uses[b][i]);
+            if may_raise(&instrs[i]) {
+                live.extend(seeds.raise.iter().copied());
+            }
+            ordinary_live_before[i] = live.clone();
+        }
+
+        let mut generation_state = generation_entries[b].clone();
+        let mut register_state = register_entries[b].clone();
+        let mut generation_before = Vec::with_capacity(instrs.len());
+        let mut generation_after = Vec::with_capacity(instrs.len());
+        let mut register_before = Vec::with_capacity(instrs.len());
+        for instr in &instrs {
+            generation_before.push(generation_state.clone());
+            register_before.push(register_state.clone());
+            transfer_register_loans(
+                &mut register_state,
+                &generation_state,
+                instr,
+                ctx.loan_roots,
+                &f.reg_types,
+            );
+            transfer_loan_generation(&mut generation_state, instr, ctx.generation_dests);
+            generation_after.push(generation_state.clone());
+        }
+
+        let mut live_before = Vec::with_capacity(instrs.len());
+        let mut live_after = Vec::with_capacity(instrs.len());
+        for i in 0..instrs.len() {
+            live_before.push(effective_drop_liveness(
+                ordinary_live_before[i].clone(),
+                &generation_before[i],
+                ctx.loan_roots,
+            ));
+            live_after.push(effective_drop_liveness(
+                ordinary_live_after[i].clone(),
+                &generation_after[i],
+                ctx.loan_roots,
+            ));
+        }
+
+        let mut new_instrs = Vec::with_capacity(instrs.len());
+        for (i, instr) in instrs.iter().enumerate() {
+            let mut cloned = instr.clone();
+            if let MirInstr::Try { .. } = &cloned {
+                let nested_entry = elaborate_try_interior(
+                    ctx,
+                    &mut cloned,
+                    &ordinary_live_after[i],
+                    seeds.raise,
+                    &generation_before[i],
+                    &register_before[i],
+                );
+                let moved = try_moved_vars(instr);
+                let entry_dead: Vec<VarId> = live_before[i]
+                    .iter()
+                    .copied()
+                    .filter(|v| {
+                        is_droppable_root(f, *v) && !moved.contains(v) && !nested_entry.contains(v)
+                    })
+                    .collect();
+                append_drops(&mut new_instrs, entry_dead);
+            }
+            new_instrs.push(cloned);
+            let moved = vars_moved(instr);
+            let mut dying: Vec<VarId> = Vec::new();
+            let touched = var_uses(instr)
+                .into_iter()
+                .map(|(v, _)| v)
+                .chain(var_def(instr))
+                .chain(register_uses[b][i].iter().copied());
+            let roots_before = active_drop_loan_roots(&generation_before[i], ctx.loan_roots);
+            let roots_after = active_drop_loan_roots(&generation_after[i], ctx.loan_roots);
+            let retired_roots = roots_before.difference(&roots_after).copied();
+            let deaths = live_before[i]
+                .difference(&live_after[i])
+                .copied()
+                .chain(touched)
+                .chain(retired_roots);
+            for v in deaths {
+                if is_droppable_root(f, v)
+                    && !moved.contains(&v)
+                    && !live_after[i].contains(&v)
+                    && !dying.contains(&v)
+                {
+                    dying.push(v);
+                }
+            }
+            append_drops(&mut new_instrs, dying);
+        }
+        blocks[b].instrs = new_instrs;
+    }
+
+    // Region-internal edge drops with critical-edge splitting. Exit
+    // terminators have no local successors, so only `Jump`/`Branch` edges are
+    // processed and `rewire_target` covers every case.
+    let mut pred_count = vec![0usize; nb];
+    for block in blocks.iter().take(nb) {
+        for s in successors(&block.term) {
+            pred_count[s] += 1;
+        }
+    }
+    for p in 0..nb {
+        let mut succs: Vec<usize> = successors(&blocks[p].term);
+        succs.sort_unstable();
+        succs.dedup();
+        let n_succ = succs.len();
+        let edge_live: Vec<(usize, HashSet<VarId>)> = succs
+            .iter()
+            .map(|successor| {
+                (
+                    *successor,
+                    effective_drop_liveness(
+                        live_in[*successor].clone(),
+                        &generation_exits[p],
+                        ctx.loan_roots,
+                    ),
+                )
+            })
+            .collect();
+        let live_out_p: HashSet<VarId> = edge_live
+            .iter()
+            .flat_map(|(_, live)| live.iter().copied())
+            .collect();
+        for &s in &succs {
+            let live_on_edge = edge_live
+                .iter()
+                .find_map(|(successor, live)| (*successor == s).then_some(live))
+                .expect("each successor has an effective edge-live set");
+            let dying: Vec<VarId> = live_out_p
+                .iter()
+                .copied()
+                .filter(|&v| !live_on_edge.contains(&v) && is_droppable_root(f, v))
+                .collect();
+            if dying.is_empty() {
+                continue;
+            }
+            if n_succ == 1 {
+                append_drops(&mut blocks[p].instrs, dying);
+            } else if pred_count[s] == 1 {
+                prepend_drops(&mut blocks[s].instrs, dying);
+            } else {
+                let new_idx = blocks.len();
+                let mut instrs = Vec::new();
+                append_drops(&mut instrs, dying);
+                blocks.push(MirBlock {
+                    instrs,
+                    term: MirTerm::Jump(s),
+                });
+                rewire_target(&mut blocks[p].term, s, new_idx);
+            }
+        }
+    }
+
+    effective_entry
+}
+
+/// A region block's live-out, per terminator kind: local `Jump`/`Branch`
+/// successors read region liveness; each exit edge reads its seed.
+fn region_block_live_out(
+    blocks: &[MirBlock],
+    b: usize,
+    live_in: &[HashSet<VarId>],
+    seeds: &RegionSeeds,
+) -> HashSet<VarId> {
+    match &blocks[b].term {
+        MirTerm::Jump(_) | MirTerm::Branch { .. } => {
+            let mut out = HashSet::new();
+            for s in successors(&blocks[b].term) {
+                if let Some(live) = live_in.get(s) {
+                    out.extend(live);
+                }
+            }
+            out
+        }
+        MirTerm::FallOff => seeds.fall_off.clone(),
+        MirTerm::Return(_) => seeds.finally_live.clone(),
+        // The crossing return's cleanup values are torn down by the return
+        // flow itself (after the `finally`): keep them live to the terminator
+        // so no earlier death splices a competing drop.
+        MirTerm::ReturnWithCleanup { cleanup, .. } => {
+            let mut out = seeds.finally_live.clone();
+            out.extend(cleanup.iter().copied());
+            out
+        }
+        MirTerm::EscapeJump { target, cleanup } => {
+            let mut out = seeds.finally_live.clone();
+            out.extend(cleanup.iter().copied());
+            if let Some(live) = seeds.effective_live_in.get(*target) {
+                out.extend(live);
+            }
+            out
+        }
+    }
+}
+
+/// Backward liveness transfer over a region block: `transfer_drop_liveness`
+/// plus the raise seed at every potentially-raising instruction, so a value
+/// the raise edge's observer may read is never vacated before a raise can
+/// reach it.
+fn transfer_region_drop_liveness(
+    instrs: &[MirInstr],
+    mut live: HashSet<VarId>,
+    raise: &HashSet<VarId>,
+) -> HashSet<VarId> {
+    for instr in instrs.iter().rev() {
+        if let Some(d) = var_def(instr) {
+            live.remove(&d);
+        }
+        for (u, _) in var_uses(instr) {
+            live.insert(u);
+        }
+        if let MirInstr::ConsumeVar { var } = instr {
+            live.insert(*var);
+        }
+        if may_raise(instr) {
+            live.extend(raise.iter().copied());
+        }
+    }
+    live
+}
+
+/// Union every `ReturnWithCleanup.cleanup` variable below `blocks` (deep
+/// through nested `try`s).
+fn collect_return_cleanups(blocks: &[MirBlock], out: &mut HashSet<VarId>) {
+    for block in blocks {
+        for instr in &block.instrs {
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = instr
+            {
+                collect_return_cleanups(body, out);
+                if let Some((_, h)) = handler {
+                    collect_return_cleanups(h, out);
+                }
+                if let Some(e) = orelse {
+                    collect_return_cleanups(e, out);
+                }
+                if let Some(fb) = finalbody {
+                    collect_return_cleanups(fb, out);
+                }
+            }
+        }
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
+            out.extend(cleanup.iter().copied());
+        }
+    }
+}
+
+/// The `^`-moved variables of a `try`'s regions (deep), excluded from the
+/// entry-edge drop set (their values transferred to a new owner).
+fn try_moved_vars(try_instr: &MirInstr) -> HashSet<VarId> {
+    let mut counts = HashMap::new();
+    let (mut order, mut moved) = (Vec::new(), HashSet::new());
+    if let MirInstr::Try {
+        body,
+        handler,
+        orelse,
+        finalbody,
+        ..
+    } = try_instr
+    {
+        collect_region_defs(body, &mut counts, &mut order, &mut moved);
+        if let Some((_, h)) = handler {
+            collect_region_defs(h, &mut counts, &mut order, &mut moved);
+        }
+        if let Some(e) = orelse {
+            collect_region_defs(e, &mut counts, &mut order, &mut moved);
+        }
+        if let Some(fb) = finalbody {
+            collect_region_defs(fb, &mut counts, &mut order, &mut moved);
+        }
+    }
+    moved
+}
+
+/// The union of every loan-generation state reachable anywhere in a region
+/// (deep through nested `try`s) given its entry state — the conservative loan
+/// picture for a region entered after an arbitrary prefix of this one.
+fn region_any_generation_state(
+    blocks: &[MirBlock],
+    entry: &LoanGenerationState,
+    generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
+) -> LoanGenerationState {
+    let entries = loan_generation_entries_over(blocks, entry, generation_dests);
+    let mut any = entry.clone();
+    for (block, block_entry) in blocks.iter().zip(&entries) {
+        let mut state = block_entry.clone();
+        any = join_loan_generation_states(any, block_entry);
+        for instr in &block.instrs {
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = instr
+            {
+                let mut sub = region_any_generation_state(body, &state, generation_dests);
+                if let Some((_, h)) = handler {
+                    let inner = region_any_generation_state(h, &sub, generation_dests);
+                    sub = join_loan_generation_states(sub, &inner);
+                }
+                if let Some(e) = orelse {
+                    let inner = region_any_generation_state(e, &sub, generation_dests);
+                    sub = join_loan_generation_states(sub, &inner);
+                }
+                if let Some(fb) = finalbody {
+                    let inner = region_any_generation_state(fb, &sub, generation_dests);
+                    sub = join_loan_generation_states(sub, &inner);
+                }
+                any = join_loan_generation_states(any, &sub);
+            }
+            transfer_loan_generation(&mut state, instr, generation_dests);
+            any = join_loan_generation_states(any, &state);
+        }
+    }
+    any
+}
+
 /// The owner roots carried by each `EstablishLoans` generation. A later
 /// establishment for the same aggregate replaces the old marker; keeping the
 /// marker as the key prevents historical owners from becoming one permanent
@@ -763,9 +1443,13 @@ struct DropLoanGeneration {
     propagate_through_registers: bool,
 }
 
+/// Collected deep through `try` regions: region interiors get their own drop
+/// elaboration, so their generations participate in owner retention too.
+/// Markers are function-wide unique registers, so the extra entries are inert
+/// for any walk that never activates them.
 fn drop_loan_generations(f: &MirFunction) -> BTreeMap<u32, DropLoanGeneration> {
     let mut roots_by_generation: BTreeMap<u32, DropLoanGeneration> = BTreeMap::new();
-    for instr in f.blocks.iter().flat_map(|block| &block.instrs) {
+    for_each_instr_deep(&f.blocks, &mut |instr| {
         if let MirInstr::EstablishLoans {
             reference,
             loans,
@@ -790,7 +1474,7 @@ fn drop_loan_generations(f: &MirFunction) -> BTreeMap<u32, DropLoanGeneration> {
                 }
             }
         }
-    }
+    });
     roots_by_generation
 }
 
@@ -1037,29 +1721,34 @@ fn may_alias_owned_storage(ty: &crate::types::Ty) -> bool {
     )
 }
 
-fn register_loan_uses(
-    f: &MirFunction,
+/// Per-instruction transient owner uses and per-block incoming register-loan
+/// states over an arbitrary block vector (a function body or a `try` region
+/// mini-CFG) with an explicit entry state.
+fn register_loan_uses_over(
+    blocks: &[MirBlock],
     generation_entries: &[LoanGenerationState],
+    entry_registers: &RegisterLoanState,
     loan_roots: &BTreeMap<u32, DropLoanGeneration>,
-) -> Vec<Vec<Vec<VarId>>> {
-    let generation_dests = loan_generation_dests(f);
-    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); f.blocks.len()];
-    for (block, body) in f.blocks.iter().enumerate() {
+    generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
+    reg_types: &HashMap<u32, crate::types::Ty>,
+) -> (Vec<Vec<Vec<VarId>>>, Vec<RegisterLoanState>) {
+    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
+    for (block, body) in blocks.iter().enumerate() {
         for successor in successors(&body.term) {
-            if successor < f.blocks.len() {
+            if successor < blocks.len() {
                 predecessors[successor].push(block);
             }
         }
     }
 
-    let mut incoming: Vec<Option<RegisterLoanState>> = vec![None; f.blocks.len()];
-    let mut outgoing: Vec<Option<RegisterLoanState>> = vec![None; f.blocks.len()];
+    let mut incoming: Vec<Option<RegisterLoanState>> = vec![None; blocks.len()];
+    let mut outgoing: Vec<Option<RegisterLoanState>> = vec![None; blocks.len()];
     let mut changed = true;
     while changed {
         changed = false;
-        for block in 0..f.blocks.len() {
+        for block in 0..blocks.len() {
             let new_in = if block == 0 || predecessors[block].is_empty() {
-                RegisterLoanState::default()
+                entry_registers.clone()
             } else {
                 let mut states = predecessors[block]
                     .iter()
@@ -1071,15 +1760,15 @@ fn register_loan_uses(
             };
             let mut new_out = new_in.clone();
             let mut generations = generation_entries[block].clone();
-            for instruction in &f.blocks[block].instrs {
+            for instruction in &blocks[block].instrs {
                 transfer_register_loans(
                     &mut new_out,
                     &generations,
                     instruction,
                     loan_roots,
-                    &f.reg_types,
+                    reg_types,
                 );
-                transfer_loan_generation(&mut generations, instruction, &generation_dests);
+                transfer_loan_generation(&mut generations, instruction, generation_dests);
             }
             if incoming[block].as_ref() != Some(&new_in)
                 || outgoing[block].as_ref() != Some(&new_out)
@@ -1091,11 +1780,15 @@ fn register_loan_uses(
         }
     }
 
-    f.blocks
+    let entries: Vec<RegisterLoanState> = incoming
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect();
+    let uses = blocks
         .iter()
         .enumerate()
         .map(|(block, body)| {
-            let mut registers = incoming[block].clone().unwrap_or_default();
+            let mut registers = entries[block].clone();
             let mut generations = generation_entries[block].clone();
             body.instrs
                 .iter()
@@ -1105,14 +1798,15 @@ fn register_loan_uses(
                         &generations,
                         instruction,
                         loan_roots,
-                        &f.reg_types,
+                        reg_types,
                     );
-                    transfer_loan_generation(&mut generations, instruction, &generation_dests);
+                    transfer_loan_generation(&mut generations, instruction, generation_dests);
                     uses
                 })
                 .collect()
         })
-        .collect()
+        .collect();
+    (uses, entries)
 }
 
 fn transfer_drop_liveness(instrs: &[MirInstr], mut live: HashSet<VarId>) -> HashSet<VarId> {
@@ -2407,20 +3101,22 @@ fn transfer_loan_generation(
 }
 
 /// Destination domain per loan generation marker, for domain-aware
-/// generation replacement and release.
+/// generation replacement and release. Collected deep through `try` regions
+/// (markers are function-wide unique, so region entries are inert for
+/// top-level-only walks).
 fn loan_generation_dests(f: &MirFunction) -> BTreeMap<u32, Option<MirInteriorOrigin>> {
-    f.blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .filter_map(|instruction| match instruction {
-            MirInstr::EstablishLoans {
-                marker,
-                dest_interior,
-                ..
-            } => Some((marker.0, dest_interior.clone())),
-            _ => None,
-        })
-        .collect()
+    let mut dests = BTreeMap::new();
+    for_each_instr_deep(&f.blocks, &mut |instruction| {
+        if let MirInstr::EstablishLoans {
+            marker,
+            dest_interior,
+            ..
+        } = instruction
+        {
+            dests.insert(marker.0, dest_interior.clone());
+        }
+    });
+    dests
 }
 
 /// Two interior paths overlap when one is a prefix of the other.
@@ -2445,23 +3141,36 @@ fn projection_covers_domain(proj: &[Proj], domain: &[crate::origin::OriginSeg]) 
 }
 
 fn loan_generation_block_entries(f: &MirFunction) -> Vec<LoanGenerationState> {
-    let generation_dests = loan_generation_dests(f);
-    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); f.blocks.len()];
-    for (block, body) in f.blocks.iter().enumerate() {
+    loan_generation_entries_over(
+        &f.blocks,
+        &LoanGenerationState::default(),
+        &loan_generation_dests(f),
+    )
+}
+
+/// Per-block incoming loan-generation states over an arbitrary block vector (a
+/// function body or a `try` region mini-CFG) with an explicit entry state.
+fn loan_generation_entries_over(
+    blocks: &[MirBlock],
+    entry: &LoanGenerationState,
+    generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
+) -> Vec<LoanGenerationState> {
+    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
+    for (block, body) in blocks.iter().enumerate() {
         for successor in successors(&body.term) {
-            if successor < f.blocks.len() {
+            if successor < blocks.len() {
                 predecessors[successor].push(block);
             }
         }
     }
-    let mut incoming: Vec<Option<LoanGenerationState>> = vec![None; f.blocks.len()];
-    let mut outgoing: Vec<Option<LoanGenerationState>> = vec![None; f.blocks.len()];
+    let mut incoming: Vec<Option<LoanGenerationState>> = vec![None; blocks.len()];
+    let mut outgoing: Vec<Option<LoanGenerationState>> = vec![None; blocks.len()];
     let mut changed = true;
     while changed {
         changed = false;
-        for block in 0..f.blocks.len() {
+        for block in 0..blocks.len() {
             let new_in = if block == 0 || predecessors[block].is_empty() {
-                LoanGenerationState::default()
+                entry.clone()
             } else {
                 let mut states = predecessors[block]
                     .iter()
@@ -2472,8 +3181,8 @@ fn loan_generation_block_entries(f: &MirFunction) -> Vec<LoanGenerationState> {
                 states.fold(first.clone(), join_loan_generation_states)
             };
             let mut new_out = new_in.clone();
-            for instruction in &f.blocks[block].instrs {
-                transfer_loan_generation(&mut new_out, instruction, &generation_dests);
+            for instruction in &blocks[block].instrs {
+                transfer_loan_generation(&mut new_out, instruction, generation_dests);
             }
             if incoming[block].as_ref() != Some(&new_in)
                 || outgoing[block].as_ref() != Some(&new_out)

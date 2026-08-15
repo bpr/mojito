@@ -328,18 +328,133 @@ fn return_from_owned_iteration_runs_finally_before_iterator_cleanup() {
 
 #[test]
 fn del_runs_when_a_try_body_is_left() {
-    // A value constructed in a `try` body is destroyed when the body is left —
-    // whether it raises (exceptional-edge cleanup, before the handler) or completes
-    // normally (scope-exit) — exactly once on each path.
+    // A value constructed in a `try` body dies at its last use — the `.id`
+    // load feeding the print — exactly as the same code outside a `try`, and
+    // exactly once on both the raising and the normal path.
     let raising = format!(
         "{RES}def main():\n    try:\n        var r: Res = Res(1)\n        print(\"have\", r.id)\n        raise \"boom\"\n    except e:\n        print(\"caught\")\n    print(\"done\")\n"
     );
-    assert_eq!(vm(&raising), "have 1\ndel 1\ncaught\ndone\n");
+    assert_eq!(vm(&raising), "del 1\nhave 1\ncaught\ndone\n");
 
     let normal = format!(
         "{RES}def main():\n    try:\n        var r: Res = Res(2)\n        print(\"have\", r.id)\n    except e:\n        print(\"caught\")\n    print(\"done\")\n"
     );
-    assert_eq!(vm(&normal), "have 2\ndel 2\ndone\n");
+    assert_eq!(vm(&normal), "del 2\nhave 2\ndone\n");
+}
+
+// Copyable/Movable printing struct plus raising helpers for the try-region
+// per-instruction drop-elaboration tests.
+const TRY_NOISY: &str = "struct Noisy(Deinitable, Movable, Copyable):\n    var tag: Int\n    def __init__(out self, tag: Int):\n        self.tag = tag\n    def __deinit__(deinit self):\n        print(\"deinit\", self.tag)\n\ndef may(x: Int) raises -> Int:\n    if x < 0:\n        raise Error(\"neg\")\n    return x\n\ndef make(x: Int) raises -> Noisy:\n    if x < 0:\n        raise Error(\"neg\")\n    return Noisy(x)\n\n";
+
+#[test]
+fn overwritten_try_rebind_value_drops_at_the_rebind() {
+    // Rebinding an outer variable inside a `try` body destroys the overwritten
+    // value between the constructing call and the rebind — on the normal path
+    // only. When the call raises, the drop is skipped and the handler (and the
+    // code after the block) still observes the original value.
+    let src = format!(
+        "{TRY_NOISY}def probe(x: Int):\n    var n = Noisy(1)\n    try:\n        n = make(x)\n    except e:\n        print(\"caught\")\n    print(\"post\", n.tag)\n\ndef main():\n    probe(7)\n    probe(-1)\n"
+    );
+    assert_eq!(
+        vm(&src),
+        "deinit 1\ndeinit 7\npost 7\ncaught\ndeinit 1\npost 1\n"
+    );
+}
+
+#[test]
+fn silent_try_rebind_drops_the_old_value_before_the_region() {
+    // When nothing before the rebind can raise (a `^` move is provably
+    // silent), the overwritten value is unobservable on every region path and
+    // dies on the entry edge, immediately before the `try`.
+    let src = format!(
+        "{TRY_NOISY}def main():\n    var keep = Noisy(1)\n    var n = Noisy(2)\n    try:\n        n = keep^\n    except e:\n        pass\n    print(\"post\", n.tag)\n"
+    );
+    assert_eq!(vm(&src), "deinit 2\ndeinit 1\npost 1\n");
+}
+
+#[test]
+fn dead_rebinds_in_handler_else_and_finally_regions_are_dropped() {
+    // A value rebound in an `except`/`else`/`finally` region and never read
+    // afterward runs its destructor inside the region (the scope-exit cleanup
+    // runs before those regions, so only per-instruction drops can reach it).
+    let handler = format!(
+        "{TRY_NOISY}def main():\n    var a = Noisy(1)\n    try:\n        a = make(-1)\n    except e:\n        a = Noisy(3)\n        print(\"handled\")\n    print(\"done\")\n"
+    );
+    assert_eq!(vm(&handler), "deinit 1\ndeinit 3\nhandled\ndone\n");
+
+    let orelse = format!(
+        "{TRY_NOISY}def main():\n    var a = Noisy(1)\n    try:\n        a = make(7)\n    except e:\n        print(\"caught\")\n    else:\n        a = Noisy(3)\n        print(\"else\")\n    print(\"done\")\n"
+    );
+    assert_eq!(vm(&orelse), "deinit 1\ndeinit 7\ndeinit 3\nelse\ndone\n");
+
+    // The unused outer variable itself dies at its definition (ordinary
+    // top-level ASAP timing); the `finally` rebind is the region-owned drop.
+    let finally = format!(
+        "{TRY_NOISY}def main():\n    var a = Noisy(1)\n    try:\n        print(\"body\")\n    finally:\n        a = Noisy(3)\n        print(\"fin\")\n    print(\"done\")\n"
+    );
+    assert_eq!(vm(&finally), "deinit 1\nbody\ndeinit 3\nfin\ndone\n");
+}
+
+#[test]
+fn raise_seed_keeps_handler_observed_values_alive_through_the_body() {
+    // A value the handler reads must survive every potentially-raising body
+    // instruction — its in-region death lands after the *last* raising call,
+    // so the handler still observes it whichever call raises. (The `deinit`
+    // preceding `caught` is the handler's own ASAP drop at the `n.tag` load.)
+    let src = format!(
+        "{TRY_NOISY}def main():\n    var n = Noisy(1)\n    try:\n        var x = may(-1)\n        var y = may(-2)\n    except e:\n        print(\"caught\", n.tag)\n    print(\"done\")\n"
+    );
+    assert_eq!(vm(&src), "deinit 1\ncaught 1\ndone\n");
+}
+
+#[test]
+fn read_borrowed_owner_outlives_the_call_inside_a_try() {
+    // The borrowed-argument retention rule holds under region elaboration:
+    // the owner's drop lands right after the call that borrows it, not
+    // between argument evaluation and the call.
+    let src = format!(
+        "{TRY_NOISY}def peek(t: Noisy):\n    print(\"peek\", t.tag)\n\ndef main():\n    try:\n        var t = Noisy(2)\n        peek(t)\n        var x = may(-1)\n    except e:\n        print(\"caught\")\n    print(\"after call\")\n"
+    );
+    assert_eq!(vm(&src), "peek 2\ndeinit 2\ncaught\nafter call\n");
+}
+
+#[test]
+fn named_destructor_call_inside_a_try_skips_the_whole_value_deinit() {
+    // `h^.finish()` inside a `try` body: the lowered `ConsumeVar` still owns
+    // the teardown — region elaboration must not splice a competing `DropVar`
+    // (the whole-value `__deinit__` would double-run).
+    let src = "struct Item(Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __init__(out self, *, deinit move: Self):\n        self.id = move.id\n    def __deinit__(deinit self):\n        print(\"drop item\", self.id)\n\nstruct Holder(Movable):\n    var item: Item\n    def __init__(out self, id: Int):\n        self.item = Item(id)\n    def __deinit__(deinit self):\n        print(\"drop holder\", self.item.id)\n    def finish(deinit self):\n        print(\"finish\", self.item.id)\n\ndef may(x: Int) raises -> Int:\n    if x < 0:\n        raise Error(\"neg\")\n    return x\n\ndef main():\n    try:\n        var h = Holder(1)\n        h^.finish()\n        var x = may(-1)\n    except e:\n        print(\"caught\")\n    print(\"done\")\n";
+    assert_eq!(vm(src), "finish 1\ndrop item 1\ncaught\ndone\n");
+}
+
+#[test]
+fn interior_reference_retains_its_owner_inside_a_try() {
+    // Loan-aware retention inside a region: the list's last direct use is the
+    // `ref` establishment, but the owner must stay alive until the reference's
+    // last read — an early owner drop would print `deinit 7` before `7`.
+    let src = format!(
+        "{TRY_NOISY}def main():\n    try:\n        var items = [Noisy(7)]\n        ref first = items[0]\n        var x = may(4)\n        print(first.tag)\n    except e:\n        print(\"caught\")\n    print(\"done\")\n"
+    );
+    assert_eq!(vm(&src), "7\ndeinit 7\ndone\n");
+}
+
+#[test]
+fn nested_try_rebind_drops_each_value_once() {
+    // An outer variable rebound in a nested `try` body: the overwritten value
+    // drops at the inner rebind, the new value at its ordinary death after
+    // both blocks — exactly once each.
+    let src = format!(
+        "{TRY_NOISY}def main():\n    var n = Noisy(1)\n    try:\n        try:\n            n = make(7)\n        except e:\n            print(\"inner\")\n    except e:\n        print(\"outer\")\n    print(\"post\", n.tag)\n"
+    );
+    assert_eq!(vm(&src), "deinit 1\ndeinit 7\npost 7\n");
+}
+
+#[test]
+fn ref_binding_write_through_survives_region_elaboration() {
+    // A `ref` binding assigned inside a `try` writes through to the referent;
+    // region drop elaboration must not vacate the handle before the write.
+    let src = "def main():\n    var items = [10, 20]\n    try:\n        ref r = items[0]\n        r = 99\n    except e:\n        pass\n    print(items[0])\n";
+    assert_eq!(vm(src), "99\n");
 }
 
 #[test]

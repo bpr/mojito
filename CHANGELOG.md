@@ -6,6 +6,22 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Fixed
+
+- Per-instruction drop elaboration inside `try` regions (roadmap §3): region
+  interiors now get the same ASAP death/`DropVar` elaboration and edge drops
+  as top-level blocks, seeded per exit kind with a raise-observer liveness
+  seed at every potentially-raising instruction. The overwritten value of an
+  outer variable rebound in a `try` body now runs its destructor at the
+  rebind on the normal path (still skipped when the constructing call
+  raises, so the handler observes the original value), and a variable
+  rebound in an `except`/`else`/`finally` region that is dead afterward is
+  now dropped inside the region instead of leaking. The `Try.cleanup` and
+  `EscapeJump.cleanup` lists remain as idempotent raise-edge/scope-exit
+  backstops, and drop timing inside regions now matches the identical code
+  outside a `try` (a value's destructor can run between its last use and the
+  enclosing statement's effect, as at top level).
+
 ### Added
 
 - The Int/Scalar range family (nightly §8): `stdlib/std/range.mojo` now

@@ -444,19 +444,19 @@ fn try_body_drop_timing_is_preserved() {
         run_compiled(&iter).expect("iterator drop program runs"),
         "deinit 1\ndeinit 2\ncaught\nafter\n"
     );
-    // An outer variable rebound in the body and never observed again is still
-    // destroyed at the region boundary (region interiors get no
-    // per-instruction drops).
+    // An outer variable rebound in the body and never observed again is
+    // destroyed exactly once.
     let dead = format!(
         "{noisy}def main():\n    var n = Noisy(1)\n    try:\n        n = Noisy(2)\n    except e:\n        pass\n    print(\"done\")\n"
     );
     assert_eq!(parity(&dead), "deinit 1\ndeinit 2\ndone\n");
     // A rebound outer variable that is read after the block keeps its value
-    // through the region boundary.
+    // through the region boundary, and the overwritten value runs its
+    // destructor at the rebind (skipped when the constructing call raises).
     let live = format!(
         "{noisy}def main():\n    var n = Noisy(1)\n    try:\n        n = Noisy(2)\n    except e:\n        pass\n    print(\"post\", n.tag)\n"
     );
-    assert_eq!(parity(&live), "deinit 2\npost 2\n");
+    assert_eq!(parity(&live), "deinit 1\ndeinit 2\npost 2\n");
 }
 
 #[test]

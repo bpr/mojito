@@ -2449,7 +2449,42 @@ instruction. The liveness pass handles these by inserting drops:
 - at the start of the successor when there is only one predecessor
 - in a fresh split block for critical edges
 
-This keeps ASAP destruction precise across branches.
+This keeps ASAP destruction precise across branches, both in a function's
+top-level CFG and inside each `try` region's mini-CFG.
+
+### Try Region Drops
+
+Region interiors get the same per-instruction and edge drop elaboration as
+top-level blocks: each of a `try`'s four regions is a mini-CFG whose liveness
+is seeded from the enclosing walk at the instruction, per exit kind — the
+normal `FallOff` continuation (`else` entry, then `finally` entry, then the
+code after the block), `Return`/`ReturnWithCleanup`/`EscapeJump` edges (the
+`finally` still runs after them, and a crossing return's cleanup values are
+torn down after it), and `EscapeJump` targets bounded by the enclosing
+effective live-in. Because any potentially-raising instruction can transfer
+control to the raise edge's observer (the handler, or the `finally` and the
+enclosing handler when there is none), a **raise seed** — that observer's entry
+liveness — is unioned into the live set at every instruction not on a minimal
+allowlist of provably silent operations (`DefVar`, `UseVar`, `DropVar`,
+`ConsumeVar`, `KeepAlive`). Backward propagation therefore places each
+normal-flow drop after the last potentially-raising instruction preceding the
+death: a handler can never observe a vacated slot, and an outer variable
+rebound in the body runs the overwritten value's destructor between the
+constructing call and the rebind — skipped exactly when that call raises. A
+value live into the `try` that no region path can observe (an unconditional
+silent rebind precedes every potential raise) dies on the entry edge,
+immediately before the `try`. The loan machinery participates: generation and
+register-loan fixpoints run over each region with entry states replayed from
+the enclosing walk (regions entered by raise or completion use the union of
+every state the preceding region can reach — pure over-retention), so owner
+retention and retirement behave identically inside regions.
+
+Per-instruction drops own all *normal-flow* deaths inside regions. The raise
+edge cannot host per-instruction drops, so the scope-exit cleanup lists remain
+and act as raise-edge/scope-exit backstops. The VM's `DropVar` and cleanup
+teardown on an already-vacated (`None`) slot are no-ops, and that idempotency
+is load-bearing: a value may legitimately be listed on a cleanup edge it
+already died before.
 
 ### Try Cleanup
 
@@ -2461,9 +2496,10 @@ the function lies within the body region (a reassignment is also a `DefVar`, so
 an outer variable merely rebound inside the body is not a local and survives
 the exit) — plus the liveness-guarded rebound outer variables that cannot be
 observed after the body is left: dead on the normal continuation, unused by the
-handler/`else`/`finally` regions, and dead at every escape target. Region
-interiors get no per-instruction drop elaboration, so without that second set a
-dead rebound value would never run its destructor.
+handler/`else`/`finally` regions, and dead at every escape target. That second
+set is the raise-edge backstop for rebound values whose per-instruction drop
+sits on the normal path: a raise landing between the rebind and that drop
+would otherwise leak the value.
 
 `EscapeJump` also carries cleanup for cross-region loop escapes. This makes
 hidden try-region exits explicit enough for the VM to run destructors before

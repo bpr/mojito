@@ -117,18 +117,6 @@ instead of the prelude binding).
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
-- [ ] **Per-instruction drop elaboration inside `try` regions** — region
-  interiors currently get whole-region drop granularity only (the `Try`
-  scope-exit cleanup plus a liveness-guarded seed for unobservable rebound
-  outer variables), not the per-instruction ASAP drops top-level blocks get.
-  Two residual gaps, settle before freezing MIR semantics into artifacts:
-  the *overwritten* value of an outer variable rebound inside a `try` body
-  never runs its destructor when the variable stays observable afterward
-  (the untyped `DefVar` replaces the slot silently), and a variable rebound
-  in an `except`/`else`/`finally` region that is dead afterward is never
-  dropped (the scope-exit cleanup runs before those regions). The fix is
-  running the ordinary death/`DropVar` elaboration over each region's
-  mini-CFG with live-out seeded from the enclosing block's liveness.
 - [ ] **Backend-ready MIR checkpoint** — confirm that checked declarations plus
   typed verified MIR are sufficient inputs, with no source-AST reconstruction,
   before freezing a serialized schema.
