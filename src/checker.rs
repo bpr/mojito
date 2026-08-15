@@ -374,7 +374,6 @@ impl ConformanceOracle {
                 type_params,
                 conforms,
                 conformance_conditions,
-                where_clauses,
                 methods,
                 fieldwise_init,
                 ..
@@ -383,18 +382,7 @@ impl ConformanceOracle {
                 continue;
             };
 
-            let mut decls = checker.classify_params(type_params)?;
-            for condition in where_clauses {
-                let constraint = checker.compile_where_clause(condition)?;
-                if let Some(last) = decls.last_mut() {
-                    match last {
-                        ParamDecl::Type { constraints, .. }
-                        | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
-                    }
-                } else if type_params.is_empty() {
-                    checker.validate_declaration_constraint(name, &constraint)?;
-                }
-            }
+            let decls = checker.classify_params(type_params)?;
             let mut method_names: HashMap<String, Vec<MethodSig>> = HashMap::new();
             for method in methods {
                 method_names
@@ -420,6 +408,63 @@ impl ConformanceOracle {
                     explicit_destructors: HashMap::new(),
                 },
             );
+        }
+        // Best-effort generic comptime alias registration, so a struct
+        // `where` clause compiled below can reference a predicate alias. A
+        // body the signature-only registry cannot lower (e.g. one naming a
+        // type this oracle never registers) is skipped: the full checker
+        // still validates every declaration, and a condition referencing a
+        // skipped alias fails closed at its lazy evaluation site.
+        for statement in stmts {
+            let StmtKind::Comptime {
+                name,
+                type_params,
+                ty,
+                where_clauses,
+                value,
+            } = &statement.kind
+            else {
+                continue;
+            };
+            if type_params.is_empty() {
+                continue;
+            }
+            let _ = checker.check_generic_comptime_alias(
+                name,
+                type_params,
+                ty.as_ref(),
+                where_clauses,
+                value,
+            );
+        }
+        // Struct `where` clauses compile after alias registration and attach
+        // to the registered declaration's final parameter (or validate
+        // immediately for a non-generic struct), as in the full checker.
+        for statement in stmts {
+            let StmtKind::Struct {
+                name,
+                type_params,
+                where_clauses,
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            for condition in where_clauses {
+                let constraint = checker.compile_where_clause(condition)?;
+                let info = checker
+                    .structs
+                    .get_mut(name)
+                    .expect("struct was registered by the loop above");
+                if let Some(last) = info.decls.last_mut() {
+                    match last {
+                        ParamDecl::Type { constraints, .. }
+                        | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
+                    }
+                } else if type_params.is_empty() {
+                    checker.validate_declaration_constraint(name, &constraint)?;
+                }
+            }
         }
         for statement in stmts {
             let StmtKind::Struct {
@@ -1873,20 +1918,32 @@ struct StructInfo {
     explicit_destructors: HashMap<String, bool>,
 }
 
-/// A generic top-level type alias (`comptime Alias[params] = Type`). The
-/// parameters are classified `ParamDecl`s — trailing `where` clauses attach to
-/// the last one — so each application validates arity, bounds, defaults, and
-/// declaration constraints through the same `resolve_use_params` contract as a
-/// struct application. The body is lowered once to a symbolic template
-/// (`Ty::Param` / `CtValue::Param`) and substituted per application. Aliases
-/// lower sequentially at declaration, so a body may reference only
-/// already-declared names: self-reference fails as an unknown type, and an
-/// alias expanding an earlier alias bakes the expansion into its template.
-/// Origin parameters are rejected at declaration, so no origin bindings exist.
+/// A generic top-level alias (`comptime Alias[params] = Type` or a Bool
+/// proposition). The parameters are classified `ParamDecl`s — trailing `where`
+/// clauses attach to the last one — so each type-bodied application validates
+/// arity, bounds, defaults, and declaration constraints through the same
+/// `resolve_use_params` contract as a struct application. A type body is
+/// lowered once to a symbolic template (`Ty::Param` / `CtValue::Param`) and
+/// substituted per application; a Bool body is lowered once to a symbolic
+/// [`GenericConstraint`] and inlined into the consuming proposition per
+/// application. Aliases lower sequentially at declaration, so a body may
+/// reference only already-declared names: self-reference fails as an unknown
+/// type, and an alias expanding an earlier alias bakes the expansion into its
+/// template. Origin parameters are rejected at declaration, so no origin
+/// bindings exist.
 #[derive(Clone)]
 struct ComptimeAlias {
     decls: Vec<ParamDecl>,
-    template: Ty,
+    body: AliasBody,
+}
+
+/// The lowered body of a [`ComptimeAlias`]: a symbolic type template, or a
+/// symbolic Bool proposition (a predicate alias, usable exactly where
+/// `conforms_to`/`IsTrivially*` propositions are — never in type positions).
+#[derive(Clone)]
+enum AliasBody {
+    Type(Box<Ty>),
+    Predicate(Box<GenericConstraint>),
 }
 
 /// A parameterized associated type a conforming struct defines

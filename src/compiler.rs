@@ -184,6 +184,7 @@ impl Compiler {
         // exactly once, on the fixpoint program.
         const SPECIALIZATION_ROUNDS: usize = 5;
         let templates = bound_generic_template_names(&linked);
+        let range_templates = scalar_range_template_names(&linked);
         let mut tuple_requests: Vec<TupleSpecializationRequest> = Vec::new();
         let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
@@ -215,7 +216,10 @@ impl Compiler {
                     grew = true;
                 }
             }
-            for request in def_specialization_requests(&checked, &templates) {
+            for request in def_specialization_requests(&checked, &templates)
+                .into_iter()
+                .chain(scalar_range_requests(&checked, &range_templates))
+            {
                 if conflicted.contains(request.occurrence()) {
                     continue;
                 }
@@ -409,6 +413,63 @@ fn def_specialization_requests(
         }
     }
     let mut requests: Vec<DefSpecializationRequest> = by_occurrence.into_values().collect();
+    requests.sort_by(|a, b| {
+        let key = |request: &DefSpecializationRequest| {
+            (
+                request.occurrence().source.clone(),
+                request.occurrence().span.0,
+                request.occurrence().span.1,
+                request.callee().to_string(),
+            )
+        };
+        key(a).cmp(&key(b))
+    });
+    requests
+}
+
+/// The linked declaration names of the scalar range-family struct templates,
+/// keyed by the plain family name the checker's scalar-`range` inference
+/// records (the checker never sees the dropped comptime-class templates, so
+/// it cannot record the module-mangled spelling itself).
+fn scalar_range_template_names(linked: &[Stmt]) -> std::collections::HashMap<&'static str, String> {
+    let mut names = std::collections::HashMap::new();
+    for statement in linked {
+        let StmtKind::Struct { name, .. } = &statement.kind else {
+            continue;
+        };
+        if let Some(family) = crate::types::SCALAR_RANGE_FAMILY
+            .iter()
+            .find(|family| name == *family || name.ends_with(&format!("${family}")))
+        {
+            names.entry(*family).or_insert_with(|| name.clone());
+        }
+    }
+    names
+}
+
+/// Checker-recorded scalar-range instantiations, rewritten from the plain
+/// family name to the linked struct-template name and sorted like
+/// [`def_specialization_requests`]. Occurrence conflicts share the caller's
+/// def-request conflict handling.
+fn scalar_range_requests(
+    checked: &CheckedProgram,
+    templates: &std::collections::HashMap<&'static str, String>,
+) -> Vec<DefSpecializationRequest> {
+    let mut requests: Vec<DefSpecializationRequest> = checked
+        .generic_instantiations()
+        .iter()
+        .filter_map(|(span, instantiation)| {
+            let linked = templates.get(instantiation.callee.as_str())?;
+            if !instantiation.arguments.iter().all(closed_generic_argument) {
+                return None;
+            }
+            Some(DefSpecializationRequest::new(
+                span.clone(),
+                linked.clone(),
+                instantiation.arguments.clone(),
+            ))
+        })
+        .collect();
     requests.sort_by(|a, b| {
         let key = |request: &DefSpecializationRequest| {
             (
@@ -773,8 +834,17 @@ fn tuple_specialization_constraint_is_closed(
             tuple_specialization_constraint_is_closed(condition, type_binders, value_binders)
         }
         GenericConstraint::Conforms { param, .. }
-        | GenericConstraint::ConformsPack { param, .. } => {
+        | GenericConstraint::ConformsPack { param, .. }
+        | GenericConstraint::PackPredicate { param, .. } => {
             type_binders.contains(param.trim_start_matches('*'))
+        }
+        GenericConstraint::PackContains { param, element } => {
+            type_binders.contains(param.trim_start_matches('*'))
+                && tuple_specialization_constraint_operand_is_closed(
+                    element,
+                    type_binders,
+                    value_binders,
+                )
         }
         GenericConstraint::Trivial(_, operand) => {
             tuple_specialization_constraint_operand_is_closed(operand, type_binders, value_binders)
@@ -818,6 +888,9 @@ fn tuple_specialization_constraint_operand_is_closed(
         }
         crate::types::ConstraintOperand::Type(ty) => {
             tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
+        }
+        crate::types::ConstraintOperand::PackLength(name) => {
+            type_binders.contains(name.trim_start_matches('*'))
         }
     }
 }

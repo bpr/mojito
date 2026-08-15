@@ -12,6 +12,6 @@ from std.string import Codepoint, String, StringSpan
 from std.collections.set import Set
 from std.collections.dict import Dict
 from std.collections.tuple import Tuple
-from std.range import Range, range
+from std.range import range
 from std.memory import alloc
 from std.span import Span

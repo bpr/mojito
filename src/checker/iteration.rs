@@ -280,6 +280,12 @@ impl Checker {
             if crate::types::is_range_type(ty) {
                 return Ok(builtin(Ty::Int));
             }
+            // A discovery-round abstract scalar range iterates its scalar
+            // element; the fixpoint rewrite registers the concrete struct
+            // before any lowering consumes this protocol.
+            if let Some((_, dtype)) = crate::types::scalar_range_parts(ty) {
+                return Ok(builtin(simd_ty(dtype, 1)));
+            }
             if let Some(element) = list_element(ty).or_else(|| set_element(ty)) {
                 self.require_owned_iteration_element(mode, element)?;
                 return Ok(builtin(element.clone()));

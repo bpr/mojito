@@ -822,16 +822,34 @@ argument (`FixedBuffer[N]`) and as an ordinary `Int` at runtime. (Mojo removed
 `alias`; `comptime` replaces it.)
 
 A module-scope **generic alias** `comptime Alias[params]: Type where ... = ...`
-declares a parametric type abbreviation: the body must be a type expression,
-and each application (`Alias[Int]`, in any type position) validates arity,
-bounds, defaults, and the declared `where` clauses before expanding to the
-aliased type. Aliases lower sequentially, so a body may reference only
-already-declared names (self-reference is an unknown type; an alias may expand
-an earlier alias). Value-bodied generic aliases (`comptime Twice[n: Int] =
-2 * n`), origin parameters, aliases in function bodies, and using an alias as
-a constructor callee or bare value are rejected. Repeated trailing `where`
-clauses are retained independently on every declaration that accepts a clause
-(see **function_def**).
+declares a parametric abbreviation: the body is either a type expression or a
+**Bool proposition** (a predicate alias such as `comptime IsSmallCopy[T] =
+conforms_to(T, Copyable) and IsTriviallyCopyable[T]`). A type-bodied alias
+application (`Alias[Int]`, in any type position) validates arity, bounds,
+defaults, and the declared `where` clauses before expanding to the aliased
+type. A predicate-alias application (`IsSmallCopy[T]`) is a compile-time Bool
+proposition valid exactly where `conforms_to` and the `IsTrivially*`
+predicates are: `where` clauses, conditional-conformance conditions, and
+`comptime if` — not in type positions. Predicate-alias parameters take no
+bounds beyond `AnyType` (spell requirements in the body) and no defaults.
+Aliases lower sequentially, so a body may reference only already-declared
+names (self-reference is an unknown type; an alias may expand an earlier
+alias, including a predicate alias expanding an earlier one). Non-Bool
+value-bodied generic aliases (`comptime Twice[n: Int] = 2 * n`), origin
+parameters, aliases in function bodies, and using an alias as a constructor
+callee or bare value are rejected. Repeated trailing `where` clauses are
+retained independently on every declaration that accepts a clause (see
+**function_def**).
+
+The same constraint positions accept the current-Mojo `TypeList`
+vocabulary: `TypeList.of[Trait=..., T1, ...]()` (concrete) and
+`TypeList[Ts.values]()` (the pack adapter) carry `length` (deprecated alias
+`size`) as an Int operand and
+`any[P]()`/`all[P]()`/`all_conforms_to[Trait]()`/`contains[T]()` as
+propositions (`P` an `IsTrivially*` spelling or a one-parameter predicate
+alias); a compile-time TypeList value also binds with `comptime`, measures
+with `len`, indexes with compile-time bounds checking, and drives
+`comptime if`.
 
 ```
 comptime_if_stmt:  'comptime' if_stmt      # 'comptime' 'if' … 'elif' … 'else' …

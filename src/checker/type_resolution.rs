@@ -974,6 +974,11 @@ impl Checker {
         alias: &ComptimeAlias,
         args: &[crate::ast::ParamArg],
     ) -> Result<Ty, TypeError> {
+        let AliasBody::Type(template) = &alias.body else {
+            return Err(TypeError::Unsupported(format!(
+                "'{name}' is a Bool-valued comptime alias, not a type"
+            )));
+        };
         let (_, tyargs) = self.resolve_use_params(name, &alias.decls, args, &[], &[])?;
         let mut types = HashMap::new();
         let mut values = HashMap::new();
@@ -998,7 +1003,7 @@ impl Checker {
         // application must re-select the executable nominal implementation so
         // discovery can materialize it.
         Ok(self.canonicalize_public_tuple_types(
-            self.resolve_assoc_ty(&substitute_assoc(&alias.template, &bindings)),
+            self.resolve_assoc_ty(&substitute_assoc(template, &bindings)),
         ))
     }
 

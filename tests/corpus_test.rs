@@ -89,6 +89,23 @@ fn expected_substring(source: &str) -> Option<String> {
     })
 }
 
+/// The `# requires: discovery` directive marks a fixture whose semantics need
+/// the `Compiler`'s whole-program discovery/specialization handoff (e.g. the
+/// checker-inferred scalar-range constructor rewrite). The phase-composed
+/// `verify::*` seam is documented as non-authoritative for exactly that
+/// handoff (AGENTS.md), so such fixtures pin lowering and verification
+/// through the authoritative `vm_ok`/`assets_ok` Compiler trials instead.
+fn requires_discovery(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|source| {
+        source.lines().any(|line| {
+            line.trim_start()
+                .strip_prefix('#')
+                .and_then(|rest| rest.trim_start().strip_prefix("requires:"))
+                .is_some_and(|value| value.trim() == "discovery")
+        })
+    })
+}
+
 fn fail(message: String) -> Failed {
     Failed::from(message)
 }
@@ -213,6 +230,9 @@ fn verify_trials(trials: &mut Vec<Trial>) {
     let mut total = 0usize;
     for category in ["ok", "origin_ok", "ownership_ok"] {
         for path in fixtures(category) {
+            if requires_discovery(&path) {
+                continue;
+            }
             total += 1;
             let name = format!("verify::{category}::{}", stem(&path));
             trials.push(Trial::test(name, move || {

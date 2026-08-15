@@ -492,13 +492,41 @@ impl Checker {
                     }
                     Ok(ret)
                 }
-                Err(OverloadSelect::NoMatch) => Err(TypeError::BadCall {
-                    func: name.to_string(),
-                    reason: match availability_failures.as_slice() {
-                        [Some(reason)] => reason.clone(),
-                        _ => "no overload matches the supplied arguments".to_string(),
-                    },
-                }),
+                Err(OverloadSelect::NoMatch) => {
+                    // The stdlib scalar `range` family: upstream's overloads
+                    // are dtype-inferred with no explicit spelling, so a
+                    // scalar argument can never match the Int defs. The
+                    // stdlib-set guard (a candidate returning a range-family
+                    // struct) keeps a user's shadowing `range` overloads on
+                    // the ordinary diagnostic path.
+                    if name == "range"
+                        && param_args.is_empty()
+                        && kwargs.is_empty()
+                        && candidates.iter().any(|candidate| {
+                            matches!(
+                                candidate,
+                                Ty::Func { ret, .. }
+                                    if matches!(
+                                        ret.as_ref(),
+                                        Ty::Struct(target, _)
+                                            if crate::types::SCALAR_RANGE_FAMILY
+                                                .iter()
+                                                .any(|family| target.contains(family))
+                                    )
+                            )
+                        })
+                        && let Some(ty) = self.infer_scalar_range(&span, args)?
+                    {
+                        return Ok(ty);
+                    }
+                    Err(TypeError::BadCall {
+                        func: name.to_string(),
+                        reason: match availability_failures.as_slice() {
+                            [Some(reason)] => reason.clone(),
+                            _ => "no overload matches the supplied arguments".to_string(),
+                        },
+                    })
+                }
                 Err(OverloadSelect::Ambiguous) => Err(TypeError::BadCall {
                     func: name.to_string(),
                     reason: "ambiguous overloaded call".to_string(),

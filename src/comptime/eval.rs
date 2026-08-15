@@ -48,6 +48,14 @@ impl<'a> Elab<'a> {
                     self.param_arg_type(&args[0], scope)?,
                 )))
             }
+            // A module-scope generic comptime alias applied in a compile-time
+            // position (typically a `comptime if` condition, pruned before the
+            // checker's own alias registry could expand it).
+            ExprKind::TypeApply { name, args }
+                if self.generic_aliases.borrow().contains_key(name) =>
+            {
+                self.apply_generic_alias(name, args, scope)
+            }
             ExprKind::TypeApply { name, args } => self.type_value(name, args, scope),
             ExprKind::TupleLit(elems) => Ok(CtValue::Tuple(self.eval_all(elems, scope)?)),
             ExprKind::ListLit(elems) => Ok(CtValue::List(self.eval_all(elems, scope)?)),
@@ -69,6 +77,16 @@ impl<'a> Elab<'a> {
                 match self.eval(object, scope)? {
                     CtValue::Type(ty) => self.associated_value(&ty, field),
                     CtValue::Reflected(ty) if field == "T" => Ok(CtValue::Type(ty)),
+                    // `tl.length` (with deprecated alias `size`, still shipped
+                    // by the audited head) on a compile-time TypeList value.
+                    value
+                        if value.typelist_elements().is_some()
+                            && matches!(field.as_str(), "length" | "size") =>
+                    {
+                        Ok(CtValue::Int(
+                            value.typelist_elements().expect("guarded").len() as i64,
+                        ))
+                    }
                     // A field read on a frozen struct instance folds to the
                     // frozen field value.
                     CtValue::Struct { name, fields } => fields
@@ -94,6 +112,20 @@ impl<'a> Elab<'a> {
                 {
                     let ty = self.param_arg_type(&ParamArg::Value((**index).clone()), scope)?;
                     return Ok(CtValue::Bool(self.conformance.trivially(kind, &ty)));
+                }
+                // A generic-alias application whose single non-scalar bracket
+                // argument parses as indexing (`MyPred[Plain]`), or a
+                // multi-argument application (`MyPred[A, B]`, a tuple index).
+                if let ExprKind::Identifier(name) = &object.kind
+                    && self.generic_aliases.borrow().contains_key(name)
+                {
+                    let args: Vec<ParamArg> = match &index.kind {
+                        ExprKind::TupleLit(elements) => {
+                            elements.iter().cloned().map(ParamArg::Value).collect()
+                        }
+                        _ => vec![ParamArg::Value((**index).clone())],
+                    };
+                    return self.apply_generic_alias(name, &args, scope);
                 }
                 if let ExprKind::Member {
                     object: reflected,
@@ -157,7 +189,18 @@ impl<'a> Elab<'a> {
                         "unsupported parameterized compile-time callable".to_string(),
                     ));
                 };
-                let CtValue::Reflected(ty) = self.eval(object, scope)? else {
+                // `TypeList.of[...]()` — the concrete constructor. Checked
+                // before evaluating the object: `TypeList` is not a value.
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "TypeList")
+                    && field == "of"
+                {
+                    return self.eval_typelist_of(param_args, scope);
+                }
+                let receiver = self.eval(object, scope)?;
+                if receiver.typelist_elements().is_some() {
+                    return self.eval_typelist_method(&receiver, field, param_args, scope);
+                }
+                let CtValue::Reflected(ty) = receiver else {
                     return Err(ComptimeError::NotComptime(format!(
                         "compile-time reflection method '{field}' needs a reflect[T] handle"
                     )));
@@ -189,6 +232,37 @@ impl<'a> Elab<'a> {
                     left = r;
                 }
                 Ok(CtValue::Bool(true))
+            }
+            // `TypeList[Ts.values]()` — the pack adapter, wrapping the bound
+            // pack's element types as a compile-time TypeList value.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "TypeList" && args.is_empty() && kwargs.is_empty() => {
+                let [ParamArg::Value(projection)] = param_args.as_slice() else {
+                    return Err(ComptimeError::NotComptime(
+                        "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
+                    ));
+                };
+                let values = match &projection.kind {
+                    ExprKind::Member { object, field }
+                        if field == "values" && matches!(&object.kind, ExprKind::Identifier(_)) =>
+                    {
+                        let ExprKind::Identifier(pack) = &object.kind else {
+                            unreachable!("guarded above");
+                        };
+                        scope.get(pack).cloned().ok_or_else(|| {
+                            ComptimeError::NotComptime(format!(
+                                "unknown compile-time type pack '{pack}'"
+                            ))
+                        })?
+                    }
+                    _ => self.eval(projection, scope)?,
+                };
+                let elements = values.as_sequence("TypeList element pack")?;
+                Ok(make_typelist(elements))
             }
             ExprKind::Call {
                 name, args, kwargs, ..
@@ -314,6 +388,170 @@ impl<'a> Elab<'a> {
 
     /// Evaluate arguments and materialize each back to a scope-free literal
     /// expression (the body of a synthesized CTFE entry).
+    /// Apply a module-scope generic comptime alias: bind each argument by
+    /// position and evaluate the body against the module-constant environment
+    /// (the alias sees module scope, not the applier's locals). Arguments
+    /// evaluate as compile-time values, falling back to type resolution for a
+    /// bare type argument.
+    fn apply_generic_alias(
+        &self,
+        name: &str,
+        args: &[ParamArg],
+        scope: &HashMap<String, CtValue>,
+    ) -> Result<CtValue, ComptimeError> {
+        let mut values = Vec::with_capacity(args.len());
+        for argument in args {
+            values.push(match argument {
+                ParamArg::Type(annotation) => {
+                    CtValue::Type(Box::new(self.type_from_anno(annotation, scope)?))
+                }
+                ParamArg::Value(expr) => match self.eval(expr, scope) {
+                    Ok(value) => value,
+                    Err(_) => CtValue::Type(Box::new(self.param_arg_type(argument, scope)?)),
+                },
+                ParamArg::Named { .. } => {
+                    return Err(ComptimeError::NotComptime(
+                        "a generic comptime alias takes positional arguments".to_string(),
+                    ));
+                }
+            });
+        }
+        self.apply_generic_alias_values(name, values)
+    }
+
+    /// The value-level core of [`Self::apply_generic_alias`], shared with the
+    /// TypeList `any`/`all` per-element predicate evaluation.
+    fn apply_generic_alias_values(
+        &self,
+        name: &str,
+        values: Vec<CtValue>,
+    ) -> Result<CtValue, ComptimeError> {
+        self.burn()?;
+        let (params, body) = self
+            .generic_aliases
+            .borrow()
+            .get(name)
+            .cloned()
+            .expect("guarded by generic_aliases lookup");
+        if values.len() != params.len() {
+            return Err(ComptimeError::Arity(format!(
+                "{name}[...] takes exactly {} argument(s)",
+                params.len()
+            )));
+        }
+        let mut env = self.top_consts.borrow().clone();
+        for (param, value) in params.iter().zip(values) {
+            env.insert(param.name.clone(), value);
+        }
+        self.eval(&body, &env)
+    }
+
+    /// Evaluate `TypeList.of[Trait=..., T1, ..., Tn]()` to a compile-time
+    /// TypeList value. The optional `Trait=` keyword names the common bound;
+    /// membership is not re-checked here (each element's uses enforce their
+    /// own capabilities).
+    fn eval_typelist_of(
+        &self,
+        param_args: &[ParamArg],
+        scope: &HashMap<String, CtValue>,
+    ) -> Result<CtValue, ComptimeError> {
+        let mut types = Vec::new();
+        for argument in param_args {
+            match argument {
+                ParamArg::Named { name, .. } if name == "Trait" => {}
+                other => types.push(CtValue::Type(Box::new(self.param_arg_type(other, scope)?))),
+            }
+        }
+        Ok(make_typelist(types))
+    }
+
+    /// Evaluate a member call on a compile-time TypeList value:
+    /// `any`/`all` (per-element predicates: IsTrivially* or a one-parameter
+    /// Bool-bodied comptime alias), `all_conforms_to`, and `contains`.
+    fn eval_typelist_method(
+        &self,
+        receiver: &CtValue,
+        field: &str,
+        param_args: &[ParamArg],
+        scope: &HashMap<String, CtValue>,
+    ) -> Result<CtValue, ComptimeError> {
+        let elements = receiver
+            .typelist_elements()
+            .expect("guarded by the caller")
+            .to_vec();
+        let types = elements
+            .iter()
+            .map(|value| match value {
+                CtValue::Type(ty) => Ok((**ty).clone()),
+                _ => Err(ComptimeError::NotComptime(
+                    "a TypeList holds types".to_string(),
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let single_name = || -> Result<&str, ComptimeError> {
+            match param_args {
+                [
+                    ParamArg::Value(Expr {
+                        kind: ExprKind::Identifier(name),
+                        ..
+                    }),
+                ]
+                | [ParamArg::Type(Type::Named(name, _))] => Ok(name),
+                _ => Err(ComptimeError::NotComptime(format!(
+                    "TypeList.{field} takes exactly one compile-time name argument"
+                ))),
+            }
+        };
+        match field {
+            "all_conforms_to" => {
+                let trait_name = crate::ast::canonical_trait_name(single_name()?);
+                Ok(CtValue::Bool(types.iter().all(|ty| {
+                    self.conformance.require(ty, trait_name).is_ok()
+                })))
+            }
+            "any" | "all" => {
+                let predicate = single_name()?.to_string();
+                let all = field == "all";
+                let mut holds = Vec::with_capacity(types.len());
+                for ty in &types {
+                    let value = if let Some(kind) = crate::types::trivial_predicate_name(&predicate)
+                    {
+                        self.conformance.trivially(kind, ty)
+                    } else if self.generic_aliases.borrow().contains_key(&predicate) {
+                        self.apply_generic_alias_values(
+                            &predicate,
+                            vec![CtValue::Type(Box::new(ty.clone()))],
+                        )?
+                        .as_bool("TypeList predicate")?
+                    } else {
+                        return Err(ComptimeError::NotComptime(format!(
+                            "TypeList.{field} requires an IsTrivially* predicate or a \
+                                 Bool-bodied comptime alias"
+                        )));
+                    };
+                    holds.push(value);
+                }
+                Ok(CtValue::Bool(if all {
+                    holds.iter().all(|held| *held)
+                } else {
+                    holds.iter().any(|held| *held)
+                }))
+            }
+            "contains" => {
+                let [only] = param_args else {
+                    return Err(ComptimeError::NotComptime(
+                        "TypeList.contains takes exactly one type argument".to_string(),
+                    ));
+                };
+                let needle = self.param_arg_type(only, scope)?;
+                Ok(CtValue::Bool(types.contains(&needle)))
+            }
+            _ => Err(ComptimeError::NotComptime(format!(
+                "unsupported TypeList member '{field}'"
+            ))),
+        }
+    }
+
     pub(super) fn eval_to_literals(
         &self,
         exprs: &[Expr],
@@ -839,5 +1077,15 @@ impl<'a> Elab<'a> {
         }
         self.eval(iter, scope)?
             .as_sequence("a range(...), tuple, or list")
+    }
+}
+
+/// Wrap element types as the compile-time `TypeList` value: a marker struct
+/// holding the `values` tuple, so member access and predicates dispatch on
+/// the TypeList identity rather than on every plain comptime tuple.
+fn make_typelist(types: Vec<CtValue>) -> CtValue {
+    CtValue::Struct {
+        name: "TypeList".to_string(),
+        fields: vec![("values".to_string(), CtValue::Tuple(types))],
     }
 }

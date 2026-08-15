@@ -1360,6 +1360,21 @@ impl Checker {
         if let Ty::Struct(name, _) = &obj_ty
             && !self.structs.contains_key(name)
         {
+            // A discovery-round abstract scalar range subscripts by Int to
+            // its scalar element; the fixpoint rewrite registers the
+            // concrete struct with its ordinary `__getitem__` before any
+            // lowering consumes this shortcut.
+            if let Some((_, dtype)) = crate::types::scalar_range_parts(&obj_ty) {
+                let idx_ty = self.infer(index)?;
+                if !self.is_index_type(&idx_ty) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "Indexer".to_string(),
+                        found: idx_ty.to_string(),
+                        context: "index".to_string(),
+                    });
+                }
+                return Ok(simd_ty(dtype, 1));
+            }
             if let Some(element) = list_element(&obj_ty) {
                 let idx_ty = self.infer(index)?;
                 if !self.is_index_type(&idx_ty) {

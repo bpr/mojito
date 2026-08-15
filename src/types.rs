@@ -206,6 +206,29 @@ pub const TSTRING_TYPE_NAME: &str = "TString";
 
 pub const RANGE_TYPE_NAME: &str = "Range";
 
+/// The nominal scalar range family mirroring current Mojo's three private
+/// range structs, in `range(...)` arity order (1, 2, 3 arguments).
+pub const SCALAR_RANGE_FAMILY: [&str; 3] =
+    ["_ZeroStartingRange", "_SequentialRange", "_StridedRange"];
+
+/// Decompose a checker-abstract scalar-range type — `Ty::Struct` naming a
+/// [`SCALAR_RANGE_FAMILY`] member (plain or module-qualified) with one
+/// concrete dtype value argument. This form exists only in the discovery
+/// round: the specialization fixpoint rewrites every occurrence into a
+/// registered concrete struct before MIR lowering.
+pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, crate::ast::Dtype)> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    let family = SCALAR_RANGE_FAMILY
+        .iter()
+        .find(|family| *family == name || name.ends_with(&format!("${family}")))?;
+    let [TyArg::Val(CtValue::Dtype(dtype))] = arguments.as_slice() else {
+        return None;
+    };
+    Some((family, *dtype))
+}
+
 pub const OPTIONAL_TYPE_NAME: &str = "Optional";
 
 /// Compiler-private inline possibly-uninitialized storage, the field type of
@@ -485,6 +508,18 @@ pub enum ConstraintOperand {
     Param(String),
     Value(CtValue),
     Type(Ty),
+    /// `TypeList[Ts.values]().length` over a symbolic pack parameter,
+    /// resolving to the bound pack's element count.
+    PackLength(String),
+}
+
+/// The per-element predicate of a `TypeList` `any`/`all` proposition: a
+/// builtin `IsTrivially*` spelling or a Bool-bodied predicate alias with one
+/// type parameter, applied to each element of the bound pack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackPredicateRef {
+    Trivial(TrivialLifecycle),
+    Alias(String),
 }
 
 /// The lifecycle facet queried by the
@@ -535,6 +570,19 @@ pub enum GenericConstraint {
     ConformsPack {
         param: String,
         trait_name: String,
+    },
+    /// `TypeList[Ts.values]().any[P]()` / `.all[P]()` over a symbolic pack
+    /// parameter: `P` holds for at least one / every element type.
+    PackPredicate {
+        param: String,
+        predicate: PackPredicateRef,
+        all: bool,
+    },
+    /// `TypeList[Ts.values]().contains[T]()`: the operand type equals some
+    /// element of the bound pack.
+    PackContains {
+        param: String,
+        element: ConstraintOperand,
     },
     /// `IsTrivially{Movable,Copyable,Deinitable}[operand]`.
     Trivial(TrivialLifecycle, ConstraintOperand),

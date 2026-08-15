@@ -155,6 +155,19 @@ impl<'a> Elab<'a> {
         // duplicate here keeps the first target (defensive).
         for request in def_requests {
             let callee = request.callee();
+            // A scalar-range request targets a DType-value-param struct
+            // template rather than a bound-generic def: record the
+            // constructor-rewrite target consumed by `mono_expr`'s
+            // `range(...)` occurrence. The Job queues lazily at the rewrite,
+            // like the def targets below.
+            if self.struct_template(callee) {
+                if let [TyArg::Val(value @ CtValue::Dtype(_))] = request.arguments() {
+                    mono.range_call_targets
+                        .entry(request.occurrence().clone().without_syntax())
+                        .or_insert_with(|| (callee.to_string(), vec![value.clone()]));
+                }
+                continue;
+            }
             if !self.bound_generics.contains(callee) {
                 continue;
             }

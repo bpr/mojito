@@ -37,9 +37,10 @@ and reference results; call-less index and slice operations name their exact
 compiler-owned intrinsic family instead of asking the VM to infer one from a
 runtime value. The narrow nominally typed `Slice.indices()` result still crosses
 private Tuple storage through that explicit intrinsic bridge. Public
-`List`, `Set`, `Dict`, `Range`, and heterogeneous `Tuple` values are nominal
-library structs; only compile-time lists and the private heterogeneous
-runtime-pack carrier retain compiler-owned aggregate representations.
+`List`, `Set`, `Dict`, heterogeneous `Tuple`, and current Mojo's private
+Int/Scalar range family are nominal library structs; only compile-time lists
+and the private heterogeneous runtime-pack carrier retain compiler-owned
+aggregate representations.
 
 [`docs/features.md`](docs/features.md) is the authoritative support matrix;
 [`conformance/parity.tsv`](conformance/parity.tsv) and
@@ -104,12 +105,6 @@ as a subset gap). The remaining pass works the prioritized changeset in
 [`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
 specifications and upstream evidence), in this order:
 
-- [ ] **Scalar, SIMD, range, and generic vocabulary (nightly §8)** — the
-  SIMD half of the section is complete (`SIMDLength` landed; invalid widths
-  already reject at checked elaboration).
-  - generalize the Int-only `Range` proof subset to the Int/Scalar family
-  - adopt `TypeList` `length`/`any`/`all` for variadic predicates
-  - probe Tuple's public `*Ts` parameter name for compatibility
 - [ ] **Pass close-out** — in order:
   1. Run the open-question probes and the re-probe list in
      [`conformance/probes/`](conformance/probes/) against the audited build;

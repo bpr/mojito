@@ -146,7 +146,20 @@ impl<'a> Elab<'a> {
                 // Only the semantic free-callee graph crosses this checked
                 // boundary. Linked `$` spelling is neither a dependency nor a
                 // specialization test.
-                StmtKind::Def { name, .. } => declarations.contains(name),
+                //
+                // The nominal `std.range` defs return the DType-value-param
+                // range-family structs, whose templates cannot cross this
+                // boundary (they are monomorphizer inputs, excluded below)
+                // and whose specializations do not exist yet during
+                // elaboration. Dropping the defs routes a CTFE `range(...)`
+                // call through the checker's focused Int intrinsic and the
+                // VM's own compile-time range materialization instead.
+                StmtKind::Def { name, .. } => {
+                    declarations.contains(name)
+                        && !stmt.module.as_deref().is_some_and(|module| {
+                            std::path::Path::new(module).ends_with("std/range.mojo")
+                        })
+                }
                 // A variadic struct template is a monomorphizer input and cannot
                 // cross the ordinary checked boundary. Concrete CTFE uses have
                 // already been specialized; an unused public `Tuple[*Ts]`

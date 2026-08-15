@@ -8,6 +8,59 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The Int/Scalar range family (nightly §8): `stdlib/std/range.mojo` now
+  mirrors current Mojo's three private range structs
+  (`_ZeroStartingRange`/`_SequentialRange`/`_StridedRange[dtype: DType =
+  DType.int]`), each its own borrowed typed-raising iterator over
+  `Scalar[dtype]` elements with upstream's construction rules (negative
+  zero-start ends clamp empty, the two-argument form never counts down, a
+  zero step canonicalizes to the empty range at construction). The public
+  `Range` prelude identity is gone (upstream has none); `range` remains the
+  stable exported overload set. Scalar arguments (`range(Int32(4))`,
+  `range(Int16(3), 7, 2)`) infer the dtype through a checker intercept that
+  records the family instantiation and the specialization fixpoint rewrites
+  the call into the generated concrete struct's constructor — upstream's
+  infer-only `range[dtype: DType, //]` overloads have no explicit spelling,
+  so no source-def encoding exists. Mixed dtypes, Bool, and float dtypes
+  reject at checking (floats with upstream's needs-a-step message for 1/2
+  arguments, an explicit unsupported-subset message for the strided form).
+  Struct DType value parameters may now declare upstream's `= DType.int`
+  default, and `comptime IteratorType[...] = Self` (a self-iterating
+  struct) resolves. Recorded subset gaps: non-Int `Indexer` `range`
+  arguments, `reversed()`/`bounds()`/`__has_next__`, containment and
+  formatting, float strided ranges, Int-only subscripts, `comptime for`
+  over scalar ranges, and bare default application of the dtype parameter.
+
+- The `TypeList` vocabulary (nightly §8): current Mojo's type-level list
+  runs as a compile-time subset with the post-rename member names —
+  `TypeList.of[Trait=..., T1, ...]()` (concrete constructor),
+  `TypeList[Ts.values]()` (the pack adapter, lowering to the same checked
+  pack-constraint forms as `conforms_to(Ts.values, ...)`), `length` with
+  the deprecated still-shipped `size` alias (probe
+  `typelist_size_deprecated_alias`), `any`/`all` per-element predicate
+  reductions (builtin `IsTrivially*` spellings or one-parameter predicate
+  aliases), `all_conforms_to[Trait]()`, and `contains[T]()` — valid in
+  `where` clauses, conditional-conformance conditions, and `comptime if`,
+  plus Sized/indexable/bindable compile-time TypeList values. The
+  map/filter/reduce/reverse/slice/tabulate family, generator-typed
+  predicates, generic-parameter `of` elements, and runtime-position values
+  are recorded gaps; pack-adapter forms in variadic-def `where` clauses
+  share `conforms_to`'s pre-existing whole-pack limitations.
+
+- Bool-bodied generic comptime aliases (predicate aliases, nightly §8
+  groundwork): `comptime IsSmallCopy[T: AnyType] = conforms_to(T, Copyable)
+  and IsTriviallyCopyable[T]` compiles its body into the checked constraint
+  algebra, and an application (`IsSmallCopy[T]`, `IsSmallCopy[Plain]`) inlines
+  it wherever `conforms_to`/`IsTrivially*` propositions are valid — `where`
+  clauses, conditional-conformance conditions, and `comptime if` — with
+  concrete bindings folding `conforms_to` eagerly and a predicate alias
+  freely expanding an earlier one. Generic aliases now pre-register like
+  struct shells, so a conformance condition or synthesized conditional
+  method may reference an alias declared later in the file. Predicate-alias
+  parameters take no bounds beyond `AnyType`, no defaults, and no packs;
+  the builtin `IsTrivially*` names are unshadowable; non-Bool value bodies
+  stay rejected subset gaps.
+
 - The experimental conservative subtree origin (nightly §7): `origin._subtree`
   is accepted in Pointer origin arguments and `origin_cast` targets — over
   origin parameters, `origin_of(...)` places, and interior projections, but

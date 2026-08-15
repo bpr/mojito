@@ -39,6 +39,8 @@ them after every re-pin.
 | `subtree_origin_surface.mojo` | Where is `._subtree` legal (ref clauses? — Mojito: Pointer/origin_cast only), and the terminal-projection + second-write diagnostics? | runs, prints `4` (first write legal) |
 | `implicit_span_conversion.mojo` | Which spellings convert to a Span parameter (named List / bare literal), and is the converted span writable? | runs, prints `30`; literals stay a gap |
 | `span_iteration_yield.mojo` | Does span iteration yield references (write-through) or copies, and the during-iteration-mutation diagnostic family? | runs, prints `23` |
+| `tuple_element_types_public_spelling.mojo` | Does the head keep Tuple's `*Ts` parameter and `element_types` member spellings? (Verified in source at `ae386d1b204`.) | runs, prints `2` / `7` |
+| `typelist_size_deprecated_alias.mojo` | Does the head still accept deprecated `TypeList.size`? (Deprecation-bridge tracking; verified in source at `ae386d1b204`.) | runs, prints `2` |
 
 ## Re-probes of enforced claims (evidence from the `609afcd0735` pin)
 

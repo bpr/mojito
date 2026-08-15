@@ -235,6 +235,26 @@ impl Checker {
             ExprKind::TypeApply { name, args } => self
                 .ty_value_from_name(name, args)
                 .ok_or_else(|| TypeError::NotComptime(name.clone())),
+            // A type application whose bracket argument parses as runtime
+            // indexing (`Scalar[DType.int32]` — the standing Index-vs-TypeApply
+            // parse split for a single non-scalar argument).
+            ExprKind::Index { object, index }
+                if matches!(&object.kind, ExprKind::Identifier(_)) =>
+            {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    unreachable!("guarded above");
+                };
+                let args: Vec<crate::ast::ParamArg> = match &index.kind {
+                    ExprKind::TupleLit(elements) => elements
+                        .iter()
+                        .cloned()
+                        .map(crate::ast::ParamArg::Value)
+                        .collect(),
+                    _ => vec![crate::ast::ParamArg::Value((**index).clone())],
+                };
+                self.ty_value_from_name(name, &args)
+                    .ok_or_else(|| TypeError::NotComptime(name.clone()))
+            }
             ExprKind::Member { object, field } => {
                 if let ExprKind::Identifier(s) = &object.kind
                     && s == "Self"
@@ -421,6 +441,15 @@ impl Checker {
                     CtExpr::Param(name.clone())
                 }
             }
+            // `DType.<dt>` — a dtype value parameter's default (`dtype: DType
+            // = DType.int`), mirroring the comptime evaluator's spelling.
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") =>
+            {
+                let dtype = crate::ast::Dtype::from_name(field).ok_or_else(|| {
+                    TypeError::Unsupported(format!("unknown DType member '{field}'"))
+                })?;
+                CtExpr::Value(CtValue::Dtype(dtype))
+            }
             ExprKind::TupleLit(values) => CtExpr::Value(CtValue::Tuple(
                 values
                     .iter()
@@ -488,6 +517,21 @@ impl Checker {
         &self,
         expr: &Expr,
     ) -> Result<GenericConstraint, TypeError> {
+        // A predicate-alias application (`MyPred[T]`) inlines the alias's
+        // compiled Bool body with the arguments substituted, so the consuming
+        // proposition needs no new constraint form. (Registration forbids an
+        // alias shadowing the builtin `IsTrivially*` spellings, so this check
+        // never preempts them.)
+        if let Some((name, args)) = self.predicate_alias_application(expr) {
+            let name = name.to_string();
+            return self.apply_predicate_alias(&name, &args);
+        }
+        // A `TypeList` proposition (`TypeList[Ts.values]().all[P]()`,
+        // `TypeList.of[...]().contains[T]()`, ...): symbolic pack receivers
+        // lower to pack constraint forms, concrete receivers fold eagerly.
+        if let Some(constraint) = self.compile_typelist_proposition(expr)? {
+            return Ok(constraint);
+        }
         let binary = |left: &Expr, right: &Expr| {
             Ok((
                 self.constraint_operand(left)?,
@@ -505,7 +549,7 @@ impl Checker {
                         "{name}[T] takes exactly one type argument"
                     )));
                 }
-                GenericConstraint::Trivial(kind, self.trivial_predicate_operand(&args[0])?)
+                GenericConstraint::Trivial(kind, self.predicate_operand(&args[0])?)
             }
             // A single non-scalar bracket argument (`IsTriviallyMovable[T]`)
             // parses as runtime indexing; recognize the predicate here too.
@@ -598,10 +642,417 @@ impl Checker {
         })
     }
 
-    /// The single type argument of an `IsTrivially*` predicate: a bare name is a
-    /// generic parameter (mirroring `conforms_to`'s param-only operand) unless
-    /// it names a scalar; any other annotation resolves as a concrete type.
-    fn trivial_predicate_operand(
+    /// Recognize and lower a `TypeList` Bool proposition in a constraint
+    /// position, or `None` when the expression is not TypeList-shaped. The
+    /// supported members are the current-vocabulary subset: `any`/`all`
+    /// (per-element predicates), `all_conforms_to` (the trait form), and
+    /// `contains`; `length` (with its deprecated `size` alias) is an operand,
+    /// handled by `constraint_operand`.
+    pub(super) fn compile_typelist_proposition(
+        &self,
+        expr: &Expr,
+    ) -> Result<Option<GenericConstraint>, TypeError> {
+        let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return Ok(None);
+        };
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Ok(None);
+        }
+        let ExprKind::Member { object, field } = &callee.kind else {
+            return Ok(None);
+        };
+        let Some(receiver) = self.typelist_receiver(object)? else {
+            return Ok(None);
+        };
+        let single = |what: &str| -> Result<&crate::ast::ParamArg, TypeError> {
+            match param_args.as_slice() {
+                [only] => Ok(only),
+                _ => Err(TypeError::Unsupported(format!(
+                    "TypeList.{what} takes exactly one compile-time argument"
+                ))),
+            }
+        };
+        Ok(Some(match field.as_str() {
+            "all_conforms_to" => {
+                let trait_name = match single("all_conforms_to")? {
+                    crate::ast::ParamArg::Value(Expr {
+                        kind: ExprKind::Identifier(name),
+                        ..
+                    })
+                    | crate::ast::ParamArg::Type(SourceType::Named(name, _)) => {
+                        crate::ast::canonical_trait_name(name)
+                    }
+                    _ => {
+                        return Err(TypeError::Unsupported(
+                            "TypeList.all_conforms_to requires a trait name".to_string(),
+                        ));
+                    }
+                };
+                self.check_trait_name(trait_name)?;
+                match receiver {
+                    TypeListReceiver::Pack(param) => GenericConstraint::ConformsPack {
+                        param,
+                        trait_name: trait_name.to_string(),
+                    },
+                    TypeListReceiver::Concrete(types) => GenericConstraint::Bool(
+                        types.iter().all(|ty| self.conforms_to(ty, trait_name)),
+                    ),
+                }
+            }
+            member @ ("any" | "all") => {
+                let all = member == "all";
+                let predicate = match single(member)? {
+                    crate::ast::ParamArg::Value(Expr {
+                        kind: ExprKind::Identifier(name),
+                        ..
+                    })
+                    | crate::ast::ParamArg::Type(SourceType::Named(name, _)) => {
+                        if let Some(kind) = crate::types::trivial_predicate_name(name) {
+                            crate::types::PackPredicateRef::Trivial(kind)
+                        } else if matches!(self.predicate_alias(name), Some((decls, _)) if decls.len() == 1)
+                        {
+                            crate::types::PackPredicateRef::Alias(name.clone())
+                        } else {
+                            return Err(TypeError::Unsupported(format!(
+                                "TypeList.{member} requires an IsTrivially* predicate or a \
+                                 one-parameter Bool-bodied comptime alias"
+                            )));
+                        }
+                    }
+                    _ => {
+                        return Err(TypeError::Unsupported(format!(
+                            "TypeList.{member} requires a predicate name"
+                        )));
+                    }
+                };
+                match receiver {
+                    TypeListReceiver::Pack(param) => GenericConstraint::PackPredicate {
+                        param,
+                        predicate,
+                        all,
+                    },
+                    TypeListReceiver::Concrete(types) => {
+                        let holds = |ty: &Ty| self.eval_pack_predicate(&predicate, ty);
+                        GenericConstraint::Bool(if all {
+                            types.iter().all(holds)
+                        } else {
+                            types.iter().any(holds)
+                        })
+                    }
+                }
+            }
+            "contains" => {
+                let element = self.predicate_operand(single("contains")?)?;
+                match receiver {
+                    TypeListReceiver::Pack(param) => {
+                        GenericConstraint::PackContains { param, element }
+                    }
+                    TypeListReceiver::Concrete(types) => match element {
+                        ConstraintOperand::Type(needle) => {
+                            GenericConstraint::Bool(types.contains(&needle))
+                        }
+                        _ => {
+                            return Err(TypeError::Unsupported(
+                                "TypeList.contains on a concrete list requires a concrete type"
+                                    .to_string(),
+                            ));
+                        }
+                    },
+                }
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    /// A `TypeList` receiver in a constraint position: the pack adapter
+    /// (`TypeList[Ts.values]()`) naming a symbolic pack parameter, or the
+    /// concrete constructor (`TypeList.of[Trait=..., T1, ..., Tn]()`) whose
+    /// element types resolve immediately.
+    fn typelist_receiver(&self, expr: &Expr) -> Result<Option<TypeListReceiver>, TypeError> {
+        match &expr.kind {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "TypeList" && args.is_empty() && kwargs.is_empty() => {
+                let [
+                    crate::ast::ParamArg::Value(Expr {
+                        kind: ExprKind::Member { object, field },
+                        ..
+                    }),
+                ] = param_args.as_slice()
+                else {
+                    return Err(TypeError::Unsupported(
+                        "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
+                    ));
+                };
+                let (ExprKind::Identifier(pack), "values") = (&object.kind, field.as_str()) else {
+                    return Err(TypeError::Unsupported(
+                        "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
+                    ));
+                };
+                Ok(Some(TypeListReceiver::Pack(pack.clone())))
+            }
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } if args.is_empty() && kwargs.is_empty() => {
+                let ExprKind::Member { object, field } = &callee.kind else {
+                    return Ok(None);
+                };
+                if !matches!(&object.kind, ExprKind::Identifier(name) if name == "TypeList")
+                    || field != "of"
+                {
+                    return Ok(None);
+                }
+                let mut types = Vec::new();
+                for argument in param_args {
+                    let annotation = match argument {
+                        // The optional `Trait=` keyword names the common
+                        // bound; membership is not re-checked here (the
+                        // elements' own uses enforce their capabilities).
+                        crate::ast::ParamArg::Named { name, .. } if name == "Trait" => continue,
+                        crate::ast::ParamArg::Type(annotation) => annotation.clone(),
+                        crate::ast::ParamArg::Value(Expr {
+                            kind: ExprKind::Identifier(name),
+                            ..
+                        }) => SourceType::Named(name.clone(), Vec::new()),
+                        _ => {
+                            return Err(TypeError::Unsupported(
+                                "TypeList.of takes type arguments".to_string(),
+                            ));
+                        }
+                    };
+                    types.push(self.ty_from_anno(&annotation).map_err(|_| {
+                        TypeError::Unsupported(
+                            "a TypeList.of element must be a concrete type in this position"
+                                .to_string(),
+                        )
+                    })?);
+                }
+                Ok(Some(TypeListReceiver::Concrete(types)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Lower a Bool-bodied generic comptime alias (a predicate alias). The
+    /// body compiles through the ordinary constraint algebra with the alias's
+    /// own parameters symbolic. The declaration must stay inside the predicate
+    /// subset — no packs, no defaults, no bounds beyond `AnyType` — because an
+    /// application inlines only the body: a declared bound the inlined
+    /// proposition would not re-check cannot be silently dropped.
+    pub(super) fn compile_predicate_alias_body(
+        &self,
+        decls: &[ParamDecl],
+        value: &Expr,
+    ) -> Result<GenericConstraint, TypeError> {
+        for decl in decls {
+            let unsupported = |what: &str| {
+                TypeError::Unsupported(format!("{what} on a Bool-bodied comptime alias parameter"))
+            };
+            match decl {
+                ParamDecl::Type {
+                    bounds,
+                    callable_bound,
+                    default,
+                    variadic,
+                    ..
+                } => {
+                    if *variadic {
+                        return Err(unsupported("a variadic pack"));
+                    }
+                    if callable_bound.is_some() {
+                        return Err(unsupported("a callable bound"));
+                    }
+                    if default.is_some() {
+                        return Err(unsupported("a default"));
+                    }
+                    if bounds.iter().any(|bound| bound != "AnyType") {
+                        return Err(TypeError::Unsupported(
+                            "a Bool-bodied comptime alias parameter takes no bound beyond \
+                             AnyType; spell the requirement in the body"
+                                .to_string(),
+                        ));
+                    }
+                }
+                ParamDecl::Value {
+                    default,
+                    callable_default,
+                    variadic,
+                    ..
+                } => {
+                    if *variadic {
+                        return Err(unsupported("a variadic pack"));
+                    }
+                    if default.is_some() || callable_default.is_some() {
+                        return Err(unsupported("a default"));
+                    }
+                }
+            }
+        }
+        let constraint = self
+            .compile_generic_constraint(value)
+            .map_err(|error| match &error {
+                TypeError::Unsupported(message)
+                    if message == "unsupported generic where proposition" =>
+                {
+                    TypeError::Unsupported(
+                        "a generic comptime alias must be defined by a type or a Bool proposition"
+                            .to_string(),
+                    )
+                }
+                _ => error,
+            })?;
+        let declared: HashSet<&str> = decls.iter().map(|decl| decl.name()).collect();
+        validate_predicate_params(&constraint, &declared)?;
+        Ok(constraint)
+    }
+
+    /// Recognize a predicate-alias application expression (`MyPred[T]`,
+    /// spelled as a type application or as bracket indexing, with a tuple
+    /// index carrying multiple arguments), returning the alias name and its
+    /// arguments. `None` when the expression is not an application of a
+    /// registered predicate alias.
+    pub(super) fn predicate_alias_application<'e>(
+        &self,
+        expr: &'e Expr,
+    ) -> Option<(&'e str, Vec<crate::ast::ParamArg>)> {
+        match &expr.kind {
+            ExprKind::TypeApply { name, args } if self.predicate_alias(name).is_some() => {
+                Some((name, args.clone()))
+            }
+            ExprKind::Index { object, index } => {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    return None;
+                };
+                self.predicate_alias(name)?;
+                let args = match &index.kind {
+                    ExprKind::TupleLit(elements) => elements
+                        .iter()
+                        .cloned()
+                        .map(crate::ast::ParamArg::Value)
+                        .collect(),
+                    _ => vec![crate::ast::ParamArg::Value((**index).clone())],
+                };
+                Some((name, args))
+            }
+            _ => None,
+        }
+    }
+
+    /// The compiled Bool body of a registered predicate alias, or `None` when
+    /// the name is unknown or names a type-bodied alias.
+    pub(super) fn predicate_alias(&self, name: &str) -> Option<(&[ParamDecl], &GenericConstraint)> {
+        let alias = self.comptime_aliases.get(name)?;
+        match &alias.body {
+            AliasBody::Predicate(constraint) => Some((&alias.decls, constraint)),
+            AliasBody::Type(_) => None,
+        }
+    }
+
+    /// Expand a predicate-alias application into the consuming proposition:
+    /// bind each argument to the declared parameter and substitute it through
+    /// the alias's compiled body. A concrete type binding folds `conforms_to`
+    /// eagerly (the param-only `Conforms` form cannot carry it symbolically).
+    pub(super) fn apply_predicate_alias(
+        &self,
+        name: &str,
+        args: &[crate::ast::ParamArg],
+    ) -> Result<GenericConstraint, TypeError> {
+        let (decls, template) = self
+            .predicate_alias(name)
+            .expect("guarded by predicate_alias");
+        if args.len() != decls.len() {
+            return Err(TypeError::Unsupported(format!(
+                "{name}[...] takes exactly {} argument(s)",
+                decls.len()
+            )));
+        }
+        let (decls, template) = (decls.to_vec(), template.clone());
+        let mut bindings = HashMap::new();
+        for (decl, argument) in decls.iter().zip(args) {
+            bindings.insert(decl.name().to_string(), self.predicate_operand(argument)?);
+        }
+        self.substitute_predicate(&template, &bindings)
+    }
+
+    /// Substitute predicate-alias application bindings through the compiled
+    /// body. Operand parameters rename or bake in the bound operand; a
+    /// `Conforms` on a concretely bound parameter folds to its truth value.
+    fn substitute_predicate(
+        &self,
+        constraint: &GenericConstraint,
+        bindings: &HashMap<String, ConstraintOperand>,
+    ) -> Result<GenericConstraint, TypeError> {
+        use GenericConstraint::*;
+        let operand = |operand: &ConstraintOperand| match operand {
+            ConstraintOperand::Param(param) => bindings.get(param).cloned().ok_or_else(|| {
+                TypeError::Unsupported(format!(
+                    "a Bool-bodied comptime alias may reference only its own parameters \
+                     ('{param}' is not declared)"
+                ))
+            }),
+            other => Ok(other.clone()),
+        };
+        Ok(match constraint {
+            WithMessage(inner, message) => WithMessage(
+                Box::new(self.substitute_predicate(inner, bindings)?),
+                message.clone(),
+            ),
+            Bool(value) => Bool(*value),
+            Not(inner) => Not(Box::new(self.substitute_predicate(inner, bindings)?)),
+            And(left, right) => And(
+                Box::new(self.substitute_predicate(left, bindings)?),
+                Box::new(self.substitute_predicate(right, bindings)?),
+            ),
+            Or(left, right) => Or(
+                Box::new(self.substitute_predicate(left, bindings)?),
+                Box::new(self.substitute_predicate(right, bindings)?),
+            ),
+            Conforms { param, trait_name } => {
+                match operand(&ConstraintOperand::Param(param.clone()))? {
+                    ConstraintOperand::Param(param) => Conforms {
+                        param,
+                        trait_name: trait_name.clone(),
+                    },
+                    ConstraintOperand::Type(ty) => Bool(self.conforms_to(&ty, trait_name)),
+                    ConstraintOperand::Value(_) | ConstraintOperand::PackLength(_) => {
+                        return Err(TypeError::Unsupported(format!(
+                            "conforms_to in a comptime alias requires a type argument for '{param}'"
+                        )));
+                    }
+                }
+            }
+            ConformsPack { .. } | PackPredicate { .. } | PackContains { .. } => {
+                return Err(TypeError::Unsupported(
+                    "a pack projection in a Bool-bodied comptime alias".to_string(),
+                ));
+            }
+            Trivial(kind, inner) => Trivial(*kind, operand(inner)?),
+            Eq(left, right) => Eq(operand(left)?, operand(right)?),
+            Ne(left, right) => Ne(operand(left)?, operand(right)?),
+            Lt(left, right) => Lt(operand(left)?, operand(right)?),
+            Le(left, right) => Le(operand(left)?, operand(right)?),
+            Gt(left, right) => Gt(operand(left)?, operand(right)?),
+            Ge(left, right) => Ge(operand(left)?, operand(right)?),
+        })
+    }
+
+    /// A single argument of a comptime predicate (`IsTrivially*` or a
+    /// predicate-alias application): a bare name is a generic parameter
+    /// (mirroring `conforms_to`'s param-only operand) unless it names a
+    /// scalar; any other annotation resolves as a concrete type.
+    fn predicate_operand(
         &self,
         argument: &crate::ast::ParamArg,
     ) -> Result<ConstraintOperand, TypeError> {
@@ -615,13 +1066,26 @@ impl Checker {
             crate::ast::ParamArg::Type(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
             crate::ast::ParamArg::Named { .. } => {
                 return Err(TypeError::Unsupported(
-                    "an IsTrivially* predicate takes a positional type argument".to_string(),
+                    "a comptime predicate takes positional arguments".to_string(),
                 ));
             }
         })
     }
 
     pub(super) fn constraint_operand(&self, expr: &Expr) -> Result<ConstraintOperand, TypeError> {
+        // `TypeList[Ts.values]().length` (with `size` a deprecated accepted
+        // alias, still shipped by the audited head) is an Int operand.
+        if let ExprKind::Member { object, field } = &expr.kind
+            && matches!(field.as_str(), "length" | "size")
+            && let Some(receiver) = self.typelist_receiver(object)?
+        {
+            return Ok(match receiver {
+                TypeListReceiver::Pack(param) => ConstraintOperand::PackLength(param),
+                TypeListReceiver::Concrete(types) => {
+                    ConstraintOperand::Value(CtValue::Int(types.len() as i64))
+                }
+            });
+        }
         Ok(match &expr.kind {
             ExprKind::Identifier(name) => scalar_type_name(name)
                 .map(ConstraintOperand::Type)
@@ -738,6 +1202,26 @@ impl Checker {
                 }
                 })
                 .unwrap_or(false),
+            PackPredicate {
+                param,
+                predicate,
+                all,
+            } => bound_pack_types(environment, param).is_some_and(|types| {
+                let mut holds = types
+                    .iter()
+                    .map(|ty| self.eval_pack_predicate(predicate, ty));
+                if *all {
+                    holds.all(|held| held)
+                } else {
+                    holds.any(|held| held)
+                }
+            }),
+            PackContains { param, element } => {
+                let Some(TyArg::Ty(needle)) = self.constraint_value(element, environment) else {
+                    return false;
+                };
+                bound_pack_types(environment, param).is_some_and(|types| types.contains(&needle))
+            }
             Eq(left, right) => {
                 match (
                     self.constraint_value(left, environment),
@@ -786,8 +1270,54 @@ impl Checker {
             }
             ConstraintOperand::Value(value) => Some(TyArg::Val(value.clone())),
             ConstraintOperand::Type(ty) => Some(TyArg::Ty(ty.clone())),
+            ConstraintOperand::PackLength(param) => bound_pack_types(environment, param)
+                .map(|types| TyArg::Val(CtValue::Int(types.len() as i64))),
         }
     }
+
+    /// Evaluate a `TypeList` per-element predicate against one concrete
+    /// element type.
+    fn eval_pack_predicate(&self, predicate: &crate::types::PackPredicateRef, ty: &Ty) -> bool {
+        match predicate {
+            crate::types::PackPredicateRef::Trivial(kind) => self.is_trivially(*kind, ty),
+            crate::types::PackPredicateRef::Alias(name) => {
+                let Some((decls, template)) = self.predicate_alias(name) else {
+                    return false;
+                };
+                let [only] = decls else {
+                    return false;
+                };
+                let bindings =
+                    HashMap::from([(only.name().to_string(), ConstraintOperand::Type(ty.clone()))]);
+                let template = template.clone();
+                self.substitute_predicate(&template, &bindings)
+                    .map(|constraint| self.eval_generic_constraint(&constraint, &HashMap::new()))
+                    .unwrap_or(false)
+            }
+        }
+    }
+}
+
+/// The element types of a pack parameter bound in a constraint environment.
+fn bound_pack_types(environment: &HashMap<&str, &TyArg>, param: &str) -> Option<Vec<Ty>> {
+    let TyArg::Val(CtValue::Tuple(values)) = environment.get(param)? else {
+        return None;
+    };
+    values
+        .iter()
+        .map(|value| match value {
+            CtValue::Type(ty) => Some((**ty).clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A recognized `TypeList` receiver expression in a constraint position.
+enum TypeListReceiver {
+    /// The pack adapter `TypeList[Ts.values]()`, naming the pack parameter.
+    Pack(String),
+    /// The concrete constructor `TypeList.of[...]()`, with resolved elements.
+    Concrete(Vec<Ty>),
 }
 
 /// The type a parameterized associated type's body denotes. The body parses as
@@ -797,6 +1327,9 @@ impl Checker {
 pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeError> {
     match &value.kind {
         ExprKind::TypeValue(ty) => Ok(ty.clone()),
+        // `comptime IteratorType[...] = Self` — a self-iterating struct
+        // (current Mojo's range family) names itself as the member's body.
+        ExprKind::Identifier(name) if name == "Self" => Ok(SourceType::SelfType),
         ExprKind::Identifier(name) => Ok(SourceType::Named(name.clone(), Vec::new())),
         ExprKind::TypeApply { name, args } => Ok(SourceType::Named(name.clone(), args.clone())),
         // A type application such as `List[T]` parses as a subscript over the
@@ -845,4 +1378,54 @@ pub(super) fn assoc_param_kind(param: &crate::ast::TypeParam) -> AssocParamKind 
 
 fn unsupported_assoc_body() -> TypeError {
     TypeError::Unsupported("a parameterized associated type must be defined by a type".to_string())
+}
+
+/// Every parameter a predicate-alias body references must be declared, so an
+/// application can never leave a dangling operand that would silently evaluate
+/// false. Pack projections are rejected here because the param-only
+/// `ConformsPack` form cannot carry a substituted single-type binding.
+fn validate_predicate_params(
+    constraint: &GenericConstraint,
+    declared: &HashSet<&str>,
+) -> Result<(), TypeError> {
+    use GenericConstraint::*;
+    let check_param = |param: &str| {
+        if declared.contains(param) {
+            Ok(())
+        } else {
+            Err(TypeError::Unsupported(format!(
+                "a Bool-bodied comptime alias may reference only its own parameters \
+                 ('{param}' is not declared)"
+            )))
+        }
+    };
+    let check_operand = |operand: &ConstraintOperand| match operand {
+        ConstraintOperand::Param(param) => check_param(param),
+        ConstraintOperand::Value(_) | ConstraintOperand::Type(_) => Ok(()),
+        ConstraintOperand::PackLength(_) => Err(TypeError::Unsupported(
+            "a pack projection in a Bool-bodied comptime alias".to_string(),
+        )),
+    };
+    match constraint {
+        WithMessage(inner, _) | Not(inner) => validate_predicate_params(inner, declared),
+        And(left, right) | Or(left, right) => {
+            validate_predicate_params(left, declared)?;
+            validate_predicate_params(right, declared)
+        }
+        Conforms { param, .. } => check_param(param),
+        ConformsPack { .. } | PackPredicate { .. } | PackContains { .. } => Err(
+            TypeError::Unsupported("a pack projection in a Bool-bodied comptime alias".to_string()),
+        ),
+        Trivial(_, operand) => check_operand(operand),
+        Eq(left, right)
+        | Ne(left, right)
+        | Lt(left, right)
+        | Le(left, right)
+        | Gt(left, right)
+        | Ge(left, right) => {
+            check_operand(left)?;
+            check_operand(right)
+        }
+        Bool(_) => Ok(()),
+    }
 }

@@ -260,11 +260,31 @@ impl CtValue {
             _ => Err(ComptimeError::NotInt(ctx.to_string())),
         }
     }
-    /// The elements of a compile-time collection (`Tuple`/`List`), for iteration.
+    /// The elements of a compile-time collection (`Tuple`/`List`), for
+    /// iteration and indexing. A `TypeList` value (`Sized` and iterable
+    /// upstream) yields its element types.
     fn as_sequence(&self, ctx: &str) -> Result<Vec<CtValue>, ComptimeError> {
         match self {
             CtValue::Tuple(v) | CtValue::List(v) => Ok(v.clone()),
-            _ => Err(ComptimeError::BadRange(ctx.to_string())),
+            _ => self
+                .typelist_elements()
+                .map(<[CtValue]>::to_vec)
+                .ok_or_else(|| ComptimeError::BadRange(ctx.to_string())),
+        }
+    }
+
+    /// The element types carried by a compile-time `TypeList` value, or
+    /// `None` for any other value.
+    fn typelist_elements(&self) -> Option<&[CtValue]> {
+        let CtValue::Struct { name, fields } = self else {
+            return None;
+        };
+        if name != "TypeList" {
+            return None;
+        }
+        match fields.as_slice() {
+            [(field, CtValue::Tuple(values))] if field == "values" => Some(values),
+            _ => None,
         }
     }
 }
@@ -444,6 +464,7 @@ pub(crate) fn elaborate_with_requests(
         materialized_callables,
         fuel: Cell::new(FUEL),
         top_consts: RefCell::new(HashMap::new()),
+        generic_aliases: RefCell::new(HashMap::new()),
     };
     let mut env = HashMap::new();
     let elaborated = elab.block(&program, &mut env, false)?;
@@ -1629,6 +1650,12 @@ struct Elab<'a> {
     materialized_callables: Vec<(Ty, String)>,
     fuel: Cell<usize>,
     top_consts: RefCell<HashMap<String, CtValue>>,
+    /// Module-scope generic `comptime` aliases in declaration order, name →
+    /// (parameters, body). The declarations pass through elaboration for the
+    /// checker's alias registry, but an application inside a `comptime if`
+    /// condition must already evaluate here — the branches are pruned before
+    /// checking.
+    generic_aliases: RefCell<HashMap<String, (Vec<TypeParam>, Expr)>>,
 }
 
 fn classify_ct_params(tps: &[TypeParam]) -> Vec<ParamDecl> {
@@ -1684,6 +1711,15 @@ impl<'a> Elab<'a> {
                 value,
             } => {
                 if !type_params.is_empty() {
+                    // A generic alias registers for the checker; record the
+                    // module-scope declaration here too so an application in a
+                    // later `comptime if` condition can evaluate before the
+                    // branches are pruned.
+                    if !in_fn {
+                        self.generic_aliases
+                            .borrow_mut()
+                            .insert(name.clone(), (type_params.clone(), (*value).clone()));
+                    }
                     out.push(stmt.clone());
                     return Ok(());
                 }
@@ -2421,6 +2457,11 @@ struct Mono {
     /// Checker-discovered inferred bound-generic applications: call occurrence
     /// (without its syntax id) → the concrete clone that call selects.
     def_call_targets: HashMap<SourceSpan, DefCallTarget>,
+    /// Checker-discovered scalar `range(...)` occurrences: call occurrence →
+    /// the linked range-family struct template plus the dtype value its
+    /// generated specialization bakes. `mono_expr` rewrites the call into
+    /// that concrete constructor.
+    range_call_targets: HashMap<SourceSpan, (String, Vec<CtValue>)>,
 }
 
 impl Mono {

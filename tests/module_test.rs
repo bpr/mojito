@@ -67,9 +67,9 @@ fn implicit_prelude_loads_each_core_collection_identity_once() {
         ("Set", 1),
         ("Dict", 1),
         ("Tuple", 1),
-        ("Range", 1),
         // `range` is one public overload set with one-, two-, and three-argument
-        // declarations, all under the same stable identity.
+        // declarations, all under the same stable identity. The range structs
+        // themselves are private (underscore) module members, like upstream.
         ("range", 3),
     ] {
         assert_eq!(
@@ -85,11 +85,11 @@ fn explicit_core_imports_and_aliases_reuse_prelude_declarations() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List as ExplicitList\nfrom std.collections.tuple import Tuple\nimport std.range as ranges\n\ndef consume(values: ExplicitList[Int], pair: Tuple[Int, Bool], span: ranges.Range):\n    pass\n\ndef main():\n    for i in ranges.range(1):\n        pass\n",
+        "from std.collections.list import List as ExplicitList\nfrom std.collections.tuple import Tuple\nimport std.range as ranges\n\ndef consume(values: ExplicitList[Int], pair: Tuple[Int, Bool]):\n    pass\n\ndef main():\n    for i in ranges.range(1):\n        pass\n",
     );
     let program = link(&main).expect("link explicit core aliases");
 
-    for (name, expected) in [("List", 1), ("Tuple", 1), ("Range", 1), ("range", 3)] {
+    for (name, expected) in [("List", 1), ("Tuple", 1), ("range", 3)] {
         assert_eq!(
             declaration_count(&program, name),
             expected,
@@ -111,7 +111,7 @@ fn explicit_core_imports_and_aliases_reuse_prelude_declarations() {
             other => panic!("expected a named core type, got {other:?}"),
         })
         .collect();
-    assert_eq!(type_names, ["List", "Tuple", "Range"]);
+    assert_eq!(type_names, ["List", "Tuple"]);
 }
 
 #[test]
@@ -124,7 +124,6 @@ fn parsed_snippets_can_inject_the_same_prelude_without_an_entry_path() {
         ("Set", 1),
         ("Dict", 1),
         ("Tuple", 1),
-        ("Range", 1),
         ("range", 3),
     ] {
         assert_eq!(

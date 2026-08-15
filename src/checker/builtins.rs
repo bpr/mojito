@@ -740,7 +740,8 @@ impl Checker {
                 || set_element(ty).is_some()
                 || dict_elements(ty).is_some()
                 || tuple_elements(ty).is_some()
-                || crate::types::is_range_type(ty))
+                || crate::types::is_range_type(ty)
+                || crate::types::scalar_range_parts(ty).is_some())
         {
             return Ok(Some(Ty::Int));
         }
@@ -804,6 +805,96 @@ impl Checker {
             self.record_literal_materializations(arg, &arg_ty, &Ty::Int)?;
         }
         Ok(range_type())
+    }
+
+    /// Scalar `range` inference for the dtype-inferred family. Upstream's
+    /// `range[dtype: DType, //](...)` overloads are infer-only — there is no
+    /// explicit-argument spelling — so the linked Int overload set cannot
+    /// host them as source defs. Called only after ordinary overload
+    /// selection found no match; returns `None` when no argument names a
+    /// concrete non-Int scalar, so the ordinary no-match error stands. On
+    /// success the result is the abstract family type plus a recorded
+    /// instantiation, and the specialization fixpoint rewrites the call into
+    /// the generated concrete struct's constructor.
+    pub(super) fn infer_scalar_range(
+        &self,
+        span: &crate::token::SourceSpan,
+        args: &[Expr],
+    ) -> Result<Option<Ty>, TypeError> {
+        if args.is_empty() || args.len() > 3 {
+            return Ok(None);
+        }
+        let mut tys = Vec::with_capacity(args.len());
+        for arg in args {
+            tys.push(self.infer(arg)?);
+        }
+        let mut dtype: Option<Dtype> = None;
+        let mut triggered = false;
+        for ty in &tys {
+            let this = match ty {
+                Ty::Simd { dtype, width: 1 } => {
+                    triggered = true;
+                    Some(*dtype)
+                }
+                Ty::Float64 => {
+                    triggered = true;
+                    Some(Dtype::Float64)
+                }
+                Ty::Int => Some(Dtype::Int),
+                Ty::IntLiteral | Ty::FloatLiteral => None,
+                // Not a scalar-range shape at all; the ordinary
+                // no-matching-overload diagnostic stands.
+                _ => return Ok(None),
+            };
+            if let (Some(current), Some(this)) = (&dtype, this)
+                && *current != this
+            {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!("Scalar[DType.{}]", current.name()),
+                    found: ty.to_string(),
+                    context: "range arguments must share one dtype".to_string(),
+                });
+            }
+            dtype = dtype.or(this);
+        }
+        if !triggered {
+            return Ok(None);
+        }
+        let dtype = dtype.expect("a triggering argument carries a concrete dtype");
+        if dtype == Dtype::Bool {
+            return Err(TypeError::Unsupported(
+                "range requires a numeric dtype".to_string(),
+            ));
+        }
+        if dtype.is_float() {
+            return Err(TypeError::Unsupported(if args.len() == 3 {
+                "float strided ranges are not supported; use an integral dtype".to_string()
+            } else {
+                "a floating-point range requires an explicit step; use range(start, end, step)"
+                    .to_string()
+            }));
+        }
+        let lane = simd_ty(dtype, 1);
+        for (ty, arg) in tys.iter().zip(args) {
+            if !splats_to(ty, dtype) {
+                return Err(TypeError::TypeMismatch {
+                    expected: lane.to_string(),
+                    found: ty.to_string(),
+                    context: "range argument".to_string(),
+                });
+            }
+            self.record_literal_materializations(arg, ty, &lane)?;
+        }
+        let family = crate::types::SCALAR_RANGE_FAMILY[args.len() - 1];
+        let arguments = vec![TyArg::Val(CtValue::Dtype(dtype))];
+        self.generic_instantiations.borrow_mut().insert(
+            span.clone(),
+            crate::checked::GenericInstantiation {
+                callee: family.to_string(),
+                arguments: arguments.clone(),
+            },
+        );
+        Ok(Some(Ty::Struct(family.to_string(), arguments)))
     }
 
     /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:

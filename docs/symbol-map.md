@@ -65,8 +65,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/statements.rs` owns `check_program`, block scoping, and the
   `check_stmt` statement dispatcher, including generic comptime alias lowering
   (`check_generic_comptime_alias` fills the `Checker.comptime_aliases`
-  registry of `ComptimeAlias` entries — classified `ParamDecl`s plus a
-  symbolic template). `check_def` checks one function declaration — the
+  registry of `ComptimeAlias` entries — classified `ParamDecl`s plus an
+  `AliasBody`: a symbolic type template or, for a Bool-bodied predicate
+  alias, a symbolic `GenericConstraint`; `check_program` pre-registers
+  module-level aliases like struct shells). `check_def` checks one function declaration — the
   `StmtKind::Def` arm delegates to it, and lambda mode (`lambda = true`)
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
@@ -129,7 +131,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `compile_generic_constraint`; declarations compile one constraint per
   trailing `where` clause. `lower_parameterized_member` lowers the symbolic
   template shared by parameterized associated members and generic comptime
-  aliases.
+  aliases. Predicate aliases live here too: `compile_predicate_alias_body`
+  lowers a Bool body, and `predicate_alias_application`/`apply_predicate_alias`
+  recognize and inline an application (shared by constraint compilation and
+  `traits.rs`'s raw conformance-condition evaluator); the elaborator's
+  `comptime if` path applies module-scope aliases via `Elab::apply_generic_alias`
+  (`comptime/eval.rs`). The `TypeList` vocabulary shares both homes:
+  `compile_typelist_proposition`/`typelist_receiver` lower the constraint
+  forms (`PackPredicate`/`PackContains`/`PackLength` in `types.rs`), and the
+  elaborator evaluates compile-time TypeList values (`eval_typelist_of`,
+  `eval_typelist_method`, the `make_typelist` marker in `comptime/eval.rs`).
 - `checker/operators.rs` and `checker/iteration.rs` own operator/SIMD inference
   and iterator-protocol selection respectively.
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates

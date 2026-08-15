@@ -1609,6 +1609,16 @@ impl Checker {
         expr: &Expr,
         args: &HashMap<&str, &TyArg>,
     ) -> bool {
+        // A predicate-alias application inlines its compiled Bool body (with
+        // the condition's spellings substituted), then evaluates it under the
+        // same argument environment as the surrounding condition.
+        if let Some((name, param_args)) = self.predicate_alias_application(expr) {
+            let name = name.to_string();
+            return match self.apply_predicate_alias(&name, &param_args) {
+                Ok(constraint) => self.eval_generic_constraint(&constraint, args),
+                Err(_) => false,
+            };
+        }
         match &expr.kind {
             ExprKind::TupleLit(elements)
                 if matches!(

@@ -5332,13 +5332,14 @@ fn generic_comptime_aliases_reject_unsupported_shapes() {
         }
     ));
 
-    // A value-bodied generic alias is a recorded subset gap.
+    // A non-Bool value-bodied generic alias is a recorded subset gap (Bool
+    // proposition bodies are predicate aliases and are supported).
     let TypeError::Unsupported(message) = err("comptime Twice[n: Int] = 2 * n\n") else {
         panic!("expected a value-bodied alias rejection");
     };
     assert_eq!(
         message,
-        "a generic comptime alias must be defined by a type"
+        "a generic comptime alias must be defined by a type or a Bool proposition"
     );
 
     // Sequential lowering: a self-referential body names an unknown type.
@@ -5387,6 +5388,84 @@ fn generic_comptime_aliases_reject_unsupported_shapes() {
         ),
         TypeError::UndefinedVariable(name) if name == "Pair"
     ));
+}
+
+#[test]
+fn bool_bodied_comptime_aliases_are_predicates() {
+    // A predicate alias applies in a def where clause, regardless of the
+    // declaration order between the alias and its consumer (aliases
+    // pre-register like struct shells).
+    ok(
+        "comptime IsCopy[T: AnyType] = conforms_to(T, Copyable)\n\ndef pick[T: Copyable](value: T) -> T where IsCopy[T]:\n    return value\n\ndef main():\n    print(pick(1))\n",
+    );
+    // A predicate alias may expand an earlier one, mix with the builtin
+    // IsTrivially* predicates, and gate a conditional conformance (the
+    // `comptime if` position is exercised by the corpus fixture, since the
+    // elaborator prunes those branches before checking).
+    ok(
+        "comptime IsCopy[T: AnyType] = conforms_to(T, Copyable) and IsTriviallyCopyable[T]\ncomptime StillCopy[T: AnyType] = IsCopy[T]\n\nstruct Wrap[T: Copyable & Deinitable & Movable](Copyable where StillCopy[T], Deinitable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\ndef dup[T: Copyable](value: T) -> T:\n    return value\n\ndef main():\n    var doubled = dup(Wrap(7))\n    print(doubled.item)\n",
+    );
+
+    // A body referencing an undeclared name rejects at declaration rather
+    // than evaluating false at some application.
+    let TypeError::Unsupported(message) =
+        err("comptime IsCopy[T: AnyType] = conforms_to(U, Copyable)\n")
+    else {
+        panic!("expected a dangling-parameter rejection");
+    };
+    assert_eq!(
+        message,
+        "a Bool-bodied comptime alias may reference only its own parameters ('U' is not declared)"
+    );
+
+    // Pack projections cannot substitute through the param-only pack form.
+    let TypeError::Unsupported(message) =
+        err("comptime AllCopy[T: AnyType] = conforms_to(T.values, Copyable)\n")
+    else {
+        panic!("expected a pack-projection rejection");
+    };
+    assert_eq!(message, "a pack projection in a Bool-bodied comptime alias");
+
+    // Bounds beyond AnyType would be silently dropped by inlining; rejected.
+    let TypeError::Unsupported(message) =
+        err("comptime IsCopy[T: Movable] = conforms_to(T, Copyable)\n")
+    else {
+        panic!("expected a bounded-parameter rejection");
+    };
+    assert_eq!(
+        message,
+        "a Bool-bodied comptime alias parameter takes no bound beyond AnyType; spell the requirement in the body"
+    );
+
+    // The builtin IsTrivially* spellings are not a shadowable namespace.
+    assert!(matches!(
+        err("comptime IsTriviallyCopyable[T: AnyType] = conforms_to(T, Copyable)\n"),
+        TypeError::Redeclaration(name) if name == "IsTriviallyCopyable"
+    ));
+}
+
+#[test]
+fn typelist_vocabulary_lowers_into_the_constraint_algebra() {
+    // The pack adapter compiles to the same pack-constraint forms as
+    // `conforms_to(Ts.values, Trait)`; `length`/`size` are Int operands.
+    ok(
+        "comptime IsSmall[T: AnyType] = IsTriviallyCopyable[T]\n\ndef all_copyable[*Ts: Movable](values: Tuple[*Ts]) -> Int where TypeList[Ts.values]().all_conforms_to[Copyable]():\n    return len(values)\n\ndef all_small[*Ts: Movable](values: Tuple[*Ts]) -> Int where TypeList[Ts.values]().all[IsSmall]():\n    return len(values)\n\ndef has_int[*Ts: Movable](values: Tuple[*Ts]) -> Bool where TypeList[Ts.values]().contains[Int]():\n    return True\n\ndef pair_only[*Ts: Movable](values: Tuple[*Ts]) -> Int where TypeList[Ts.values]().length == 2:\n    return len(values)\n\ndef main():\n    print(1)\n",
+    );
+
+    // A concrete `of` list folds eagerly: a failing proposition rejects the
+    // application through the ordinary constraint diagnostic.
+    assert!(matches!(
+        err(
+            "def gated(x: Int) -> Int where TypeList.of[Int]().contains[String]():\n    return x\n\ndef main():\n    print(gated(1))\n",
+        ),
+        TypeError::BadCall { .. }
+    ));
+
+    // The deprecated `size` alias of `length` stays accepted (upstream still
+    // ships it deprecated), and both spell the same operand.
+    ok(
+        "def sized(x: Int) -> Int where TypeList.of[Int, Bool]().size == 2:\n    return x\n\ndef main():\n    print(sized(3))\n",
+    );
 }
 
 #[test]

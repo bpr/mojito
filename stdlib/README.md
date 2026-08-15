@@ -52,9 +52,14 @@ only from their authoritative `std` modules.
   chained receiver/place in typed MIR. Ordinary public value reads already copy
   through the returned reference, explicit `ref` bindings retain the alias, and
   public indexing remains `__getitem__`.
-- `std/range.mojo` — the nominal `Range` returned by the bundled `range`
-  overloads, with length, indexing, containment, formatting, and borrowed
-  typed-raising iteration through `_RangeIter`.
+- `std/range.mojo` — current Mojo's private range family
+  (`_ZeroStartingRange`/`_SequentialRange`/`_StridedRange[dtype: DType =
+  DType.int]`), each its own borrowed typed-raising iterator over
+  `Scalar[dtype]` elements, returned by the bundled Int `range` overloads;
+  scalar arguments reach the same structs through checker-inferred dtype
+  specialization. Length and Int indexing run; containment, formatting,
+  `reversed()`, `bounds()`, and float strided ranges are recorded subset
+  gaps.
 - `std/collections/tuple.mojo` — the public heterogeneous `Tuple[*Ts]`, with
   current `__getitem_param__` indexing and element-conditional lifecycle,
   comparison, formatting, concatenation, reversal, and consuming APIs. Its

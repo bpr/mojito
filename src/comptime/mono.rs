@@ -673,6 +673,28 @@ impl<'a> Elab<'a> {
                 for k in kwargs.iter_mut() {
                     self.mono_expr(&mut k.value, consts, mono)?;
                 }
+                // A checker-selected scalar-range occurrence: rewrite the
+                // `range(...)` call into the concrete generated range-family
+                // struct's constructor and queue its specialization.
+                if name == "range"
+                    && let Some((template, vals)) = mono
+                        .range_call_targets
+                        .get(&source_span.clone().without_syntax())
+                        .cloned()
+                {
+                    let mangled = mangle(&template, &vals);
+                    if mono.done.insert(mangled.clone()) {
+                        mono.queue.push_back(Job {
+                            orig: template,
+                            vals,
+                            site: request_site,
+                            output_name: mangled.clone(),
+                            whole_pack_abi: false,
+                        });
+                    }
+                    *name = mangled;
+                    return Ok(());
+                }
                 // A bare public `Tuple(...)` has no source type arguments from
                 // which pre-check elaboration could soundly choose `*Ts`.  Only
                 // rewrite an occurrence the checker explicitly identified; an

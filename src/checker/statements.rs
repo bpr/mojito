@@ -70,6 +70,34 @@ impl Checker {
             self.check_trait(name, refines, methods, comptime_members)?;
             self.predeclared_traits.insert(name.clone());
         }
+        // Generic comptime aliases register before struct types and method
+        // signatures: a field annotation or a synthesized conditional-method
+        // availability (e.g. `copy()` gated on a `Copyable where MyPred[T]`
+        // condition) may reference an alias regardless of declaration order.
+        // The pre-pass keeps source order, so an alias body still sees only
+        // earlier aliases.
+        for statement in stmts {
+            let StmtKind::Comptime {
+                name,
+                type_params,
+                ty,
+                where_clauses,
+                value,
+            } = &statement.kind
+            else {
+                continue;
+            };
+            if type_params.is_empty() {
+                continue;
+            }
+            self.check_generic_comptime_alias(
+                name,
+                type_params,
+                ty.as_ref(),
+                where_clauses,
+                value,
+            )?;
+        }
         for statement in stmts {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
@@ -1146,6 +1174,13 @@ impl Checker {
                 value,
             } => {
                 if !type_params.is_empty() {
+                    // Top-level aliases were registered by `check_program`'s
+                    // pre-pass; re-walking the same statement is not a
+                    // redeclaration. Any other context still reports its own
+                    // rejection (module-scope-only, origin params, ...).
+                    if self.function_bases.is_empty() && self.comptime_aliases.contains_key(name) {
+                        return Ok(());
+                    }
                     return self.check_generic_comptime_alias(
                         name,
                         type_params,
@@ -2225,7 +2260,7 @@ impl Checker {
     /// symbolic template and expanded per application during type resolution.
     /// The alias declares no value binding: it is a pure type declaration,
     /// like a struct or trait, with no runtime form.
-    fn check_generic_comptime_alias(
+    pub(super) fn check_generic_comptime_alias(
         &mut self,
         name: &str,
         type_params: &[crate::ast::TypeParam],
@@ -2255,6 +2290,12 @@ impl Checker {
         {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
+        // The builtin `IsTrivially*` predicates are compiler spellings, not a
+        // shadowable namespace: every evaluation surface recognizes them
+        // before consulting the alias registry.
+        if crate::types::trivial_predicate_name(name).is_some() {
+            return Err(TypeError::Redeclaration(name.to_string()));
+        }
         if let Some(annotation) = ty {
             // Resolve and classify the annotation even though the symbolic
             // body is checked only at application, so a declared type is not
@@ -2275,12 +2316,25 @@ impl Checker {
                 }
             }
         }
-        let source_ty = super::constraints::assoc_body_source_type(value).map_err(|_| {
-            TypeError::Unsupported("a generic comptime alias must be defined by a type".to_string())
-        })?;
-        let template = self.lower_parameterized_member(type_params, &source_ty)?;
+        // A body is a type expression or a Bool proposition (a predicate
+        // alias). Some Bool bodies parse as type applications
+        // (`IsTriviallyCopyable[T]` is an `Index` shape), so a body that
+        // parses as a type but fails to lower falls back to the predicate
+        // path; a genuine type error is reported when neither path accepts.
+        let body = match super::constraints::assoc_body_source_type(value) {
+            Ok(source_ty) => match self.lower_parameterized_member(type_params, &source_ty) {
+                Ok(template) => AliasBody::Type(Box::new(template)),
+                Err(type_error) => AliasBody::Predicate(Box::new(
+                    self.compile_predicate_alias_body(&decls, value)
+                        .map_err(|_| type_error)?,
+                )),
+            },
+            Err(_) => {
+                AliasBody::Predicate(Box::new(self.compile_predicate_alias_body(&decls, value)?))
+            }
+        };
         self.comptime_aliases
-            .insert(name.to_string(), ComptimeAlias { decls, template });
+            .insert(name.to_string(), ComptimeAlias { decls, body });
         Ok(())
     }
 }
