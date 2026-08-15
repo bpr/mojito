@@ -1267,6 +1267,8 @@ impl Checker {
         Some((|| {
             // `set(init_with=…)` is the keyword-selected placement form: the
             // zero-parameter factory's result replaces the payload in place.
+            // Upstream declares the alternative infer-only, so it comes from
+            // the factory's return type; an explicit parameter rejects.
             if field == "set"
                 && let [kwarg] = kwargs
                 && kwarg.name == "init_with"
@@ -1278,26 +1280,38 @@ impl Checker {
                         got: args.len(),
                     });
                 }
-                let (index, alternative) = self.variant_alternative(&alternatives, param_args)?;
+                if !param_args.is_empty() {
+                    return Err(TypeError::BadCall {
+                        func: "Variant.set".to_string(),
+                        reason: "the 'init_with' form infers its alternative from the \
+                                 factory result; do not pass an explicit type parameter"
+                            .to_string(),
+                    });
+                }
                 self.require_variant_set_deinitable(&alternatives)?;
                 self.check_place(object)?;
                 let factory = self.infer(&kwarg.value)?;
-                let factory_ok = matches!(
-                    &factory,
+                let factory_ret = match &factory {
                     Ty::Func {
                         params,
                         raises: false,
                         ret,
                         ..
-                    } if params.is_empty() && coerces(ret, &alternative)
-                );
-                if !factory_ok {
+                    } if params.is_empty() => Some(ret.as_ref()),
+                    _ => None,
+                };
+                let index = factory_ret.and_then(|ret| {
+                    alternatives
+                        .iter()
+                        .position(|alternative| coerces(ret, alternative))
+                });
+                let Some(index) = index else {
                     return Err(TypeError::TypeMismatch {
-                        expected: format!("def() -> {alternative}"),
+                        expected: "def() -> T for one alternative T".to_string(),
                         found: factory.to_string(),
                         context: "'init_with' factory for 'Variant.set'".to_string(),
                     });
-                }
+                };
                 self.operation_adjustments.borrow_mut().insert(
                     span.clone(),
                     crate::checked::SemanticAdjustment::VariantSetInitWith {
@@ -1437,10 +1451,13 @@ impl Checker {
                             reason: "consuming receiver must be an owned place".to_string(),
                         });
                     }
-                    self.check_variant_deinit_handler(&alternatives, &args[0])?;
+                    let index = self.check_variant_deinit_handler(&alternatives, &args[0])?;
                     self.operation_adjustments.borrow_mut().insert(
                         span.clone(),
-                        crate::checked::SemanticAdjustment::VariantDeinitWith { alternatives },
+                        crate::checked::SemanticAdjustment::VariantDeinitWith {
+                            alternatives,
+                            index,
+                        },
                     );
                     self.record_interior_invalidation(span, object);
                     Ok(Ty::None)
@@ -1542,19 +1559,20 @@ impl Checker {
         Ok(())
     }
 
-    /// Validate a `Variant.deinit_with` handler: one non-raising callable
-    /// consuming a single payload parameter and returning `None`. A generic
-    /// handler must admit every alternative under its declared parameter
-    /// bounds (the VM applies it type-erased per tag); a monomorphic handler
-    /// only covers a variant whose alternatives all coerce to its parameter.
+    /// Validate a `Variant.deinit_with` handler: one non-raising monomorphic
+    /// callable consuming a single `var` payload parameter for exactly one
+    /// alternative and returning `None` (upstream's
+    /// `deinit_with[T: AnyType, F: def(var T)]` contract — generic handlers
+    /// reject). Returns the handled alternative's index; the VM aborts on a
+    /// runtime tag mismatch.
     fn check_variant_deinit_handler(
         &self,
         alternatives: &[Ty],
         handler: &Expr,
-    ) -> Result<(), TypeError> {
+    ) -> Result<usize, TypeError> {
         let handler_ty = self.infer(handler)?;
         let reject = |found: &Ty| TypeError::TypeMismatch {
-            expected: "def[T: AnyType](deinit element: T) handling every alternative".to_string(),
+            expected: "def(var element: T) for one alternative T".to_string(),
             found: found.to_string(),
             context: "'Variant.deinit_with' handler".to_string(),
         };
@@ -1574,56 +1592,10 @@ impl Checker {
                 ) {
                     return Err(reject(&handler_ty));
                 }
-                for alternative in alternatives {
-                    if !coerces(alternative, &params[0]) {
-                        return Err(reject(&handler_ty));
-                    }
-                }
-                Ok(())
-            }
-            Ty::GenericFunc {
-                decls,
-                params,
-                conventions,
-                raises: false,
-                ret,
-                ..
-            } if params.len() == 1 && **ret == Ty::None => {
-                if !matches!(
-                    conventions.first(),
-                    Some(Some(
-                        crate::ast::ArgConvention::Deinit | crate::ast::ArgConvention::Var
-                    ))
-                ) {
-                    return Err(reject(&handler_ty));
-                }
-                let Ty::Param { name, .. } = &params[0] else {
-                    return Err(reject(&handler_ty));
-                };
-                let bounds = decls.iter().find_map(|decl| match decl {
-                    crate::types::ParamDecl::Type {
-                        name: decl_name,
-                        bounds,
-                        ..
-                    } if decl_name == name => Some(bounds.clone()),
-                    _ => None,
-                });
-                let Some(bounds) = bounds else {
-                    return Err(reject(&handler_ty));
-                };
-                for alternative in alternatives {
-                    for bound in &bounds {
-                        if !self.conforms_to(alternative, bound) {
-                            return Err(TypeError::TraitNotSatisfied {
-                                param: "Variant.deinit_with alternative".to_string(),
-                                ty: alternative.to_string(),
-                                trait_name: bound.clone(),
-                                reason: self.trait_failure_reason(alternative, bound),
-                            });
-                        }
-                    }
-                }
-                Ok(())
+                alternatives
+                    .iter()
+                    .position(|alternative| alternative == &params[0])
+                    .ok_or_else(|| reject(&handler_ty))
             }
             other => Err(reject(other)),
         }

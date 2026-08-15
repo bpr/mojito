@@ -98,28 +98,42 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     def bucket_count(self) -> Int:
         return self.nbuckets
 
-    # Displacement-returning insertion: replacing an existing key returns the
-    # previous value, a fresh key returns an empty Optional.
+    # Displacement-returning insertion: replacing an existing key moves the
+    # previous entry (key and value) out and returns it; a fresh key returns
+    # an empty Optional. Nothing is destroyed in place, so no `Deinitable`
+    # bound is required.
     def insert(mut self, key: StringLiteral, value: Self.V) -> Optional[
-        Self.V
-    ] where conforms_to(Self.V, Deinitable):
+        DictEntry[StringLiteral, Self.V]
+    ]:
         var existing: Int = self.find_index(key)
         if existing >= 0:
-            var displaced = Optional[Self.V](self.entries._get_copy(existing).value)
-            self.entries[existing] = DictEntry[StringLiteral, Self.V](key, value)
+            var displaced = Optional[DictEntry[StringLiteral, Self.V]](
+                self.entries.data.unsafe_offset(existing).unsafe_take_pointee()
+            )
+            self.entries.data[existing] = DictEntry[StringLiteral, Self.V](key, value)
             return displaced^
-        self[key] = value
-        return Optional[Self.V]()
+        # Fresh-key path: append and index directly (like `__setitem__`'s
+        # fresh branch) — delegating would demand its `Deinitable` bound.
+        var entry_index: Int = len(self.entries)
+        self.entries.append(DictEntry[StringLiteral, Self.V](key, value))
+        var bucket: Int = bucket_index(key, self.nbuckets)
+        var bucket_entries: List[Int] = self.index._get_copy(bucket)
+        bucket_entries.append(entry_index)
+        self.index[bucket] = bucket_entries^
+        self.count = self.count + 1
+        if self.count == self.nbuckets:
+            self.rehash(self.nbuckets * 2)
+        return Optional[DictEntry[StringLiteral, Self.V]]()
 
-    # Consuming teardown: every entry is handed to the consuming handler; the
-    # bucket index holds only integers and drops with the shell.
+    # Consuming teardown: every entry is handed front-to-back to the consuming
+    # handler; the bucket index holds only integers and drops with the shell.
     def deinit_with(
         deinit self,
-        elt_handler: def(deinit key: StringLiteral, deinit value: Self.V) capturing[_],
+        elt_handler: def(var key: StringLiteral, var value: Self.V) capturing[_],
         /,
     ):
         while len(self.entries) > 0:
-            var entry = self.entries.pop()
+            var entry = self.entries.pop(0)
             elt_handler(entry.key^, entry.value^)
 
     def get(self, key: StringLiteral) -> Optional[Self.V]:

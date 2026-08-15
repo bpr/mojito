@@ -121,9 +121,6 @@ struct Optional[T: AnyType](
     def __bool__(self) -> Bool:
         return self._size == 1
 
-    def is_some(self) -> Bool:
-        return self._size == 1
-
     def or_else(self, default: Self.T) -> Self.T where conforms_to(Self.T, Copyable):
         if self._size == 1:
             return self.data[0]
@@ -145,13 +142,13 @@ struct Optional[T: AnyType](
             _mojito_abort("Optional.deinit_assert_empty on a non-empty Optional")
         self.data.unsafe_free()
 
-    def deinit_with(deinit self, elt_handler: def(deinit element: Self.T) capturing[_], /):
+    def deinit_with(deinit self, elt_handler: def(var element: Self.T) capturing[_], /):
         if self._size == 1:
             elt_handler(self.data.unsafe_take_pointee())
         self.data.unsafe_free()
 
     def map[U: Movable](
-        deinit self, f: def(deinit element: Self.T) capturing[_] -> U, /
+        deinit self, f: def(var element: Self.T) capturing[_] -> U, /
     ) -> Optional[U]:
         if self._size == 1:
             var result = Optional[U](f(self.data.unsafe_take_pointee()))
@@ -161,7 +158,7 @@ struct Optional[T: AnyType](
         return Optional[U]()
 
     def and_then[U: Movable](
-        deinit self, f: def(deinit element: Self.T) capturing[_] -> Optional[U], /
+        deinit self, f: def(var element: Self.T) capturing[_] -> Optional[U], /
     ) -> Optional[U]:
         if self._size == 1:
             var result = f(self.data.unsafe_take_pointee())

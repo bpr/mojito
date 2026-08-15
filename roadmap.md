@@ -101,22 +101,19 @@ re-probed at every re-pin (e.g. expected struct extensions would qualify). The e
 (see the changelog: `unified {...}`, bare `move:`, the competing `__setitem__`
 pair, `def(...)`-typed storage, captured-Origin specialization values, and
 unqualified stateful downward funargs now reject; `objs[0](args)` is recorded
-as a subset gap). The remaining pass works the prioritized changeset in
-[`docs/mojo-nightly.md`](docs/mojo-nightly.md) (its §0–§8 hold the detailed
-specifications and upstream evidence), in this order:
-
-- [ ] **Pass close-out** — in order:
-  1. Run the open-question probes and the re-probe list in
-     [`conformance/probes/`](conformance/probes/) against the audited build;
-     resolve each per its header.
-  2. Re-verify the "Confirmed Alignment" list in `docs/mojo-nightly.md`
-     (add the permanent two-root namespace-directory module case and the
-     caught-error `raise e` differential case).
-  3. Full differential conformance run in a Pixi environment with the exact
-     audited build; record `mojo --version` and both hashes with the
-     results; update the `conformance/parity.tsv` header pins.
-  4. Delete this section's checkboxes — the next re-pin recreates the pass
-     with a fresh divergence list.
+as a subset gap). The `ae386d1b204` pass is complete, including its close-out
+(probes resolved, the Confirmed Alignment list re-verified, and the full
+differential run recorded in `docs/mojo-nightly.md`); the recorded divergences
+to burn down next pass live in `conformance/parity.tsv` notes and the
+`mojito-only`/`mojo-only` rows of `conformance/cases.tsv`: span
+parameterization (`Span[T, _]`, `Imm`/`Mut` view aliases), `len(String)`
+acceptance, bare `def(...)` parameter annotations, OwnedPointer `p[]`, the
+`._subtree`-cast bridge, `capturing[...]`-annotated closure locals (upstream
+stores closures un-annotated — needs closure escape inference for
+un-annotated local bindings), and prelude-visible `Set` (upstream requires an
+import for the name while set displays stay name-independent — needs the
+display lowering to reach the stdlib Set through a compiler-internal identity
+instead of the prelude binding).
 
 ### 3. Stabilize Textual MIR/VM Assembly
 

@@ -1,5 +1,5 @@
 def main():
-    var values = [10, 20, 30]
+    var values: List[Int] = [10, 20, 30]
     ref first = values[0]
     ref same = values[0]
 

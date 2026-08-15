@@ -790,7 +790,7 @@ form: offsets are legal (the VM's arena bounds check is the dynamic
 backstop), the projection is part of the type so the discriminator also fixes
 the runtime representation (allocation arithmetic, never a frame/slot
 handle), and the origin's loan engages the ordinary interior-generation
-staleness machinery. `origin_cast` rebinds provenance without a runtime
+staleness machinery. `unsafe_origin_cast` rebinds provenance without a runtime
 operation (lowering forwards the receiver register; MIR verify compares
 pointer ABI modulo origin) and never upgrades a statically immutable
 capability.
@@ -800,7 +800,7 @@ that capability. Their loans flow through three checked channels: a
 constructor's `ref [origin]` parameter records `BorrowRefArguments` (the
 binding loans each lent place), a view-typed subscript result records
 `BorrowViewResult` (the result inherits the receiver's loans, falling back
-to the receiver's own place for a plain owner), and `origin_cast`/
+to the receiver's own place for a plain owner), and `unsafe_origin_cast`/
 `unsafe_offset` results carry their rebound or forwarded origins through the
 aggregate-origin walks. The loans are whole-place and shared, so reads
 coexist while structural mutation of the source conflicts with any live
@@ -1030,8 +1030,10 @@ the exact generic-method target, and reuses the already evaluated source-index
 register for the value-parameter ABI. This is separate from runtime
 `__getitem__(index)` dispatch and does not add an ordinary positional argument.
 
-The implicit prelude exposes `List`, `Set`, `Dict`, `Range`, and `Tuple` as
-ordinary bundled structs. List, set, and dictionary displays lower to the
+The implicit prelude exposes `List`, `Set`, `Dict`, `Optional`, `Range`, and
+`Tuple` as ordinary bundled structs (upstream requires an explicit import for
+the `Set` name — a recorded divergence pending display-lowering identity
+plumbing). List, set, and dictionary displays lower to the
 selected nominal constructor; comprehension leaves lower to ordinary
 `append`, `add`, or `__setitem__` calls. Range syntax is an ordinary overload of
 the bundled `range` function. Tuple displays request a concrete specialization
@@ -2210,7 +2212,7 @@ assignment writes through it. MIR transfers the originating loan to the
 aggregate binding. Reaching-generation-aware drop liveness keeps the current
 owner alive through aggregate handle use, releases the old owner when the
 aggregate is rebound, and retains the replacement generation independently.
-Stored `UnsafeAnyOrigin` is rejected because it would hide an untracked mutable
+A stored `MutUnsafeAnyOrigin` reference is rejected because it would hide an untracked mutable
 capability behind an otherwise safe value.
 
 `UnsafePointer(to=place)` rides the same machinery. The checker infers

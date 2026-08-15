@@ -18,6 +18,43 @@ from std.optional import Optional
 
 from std.iterable import Iterable, Iterator, StopIteration
 
+# Shared strict contiguous-slice bounds checking with the audited head's
+# abort messages (upstream std/collections/check_bounds.mojo): start
+# out-of-bounds, end out-of-bounds, and reversed bounds each abort with the
+# index and the valid range interpolated. Lives here (not in a collections
+# module) so the collection modules and String share it without an import
+# cycle through the prelude's String binding.
+struct _BoundsMessage(Movable, Writer):
+    var text: String
+
+    def __init__(out self):
+        self.text = String("")
+
+    def write_string(mut self, chunk: String):
+        self.text = self.text + chunk
+
+
+def check_slice_bounds(start: Int, end: Int, length: Int):
+    if start < 0 or start > length:
+        var message = _BoundsMessage()
+        message.write(
+            "slice start index ", start, " is out of bounds, valid range is 0 to ", length
+        )
+        _mojito_abort(message.text)
+    if end < 0 or end > length:
+        var message = _BoundsMessage()
+        message.write(
+            "slice end index ", end, " is out of bounds, valid range is 0 to ", length
+        )
+        _mojito_abort(message.text)
+    if start > end:
+        var message = _BoundsMessage()
+        message.write(
+            "slice start index ", start, " is greater than slice end index ", end
+        )
+        _mojito_abort(message.text)
+
+
 struct String(
     Comparable, Copyable, Equatable, Hashable, Iterable, Movable, Writable
 ):
@@ -493,8 +530,7 @@ struct String(
     def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan:
         var start = byte.start.or_else(0)
         var end = byte.end.or_else(self.size)
-        if start < 0 or end > self.size or start > end:
-            _mojito_abort("String byte slice bounds out of range")
+        check_slice_bounds(start, end, self.size)
         if not self._is_codepoint_boundary(start):
             _mojito_abort("String byte slice endpoint is not a codepoint boundary")
         if not self._is_codepoint_boundary(end):
@@ -511,8 +547,7 @@ struct String(
             var total = self.codepoint_count()
             var start = codepoint.start.or_else(0)
             var end = codepoint.end.or_else(total)
-            if start < 0 or end > total or start > end:
-                _mojito_abort("String codepoint slice bounds out of range")
+            check_slice_bounds(start, end, total)
             start_byte = self._codepoint_offset(start)
             end_byte = self._codepoint_offset(end)
         except e:
@@ -706,7 +741,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     var _size: Int
 
     def __init__(out self, ref [origin] src: String):
-        self._data = src.data.origin_cast[
+        self._data = src.data.unsafe_origin_cast[
             origin._get_owned_interior["bytes"]
         ]()
         self._size = src.size
@@ -716,6 +751,9 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return _GraphemeIter(self, 0)
 
     def __len__(self) -> Int:
+        return self._size
+
+    def byte_length(self) -> Int:
         return self._size
 
     def to_string(self) -> String:
@@ -754,8 +792,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def __getitem__(self, *, byte: ContiguousSlice) -> Self:
         var start = byte.start.or_else(0)
         var end = byte.end.or_else(self._size)
-        if start < 0 or end > self._size or start > end:
-            _mojito_abort("StringSpan byte slice bounds out of range")
+        check_slice_bounds(start, end, self._size)
         if not self._boundary(start):
             _mojito_abort("StringSpan byte slice endpoint is not a codepoint boundary")
         if not self._boundary(end):
@@ -770,8 +807,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             var total = text.codepoint_count()
             var start = codepoint.start.or_else(0)
             var end = codepoint.end.or_else(total)
-            if start < 0 or end > total or start > end:
-                _mojito_abort("StringSpan codepoint slice bounds out of range")
+            check_slice_bounds(start, end, total)
             start_byte = text._codepoint_offset(start)
             end_byte = text._codepoint_offset(end)
         except e:
@@ -786,8 +822,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             var total = text.grapheme_count()
             var start = grapheme.start.or_else(0)
             var end = grapheme.end.or_else(total)
-            if start < 0 or end > total or start > end:
-                _mojito_abort("StringSpan grapheme slice bounds out of range")
+            check_slice_bounds(start, end, total)
             start_byte = text._grapheme_offset(start)
             end_byte = text._grapheme_offset(end)
         except e:

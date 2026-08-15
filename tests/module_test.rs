@@ -66,6 +66,7 @@ fn implicit_prelude_loads_each_core_collection_identity_once() {
         ("List", 1),
         ("Set", 1),
         ("Dict", 1),
+        ("Optional", 1),
         ("Tuple", 1),
         // `range` is one public overload set with one-, two-, and three-argument
         // declarations, all under the same stable identity. The range structs
@@ -123,6 +124,7 @@ fn parsed_snippets_can_inject_the_same_prelude_without_an_entry_path() {
         ("List", 1),
         ("Set", 1),
         ("Dict", 1),
+        ("Optional", 1),
         ("Tuple", 1),
         ("range", 3),
     ] {
@@ -337,6 +339,30 @@ fn custom_search_roots_are_tried_in_order() {
     );
     let execution = compiler.run_path(&main).unwrap();
     assert_eq!(execution.output, "1\n");
+}
+
+#[test]
+fn two_roots_share_a_namespace_directory_prefix() {
+    // The permanent two-root namespace-directory case (Confirmed Alignment,
+    // audit ae386d1b204): `foo.bar` and `foo.baz` resolve from distinct
+    // search roots that both contribute to the `foo` namespace prefix.
+    // Source-package precedence and package `__init__.mojo` boundaries are
+    // unchanged.
+    let d = TempDir::new();
+    d.write("root_a/foo/bar.mojo", "def one() -> Int:\n    return 1\n");
+    d.write("root_b/foo/baz.mojo", "def two() -> Int:\n    return 2\n");
+    let main = d.write(
+        "src/main.mojo",
+        "from foo.bar import one\nfrom foo.baz import two\n\ndef main():\n    print(one() + two())\n",
+    );
+    let compiler = Compiler::new(
+        LinkOptions {
+            search_roots: vec![d.0.join("root_a"), d.0.join("root_b")],
+        },
+        BackendKind::Vm,
+    );
+    let execution = compiler.run_path(&main).unwrap();
+    assert_eq!(execution.output, "3\n");
 }
 
 #[test]

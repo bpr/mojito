@@ -613,6 +613,17 @@ impl<'a> Elab<'a> {
                     substitute_type_bindings_in_expr(default, &type_substitutions);
                 }
             }
+            // A retained binder's dependent callable bound (`F: def(T) -> T`)
+            // or value type may reference a just-baked sibling type parameter;
+            // rewrite them so the residual signature stays self-contained.
+            for parameter in &mut kept_type_params {
+                if let Some(bound) = &mut parameter.callable_bound {
+                    substitute_type_bindings_in_type(bound, &type_substitutions);
+                }
+                if let Some(value_type) = &mut parameter.value_type {
+                    substitute_type_bindings_in_type(value_type, &type_substitutions);
+                }
+            }
             if let Some(ret) = &mut specialized_ret {
                 substitute_type_bindings_in_type(ret, &type_substitutions);
             }

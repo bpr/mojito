@@ -281,7 +281,7 @@ impl Flatten<'_> {
                 }
                 Vec::new()
             }
-            // An `origin_cast` result loans exactly its rebound target
+            // An `unsafe_origin_cast` result loans exactly its rebound target
             // place; an interior-generation tail becomes the loan's interior
             // domain so container mutation stales it without ordinary reads
             // conflicting.

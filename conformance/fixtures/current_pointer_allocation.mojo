@@ -1,4 +1,4 @@
-from std.memory import Layout, dealloc, unsafe_alloc
+from std.memory import Layout, alloc, dealloc
 
 def main():
     var allocation = alloc(Layout[Int](count=4))
@@ -7,7 +7,3 @@ def main():
     print(ptr[])
     print(allocation.layout().count())
     dealloc(allocation^)
-    var raw = unsafe_alloc[Int](1)
-    raw.unsafe_write(7)
-    print(raw[unsafe_offset=0])
-    raw.unsafe_free()

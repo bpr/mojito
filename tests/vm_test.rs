@@ -151,7 +151,7 @@ fn comprehension_binders_do_not_overwrite_outer_or_shadowed_bindings() {
 fn collection_displays_materialize_contextual_element_types() {
     assert_eq!(
         vm(
-            "def empty() -> Set[Float64]:\n    return {}\n\ndef numbers() -> Set[Float64]:\n    return {1, 2}\n\ndef show(values: Set[Float64]):\n    print(values)\n\ndef main():\n    show({})\n    show({1, 2})\n    print(empty())\n    print(numbers())\n"
+            "from std.collections.set import Set\n\ndef empty() -> Set[Float64]:\n    return {}\n\ndef numbers() -> Set[Float64]:\n    return {1, 2}\n\ndef show(values: Set[Float64]):\n    print(values)\n\ndef main():\n    show({})\n    show({1, 2})\n    print(empty())\n    print(numbers())\n"
         ),
         "{}\n{1.0, 2.0}\n{}\n{1.0, 2.0}\n"
     );
@@ -714,7 +714,7 @@ fn unpack_and_exception_targets_seed_typed_capture_slots() {
     let src = "def main():\n    if True:\n        var left, label = (40, \"two\")\n        def show() {left, label}:\n            print(left, label)\n        show()\n    if True:\n        var left, label = (42, True)\n        def show() {left, label}:\n            print(left, label)\n        show()\n    var error = 40\n    try:\n        raise \"caught\"\n    except error:\n        def show_error() {error}:\n            print(error)\n        show_error()\n    print(error)\n";
     assert_eq!(
         run_compiled(src).expect("compile nominal Tuple unpacking"),
-        "40 two\n42 True\nError(\"caught\")\n40\n"
+        "40 two\n42 True\ncaught\n40\n"
     );
 }
 
@@ -1149,7 +1149,10 @@ fn raising_iter_normalization_propagates_to_the_enclosing_try() {
 
 #[test]
 fn slice_bounds_construct_nominal_optional_values() {
-    let source = "struct Optional[T: Movable]:\n    var value: Int\n    var present: Bool\n    def __init__(out self):\n        self.value = 0\n        self.present = False\n    def __init__(out self, value: Int):\n        self.value = value\n        self.present = True\n    def or_else(self, default: Int) -> Int:\n        if self.present:\n            return self.value\n        return default\n\ndef main():\n    var present = Slice(1, 4).start.or_else(9)\n    var absent = Slice(None, 4).start.or_else(9)\n    print(present, absent)\n";
+    // The prelude-visible nominal Optional serves the Slice-bound bridge
+    // directly (a local shadowing struct would now collide with the prelude
+    // binding).
+    let source = "def main():\n    var present = Slice(1, 4).start.or_else(9)\n    var absent = Slice(None, 4).start.or_else(9)\n    print(present, absent)\n";
     assert_eq!(parity(source), "1 9\n");
 }
 
@@ -1323,27 +1326,40 @@ fn tuple_comparable_conformance_survives_discovery_and_specialization() {
 
 #[test]
 fn slice_subscript_runs() {
-    // List + String slicing: strict contiguous bounds, strided normalization
-    // (optional bounds, negative indices, reversal), StringLiteral slices.
-    let src = "def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4, 5]\n    print(xs[1:4])\n    print(xs[::2])\n    print(xs[::-1])\n    print(xs[-2::1])\n    var s: StringLiteral = \"hello\"\n    print(s[1:4])\n    print(s[::-1])\n";
+    // List slicing: strict contiguous bounds plus strided normalization
+    // (optional bounds, negative indices, reversal). String-family
+    // positional slicing, including StringLiteral values, was removed at
+    // the audited head.
+    let src = "def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4, 5]\n    print(xs[1:4])\n    print(xs[::2])\n    print(xs[::-1])\n    print(xs[-2::1])\n";
     assert_eq!(
         run_compiled(src).expect("compile nominal List slice overloads"),
-        "[1, 2, 3]\n[0, 2, 4]\n[5, 4, 3, 2, 1, 0]\n[4, 5]\nell\nolleh\n"
+        "[1, 2, 3]\n[0, 2, 4]\n[5, 4, 3, 2, 1, 0]\n[4, 5]\n"
     );
 }
 
 #[test]
 fn contiguous_list_slice_bounds_abort() {
     // Strict contiguous bounds: negative, out-of-range, and reversed bounds
-    // abort instead of normalizing through `Slice.indices()`.
-    for slice in ["[-2:]", "[0:9]", "[3:1]"] {
+    // abort instead of normalizing through `Slice.indices()`, with the
+    // audited head's interpolated messages.
+    for (slice, message) in [
+        (
+            "[-2:]",
+            "abort: slice start index -2 is out of bounds, valid range is 0 to 5",
+        ),
+        (
+            "[0:9]",
+            "abort: slice end index 9 is out of bounds, valid range is 0 to 5",
+        ),
+        (
+            "[3:1]",
+            "abort: slice start index 3 is greater than slice end index 1",
+        ),
+    ] {
         let src =
             format!("def main():\n    var xs: List[Int] = [0, 1, 2, 3, 4]\n    print(xs{slice})\n");
         let err = run_compiled(&src).expect_err("strict contiguous bounds abort");
-        assert!(
-            err.contains("abort: List slice bounds out of range"),
-            "unexpected error for {slice}: {err}"
-        );
+        assert!(err.contains(message), "unexpected error for {slice}: {err}");
     }
 }
 
@@ -1680,10 +1696,10 @@ fn augmented_nominal_subscripts_match_current_mojo_order() {
 
 #[test]
 fn explicit_slice_values_expose_optional_fields_and_indices() {
-    let src = "def main():\n    var span = Slice(None, None, -1)\n    print(span.start.is_some(), span.end.or_else(9), span.step.or_else(1))\n    print(span.indices(4))\n    print(slice(3).indices(10))\n";
+    let src = "def main():\n    var span = Slice(None, None, -1)\n    print(span.start.or_else(8), span.end.or_else(9), span.step.or_else(1))\n    print(span.indices(4))\n    print(slice(3).indices(10))\n";
     assert_eq!(
         run_compiled(src).expect("vm backend failed"),
-        "False 9 -1\n(3, -1, -1)\n(0, 3, 1)\n"
+        "8 9 -1\n(3, -1, -1)\n(0, 3, 1)\n"
     );
 }
 
@@ -1715,7 +1731,7 @@ fn explicit_bound_generic_application_iterates_concrete_collections() {
     // and re-checks the body with `C := List[Int]` / `Set[Int]`, so the
     // generic `for` runs through ordinary concrete borrowed iteration with no
     // erased dispatch at these call sites.
-    let src = "def total[C: Iterable](c: C) -> Int:\n    var acc = 0\n    for item in c:\n        acc += item\n    return acc\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(total[List[Int]](xs))\n    var s: Set[Int] = Set[Int]()\n    s.add(30)\n    print(total[Set[Int]](s))\n";
+    let src = "from std.collections.set import Set\n\ndef total[C: Iterable](c: C) -> Int:\n    var acc = 0\n    for item in c:\n        acc += item\n    return acc\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(total[List[Int]](xs))\n    var s: Set[Int] = Set[Int]()\n    s.add(30)\n    print(total[Set[Int]](s))\n";
     assert_eq!(run_compiled(src).unwrap(), "12\n30\n");
 }
 
@@ -1760,34 +1776,25 @@ fn retained_template_executes_erased_dispatch_under_the_compiler() {
 }
 
 #[test]
-fn bound_generic_function_value_invokes_through_the_compiler() {
-    // The function-value fallback executes under the authoritative pipeline:
-    // the template stays abstract and the indirect call retargets at runtime.
-    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    var callback: def(Int) -> Int = ident\n    print(callback(41))\n";
-    assert_eq!(run_compiled(src).expect("function value runs"), "41\n");
+fn bound_generic_function_value_rejects_contextual_specialization() {
+    // Current Mojo does not infer a generic specialization from a local
+    // callable annotation, so the authoritative pipeline rejects the
+    // materialization at check time.
+    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    var callback: def(Int) thin -> Int = ident\n    print(callback(41))\n";
+    let error = run_compiled(src).expect_err("contextual specialization rejects");
+    assert!(error.contains("does not infer a specialization"), "{error}");
 }
 
 #[test]
-fn unsafe_maybe_uninit_init_with_places_and_takes() {
-    // `unsafe_init_with` performs placement construction (the factory result
-    // lands directly in storage, no `Movable` bound), and the mut-receiver
-    // `unsafe_take` moves the payload out leaving the slot reusable.
-    let src = "from std.memory import UnsafeMaybeUninit\n\ndef main():\n    def make() -> Int:\n        return 7\n    var u = UnsafeMaybeUninit[Int]()\n    u.unsafe_init_with(make)\n    print(\"taken\", u.unsafe_take())\n    u.unsafe_write(9)\n    print(\"again\", u.unsafe_take())\n";
+fn unsafe_maybe_uninit_writes_and_assumes_init() {
+    // The audited surface: the value constructor and `unsafe_write` fill the
+    // storage, and the consuming `unsafe_assume_init` moves the payload out.
+    // (The former `unsafe_init_with`/`unsafe_take` wrappers were Mojito-only
+    // extensions and were removed to match the head.)
+    let src = "from std.memory import UnsafeMaybeUninit\n\ndef main():\n    var u = UnsafeMaybeUninit[Int]()\n    u.unsafe_write(7)\n    print(\"first\", u^.unsafe_assume_init())\n    var v = UnsafeMaybeUninit[Int](9)\n    print(\"second\", v^.unsafe_assume_init())\n";
     assert_eq!(
         run_compiled(src).expect("uninit storage runs"),
-        "taken 7\nagain 9\n"
-    );
-}
-
-#[test]
-fn init_with_placement_supports_non_movable_payloads() {
-    // The factory constructs into its return slot and the result lands in
-    // storage without moving a named place, so a `Movable where False`
-    // payload place-constructs and reads back by reference.
-    let src = "from std.memory import UnsafeMaybeUninit\n\nstruct Pinned(Movable where False):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n\ndef main():\n    def make() -> Pinned:\n        return Pinned(3)\n    var u = UnsafeMaybeUninit[Pinned]()\n    u.unsafe_init_with(make)\n    ref v = u.unsafe_assume_init()\n    print(v.x)\n";
-    assert_eq!(
-        run_compiled(src).expect("non-movable placement runs"),
-        "3\n"
+        "first 7\nsecond 9\n"
     );
 }
 
@@ -1805,10 +1812,10 @@ fn container_family_owning_apis_execute() {
     // non-Deinitable elements), clear_with, and displacement-returning
     // insert, with the caller's residual consumption seeing the drained
     // write-back state (no double teardown).
-    let src = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    conns^.deinit_with(lambda (deinit element: Conn): element^.close())\n    var d: Dict[Int, Int] = {1: 10}\n    print(\"displaced\", d.insert(1, 11).or_else(-1))\n    print(\"fresh\", d.insert(2, 20).is_some())\n    d.clear_with(lambda (deinit key: Int, deinit value: Int): print(\"cleared\", key, value))\n    print(\"len\", len(d))\n    var s: Set[Int] = {7}\n    print(\"set displaced\", s.insert(7).or_else(-1))\n    s^.deinit_with(lambda (deinit element: Int): print(\"torn\", element))\n";
+    let src = "from std.collections.set import Set\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    conns^.deinit_with(lambda (var element: Conn): element^.close())\n    var d: Dict[Int, Int] = {1: 10}\n    var displaced = d.insert(1, 11)\n    print(\"displaced\", displaced.value().value)\n    print(\"fresh\", Bool(d.insert(2, 20)))\n    d.clear_with(lambda (var key: Int, var value: Int): print(\"cleared\", key, value))\n    print(\"len\", len(d))\n    var s: Set[Int] = {7}\n    print(\"set displaced\", s.insert(7).or_else(-1))\n    s^.deinit_with(lambda (var element: Int): print(\"torn\", element))\n";
     assert_eq!(
         run_compiled(src).expect("family APIs run"),
-        "close 1\nclose 2\ndisplaced 10\nfresh False\ncleared 2 20\ncleared 1 11\nlen 0\nset displaced 7\ntorn 7\n"
+        "close 1\nclose 2\ndisplaced 10\nfresh False\ncleared 1 11\ncleared 2 20\nlen 0\nset displaced 7\ntorn 7\n"
     );
 }
 

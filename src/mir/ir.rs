@@ -126,7 +126,6 @@ pub enum MirIntrinsicSubscript {
     Simd,
     Pointer,
     ComptimeList,
-    String,
 }
 
 /// A compile-time-known literal.
@@ -660,11 +659,13 @@ pub enum MirInstr {
     },
     /// Consuming teardown (`deinit_with`): destructure the moved variant
     /// value and invoke the single-parameter consuming `handler` callable
-    /// value with the active payload, whatever its runtime tag.
+    /// value with the active payload. The handler covers exactly the
+    /// alternative at `index`; any other runtime tag aborts.
     VariantDeinitWith {
         dest: Reg,
         variant: Reg,
         handler: Reg,
+        index: usize,
     },
     /// Replace the active payload without destroying it, returning ownership of
     /// that previous payload to the caller.

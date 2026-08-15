@@ -1,8 +1,9 @@
 # Current Mojo's owning Variant surface: `unwrap`/`unsafe_unwrap` (the
-# renamed consuming extraction), `set[T](init_with=...)` in-place placement
-# replacement (the factory result becomes the payload, the previous payload
-# is destroyed under its runtime tag), and `deinit_with(handler)` consuming
-# teardown through a generic or monomorphic handler.
+# renamed consuming extraction), `set(init_with=...)` in-place placement
+# replacement (the alternative is inferred from the factory result — an
+# explicit type parameter rejects upstream), and `deinit_with(handler)`
+# consuming teardown through a monomorphic `var`-convention handler for one
+# alternative (a runtime tag mismatch aborts).
 from std.utils import Variant
 
 struct Res(Movable):
@@ -24,16 +25,18 @@ def main():
     # set(init_with=...) in-place placement replacement
     var w: Variant[Int, String] = Variant[Int, String](1)
     var base = 40
-    w.set[Int](init_with=lambda () -> Int: base + 2)
+    w.set(init_with=lambda () -> Int: base + 2)
     print("set", w.unsafe_unwrap[Int]())
 
-    # deinit_with: generic handler consumes the payload under the runtime tag
-    def consume[T: Movable](deinit element: T):
+    # deinit_with: a monomorphic handler for the active alternative (spelled
+    # as a nested def — a String-typed lambda parameter is a recorded lambda
+    # gap)
+    def consume_string(var element: String):
         print("consumed")
     var x: Variant[Int, String] = Variant[Int, String](String("hello"))
-    x.deinit_with(consume)
+    x.deinit_with(consume_string)
 
     # deinit_with with a Res payload through a monomorphic handler
     var y: Variant[Res] = Variant[Res](Res(9))
-    y.deinit_with(lambda (deinit element: Res): element^.__deinit__())
+    y.deinit_with(lambda (var element: Res): element^.__deinit__())
     print("done")

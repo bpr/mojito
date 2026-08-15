@@ -1,6 +1,6 @@
 # Static-origin references cannot be manufactured from local storage.
-# expect: cannot satisfy StaticOrigin
-def observe(ref[StaticOrigin] value: Int):
+# expect: cannot satisfy ImmStaticOrigin
+def observe(ref[ImmStaticOrigin] value: Int):
     print(value)
 
 def main():

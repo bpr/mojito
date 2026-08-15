@@ -6,6 +6,8 @@
 # the source conflicts. Element access and the strict contiguous sub-slice
 # use current Mojo's strict bounds: violations abort.
 
+from std.string import check_slice_bounds
+
 from std.collections.list import List
 
 from std.iterable import Iterable, Iterator, StopIteration
@@ -26,7 +28,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
 
     @implicit
     def __init__(out self, ref [origin] list: List[Self.T]):
-        self._data = list.data.origin_cast[
+        self._data = list.data.unsafe_origin_cast[
             origin._get_owned_interior["element"]
         ]()
         self._size = len(list)
@@ -55,8 +57,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
     def __getitem__(self, slice: ContiguousSlice) -> Self:
         var start = slice.start.or_else(0)
         var end = slice.end.or_else(self._size)
-        if start < 0 or end > self._size or start > end:
-            abort("Span slice bounds out of range")
+        check_slice_bounds(start, end, self._size)
         var result = self
         result._data = result._data.unsafe_offset(start)
         result._size = end - start

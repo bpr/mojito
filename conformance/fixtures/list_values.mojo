@@ -1,5 +1,5 @@
 def main():
-    var values = [2, 4, 6]
+    var values: List[Int] = [2, 4, 6]
     values.append(8)
     print(values[0], values[3], len(values))
     if 4 in values:

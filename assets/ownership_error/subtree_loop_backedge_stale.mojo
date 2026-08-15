@@ -6,7 +6,7 @@ struct Buf:
     var value: Int
 
     def view(ref self) -> Pointer[Int, origin_of(self)._subtree]:
-        return UnsafePointer(to=self.value).origin_cast[
+        return UnsafePointer(to=self.value).unsafe_origin_cast[
             origin_of(self)._subtree
         ]()
 

@@ -399,7 +399,7 @@ fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if contains_type_param(found) || contains_type_param(expected) {
         return true;
     }
-    // Pointer provenance erases from the runtime ABI: `origin_cast` retypes
+    // Pointer provenance erases from the runtime ABI: `unsafe_origin_cast` retypes
     // a pointer without any runtime operation (lowering forwards the
     // receiver register), so ABI compatibility compares elements only. The
     // checker and ownership analysis own origin discipline.
@@ -3121,12 +3121,6 @@ fn verify_intrinsic_index(
         | (MirIntrinsicSubscript::ComptimeList, Some(Ty::ComptimeList(element))) => {
             Some(vec![element.as_ref()])
         }
-        (MirIntrinsicSubscript::String, _) => {
-            errors.push(format!(
-                "{prefix}: String intrinsic is valid for Slice, not Index"
-            ));
-            return;
-        }
         (_, Some(base)) => {
             errors.push(format!(
                 "{prefix}: intrinsic {intrinsic:?} is incompatible with checked base type {base}"
@@ -3167,30 +3161,15 @@ fn indexed_place_element_types(base: &Ty) -> Option<Vec<Ty>> {
 fn verify_intrinsic_slice(
     prefix: &str,
     intrinsic: MirIntrinsicSubscript,
-    base: Option<&Ty>,
-    dest: Option<&Ty>,
+    _base: Option<&Ty>,
+    _dest: Option<&Ty>,
     errors: &mut Vec<String>,
 ) {
-    if intrinsic != MirIntrinsicSubscript::String {
-        errors.push(format!(
-            "{prefix}: intrinsic {intrinsic:?} is not a slice dispatch"
-        ));
-        return;
-    }
-    if let Some(base) = base
-        && !types_compatible(base, &Ty::StringLiteral)
-    {
-        errors.push(format!(
-            "{prefix}: String slice intrinsic has checked base type {base}"
-        ));
-    }
-    if let Some(dest) = dest
-        && !types_compatible(dest, &Ty::StringLiteral)
-    {
-        errors.push(format!(
-            "{prefix}: String slice intrinsic has result type {dest}"
-        ));
-    }
+    // No intrinsic slice dispatch remains (StringLiteral positional slicing
+    // was removed at the audited head); any recorded kind is a verifier error.
+    errors.push(format!(
+        "{prefix}: intrinsic {intrinsic:?} is not a slice dispatch"
+    ));
 }
 
 /// Rebuild the executable callable shape from the symbolic generic contract.

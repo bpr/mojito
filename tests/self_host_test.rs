@@ -65,7 +65,7 @@ fn self_hosted_generic_optional() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.optional import Optional\n\ndef main():\n    var a: Optional[Int] = Optional[Int](42)\n    var b: Optional[Int] = Optional[Int]()\n    print(a.is_some(), a.or_else(-1))\n    print(b.is_some(), b.or_else(-1))\n",
+        "from std.optional import Optional\n\ndef main():\n    var a: Optional[Int] = Optional[Int](42)\n    var b: Optional[Int] = Optional[Int]()\n    print(Bool(a), a.or_else(-1))\n    print(Bool(b), b.or_else(-1))\n",
     );
     assert_eq!(run(&main).unwrap(), "True 42\nFalse -1\n");
 }
@@ -295,7 +295,7 @@ fn self_hosted_dict_views_get_and_snapshots() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 1\n    d[\"b\"] = 2\n    var keys = d.keys()\n    var values = d.values()\n    var items = d.items()\n    d[\"c\"] = 3\n    print(len(keys), len(values), len(items), len(d))\n    print(keys[0], keys[1], values[0], values[1])\n    print(items[0].key, items[0].value)\n    print(d.get(\"a\").is_some(), d.get(\"z\").is_some())\n    print(d.get(\"z\", 99))\n    for key in d:\n        print(key, d[key])\n",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 1\n    d[\"b\"] = 2\n    var keys = d.keys()\n    var values = d.values()\n    var items = d.items()\n    d[\"c\"] = 3\n    print(len(keys), len(values), len(items), len(d))\n    print(keys[0], keys[1], values[0], values[1])\n    print(items[0].key, items[0].value)\n    print(Bool(d.get(\"a\")), Bool(d.get(\"z\")))\n    print(d.get(\"z\", 99))\n    for key in d:\n        print(key, d[key])\n",
     );
     assert_eq!(
         run(&main).unwrap(),
@@ -308,7 +308,7 @@ fn hash_dict_matches_list_dict_and_preserves_order() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.dict import Dict\nfrom std.collections.hashdict import HashDict\n\ndef main() raises:\n    var a: Dict[Int, Int] = Dict[Int, Int]()\n    var b: HashDict[Int, Int] = HashDict[Int, Int]()\n    var i: Int = 0\n    while i < 20:\n        a[i] = i * 10\n        b[i] = i * 10\n        i = i + 1\n    a[3] = 333\n    b[3] = 333\n    print(len(a), len(b), b.bucket_count())\n    for key in a:\n        print(key, a[key])\n    print(\"---\")\n    for key in b:\n        print(key, b[key])\n    print(b.get(100).is_some(), b.get(100, -1))\n",
+        "from std.collections.dict import Dict\nfrom std.collections.hashdict import HashDict\n\ndef main() raises:\n    var a: Dict[Int, Int] = Dict[Int, Int]()\n    var b: HashDict[Int, Int] = HashDict[Int, Int]()\n    var i: Int = 0\n    while i < 20:\n        a[i] = i * 10\n        b[i] = i * 10\n        i = i + 1\n    a[3] = 333\n    b[3] = 333\n    print(len(a), len(b), b.bucket_count())\n    for key in a:\n        print(key, a[key])\n    print(\"---\")\n    for key in b:\n        print(key, b[key])\n    print(Bool(b.get(100)), b.get(100, -1))\n",
     );
     let output = run(&main).unwrap();
     let mut lines = output.lines();
@@ -336,7 +336,7 @@ fn hash_dict_missing_subscript_raises() {
         "main.mojo",
         "from std.collections.hashdict import HashDict\n\ndef main():\n    var d: HashDict[String, Int] = HashDict[String, Int]()\n    try:\n        print(d[\"missing\"])\n    except e:\n        print(e)\n",
     );
-    assert_eq!(run(&main).unwrap(), "Error(\"missing key\")\n");
+    assert_eq!(run(&main).unwrap(), "missing key\n");
 }
 
 #[test]

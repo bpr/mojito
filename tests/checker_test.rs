@@ -687,7 +687,7 @@ fn comprehension_binders_are_lexical_and_enforce_linear_cleanup() {
 #[test]
 fn collection_displays_use_parameter_and_return_context() {
     ok(
-        "def consume(values: Set[Float64]):\n    pass\n\ndef empty() -> Set[Float64]:\n    return {}\n\ndef numbers() -> Set[Float64]:\n    return {1, 2}\n\ndef main():\n    consume({})\n    consume({1, 2})\n    print(empty(), numbers())\n",
+        "from std.collections.set import Set\n\ndef consume(values: Set[Float64]):\n    pass\n\ndef empty() -> Set[Float64]:\n    return {}\n\ndef numbers() -> Set[Float64]:\n    return {1, 2}\n\ndef main():\n    consume({})\n    consume({1, 2})\n    print(empty(), numbers())\n",
     );
     ok(
         "def consume(values: Dict[StringLiteral, Float64]):\n    pass\n\ndef main():\n    consume({})\n    consume({\"one\": 1, \"two\": 2})\n",
@@ -1210,7 +1210,7 @@ fn reference_next_refinement_rejects_noncopyable_or_mismatched_referents() {
 #[test]
 fn value_next_cannot_refine_a_reference_requirement() {
     let error = err(
-        "trait ReferenceIteratorContract:\n    def __next__(mut self) -> ref[UnsafeAnyOrigin] Int: ...\n\n@fieldwise_init\nstruct ValueIterator(ReferenceIteratorContract):\n    var value: Int\n    def __next__(mut self) -> Int:\n        return self.value\n",
+        "trait ReferenceIteratorContract:\n    def __next__(mut self) -> ref[MutUnsafeAnyOrigin] Int: ...\n\n@fieldwise_init\nstruct ValueIterator(ReferenceIteratorContract):\n    var value: Int\n    def __next__(mut self) -> Int:\n        return self.value\n",
     );
     assert!(matches!(
         error,
@@ -2079,7 +2079,7 @@ fn infers_list_element_type_with_widening() {
 #[test]
 fn collection_literal_annotations_solve_only_direct_type_holes() {
     ok(
-        "var inferred_list: List[_] = [1, 2]\nvar bare_list: List = [3, 4]\nvar inferred_set: Set[_] = {1, 2}\nvar inferred_dict: Dict[_, _] = {\"one\": 1}\nvar value_hole: Dict[StringLiteral, _] = {\"two\": 2}\n",
+        "from std.collections.set import Set\nvar inferred_list: List[_] = [1, 2]\nvar bare_list: List = [3, 4]\nvar inferred_set: Set[_] = {1, 2}\nvar inferred_dict: Dict[_, _] = {\"one\": 1}\nvar value_hole: Dict[StringLiteral, _] = {\"two\": 2}\n",
     );
 
     assert!(matches!(
@@ -3181,7 +3181,7 @@ fn trait_refinement_inherits_requirements_and_capabilities() {
 #[test]
 fn checks_callable_parameters_and_indirect_invocation() {
     ok(
-        "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    var callback: def(Int) -> Int = increment\n    print(apply(callback, 41))\n",
+        "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    var callback: def(Int) thin -> Int = increment\n    print(apply(callback, 41))\n",
     );
     assert!(matches!(
         err(
@@ -3267,10 +3267,15 @@ fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effect
 }
 
 #[test]
-fn contextually_instantiates_a_generic_callable_value() {
-    ok(
-        "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) -> Int = identity\n    print(callback(42))\n",
-    );
+fn rejects_contextual_generic_callable_specialization() {
+    // Current Mojo does not infer a generic specialization from a local
+    // callable annotation; only explicit specialization materializes one.
+    assert!(matches!(
+        err(
+            "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) thin -> Int = identity\n    print(callback(42))\n"
+        ),
+        TypeError::Unsupported(_)
+    ));
 }
 
 #[test]
@@ -3342,7 +3347,7 @@ fn contextual_type_selects_an_origin_specialized_overload_value() {
 #[test]
 fn contextually_selects_an_overloaded_callable_value() {
     ok(
-        "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) -> Int = choose\n    var result: Int = callback(41)\n",
+        "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    var result: Int = callback(41)\n",
     );
 }
 
@@ -3512,9 +3517,9 @@ fn checks_reference_aggregate_permissions_initialization_and_escape() {
         "struct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n    def __init__(out self, ref[origin] value: Int):\n        self.value = value\n"
     )
     .is_ok());
-    assert!(check_source("struct Seen:\n    var value: ref[UntrackedOrigin] Int\n").is_ok());
+    assert!(check_source("struct Seen:\n    var value: ref[ImmUntrackedOrigin] Int\n").is_ok());
     assert!(matches!(
-        check_source("struct Hidden:\n    var value: ref[UnsafeAnyOrigin] Int\n"),
+        check_source("struct Hidden:\n    var value: ref[MutUnsafeAnyOrigin] Int\n"),
         Err(TypeError::Unsupported(message)) if message.contains("UnsafeAnyOrigin")
     ));
     assert!(check_source(
@@ -5481,13 +5486,13 @@ fn function_typed_keyword_variadics_keep_their_collector_role() {
 fn accepts_thin_lambda_bindings_and_calls() {
     // `{}` and an omitted list with no free variables are both thin.
     ok(
-        "def main():\n    var f: def(x: Int) -> Int = lambda (x: Int) {} -> Int: x * 2\n    var r: Int = f(21)\n",
+        "def main():\n    var f: def(x: Int) thin -> Int = lambda (x: Int) {} -> Int: x * 2\n    var r: Int = f(21)\n",
     );
     ok(
-        "def main():\n    var f: def(x: Int) -> Int = lambda (x: Int) -> Int: x + 1\n    var r: Int = f(1)\n",
+        "def main():\n    var f: def(x: Int) thin -> Int = lambda (x: Int) -> Int: x + 1\n    var r: Int = f(1)\n",
     );
-    ok("def main():\n    var f: def() -> Int = lambda -> Int: 42\n    var r: Int = f()\n");
-    ok("def main():\n    var f: def() = lambda: None\n    f()\n");
+    ok("def main():\n    var f: def() thin -> Int = lambda -> Int: 42\n    var r: Int = f()\n");
+    ok("def main():\n    var f: def() thin = lambda: None\n    f()\n");
 }
 
 #[test]
@@ -5495,7 +5500,7 @@ fn lambda_with_explicit_capture_all_is_a_closure_even_without_captures() {
     // `{imm}` is an explicit capture convention: the lambda is a closure and
     // cannot bind to an unqualified `def(...)` contract.
     let error = err(
-        "def main():\n    var f: def(x: Int) -> Int = lambda (x: Int) {imm} -> Int: x + 1\n    var r: Int = f(1)\n",
+        "def main():\n    var f: def(x: Int) thin -> Int = lambda (x: Int) {imm} -> Int: x + 1\n    var r: Int = f(1)\n",
     );
     assert!(
         matches!(&error, TypeError::TypeMismatch { found, .. } if found.contains("capturing")),
@@ -5512,7 +5517,7 @@ fn lambda_omitted_capture_list_imm_captures_free_variables() {
     );
     // ...and a thin contract rejects it.
     let error = err(
-        "def main():\n    var z = 10\n    var f: def(x: Int) -> Int = lambda (x: Int) -> Int: x + z\n    var r: Int = f(5)\n",
+        "def main():\n    var z = 10\n    var f: def(x: Int) thin -> Int = lambda (x: Int) -> Int: x + z\n    var r: Int = f(5)\n",
     );
     assert!(
         matches!(&error, TypeError::TypeMismatch { found, .. } if found.contains("capturing")),
@@ -5522,7 +5527,7 @@ fn lambda_omitted_capture_list_imm_captures_free_variables() {
 
 #[test]
 fn lambda_omitted_return_type_is_fixed_none() {
-    let error = err("def main():\n    var f: def() = lambda: 1 + 1\n    f()\n");
+    let error = err("def main():\n    var f: def() thin = lambda: 1 + 1\n    f()\n");
     assert!(
         matches!(
             &error,
@@ -5536,7 +5541,7 @@ fn lambda_omitted_return_type_is_fixed_none() {
 #[test]
 fn lambda_empty_capture_list_rejects_free_variables() {
     let error = err(
-        "def main():\n    var z = 10\n    var f: def(x: Int) -> Int = lambda (x: Int) {} -> Int: x + z\n    var r: Int = f(5)\n",
+        "def main():\n    var z = 10\n    var f: def(x: Int) thin -> Int = lambda (x: Int) {} -> Int: x + z\n    var r: Int = f(5)\n",
     );
     assert!(
         matches!(
@@ -5577,7 +5582,7 @@ fn generic_lambda_is_a_closure() {
     // A lambda-owned parameter list forces the capturing environment, so a
     // thin `def(...)` contract rejects it.
     let error = err(
-        "def main():\n    var f: def(x: Int) -> Int = lambda [N: Int](x: Int) {} -> Int: x + N\n    var r: Int = f(1)\n",
+        "def main():\n    var f: def(x: Int) thin -> Int = lambda [N: Int](x: Int) {} -> Int: x + N\n    var r: Int = f(1)\n",
     );
     assert!(
         matches!(&error, TypeError::TypeMismatch { found, .. } if found.contains("capturing")),

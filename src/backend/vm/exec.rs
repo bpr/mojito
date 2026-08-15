@@ -838,9 +838,6 @@ impl VmBackend {
                     self.materialize_checked_result(prog, result, target)?
                 } else {
                     match intrinsic {
-                        Some(MirIntrinsicSubscript::String) => {
-                            crate::runtime::slice_value(&receiver, lo, hi, st)?
-                        }
                         Some(kind) => {
                             return Err(RuntimeError::TypeError(format!(
                                 "vm: intrinsic {kind:?} does not support slicing"
@@ -1152,16 +1149,23 @@ impl VmBackend {
                 dest,
                 variant,
                 handler,
+                index: expected,
             } => {
-                let Value::Variant { value, .. } = &regs[variant.0 as usize] else {
+                let Value::Variant { index, value, .. } = &regs[variant.0 as usize] else {
                     return Err(RuntimeError::TypeError(format!(
                         "Variant.deinit_with applied to {}",
                         crate::runtime::type_name(&regs[variant.0 as usize])
                     )));
                 };
+                // The handler is monomorphic for one alternative; upstream
+                // aborts when the runtime tag holds a different type.
+                if index != expected {
+                    return Err(RuntimeError::Abort(
+                        "Variant.deinit_with: wrong variant type".to_string(),
+                    ));
+                }
                 // The receiver place was moved to a tombstone before this
-                // instruction; the handler consumes the payload under the
-                // runtime tag.
+                // instruction; the handler consumes the payload.
                 let payload = value.as_ref().clone();
                 let handler = regs[handler.0 as usize].clone();
                 self.invoke_callable_value(

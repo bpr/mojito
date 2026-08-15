@@ -200,8 +200,14 @@ fn run_program(
     if !execution.output.is_empty() {
         print!("{}", execution.output);
     }
-    for (n, v) in execution.bindings {
-        println!("{n} = {v}");
+    // Echo final bindings only for stdin snippets: file-based programs run
+    // through `main`, and their observable output must match `mojo run`
+    // exactly (a module-scope `comptime` value would otherwise leak an extra
+    // `NAME = value` line into differential comparisons).
+    if !matches!(file, Some(path) if path != "-") {
+        for (n, v) in execution.bindings {
+            println!("{n} = {v}");
+        }
     }
     Ok(())
 }

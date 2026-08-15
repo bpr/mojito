@@ -3,5 +3,5 @@
 # expect: could not infer capture convention for 'z'
 def main():
     var z = 10
-    var f: def(x: Int) -> Int = lambda (x: Int) {} -> Int: x + z
+    var f: def(x: Int) thin -> Int = lambda (x: Int) {} -> Int: x + z
     print(f(5))

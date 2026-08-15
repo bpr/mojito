@@ -1,6 +1,8 @@
 # Borrowed Set iteration through the generic reference-yielding protocol: the
 # delegated `_ListIter` borrows the backing list through the seam handle two
 # frames deep, and `for ref` writes through into the set's storage.
+from std.collections.set import Set
+
 def main():
     var s: Set[Int] = Set[Int]()
     s.add(1)

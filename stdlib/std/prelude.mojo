@@ -11,6 +11,7 @@ from std.format.tstring import TString
 from std.string import Codepoint, String, StringSpan
 from std.collections.set import Set
 from std.collections.dict import Dict
+from std.optional import Optional
 from std.collections.tuple import Tuple
 from std.range import range
 from std.memory import alloc

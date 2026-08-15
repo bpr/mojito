@@ -9,7 +9,7 @@ struct Buf:
     def view(ref self) -> Pointer[
         Int, origin_of(self)._get_owned_interior["items"]
     ]:
-        return UnsafePointer(to=self.value).origin_cast[
+        return UnsafePointer(to=self.value).unsafe_origin_cast[
             origin_of(self)._get_owned_interior["items"]
         ]()
 

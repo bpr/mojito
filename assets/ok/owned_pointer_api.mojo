@@ -1,7 +1,8 @@
-# The minimal OwnedPointer proof subset with current Mojo's naming from day
-# one: value and `init_with=` placement construction, `into_inner` (never the
-# pre-rename `take`), interior-origin `unsafe_ptr()` views, and a conditional
-# destructor (a linear pointee makes the OwnedPointer itself linear).
+# The minimal OwnedPointer proof subset with current Mojo's naming: value
+# construction, `into_inner` (never the pre-rename `take`), interior-origin
+# `unsafe_ptr()` views, and a conditional destructor (a linear pointee makes
+# the OwnedPointer itself linear). Upstream's borrowed `p[]` dereference and
+# `init_with=`/`copy_value=` constructors are recorded gaps.
 from std.memory import OwnedPointer, Allocation, Layout, alloc, dealloc
 
 struct Res(Movable):
@@ -19,11 +20,6 @@ def main():
     view[0] += 1
     print("deref", view[0])
     print("inner", p^.into_inner())
-
-    var base = 6
-    var q = OwnedPointer[Int](init_with=lambda () -> Int: base + 1)
-    var qview = q.unsafe_ptr()
-    print("placed", qview[0])
 
     # implicit drop runs the pointee destructor exactly once
     var r = OwnedPointer[Res](Res(9))

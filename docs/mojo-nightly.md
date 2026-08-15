@@ -34,6 +34,22 @@ collection slicing and view contracts. These affect ordinary systems programs
 and current standard-library source, so they take precedence over expanding the
 existing proof-subset library breadth.
 
+**Close-out record (2026-08-15).** The full differential conformance run
+passes 176/176 `conformance/cases.tsv` cases against the exact audited build:
+`mojo --version` reports `Mojo 1.1.0.dev2026080805 (7ade05af)` from a Pixi
+environment pinning the `mojo ==1.1.0.dev2026080805` conda nightly (the version
+`ae386d1b20434e126aea8a32a2b625ed1343eaf5`'s lockfiles pin); the Mojito side is
+commit `a6bfe27` plus the close-out change that carries this record. The
+close-out resolved all twenty open-question probes (their answers live in the
+new `cases.tsv` claims and parity-row notes), re-confirmed the five-item
+re-probe table, fixed a discovery-path regression for dependent callable bounds
+(`F: def(T) -> T` residual signatures), aligned the origin-alias vocabulary
+(`ImmStaticOrigin`, `ImmUntrackedOrigin`, `MutUnsafeAnyOrigin`), and
+reclassified the July-era case rows whose behavior the head changed (implicit
+`def`-scope declaration, the Dict projected-value refresh, raising
+explicit-destroy rollback, and untracked-ref conversions are now documented
+one-sided rows).
+
 ## Prioritized Changeset
 
 The order below is the recommended implementation order; dependencies and
@@ -358,15 +374,18 @@ already covers:
 - Int and `Scalar[DType.int]`, current reflection field handles, `StringDict`
   kwargs storage/forwarding, origin-parameterized borrowed `Iterable`, and
   monomorphic `IterableOwned.IteratorOwnedType` are present.
-- The stable compiler passes the new two-root namespace-directory example:
-  `foo.bar` and `foo.baz` can be imported from distinct `-I` roots and share the
-  `foo` prefix. Add that exact case permanently; keep source-package precedence
-  and package `__init__.mojo` boundaries unchanged.
+- The two-root namespace-directory example — `foo.bar` and `foo.baz` imported
+  from distinct `-I` roots sharing the `foo` prefix — is pinned permanently by
+  `tests/module_test.rs` `two_roots_share_a_namespace_directory_prefix` and was
+  hand-verified against the audited build (`mojo run -I root_a -I root_b`
+  prints `3`, 2026-08-15). Source-package precedence and package
+  `__init__.mojo` boundaries are unchanged.
 - `range(..., step=0)` is empty in nominal runtime iteration, direct compile-time
   unrolling, and VM-backed CTFE.
-- `Error` is treated as implicitly copyable by the current checked type facts.
-  Add a caught-error `raise e` differential case before opening implementation
-  work.
+- `Error` is treated as implicitly copyable by the current checked type facts,
+  and the caught-error `raise e` shape is pinned by the `raise-caught-error`
+  differential case (both compilers relay and print `caught boom`; Mojito's
+  `print(e)` rendering was aligned to the bare message).
 
 ## Monitored Or Deferred Movement
 

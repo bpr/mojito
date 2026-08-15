@@ -647,19 +647,42 @@ fn verifier_rejects_missing_nominal_subscript_contracts() {
 
 #[test]
 fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
-    let mut missing = lower_source("def main():\n    print(\"abc\"[1:])\n");
-    missing
-        .functions
-        .iter_mut()
-        .flat_map(|(_, function)| function.blocks.iter_mut())
-        .flat_map(|block| block.instrs.iter_mut())
-        .find_map(|instruction| match instruction {
-            MirInstr::Slice { intrinsic, .. } => Some(intrinsic),
-            _ => None,
-        })
-        .expect("String Slice lowered")
-        .take();
+    // Slice dispatch shapes are hand-built: source-level slicing is nominal
+    // only (the StringLiteral slice intrinsic was retired with the audited
+    // head), so a missing or spurious dispatch never comes from lowering.
+    let slice = |call, intrinsic| {
+        program(function(
+            vec![block(
+                vec![
+                    MirInstr::Const {
+                        dest: Reg(0),
+                        k: Const::Str("abc".to_string()),
+                    },
+                    MirInstr::Slice {
+                        dest: Reg(1),
+                        object: Reg(0),
+                        kind: mojito::types::SliceKind::ContiguousSlice,
+                        lower: None,
+                        upper: None,
+                        step: None,
+                        object_place: None,
+                        arg_places: Vec::new(),
+                        call,
+                        intrinsic,
+                    },
+                ],
+                MirTerm::Return(Some(Reg(1))),
+            )],
+            2,
+            &[(0, Ty::StringLiteral), (1, Ty::StringLiteral)],
+        ))
+    };
+    let missing = slice(None, None);
     expect_finding(&missing, "slice operation must carry exactly one");
+
+    // No intrinsic slice dispatch remains: any recorded kind is a finding.
+    let spurious = slice(None, Some(MirIntrinsicSubscript::Pointer));
+    expect_finding(&spurious, "is not a slice dispatch");
 
     let mut mistyped = lower_source(
         "def main():\n    var lanes = SIMD[DType.int, 2](1, 2)\n    print(lanes[0])\n",

@@ -1246,7 +1246,7 @@ fn inferred_generic_method_calls_retain_parameter_declarations() {
 #[test]
 fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
     let program = parse(
-        "def main():\n    var xs = List[Int](18446744073709551616)\n    var unique = Set[Int](18446744073709551616)\n    var table: Dict[Int, Int] = {18446744073709551616: 18446744073709551616}\n    for i in range(18446744073709551616):\n        pass\n",
+        "from std.collections.set import Set\n\ndef main():\n    var xs = List[Int](18446744073709551616)\n    var unique = Set[Int](18446744073709551616)\n    var table: Dict[Int, Int] = {18446744073709551616: 18446744073709551616}\n    for i in range(18446744073709551616):\n        pass\n",
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
@@ -3212,10 +3212,12 @@ fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
 
 #[test]
 fn function_value_reference_retains_the_bound_generic_template() {
-    // A function-value use has no application to monomorphize against, so it
-    // pins the abstract template — the designed erased-dispatch fallback.
+    // A residual callable argument has no application to monomorphize
+    // against, so it pins the abstract template — the designed
+    // erased-dispatch fallback. (Local callable storage no longer infers a
+    // generic specialization, so the argument channel carries this shape.)
     let mir = compiled_mir(
-        "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    var callback: def(Int) -> Int = ident\n    print(callback(41))\n",
+        "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    print(apply(ident, 41))\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"ident"), "{names:?}");
@@ -3230,7 +3232,7 @@ fn subtree_loan_shapes_verify_terminal_only() {
     // A subtree-origin pointer binding establishes a loan whose interior
     // path may end in — but never continue past — the subtree segment, and
     // transfer destination domains never carry one.
-    let src = "@fieldwise_init\nstruct Buf:\n    var value: Int\n\n    def view(ref self) -> Pointer[Int, origin_of(self)._subtree]:\n        return UnsafePointer(to=self.value).origin_cast[\n            origin_of(self)._subtree\n        ]()\n\ndef main():\n    var b = Buf(3)\n    var p = b.view()\n    print(p[])\n";
+    let src = "@fieldwise_init\nstruct Buf:\n    var value: Int\n\n    def view(ref self) -> Pointer[Int, origin_of(self)._subtree]:\n        return UnsafePointer(to=self.value).unsafe_origin_cast[\n            origin_of(self)._subtree\n        ]()\n\ndef main():\n    var b = Buf(3)\n    var p = b.view()\n    print(p[])\n";
     let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),

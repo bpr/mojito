@@ -503,7 +503,7 @@ pub enum SemanticAdjustment {
     /// `pointer.unsafe_offset(i)`: provenance-preserving element arithmetic,
     /// lowered as the ordinary pointer `+` operation.
     PointerOffset,
-    /// `pointer.origin_cast[...]()`: a checked provenance rebind. The runtime
+    /// `pointer.unsafe_origin_cast[...]()`: a checked provenance rebind. The runtime
     /// value is unchanged, so lowering forwards the receiver register; the
     /// resolved target origin is retained so aggregate-origin bookkeeping can
     /// carry the rebound loan without re-resolving the parameter argument.
@@ -530,10 +530,12 @@ pub enum SemanticAdjustment {
         index: usize,
     },
     /// `variant.deinit_with(handler)`: consume the variant, handing the
-    /// active payload to the single-parameter consuming handler under the
-    /// runtime tag (the handler was checked to admit every alternative).
+    /// active payload to the single-parameter consuming handler. The handler
+    /// is monomorphic for exactly one alternative (`index`); a runtime tag
+    /// mismatch aborts, matching upstream's contract.
     VariantDeinitWith {
         alternatives: Vec<Ty>,
+        index: usize,
     },
     /// `storage^.take()`: move the payload out of consumed inline uninit
     /// storage; traps at the VM if the storage is uninitialized.

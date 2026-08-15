@@ -1312,7 +1312,7 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
-                // `pointer.origin_cast[...]()` retypes provenance only: the
+                // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
                 // runtime value is the receiver, unchanged, and the origin
                 // parameter argument never lowers (origins erase).
                 if self.checked_adjustments(e).iter().any(|adjustment| {
@@ -1437,7 +1437,8 @@ impl Flatten<'_> {
                             self.emit_nested_closure_argument_keepalives(args, kwargs);
                             return dest;
                         }
-                        crate::SemanticAdjustment::VariantDeinitWith { .. } => {
+                        crate::SemanticAdjustment::VariantDeinitWith { index, .. } => {
+                            let index = index.to_owned();
                             let place = self
                                 .try_place(object)
                                 .expect("checked Variant.deinit_with receiver is an owned place");
@@ -1456,6 +1457,7 @@ impl Flatten<'_> {
                                 dest,
                                 variant,
                                 handler,
+                                index,
                             });
                             self.emit_nested_closure_argument_keepalives(args, kwargs);
                             return dest;
@@ -1622,15 +1624,52 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                // `v.set(init_with=…)` infers its alternative from the factory
+                // (no explicit type parameter), so it arrives as an ordinary
+                // method call rather than a parameterized invoke.
+                if let Some(index) =
+                    self.checked_adjustments(e)
+                        .iter()
+                        .find_map(|adjustment| match adjustment {
+                            crate::SemanticAdjustment::VariantSetInitWith { index, .. } => {
+                                Some(*index)
+                            }
+                            _ => None,
+                        })
+                {
+                    let place = self
+                        .try_place(object)
+                        .expect("checked Variant.set receiver is a writable place");
+                    let factory = self.expr(
+                        &kwargs
+                            .first()
+                            .expect("checked Variant.set(init_with=) has one factory")
+                            .value,
+                    );
+                    let dest = self.fresh(span(e), None);
+                    self.emit_interior_invalidations(e, None);
+                    self.emit(MirInstr::VariantSetInitWith {
+                        dest,
+                        place,
+                        index,
+                        factory,
+                    });
+                    self.emit_nested_closure_argument_keepalives(args, kwargs);
+                    return dest;
+                }
                 // The parameterless Variant owning operation
                 // (`v^.deinit_with(handler)`) is spelled as an ordinary method
                 // call rather than a parameterized invoke.
-                if self.checked_adjustments(e).iter().any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        crate::SemanticAdjustment::VariantDeinitWith { .. }
-                    )
-                }) {
+                if let Some(index) =
+                    self.checked_adjustments(e)
+                        .iter()
+                        .find_map(|adjustment| match adjustment {
+                            crate::SemanticAdjustment::VariantDeinitWith { index, .. } => {
+                                Some(*index)
+                            }
+                            _ => None,
+                        })
+                {
                     let place = self
                         .try_place(object)
                         .expect("checked Variant.deinit_with receiver is an owned place");
@@ -1649,6 +1688,7 @@ impl Flatten<'_> {
                         dest,
                         variant,
                         handler,
+                        index,
                     });
                     self.emit_nested_closure_argument_keepalives(args, kwargs);
                     return dest;
@@ -2434,10 +2474,10 @@ impl Flatten<'_> {
                 let upper = upper.as_ref().map(|b| self.expr(b));
                 let step = step.as_ref().map(|b| self.expr(b));
                 let call = self.subscript_call_contract(e, &[]);
-                let intrinsic = call
-                    .is_none()
-                    .then(|| self.intrinsic_slice_dispatch(object))
-                    .flatten();
+                // No intrinsic slice channel remains: StringLiteral
+                // positional slicing was removed at the audited head, so
+                // every checked slice routes through a nominal call.
+                let intrinsic = None;
                 let kind = self
                     .checked_adjustments(e)
                     .into_iter()

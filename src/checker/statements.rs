@@ -349,6 +349,25 @@ impl Checker {
                 Ok(())
             }
             StmtKind::VarDecl { name, ty, value } => {
+                // Current Mojo reads a bare `def(...)` local annotation as
+                // trait-typed storage, like fields and collection elements;
+                // a stored callable spells `def(...) thin`. The explicit
+                // `capturing[...]` local annotation stays accepted as
+                // Mojito's spelling for closure-storing locals (upstream
+                // stores those un-annotated) — a recorded divergence.
+                if let Some(crate::ast::Type::Func {
+                    thin: false,
+                    capturing: None,
+                    ..
+                }) = ty
+                {
+                    return Err(TypeError::Unsupported(format!(
+                        "a 'def(...)' type names a trait in the annotation of variable \
+                         '{name}' in current Mojo, not a storable callable value; spell \
+                         a stored callable 'def(...) thin' or a stored closure \
+                         'def(...) capturing[...]'"
+                    )));
+                }
                 if matches!(value.kind, ExprKind::Uninitialized) {
                     let Some(annotation) = ty else {
                         return Err(TypeError::Unsupported(
@@ -377,6 +396,21 @@ impl Checker {
                     // Annotated: the value must coerce to the annotation.
                     Some(anno) => {
                         let expected = contextual.clone().unwrap_or(self.ty_from_anno(anno)?);
+                        // Current Mojo does not infer a generic function's
+                        // specialization from local-storage context; only an
+                        // explicit specialization (`f[...]`) materializes a
+                        // generic function as a stored callable value.
+                        if matches!(found, Ty::GenericFunc { .. })
+                            && matches!(expected, Ty::Func { .. })
+                            && matches!(value.kind, ExprKind::Identifier(_))
+                        {
+                            return Err(TypeError::Unsupported(format!(
+                                "cannot materialize a generic function as the '{expected}' \
+                                 value of variable '{name}': current Mojo does not infer a \
+                                 specialization from a local annotation; specialize \
+                                 explicitly or bind a non-generic function"
+                            )));
+                        }
                         if contains_infer(&expected) {
                             if contains_infer(&found) {
                                 return Err(TypeError::CannotInferTypeParam {
@@ -1639,6 +1673,19 @@ impl Checker {
         }
         if self.structs.contains_key(name) {
             return Err(TypeError::Redeclaration(name.clone()));
+        }
+        // Current Mojo restricts the `deinit` convention to struct method
+        // arguments; free functions, nested functions, and lambdas take
+        // ownership with `var` instead.
+        if let Some(param) = params
+            .iter()
+            .find(|p| p.convention == Some(crate::ast::ArgConvention::Deinit))
+        {
+            return Err(TypeError::Unsupported(format!(
+                "the 'deinit' convention on parameter '{}' is only valid on struct \
+                 method arguments; take ownership with 'var' instead",
+                param.name
+            )));
         }
         // Free functions, including generic functions, share one binder
         // for regular, `*args`, and homogeneous `**kwargs` parameters.

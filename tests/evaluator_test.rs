@@ -147,26 +147,30 @@ fn named_out_result_is_returned_without_a_caller_argument() {
 #[test]
 fn callable_parameter_invokes_a_function_value() {
     let actual = output(
-        "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    var callback: def(Int) -> Int = increment\n    print(apply(callback, 41))\n",
+        "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    var callback: def(Int) thin -> Int = increment\n    print(apply(callback, 41))\n",
     );
     assert_eq!(actual, "42\n");
 }
 
 #[test]
-fn generic_function_value_runs_through_a_monomorphic_callable_view() {
-    assert_eq!(
-        output(
-            "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) -> Int = identity\n    print(callback(42))\n"
-        ),
-        "42\n"
-    );
+fn generic_function_value_rejects_contextual_specialization() {
+    // Current Mojo does not infer a generic specialization from a local
+    // callable annotation; the materialization rejects at check time.
+    let program = parse(
+        "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) thin -> Int = identity\n    print(callback(42))\n",
+    )
+    .expect("parse");
+    assert!(matches!(
+        check_program(&program),
+        Err(TypeError::Unsupported(_))
+    ));
 }
 
 #[test]
 fn overloaded_function_value_uses_its_contextual_signature() {
     assert_eq!(
         output(
-            "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) -> Int = choose\n    print(callback(41))\n"
+            "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    print(callback(41))\n"
         ),
         "42\n"
     );
@@ -498,7 +502,7 @@ fn exact_float_signed_zero_uses_numeric_equality_and_abs() {
 #[test]
 fn exact_literals_materialize_at_collection_and_range_boundaries() {
     let e = run(
-        "var xs: List[Int] = [2 ** 64]\nvar unique: Set[Int] = {2 ** 64 + 1, 1}\nvar table: Dict[Int, Int] = {2 ** 64 + 1: 2 ** 64 + 2}\nvar key: Int = 1\nvar found: Int = table.get(key, -1)\nvar total: Int = 0\nfor i in range(2 ** 64 + 2):\n    total += i\n",
+        "from std.collections.set import Set\nvar xs: List[Int] = [2 ** 64]\nvar unique: Set[Int] = {2 ** 64 + 1, 1}\nvar table: Dict[Int, Int] = {2 ** 64 + 1: 2 ** 64 + 2}\nvar key: Int = 1\nvar found: Int = table.get(key, -1)\nvar total: Int = 0\nfor i in range(2 ** 64 + 2):\n    total += i\n",
     );
     assert_nominal(&binding(&e, "xs"), "List");
     assert_nominal(&binding(&e, "unique"), "Set");

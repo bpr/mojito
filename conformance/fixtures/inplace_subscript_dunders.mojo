@@ -1,5 +1,5 @@
 @fieldwise_init
-struct Counter(Copyable, Movable):
+struct Counter(ImplicitlyCopyable, Copyable, Movable):
     var value: Int
 
     def __iadd__(mut self, amount: Int):

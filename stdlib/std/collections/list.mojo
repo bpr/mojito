@@ -4,6 +4,8 @@
 # destroys one in place — the public raw-pointer vocabulary over storage this
 # List owns.
 
+from std.string import check_slice_bounds
+
 from std.memory import unsafe_alloc
 
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
@@ -157,7 +159,7 @@ struct List[T: Movable](
     def unsafe_ptr(ref self) -> Pointer[
         Self.T, origin_of(self)._get_owned_interior["element"]
     ]:
-        return self.data.origin_cast[
+        return self.data.unsafe_origin_cast[
             origin_of(self)._get_owned_interior["element"]
         ]()
 
@@ -201,8 +203,7 @@ struct List[T: Movable](
     ):
         var start = slice.start.or_else(0)
         var end = slice.end.or_else(self.size)
-        if start < 0 or end > self.size or start > end:
-            abort("List slice bounds out of range")
+        check_slice_bounds(start, end, self.size)
         var result = List[Self.T]()
         var i = start
         while i < end:
@@ -259,7 +260,7 @@ struct List[T: Movable](
     # caller-supplied consuming handler (no `Deinitable` requirement), then
     # the buffer is freed. The caller's trailing consumption sees the drained
     # write-back state, so only trivial residual fields remain.
-    def deinit_with(deinit self, elt_handler: def(deinit element: Self.T) capturing[_], /):
+    def deinit_with(deinit self, elt_handler: def(var element: Self.T) capturing[_], /):
         var i = 0
         while i < self.size:
             elt_handler(self.data.unsafe_offset(i).unsafe_take_pointee())

@@ -17,35 +17,27 @@ fixture when it becomes a claim). Probes marked *re-probe* below duplicate an
 already-enforced claim whose evidence predates the current audit head — run
 them after every re-pin.
 
-## Open questions (audit `ae386d1b204`)
+The `ae386d1b204` open-question pass (2026-08-15) resolved and deleted
+seventeen probes; their answers live in `cases.tsv` claims
+(`string-keyword-slice`, `optional-owning-surface`, `set-owned-iteration`,
+`span-iteration-write-through`, `variant-owning-ops`, `insert-displacement`,
+`string-positional-slice`, `string-literal-slice`, `owned-pointer-deref`,
+`span-parameter-bare-element`, `len-string-units`, `subtree-origin-cast`,
+`raise-caught-error`) and the parity rows they reference.
 
-| Probe | Question | Mojito today |
+## Deprecation / vocabulary tracking (re-run at every re-pin)
+
+| Probe | Question | Expected on both |
 |---|---|---|
-| `def_typed_local_annotation.mojo` | Is a bare `def(...)` local `var` annotation a callable-value position in current Mojo, or a trait like field/element positions? | runs, prints `42` |
-| `generic_function_value_materialization.mojo` | Does current Mojo contextually materialize a generic function into a `def(Int) -> Int` value? (Moot if the previous probe rejects.) | runs, prints `42` |
-| `simd_size_deprecated_alias.mojo` | Does the head still accept deprecated `SIMDSize`? (Deprecation-bridge tracking; verified in source at `ae386d1b204`.) | runs, prints `4` |
-| `contiguous_slice_abort_message.mojo` | Exact abort text/exit behavior for an invalid contiguous List slice bound on the CPU-default assertion configuration? | aborts: `abort: List slice bounds out of range` |
-| `string_positional_slice_removed.mojo` | Does the head still accept positional `s[1:4]` on the nominal String? | rejects with a keyword-slice hint |
-| `keyword_slice_syntax_shape.mojo` | Is `s[byte=a:b]` the accepted spelling, returning a borrowed view? | runs, prints `ell 3` |
-| `span_alias_names.mojo` | Exact `Imm`/`Mut` view-alias spellings; does `StringSlice` still resolve? | runs via the `StringSlice` alias |
-| `string_literal_positional_slice.mojo` | Does StringLiteral keep normalizing positional slices? | runs, prints `ell` / `olleh` |
-| `optional_owning_surface.mojo` | Optional's exact owning surface: `is_some`/`__bool__`, the `init_with=` spelling, `take` bound/trap, reference- vs value-yielding iteration? | runs, prints `True True` / `7` / `7` |
-| `deinit_with_handler_shape.mojo` | `deinit_with`/`clear_with` handler shapes: funarg vs comptime parameter, `deinit` vs `var` elements, kv-pair vs entry for mappings, drain order? | runs; drains back-to-front |
-| `variant_owning_surface.mojo` | `unwrap` mismatch behavior, `set(init_with=…)` spelling, `deinit_with` handler genericity, the all-alternatives `Deinitable` gate on `set`? | runs, prints `5` / `consumed` |
-| `insert_displacement_semantics.mojo` | Displacement `insert`: return type, key retention, Set element replacement, position retention? | runs, prints `10` / `7` |
-| `owned_pointer_surface.mojo` | OwnedPointer's constructor set, `p[]` dereference (Mojito subset gap), `unsafe_ptr` signature, prelude visibility? | rejects `p[]` (raw-pointer-only empty subscript) |
-| `owned_iteration_family.mojo` | Which collections declare `IterableOwned` at the head (Mojito: List/Array/Optional only)? | rejects Set owned iteration |
-| `unsafe_maybe_uninit_take.mojo` | The head's name for the mut-receiver UnsafeMaybeUninit take (Mojito: `unsafe_take`)? | runs, prints `5` / `6` |
-| `subtree_origin_surface.mojo` | Where is `._subtree` legal (ref clauses? — Mojito: Pointer/origin_cast only), and the terminal-projection + second-write diagnostics? | runs, prints `4` (first write legal) |
-| `implicit_span_conversion.mojo` | Which spellings convert to a Span parameter (named List / bare literal), and is the converted span writable? | runs, prints `30`; literals stay a gap |
-| `span_iteration_yield.mojo` | Does span iteration yield references (write-through) or copies, and the during-iteration-mutation diagnostic family? | runs, prints `23` |
+| `simd_size_deprecated_alias.mojo` | Does the head still accept deprecated `SIMDSize`? (`@deprecated` in source at `ae386d1b204`.) | runs, prints `4` (Mojo warns) |
+| `typelist_size_deprecated_alias.mojo` | Does the head still accept deprecated `TypeList.size`? (`size = Self.length` alias in source at `ae386d1b204`.) | runs, prints `2` (Mojo warns) |
 | `tuple_element_types_public_spelling.mojo` | Does the head keep Tuple's `*Ts` parameter and `element_types` member spellings? (Verified in source at `ae386d1b204`.) | runs, prints `2` / `7` |
-| `typelist_size_deprecated_alias.mojo` | Does the head still accept deprecated `TypeList.size`? (Deprecation-bridge tracking; verified in source at `ae386d1b204`.) | runs, prints `2` |
 
-## Re-probes of enforced claims (evidence from the `609afcd0735` pin)
+## Re-probes of enforced claims
 
-These rejections were enforced by the slice-A alignment sweep on the strength
-of the previous audit; confirm they still hold on the current head.
+These rejections were enforced by the slice-A alignment sweep and confirmed
+against the `ae386d1b204` build (2026-08-15); confirm they still hold at each
+re-pin.
 
 | Program | Expected on both | Enforced by |
 |---|---|---|
@@ -54,3 +46,8 @@ of the previous audit; confirm they still hold on the current head.
 | `../fixtures/captured_nested_origin_specialization.mojo` | reject (capturing nested fn as specialized value) | checker error at value materialization |
 | `../../assets/type_error/capturing_closure_plain_def_param.mojo` | reject (capturing closure into unqualified `def(...)`) | value-coercion checker error |
 | `../../assets/type_error/callable_element_call_parses_as_parameter_application.mojo` | **Mojo runs (prints `6`), Mojito rejects** — recorded subset gap | parenthesization-hint diagnostic |
+
+Bridges to re-check by hand each re-pin (no standalone probe): `UnsafePointer`
+remains a deprecated alias of `Pointer` upstream (Mojito keeps accepting it as
+a bridge), and the `subtree-origin-cast` mojito-only case documents Mojito's
+`._subtree` cast acceptance against upstream's pass-manager failure.

@@ -303,7 +303,9 @@ impl fmt::Display for Value {
                     write!(f, "[{}]", strs.join(", "))
                 }
             }
-            Value::Error(msg) => write!(f, "Error({:?})", msg),
+            // Upstream prints an Error as its bare message (`print(e)` ->
+            // `boom`), not a constructor rendering.
+            Value::Error(msg) => write!(f, "{}", msg),
             Value::Pointer { allocation, offset } => {
                 write!(f, "Pointer({allocation:#x}+{offset})")
             }
@@ -617,33 +619,6 @@ pub(crate) fn value_as_index(v: &Value) -> Result<i64, RuntimeError> {
     }
 }
 
-/// The concrete indices a slice `[lower:upper:step]` selects from a sequence of
-/// `len` elements, using Python semantics (negative indices wrap; bounds clamp;
-/// `step` may be negative to reverse; `None` bounds take direction-aware defaults).
-/// A zero `step` is a runtime error.
-pub(crate) fn slice_indices(
-    len: i64,
-    lower: Option<i64>,
-    upper: Option<i64>,
-    step: Option<i64>,
-) -> Result<Vec<usize>, RuntimeError> {
-    let (start, stop, step) = normalize_slice_bounds(len, lower, upper, step)?;
-    let mut idxs = Vec::new();
-    let mut i = start;
-    if step > 0 {
-        while i < stop {
-            idxs.push(i as usize);
-            i += step;
-        }
-    } else {
-        while i > stop {
-            idxs.push(i as usize);
-            i += step;
-        }
-    }
-    Ok(idxs)
-}
-
 /// Normalize a `Slice` against a concrete length, implementing the public
 /// `Slice.indices(length)` contract.
 pub(crate) fn normalize_slice_bounds(
@@ -678,30 +653,6 @@ pub(crate) fn normalize_slice_bounds(
         (lower.map_or(len - 1, adjust), upper.map_or(-1, adjust))
     };
     Ok((start, stop, step))
-}
-
-/// Slice a primitive `String` value (`a[lower:upper:step]`). Nominal collection
-/// slicing dispatches through the collection's checked `__getitem__` method.
-/// Strings are sliced over their **bytes** (consistent with `len`), rebuilt
-/// lossily if a multibyte boundary is split.
-pub(crate) fn slice_value(
-    v: &Value,
-    lower: Option<i64>,
-    upper: Option<i64>,
-    step: Option<i64>,
-) -> Result<Value, RuntimeError> {
-    match v {
-        Value::Str(s) => {
-            let bytes = s.as_bytes();
-            let idxs = slice_indices(bytes.len() as i64, lower, upper, step)?;
-            let picked: Vec<u8> = idxs.into_iter().map(|i| bytes[i]).collect();
-            Ok(Value::Str(String::from_utf8_lossy(&picked).into_owned()))
-        }
-        other => Err(RuntimeError::TypeError(format!(
-            "cannot slice {}",
-            type_name(other)
-        ))),
-    }
 }
 
 /// Evaluate primitive/internal `x in c` / `x not in c`. Nominal collections

@@ -4,4 +4,4 @@ def wrong(value: String) -> Int:
     return 0
 
 def main():
-    var callback: def(Int) -> Int = wrong
+    var callback: def(Int) thin -> Int = wrong

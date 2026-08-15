@@ -49,18 +49,18 @@ def main():
         print("owned", item.id)
 
     var e = Optional[Int](4)
-    var f = e^.map[Int](lambda (deinit v: Int) -> Int: v * 10)
+    var f = e^.map[Int](lambda (var v: Int) -> Int: v * 10)
     print("mapped", f.value())
 
-    def wrap(deinit v: Int) -> Optional[Int]:
+    def wrap(var v: Int) -> Optional[Int]:
         return Optional[Int](v + 1)
     var g = Optional[Int](6)
     var h = g^.and_then[Int](wrap)
     print("chained", h.value())
 
     var i = Optional[Res](Res(99))
-    i^.deinit_with(lambda (deinit element: Res): element^.__deinit__())
+    i^.deinit_with(lambda (var element: Res): element^.__deinit__())
 
     var k = Optional[Conn](init_with=lambda () -> Conn: Conn(5))
-    k^.deinit_with(lambda (deinit element: Conn): element^.close())
+    k^.deinit_with(lambda (var element: Conn): element^.close())
     print("done")

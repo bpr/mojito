@@ -116,38 +116,42 @@ struct Dict[
         else:
             self.entries.append(DictEntry[Self.K, Self.V](key, value))
 
-    # Displacement-returning insertion: replacing an existing key returns the
-    # previous value, a fresh key returns an empty Optional.
+    # Displacement-returning insertion: replacing an existing key moves the
+    # previous entry (key and value) out and returns it; a fresh key returns
+    # an empty Optional. Nothing is destroyed in place, so no `Deinitable`
+    # bound is required.
     def insert(mut self, var key: Self.K, var value: Self.V) -> Optional[
-        Self.V
-    ] where conforms_to(Self.K, Deinitable) and conforms_to(Self.V, Deinitable):
+        DictEntry[Self.K, Self.V]
+    ]:
         var i = self.find_index(key)
         if i >= 0:
-            var displaced = Optional[Self.V](self.entries._get_copy(i).value)
-            self.entries[i] = DictEntry[Self.K, Self.V](key, value)
+            var displaced = Optional[DictEntry[Self.K, Self.V]](
+                self.entries.data.unsafe_offset(i).unsafe_take_pointee()
+            )
+            self.entries.data[i] = DictEntry[Self.K, Self.V](key, value)
             return displaced^
         self.entries.append(DictEntry[Self.K, Self.V](key, value))
-        return Optional[Self.V]()
+        return Optional[DictEntry[Self.K, Self.V]]()
 
-    # Drain every entry through the caller-supplied consuming handler, leaving
-    # the dictionary empty and reusable.
+    # Drain every entry front-to-back through the caller-supplied consuming
+    # handler, leaving the dictionary empty and reusable.
     def clear_with(
         mut self,
-        elt_handler: def(deinit key: Self.K, deinit value: Self.V) capturing[_],
+        elt_handler: def(var key: Self.K, var value: Self.V) capturing[_],
         /,
     ):
         while len(self.entries) > 0:
-            var entry = self.entries.pop()
+            var entry = self.entries.pop(0)
             elt_handler(entry.key^, entry.value^)
 
     # Consuming teardown: `clear_with` under a consumed receiver.
     def deinit_with(
         deinit self,
-        elt_handler: def(deinit key: Self.K, deinit value: Self.V) capturing[_],
+        elt_handler: def(var key: Self.K, var value: Self.V) capturing[_],
         /,
     ):
         while len(self.entries) > 0:
-            var entry = self.entries.pop()
+            var entry = self.entries.pop(0)
             elt_handler(entry.key^, entry.value^)
 
     def get(self, key: Self.K) -> Optional[Self.V]:

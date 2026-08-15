@@ -1,11 +1,13 @@
-from std.collections.list import List, _ListIter
-from std.iterable import Iterable
+from std.collections.list import List, _ListIter, _ListOwnedIter
+from std.iterable import Iterable, IterableOwned
+from std.memory import unsafe_alloc
 from std.optional import Optional
 
 struct Set[T: Equatable & Copyable & Movable](
     Copyable,
     Deinitable where conforms_to(T, Deinitable),
     Iterable,
+    IterableOwned where conforms_to(T, Deinitable),
     Movable,
     Writable where conforms_to(T, Writable),
 ):
@@ -13,6 +15,7 @@ struct Set[T: Equatable & Copyable & Movable](
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = _ListIter[Self.T]
+    comptime IteratorOwnedType = _ListOwnedIter[Self.T]
 
     # A dense list deliberately preserves display and iteration insertion order.
     var items: List[Self.T]
@@ -61,16 +64,16 @@ struct Set[T: Equatable & Copyable & Movable](
         self.items.append(value^)
         return Optional[Self.T]()
 
-    # Drain every element through the caller-supplied consuming handler,
-    # leaving the set empty and reusable.
-    def clear_with(mut self, elt_handler: def(deinit element: Self.T) capturing[_], /):
+    # Drain every element front-to-back through the caller-supplied consuming
+    # handler, leaving the set empty and reusable.
+    def clear_with(mut self, elt_handler: def(var element: Self.T) capturing[_], /):
         while len(self.items) > 0:
-            elt_handler(self.items.pop())
+            elt_handler(self.items.pop(0))
 
     # Consuming teardown: `clear_with` under a consumed receiver.
-    def deinit_with(deinit self, elt_handler: def(deinit element: Self.T) capturing[_], /):
+    def deinit_with(deinit self, elt_handler: def(var element: Self.T) capturing[_], /):
         while len(self.items) > 0:
-            elt_handler(self.items.pop())
+            elt_handler(self.items.pop(0))
 
     def __len__(self) -> Int:
         return len(self.items)
@@ -81,6 +84,18 @@ struct Set[T: Equatable & Copyable & Movable](
         # owned List overloads.
         ref source = self.items
         return _ListIter[Self.T](source, 0)
+
+    def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
+        Self.T, Deinitable
+    ):
+        # Consuming iteration drains the backing list in insertion order,
+        # constructing the owned iterator directly like the borrowed overload.
+        var result = _ListOwnedIter[Self.T](self.items.data, self.items.size)
+        self.items.data = unsafe_alloc[Self.T](0)
+        self.items.size = 0
+        self.items.cap = 0
+        return result^
+
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.T, Writable

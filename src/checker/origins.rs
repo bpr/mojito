@@ -303,11 +303,11 @@ impl Checker {
                     .collect::<Result<Vec<_>, _>>()
                     .map(Origin::union)
             }
-            ExprKind::Identifier(name) if name == "StaticOrigin" => Ok(Origin::Static),
-            ExprKind::Identifier(name) if name == "UntrackedOrigin" => {
+            ExprKind::Identifier(name) if name == "ImmStaticOrigin" => Ok(Origin::Static),
+            ExprKind::Identifier(name) if name == "ImmUntrackedOrigin" => {
                 Ok(Origin::Untracked { mutable: false })
             }
-            ExprKind::Identifier(name) if name == "UnsafeAnyOrigin" => {
+            ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
                 Ok(Origin::Untracked { mutable: true })
             }
             _ => Err(TypeError::TypeMismatch {
@@ -1173,7 +1173,7 @@ impl Checker {
                 .is_some_and(|origin| !matches!(origin, Origin::Static))
             {
                 return Err(TypeError::Unsupported(
-                    "a local place cannot satisfy StaticOrigin".to_string(),
+                    "a local place cannot satisfy ImmStaticOrigin".to_string(),
                 ));
             }
             if let Some(signature) = signature
@@ -1268,7 +1268,7 @@ pub(super) fn interior_origin_syntax(expr: &Expr) -> Option<(&Expr, &str)> {
 /// Recognize the experimental conservative-origin spelling `base._subtree`
 /// (current Mojo's `Origin._subtree` member). Like `_get_owned_interior`, it is
 /// accepted only in origin positions — this pass, Pointer origin arguments and
-/// `origin_cast` targets; `ref [...]` clauses reject it explicitly.
+/// `unsafe_origin_cast` targets; `ref [...]` clauses reject it explicitly.
 pub(super) fn subtree_origin_syntax(expr: &Expr) -> Option<&Expr> {
     let ExprKind::Member { object, field } = &expr.kind else {
         return None;
@@ -1281,7 +1281,7 @@ pub(super) fn subtree_origin_syntax(expr: &Expr) -> Option<&Expr> {
 pub(super) fn reject_subtree_origin_here(context: &str) -> TypeError {
     TypeError::Unsupported(format!(
         "'_subtree' origins are supported only as Pointer origin arguments and \
-         origin_cast targets, not in {context}"
+         unsafe_origin_cast targets, not in {context}"
     ))
 }
 
@@ -1352,9 +1352,9 @@ pub(super) fn validate_origin_expr(
         ExprKind::Identifier(name)
             if name == "_"
                 || name == "self"
-                || name == "StaticOrigin"
-                || name == "UntrackedOrigin"
-                || name == "UnsafeAnyOrigin"
+                || name == "ImmStaticOrigin"
+                || name == "ImmUntrackedOrigin"
+                || name == "MutUnsafeAnyOrigin"
                 || origin_params.contains(name.as_str())
                 || value_params.contains(name.as_str()) =>
         {
@@ -1514,15 +1514,15 @@ pub(super) fn lower_ref_sig(
         match &expression.kind {
             ExprKind::Identifier(name) if name == "_" => members.push(SigOrigin::Infer),
             ExprKind::Identifier(name) if name == "self" => members.push(SigOrigin::Self_),
-            ExprKind::Identifier(name) if name == "StaticOrigin" => {
+            ExprKind::Identifier(name) if name == "ImmStaticOrigin" => {
                 members.push(SigOrigin::Static);
                 mutability = SigMutability::Immutable;
             }
-            ExprKind::Identifier(name) if name == "UntrackedOrigin" => {
+            ExprKind::Identifier(name) if name == "ImmUntrackedOrigin" => {
                 members.push(SigOrigin::Untracked { mutable: false });
                 mutability = SigMutability::Immutable;
             }
-            ExprKind::Identifier(name) if name == "UnsafeAnyOrigin" => {
+            ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
                 members.push(SigOrigin::Untracked { mutable: true });
                 mutability = SigMutability::Mutable;
             }
@@ -1932,7 +1932,7 @@ pub(super) fn ref_binding_is_writable(
     else {
         return false;
     };
-    if origin_name == "UnsafeAnyOrigin" {
+    if origin_name == "MutUnsafeAnyOrigin" {
         return true;
     }
     let Some(origin) = type_params.iter().find(|candidate| {
@@ -2957,7 +2957,7 @@ impl Checker {
                 Vec::new()
             }
             ExprKind::Invoke { args, kwargs, .. } | ExprKind::MethodCall { args, kwargs, .. } => {
-                // An `origin_cast` result carries exactly its rebound target
+                // An `unsafe_origin_cast` result carries exactly its rebound target
                 // origin, recorded by the checker when it typed the cast.
                 if let Some(crate::checked::SemanticAdjustment::PointerOriginCast { origin }) = self
                     .operation_adjustments

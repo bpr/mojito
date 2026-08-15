@@ -13,6 +13,6 @@ struct Watch[mut: Bool, //, origin: Origin[mut=mut]]:
 def main():
     var a = Buf(3)
     var b = Buf(7)
-    var wa = Watch(UnsafePointer(to=a.value).origin_cast[origin_of(a)._subtree]())
-    var wb = Watch(UnsafePointer(to=b.value).origin_cast[origin_of(b)._subtree]())
+    var wa = Watch(UnsafePointer(to=a.value).unsafe_origin_cast[origin_of(a)._subtree]())
+    var wb = Watch(UnsafePointer(to=b.value).unsafe_origin_cast[origin_of(b)._subtree]())
     print(wa.data[] + wb.data[])

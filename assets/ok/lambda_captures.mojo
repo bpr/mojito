@@ -1,6 +1,8 @@
 # Lambda capture semantics: an omitted capture list imm-captures free variables
 # (observing later outer updates), `{mut}` writes through, `{var}` snapshots at
-# the lambda's evaluation point, and `{}` captures nothing.
+# the lambda's evaluation point, and `{}` captures nothing. Capturing lambdas
+# stored in locals keep Mojito's explicit `capturing[...]` annotation (a
+# recorded divergence: upstream stores closures un-annotated instead).
 def call(f: def() capturing[_] -> Int) -> Int:
     return f()
 

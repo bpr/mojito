@@ -94,7 +94,7 @@ impl std::fmt::Display for Origin {
                 }
                 Ok(())
             }
-            Origin::Static => write!(f, "StaticOrigin"),
+            Origin::Static => write!(f, "ImmStaticOrigin"),
             Origin::Untracked { mutable } => {
                 write!(
                     f,
@@ -250,7 +250,7 @@ pub enum PointerOrigin {
     /// `origin_of(self)` (optionally interior-projected) in a method
     /// signature or body: the receiver's own place, symbolic until a call
     /// site rebases it onto the concrete receiver. Both the declared return
-    /// annotation and the body's `origin_cast` target resolve to this same
+    /// annotation and the body's `unsafe_origin_cast` target resolve to this same
     /// form, so return coercion compares equal without a bound `self` place.
     SelfPlace {
         mutability: Mutability,

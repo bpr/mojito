@@ -771,7 +771,16 @@ impl Checker {
         };
         let object_type = self.infer(object)?;
         let result = match &object_type {
-            Ty::StringLiteral => Ty::StringLiteral,
+            // Positional slicing on a StringLiteral value is gone at the
+            // audited head along with nominal String positional slicing;
+            // only the keyword-unit spellings remain.
+            Ty::StringLiteral => {
+                return Err(TypeError::Unsupported(
+                    "String positional slicing was removed in current Mojo; spell the \
+                     unit explicitly: 's[byte=a:b]' or 's[codepoint=a:b]'"
+                        .to_string(),
+                ));
+            }
             Ty::Struct(name, _)
                 if !self.structs.contains_key(name) && list_element(&object_type).is_some() =>
             {

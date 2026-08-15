@@ -1027,11 +1027,6 @@ impl Flatten<'_> {
         }
     }
 
-    fn intrinsic_slice_dispatch(&self, object: &Expr) -> Option<MirIntrinsicSubscript> {
-        matches!(self.checked_ty(object), Some(Ty::StringLiteral))
-            .then_some(MirIntrinsicSubscript::String)
-    }
-
     /// Peel container slots that themselves store reference handles until one
     /// read through the returned handle yields `target`. This distinguishes
     /// writing a `List[ref T]` element's referent from replacing the stored

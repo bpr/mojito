@@ -331,11 +331,13 @@ impl Checker {
             }
             return Ok(self.public_tuple_type(vec![Ty::Int, Ty::Int, Ty::Int]));
         }
+        // Raw-seam compatibility only: with the linked stdlib present the
+        // nominal prelude `Optional` owns its full method surface below.
         if matches!(&obj_ty, Ty::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(Ty::Int)]))
+            && !self.structs.contains_key("Optional")
         {
             reject_kwargs(kwargs)?;
             return match method {
-                "is_some" if args.is_empty() => Ok(Ty::Bool),
                 "or_else" => {
                     let types = self.builtin_args("Optional.or_else", 1, args)?;
                     if coerces(&types[0], &Ty::Int) {
@@ -1781,28 +1783,29 @@ impl Checker {
         if !kwargs.is_empty() && method != "unsafe_write" {
             reject_kwargs(kwargs)?;
         }
-        // `origin_cast` takes its target origin as the sole compile-time
+        // `unsafe_origin_cast` takes its target origin as the sole compile-time
         // parameter argument; no other pointer method is parameterized.
-        if !param_args.is_empty() && method != "origin_cast" {
+        if !param_args.is_empty() && method != "unsafe_origin_cast" {
             return Err(TypeError::BadCall {
                 func: format!("Pointer.{method}"),
                 reason: "compile-time parameter arguments are not supported here".to_string(),
             });
         }
         match method {
-            // Provenance rebind (current Mojo's `origin_cast` vocabulary): the
-            // runtime value is unchanged; only the checked origin moves. The
-            // cast cannot upgrade a statically immutable capability.
-            "origin_cast" => {
+            // Provenance rebind (current Mojo's `unsafe_origin_cast`
+            // vocabulary): the runtime value is unchanged; only the checked
+            // origin moves. The cast cannot upgrade a statically immutable
+            // capability.
+            "unsafe_origin_cast" => {
                 let [target] = param_args else {
                     return Err(TypeError::BadCall {
-                        func: "Pointer.origin_cast".to_string(),
+                        func: "Pointer.unsafe_origin_cast".to_string(),
                         reason: "expected exactly one origin parameter argument".to_string(),
                     });
                 };
                 if !args.is_empty() {
                     return Err(TypeError::ArityMismatch {
-                        name: "origin_cast".to_string(),
+                        name: "unsafe_origin_cast".to_string(),
                         expected: 0,
                         got: args.len(),
                     });

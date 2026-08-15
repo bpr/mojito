@@ -12,7 +12,8 @@ pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(),
     if matches!(ty, Ty::Func { .. } | Ty::GenericFunc { .. }) {
         return Err(TypeError::Unsupported(format!(
             "a 'def(...)' type names a trait in {position} in current Mojo, not a storable \
-             callable value; callable values are limited to parameters and local bindings"
+             callable value; callable values are limited to parameters and 'def(...) thin' \
+             local bindings"
         )));
     }
     Ok(())
@@ -158,12 +159,13 @@ impl Checker {
                         "reference-valued fields require a named origin parameter".to_string(),
                     ));
                 };
-                if origin_name == "UnsafeAnyOrigin" {
+                if origin_name.ends_with("UnsafeAnyOrigin") {
                     return Err(TypeError::Unsupported(
-                        "UnsafeAnyOrigin cannot be hidden in a stored reference field".to_string(),
+                        "an UnsafeAnyOrigin reference cannot be hidden in a stored reference                          field"
+                            .to_string(),
                     ));
                 }
-                if origin_name == "UntrackedOrigin" {
+                if origin_name == "ImmUntrackedOrigin" {
                     return Ok(Ty::Ref(crate::origin::RefTy {
                         referent: Box::new(self.resolve_ty_from_anno(referent)?),
                         origin: crate::origin::Origin::Untracked { mutable: false },
@@ -1609,7 +1611,7 @@ impl Checker {
             {
                 // `origin_of(self)` stays symbolic whether or not a `self`
                 // place is bound, so a declared return annotation and the
-                // body's `origin_cast` target resolve to one comparable
+                // body's `unsafe_origin_cast` target resolve to one comparable
                 // form; call sites rebase it onto the concrete receiver.
                 if matches!(&args[0].kind, ExprKind::Identifier(name) if name == "self") {
                     return Ok(PointerOrigin::SelfPlace {

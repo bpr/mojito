@@ -63,7 +63,7 @@ struct Allocation[T: AnyType](Movable, Deinitable where False):
     def unsafe_ptr(ref self) -> Pointer[
         Self.T, origin_of(self)._get_owned_interior["element"]
     ]:
-        return self._alloc._ptr.origin_cast[
+        return self._alloc._ptr.unsafe_origin_cast[
             origin_of(self)._get_owned_interior["element"]
         ]()
 
@@ -114,19 +114,6 @@ struct UnsafeMaybeUninit[T: AnyType](
     def unsafe_write(mut self, var value: Self.T, /) where conforms_to(Self.T, Movable):
         self._storage.unsafe_write(value^)
 
-    def unsafe_init_with(mut self, factory: def() capturing[_] -> Self.T, /):
-        # Placement construction: the factory's fresh result lands directly in
-        # the storage payload, so no `Movable` bound is required — nothing
-        # moves out of a named place.
-        self._storage.unsafe_write(factory())
-
-    def unsafe_take(mut self) -> Self.T where conforms_to(Self.T, Movable):
-        # Move the payload out and leave the storage uninitialized (unlike the
-        # consuming `unsafe_assume_init(deinit self)`, the slot survives).
-        var value = self._storage^.take()
-        self._storage = __UninitStorage[Self.T]()
-        return value^
-
     def unsafe_assume_init(deinit self) -> Self.T where conforms_to(Self.T, Movable):
         return self._storage^.take()
 
@@ -155,12 +142,6 @@ struct OwnedPointer[T: AnyType](
         self._ptr = unsafe_alloc[Self.T](1)
         self._ptr[0] = value^
 
-    def __init__(out self, *, init_with: def() capturing[_] -> Self.T):
-        # Placement construction: the factory result lands directly in the
-        # heap slot, so no `Movable` bound is required.
-        self._ptr = unsafe_alloc[Self.T](1)
-        self._ptr[0] = init_with()
-
     # Upstream's borrowed dereference is the empty subscript (`p[]`), which
     # Mojito reserves for raw pointers — a recorded subset gap. Borrowed
     # access goes through `unsafe_ptr()[0]`: the interior-generation origin
@@ -168,7 +149,7 @@ struct OwnedPointer[T: AnyType](
     def unsafe_ptr(ref self) -> Pointer[
         Self.T, origin_of(self)._get_owned_interior["element"]
     ]:
-        return self._ptr.origin_cast[
+        return self._ptr.unsafe_origin_cast[
             origin_of(self)._get_owned_interior["element"]
         ]()
 
