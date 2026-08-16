@@ -24,6 +24,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Artifact verifier integration (roadmap §3): `mir::text::verify_artifact`
+  runs the canonical `mir::verify` semantic pass on assembled textual-MIR
+  programs and reports every finding as a source-located artifact
+  diagnostic — resolved through the retained assembly source map at block,
+  then function, then artifact-root precision, with the resolved artifact
+  path named in the diagnostic context. `mir::text::load_artifact` composes
+  parse-then-verify as the loading gate that the upcoming VM artifact
+  execution will sit behind. Verification policy stays in `mir::verify`;
+  the text module only maps its canonical finding prefixes to spans.
 - The Int/Scalar range family (nightly §8): `stdlib/std/range.mojo` now
   mirrors current Mojo's three private range structs
   (`_ZeroStartingRange`/`_SequentialRange`/`_StridedRange[dtype: DType =

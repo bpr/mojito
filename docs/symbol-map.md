@@ -16,7 +16,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Check | `checker::{check_program, Checker}`, `checked::CheckedProgram` | Authoritative semantic handoff and side tables. |
 | HIR | `hir::Cfg::build_checked_fn` (unchecked `build`/`build_fn` are phase-test compatibility) | Statement CFG with nested expressions. |
 | MIR | `mir::lower_checked_program`, `mir::MirProgram` | Fully register-typed A-normal IR, places, declaration metadata, source table. |
-| MIR text | `mir::text::{disassemble, parse_artifact, ParsedArtifact, ArtifactSourceMap, ArtifactReport}` | Canonical serialization plus source-located, Mojo-independent artifact parsing; semantic artifact verification remains a separate stage. |
+| MIR text | `mir::text::{disassemble, parse_artifact, verify_artifact, load_artifact, ParsedArtifact, ArtifactSourceMap, ArtifactReport}` | Canonical serialization, source-located Mojo-independent artifact parsing, and the parse-then-verify loading gate that maps canonical `mir::verify` findings to artifact spans. |
 | Verify | `mir::verify::verify` | Semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. |
 | Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR. |
 | Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar` operations; re-verified before execution. |
@@ -159,9 +159,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 - `mir/ir.rs` defines `MirInstr`, `MirTerm`, `MirPlace`, `MirFunction`, and
   `MirProgram`.
-- `mir/text.rs` owns the public disassembler, textual-schema version constants,
-  reserved words, canonical escaping, and exhaustive instruction/terminator
-  spellings; `mir/text/write.rs` owns structural serialization and ordering.
+- `mir/text.rs` owns the public disassembler, the verified artifact-loading
+  entry points (`verify_artifact`/`load_artifact`, including the mapping of
+  canonical `mir::verify` finding prefixes to artifact spans), textual-schema
+  version constants, reserved words, canonical escaping, and exhaustive
+  instruction/terminator spellings; `mir/text/write.rs` owns structural
+  serialization and ordering.
 - `mir/text/parse.rs` owns UTF-8 validation, the recoverable spanned schema
   parser, typed reconstruction, structural diagnostics, and artifact source
   mapping. It does not own semantic MIR verification.

@@ -6,9 +6,11 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.0 is a schema. Canonical in-memory disassembly is implemented;
-assembly, artifact-loading verification, round trips, and CLI execution remain
-separate implementation stages.
+Version 1.0 is a schema. Canonical in-memory disassembly, seed-subset assembly
+parsing, and artifact-loading verification (`mir::text::load_artifact`, which
+reports canonical-verifier findings at artifact source spans) are implemented;
+full-coverage round trips and CLI execution remain separate implementation
+stages.
 
 ## Compatibility
 

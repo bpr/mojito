@@ -6,6 +6,11 @@
 //! reject programs with any finding; ownership dataflow remains owned by
 //! `crate::analysis` and is composed with this verifier by the pipeline.
 //!
+//! Findings locate themselves textually with the canonical prefixes
+//! `MIR function '<name>'` and `MIR function '<name>' block <n>`.
+//! `crate::mir::text::verify_artifact` maps those prefixes back to artifact
+//! source locations — keep the spellings in sync with its candidate parser.
+//!
 //! Check classes:
 //! - typed-place completeness and projection consistency;
 //! - register bounds and register-type completeness;

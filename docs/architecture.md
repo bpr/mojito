@@ -2815,16 +2815,22 @@ this vocabulary.
 `mir::text::parse_artifact` owns the inverse syntax boundary. It validates UTF-8
 bytes, parses a Mojo-independent spanned schema tree, and decodes structural MIR
 while retaining an `ArtifactSourceMap` separate from serialized Mojo source
-locations. Parsing does not invoke semantic MIR verification: the returned
-`ParsedArtifact` is the input to the following artifact-verifier integration
-stage, which can use those assembly spans for diagnostics.
+locations. Parsing does not invoke semantic MIR verification:
+`mir::text::verify_artifact` composes the canonical `mir::verify` pass on the
+returned `ParsedArtifact` and maps each finding to its assembly span (block,
+then function, then artifact-root precision) by parsing the verifier's
+canonical `MIR function '<name>' [block <n>]` message prefixes — the one
+sanctioned consumer of that spelling. `load_artifact` bundles parse-then-verify
+as the loading gate artifact execution sits behind; verification policy itself
+never moves out of `mir::verify`.
 
 The compiler exposes a human-readable, flattened, versioned serialization
 of verified MIR and the metadata needed to execute it. The format must support:
 
 - deterministic printing suitable for review and golden tests (implemented)
-- parsing with source-located diagnostics
-- structural and semantic verification before execution
+- parsing with source-located diagnostics (implemented for the seed
+  instruction subset)
+- structural and semantic verification before execution (implemented)
 - lossless print/parse/print round trips
 - disassembly of verified in-memory programs (implemented)
 - execution by the register VM without reconstructing source AST semantics

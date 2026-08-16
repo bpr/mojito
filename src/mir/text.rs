@@ -1,8 +1,9 @@
 //! Stable vocabulary for Mojito textual MIR schema version 1.
 //!
-//! This module owns canonical spelling and disassembly. Parsing remains a
-//! separate roadmap stage and may not derive artifact syntax from Rust `Debug`
-//! output.
+//! This module owns canonical spelling, disassembly, parsing, and verified
+//! artifact loading. Artifact syntax may not derive from Rust `Debug` output,
+//! and semantic verification policy stays in `crate::mir::verify` — this
+//! module only maps its findings to artifact source locations.
 
 use super::{Const, MirInstr, MirIntrinsicSubscript, MirProgram, MirTerm, Proj, UseMode};
 use crate::token::Span;
@@ -64,11 +65,65 @@ impl fmt::Display for ArtifactReport {
 impl std::error::Error for ArtifactReport {}
 
 /// Parse a Mojito MIR artifact without running semantic MIR verification.
+/// [`load_artifact`] composes this decoding with the canonical verifier.
 pub fn parse_artifact(
     input: &[u8],
     source_name: impl Into<String>,
 ) -> Result<ParsedArtifact, ArtifactReport> {
     parse::artifact(input, source_name.into())
+}
+
+/// Parse and semantically verify a Mojito MIR artifact — the loading gate
+/// artifact execution sits behind.
+pub fn load_artifact(
+    input: &[u8],
+    source_name: impl Into<String>,
+) -> Result<ParsedArtifact, ArtifactReport> {
+    let source_name = source_name.into();
+    let parsed = parse_artifact(input, source_name.clone())?;
+    verify_artifact(&parsed, source_name)?;
+    Ok(parsed)
+}
+
+/// Run the canonical MIR semantic verifier on a parsed artifact, reporting
+/// every finding at its artifact source location.
+///
+/// Verification policy stays in `crate::mir::verify`; this entry maps each
+/// finding to the most precise assembly span the artifact's source map
+/// records (block, then function, then the artifact root) and names the
+/// resolved artifact path in the diagnostic context.
+pub fn verify_artifact(
+    parsed: &ParsedArtifact,
+    source_name: impl Into<String>,
+) -> Result<(), ArtifactReport> {
+    let mut findings = parsed.program.invariant_errors.clone();
+    findings.extend(super::verify::verify(&parsed.program));
+    if findings.is_empty() {
+        return Ok(());
+    }
+    let diagnostics = findings
+        .into_iter()
+        .map(|message| {
+            let candidates = finding_candidates(
+                parsed
+                    .program
+                    .functions
+                    .iter()
+                    .map(|(name, _)| name.as_str()),
+                &message,
+            );
+            let (path, span) = resolve_candidate_span(&parsed.source_map, &candidates);
+            ArtifactDiagnostic {
+                span,
+                message,
+                context: vec![path],
+            }
+        })
+        .collect();
+    Err(ArtifactReport {
+        source_name: source_name.into(),
+        diagnostics,
+    })
 }
 
 /// A verified-MIR program could not be represented by schema version 1.0.
@@ -385,6 +440,54 @@ pub fn quote(value: &str) -> String {
     output
 }
 
+/// Candidate source-map paths for one verifier finding, most precise first
+/// and always ending at the artifact root.
+///
+/// The canonical verifier locates findings textually with the prefixes
+/// `MIR function '<name>' block <n>` and `MIR function '<name>'` (see the
+/// module documentation of `crate::mir::verify`; this is the only consumer
+/// of that spelling). The name is matched against the program's own function
+/// identities — longest match wins — instead of re-parsing quote syntax, so
+/// a name containing a quote cannot mislocate a finding.
+fn finding_candidates<'a>(names: impl IntoIterator<Item = &'a str>, message: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    if let Some(rest) = message.strip_prefix("MIR function '") {
+        let matched = names
+            .into_iter()
+            .filter(|name| {
+                rest.strip_prefix(*name)
+                    .is_some_and(|after| after.starts_with('\''))
+            })
+            .max_by_key(|name| name.len());
+        if let Some(name) = matched {
+            let after = &rest[name.len() + 1..];
+            if let Some(block) = after.strip_prefix(" block ") {
+                let digits = &block[..block
+                    .find(|character: char| !character.is_ascii_digit())
+                    .unwrap_or(block.len())];
+                if !digits.is_empty() {
+                    candidates.push(format!("function/{name}/bb{digits}"));
+                }
+            }
+            candidates.push(format!("function/{name}"));
+        }
+    }
+    candidates.push("artifact".to_string());
+    candidates
+}
+
+/// The first candidate path the source map locates. A decoded artifact always
+/// marks its root, so the terminal `artifact` candidate resolves; the empty
+/// span only backstops a hand-built map.
+fn resolve_candidate_span(source_map: &ArtifactSourceMap, candidates: &[String]) -> (String, Span) {
+    for path in candidates {
+        if let Some(span) = source_map.span(path) {
+            return (path.clone(), span);
+        }
+    }
+    ("artifact".to_string(), (0, 0))
+}
+
 mod parse;
 mod write;
 
@@ -398,5 +501,68 @@ mod tests {
         assert!(!is_bare_identifier("fn"));
         assert!(!is_bare_identifier("has.dot"));
         assert_eq!(quote("a\n\"\\\u{7}"), "\"a\\n\\\"\\\\\\u{7}\"");
+    }
+
+    #[test]
+    fn finding_candidates_rank_block_function_then_artifact() {
+        assert_eq!(
+            finding_candidates(
+                ["main"],
+                "MIR function 'main' block 12: invalid register r9"
+            ),
+            ["function/main/bb12", "function/main", "artifact"]
+        );
+        assert_eq!(
+            finding_candidates(
+                ["main"],
+                "MIR function 'main' has 1 variable names for 2 slots"
+            ),
+            ["function/main", "artifact"]
+        );
+        assert_eq!(
+            finding_candidates(["main"], "program-level finding"),
+            ["artifact"]
+        );
+        // Unknown names and malformed block numbers never invent paths.
+        assert_eq!(
+            finding_candidates(["main"], "MIR function 'other' block 0: x"),
+            ["artifact"]
+        );
+        assert_eq!(
+            finding_candidates(["main"], "MIR function 'main' block x: y"),
+            ["function/main", "artifact"]
+        );
+    }
+
+    #[test]
+    fn finding_candidates_match_quoted_names_longest_first() {
+        assert_eq!(
+            finding_candidates(
+                ["tricky", "tricky' block 2"],
+                "MIR function 'tricky' block 2' block 0: x"
+            ),
+            [
+                "function/tricky' block 2/bb0",
+                "function/tricky' block 2",
+                "artifact"
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_resolution_falls_back_to_the_artifact_root() {
+        let parsed = parse_artifact(
+            b"mojito-mir 1.0\nartifact { features: [], files: [], structs: [], decls: [], functions: [] }",
+            "empty.mir",
+        )
+        .expect("parse empty artifact");
+        let candidates = [
+            "function/missing/bb3".to_string(),
+            "function/missing".to_string(),
+            "artifact".to_string(),
+        ];
+        let (path, span) = resolve_candidate_span(&parsed.source_map, &candidates);
+        assert_eq!(path, "artifact");
+        assert_eq!(span, parsed.source_map.span("artifact").unwrap());
     }
 }
