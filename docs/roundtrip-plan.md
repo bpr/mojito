@@ -73,8 +73,9 @@ execution or compiler dump flags; those remain the later roadmap §3 tasks.
   raw phase seam is non-authoritative for the whole-program
   discovery/specialization handoff, so those trials re-lower from
   `CompiledProgram::checked()` before drop elaboration. Caching the verified
-  `MirProgram` in `CompiledProgram` stays deferred to the VM-artifact-execution
-  task, where the `Backend` contract is already open.
+  `MirProgram` in `CompiledProgram` stays deferred to the roadmap §3
+  compiler/test-integration task (artifact execution bypasses the `Compiler`,
+  so caching buys it nothing).
 
 ## Known corpus finding
 

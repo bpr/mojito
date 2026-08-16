@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- VM artifact execution (roadmap §3): `mojito exec [FILE]` runs a verified
+  textual MIR artifact (file or stdin) directly on the register VM.
+  `artifact::run_artifact` composes the `load_artifact` gate (parse plus the
+  canonical MIR semantic verifier) with the new
+  `Backend::run_elaborated`/`VmBackend::run_elaborated` entry, which executes
+  the serialized, already drop-elaborated program exactly as written — no
+  re-elaboration, re-verification, or post-drop ownership re-analysis.
+  Loading diagnostics render with artifact line:column, the offending line,
+  and the mapped artifact path; non-VM backends refuse. A frozen executable
+  snapshot plus output/bindings-equivalence tests pin artifact execution
+  against the direct VM run.
+
+### Added
+
 - Lossless textual-MIR round trips (roadmap §3): `mir::text::parse_artifact`
   now decodes the complete 1.0 schema — every instruction, terminator, type,
   origin, and declaration-metadata form the canonical printer emits,

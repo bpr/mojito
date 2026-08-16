@@ -167,8 +167,9 @@ impl Compiler {
     /// statement set. Verification and ownership run over one lowered
     /// `MirProgram` — the production MIR contract the backend re-derives
     /// deterministically.
-    // follow-up: cache the verified `MirProgram` in `CompiledProgram` so the
-    // backend does not lower a second time (touches the `Backend` contract).
+    // follow-up (roadmap §3 compiler/test integration): cache the verified
+    // `MirProgram` in `CompiledProgram` so the backend does not lower a second
+    // time (touches the `Backend` contract).
     pub fn compile_linked(&self, linked: Vec<Stmt>) -> Result<CompiledProgram, CompilerError> {
         // Public `Tuple[*Ts]` is a nominal variadic struct, but the element
         // types of a bare `Tuple(exprs...)` or tuple display are semantic

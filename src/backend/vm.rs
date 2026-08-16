@@ -2402,6 +2402,25 @@ impl VmBackend {
         self.run_prog(build_prog_lowered(lowered)?)
     }
 
+    /// Run a verified, already drop-elaborated MIR program — what
+    /// `mir::text::load_artifact` yields. The loading gate is the artifact's
+    /// semantic gate, so this entry re-runs neither `mir::verify` nor the
+    /// pre-drop ownership analysis (meaningless on elaborated MIR), and it
+    /// must not re-run drop elaboration: `elaborate_drops_program` is not
+    /// idempotent, and the artifact's `drop.var`/cleanup schedule is already
+    /// final.
+    pub fn run_elaborated(&mut self, mir: MirProgram) -> Result<(), RuntimeError> {
+        if !mir.invariant_errors.is_empty() {
+            return Err(RuntimeError::Unsupported(format!(
+                "invalid MIR program: {}",
+                mir.invariant_errors.join("; ")
+            )));
+        }
+        let structs = build_structs(&mir.declarations);
+        let sigs = build_sigs(&mir.declarations);
+        self.run_prog(Prog { mir, structs, sigs })
+    }
+
     /// Captured standard output.
     pub fn output(&self) -> String {
         self.output.clone()

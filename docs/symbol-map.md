@@ -20,7 +20,8 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Verify | `mir::verify::verify` | Semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. |
 | Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR. |
 | Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar` operations; re-verified before execution. |
-| Execute | `backend::Backend::run`, `backend::vm::VmBackend` | Output and bindings from verified MIR. |
+| Execute | `backend::Backend::{run, run_elaborated}`, `backend::vm::VmBackend` | Output and bindings from verified MIR; `run_elaborated` executes an already drop-elaborated program (the artifact entry) without re-elaboration or ownership re-analysis. |
+| Artifacts | `artifact::{run_artifact, ArtifactRunError}` | Load-then-execute composition for textual MIR artifacts: the `load_artifact` gate plus `Backend::run_elaborated`, shared by the CLI `exec` subcommand and tests. |
 
 ## Cross-Phase Contracts
 

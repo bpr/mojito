@@ -2826,7 +2826,10 @@ then function, then artifact-root precision) by parsing the verifier's
 canonical `MIR function '<name>' [block <n>]` message prefixes — the one
 sanctioned consumer of that spelling. `load_artifact` bundles parse-then-verify
 as the loading gate artifact execution sits behind; verification policy itself
-never moves out of `mir::verify`.
+never moves out of `mir::verify`. `artifact::run_artifact` composes that gate
+with `Backend::run_elaborated` (the CLI `exec` subcommand's engine): the
+loaded program executes exactly as serialized, with no re-elaboration,
+re-verification, or ownership re-analysis.
 
 The compiler exposes a human-readable, flattened, versioned serialization
 of verified MIR and the metadata needed to execute it. The format must support:
@@ -2839,6 +2842,11 @@ of verified MIR and the metadata needed to execute it. The format must support:
   `tests/corpus_test.rs`)
 - disassembly of verified in-memory programs (implemented)
 - execution by the register VM without reconstructing source AST semantics
+  (implemented: `artifact::run_artifact` composes `load_artifact` with
+  `Backend::run_elaborated`, which runs the serialized, already
+  drop-elaborated program as-is — re-running `elaborate_drops_program` is
+  unsound because elaboration is not idempotent, and the pre-drop ownership
+  analysis has no meaning post-drop; verify-at-load is the consumer gate)
 - consumption by future native backends (LLVM and the MLIR-family targets first)
 
 This is a Mojito format, not a generic interchange standard. The in-memory MIR

@@ -34,6 +34,15 @@ impl Backend {
         }
     }
 
+    /// Run a verified, already drop-elaborated MIR program — the artifact
+    /// execution entry sitting behind `mir::text::load_artifact`. See
+    /// [`VmBackend::run_elaborated`] for the trust contract.
+    pub fn run_elaborated(&mut self, program: crate::mir::MirProgram) -> Result<(), RuntimeError> {
+        match self {
+            Backend::Vm(vm) => vm.run_elaborated(program),
+        }
+    }
+
     /// Captured standard output.
     pub fn output(&self) -> String {
         match self {

@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod artifact;
 pub mod ast;
 pub mod backend;
 mod call;
@@ -23,6 +24,7 @@ pub mod types;
 
 // Re-export commonly used types at the crate root for convenience
 pub use analysis::{check_ownership, check_ownership_checked, check_ownership_program};
+pub use artifact::{ArtifactRunError, run_artifact};
 pub use ast::{
     Dtype, Expr, ImportName, ImportNames, InfixOp, Param, PrefixOp, SourceType, Stmt, Type,
     TypeParam,

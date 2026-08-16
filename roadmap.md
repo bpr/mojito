@@ -117,8 +117,6 @@ instead of the prelude binding).
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
-- [ ] **VM artifact execution** — run verified textual artifacts directly from
-  the CLI.
 - [ ] **Compiler/test integration** — expose dumps and use assembly snapshots and
   conformance artifacts as backend-independent contracts.
 

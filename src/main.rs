@@ -35,6 +35,7 @@ fn load_program(file: Option<&str>, link_options: &LinkOptions) -> Result<Vec<St
 /// mojito parse [FILE]   # the parsed AST (pretty-printed)
 /// mojito check [FILE]   # lex + parse + type-check; report ok / the error
 /// mojito run   [FILE]   # the full pipeline; print output + final bindings
+/// mojito exec  [FILE]   # execute a verified textual MIR artifact
 /// mojito demo           # the built-in showcase (also the no-arg default)
 /// ```
 ///
@@ -60,6 +61,7 @@ fn main() -> ExitCode {
         Some("check") => program_stage("check", file, &cli.link_options, run_check),
         Some("own") => program_stage("own", file, &cli.link_options, run_own),
         Some("run") => stage_run(file, cli.backend, &cli.link_options),
+        Some("exec") => stage_exec(file, cli.backend),
         Some("-h" | "--help" | "help") => {
             print_usage();
             ExitCode::SUCCESS
@@ -212,6 +214,73 @@ fn run_program(
     Ok(())
 }
 
+/// `exec`: load a verified textual MIR artifact and execute it on the selected
+/// backend. Artifacts carry no imports, so the module-root options are
+/// irrelevant here; the loading gate (parse + canonical MIR verification) is
+/// the artifact's semantic gate.
+fn stage_exec(file: Option<&str>, backend: mojito::BackendKind) -> ExitCode {
+    let bytes = match read_bytes(file) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("exec: cannot read input: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let label = file.unwrap_or("-");
+    match mojito::run_artifact(&bytes, label, backend) {
+        Ok(execution) => {
+            // Artifacts are compiled programs: print their output verbatim and
+            // never echo bindings, matching file-based `run`'s parity rationale.
+            if !execution.output.is_empty() {
+                print!("{}", execution.output);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(mojito::ArtifactRunError::Load(report)) => {
+            let source = std::str::from_utf8(&bytes).ok();
+            for diagnostic in &report.diagnostics {
+                let message = match &source {
+                    Some(source) => {
+                        let mut message = format_source_error(
+                            label,
+                            source,
+                            diagnostic.span.0,
+                            &diagnostic.message,
+                        );
+                        for context in &diagnostic.context {
+                            message.push_str(&format!("\n  in {context}"));
+                        }
+                        message
+                    }
+                    None => format!(
+                        "{label}: bytes {}..{}: {}",
+                        diagnostic.span.0, diagnostic.span.1, diagnostic.message
+                    ),
+                };
+                eprintln!("exec error: {message}");
+            }
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("exec error: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Read the named file, or standard input, as raw bytes — the artifact parser
+/// owns UTF-8 validation and BOM rejection, so `exec` must not pre-decode.
+fn read_bytes(file: Option<&str>) -> std::io::Result<Vec<u8>> {
+    match file {
+        None | Some("-") => {
+            let mut bytes = Vec::new();
+            std::io::stdin().read_to_end(&mut bytes)?;
+            Ok(bytes)
+        }
+        Some(path) => std::fs::read(path),
+    }
+}
+
 fn print_usage() {
     eprint!(
         "mojito — a compiler and register VM for a subset of Mojo\n\n\
@@ -225,6 +294,7 @@ fn print_usage() {
          \x20 parse [FILE]   print the parsed AST\n\
          \x20 check [FILE]   type-check and report ok or the first error\n\
          \x20 run   [FILE]   evaluate and print output + final bindings\n\
+         \x20 exec  [FILE]   execute a verified textual MIR artifact\n\
          \x20 demo           run the built-in showcase (default)\n\n\
          FILE defaults to '-' (standard input).\n"
     );

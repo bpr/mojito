@@ -1,0 +1,67 @@
+mojito-mir 1.0
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: absent, module: absent }
+  ],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: main, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [] }
+  ],
+  functions: [
+      fn {
+        name: main,
+        registers: 3,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 22, end: 24, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 22, end: 24, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 16, end: 25, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(42) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              call { dest: %r2, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [] }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: __toplevel__,
+        registers: 0,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]
+}
