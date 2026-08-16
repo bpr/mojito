@@ -1383,12 +1383,14 @@ arguments, receiver and argument place requirements, capture slots,
 checker-selected executable result (including exact reference origin and
 permission), and protection of every raising subscript form. Function
 declarations retain whether a receiver exists, its declared convention, aligned
-explicit-parameter conventions, and the reference-return ABI. The verifier
-permits only declared `Ref` to effective `Read` narrowing. An abstract
-trait-bound target has no concrete declaration until runtime retargeting, so the
-verifier checks its retained operand/result contract for internal consistency
-but cannot yet compare it with a retained abstract trait requirement; concrete
-targets are additionally checked against `MirDeclarations`. The
+explicit-parameter conventions, positional- and keyword-variadic collector
+conventions, and the reference-return ABI. The verifier permits only declared
+`Ref` to effective `Read` narrowing. An abstract trait-bound target has no
+concrete body declaration until runtime retargeting; its complete selected
+requirement is therefore retained as typed call-local MIR metadata (including
+argument conventions/place requirements, result ABI, effects, generic
+arguments, and any result adapter) and verified as the abstract declaration of
+record. Concrete targets are additionally checked against `MirDeclarations`. The
 pipeline composes it with
 `analysis::check_ownership_program`, which owns the ownership dataflow; the
 compiler rejects findings as `CompilerError::Verify`, and the VM re-verifies
@@ -2833,17 +2835,19 @@ The main pressure points are:
   unchecked phase-test path, nominal callable-conformance facts in
   `MirDeclarations`, and caching the verified `MirProgram` in `CompiledProgram`
   to avoid the compiler/VM double lowering
+- the backend-ready MIR checkpoint is closed: abstract erased-dispatch
+  requirements live in typed call-local contracts, callable-value requirements
+  live in their stored `Ty::Func`/`Ty::GenericFunc` contracts, variadic
+  conventions are explicit declaration fields, and reference loans are checked
+  against their executable capability permission and canonical interior owner
 - source modules and packages are flattened after lexical namespace resolution;
   compiled `.mojoc` artifacts remain future distribution tooling
 - trait support is intentionally incomplete; in particular, associated
   compile-time types are monomorphic, so origin-parameterized iterator families
   must cross the checked/MIR boundary before its textual schema freezes
 - abstract trait-dispatch subscripts are verified from their complete
-  checker-retained argument/result contract and retargeted to a concrete method
-  at execution; the backend-ready MIR checkpoint should retain abstract trait
-  requirement declarations themselves, and any witness needed to independently
-  validate effective `ref`-to-`read` narrowing, before accepting textual MIR as
-  a standalone artifact
+  checker-retained argument/result requirement and retargeted to a concrete
+  method only at execution
 - exception modeling is structured, not a fully general unwind-edge MIR
 - nested-function and capture support should match Mojo's non-escaping patterns
   without growing into a general escaping-closure system

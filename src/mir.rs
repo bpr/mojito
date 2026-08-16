@@ -94,8 +94,14 @@ pub struct MirFunctionDeclaration {
     pub defaults: Vec<Option<CheckedConst>>,
     pub required: Vec<bool>,
     pub variadic: Option<Ty>,
+    /// Declared convention of the positional variadic collector. Kept
+    /// independently because it is not represented in `param_conventions`.
+    pub variadic_convention: Option<ArgConvention>,
     pub variadic_index: Option<usize>,
     pub kw_variadic: Option<Ty>,
+    /// Declared convention of the keyword variadic collector. Kept
+    /// independently because it is not represented in `param_conventions`.
+    pub kw_variadic_convention: Option<ArgConvention>,
     pub kw_variadic_index: Option<usize>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
@@ -288,6 +294,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             &mut invariant_errors,
                         )
                     }),
+                    variadic_convention: variadic_idx.and_then(|i| params[i].convention),
                     variadic_index: runtime_variadic_index(params, variadic_idx),
                     kw_variadic: kw_variadic_idx.map(|i| {
                         checked_type_or_record(
@@ -302,6 +309,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             &mut invariant_errors,
                         )
                     }),
+                    kw_variadic_convention: kw_variadic_idx.and_then(|i| params[i].convention),
                     kw_variadic_index: runtime_parameter_index(params, kw_variadic_idx),
                     positional_only: regular_marker_index(params, *positional_only),
                     keyword_only: effective_keyword_only_index(params, *keyword_only, variadic_idx),
@@ -533,6 +541,8 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                 &mut invariant_errors,
                             )
                         }),
+                        variadic_convention: variadic_idx
+                            .and_then(|index| m.params[index].convention),
                         variadic_index: runtime_variadic_index(&m.params, variadic_idx),
                         kw_variadic: kw_variadic_idx.map(|index| {
                             checked_type_or_record(
@@ -547,6 +557,8 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                 &mut invariant_errors,
                             )
                         }),
+                        kw_variadic_convention: kw_variadic_idx
+                            .and_then(|index| m.params[index].convention),
                         kw_variadic_index: runtime_parameter_index(&m.params, kw_variadic_idx),
                         positional_only: regular_marker_index(&m.params, m.positional_only),
                         keyword_only: effective_keyword_only_index(

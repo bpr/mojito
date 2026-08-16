@@ -443,6 +443,7 @@ fn lower_nested_node(
                     .cloned()
                     .unwrap_or(Ty::None)
             }),
+            variadic_convention: variadic_idx.and_then(|index| dparams[index].convention),
             variadic_index: runtime_variadic_index(dparams, variadic_idx)
                 .map(|index| capture_count + index),
             kw_variadic: kw_variadic_idx.map(|index| {
@@ -456,6 +457,7 @@ fn lower_nested_node(
                     .cloned()
                     .unwrap_or(Ty::None)
             }),
+            kw_variadic_convention: kw_variadic_idx.and_then(|index| dparams[index].convention),
             kw_variadic_index: runtime_parameter_index(dparams, kw_variadic_idx)
                 .map(|index| capture_count + index),
             positional_only: regular_marker_index(dparams, *positional_only)

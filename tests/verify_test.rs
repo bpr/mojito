@@ -897,6 +897,55 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
     );
     expect_finding(&program(malformed), "has no interior segment");
 
+    let immutable = reference_ty(Ty::Int, mojito::Mutability::Immutable);
+    let mut escalated = function(
+        vec![block(
+            vec![MirInstr::EstablishLoans {
+                reference: 0,
+                loans: vec![MirLoan {
+                    place: MirPlace::root(0, Some(immutable.clone())),
+                    mutable: true,
+                    interior: None,
+                }],
+                marker: Reg(0),
+                dest_interior: None,
+            }],
+            MirTerm::Return(None),
+        )],
+        1,
+        &[(0, Ty::None)],
+    );
+    escalated.var_tys.insert(0, immutable);
+    expect_finding(
+        &program(escalated),
+        "mutable loan recovers permission unavailable through its source capability",
+    );
+
+    let mismatched_root = function(
+        vec![block(
+            vec![MirInstr::EstablishLoans {
+                reference: 0,
+                loans: vec![MirLoan {
+                    place: MirPlace::root(0, Some(Ty::Int)),
+                    mutable: false,
+                    interior: Some(MirInteriorOrigin {
+                        root: 1,
+                        path: vec![mojito::OriginSeg::Interior("element".to_string())],
+                    }),
+                }],
+                marker: Reg(0),
+                dest_interior: None,
+            }],
+            MirTerm::Return(None),
+        )],
+        1,
+        &[(0, Ty::None)],
+    );
+    expect_finding(
+        &program(mismatched_root),
+        "executable place roots at slot 0",
+    );
+
     let unnamed_refresh = function(
         vec![block(
             vec![MirInstr::InvalidateInteriors {
@@ -1066,8 +1115,10 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
         defaults: vec![None],
         required: vec![true],
         variadic: None,
+        variadic_convention: None,
         variadic_index: None,
         kw_variadic: None,
+        kw_variadic_convention: None,
         kw_variadic_index: None,
         positional_only: None,
         keyword_only: None,
@@ -1122,8 +1173,10 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
         defaults: Vec::new(),
         required: Vec::new(),
         variadic: None,
+        variadic_convention: None,
         variadic_index: None,
         kw_variadic: None,
+        kw_variadic_convention: None,
         kw_variadic_index: None,
         positional_only: None,
         keyword_only: None,
@@ -1419,8 +1472,10 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
         defaults: Vec::new(),
         required: Vec::new(),
         variadic: None,
+        variadic_convention: None,
         variadic_index: None,
         kw_variadic: None,
+        kw_variadic_convention: None,
         kw_variadic_index: None,
         positional_only: None,
         keyword_only: None,
@@ -1480,8 +1535,10 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
         defaults: Vec::new(),
         required: Vec::new(),
         variadic: None,
+        variadic_convention: None,
         variadic_index: None,
         kw_variadic: None,
+        kw_variadic_convention: None,
         kw_variadic_index: None,
         positional_only: None,
         keyword_only: None,

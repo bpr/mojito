@@ -16,7 +16,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Check | `checker::{check_program, Checker}`, `checked::CheckedProgram` | Authoritative semantic handoff and side tables. |
 | HIR | `hir::Cfg::build_checked_fn` (unchecked `build`/`build_fn` are phase-test compatibility) | Statement CFG with nested expressions. |
 | MIR | `mir::lower_checked_program`, `mir::MirProgram` | Fully register-typed A-normal IR, places, declaration metadata, source table. |
-| Verify | `mir::verify::verify` | Semantic verification of typed MIR: register/place types, call contracts, CFG edges, effects, references. |
+| Verify | `mir::verify::verify` | Semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. |
 | Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR. |
 | Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar` operations; re-verified before execution. |
 | Execute | `backend::Backend::run`, `backend::vm::VmBackend` | Output and bindings from verified MIR. |

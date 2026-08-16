@@ -1802,6 +1802,16 @@ fn verify_runtime_pack_abi(declarations: &MirDeclarations, errors: &mut Vec<Stri
                 "MIR declaration '{name}' has a receiver convention but no receiver"
             ));
         }
+        if declaration.variadic.is_none() && declaration.variadic_convention.is_some() {
+            errors.push(format!(
+                "MIR declaration '{name}' has a positional variadic convention but no positional variadic parameter"
+            ));
+        }
+        if declaration.kw_variadic.is_none() && declaration.kw_variadic_convention.is_some() {
+            errors.push(format!(
+                "MIR declaration '{name}' has a keyword variadic convention but no keyword variadic parameter"
+            ));
+        }
         for (index, convention) in declaration.param_conventions.iter().enumerate() {
             let expected_reference = matches!(
                 convention,
@@ -1953,6 +1963,36 @@ fn verify_instruction(
                 }
             }
             for loan in loans {
+                let through_capability = loan
+                    .place
+                    .through
+                    .and_then(|through| function.var_tys.get(&through))
+                    .and_then(reference_capability);
+                let place_capability = make_ref_target(&loan.place);
+                let permission = through_capability
+                    .map(|capability| capability.permission)
+                    .or_else(|| place_capability.and_then(|(_, permission)| permission));
+                if loan.mutable
+                    && permission.is_some_and(|permission| {
+                        !permission.satisfies(ReferencePermission::Mutable)
+                    })
+                {
+                    errors.push(format!(
+                        "{prefix}: mutable loan recovers permission unavailable through its source capability"
+                    ));
+                }
+                if let Some(capability) = through_capability
+                    && let Some(root) = loan.place.root_ty.as_ref()
+                    && let Some(target) = reference_capability(root)
+                        .map(|root| root.target)
+                        .or(Some(root))
+                    && !types_compatible(capability.target, target)
+                {
+                    errors.push(format!(
+                        "{prefix}: loan place root type {target} is incompatible with its through-reference capability target {}",
+                        capability.target
+                    ));
+                }
                 let Some(origin) = &loan.interior else {
                     continue;
                 };
@@ -1960,6 +2000,12 @@ fn verify_instruction(
                     errors.push(format!(
                         "{prefix}: interior loan has invalid root slot {}",
                         origin.root
+                    ));
+                }
+                if origin.root != loan.place.root && loan.place.through.is_none() {
+                    errors.push(format!(
+                        "{prefix}: interior loan origin roots at slot {}, but its executable place roots at slot {}",
+                        origin.root, loan.place.root
                     ));
                 }
                 // A domain loan names either a named interior generation or

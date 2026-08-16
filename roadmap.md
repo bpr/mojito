@@ -117,35 +117,6 @@ instead of the prelude binding).
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
-- [ ] **Backend-ready MIR checkpoint** — confirm that checked declarations plus
-  typed verified MIR are sufficient inputs, with no source-AST reconstruction,
-  before freezing a serialized schema.
-  - Retain any final verification witnesses needed to validate abstract
-    trait-dispatch signatures and checker-selected `ref`-to-`read` convention
-    narrowing without trusting an unavailable source declaration or source
-    binding-mutability fact.
-  - With bound-generic monomorphization complete, the abstract-dispatch
-    surface is reachable only through the documented erased residue, and the
-    concrete witness set to re-confirm is:
-    1. `verify_iterator_result_adapter` (abstract `Next`/`TryNext` require
-       the `CopyIteratorReference` adapter, concrete targets forbid it)
-    2. the `GetIter` undeclared-prepare tolerance (only the
-       `iterator_dispatch_symbol` spellings)
-    3. the subscript abstract-target tolerance (receiver-membership skipped,
-       full contract still verified)
-    4. the `MethodCall` abstract-`__next__` adapter symmetry
-    5. `CallIndirect` abstract `__call__$ov$…` validation against the stored
-       callable contract (the home of ref-to-read narrowing)
-    6. the direct-`Call` undeclared-callee tolerance (which also covers
-       builtins and may deserve an allowlist here)
-  - Retain declared conventions for variadic overflow parameters if the
-    serialized ABI exposes those conventions independently of their
-    fixed-parameter prefix.
-  - Prove that every `MirPlace::through` derives from its exact source
-    capability/loan, check `MirLoan::mutable` against that capability's
-    permission, and cross-check each canonical interior origin with its
-    executable place and declared reference origin before accepting assembled
-    artifacts.
 - [ ] **Text format schema** — specify versioning, deterministic identifiers,
   declarations, blocks, instructions, constants, types, and source locations.
 - [ ] **Disassembler** — print every verified MIR program deterministically and

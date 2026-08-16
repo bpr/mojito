@@ -1369,7 +1369,7 @@ fn checked_declaration_types_are_keyed_by_source_site_not_type_syntax() {
 #[test]
 fn mir_declarations_carry_generic_free_and_method_keyword_collectors() {
     let program = parse(
-        "def collect[T: Copyable & Movable](var **options: T):\n    pass\n\nstruct Relay:\n    def collect[T: Copyable & Movable](self, var **options: T):\n        pass\n",
+        "def collect[T: Copyable & Movable](var **options: T):\n    pass\n\ndef pack[*Ts: Movable](var *args: *Ts):\n    pass\n\nstruct Relay:\n    def collect[T: Copyable & Movable](self, var **options: T):\n        pass\n",
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
@@ -1385,6 +1385,10 @@ fn mir_declarations_carry_generic_free_and_method_keyword_collectors() {
     for declaration in [collector("collect"), collector("Relay.collect")] {
         assert_eq!(declaration.kw_variadic_index, Some(0));
         assert_eq!(
+            declaration.kw_variadic_convention,
+            Some(mojito::ast::ArgConvention::Var)
+        );
+        assert_eq!(
             declaration.kw_variadic,
             Some(mojito::Ty::Param {
                 name: "T".into(),
@@ -1393,6 +1397,12 @@ fn mir_declarations_carry_generic_free_and_method_keyword_collectors() {
             })
         );
     }
+    let pack = collector("pack");
+    assert_eq!(pack.variadic_index, Some(0));
+    assert_eq!(
+        pack.variadic_convention,
+        Some(mojito::ast::ArgConvention::Var)
+    );
 
     let collector_body = |name: &str| {
         &mir.functions
