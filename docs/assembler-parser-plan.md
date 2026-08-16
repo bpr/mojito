@@ -1,5 +1,9 @@
 # Textual MIR Assembler Parser and Diagnostics Plan
 
+> **Status:** the seed-subset deferral recorded below closed with the
+> full-schema parser and corpus round trips; see
+> [`roundtrip-plan.md`](roundtrip-plan.md).
+
 ## Objective
 
 Implement a source-located parser for Mojito MIR 1.x artifacts that reconstructs

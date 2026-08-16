@@ -232,6 +232,33 @@ impl FloatLiteral {
         })
     }
 
+    /// Parse this type's own `Display` spellings exactly: `-0.0`, `{n}.0`,
+    /// or the reduced `{numer}/{denom}` rational. The textual MIR artifact
+    /// parser uses this to reproduce serialized literals bit-for-bit; a
+    /// non-reduced rational is accepted and reprints reduced.
+    pub fn parse_exact(text: &str) -> Option<Self> {
+        if text == "-0.0" {
+            return Some(Self {
+                value: BigRational::zero(),
+                negative_zero: true,
+            });
+        }
+        if let Some((numerator, denominator)) = text.split_once('/') {
+            let numerator = BigInt::parse_bytes(numerator.as_bytes(), 10)?;
+            let denominator = BigInt::parse_bytes(denominator.as_bytes(), 10)?;
+            if !denominator.is_positive() {
+                return None;
+            }
+            return Some(Self::from_rational(BigRational::new(
+                numerator,
+                denominator,
+            )));
+        }
+        let whole = text.strip_suffix(".0")?;
+        let numerator = BigInt::parse_bytes(whole.as_bytes(), 10)?;
+        Some(Self::from_rational(BigRational::from_integer(numerator)))
+    }
+
     /// Exact representation of an already-materialized binary float. This is
     /// used only for compiler-synthesized constants and compatibility helpers;
     /// source literals always enter through [`Self::parse_decimal`].
@@ -511,6 +538,32 @@ mod tests {
 
         let f64_halfway = FloatLiteral::parse_decimal("9007199254740993.0").unwrap();
         assert_eq!(f64_halfway.to_f64(), Some(9_007_199_254_740_992.0));
+    }
+
+    #[test]
+    fn parse_exact_inverts_display() {
+        for spelling in ["-0.0", "0.0", "3.0", "-7.0", "157/50", "-1/3"] {
+            let value = FloatLiteral::parse_exact(spelling).unwrap();
+            assert_eq!(value.to_string(), spelling);
+        }
+        assert!(
+            FloatLiteral::parse_exact("-0.0")
+                .unwrap()
+                .is_negative_zero()
+        );
+        // Huge magnitudes stay exact: Display of a large integer rational
+        // round-trips digit-for-digit.
+        let huge = FloatLiteral::parse_decimal("1e100").unwrap();
+        assert_eq!(FloatLiteral::parse_exact(&huge.to_string()).unwrap(), huge);
+        // Acceptance is lenient, output canonical: a non-reduced rational
+        // reprints reduced.
+        assert_eq!(FloatLiteral::parse_exact("2/4").unwrap().to_string(), "1/2");
+        for rejected in ["1/0", "1/-2", "nope", "1.5", ".0", "", "1e3"] {
+            assert!(
+                FloatLiteral::parse_exact(rejected).is_none(),
+                "accepted {rejected:?}"
+            );
+        }
     }
 
     #[test]

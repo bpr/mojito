@@ -117,8 +117,6 @@ instead of the prelude binding).
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
-- [ ] **Lossless round trips** — require MIR → text → MIR equivalence across the
-  full test corpus.
 - [ ] **VM artifact execution** — run verified textual artifacts directly from
   the CLI.
 - [ ] **Compiler/test integration** — expose dumps and use assembly snapshots and

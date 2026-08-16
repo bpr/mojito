@@ -2,10 +2,15 @@ use mojito::mir::text::{disassemble, load_artifact, parse_artifact, verify_artif
 
 const MINIMAL: &[u8] = include_bytes!("snapshots/mir/minimal.mir");
 const CONTROL_FLOW: &[u8] = include_bytes!("snapshots/mir/control_flow.mir");
+const METADATA: &[u8] = include_bytes!("snapshots/mir/metadata.mir");
 
 #[test]
 fn canonical_snapshots_parse_and_reprint() {
-    for (name, source) in [("minimal.mir", MINIMAL), ("control_flow.mir", CONTROL_FLOW)] {
+    for (name, source) in [
+        ("minimal.mir", MINIMAL),
+        ("control_flow.mir", CONTROL_FLOW),
+        ("metadata.mir", METADATA),
+    ] {
         let parsed = parse_artifact(source, name).expect("parse canonical artifact");
         assert_eq!(disassemble(&parsed.program).unwrap().as_bytes(), source);
     }
@@ -26,7 +31,11 @@ fn source_map_locates_functions_blocks_and_instructions() {
 
 #[test]
 fn canonical_snapshots_load_verified() {
-    for (name, source) in [("minimal.mir", MINIMAL), ("control_flow.mir", CONTROL_FLOW)] {
+    for (name, source) in [
+        ("minimal.mir", MINIMAL),
+        ("control_flow.mir", CONTROL_FLOW),
+        ("metadata.mir", METADATA),
+    ] {
         load_artifact(source, name).expect("load verified canonical artifact");
     }
 }

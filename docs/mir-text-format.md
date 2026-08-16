@@ -6,11 +6,13 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.0 is a schema. Canonical in-memory disassembly, seed-subset assembly
-parsing, and artifact-loading verification (`mir::text::load_artifact`, which
-reports canonical-verifier findings at artifact source spans) are implemented;
-full-coverage round trips and CLI execution remain separate implementation
-stages.
+Version 1.0 is implemented end to end for inspection and loading: canonical
+in-memory disassembly, full-grammar assembly parsing, and artifact-loading
+verification (`mir::text::load_artifact`, which reports canonical-verifier
+findings at artifact source spans). Lossless print → parse → print round trips
+are enforced byte-for-byte over the drop-elaborated MIR of every executable
+corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`. CLI
+artifact execution remains a separate implementation stage.
 
 ## Compatibility
 
@@ -100,6 +102,9 @@ empty lists, empty strings, `none` values, and zero are distinct.
   capture sets use their already-canonical semantic order.
 - Record fields appear in the order specified here. A version 1.0 canonical
   emitter never omits a required field, even when it is empty or false.
+- These ordering rules bind the emitter. A parser requires the dense `fileN`
+  and `bbN` identities but otherwise accepts record fields and unordered
+  tables in any order; reprinting restores the canonical order.
 
 Nested `try` regions introduce a new local `bbN` namespace for each of `body`,
 `handler`, `orelse`, and `finally`. Ordinary jumps inside a region address that
@@ -226,11 +231,15 @@ record.
 ### Constants
 
 `Const` is one of `int(sint)`, `float(bits_hex)`,
-`int_literal(decimal)`, `float_literal(exact_decimal)`, `bool(true|false)`,
+`int_literal(decimal)`, `float_literal(exact)`, `bool(true|false)`,
 `string(string)`, `function(symbol)`, or `none`. Concrete `float` stores the
 exact IEEE-754 binary64 bits as 16 lowercase hex digits. `IntLiteral` uses
-arbitrary-precision decimal. `FloatLiteral` uses its canonical exact decimal
-spelling, including negative zero, and may not round through host `f64`.
+arbitrary-precision decimal. `FloatLiteral` uses its canonical exact spelling
+and may never round through host `f64`: `-0.0` for negative zero, `{n}.0` for
+an integral value, and the reduced `{numer}/{denom}` rational otherwise —
+compile-time folding produces exact non-decimal rationals such as `1/3`, so an
+exact decimal form does not exist in general. A parser accepts a non-reduced
+rational; reprinting reduces it.
 
 `CheckedConst` uses `checked_int`, `checked_float`, `checked_bool`,
 `checked_string`, or `checked_none` with the same fidelity rules.
@@ -254,7 +263,7 @@ generic_func { environment, param_decls, params, names, return_type, required,
                error_type, conventions, ref_params, ref_return, transfers }
 overload([type...])
 param { name, bounds, callable_bound }
-assoc { base, member }
+assoc { base, member, arguments }
 dependent_index { elements, index }
 struct_type { name, arguments }
 simd { dtype, width }
@@ -268,15 +277,19 @@ ref { referent, origin, mutability }
 operators/conventions use their lowercase source-independent enum names;
 conventions are `read`, `var`, `mut`, `out`, `ref`, and `deinit`.
 
-`ParamDecl` is `type_param { name, bounds, default, constraints }` or
-`value_param { name, type, default, variadic, infer_only, constraints }`.
+`ParamDecl` is
+`type_param { name, bounds, callable_bound, default, infer_only, variadic, constraints }`
+or
+`value_param { name, type, default, callable_default, infer_only, variadic, constraints }`.
 Callable defaults use `default_symbol`, `default_parameter`, or
 `default_if { condition, then_value, else_value }`.
 
 `GenericConstraint` and `CtExpr` are prefix trees. Their tags map one-to-one to
-the public variants: `conforms`, `conforms_pack`, `pack_predicate`,
-`pack_contains`, `trivial`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`,
-`not`, `constraint_bool`; and `ct_param`, `ct_value`, `ct_neg`, `ct_add`,
+the public variants: `with_message { condition, message }`, `conforms`,
+`conforms_pack`, `pack_predicate` (whose predicate is `predicate_trivial` or
+`predicate_alias`), `pack_contains`, `trivial`, `eq`, `ne`, `lt`, `le`, `gt`,
+`ge`, `and`, `or`, `not`, `constraint_bool`; and `ct_param`, `ct_value`,
+`ct_neg`, `ct_add`,
 `ct_sub`, `ct_mul`, `ct_floor_div`, `ct_mod`, `ct_pow`. Constraint operands are
 `operand_param`, `operand_value`, `operand_type`, and `operand_pack_length`.
 
@@ -285,9 +298,10 @@ the public variants: `conforms`, `conforms_pack`, `pack_predicate`,
 Origin path segments are `field(symbol)`, `any_index`, `interior(symbol)`, and
 `subtree`. Origins are `origin_param(id)`, `origin_self`,
 `origin_place { root: $vN, path }`, `origin_union`, `origin_static`, and
-`origin_untracked { mutable }`. Pointer origins add `pointer_param`,
-`pointer_self`, and `pointer_unsafe_any`; all fields of the corresponding
-`PointerOrigin` variant are required.
+`origin_untracked { mutable }`. Pointer origins are `pointer_place`,
+`pointer_param`, `pointer_self`, `pointer_static`, `pointer_untracked`, and
+`pointer_unsafe_any`; all fields of the corresponding `PointerOrigin` variant
+are required.
 
 Mutability is `immutable`, `mutable`, or `mutability_param(id)`. Signature
 origins are `sig_self`, `sig_param(index)`, `sig_bound(origin)`, `sig_static`,
@@ -295,8 +309,8 @@ origins are `sig_self`, `sig_param(index)`, `sig_bound(origin)`, `sig_static`,
 mutability is `sig_immutable`, `sig_mutable`, `sig_bool_param(index)`, or
 `sig_infer`. A `RefSig` is `ref_sig { origin, mutability }`.
 
-Capture access is `read`, `write`, or `infer`. Capture sets are
-`capture_set_param(id)` or `capture_set([capture_origin...])`. Callable
+Capture access is `read` or `write`. Capture sets are `capture_set_infer`,
+`capture_set_param(id)`, or `capture_set([capture_origin...])`. Callable
 environments are `default`, `thin`, or `capturing(capture_set)`.
 
 Every transfer, call argument, boundary, result adapter, iterator call, generic

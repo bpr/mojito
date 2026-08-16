@@ -1,11 +1,13 @@
 use mojito::SourceSpan;
-use mojito::literal::IntLiteral;
+use mojito::ast::ArgConvention;
+use mojito::checked::CheckedConst;
+use mojito::literal::{FloatLiteral, IntLiteral};
 use mojito::mir::{
-    self, Const, MirBlock, MirDeclarations, MirFunction, MirInstr, MirProgram, MirTerm, Reg,
-    SpanTable, UseMode,
+    self, Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    MirProgram, MirStructDeclaration, MirTerm, Reg, SpanTable, UseMode,
 };
-use mojito::types::Ty;
-use std::collections::HashMap;
+use mojito::types::{ParamDecl, Ty};
+use std::collections::{HashMap, HashSet};
 
 fn identity_program() -> MirProgram {
     let function = MirFunction {
@@ -119,6 +121,59 @@ fn control_flow_program() -> MirProgram {
     }
 }
 
+fn metadata_program() -> MirProgram {
+    let mut program = identity_program();
+    program.declarations = MirDeclarations {
+        structs: vec![MirStructDeclaration {
+            name: "Box".into(),
+            fields: vec![("value".into(), Ty::Int)],
+            mut_self_methods: HashSet::from(["set".into()]),
+            fieldwise_init: true,
+            param_decls: vec![ParamDecl::Type {
+                name: "T".into(),
+                bounds: vec!["Copyable".into()],
+                callable_bound: None,
+                default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            }],
+            explicit_destroy_message: Some("call destroy() first".into()),
+            explicit_destructors: HashMap::from([("_finish".into(), true)]),
+        }],
+        functions: vec![MirFunctionDeclaration {
+            lowered_name: "scale".into(),
+            param_names: vec!["value".into(), "by".into()],
+            param_types: vec![Ty::Int, Ty::Float64],
+            defaults: vec![
+                None,
+                Some(CheckedConst::Float(
+                    FloatLiteral::parse_exact("157/50").unwrap(),
+                )),
+            ],
+            required: vec![true, false],
+            variadic: None,
+            variadic_convention: None,
+            variadic_index: None,
+            kw_variadic: None,
+            kw_variadic_convention: None,
+            kw_variadic_index: None,
+            positional_only: None,
+            keyword_only: Some(1),
+            param_decls: Vec::new(),
+            has_receiver: false,
+            receiver_convention: None,
+            param_conventions: vec![None, Some(ArgConvention::Read)],
+            ret_ty: Ty::Int,
+            returns_reference: false,
+            raises: false,
+            error_ty: None,
+            ref_params: vec![false, false],
+        }],
+    };
+    program
+}
+
 #[test]
 fn minimal_program_has_a_stable_snapshot() {
     let text = mir::text::disassemble(&identity_program()).expect("disassemble verified MIR");
@@ -130,6 +185,12 @@ fn minimal_program_has_a_stable_snapshot() {
 fn control_flow_and_literals_have_a_stable_snapshot() {
     let text = mir::text::disassemble(&control_flow_program()).expect("disassemble verified MIR");
     assert_eq!(text, include_str!("snapshots/mir/control_flow.mir"));
+}
+
+#[test]
+fn declaration_metadata_has_a_stable_snapshot() {
+    let text = mir::text::disassemble(&metadata_program()).expect("disassemble verified MIR");
+    assert_eq!(text, include_str!("snapshots/mir/metadata.mir"));
 }
 
 #[test]

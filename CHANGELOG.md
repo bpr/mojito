@@ -6,6 +6,23 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Added
+
+- Lossless textual-MIR round trips (roadmap §3): `mir::text::parse_artifact`
+  now decodes the complete 1.0 schema — every instruction, terminator, type,
+  origin, and declaration-metadata form the canonical printer emits,
+  including nested `try` regions (dense per-region block namespaces, kept out
+  of the artifact source map) and the `structs:`/`decls:` sections — with
+  missing-required-field, unknown-tag, and duplicate-entry diagnostics.
+  `FloatLiteral::parse_exact` is the exact inverse of the literal's display
+  spellings (`-0.0`, `{n}.0`, reduced `{numer}/{denom}`), so serialized exact
+  literals reproduce bit-for-bit. The new `roundtrip::*` corpus group
+  enforces disassemble → parse → re-disassemble byte equality over the
+  drop-elaborated MIR of every executable fixture, with the second
+  disassembly re-running the canonical verifier on the parsed program;
+  `tests/snapshots/mir/metadata.mir` pins a declaration-metadata artifact
+  through the same parse/reprint/load gates.
+
 ### Fixed
 
 - Per-instruction drop elaboration inside `try` regions (roadmap §3): region

@@ -1,0 +1,41 @@
+mojito-mir 1.0
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("identity.mojo"), module: absent }
+  ],
+  structs: [
+    struct { name: Box, fields: [field { name: value, type: Int }], mut_self_methods: [set], fieldwise_init: true, param_decls: [type_param { name: T, bounds: [Copyable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: present("call destroy() first"), explicit_destructors: [destructor { name: _finish, raises: true }] }
+  ],
+  decls: [
+    decl { lowered_name: scale, param_names: [value, by], param_types: [Int, Float64], defaults: [absent, present(checked_float(157/50))], required: [true, false], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: present(1), param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, present(read)], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false] }
+  ],
+  functions: [
+      fn {
+        name: identity,
+        registers: 1,
+        vars: 1,
+        var_names: [value],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 44, end: 49, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]
+}

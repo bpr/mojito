@@ -2813,9 +2813,13 @@ unordered tables through sorted borrowed views. The later parser must share
 this vocabulary.
 
 `mir::text::parse_artifact` owns the inverse syntax boundary. It validates UTF-8
-bytes, parses a Mojo-independent spanned schema tree, and decodes structural MIR
-while retaining an `ArtifactSourceMap` separate from serialized Mojo source
-locations. Parsing does not invoke semantic MIR verification:
+bytes, parses a Mojo-independent spanned schema tree, and decodes the complete
+schema — every instruction, terminator, type, origin, and declaration-metadata
+form the printer emits — while retaining an `ArtifactSourceMap` separate from
+serialized Mojo source locations. Nested `try` regions decode through their
+own dense per-region block namespaces and are deliberately absent from the
+source map: the enclosing instruction path brackets them, and the canonical
+verifier resolves only function-level block paths. Parsing does not invoke semantic MIR verification:
 `mir::text::verify_artifact` composes the canonical `mir::verify` pass on the
 returned `ParsedArtifact` and maps each finding to its assembly span (block,
 then function, then artifact-root precision) by parsing the verifier's
@@ -2828,10 +2832,11 @@ The compiler exposes a human-readable, flattened, versioned serialization
 of verified MIR and the metadata needed to execute it. The format must support:
 
 - deterministic printing suitable for review and golden tests (implemented)
-- parsing with source-located diagnostics (implemented for the seed
-  instruction subset)
+- parsing with source-located diagnostics (implemented for the full schema)
 - structural and semantic verification before execution (implemented)
-- lossless print/parse/print round trips
+- lossless print/parse/print round trips (implemented; enforced byte-for-byte
+  per executable corpus fixture by the `roundtrip::*` group of
+  `tests/corpus_test.rs`)
 - disassembly of verified in-memory programs (implemented)
 - execution by the register VM without reconstructing source AST semantics
 - consumption by future native backends (LLVM and the MLIR-family targets first)

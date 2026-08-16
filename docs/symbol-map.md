@@ -166,8 +166,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   instruction/terminator spellings; `mir/text/write.rs` owns structural
   serialization and ordering.
 - `mir/text/parse.rs` owns UTF-8 validation, the recoverable spanned schema
-  parser, typed reconstruction, structural diagnostics, and artifact source
-  mapping. It does not own semantic MIR verification.
+  parser, full-schema typed reconstruction (every instruction, terminator,
+  type, origin, and declaration-metadata form, including nested try-region
+  block namespaces), structural diagnostics, and artifact source mapping. It
+  does not own semantic MIR verification.
 - `mir.rs` owns the `Flatten` ANF-lowering driver, core emission primitives, and
   the `lower_cfg`/`lower_program` entry points. `Flatten`'s methods are split by
   responsibility across `impl Flatten<'_>` blocks in the submodules below.

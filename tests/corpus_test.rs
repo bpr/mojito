@@ -14,6 +14,11 @@
 //! - `verify::<category>::<name>` — raw phase functions (link → elaborate →
 //!   check_program → lower_checked_program → elaborate_drops_program →
 //!   verify) over every executable fixture category.
+//! - `roundtrip::<category>::<name>` — canonical-text round trips over the
+//!   drop-elaborated MIR of every executable fixture: disassemble → parse →
+//!   re-disassemble must reproduce the text byte-for-byte. The second
+//!   disassembly re-runs the canonical verifier and schema findings on the
+//!   parsed program, so it is also the artifact-side semantic gate.
 //! - `origin_ok::<name>` / `origin_error::<name>` — production `Compiler`
 //!   accept/reject for checked-origin fixtures.
 //! - `ownership_ok::<name>` / `ownership_error::<name>` — the standalone
@@ -27,7 +32,9 @@
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use mojito::analysis::elaborate_drops_program;
+use mojito::mir::text::{disassemble, parse_artifact};
 use mojito::mir::verify::verify;
+use mojito::mir::{MirProgram, lower_checked_program};
 use mojito::{
     Compiler, CompilerError, OwnershipError, check, check_ownership, check_program, elaborate,
     link, parse,
@@ -41,6 +48,7 @@ fn main() {
     assets_outcome_trials(&mut trials);
     vm_ok_trials(&mut trials);
     verify_trials(&mut trials);
+    roundtrip_trials(&mut trials);
     origin_trials(&mut trials);
     ownership_trials(&mut trials);
     libtest_mimic::run(&arguments, trials).exit();
@@ -260,6 +268,96 @@ fn verify_trials(trials: &mut Vec<Trial>) {
         }
     }
     trials.push(Trial::test("verify::guard_corpus_size", move || {
+        if total <= 40 {
+            return Err(fail(format!("fixture corpus unexpectedly small: {total}")));
+        }
+        Ok(())
+    }));
+}
+
+/// The drop-elaborated MIR a fixture executes, via the raw phase seam — or,
+/// for `# requires: discovery` fixtures, re-lowered from the authoritative
+/// `Compiler` pipeline's checked program (the seam is non-authoritative for
+/// the whole-program discovery/specialization handoff).
+fn roundtrip_mir(path: &Path) -> Result<MirProgram, Failed> {
+    let mir = if requires_discovery(path) {
+        let compiled = Compiler::default()
+            .compile_path(path)
+            .map_err(|error| fail(format!("compile: {error}")))?;
+        lower_checked_program(compiled.checked())
+    } else {
+        let program = link(path).map_err(|error| fail(format!("link: {error}")))?;
+        let program = elaborate(program).map_err(|error| fail(format!("elaborate: {error}")))?;
+        let checked = check_program(&program).map_err(|error| fail(format!("check: {error:?}")))?;
+        lower_checked_program(&checked)
+    };
+    if !mir.invariant_errors.is_empty() {
+        return Err(fail(format!(
+            "invariant errors: {:?}",
+            mir.invariant_errors
+        )));
+    }
+    Ok(elaborate_drops_program(mir))
+}
+
+/// The first line where two disassemblies diverge, for a readable failure.
+fn first_divergence(first: &str, second: &str) -> String {
+    for (number, (left, right)) in first.lines().zip(second.lines()).enumerate() {
+        if left != right {
+            return format!(
+                "first divergence at line {}:\n  first:  {left}\n  second: {right}",
+                number + 1
+            );
+        }
+    }
+    format!(
+        "one text is a prefix of the other ({} vs {} bytes)",
+        first.len(),
+        second.len()
+    )
+}
+
+fn roundtrip_trials(trials: &mut Vec<Trial>) {
+    let mut total = 0usize;
+    for category in ["ok", "origin_ok", "ownership_ok"] {
+        for path in fixtures(category) {
+            total += 1;
+            let name = format!("roundtrip::{category}::{}", stem(&path));
+            trials.push(Trial::test(name, move || {
+                let elaborated = roundtrip_mir(&path)?;
+                // A program schema 1.0 cannot represent is exactly the finding
+                // this group exists to surface.
+                let first = disassemble(&elaborated)
+                    .map_err(|error| fail(format!("disassemble: {error}")))?;
+                let parsed = parse_artifact(first.as_bytes(), stem(&path)).map_err(|report| {
+                    let details: Vec<String> = report
+                        .diagnostics
+                        .iter()
+                        .map(|diagnostic| {
+                            format!(
+                                "{} at bytes {}..{}: {:?}",
+                                diagnostic.message,
+                                diagnostic.span.0,
+                                diagnostic.span.1,
+                                &first[diagnostic.span.0.min(first.len())
+                                    ..diagnostic.span.1.min(first.len())]
+                            )
+                        })
+                        .collect();
+                    fail(format!("parse: {report}\n{}", details.join("\n")))
+                })?;
+                // Reprinting re-runs the canonical verifier plus schema
+                // findings on the parsed program — the artifact-side gate.
+                let second = disassemble(&parsed.program)
+                    .map_err(|error| fail(format!("re-disassemble: {error}")))?;
+                if first != second {
+                    return Err(fail(first_divergence(&first, &second)));
+                }
+                Ok(())
+            }));
+        }
+    }
+    trials.push(Trial::test("roundtrip::guard_corpus_size", move || {
         if total <= 40 {
             return Err(fail(format!("fixture corpus unexpectedly small: {total}")));
         }
