@@ -31,6 +31,7 @@ use std::collections::{HashMap, HashSet};
 
 mod ir;
 pub use ir::*;
+pub mod text;
 pub mod verify;
 
 mod calls;

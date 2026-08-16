@@ -791,6 +791,13 @@ pub struct TransferEffect {
 #[derive(Debug, Clone, Default, Eq)]
 pub struct TransferSet(pub(crate) Vec<TransferEffect>);
 
+impl TransferSet {
+    /// Iterate the canonical transfer effects retained by a callable type.
+    pub fn iter(&self) -> impl Iterator<Item = &TransferEffect> {
+        self.0.iter()
+    }
+}
+
 impl PartialEq for TransferSet {
     /// Always equal BY DESIGN: the set is metadata on the type, not part of
     /// its identity. See the type-level comment before relying on `==`.

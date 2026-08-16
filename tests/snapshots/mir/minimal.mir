@@ -1,0 +1,39 @@
+mojito-mir 1.0
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("identity.mojo"), module: absent }
+  ],
+  structs: [
+  ],
+  decls: [
+  ],
+  functions: [
+      fn {
+        name: identity,
+        registers: 1,
+        vars: 1,
+        var_names: [value],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 44, end: 49, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]
+}

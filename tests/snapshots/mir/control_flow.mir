@@ -1,0 +1,52 @@
+mojito-mir 1.0
+artifact {
+  features: [],
+  files: [
+  ],
+  structs: [
+  ],
+  decls: [
+  ],
+  functions: [
+      fn {
+        name: choose,
+        registers: 5,
+        vars: 1,
+        var_names: [flag],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: branch { condition: %r0, then: bb1, else: bb2 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r1, value: int_literal(7) },
+              literal.materialize { dest: %r2, value: %r1, target: Int }
+            ],
+            terminator: return { value: present(%r2) }
+          },
+          bb2 {
+            instructions: [
+              const { dest: %r3, value: int_literal(-3) },
+              literal.materialize { dest: %r4, value: %r3, target: Int }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]
+}

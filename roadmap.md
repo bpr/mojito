@@ -117,10 +117,6 @@ instead of the prelude binding).
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
-- [ ] **Text format schema** — specify versioning, deterministic identifiers,
-  declarations, blocks, instructions, constants, types, and source locations.
-- [ ] **Disassembler** — print every verified MIR program deterministically and
-  add stable snapshots for representative programs.
 - [ ] **Assembler parser and diagnostics** — parse the text format with precise
   source errors and no dependency on Mojo source syntax.
 - [ ] **Artifact verifier integration** — run the canonical MIR semantic verifier

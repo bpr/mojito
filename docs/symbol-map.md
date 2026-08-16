@@ -16,6 +16,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Check | `checker::{check_program, Checker}`, `checked::CheckedProgram` | Authoritative semantic handoff and side tables. |
 | HIR | `hir::Cfg::build_checked_fn` (unchecked `build`/`build_fn` are phase-test compatibility) | Statement CFG with nested expressions. |
 | MIR | `mir::lower_checked_program`, `mir::MirProgram` | Fully register-typed A-normal IR, places, declaration metadata, source table. |
+| MIR text | `mir::text::{disassemble, DisassembleError, MAGIC, VERSION_MAJOR, VERSION_MINOR}` | Canonical, deterministic serialization of verified `MirProgram`; closed vocabulary and normative grammar in `docs/mir-text-format.md`. |
 | Verify | `mir::verify::verify` | Semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. |
 | Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR. |
 | Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar` operations; re-verified before execution. |
@@ -158,6 +159,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 - `mir/ir.rs` defines `MirInstr`, `MirTerm`, `MirPlace`, `MirFunction`, and
   `MirProgram`.
+- `mir/text.rs` owns the public disassembler, textual-schema version constants,
+  reserved words, canonical escaping, and exhaustive instruction/terminator
+  spellings; `mir/text/write.rs` owns structural serialization and ordering.
 - `mir.rs` owns the `Flatten` ANF-lowering driver, core emission primitives, and
   the `lower_cfg`/`lower_program` entry points. `Flatten`'s methods are split by
   responsibility across `impl Flatten<'_>` blocks in the submodules below.

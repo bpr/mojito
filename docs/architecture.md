@@ -2803,14 +2803,23 @@ reimplementing every scalar/list/string/SIMD rule from scratch.
 
 ### Textual MIR/VM assembly boundary
 
-The compiler should expose a human-readable, flattened, versioned serialization
+The normative version-1 grammar, compatibility policy, canonical ordering, and
+serialization inventory live in [`mir-text-format.md`](mir-text-format.md).
+`mir::text` owns the matching version constants, closed mnemonic vocabulary,
+and the canonical `disassemble` entry point. The printer rejects MIR invariant
+or verifier findings before emitting any text, serializes checked semantic
+metadata directly without AST or `Debug` reconstruction, and normalizes
+unordered tables through sorted borrowed views. The later parser must share
+this vocabulary.
+
+The compiler exposes a human-readable, flattened, versioned serialization
 of verified MIR and the metadata needed to execute it. The format must support:
 
-- deterministic printing suitable for review and golden tests
+- deterministic printing suitable for review and golden tests (implemented)
 - parsing with source-located diagnostics
 - structural and semantic verification before execution
 - lossless print/parse/print round trips
-- disassembly of in-memory programs
+- disassembly of verified in-memory programs (implemented)
 - execution by the register VM without reconstructing source AST semantics
 - consumption by future native backends (LLVM and the MLIR-family targets first)
 

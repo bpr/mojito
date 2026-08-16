@@ -7,6 +7,9 @@ The VM does not currently decode a packed bytecode stream. It executes the
 structured `MirInstr` and `MirTerm` values defined in `src/mir/ir.rs`. The
 mnemonics below are a human-readable assembly spelling for those existing
 operations; they do not define a separate implementation or binary encoding.
+The normative artifact grammar, versioning, metadata, and canonical spellings
+are defined by [`mir-text-format.md`](mir-text-format.md); where this execution
+manual is illustrative, that schema is authoritative.
 
 ## Machine Model
 
@@ -949,6 +952,7 @@ lowering. The example is explanatory rather than a golden dump format.
 ## Opcode Inventory
 
 The categorized tables in [Instruction Summary](#instruction-summary) are the
-human-readable inventory. Until the versioned textual schema is frozen,
-`MirInstr` and `MirTerm` in `src/mir/ir.rs` remain authoritative; keeping a
-second flat list here would drift whenever the structured MIR evolves.
+human-readable execution inventory. The frozen textual vocabulary and canonical
+printer live in `mir::text`; `MirInstr` and `MirTerm` in `src/mir/ir.rs` remain
+the in-memory authority. Keeping another flat opcode list here would drift when
+the structured MIR evolves.
