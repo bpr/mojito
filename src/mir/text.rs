@@ -5,8 +5,71 @@
 //! output.
 
 use super::{Const, MirInstr, MirIntrinsicSubscript, MirProgram, MirTerm, Proj, UseMode};
+use crate::token::Span;
 use crate::types::Ty;
+use std::collections::BTreeMap;
 use std::fmt;
+
+/// A successfully decoded MIR artifact and its assembly-source locations.
+#[derive(Debug)]
+pub struct ParsedArtifact {
+    pub program: MirProgram,
+    pub source_map: ArtifactSourceMap,
+}
+
+/// Byte spans in the assembly source, keyed by stable artifact paths.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArtifactSourceMap {
+    entries: BTreeMap<String, Span>,
+}
+
+impl ArtifactSourceMap {
+    pub fn span(&self, path: &str) -> Option<Span> {
+        self.entries.get(path).copied()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, Span)> {
+        self.entries
+            .iter()
+            .map(|(path, span)| (path.as_str(), *span))
+    }
+}
+
+/// One source-located artifact syntax or structural error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactDiagnostic {
+    pub span: Span,
+    pub message: String,
+    pub context: Vec<String>,
+}
+
+/// All recoverable diagnostics produced while parsing one artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactReport {
+    pub source_name: String,
+    pub diagnostics: Vec<ArtifactDiagnostic>,
+}
+
+impl fmt::Display for ArtifactReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} artifact error(s) in {}",
+            self.diagnostics.len(),
+            self.source_name
+        )
+    }
+}
+
+impl std::error::Error for ArtifactReport {}
+
+/// Parse a Mojito MIR artifact without running semantic MIR verification.
+pub fn parse_artifact(
+    input: &[u8],
+    source_name: impl Into<String>,
+) -> Result<ParsedArtifact, ArtifactReport> {
+    parse::artifact(input, source_name.into())
+}
 
 /// A verified-MIR program could not be represented by schema version 1.0.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,6 +385,7 @@ pub fn quote(value: &str) -> String {
     output
 }
 
+mod parse;
 mod write;
 
 #[cfg(test)]

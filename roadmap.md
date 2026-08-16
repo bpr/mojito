@@ -117,8 +117,6 @@ instead of the prelude binding).
 
 ### 3. Stabilize Textual MIR/VM Assembly
 
-- [ ] **Assembler parser and diagnostics** — parse the text format with precise
-  source errors and no dependency on Mojo source syntax.
 - [ ] **Artifact verifier integration** — run the canonical MIR semantic verifier
   on assembled programs and report artifact source locations before execution.
 - [ ] **Lossless round trips** — require MIR → text → MIR equivalence across the

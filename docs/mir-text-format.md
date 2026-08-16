@@ -55,6 +55,7 @@ uint        = "0" | ("1" … "9"), { digit } ;
 sint        = [ "-" ], uint ;
 bare        = ("A" … "Z" | "a" … "z" | "_"),
               { "A" … "Z" | "a" … "z" | "_" | digit } ;
+tag         = bare, { ".", bare } ;
 string      = '"', { scalar | escape }, '"' ;
 escape      = '\\"' | '\\\\' | '\\n' | '\\r' | '\\t' |
               '\\u{', hex, { hex }, '}' ;

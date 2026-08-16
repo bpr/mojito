@@ -2812,6 +2812,13 @@ metadata directly without AST or `Debug` reconstruction, and normalizes
 unordered tables through sorted borrowed views. The later parser must share
 this vocabulary.
 
+`mir::text::parse_artifact` owns the inverse syntax boundary. It validates UTF-8
+bytes, parses a Mojo-independent spanned schema tree, and decodes structural MIR
+while retaining an `ArtifactSourceMap` separate from serialized Mojo source
+locations. Parsing does not invoke semantic MIR verification: the returned
+`ParsedArtifact` is the input to the following artifact-verifier integration
+stage, which can use those assembly spans for diagnostics.
+
 The compiler exposes a human-readable, flattened, versioned serialization
 of verified MIR and the metadata needed to execute it. The format must support:
 

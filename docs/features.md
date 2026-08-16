@@ -81,7 +81,8 @@ Status meanings:
 | Standard library | Self-hosted collections, algorithms, math, hashing | Run | Proof subset under `stdlib/`, not Mojo's full standard library. |
 | Backend | Register VM | Run | Sole backend and runtime; direct calls use an explicit continuation-driven frame stack with monotonic frame identities. |
 | Tooling | MIR 1.0 schema and disassembler | Check | `mir::text::disassemble` rejects unverified MIR and emits deterministic UTF-8/LF artifacts with canonical ordering, exact literals, full checked metadata, and stable snapshots. Parsing and artifact execution remain unsupported. |
-| Tooling | Textual MIR assembler, artifact verifier/loading, execution | No | Planned against the versioned Mojito-owned MIR 1.0 schema. |
+| Tooling | Textual MIR assembler parser and structural diagnostics | Check | `mir::text::parse_artifact` consumes UTF-8 bytes independently of Mojo syntax, reconstructs MIR, retains assembly spans, and reports recoverable syntax/shape errors. Semantic artifact verification and execution remain separate. |
+| Tooling | Artifact verifier/loading and textual MIR execution | No | Planned against the versioned Mojito-owned MIR 1.0 schema and retained artifact source map. |
 | Backend | LLVM, MLIR, Pliron | No | Prioritized native backends after the textual MIR contract and VM semantics stabilize. LLVM is the primary target; MLIR and the Rust-native, MLIR-inspired [Pliron](https://github.com/pliron-org/pliron) (its LLVM dialect emits LLVM IR) are the MLIR-family options. `--backend=llvm\|mlir\|pliron` names are recognized seams that refuse construction until implemented. |
 | Later backend | Cranelift, eBPF | No | Lower-priority options investigated after the LLVM/MLIR-family targets stabilize; not first-pass parity requirements. |
 | Out of scope | GPU, concurrency/parallelism, distributed execution, Python interop | No | Intentionally excluded from the first Mojito parity target. |
