@@ -58,7 +58,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
 /// A whole program's worth of lowered functions, keyed by name. The synthetic
 /// `__toplevel__` holds module initialization and explicit legacy test snippets.
 /// Production compilation rejects executable file-scope source statements.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MirProgram {
     pub functions: Vec<(String, MirFunction)>,
     /// Declaration facts needed by execution, normalized once while lowering.
@@ -70,13 +70,13 @@ pub struct MirProgram {
     pub invariant_errors: Vec<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MirDeclarations {
     pub structs: Vec<MirStructDeclaration>,
     pub functions: Vec<MirFunctionDeclaration>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MirStructDeclaration {
     pub name: String,
     pub fields: Vec<(String, Ty)>,
@@ -87,7 +87,7 @@ pub struct MirStructDeclaration {
     pub explicit_destructors: HashMap<String, bool>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MirFunctionDeclaration {
     pub lowered_name: String,
     pub param_names: Vec<String>,

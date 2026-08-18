@@ -10,16 +10,16 @@ Mojito is a Rust compiler for a strict, executable subset of current Mojo. The
 register VM is the sole runtime and executable oracle; there is no tree-walking
 execution path.
 
-**Backend direction.** The end goal is native code below the verified-MIR waist,
-and the target of record is MLIR — Mojo itself is built on MLIR, so reaching an
-MLIR-family lowering is the point, not an incidental option. The prioritized
-native backends are therefore LLVM and the MLIR-family frameworks: MLIR, and
-[Pliron](https://github.com/pliron-org/pliron), a Rust-native, MLIR-inspired IR
-framework whose LLVM dialect emits LLVM IR. Because it is MLIR-inspired and pure
-Rust, Pliron is the likely best fit for an in-tree native target — a closer match
-to the MLIR end goal than Cranelift or eBPF, which are lower-priority later
-options. Do not treat MLIR as a *required internal* compiler layer; it is a
-backend below the MIR waist. See `roadmap.md` section 6 for the ordering.
+**Backend direction.** The end goal is native code below the verified-MIR waist.
+The prioritized native backends are
+[Pliron](https://github.com/pliron-org/pliron) — a Rust-native, MLIR-inspired IR
+framework whose LLVM dialect emits LLVM IR; `docs/pliron_plan.md` is the staged
+adoption plan — and Cranelift, with a C or C++ source backend as a possible
+additional target. Direct LLVM or MLIR lowering and eBPF are no longer
+prioritized. No backend IR is a *required internal* compiler layer: backends sit
+below the MIR waist, MIR remains the serialized backend-independent handoff, and
+the VM remains the executable semantic oracle. See `roadmap.md` section 6 for
+the ordering.
 
 Read these documents before changing behavior:
 

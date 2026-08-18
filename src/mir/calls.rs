@@ -648,6 +648,29 @@ impl Flatten<'_> {
         })
     }
 
+    /// Canonical interior origin for a loan established directly through
+    /// `place`. Loans and `InvalidateInteriors` facts must name interior
+    /// origins in the same owner domain — `owner_vars` plus the checked
+    /// owner-relative path — or the invalidation can never retire the loan.
+    /// When the canonical owner slot differs from the executable root, the
+    /// borrow reads through the reference held in that root (an iteration
+    /// binding, or a rebound symbolic owner's current slot); recording the
+    /// root as the place's `through` reference keeps the loan's executable
+    /// place honest for the verifier's place/origin consistency rule.
+    pub(super) fn direct_borrow_interior(
+        &mut self,
+        place: &mut MirPlace,
+        origin: &crate::origin::OriginPlace,
+    ) -> MirInteriorOrigin {
+        let canonical = self
+            .mir_interior_origin(origin, Some(place.root))
+            .expect("a direct borrow's place root is the interior-origin fallback");
+        if canonical.root != place.root && place.through.is_none() {
+            place.through = Some(place.root);
+        }
+        canonical
+    }
+
     pub(super) fn checked_interior_invalidations(
         &self,
         expression: &Expr,

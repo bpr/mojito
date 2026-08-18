@@ -32,9 +32,9 @@
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use mojito::analysis::elaborate_drops_program;
+use mojito::mir::lower_checked_program;
 use mojito::mir::text::{disassemble, parse_artifact};
 use mojito::mir::verify::verify;
-use mojito::mir::{MirProgram, lower_checked_program};
 use mojito::{
     Compiler, CompilerError, OwnershipError, check, check_ownership, check_program, elaborate,
     link, parse,
@@ -275,29 +275,30 @@ fn verify_trials(trials: &mut Vec<Trial>) {
     }));
 }
 
-/// The drop-elaborated MIR a fixture executes, via the raw phase seam — or,
-/// for `# requires: discovery` fixtures, re-lowered from the authoritative
-/// `Compiler` pipeline's checked program (the seam is non-authoritative for
-/// the whole-program discovery/specialization handoff).
-fn roundtrip_mir(path: &Path) -> Result<MirProgram, Failed> {
-    let mir = if requires_discovery(path) {
+/// Canonical executable MIR for a fixture. Discovery-dependent fixtures use
+/// the authoritative compiler's cached MIR/artifact seam; raw phase fixtures
+/// deliberately retain their independent lowering coverage.
+fn roundtrip_text(path: &Path) -> Result<String, Failed> {
+    if requires_discovery(path) {
         let compiled = Compiler::default()
             .compile_path(path)
             .map_err(|error| fail(format!("compile: {error}")))?;
-        lower_checked_program(compiled.checked())
-    } else {
-        let program = link(path).map_err(|error| fail(format!("link: {error}")))?;
-        let program = elaborate(program).map_err(|error| fail(format!("elaborate: {error}")))?;
-        let checked = check_program(&program).map_err(|error| fail(format!("check: {error:?}")))?;
-        lower_checked_program(&checked)
-    };
+        return compiled
+            .emit_mir()
+            .map_err(|error| fail(format!("emit MIR: {error}")));
+    }
+    let program = link(path).map_err(|error| fail(format!("link: {error}")))?;
+    let program = elaborate(program).map_err(|error| fail(format!("elaborate: {error}")))?;
+    let checked = check_program(&program).map_err(|error| fail(format!("check: {error:?}")))?;
+    let mir = lower_checked_program(&checked);
     if !mir.invariant_errors.is_empty() {
         return Err(fail(format!(
             "invariant errors: {:?}",
             mir.invariant_errors
         )));
     }
-    Ok(elaborate_drops_program(mir))
+    disassemble(&elaborate_drops_program(mir))
+        .map_err(|error| fail(format!("disassemble: {error}")))
 }
 
 /// The first line where two disassemblies diverge, for a readable failure.
@@ -324,11 +325,9 @@ fn roundtrip_trials(trials: &mut Vec<Trial>) {
             total += 1;
             let name = format!("roundtrip::{category}::{}", stem(&path));
             trials.push(Trial::test(name, move || {
-                let elaborated = roundtrip_mir(&path)?;
                 // A program schema 1.0 cannot represent is exactly the finding
                 // this group exists to surface.
-                let first = disassemble(&elaborated)
-                    .map_err(|error| fail(format!("disassemble: {error}")))?;
+                let first = roundtrip_text(&path)?;
                 let parsed = parse_artifact(first.as_bytes(), stem(&path)).map_err(|report| {
                     let details: Vec<String> = report
                         .diagnostics

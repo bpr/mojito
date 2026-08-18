@@ -2143,6 +2143,75 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
 }
 
 #[test]
+fn reference_row_iteration_loans_keep_the_invalidation_owner_domain() {
+    use mojito::OriginSeg;
+
+    // Iterating a `ref` row binding borrows elements whose checked provenance
+    // roots at the outer container. The loan must keep that canonical owner
+    // root — the domain `InvalidateInteriors` facts resolve through — and
+    // record the reference hop as its place's `through`, or a mutation of the
+    // row could never retire the element borrow.
+    let source = "def main():\n    var rows: List[List[Int]] = [[1, 2], [3, 4]]\n    for ref row in rows:\n        for x in row:\n            print(x)\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile nested reference-row iteration");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let rows = main
+        .var_names
+        .iter()
+        .position(|name| name == "rows")
+        .expect("rows slot") as u32;
+    let inner_loans: Vec<_> = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            MirInstr::EstablishLoans { loans, .. } => Some(loans),
+            _ => None,
+        })
+        .flatten()
+        .filter(|loan| {
+            loan.interior.as_ref().is_some_and(|origin| {
+                origin
+                    .path
+                    .iter()
+                    .filter(
+                        |segment| matches!(segment, OriginSeg::Interior(name) if name == "element"),
+                    )
+                    .count()
+                    == 2
+            })
+        })
+        .collect();
+    assert!(
+        !inner_loans.is_empty(),
+        "no element-of-element loan lowered"
+    );
+    for loan in &inner_loans {
+        let origin = loan.interior.as_ref().expect("interior origin");
+        assert_eq!(origin.root, rows, "loan origin must root at the owner");
+        if loan.place.root != rows {
+            assert_eq!(
+                loan.place.through,
+                Some(loan.place.root),
+                "a reference-hop loan must record its through reference"
+            );
+        }
+    }
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
 fn reference_list_iteration_lowers_through_the_generic_protocol() {
     use mojito::OriginSeg;
 

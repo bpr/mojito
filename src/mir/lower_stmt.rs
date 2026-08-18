@@ -357,9 +357,8 @@ impl Flatten<'_> {
         value_ty: Ty,
         origin: &crate::origin::OriginPlace,
     ) {
-        let canonical = self
-            .mir_interior_origin(origin, Some(place.root))
-            .expect("checked borrowed iteration origin has a MIR owner");
+        let mut loan_place = place.clone();
+        let canonical = self.direct_borrow_interior(&mut loan_place, origin);
         let interior = canonical
             .path
             .iter()
@@ -385,7 +384,7 @@ impl Flatten<'_> {
         let handle = self.fresh_typed(span.clone(), Some(place.root), ref_ty.clone());
         self.emit(MirInstr::MakeRef {
             dest: handle,
-            place: place.clone(),
+            place,
         });
         self.emit(MirInstr::DefVar {
             var: dest,
@@ -393,7 +392,7 @@ impl Flatten<'_> {
             binding_ty: Some(ref_ty),
         });
         let loans = vec![MirLoan {
-            place,
+            place: loan_place,
             mutable: false,
             interior,
         }];

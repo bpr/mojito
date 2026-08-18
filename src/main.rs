@@ -35,6 +35,7 @@ fn load_program(file: Option<&str>, link_options: &LinkOptions) -> Result<Vec<St
 /// mojito parse [FILE]   # the parsed AST (pretty-printed)
 /// mojito check [FILE]   # lex + parse + type-check; report ok / the error
 /// mojito run   [FILE]   # the full pipeline; print output + final bindings
+/// mojito emit-mir [FILE] # compile and print executable textual MIR
 /// mojito exec  [FILE]   # execute a verified textual MIR artifact
 /// mojito demo           # the built-in showcase (also the no-arg default)
 /// ```
@@ -61,6 +62,7 @@ fn main() -> ExitCode {
         Some("check") => program_stage("check", file, &cli.link_options, run_check),
         Some("own") => program_stage("own", file, &cli.link_options, run_own),
         Some("run") => stage_run(file, cli.backend, &cli.link_options),
+        Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
         Some("exec") => stage_exec(file, cli.backend),
         Some("-h" | "--help" | "help") => {
             print_usage();
@@ -186,16 +188,8 @@ fn run_program(
     backend: BackendKind,
     link_options: &LinkOptions,
 ) -> Result<(), String> {
-    let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
     let compiler = Compiler::new(link_options.clone(), backend);
-    let compiled = match file {
-        Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),
-        _ => compiler.compile_unlinked(&source),
-    }
-    .map_err(|error| match &error {
-        CompilerError::Module(module) => format_module_error(module, file.unwrap_or("-"), &source),
-        _ => error.to_string(),
-    })?;
+    let compiled = compile_input(&compiler, file)?;
     let execution = compiler
         .execute(&compiled)
         .map_err(|error| error.to_string())?;
@@ -212,6 +206,39 @@ fn run_program(
         }
     }
     Ok(())
+}
+
+/// `emit-mir`: compile source through ownership analysis and print the exact
+/// post-drop artifact accepted by `exec` and future backends.
+fn stage_emit_mir(file: Option<&str>, link_options: &LinkOptions) -> ExitCode {
+    let compiler = Compiler::new(link_options.clone(), BackendKind::Vm);
+    let result = compile_input(&compiler, file)
+        .and_then(|compiled| compiled.emit_mir().map_err(|error| error.to_string()));
+    match result {
+        Ok(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("emit-mir error: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn compile_input(
+    compiler: &Compiler,
+    file: Option<&str>,
+) -> Result<mojito::CompiledProgram, String> {
+    let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
+    match file {
+        Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),
+        _ => compiler.compile_unlinked(&source),
+    }
+    .map_err(|error| match &error {
+        CompilerError::Module(module) => format_module_error(module, file.unwrap_or("-"), &source),
+        _ => error.to_string(),
+    })
 }
 
 /// `exec`: load a verified textual MIR artifact and execute it on the selected
@@ -294,6 +321,7 @@ fn print_usage() {
          \x20 parse [FILE]   print the parsed AST\n\
          \x20 check [FILE]   type-check and report ok or the first error\n\
          \x20 run   [FILE]   evaluate and print output + final bindings\n\
+         \x20 emit-mir [FILE] compile and print executable textual MIR\n\
          \x20 exec  [FILE]   execute a verified textual MIR artifact\n\
          \x20 demo           run the built-in showcase (default)\n\n\
          FILE defaults to '-' (standard input).\n"

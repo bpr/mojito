@@ -43,3 +43,7 @@ libtest-mimic = "0.8.2"
 [[test]]
 name = "corpus_test"
 harness = false
+
+[[test]]
+name = "artifact_conformance_test"
+harness = false

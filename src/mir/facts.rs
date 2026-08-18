@@ -150,13 +150,14 @@ impl Flatten<'_> {
             }
             return interiors
                 .into_iter()
-                .filter_map(|origin| {
-                    self.mir_interior_origin(&origin, Some(place.root))
-                        .map(|interior| MirLoan {
-                            place: place.clone(),
-                            mutable,
-                            interior: Some(interior),
-                        })
+                .map(|origin| {
+                    let mut place = place.clone();
+                    let interior = self.direct_borrow_interior(&mut place, &origin);
+                    MirLoan {
+                        place,
+                        mutable,
+                        interior: Some(interior),
+                    }
                 })
                 .collect();
         }

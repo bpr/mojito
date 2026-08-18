@@ -1,9 +1,6 @@
 //! Execute verified textual MIR artifacts end-to-end: loading-gate
 //! composition, observable output, and equivalence with the direct VM run.
 
-use mojito::analysis::elaborate_drops_program;
-use mojito::mir::lower_checked_program;
-use mojito::mir::text::disassemble;
 use mojito::{ArtifactRunError, BackendKind, Compiler, run_artifact};
 use std::path::Path;
 
@@ -51,9 +48,7 @@ fn artifact_execution_matches_direct_execution() {
         let compiler = Compiler::default();
         let compiled = compiler.compile_path(&path).expect("compile fixture");
         let direct = compiler.execute(&compiled).expect("direct execution");
-        let mir = lower_checked_program(compiled.checked());
-        assert!(mir.invariant_errors.is_empty(), "{fixture}");
-        let text = disassemble(&elaborate_drops_program(mir)).expect("disassemble");
+        let text = compiled.emit_mir().expect("emit compiled MIR");
         let via_artifact =
             run_artifact(text.as_bytes(), fixture, BackendKind::Vm).expect("execute artifact");
         assert_eq!(via_artifact.output, direct.output, "{fixture}");

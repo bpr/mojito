@@ -65,9 +65,9 @@ Work proceeds in dependency order through the numbered sections below:
 4. **Grow the CPU standard library** demand-first against that stable contract.
 5. **Packaging, artifacts, and developer tooling**, including compiled package
    artifacts and a reproducibility gate.
-6. **Native backends** — LLVM first, then the MLIR-family targets (MLIR and the
-   Rust-native, MLIR-inspired Pliron), with Cranelift and eBPF following —
-   validated differentially against the VM corpus.
+6. **Native backends** — Pliron first (staged per `docs/pliron_plan.md`), then
+   Cranelift, with a C or C++ source backend as a possible addition — validated
+   differentially against the VM corpus.
 
 ## Ordered Work
 
@@ -114,11 +114,6 @@ un-annotated local bindings), and prelude-visible `Set` (upstream requires an
 import for the name while set displays stay name-independent — needs the
 display lowering to reach the stdlib Set through a compiler-internal identity
 instead of the prelude binding).
-
-### 3. Stabilize Textual MIR/VM Assembly
-
-- [ ] **Compiler/test integration** — expose dumps and use assembly snapshots and
-  conformance artifacts as backend-independent contracts.
 
 ### 4. Grow The CPU Standard Library
 
@@ -180,39 +175,39 @@ instead of the prelude binding).
 
 ### 6. Native Backends And Native-Only Semantics
 
-The prioritized native targets are LLVM and the MLIR-family frameworks; Cranelift
-and eBPF are later, lower-priority options. Every backend consumes the verified
-MIR contract and is validated differentially against the VM/textual corpus.
+The prioritized native targets are Pliron and Cranelift, with a C or C++ source
+backend as a possible addition; direct LLVM or MLIR lowering and eBPF are no
+longer prioritized. Every backend consumes the verified MIR contract and is
+validated differentially against the VM/textual corpus.
 
-- [ ] **LLVM backend** — the primary native target: lower the verified scalar CPU
-  subset to LLVM IR and validate it differentially against the VM/textual corpus,
-  then add stronger optimization/vectorization coverage.
+- [ ] **Pliron backend** — the primary native target: adopt
+  [Pliron](https://github.com/pliron-org/pliron), a Rust-native, MLIR-inspired
+  extensible IR framework whose LLVM dialect emits LLVM IR bitcode, through the
+  staged experimental plan in `docs/pliron_plan.md`. As a pure-Rust path to
+  native code it avoids a C++ MLIR/LLVM build dependency while keeping MIR as
+  the serialized handoff and the VM as the executable oracle.
 - [ ] **Observable CPU layout and ABI rules** — define size, alignment, field
   layout, calling convention, and layout-marker semantics against native output;
   this is intentionally not a VM-parity prerequisite and is shared by every native
   backend.
-- [ ] **MLIR backend** — lower verified MIR through MLIR dialects, reusing the
-  layout/ABI rules above; an optional path for progressive lowering and reuse of
-  the MLIR ecosystem's target coverage.
-- [ ] **Pliron backend** — target [Pliron](https://github.com/pliron-org/pliron),
-  a Rust-native, MLIR-inspired extensible IR framework whose LLVM dialect emits
-  LLVM IR bitcode. As a pure-Rust path to native code it avoids a C++ MLIR/LLVM
-  build dependency, making it an attractive in-tree lowering target once the MIR
-  contract is stable.
+- [ ] **Cranelift backend** — lower verified MIR to Cranelift, a fast,
+  embeddable, pure-Rust code generator, reusing the layout/ABI rules above.
+- [ ] **C or C++ source backend** — a possible additional target: emit portable
+  C/C++ from verified MIR, trading optimization quality for toolchain reach.
 - [ ] **Native SIMD lowering** — map completed SIMD semantics to native vectors
   where the chosen backend supports them, retaining scalar fallback behavior.
-- [ ] **Later backends** — Cranelift (a fast, embeddable code generator) and eBPF
-  are lower-priority options investigated after the LLVM/MLIR-family targets are
-  stable; neither is a first-pass parity requirement.
+- [ ] **Deprioritized backends** — direct LLVM or MLIR lowering and eBPF are no
+  longer prioritized; revisit only if the Pliron, Cranelift, and C/C++ paths
+  prove insufficient. None is a first-pass parity requirement.
 
 ### Explicit Non-Goals For First-Pass Parity
 
 - GPU programming and accelerator memory/execution models
 - concurrency, parallelism, atomics, tasks, and distributed execution
 - Python interoperability
-- MLIR as a *required* internal compiler layer (MLIR, Pliron, and LLVM are
-  pursued as optional native backends below the verified-MIR waist, not as a
-  mandatory IR the whole compiler is built on)
+- any backend IR as a *required* internal compiler layer (Pliron, Cranelift,
+  and any other native backend are pursued below the verified-MIR waist, not as
+  a mandatory IR the whole compiler is built on)
 - legacy `fn`, `owned`, and other removed source spellings except for clear
   rejection diagnostics
 - escaping closures and the removed `escaping` function effect; first-pass

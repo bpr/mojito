@@ -10,6 +10,8 @@ use crate::comptime::{
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, RuntimeError, TypeError};
+use crate::mir::MirProgram;
+use crate::mir::text::{DisassembleError, disassemble};
 use crate::module::{
     LinkOptions, ModuleError, inject_prelude, link_source_with_options, link_with_options,
 };
@@ -23,12 +25,28 @@ use std::path::Path;
 #[derive(Debug, Clone)]
 pub struct CompiledProgram {
     checked: CheckedProgram,
+    mir: MirProgram,
 }
 impl CompiledProgram {
     /// The semantically checked program carried by this ownership-verified
     /// pipeline result.
     pub fn checked(&self) -> &CheckedProgram {
         &self.checked
+    }
+
+    /// The ownership-verified, pre-drop MIR produced by the authoritative
+    /// compiler pipeline and consumed by every backend.
+    pub fn mir(&self) -> &MirProgram {
+        &self.mir
+    }
+
+    /// Emit this program as canonical, executable Mojito MIR assembly.
+    pub fn emit_mir(&self) -> Result<String, DisassembleError> {
+        disassemble(&self.drop_elaborated_mir())
+    }
+
+    fn drop_elaborated_mir(&self) -> MirProgram {
+        crate::analysis::elaborate_drops_program(self.mir.clone())
     }
 }
 #[derive(Debug, Clone)]
@@ -164,12 +182,8 @@ impl Compiler {
         self.compile_linked(linked)
     }
     /// Elaborate, check, verify, and ownership-verify an already linked
-    /// statement set. Verification and ownership run over one lowered
-    /// `MirProgram` — the production MIR contract the backend re-derives
-    /// deterministically.
-    // follow-up (roadmap §3 compiler/test integration): cache the verified
-    // `MirProgram` in `CompiledProgram` so the backend does not lower a second
-    // time (touches the `Backend` contract).
+    /// statement set. Verification, ownership, artifact emission, and backend
+    /// execution all consume the one cached `MirProgram` lowered here.
     pub fn compile_linked(&self, linked: Vec<Stmt>) -> Result<CompiledProgram, CompilerError> {
         // Public `Tuple[*Ts]` is a nominal variadic struct, but the element
         // types of a bare `Tuple(exprs...)` or tuple display are semantic
@@ -270,15 +284,21 @@ impl Compiler {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }
         crate::analysis::check_ownership_program(&mir).map_err(CompilerError::Ownership)?;
-        Ok(CompiledProgram { checked })
+        Ok(CompiledProgram { checked, mir })
     }
     /// Execute an ownership-verified program using the configured backend.
     pub fn execute(&self, program: &CompiledProgram) -> Result<Execution, CompilerError> {
         let mut backend = self.backend.instantiate().map_err(|unimplemented| {
             CompilerError::Runtime(RuntimeError::Unsupported(unimplemented))
         })?;
+        let mut mir = program.drop_elaborated_mir();
+        let findings = crate::mir::verify::verify(&mir);
+        mir.invariant_errors.extend(findings);
+        if !mir.invariant_errors.is_empty() {
+            return Err(CompilerError::Verify(mir.invariant_errors));
+        }
         backend
-            .run(program.checked())
+            .run_elaborated(mir)
             .map_err(CompilerError::Runtime)?;
         Ok(Execution {
             output: backend.output(),

@@ -856,7 +856,7 @@ pub struct MirBlock {
     pub term: MirTerm,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MirFunction {
     pub blocks: Vec<MirBlock>,
     pub n_regs: u32,
@@ -907,5 +907,5 @@ pub struct MirFunction {
 
 /// Maps each generated register to its source span and (if it names one) the
 /// origin variable — so borrow-checker diagnostics can point at real code.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SpanTable(pub HashMap<u32 /*reg*/, (SourceSpan, Option<VarId>)>);

@@ -750,3 +750,17 @@ fn unpack_into_place_faces_the_store_outward_guard() {
     let message = format!("{error}");
     assert!(message.contains("implicitly copyable"), "{message}");
 }
+
+#[test]
+fn compiled_program_retains_and_emits_its_verified_mir() {
+    let compiler = Compiler::default();
+    let compiled = compiler
+        .compile_unlinked("def main():\n    print(42)\n")
+        .expect("compile");
+    assert!(compiled.mir().invariant_errors.is_empty());
+    let first = compiled.emit_mir().expect("emit MIR");
+    let second = compiled.emit_mir().expect("repeat emission");
+    assert_eq!(first, second);
+    assert!(first.ends_with('\n'));
+    assert!(!first.ends_with("\n\n"));
+}

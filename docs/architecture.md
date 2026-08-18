@@ -43,15 +43,16 @@ let program = compiler.compile_path(path)?;
 let execution = compiler.execute(&program)?;
 ```
 
-`CompiledProgram` is a private-field wrapper around `CheckedProgram` produced by
-the driver only after linking, comptime elaboration, semantic checking, and
-ownership analysis succeed. The wrapper records pipeline provenance rather than
-adding a second semantic representation. `CompilerError` identifies the failing
-stage. Individual stage functions remain public for tests and diagnostic tools;
-a stage-composed execution still cannot bypass the ownership contract, because
-`VmBackend::run` itself re-checks pre-drop ownership before executing (the
-composition remains non-authoritative only for the whole-program
-discovery/specialization handoff).
+`CompiledProgram` privately retains both the `CheckedProgram` and the single
+ownership-verified, pre-drop `MirProgram` lowered by the driver. Execution and
+`CompiledProgram::emit_mir` clone that cached MIR, apply the same drop
+elaboration and post-drop verification, then respectively hand it to
+`Backend::run_elaborated` or canonical text serialization. Production backends
+therefore never re-lower checked syntax. `CompilerError` identifies the failing
+stage. Individual stage functions and `Backend::run(&CheckedProgram)` remain
+public compatibility seams for tests and diagnostic tools; that stage-composed
+entry re-checks pre-drop ownership but is non-authoritative for whole-program
+discovery and specialization.
 
 The design is an hourglass:
 
@@ -102,10 +103,11 @@ parity targets single-threaded CPU language semantics and excludes GPU,
 concurrency/parallelism, distributed execution, Python interoperability, and any
 requirement that MLIR be the compiler's internal IR layer. The register VM is
 the executable specification. A versioned textual MIR/VM assembly form is the
-next representation boundary; the prioritized native backends are LLVM and the
-MLIR-family frameworks — MLIR and the Rust-native, MLIR-inspired
-[Pliron](https://github.com/pliron-org/pliron) (its LLVM dialect emits LLVM IR) —
-with Cranelift and eBPF as lower-priority options that follow them.
+next representation boundary; the prioritized native backends are the
+Rust-native, MLIR-inspired [Pliron](https://github.com/pliron-org/pliron) (its
+LLVM dialect emits LLVM IR; `docs/pliron_plan.md` is the staged adoption plan)
+and Cranelift, with a C or C++ source backend as a possible addition. Direct
+LLVM or MLIR lowering and eBPF are no longer prioritized.
 
 ### Source Module Boundaries
 
@@ -2831,8 +2833,10 @@ with `Backend::run_elaborated` (the CLI `exec` subcommand's engine): the
 loaded program executes exactly as serialized, with no re-elaboration,
 re-verification, or ownership re-analysis.
 
-The compiler exposes a human-readable, flattened, versioned serialization
-of verified MIR and the metadata needed to execute it. The format must support:
+The compiler exposes a textual, flattened, versioned serialization of
+verified MIR and the metadata needed to execute it. The format is built for
+determinism and tooling rather than human reading — even trivial programs
+serialize to long artifacts. It must support:
 
 - deterministic printing suitable for review and golden tests (implemented)
 - parsing with source-located diagnostics (implemented for the full schema)
@@ -2847,7 +2851,13 @@ of verified MIR and the metadata needed to execute it. The format must support:
   drop-elaborated program as-is — re-running `elaborate_drops_program` is
   unsound because elaboration is not idempotent, and the pre-drop ownership
   analysis has no meaning post-drop; verify-at-load is the consumer gate)
-- consumption by future native backends (LLVM and the MLIR-family targets first)
+- consumption by future native backends (Pliron and Cranelift first)
+
+`mojito emit-mir [FILE]` exposes the producer boundary for files or standard
+input. It prints only the canonical post-drop artifact accepted by `mojito
+exec`, so the two commands compose directly in a pipe. Every shared runnable
+conformance case executes both from the cached compiler MIR and after textual
+serialization/loading; output and observable bindings must agree.
 
 This is a Mojito format, not a generic interchange standard. The in-memory MIR
 remains authoritative; textual assembly is its stable inspection and artifact
@@ -2867,9 +2877,8 @@ The main pressure points are:
 - MIR is fully register-typed and semantically verified; checked capture and
   binder facts cross HIR without source-name/span reconstruction. The remaining
   compatibility boundaries are name-based callee fallbacks kept only for the
-  unchecked phase-test path, nominal callable-conformance facts in
-  `MirDeclarations`, and caching the verified `MirProgram` in `CompiledProgram`
-  to avoid the compiler/VM double lowering
+  unchecked phase-test path and nominal callable-conformance facts in
+  `MirDeclarations`
 - the backend-ready MIR checkpoint is closed: abstract erased-dispatch
   requirements live in typed call-local contracts, callable-value requirements
   live in their stored `Ty::Func`/`Ty::GenericFunc` contracts, variadic

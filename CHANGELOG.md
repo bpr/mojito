@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Compiler/test textual-MIR integration (roadmap §3): `CompiledProgram` caches
+  the ownership-verified MIR lowered by the authoritative pipeline, and both
+  execution and `CompiledProgram::emit_mir` consume its shared post-drop form.
+  `mojito emit-mir [FILE]` writes that canonical executable artifact to stdout
+  and composes directly with `mojito exec -`. Every shared runnable conformance
+  case now pins byte-stable assembly plus direct/artifact output and binding
+  equivalence.
+
 - VM artifact execution (roadmap §3): `mojito exec [FILE]` runs a verified
   textual MIR artifact (file or stdin) directly on the register VM.
   `artifact::run_artifact` composes the `load_artifact` gate (parse plus the
@@ -146,6 +154,19 @@ to evolve under the `0.x` compatibility rules.
   source mutation during iteration rejects.
 
 ### Changed
+
+- The prioritized native-backend direction is now Pliron first (staged per
+  `docs/pliron_plan.md`), then Cranelift, with a C or C++ source backend as a
+  possible addition; direct LLVM or MLIR lowering and eBPF are no longer
+  prioritized. The textual MIR/VM assembly is also no longer described as
+  human-readable — it is a deterministic tooling format whose output is long
+  even for trivial programs.
+
+- The README is now a focused ~110-line landing page (intro, goals, pipeline,
+  build, quick start, documentation links). Its former CLI/fixture/conformance/
+  library-API material moved to `docs/usage.md`, and the status snapshot, Mojo
+  gap inventory, semantics tour, and development direction moved to
+  `docs/overview.md`; no content was dropped.
 
 - `Allocation.unsafe_ptr()` is tracked: it returns the Allocation's
   `element` interior-generation origin instead of `MutUntrackedOrigin`, so

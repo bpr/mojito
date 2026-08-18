@@ -1,0 +1,301 @@
+# Project Overview
+
+A narrative tour of what Mojito implements today, where it deliberately falls
+short of Mojo, and where it is headed. The authoritative support matrix is
+[the feature matrix](features.md); pipeline invariants live in
+[the architecture guide](architecture.md). For building and running, see
+[usage](usage.md).
+
+## Status
+
+See [the authoritative feature matrix](features.md) for the distinction
+between executable, checked-only, parse-only, and unsupported features. The list
+below is only a high-level snapshot.
+
+mojito currently has:
+
+- a lexer and Pratt parser for a useful slice of Mojo-like syntax
+- a type checker with structs, functions, methods, overload sets, traits,
+  generics, value parameters, builtin scalar types, lists, tuples, strings, and
+  SIMD-like values
+- source modules and packages with lexical, dotted, relative, qualified, and
+  aliased imports; dotted-prefix namespaces; ordinary namespace directories;
+  source-package precedence; explicit `__init__.mojo` re-exports; isolated linked
+  identities; configurable roots; and bundled standard-library lookup
+- compile-time elaboration for `comptime if`, `comptime for`, richer compile-time
+  values, and fuel-bounded pure-function CTFE through the MIR/VM path
+- checked callable contracts and values: dependent `F: def(...)` bounds,
+  generic anonymous `def[...]` contracts, symbolic defaults for
+  `thin`/`capturing[origins]` callable-value parameters, residual callable
+  specialization, explicit-Origin overload/generic/pack selection, nominal
+  callable structs, and read/write capture effects carried into loan analysis
+- arbitrary-precision `IntLiteral` and exact finite `FloatLiteral` evaluation,
+  with checked, explicit MIR materialization into wrapping integer and rounded
+  floating runtime scalars
+- a HIR control-flow graph lowering pass
+- a MIR/A-normal lowering pass with explicit registers, variables, places, moves,
+  drops, calls, method calls, exceptions, and loop control
+- complete checked contracts for method-dispatched nominal subscripts,
+  including raising/reference results and one-evaluation augmented assignment
+  through either value-getter/setter or mutable-reference-getter paths
+- ownership analysis for `^` moves, including use-after-move, conditional moves,
+  double moves, partial field moves, and reinitialization
+- borrow checking for ordinary call arguments, including mutable/shared aliasing
+  checks and place-sensitive field borrowing
+- liveness-driven ASAP destruction via `__deinit__(deinit self)`
+- a register VM backend used as the runtime implementation
+- self-hosted standard-library proofs in `stdlib/`, including generic
+  `Optional`, `List`, `Set`, `Dict`, `Range`, heterogeneous `Tuple`, and
+  keyword-owning `StringDict` implementations
+- basic collection/protocol traits such as `Iterable`, `Iterator`, `Sized`,
+  `Equatable`, and `Comparable` where the current self-hosted library needs
+  them
+- fixture-based tests for accepted programs, parse errors, type errors, runtime
+  errors, ownership errors, and ownership-ok cases
+
+This project is intentionally small and direct. The compiler is not wrapped in a
+large framework.
+
+## Not Mojo Proper
+
+mojito is much smaller than real Mojo. Its gaps fall into two different
+categories: language subset work that belongs on the near-term roadmap, and
+larger infrastructure work that may or may not ever be part of this project.
+
+Language deficiencies:
+
+- no complete Mojo standard library; a small self-hosted `stdlib/` exists, but it
+  is a proof of direction, not a compatible replacement
+- no full trait system; nominal conformance, common bounds, receiver conventions,
+  associated compile-time facts, refinement, and statically materialized default
+  methods run, but the complete Mojo protocol and constraint libraries remain
+  incomplete
+- no full parametric polymorphism story comparable to Mojo; generics, value
+  parameters, bound-checked heterogeneous packs with per-index concrete types,
+  dependent parameters, recursive lexical specialization, one-segment linear
+  pack forwarding, dependent callable bounds, callable-value parameters, and
+  contextual/origin-specialized callable values cover the current library, but
+  not the full language. Callable defaults and `def[...]` contracts are
+  represented symbolically, while specialization retains runtime callable
+  arguments instead of admitting functions or closures into `CtValue`; arbitrary
+  callable execution during CTFE is not supported
+- overload resolution ranks conversion count, variadic use, signature length,
+  and generic ties across functions, methods, and constructors; checked
+  user-defined `@implicit` constructors participate in that ranking, while the
+  full Mojo specialization lattice remains open
+- no complete effect system; direct, method, overloaded, indirect callable,
+  trait-requirement, and bounded-dispatch `raises` propagation is checked,
+  including typed and parametric errors and `Never`. Concrete closure
+  environments also contribute read/write owner effects to persistent-loan
+  analysis, but suspension and fully general unwind effects remain open
+- no full exception/unwind model beyond the VM-supported subset
+- no complete model of Mojo's ownership, origins, and lifetime semantics
+- non-escaping nested functions use current `{imm ...}`/`{mut ...}`/`{ref ...}`/
+  `{var ...}` capture lists and lift recursively through lexical scopes while
+  preserving sibling calls, generics, callable environment origins, effects,
+  reference returns, and call conventions. Explicit `capturing[origins]`
+  contracts preserve the environment across non-escaping callable parameters;
+  accepting a stateful closure through an unqualified `def(...)` and captured
+  nested Origin specialization are pinned-nightly Mojito extensions. The removed
+  `unified {...}` spelling is accepted only as an explicit compatibility
+  extension, and escaping closures remain intentionally rejected
+- no self-hosted `String`; string literals and runtime strings still rely on VM
+  support while storage, Unicode, slicing, and literal interop are designed
+- public heterogeneous `Tuple` is a nominal variadic-generic library struct,
+  but its field uses a compiler-private heterogeneous pack carrier; that carrier
+  is also the ABI for specialized `*args` and is not a source-level collection
+- no complete support for every Mojo expression form; some advanced forms still
+  parse before they are fully checked or executed
+
+Infrastructure and backend boundaries:
+
+- GPU, concurrency/parallelism, distributed execution, Python interoperability,
+  and MLIR are intentionally outside first-pass parity
+- no production optimizer
+- no native code generation yet (Pliron, Cranelift, or a C/C++ source backend)
+- no real SIMD lowering to machine vector instructions; SIMD values are modeled
+  at the VM value level
+- no performance claim beyond "useful as a reference implementation"
+
+The language deficiencies are the ones most likely to shrink as mojito grows.
+The infrastructure deficiencies are larger bets: interesting, but not necessary
+for mojito to be useful as a model implementation of ownership, borrowing,
+ASAP destruction, and a register-VM compiler.
+
+The goal is honest subset semantics. A feature is usually parsed before it is
+fully supported, and unsupported semantics should fail cleanly instead of
+producing a wrong answer.
+
+## Pipeline
+
+The compiler pipeline is:
+
+```text
+source
+  -> lex
+  -> parse
+  -> module link
+  -> comptime elaboration
+  -> check
+  -> HIR CFG
+  -> MIR
+  -> ownership / borrow / liveness analysis
+  -> drop elaboration
+  -> register VM
+```
+
+The `Compiler` driver owns this ordering for normal whole-program use and
+returns a `CompiledProgram` only after all compile stages succeed. Individual
+stage APIs remain available for syntax tools and compiler development.
+
+The major source directories are:
+
+- `src/lexer.rs`, `src/parser.rs`, `src/ast.rs`: tokens, AST, Pratt parser, and
+  statement parsing
+- `src/module.rs`: filesystem-backed module loading/linking
+- `src/comptime.rs`: compile-time elaboration and MIR/VM-backed CTFE support
+- `src/checker.rs`: type checking, trait checks, overload resolution, call
+  matching, value-parameter checks, and borrow checks
+- `src/hir/mod.rs`: control-flow graph lowering
+- `src/mir/mod.rs`: flattened register/place MIR
+- `src/analysis/mod.rs`: move analysis, liveness, and drop insertion
+- `src/backend/vm.rs`: register VM execution
+- `src/runtime/mod.rs`: shared runtime values and builtin operations
+- `stdlib/`: self-hosted mojito library types
+- `assets/`: executable and negative test fixtures
+- `tests/`: parser, checker, HIR, MIR, VM, ownership, and drop tests
+
+For code navigation and responsibility ownership, see the
+[symbol-level architecture map](symbol-map.md). For the complete pipeline,
+see [the architecture guide](architecture.md).
+
+## Ownership, Borrowing, And Destruction
+
+mojito treats `^` as an ownership transfer. Moving a value leaves the source
+uninitialized. Later use is rejected by analysis before the VM runs.
+
+Examples of modeled behavior:
+
+- `var b = a^` transfers ownership from `a` to `b`
+- moving the same value twice is rejected
+- moving a value on one branch and using it after the merge is rejected
+- partial field moves are tracked separately from sibling fields
+- assigning back to a moved field reinitializes it
+- `var` parameters consume their argument; removed `owned` syntax is rejected
+- `mut` and explicitly mutable `ref[origin]` parameters borrow and can write
+  through caller frame/slot places on normal and raising paths, including calls
+  inside `try`; bare `ref` propagates the caller's mutability
+- conflicting borrows in the same call are rejected
+- values with `__deinit__(deinit self)` are destroyed at last use, not scope end
+- moved values are dropped once, at their new owner
+- structs drop their own destructor first, then fields in reverse declaration
+  order
+
+This is the part of the project that makes it useful as a model implementation:
+it shows how systems-language semantics can be enforced as compiler analyses
+over a small MIR instead of being scattered through an interpreter.
+
+## Comptime
+
+`comptime` is implemented as an elaboration phase before runtime checking and
+MIR lowering.
+
+Supported pieces include:
+
+- `comptime NAME = expr` constants
+- `comptime if` branch selection
+- `comptime for` over `range` and compile-time tuple/list values
+- richer compile-time values such as integers, booleans, strings, tuples, and
+  lists, plus compile-time-only type facts
+- small pure-function CTFE, implemented by cloning/restricting helper bodies,
+  folding compile-time-only facts, and executing the result through MIR/VM with
+  fuel
+- materialization of compile-time values into ordinary runtime code where the
+  subset supports it
+
+This is intentionally still a small model of Mojo's comptime system. It is
+powerful enough to support the self-hosted library experiments, but not a full
+replacement for Mojo's compile-time evaluation and specialization machinery.
+
+## Overloading And Dispatch
+
+mojito supports same-name top-level functions, methods, and constructors as
+overload sets. The checker chooses a single best candidate at each call site:
+
+- distinct arities work directly
+- same-arity overloads work when argument types make one candidate uniquely best
+- exact type matches beat candidates that require coercion
+- ambiguous coercion cases are rejected at type-check time
+
+The selected callee is recorded as a checker fact and preserved through MIR
+lowering. Overloaded definitions lower to stable signature-based names such as
+`choose$ov$Int` or `Box.__init__$ov$String`; the source still says
+`choose(x)` or `Box(x)`.
+
+This same mechanism underpins ordinary function calls, method calls, dunder
+operator dispatch, subscript dispatch, and constructor selection. It is not yet a
+complete implementation of Mojo's overload ranking, but it is enough for the
+numeric and container patterns that need ordinary type-directed overloads.
+
+## Self-Hosted Standard Library
+
+mojito includes a small `stdlib/` written in mojito itself. These are
+ordinary `.mojo` modules imported by programs and executed by the VM.
+
+Current self-hosted proof types include:
+
+- `Optional[T]`
+- `List[T]`
+- `Set[T]`
+- `Dict[K, V]`
+- `HashDict[K, V]`
+- `HashSet[T]`
+- `Range`
+- `Tuple[*Ts]`
+- `StringDict[V]`
+
+The point is not that these are production collections. The point is that user
+structs now have enough language hooks to behave like real value types:
+
+- dunder operator and builtin dispatch
+- subscript read/write and augmented assignment with accessor-specific effects
+- type-directed function, method, and constructor overloading
+- `__len__`
+- user iteration
+- `__init__(out self)`
+- `__copyinit__`
+- `__moveinit__`
+- `__deinit__(deinit self)`
+- `UnsafePointer[T]`
+- modules
+- comptime helpers
+
+## Development Direction
+
+Near-term work:
+
+- continue tightening Mojo compatibility within the chosen subset
+- deepen self-hosted `stdlib/` coverage while deleting or shrinking Rust
+  intrinsics where practical
+- design self-hosted `String`
+- keep the private heterogeneous pack carrier smaller than the public
+  variadic-generic `Tuple` API
+- improve diagnostics and source spans
+- expand trait and generic support
+- document the architecture in `docs/architecture.md`
+- add more VM disassembly/introspection tools
+- keep growing fixture coverage from real Mojo examples
+
+Longer-term possible directions:
+
+- optional compact bytecode serialization derived from the same schema
+- Pliron as the primary native backend (staged per `docs/pliron_plan.md`),
+  then Cranelift, with a C or C++ source backend as a possible addition
+- richer borrow checking and lifetime diagnostics
+- better specialization of value-parameterized code
+- deeper comptime specialization and generated declarations
+- an explicitly documented unsafe/unsupported boundary
+
+Direct LLVM or MLIR lowering and eBPF are no longer prioritized backend
+directions. GPU, Python interoperability, and parallel/distributed execution
+are not goals for the first parity pass.

@@ -8,7 +8,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 
 | Stage | Owning symbols | Output / invariant |
 |---|---|---|
-| Driver | `compiler::Compiler::{compile_path, compile_source, execute}` | The only whole-program stage ordering. |
+| Driver | `compiler::Compiler::{compile_path, compile_source, execute}`, `compiler::CompiledProgram::{mir, emit_mir}` | The only whole-program stage ordering; caches ownership-verified MIR for backend execution and canonical artifact emission. |
 | Lex | `lexer::Lexer`, crate-level `lex` | Spanned token stream. |
 | Parse | `parser::Parser::{parse_program, parse_program_diagnostic}`, crate-level `parse` | Spanned AST; diagnostic partial AST is quarantined. |
 | Link | `module::{link_with_options, link_source_with_options, LinkOptions, ModuleError}` | Dependency-first flat program with `SourceSpan` module identity, explicit-binding collision checks, canonical self-import checks, and provisional exports for mutual cycles. `builtin_module_exports` gives the docstring-only `std.traits`/`std.origin` homes their builtin identity exports. |
@@ -20,7 +20,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Verify | `mir::verify::verify` | Semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. |
 | Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR. |
 | Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar` operations; re-verified before execution. |
-| Execute | `backend::Backend::{run, run_elaborated}`, `backend::vm::VmBackend` | Output and bindings from verified MIR; `run_elaborated` executes an already drop-elaborated program (the artifact entry) without re-elaboration or ownership re-analysis. |
+| Execute | `compiler::Compiler::execute`, `backend::Backend::{run, run_elaborated}`, `backend::vm::VmBackend` | Production execution uses the cached compiler MIR and shared drop-elaboration seam; `run_elaborated` executes its result or a loaded artifact without rewriting it. |
 | Artifacts | `artifact::{run_artifact, ArtifactRunError}` | Load-then-execute composition for textual MIR artifacts: the `load_artifact` gate plus `Backend::run_elaborated`, shared by the CLI `exec` subcommand and tests. |
 
 ## Cross-Phase Contracts
