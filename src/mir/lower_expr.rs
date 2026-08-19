@@ -1127,6 +1127,27 @@ impl Flatten<'_> {
                 if let Some(r) = self.try_simd_call(e, args) {
                     return r;
                 }
+                // `objs[0](3)` / `grid[i, j](x)`: the checker re-dispatched
+                // these value brackets as subscript-then-indirect-call, so the
+                // brackets are runtime indices, never compile-time parameters
+                // (and never the named-local callable path below).
+                if let Some(plan) = self.element_invocation(e) {
+                    let indices: Vec<&Expr> = param_args
+                        .iter()
+                        .filter_map(|argument| match argument {
+                            ParamArg::Value(value) => Some(value),
+                            _ => None,
+                        })
+                        .collect();
+                    let receiver = Expr {
+                        kind: ExprKind::Identifier(name.clone()),
+                        span: e.span,
+                        source: e.source.clone(),
+                        syntax_id: crate::token::SyntaxId::fresh(),
+                    };
+                    return self
+                        .lower_element_invocation(e, &receiver, plan, &indices, args, kwargs);
+                }
                 // A call to a nested `def` (a closure, called by name in scope):
                 // rewrite to its lifted function, prepending the captured enclosing
                 // locals as leading arguments (passed as places, so the `mut`
@@ -1509,6 +1530,19 @@ impl Flatten<'_> {
                         _ => unreachable!("filtered Variant operation"),
                     }
                 }
+                // `a.b[i](x)`: the member-base element call re-dispatched by
+                // the checker — the callee expression is the subscripted
+                // receiver, and the brackets are runtime indices.
+                if let Some(plan) = self.element_invocation(e) {
+                    let indices: Vec<&Expr> = param_args
+                        .iter()
+                        .filter_map(|argument| match argument {
+                            ParamArg::Value(value) => Some(value),
+                            _ => None,
+                        })
+                        .collect();
+                    return self.lower_element_invocation(e, callee, plan, &indices, args, kwargs);
+                }
                 if let Some(param_decls) = self.checked_adjustments(e).into_iter().find_map(
                     |adjustment| match adjustment {
                         crate::SemanticAdjustment::ParameterizedMethodCall { param_decls } => {
@@ -1582,41 +1616,20 @@ impl Flatten<'_> {
                     callee_place = place.is_typed().then_some(place);
                 }
                 let param_arg_regs = self.param_arg_regs(param_args);
-                let param_decls = callable_ty
-                    .as_ref()
-                    .map(generic_callable_param_decls)
-                    .unwrap_or_default();
-                let (arg_regs, arg_places) = self.lower_call_arguments(args);
-                let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
-                let dest = self.fresh(span(e), None);
-                self.emit_call_invalidations(e, args, kwargs);
-                let capture_accesses = self.checked_call_capture_accesses(e);
-                let (instantiated_contract, instantiated_args) = self
-                    .instantiated_callable_contract(e)
-                    .map_or((None, Vec::new()), |(contract, arguments)| {
-                        (Some(contract), arguments)
-                    });
-                let transfer_arg_places = arg_places.clone();
-                let transfer_recv_place = callee_place.clone();
-                self.emit(MirInstr::CallIndirect {
-                    dest,
+                let resolved = self.resolved_callable(e);
+                let raises = self.checked_raises(e);
+                self.emit_indirect_invocation(
+                    e,
                     callee,
-                    resolved: self.resolved_callable(e),
-                    raises: self.checked_raises(e),
-                    args: arg_regs,
-                    kwargs: kw_regs,
                     callee_place,
-                    arg_places,
-                    kwarg_places,
-                    capture_accesses,
+                    callable_ty.as_ref(),
+                    resolved,
+                    raises,
                     param_arg_regs,
-                    param_decls,
-                    instantiated_contract,
-                    instantiated_args,
-                });
-                self.emit_nested_closure_argument_keepalives(args, kwargs);
-                self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
-                dest
+                    args,
+                    kwargs,
+                    true,
+                )
             }
             ExprKind::MethodCall {
                 object,
@@ -1716,37 +1729,20 @@ impl Flatten<'_> {
                         place.project(Proj::Field(method.clone()), callable.clone());
                         place
                     });
-                    let param_decls = generic_callable_param_decls(&callable);
-                    let (arg_regs, arg_places) = self.lower_call_arguments(args);
-                    let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
-                    let dest = self.fresh(span(e), None);
-                    self.emit_call_invalidations(e, args, kwargs);
-                    let capture_accesses = self.checked_call_capture_accesses(e);
-                    let transfer_arg_places = arg_places.clone();
-                    let transfer_recv_place = callee_place.clone();
-                    self.emit(MirInstr::CallIndirect {
-                        dest,
-                        callee,
-                        resolved: self.resolved_callable(e),
-                        raises: self.checked_raises(e),
-                        args: arg_regs,
-                        kwargs: kw_regs,
-                        callee_place,
-                        arg_places,
-                        kwarg_places,
-                        capture_accesses,
-                        param_arg_regs: Vec::new(),
-                        param_decls,
-                        instantiated_contract: None,
-                        instantiated_args: Vec::new(),
-                    });
-                    self.emit_nested_closure_argument_keepalives(args, kwargs);
-                    self.install_call_transfers(
+                    let resolved = self.resolved_callable(e);
+                    let raises = self.checked_raises(e);
+                    return self.emit_indirect_invocation(
                         e,
-                        transfer_recv_place.as_ref(),
-                        &transfer_arg_places,
+                        callee,
+                        callee_place,
+                        Some(&callable),
+                        resolved,
+                        raises,
+                        Vec::new(),
+                        args,
+                        kwargs,
+                        true,
                     );
-                    return dest;
                 }
                 let pointer_storage = self.checked_adjustments(e).into_iter().find_map(
                     |adjustment| match adjustment {
@@ -2796,6 +2792,164 @@ impl Flatten<'_> {
                 dest
             }
         }
+    }
+
+    /// Emit the shared indirect-call tail: argument lowering, call-boundary
+    /// invalidations, and the `CallIndirect` with its transfer replay. The
+    /// callee register/place and the dispatch metadata are the caller's; when
+    /// `call_site_invalidations` is false the call-span invalidation facts are
+    /// the caller's responsibility (the element-call channel fires them before
+    /// materializing its reference handle, so a generation-replacing getter
+    /// retires the previous generation rather than the one it establishes).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_indirect_invocation(
+        &mut self,
+        e: &Expr,
+        callee: Reg,
+        callee_place: Option<MirPlace>,
+        callable_ty: Option<&Ty>,
+        resolved: Option<String>,
+        raises: Option<Ty>,
+        param_arg_regs: Vec<MirParamArg>,
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+        call_site_invalidations: bool,
+    ) -> Reg {
+        let param_decls = callable_ty
+            .map(generic_callable_param_decls)
+            .unwrap_or_default();
+        let (arg_regs, arg_places) = self.lower_call_arguments(args);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
+        let dest = self.fresh(span(e), None);
+        if call_site_invalidations {
+            self.emit_call_invalidations(e, args, kwargs);
+        } else {
+            for argument in args {
+                self.emit_interior_invalidations(argument, None);
+            }
+            for argument in kwargs {
+                self.emit_interior_invalidations(&argument.value, None);
+            }
+        }
+        let capture_accesses = self.checked_call_capture_accesses(e);
+        let (instantiated_contract, instantiated_args) = self
+            .instantiated_callable_contract(e)
+            .map_or((None, Vec::new()), |(contract, arguments)| {
+                (Some(contract), arguments)
+            });
+        let transfer_arg_places = arg_places.clone();
+        let transfer_recv_place = callee_place.clone();
+        self.emit(MirInstr::CallIndirect {
+            dest,
+            callee,
+            resolved,
+            raises,
+            args: arg_regs,
+            kwargs: kw_regs,
+            callee_place,
+            arg_places,
+            kwarg_places,
+            capture_accesses,
+            param_arg_regs,
+            param_decls,
+            instantiated_contract,
+            instantiated_args,
+        });
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
+        dest
+    }
+
+    /// Lower the bare element-call spelling (`objs[0](3)`, `a.b[i](x)`,
+    /// `grid[i, j](x)`): read the element through the checker-selected
+    /// `__getitem__` contract, then dispatch the element value through the
+    /// shared indirect-call emission. The receiver's call-span invalidations
+    /// fire before any reference materialization so a generation-replacing
+    /// getter (a Dict lookup) retires the previous generation, not the one
+    /// this call establishes.
+    fn lower_element_invocation(
+        &mut self,
+        e: &Expr,
+        receiver: &Expr,
+        plan: crate::checked::CheckedElementInvocation,
+        // Original checked-tree nodes: MIR fact lookup is pointer-keyed, so a
+        // cloned index subtree would lower without its recorded facts (caller
+        // places, conversions, invalidations).
+        indices: &[&Expr],
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+    ) -> Reg {
+        let (base, base_place) = self.lower_call_receiver(receiver);
+        let mut index_regs = Vec::with_capacity(indices.len());
+        let mut index_places = Vec::with_capacity(indices.len());
+        let mut sources = Vec::with_capacity(indices.len());
+        for index in indices {
+            let (register, place) = self.lower_call_argument(index);
+            sources.push((index.source_span(), register));
+            index_regs.push(register);
+            index_places.push(place);
+        }
+        for index in indices {
+            self.emit_interior_invalidations(index, None);
+        }
+        self.emit_interior_invalidations(e, None);
+        let reference_result = plan.getter.reference_result.clone();
+        let call = Some(self.mir_subscript_call_contract(plan.getter, &sources));
+        let element_ty = call
+            .as_ref()
+            .map(|contract| contract.result_ty.clone())
+            .expect("element-call plan carries the getter contract");
+        let element = self.fresh_typed(e.source_span(), None, element_ty);
+        if let [index] = index_regs.as_slice() {
+            self.emit(MirInstr::Index {
+                dest: element,
+                base,
+                index: *index,
+                base_place,
+                index_place: index_places.pop().flatten(),
+                call,
+                intrinsic: None,
+            });
+        } else {
+            self.emit(MirInstr::MultiIndex {
+                dest: element,
+                object: base,
+                args: index_regs.into_iter().map(MirSubscriptArg::Index).collect(),
+                object_place: base_place,
+                arg_places: index_places,
+                kwargs: Vec::new(),
+                kwarg_places: Vec::new(),
+                call,
+            });
+        }
+        let (callee, callee_place) = match reference_result {
+            Some(reference) => {
+                let place = self.materialize_call_reference_place(e, element, reference);
+                let value = self.fresh_typed(
+                    e.source_span(),
+                    Some(place.root),
+                    place.ty.clone().unwrap_or(Ty::Error),
+                );
+                self.emit(MirInstr::LoadPlace {
+                    dest: value,
+                    place: place.clone(),
+                });
+                (value, Some(place))
+            }
+            None => (element, None),
+        };
+        self.emit_indirect_invocation(
+            e,
+            callee,
+            callee_place,
+            Some(&plan.callable),
+            plan.target,
+            plan.raises,
+            Vec::new(),
+            args,
+            kwargs,
+            false,
+        )
     }
 
     /// If `name(...)` is a SIMD construction — `SIMD[DType.<dt>, width](elems)` or

@@ -104,12 +104,12 @@ Rust library API.
   phase design
 - [`docs/symbol-map.md`](docs/symbol-map.md) — symbol-level ownership and
   navigation map
-- [`grammar.md`](grammar.md) — accepted surface syntax
+- [`docs/grammar.md`](docs/grammar.md) — accepted surface syntax
 - [`docs/vm-instruction-set.md`](docs/vm-instruction-set.md) — VM transition
   and instruction model
 - [`docs/mir-text-format.md`](docs/mir-text-format.md) — textual MIR artifact
   format
-- [`roadmap.md`](roadmap.md) — current direction and pending work
+- [`docs/roadmap.md`](docs/roadmap.md) — current direction and pending work
 - [`assets/README.md`](assets/README.md) — test fixture rules
 - [`CHANGELOG.md`](CHANGELOG.md) — user-visible history
 

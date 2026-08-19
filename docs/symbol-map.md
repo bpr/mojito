@@ -222,7 +222,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 | If you change… | Start at… | Also inspect… |
 |---|---|---|
-| Syntax or AST shape | [`grammar.md`](../grammar.md), `parser.rs`, `ast.rs` | Parser tests, `frontend.md`, feature matrix. |
+| Syntax or AST shape | [`grammar.md`](grammar.md), `parser.rs`, `ast.rs` | Parser tests, `frontend.md`, feature matrix. |
 | Argument binding | `call.rs` | Checker/VM adapters and call-parity tests. |
 | Overload identity | `symbol.rs` | Checker selection, MIR declarations, symbol/rejection tests. |
 | Type rules | `checker.rs` or focused checker child | `CheckedProgram`, negative checker tests. |

@@ -1858,3 +1858,17 @@ fn span_iteration_rejects_source_mutation() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn bare_element_calls_match_the_parenthesized_spelling() {
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var items: List[Doubler]\n\nstruct Grid(Copyable):\n    var cells: List[Doubler]\n    def __init__(out self, cells: List[Doubler]):\n        self.cells = cells\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.cells[row * 2 + column]\n\ndef main():\n    var objs: List[Doubler] = [Doubler(2)]\n    print(objs[0](3))\n    print((objs[0])(3))\n    var h: Holder = Holder([Doubler(3)])\n    print(h.items[0](5))\n    print((h.items[0])(5))\n    var g: Grid = Grid([Doubler(1), Doubler(2), Doubler(3), Doubler(4)])\n    print(g[1, 1](10))\n    print((g[1, 1])(10))\n";
+    let output = run_compiled(source).expect("element calls execute");
+    assert_eq!(output, "6\n6\n15\n15\n40\n40\n");
+}
+
+#[test]
+fn bare_element_call_raising_getter_propagates_through_try() {
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\nstruct Bank(Copyable):\n    var items: List[Doubler]\n    def __init__(out self, items: List[Doubler]):\n        self.items = items\n    def __getitem__(self, index: Int) raises -> Doubler:\n        if index >= len(self.items):\n            raise Error(\"bank index out of range\")\n        return self.items[index]\n\ndef main():\n    var bank: Bank = Bank([Doubler(2)])\n    try:\n        print(bank[7](3))\n    except e:\n        print(\"caught: bank getter raised\")\n    try:\n        print(bank[0](4))\n    except e:\n        print(\"unreachable\")\n";
+    let output = run_compiled(source).expect("raising element call executes");
+    assert_eq!(output, "caught: bank getter raised\n8\n");
+}

@@ -533,6 +533,38 @@ impl Checker {
                 }),
             };
         }
+        // `objs[0](3)` / `grid[i, j](x)`: value brackets over an indexable
+        // runtime binding are a subscript, not compile-time parameter
+        // application — current Mojo dispatches the element call. A struct
+        // carrying its own callable contract keeps parameter application
+        // (specialized callable values), and non-value bracket forms keep the
+        // parenthesization hint in `infer_callable_ty`.
+        if let Ty::Struct(struct_name, _) = &ty
+            && !param_args.is_empty()
+            && param_args
+                .iter()
+                .all(|argument| matches!(argument, crate::ast::ParamArg::Value(_)))
+            && self.declared_callable_contract(&ty).is_none()
+            && self
+                .structs
+                .get(struct_name)
+                .is_some_and(|info| info.methods.contains_key("__getitem__"))
+        {
+            let indices: Vec<Expr> = param_args
+                .iter()
+                .filter_map(|argument| match argument {
+                    crate::ast::ParamArg::Value(value) => Some(value.clone()),
+                    _ => None,
+                })
+                .collect();
+            let receiver = Expr {
+                kind: ExprKind::Identifier(name.to_string()),
+                span: span.span,
+                source: span.source.clone(),
+                syntax_id: crate::token::SyntaxId::fresh(),
+            };
+            return self.infer_element_call(span, &receiver, &ty, &indices, args, kwargs);
+        }
         let (ty, ordinary_param_args) =
             self.prepare_callable_specialization(name, param_args, ty, origin_signatures.first())?;
         let indirect_target = match &ty {
@@ -614,6 +646,98 @@ impl Checker {
         Ok(ret)
     }
 
+    /// Type the bare element-call spelling — `objs[0](3)`, `a.b[i](x)`,
+    /// `grid[i, j](x)` — as subscript-then-indirect-call, matching current
+    /// Mojo. The brackets are a runtime subscript of `receiver`, an indexable
+    /// value with no callable contract of its own. The selected `__getitem__`
+    /// moves out of `selected_calls` into the `ElementInvocation` adjustment
+    /// so node-level consumers (reference-result diversion, resolved-callable
+    /// projection, raise attribution) see the element call, not the subscript
+    /// read.
+    pub(super) fn infer_element_call(
+        &self,
+        span: SourceSpan,
+        receiver: &Expr,
+        receiver_ty: &Ty,
+        indices: &[Expr],
+        args: &[Expr],
+        kwargs: &[crate::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        let label = match &receiver.kind {
+            ExprKind::Identifier(name) => name.clone(),
+            ExprKind::Member { field, .. } => field.clone(),
+            _ => "<element>".to_string(),
+        };
+        for (position, index) in indices.iter().enumerate() {
+            self.prepare_index_argument(receiver_ty, index, "__getitem__", position)?;
+        }
+        let result =
+            self.infer_struct_getitem_call(span.clone(), receiver, indices, receiver_ty)?;
+        let element_ty = match result {
+            Ty::Ref(reference) => *reference.referent,
+            value => value,
+        };
+        let getter = self
+            .selected_calls
+            .borrow_mut()
+            .remove(&span)
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(
+                    "element-call subscript selection recorded no contract".to_string(),
+                )
+            })?;
+        let Some(callable) = self.declared_callable_contract(&element_ty) else {
+            return Err(TypeError::NotCallable {
+                name: format!("{label}[…]"),
+                ty: element_ty.to_string(),
+            });
+        };
+        // The getter's dispatch entry must not survive as this node's resolved
+        // callable: `CallIndirect` consults the element's `__call__` target.
+        let target = self.indirect_callable_target(&element_ty);
+        match &target {
+            Some(target) => {
+                self.overload_targets
+                    .borrow_mut()
+                    .insert(span.clone(), target.clone());
+            }
+            None => {
+                self.overload_targets.borrow_mut().remove(&span);
+            }
+        }
+        let (ret, _, error, _) =
+            self.infer_callable_ty(&span, "<element>", callable.clone(), &[], args, kwargs)?;
+        let carried = contract_transfer_effects(&callable);
+        if !carried.is_empty() {
+            self.replay_transfer_effects(carried, None, args, &span)?;
+        }
+        if let Ty::Struct(struct_name, _) = &element_ty {
+            self.apply_transfer_effects(
+                &format!("{struct_name}.__call__"),
+                Some(receiver),
+                args,
+                &span,
+            )?;
+        }
+        self.record_call_environment_effects(span.clone(), &callable, &[], args, kwargs)?;
+        self.operation_adjustments.borrow_mut().insert(
+            span.clone(),
+            crate::checked::SemanticAdjustment::ElementInvocation(Box::new(
+                crate::checked::CheckedElementInvocation {
+                    getter,
+                    callable,
+                    target,
+                    raises: error.clone(),
+                },
+            )),
+        );
+        if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
+            self.record_call_effect(span.clone(), error.clone());
+            self.require_error("call through a raising callable element", error)?;
+        }
+        Ok(ret)
+    }
+
     pub(super) fn infer_callable_ty(
         &self,
         span: &SourceSpan,
@@ -647,9 +771,11 @@ impl Checker {
             Ty::Struct(struct_name, arguments) => {
                 let actual = Ty::Struct(struct_name.clone(), arguments);
                 let callable = self.declared_callable_contract(&actual).ok_or_else(|| {
-                    // `objs[0](args)` over an indexable runtime value parses as
-                    // compile-time parameter application; current Mojo instead
-                    // dispatches the element call (a recorded subset gap).
+                    // Value brackets over an indexable runtime value were
+                    // re-dispatched as an element call before reaching here,
+                    // so this shape carries type, named, or empty bracket
+                    // arguments — neither a runtime subscript nor parameter
+                    // application on a callable.
                     if !param_args.is_empty()
                         && self
                             .structs
@@ -657,10 +783,10 @@ impl Checker {
                             .is_some_and(|info| info.methods.contains_key("__getitem__"))
                     {
                         return TypeError::Unsupported(format!(
-                            "'{name}' is a runtime value of type '{struct_name}', so \
-                             '{name}[…](…)' reads as compile-time parameter application; \
-                             parenthesize '({name}[…])(…)' to subscript first and call the \
-                             element"
+                            "'{name}' is a runtime value of type '{struct_name}': \
+                             '{name}[…](…)' dispatches a subscripted element call only \
+                             for runtime index arguments, and a value takes no \
+                             compile-time parameters"
                         ));
                     }
                     TypeError::NotCallable {

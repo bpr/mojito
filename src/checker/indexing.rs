@@ -1424,17 +1424,12 @@ impl Checker {
                     .get(name)
                     .is_some_and(|info| info.methods.contains_key("__getitem__"))
             {
-                let result = self.infer_method_call(
-                    span.clone(),
+                let result = self.infer_struct_getitem_call(
+                    span,
                     object,
-                    "__getitem__",
-                    MethodCallArguments::ordinary(std::slice::from_ref(index), &[]),
+                    std::slice::from_ref(index),
+                    &obj_ty,
                 )?;
-                if list_element(&obj_ty).is_some() {
-                    self.record_interior_reference(span, object, "element");
-                } else if dict_elements(&obj_ty).is_some() {
-                    self.record_replacing_interior_reference(span, object, "value");
-                }
                 // A source `ref[...] T` subscript result is a reference handle
                 // only in a reference-valued context. Ordinary expression
                 // inference reads through it to `T`; `RefDecl` and aggregate
@@ -1480,6 +1475,32 @@ impl Checker {
             Ty::Ref(reference) => *reference.referent,
             other => other,
         })
+    }
+
+    /// Select and record the nominal `__getitem__` contract for a struct
+    /// subscript read — the shared entry for `infer_index`'s tail and the bare
+    /// element-call re-dispatch, generalized to the multi-index arity. Records
+    /// the interior-reference fact for list/dict-backed receivers and returns
+    /// the getter's raw result type; callers read through `Ty::Ref`.
+    pub(super) fn infer_struct_getitem_call(
+        &self,
+        span: SourceSpan,
+        object: &Expr,
+        indices: &[Expr],
+        obj_ty: &Ty,
+    ) -> Result<Ty, TypeError> {
+        let result = self.infer_method_call(
+            span.clone(),
+            object,
+            "__getitem__",
+            MethodCallArguments::ordinary(indices, &[]),
+        )?;
+        if list_element(obj_ty).is_some() {
+            self.record_interior_reference(span, object, "element");
+        } else if dict_elements(obj_ty).is_some() {
+            self.record_replacing_interior_reference(span, object, "value");
+        }
+        Ok(result)
     }
 
     /// An origin-bearing pointer to a precise place designates exactly one

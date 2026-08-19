@@ -1,8 +1,8 @@
-# The accepted spelling for calling a callable-struct List element:
+# The parenthesized spelling for calling a callable-struct List element:
 # parenthesizing forces the subscript to parse first, and the Invoke channel
-# dispatches the element's `__call__`. The bare `objs[0](3)` spelling parses
-# as compile-time parameter application and rejects (see
-# assets/type_error/callable_element_call_parses_as_parameter_application.mojo).
+# dispatches the element's `__call__`. The bare `objs[0](3)` spelling now
+# dispatches identically through the element-call re-dispatch (see
+# assets/ok/callable_element_call_dispatch.mojo for both spellings).
 @fieldwise_init
 struct Doubler(def(Int) -> Int, Copyable):
     var gain: Int

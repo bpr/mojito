@@ -32,6 +32,8 @@ seventeen probes; their answers live in `cases.tsv` claims
 | `simd_size_deprecated_alias.mojo` | Does the head still accept deprecated `SIMDSize`? (`@deprecated` in source at `ae386d1b204`.) | runs, prints `4` (Mojo warns) |
 | `typelist_size_deprecated_alias.mojo` | Does the head still accept deprecated `TypeList.size`? (`size = Self.length` alias in source at `ae386d1b204`.) | runs, prints `2` (Mojo warns) |
 | `tuple_element_types_public_spelling.mojo` | Does the head keep Tuple's `*Ts` parameter and `element_types` member spellings? (Verified in source at `ae386d1b204`.) | runs, prints `2` / `7` |
+| `element_call_member_base.mojo` | Does the head dispatch the bare member-base element call `h.items[0](5)` like the confirmed identifier base? | runs, prints `15` |
+| `element_call_multi_index.mojo` | Does the head dispatch the bare multi-index element call `g[1, 1](10)` through the variadic subscript? | runs, prints `40` |
 
 ## Re-probes of enforced claims
 
@@ -45,7 +47,6 @@ re-pin.
 | `../fixtures/setter_overload_extension.mojo` | reject (competing `__setitem__` pair) | declaration-time checker error |
 | `../fixtures/captured_nested_origin_specialization.mojo` | reject (capturing nested fn as specialized value) | checker error at value materialization |
 | `../../assets/type_error/capturing_closure_plain_def_param.mojo` | reject (capturing closure into unqualified `def(...)`) | value-coercion checker error |
-| `../../assets/type_error/callable_element_call_parses_as_parameter_application.mojo` | **Mojo runs (prints `6`), Mojito rejects** — recorded subset gap | parenthesization-hint diagnostic |
 
 Bridges to re-check by hand each re-pin (no standalone probe): `UnsafePointer`
 remains a deprecated alias of `Pointer` upstream (Mojito keeps accepting it as

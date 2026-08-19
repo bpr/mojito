@@ -457,6 +457,18 @@ impl Flatten<'_> {
             })
     }
 
+    pub(super) fn element_invocation(
+        &self,
+        expression: &Expr,
+    ) -> Option<crate::checked::CheckedElementInvocation> {
+        self.checked_adjustments(expression)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                crate::SemanticAdjustment::ElementInvocation(plan) => Some(*plan),
+                _ => None,
+            })
+    }
+
     pub(super) fn subscript_call_contract(
         &self,
         expression: &Expr,

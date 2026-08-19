@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Element-call dispatch: the bare `value[i](args)` spelling over an indexable
+  runtime value dispatches as subscript-then-indirect-call, matching current
+  Mojo — identifier bases (`objs[0](3)`), member bases (`h.items[0](5)`), and
+  multi-index brackets (`g[1, 1](10)`). The checker re-dispatches the shape
+  into a recorded two-call plan (the selected `__getitem__` contract plus the
+  element's `__call__` target), and MIR lowers it through the existing
+  subscript-contract and indirect-call instructions, so a raising getter keeps
+  its own catchable effect and a reference-returning getter retains the
+  hidden loan-bearing handle. Only non-value bracket arguments (types, names)
+  on an indexable value stay rejected.
+
 - Compiler/test textual-MIR integration (roadmap §3): `CompiledProgram` caches
   the ownership-verified MIR lowered by the authoritative pipeline, and both
   execution and `CompiledProgram::emit_mir` consume its shared post-drop form.
@@ -155,8 +166,8 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
-- The prioritized native-backend direction is now Pliron first (staged per
-  `docs/pliron_plan.md`), then Cranelift, with a C or C++ source backend as a
+- The prioritized native-backend direction is now Pliron first (staged in
+  `docs/roadmap.md`), then Cranelift on material Pliron failure, with a C or C++ source backend as a
   possible addition; direct LLVM or MLIR lowering and eBPF are no longer
   prioritized. The textual MIR/VM assembly is also no longer described as
   human-readable — it is a deterministic tooling format whose output is long

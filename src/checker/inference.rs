@@ -826,6 +826,37 @@ impl Checker {
                     }
                 }
                 let callable = self.infer(callee)?;
+                // `a.b[i](x)`: value brackets over an indexable runtime member
+                // are a subscript of the member value, not parameter
+                // application on a callable — the member-base mirror of the
+                // identifier-base re-dispatch in `infer_call`.
+                if let Ty::Struct(struct_name, _) = &callable
+                    && !param_args.is_empty()
+                    && param_args
+                        .iter()
+                        .all(|argument| matches!(argument, crate::ast::ParamArg::Value(_)))
+                    && self.declared_callable_contract(&callable).is_none()
+                    && self
+                        .structs
+                        .get(struct_name)
+                        .is_some_and(|info| info.methods.contains_key("__getitem__"))
+                {
+                    let indices: Vec<Expr> = param_args
+                        .iter()
+                        .filter_map(|argument| match argument {
+                            crate::ast::ParamArg::Value(value) => Some(value.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    return self.infer_element_call(
+                        expr.source_span(),
+                        callee,
+                        &callable,
+                        &indices,
+                        args,
+                        kwargs,
+                    );
+                }
                 let target = self.indirect_callable_target(&callable);
                 let (ret, _, error, _) = self.infer_callable_ty(
                     &expr.source_span(),

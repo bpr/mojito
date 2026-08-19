@@ -289,8 +289,9 @@ Near-term work:
 Longer-term possible directions:
 
 - optional compact bytecode serialization derived from the same schema
-- Pliron as the primary native backend (staged per `docs/pliron_plan.md`),
-  then Cranelift, with a C or C++ source backend as a possible addition
+- Pliron as the primary native experiment (staged in `docs/roadmap.md`), then
+  Cranelift only on material Pliron failure, with a C or C++ source backend as
+  a possible addition
 - richer borrow checking and lifetime diagnostics
 - better specialization of value-parameterized code
 - deeper comptime specialization and generated declarations

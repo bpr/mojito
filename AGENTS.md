@@ -13,12 +13,12 @@ execution path.
 **Backend direction.** The end goal is native code below the verified-MIR waist.
 The prioritized native backends are
 [Pliron](https://github.com/pliron-org/pliron) — a Rust-native, MLIR-inspired IR
-framework whose LLVM dialect emits LLVM IR; `docs/pliron_plan.md` is the staged
-adoption plan — and Cranelift, with a C or C++ source backend as a possible
+framework whose LLVM dialect emits LLVM IR; `docs/roadmap.md` contains the
+staged adoption and fallback plan — and Cranelift, with a C or C++ source backend as a possible
 additional target. Direct LLVM or MLIR lowering and eBPF are no longer
 prioritized. No backend IR is a *required internal* compiler layer: backends sit
 below the MIR waist, MIR remains the serialized backend-independent handoff, and
-the VM remains the executable semantic oracle. See `roadmap.md` section 6 for
+the VM remains the executable semantic oracle. See `docs/roadmap.md` section 4 for
 the ordering.
 
 Read these documents before changing behavior:
@@ -26,8 +26,8 @@ Read these documents before changing behavior:
 - `docs/features.md` — authoritative support matrix.
 - `docs/symbol-map.md` — symbol-level ownership and navigation map.
 - `docs/architecture.md` — pipeline invariants and phase design.
-- `grammar.md` and `docs/frontend.md` — accepted syntax and parser design.
-- `roadmap.md` — current direction, pending work, and task lifecycle policy.
+- `docs/grammar.md` and `docs/frontend.md` — accepted syntax and parser design.
+- `docs/roadmap.md` — current direction, pending work, and task lifecycle policy.
 
 Do not copy the feature inventory into this file. Update `docs/features.md` when
 support changes and update `docs/symbol-map.md` when ownership or entry points
@@ -75,7 +75,7 @@ move.
 - Add positive and negative tests at the phase that owns the rule.
 - Parser support is not semantic support. Keep those states distinct in code,
   diagnostics, and `docs/features.md`.
-- When syntax changes, update `grammar.md` first and parser tests with the code.
+- When syntax changes, update `docs/grammar.md` first and parser tests with the code.
 - When public pipeline or symbol ownership changes, update
   `docs/architecture.md` and `docs/symbol-map.md`.
 - Keep comments about current invariants. Historical comparisons belong in design

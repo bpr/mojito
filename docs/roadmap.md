@@ -59,15 +59,17 @@ Work proceeds in dependency order through the numbered sections below:
    re-probe the parity claims, and close the recorded divergences before
    freezing artifacts against a stale picture of the language. This is a
    recurring task — it reopens at every re-pin.
-3. **Freeze a textual MIR/VM assembly** once the checked-declaration + verified
-   MIR contract is confirmed sufficient, giving backend-independent artifacts,
-   snapshots, and a disassembler/assembler pair.
-4. **Grow the CPU standard library** demand-first against that stable contract.
-5. **Packaging, artifacts, and developer tooling**, including compiled package
+3. **Close and validate the textual MIR milestone.** Confirm the cached,
+   post-drop verified artifact is the exact backend handoff and close the full
+   direct/artifact conformance gate.
+4. **Build a native backend.** Evaluate Pliron first as an optional lowering
+   framework below MIR, promote it stage by stage toward LLVM output, and pivot
+   to Cranelift only if the feasibility or scalar-native gates expose a material
+   blocker.
+5. **Grow the CPU standard library** demand-first against the stable MIR and
+   native-runtime contracts.
+6. **Packaging, artifacts, and developer tooling**, including compiled package
    artifacts and a reproducibility gate.
-6. **Native backends** — Pliron first (staged per `docs/pliron_plan.md`), then
-   Cranelift, with a C or C++ source backend as a possible addition — validated
-   differentially against the VM corpus.
 
 ## Ordered Work
 
@@ -100,8 +102,9 @@ own roadmap/proposals, citing the upstream evidence in the parity records and
 re-probed at every re-pin (e.g. expected struct extensions would qualify). The extension alignment sweep for the `ae386d1b204` audit is done
 (see the changelog: `unified {...}`, bare `move:`, the competing `__setitem__`
 pair, `def(...)`-typed storage, captured-Origin specialization values, and
-unqualified stateful downward funargs now reject; `objs[0](args)` is recorded
-as a subset gap). The `ae386d1b204` pass is complete, including its close-out
+unqualified stateful downward funargs now reject; the `objs[0](args)`
+element-call gap recorded then has since been closed by the bare-spelling
+re-dispatch). The `ae386d1b204` pass is complete, including its close-out
 (probes resolved, the Confirmed Alignment list re-verified, and the full
 differential run recorded in `docs/mojo-nightly.md`); the recorded divergences
 to burn down next pass live in `conformance/parity.tsv` notes and the
@@ -115,7 +118,276 @@ import for the name while set displays stay name-independent — needs the
 display lowering to reach the stdlib Set through a compiler-internal identity
 instead of the prelude binding).
 
-### 4. Grow The CPU Standard Library
+### 3. Close And Validate The MIR Artifact Milestone
+
+- [ ] **MIR artifact close-out** — finish the current milestone before adding a
+  native dependency:
+  - run the complete required repository gate, including formatting, focused
+    and full relevant tests, Clippy with warnings denied, and `git diff --check`
+  - confirm every shared runnable conformance case passes direct execution,
+    canonical print → parse → print equality, and artifact execution with
+    identical output and displayed bindings
+  - retain the cached, ownership-verified, drop-elaborated and re-verified
+    `MirProgram` as the exact input to every backend
+  - keep `emit-mir | exec -` as the backend-independent producer/consumer
+    contract and guard against an unexpectedly reduced artifact corpus
+  - close any remaining documentation or fixture discrepancies and record the
+    completed behavior in the authoritative documentation homes
+
+### 4. Native Backend: Pliron First, Cranelift On Material Failure
+
+Mojito is ready to begin native-backend work once the artifact close-out above
+passes. Verified MIR is the stable waist, the VM remains the semantic oracle,
+and native work does not wait for complete standard-library, packaging, or Mojo
+surface parity. Unsupported native behavior rejects with a contextual compile
+diagnostic; it never silently falls back to the VM.
+
+The preferred architecture is:
+
+```text
+source -> Compiler -> ownership-verified, post-drop verified MIR
+                            |                 |
+                            |                 +-> VM / canonical .mir artifact
+                            v
+                    Pliron lowering
+                            |
+             Mojito ops only where justified
+                            |
+                    Pliron LLVM dialect
+                            |
+            LLVM IR / bitcode / object / executable
+                            |
+                    versioned runtime ABI
+```
+
+Do not replace Mojito MIR with Pliron IR. Pliron is an optional lowering,
+verification, transformation, and optimization framework below the serialized
+MIR handoff. A backend consumes `MirProgram`; it does not import AST, HIR,
+checker, ownership, or call-binding policy. The default VM build must continue
+to work without Pliron or LLVM installed.
+
+Pliron core is implemented in Rust, but its native LLVM path uses `llvm-sys`
+and requires a compatible LLVM installation. It reduces direct C++ API and
+ownership friction; it does not eliminate LLVM as a native toolchain
+dependency. Keep this distinction explicit in build and user documentation.
+
+#### Backend interface and dialect policy
+
+Separate VM execution from native compilation. The native interface accepts
+`&MirProgram`, a target description, and an output kind, and returns textual IR,
+bitcode, an object, or an executable plus structured diagnostics. Add
+`run --backend pliron` only when the JIT or executable path matches the VM for
+the advertised subset. Existing `emit-mir` and `exec` behavior stays unchanged.
+
+The first scalar spike lowers directly to Pliron's LLVM dialect. Introduce a
+narrow `mojito` Pliron dialect only for demonstrated needs such as runtime
+calls, checked traps, explicit error propagation, target-independent aggregate
+constants, or lifecycle normalization. Do not reproduce the entire MIR schema
+as a second operation set. Every custom operation needs textual syntax, a
+verifier, negative coverage, and a total conversion rule; LLVM emission rejects
+any residual illegal operation.
+
+#### Shared semantic and ABI rules
+
+Native layout has one owner shared by Pliron, Cranelift, and any later backend.
+Specialized MIR functions map to deterministically mangled native symbols;
+origin and ownership facts erase after validation, while explicit drop and
+cleanup instructions remain executable behavior. References lower to a native
+pointer plus only the runtime metadata their checked type requires. Strings use
+a specified descriptor and constant pool. Aggregates use target-owned layouts,
+never Rust's unspecified `repr(Rust)` layout.
+
+Initially lower errors and `try`/`finally` as tagged outcomes and explicit CFG
+edges so every success, error, return, and cleanup path is differential-testable.
+Do not use platform unwinding until it has a separate semantic, ABI, and
+portability specification.
+
+The runtime is a small, independently versioned Rust library with a C ABI. It
+must not expose the VM's internal `Value` representation. Its contract defines
+size, alignment, ownership, nullability, allocation responsibility, failure
+behavior, and ABI-version mismatch handling for every exported symbol.
+
+#### Cross-stage testing and rollback
+
+Every stage uses four complementary layers:
+
+1. IR unit tests for each lowering, verifier, rewrite, conversion, ABI type,
+   and unsupported diagnostic.
+2. Canonical Pliron/LLVM snapshots with UTF-8, LF, and one trailing newline.
+3. VM/native differential tests comparing stdout bytes, bindings or result,
+   error category, and ordered lifecycle events at `O0` and optimized levels.
+4. Artifact tests proving `.mir -> VM` and `.mir -> native` consume the same
+   serialized program.
+
+Track compile time, peak memory, IR size at each boundary, object size,
+execution time, and supported/excluded MIR counts. Every stage is removable by
+disabling its optional feature and backend modules without changing MIR, VM, or
+source semantics.
+
+- [ ] **Pliron Stage 0: feasibility, exact pin, and dependency isolation** —
+  validate Pliron outside the production compiler before committing to it:
+  - select exact, mutually compatible `pliron` and `pliron-llvm` releases, or
+    one immutable Git revision if no release passes; retain the lockfile and
+    record source checksums, upstream commit, Rust version, LLVM version,
+    enabled features, required packages, and discovery configuration
+  - audit the current tutorial/Kaleidoscope path and the exact present-day use
+    of Pliron in CUDA Oxide and CubeCL rather than treating project names as
+    maturity evidence
+  - prove construction, parsing/printing, verification failure, rewriting,
+    dialect conversion, LLVM module/bitcode export, object emission, and host
+    execution with source-associated diagnostics
+  - classify every required facility—operations, types, attributes, blocks,
+    SSA, dominance, pass invalidation, conversion legality, LLVM dialect
+    coverage, data layout, JIT/targets, and diagnostics—as supported, locally
+    bridgeable, upstream gap, or blocker with evidence
+  - prototype optional Cargo features and CI isolation without connecting the
+    spike to `Compiler`; a clean default build must succeed with no LLVM
+  - establish Linux as the first native host, with macOS and Windows advertised
+    only after their independent object, linker, runtime, and execution gates
+
+  Acceptance: pinned Linux CI emits and executes `main -> i32`; invalid IR
+  reports a source-associated diagnostic rather than panicking; the default VM
+  lane needs no native toolchain; and no required API needs a broad Mojito fork.
+
+  Material failure means LLVM cannot be isolated from the default build,
+  required operations/export cannot be implemented without a broad fork, the
+  version/update burden is untenable, or source-aware verification cannot be
+  preserved. A material failure skips the remaining Pliron stages and promotes
+  the Cranelift fallback task below.
+
+- [ ] **Pliron Stage 1: scalar MIR-to-native vertical slice** — connect the
+  smallest production subset to the cached executable MIR:
+  - support integer and Bool constants and arithmetic, comparisons, blocks,
+    unconditional and conditional branches, direct calls, recursion, and return
+  - lower directly to the LLVM dialect, verify before and after conversion, and
+    emit canonical Pliron text, LLVM IR/bitcode, object, and host executable
+  - add deterministic symbol mangling, MIR source-location propagation, a
+    total supported-subset match, and contextual unsupported diagnostics
+  - expose experimental `compile --backend pliron --emit ...` behind optional
+    features; text may use stdout, while binary output requires an output path
+
+  Acceptance: straight-line, diamond, loop, multi-function, and recursive
+  examples match the VM; Pliron text round-trips byte-stably; repeated builds
+  produce deterministic LLVM IR; invalid IR fails verification; and the backend
+  imports no pre-MIR semantic representation.
+
+  Passing this task authorizes broader Pliron work; it does not promote Pliron
+  to the preferred user-facing backend. If this vertical slice exposes a
+  material framework, LLVM-dialect, diagnostic, or distribution blocker, stop
+  Pliron and promote the Cranelift fallback rather than maintaining two partial
+  production backends.
+
+- [ ] **Pliron Stage 2: complete scalar execution and conversion legality** —
+  support all checked scalar operators and conversions, local storage,
+  parameters/results, recursion, and supported scalar control flow; introduce
+  Mojito dialect operations only where a demonstrated semantic boundary needs
+  them; require full conversion with no residual illegal operations; define a
+  conservative optimization pipeline and optional test-only host JIT.
+
+  Acceptance: every eligible scalar `run` conformance case matches VM output,
+  result/trap category, and bindings at `O0` and the initial optimized level; a
+  generated capability manifest records every exclusion; and a guard test fails
+  if eligible coverage unexpectedly shrinks.
+
+- [ ] **Shared native target, layout, and runtime ABI** — before strings,
+  aggregates, collections, or references become native, define:
+  - target triple, CPU features, optimization level, output kind, and output
+    path as checked build configuration
+  - integer, Bool, floating-point, overflow, conversion, NaN, and signed-zero
+    behavior
+  - size, alignment, padding, aggregate field order, calling convention,
+    parameter/result lowering, and deterministic symbol mangling
+  - string, reference, pointer, allocation, output, and error representations
+  - a versioned runtime C ABI with mechanically checked Rust/LLVM signatures
+    and target-data layout tests
+
+  Acceptance: Rust/runtime and generated native layouts and signatures agree;
+  target-only cross checks work without executing foreign code; runtime symbols
+  carry an inspectable ABI version; and no native ABI depends on VM `Value`.
+
+- [ ] **Pliron Stage 3: runtime, strings, aggregates, allocation, and errors** —
+  add constant pools, target-layout aggregates, printing, allocation and
+  deallocation, checked traps, and explicit runtime error values through the
+  shared ABI.
+
+  Acceptance: eligible string, aggregate, allocation, and error fixtures match
+  VM output and failure category; sanitizer runs find no leak, double free,
+  misalignment, or use-after-free; and produced objects expose only the
+  specified runtime symbols.
+
+- [ ] **Pliron Stage 4: references, destruction, and exceptional control flow**
+  — consume drop-elaborated MIR exactly as emitted; lower tagged success/error
+  outcomes and every `try`/`finally` cleanup edge explicitly; preserve reference
+  behavior without re-running ownership analysis; instrument ordered lifecycle
+  events in the test runtime.
+
+  Acceptance: eligible ownership/destruction cases have the same ordered
+  create/drop/error trace as the VM; negative ownership cases fail before the
+  backend; reference traps occur at the same semantic boundary; and nested
+  errors, cleanup failures, and early returns have focused differential tests.
+
+- [ ] **Pliron Stage 5: supported-language native parity** — grow one vertical
+  slice at a time across specialized generics, retained callable forms,
+  indirect calls and closures, collections, rich literals, references, and
+  other missing MIR forms. Maintain a generated operation/type/runtime
+  capability matrix and upstream narrowly scoped missing Pliron support rather
+  than accumulating untracked local patches.
+
+  Acceptance: canonical `.mir` artifacts behave identically through VM and
+  native paths; the native backend never accepts rejected source; and promotion
+  requires zero exclusions across Mojito's advertised runnable subset.
+
+- [ ] **Pliron Stage 6: optimization and distributable artifacts** — define
+  verified `O0` and release pass pipelines, analysis invalidation, object and
+  executable linking, source-level debug locations, runtime packaging,
+  reproducibility, and pre-declared compile-time, memory, code-size, startup,
+  and runtime benchmark thresholds.
+
+  Acceptance: optimized and unoptimized outputs pass the complete differential
+  suite; native execution provides a material measured benefit without an
+  unacceptable compile-time or size regression; clean builds are reproducible
+  or have narrowly documented nondeterministic sections; and executables run
+  without the compiler installed while diagnosing ABI mismatch clearly.
+
+- [ ] **Pliron promotion decision** — promote Pliron from experimental to the
+  preferred native backend only with semantic parity for all runnable corpus
+  and conformance cases, no untracked MIR gaps, reproducible Linux tooling,
+  tested/documented macOS and Windows status, acceptable benchmarks, no broad
+  fork, at least one successful dependency-upgrade rehearsal, and a sustained
+  CI period without unresolved correctness regressions. Promotion does not
+  remove the VM or make Pliron a required internal compiler layer.
+
+- [ ] **Cranelift fallback, only on material Pliron failure** — if Stage 0 or
+  Stage 1 meets its explicit stop condition, record the evidence and implement
+  the same scalar acceptance slice with Cranelift over verified MIR. Reuse the
+  shared target/layout/runtime ABI and the same differential corpus. Prefer
+  Cranelift when the governing goal becomes the shortest dependable route to
+  machine code; do not build it in parallel merely as a second production
+  backend. If Cranelift also fails materially, reassess direct LLVM, Melior,
+  Inkwell, or a C/C++ source backend with a fresh decision record.
+
+- [ ] **Native SIMD lowering** — after the selected backend reaches supported
+  language parity, map completed SIMD semantics to native vectors where the
+  target supports them and preserve defined scalar fallback behavior.
+
+#### Pliron risks that remain promotion blockers
+
+- API churn or upgrade cost disproportionate to Mojito's compatibility layer
+- missing LLVM dialect/export coverage requiring a broad local fork
+- LLVM discovery or linking that cannot be made reproducible per advertised OS
+- semantic drift in output, errors, references, or drop ordering
+- a Mojito dialect that mechanically duplicates MIR
+- aggregate/data-layout disagreement between runtime and generated code
+- optimization-only miscompilation
+- undocumented runtime ABI lock-in
+- stale real-project adoption evidence or an unsustainable upstream bus factor
+
+The default response to a correctness failure is to keep Pliron experimental or
+disable the offending optimization. The default response to an upstream or
+distribution failure at Stage 0/1 is the Cranelift fallback, not erosion of the
+MIR/VM contracts.
+
+### 5. Grow The CPU Standard Library
 
 - [ ] **Collection API parity** — grow List, Dict, HashDict, Set, HashSet, tuple,
   slice, optional/variant, and String result APIs
@@ -139,14 +411,6 @@ instead of the prelude binding).
     frozen struct values)
   - a public recursive `IntTuple`
   - mixing type parameters with DType/struct value parameters on one struct
-- [ ] **Element-call dispatch for `value[i](args)`** — current Mojo dispatches
-  the bare spelling as subscript-then-call on an indexable runtime value;
-  Mojito parses it as compile-time parameter application and rejects with a
-  parenthesization hint (a recorded subset gap pinned by
-  `assets/type_error/callable_element_call_parses_as_parameter_application.mojo`).
-  Closing it needs:
-  - checker re-dispatch of the non-callable-base shape
-  - a subscript-then-indirect-call MIR lowering channel for `ExprKind::Call`
 - [ ] **HashSet growth and rehashing** — add load-factor growth while preserving
   deterministic behavior and value semantics.
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
@@ -154,7 +418,7 @@ instead of the prelude binding).
 - [ ] **Time, random, and testing slices** — add deterministic testable cores and
   isolate host-dependent behavior behind runtime services.
 
-### 5. Packaging, Artifacts, And Developer Tooling
+### 6. Packaging, Artifacts, And Developer Tooling
 
 - [ ] **Feature and target options** — expose checked CLI/build configuration and
   record it in artifacts and diagnostics.
@@ -172,33 +436,6 @@ instead of the prelude binding).
 - [ ] **Distribution reproducibility gate** — make the release check rebuild,
   test, document, and reproduce conformance results using only the crates.io
   archive contents.
-
-### 6. Native Backends And Native-Only Semantics
-
-The prioritized native targets are Pliron and Cranelift, with a C or C++ source
-backend as a possible addition; direct LLVM or MLIR lowering and eBPF are no
-longer prioritized. Every backend consumes the verified MIR contract and is
-validated differentially against the VM/textual corpus.
-
-- [ ] **Pliron backend** — the primary native target: adopt
-  [Pliron](https://github.com/pliron-org/pliron), a Rust-native, MLIR-inspired
-  extensible IR framework whose LLVM dialect emits LLVM IR bitcode, through the
-  staged experimental plan in `docs/pliron_plan.md`. As a pure-Rust path to
-  native code it avoids a C++ MLIR/LLVM build dependency while keeping MIR as
-  the serialized handoff and the VM as the executable oracle.
-- [ ] **Observable CPU layout and ABI rules** — define size, alignment, field
-  layout, calling convention, and layout-marker semantics against native output;
-  this is intentionally not a VM-parity prerequisite and is shared by every native
-  backend.
-- [ ] **Cranelift backend** — lower verified MIR to Cranelift, a fast,
-  embeddable, pure-Rust code generator, reusing the layout/ABI rules above.
-- [ ] **C or C++ source backend** — a possible additional target: emit portable
-  C/C++ from verified MIR, trading optimization quality for toolchain reach.
-- [ ] **Native SIMD lowering** — map completed SIMD semantics to native vectors
-  where the chosen backend supports them, retaining scalar fallback behavior.
-- [ ] **Deprioritized backends** — direct LLVM or MLIR lowering and eBPF are no
-  longer prioritized; revisit only if the Pliron, Cranelift, and C/C++ paths
-  prove insufficient. None is a first-pass parity requirement.
 
 ### Explicit Non-Goals For First-Pass Parity
 

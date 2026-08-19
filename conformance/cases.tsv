@@ -131,6 +131,7 @@ string-interpolation	run	conformance/fixtures/string_interpolation.mojo
 walrus-expressions	run	conformance/fixtures/walrus_expressions.mojo
 slice-completion	run	conformance/fixtures/slice_completion.mojo
 subscript-call-contracts	run	conformance/fixtures/subscript_call_contracts.mojo
+element-call-dispatch	run	conformance/fixtures/element_call_dispatch.mojo
 subscript-contract-edges	run	conformance/fixtures/subscript_contract_edges.mojo
 augmented-subscript-contract	run	conformance/fixtures/augmented_subscript_contract.mojo
 augmented-subscript-shapes	run	conformance/fixtures/augmented_subscript_shapes.mojo

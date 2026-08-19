@@ -165,6 +165,25 @@ pub struct CheckedAugmentedSubscript {
     pub value_source: Option<SourceSpan>,
 }
 
+/// The two-call plan for a bare element call `value[i](args)` (also member
+/// bases and multi-index brackets): subscript the indexable runtime value,
+/// then dispatch the element as a callable. The getter contract lives here
+/// rather than in `SelectedCall` so node-level consumers (reference-result
+/// diversion, `resolved_callable`, `checked_raises`) see the element call,
+/// not the subscript read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedElementInvocation {
+    /// The selected `__getitem__` contract for the subscript read.
+    pub getter: CheckedCallContract,
+    /// The element's declared callable contract governing the invocation.
+    pub callable: Ty,
+    /// Exact nominal `Struct.__call__` target for a callable-struct element.
+    pub target: Option<String>,
+    /// The `__call__` contract's checked error type; the getter's raising
+    /// effect stays on its own contract.
+    pub raises: Option<Ty>,
+}
+
 /// Ownership mode selected for a checked iteration expression.  This is a
 /// semantic distinction, not a runtime guess: owned iteration must dispatch to
 /// an `__iter__(var self)` implementation, while ordinary iteration uses a
@@ -322,6 +341,11 @@ pub enum SemanticAdjustment {
         /// The field's checked callable type.
         callable: Ty,
     },
+    /// A call-shaped expression (`objs[0](3)`, `a.b[i](x)`, `grid[i, j](x)`)
+    /// whose brackets are a runtime subscript of an indexable value rather
+    /// than compile-time parameter application. MIR reads the element through
+    /// the recorded getter contract and emits an indirect call on the result.
+    ElementInvocation(Box<CheckedElementInvocation>),
     /// Monomorphic callable contract selected after applying explicit
     /// compile-time arguments to a generic callable value. Indirect-call MIR
     /// retains this typed fact so verification never has to recover a value

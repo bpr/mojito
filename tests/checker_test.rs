@@ -5589,3 +5589,90 @@ fn generic_lambda_is_a_closure() {
         "unexpected error: {error:?}"
     );
 }
+
+#[test]
+fn bare_element_calls_record_the_element_invocation_plan() {
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[0](3))\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let plans = checked
+        .expressions()
+        .iter()
+        .filter_map(|expression| {
+            expression
+                .adjustments
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    SemanticAdjustment::ElementInvocation(plan) => Some((expression, plan)),
+                    _ => None,
+                })
+        })
+        .collect::<Vec<_>>();
+    let [(expression, plan)] = plans.as_slice() else {
+        panic!("expected exactly one element-invocation plan: {plans:#?}");
+    };
+    assert!(matches!(
+        expression.syntax.kind,
+        mojito::ast::ExprKind::Call { .. }
+    ));
+    assert_eq!(plan.getter.target, "Container.__getitem__");
+    assert_eq!(plan.target.as_deref(), Some("Doubler.__call__"));
+    assert!(plan.raises.is_none());
+    // The getter contract moved out of the node's selected-call slot: the
+    // node-level contract must describe the element call, not the subscript.
+    assert!(
+        !expression
+            .adjustments
+            .iter()
+            .any(|adjustment| matches!(adjustment, SemanticAdjustment::SelectedCall(_))),
+        "{expression:#?}"
+    );
+}
+
+#[test]
+fn member_base_and_multi_index_element_calls_record_plans() {
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var inner: Container\n\n@fieldwise_init\nstruct Grid(Copyable):\n    var first: Doubler\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var h: Holder = Holder(Container(Doubler(2)))\n    print(h.inner[0](3))\n    var g: Grid = Grid(Doubler(3))\n    print(g[1, 1](4))\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let plans = checked
+        .expressions()
+        .iter()
+        .filter_map(|expression| {
+            expression
+                .adjustments
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    SemanticAdjustment::ElementInvocation(plan) => Some((expression, plan)),
+                    _ => None,
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(plans.len(), 2, "{plans:#?}");
+    assert!(plans.iter().any(|(expression, plan)| {
+        matches!(expression.syntax.kind, mojito::ast::ExprKind::Invoke { .. })
+            && plan.getter.target == "Container.__getitem__"
+    }));
+    assert!(plans.iter().any(|(expression, plan)| {
+        matches!(expression.syntax.kind, mojito::ast::ExprKind::Call { .. })
+            && plan.getter.target == "Grid.__getitem__"
+    }));
+}
+
+#[test]
+fn element_call_shapes_that_stay_rejected() {
+    // A non-callable element names the element type, not the container.
+    let source = "@fieldwise_init\nstruct Box(Copyable):\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n\ndef main():\n    var b: Box = Box(1)\n    print(b[0](3))\n";
+    let error = check_program(&parse(source).expect("parse")).expect_err("non-callable element");
+    assert!(
+        matches!(&error, TypeError::NotCallable { ty, .. } if ty == "Int"),
+        "{error:?}"
+    );
+    // Type brackets over an indexable value keep the residual diagnostic.
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[Int](3))\n";
+    let error = check_program(&parse(source).expect("parse")).expect_err("type brackets");
+    assert!(
+        matches!(&error, TypeError::Unsupported(message) if message.contains("runtime index arguments")),
+        "{error:?}"
+    );
+    // Generic-function parameter application is untouched.
+    let source = "def pick[T: Copyable](value: T) -> T:\n    return value\n\ndef main():\n    print(pick[Int](7))\n";
+    check_program(&parse(source).expect("parse")).expect("generic parameter application");
+}

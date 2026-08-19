@@ -105,8 +105,8 @@ requirement that MLIR be the compiler's internal IR layer. The register VM is
 the executable specification. A versioned textual MIR/VM assembly form is the
 next representation boundary; the prioritized native backends are the
 Rust-native, MLIR-inspired [Pliron](https://github.com/pliron-org/pliron) (its
-LLVM dialect emits LLVM IR; `docs/pliron_plan.md` is the staged adoption plan)
-and Cranelift, with a C or C++ source backend as a possible addition. Direct
+LLVM dialect emits LLVM IR; `docs/roadmap.md` contains the staged adoption and
+fallback plan) and Cranelift, with a C or C++ source backend as a possible addition. Direct
 LLVM or MLIR lowering and eBPF are no longer prioritized.
 
 ### Source Module Boundaries
