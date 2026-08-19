@@ -20,12 +20,14 @@ use crate::{Stmt, ast::StmtKind, check_program, parse};
 use crate::{Ty, TyArg};
 use std::fmt;
 use std::path::Path;
+use std::sync::OnceLock;
 /// A program that has passed linking, comptime elaboration, semantic checking,
 /// and ownership analysis and is therefore ready for any backend.
 #[derive(Debug, Clone)]
 pub struct CompiledProgram {
     checked: CheckedProgram,
     mir: MirProgram,
+    elaborated: OnceLock<MirProgram>,
 }
 impl CompiledProgram {
     /// The semantically checked program carried by this ownership-verified
@@ -35,18 +37,26 @@ impl CompiledProgram {
     }
 
     /// The ownership-verified, pre-drop MIR produced by the authoritative
-    /// compiler pipeline and consumed by every backend.
+    /// compiler pipeline, from which the elaborated backend artifact derives.
     pub fn mir(&self) -> &MirProgram {
         &self.mir
     }
 
-    /// Emit this program as canonical, executable Mojito MIR assembly.
-    pub fn emit_mir(&self) -> Result<String, DisassembleError> {
-        disassemble(&self.drop_elaborated_mir())
+    /// The drop-elaborated, re-verified MIR — the exact artifact every
+    /// backend consumes. Post-drop verification findings are folded into
+    /// `invariant_errors`; consumers refuse a non-empty list.
+    pub fn elaborated_mir(&self) -> &MirProgram {
+        self.elaborated.get_or_init(|| {
+            let mut mir = crate::analysis::elaborate_drops_program(self.mir.clone());
+            let findings = crate::mir::verify::verify(&mir);
+            mir.invariant_errors.extend(findings);
+            mir
+        })
     }
 
-    fn drop_elaborated_mir(&self) -> MirProgram {
-        crate::analysis::elaborate_drops_program(self.mir.clone())
+    /// Emit this program as canonical, executable Mojito MIR assembly.
+    pub fn emit_mir(&self) -> Result<String, DisassembleError> {
+        disassemble(self.elaborated_mir())
     }
 }
 #[derive(Debug, Clone)]
@@ -284,16 +294,18 @@ impl Compiler {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }
         crate::analysis::check_ownership_program(&mir).map_err(CompilerError::Ownership)?;
-        Ok(CompiledProgram { checked, mir })
+        Ok(CompiledProgram {
+            checked,
+            mir,
+            elaborated: OnceLock::new(),
+        })
     }
     /// Execute an ownership-verified program using the configured backend.
     pub fn execute(&self, program: &CompiledProgram) -> Result<Execution, CompilerError> {
         let mut backend = self.backend.instantiate().map_err(|unimplemented| {
             CompilerError::Runtime(RuntimeError::Unsupported(unimplemented))
         })?;
-        let mut mir = program.drop_elaborated_mir();
-        let findings = crate::mir::verify::verify(&mir);
-        mir.invariant_errors.extend(findings);
+        let mir = program.elaborated_mir().clone();
         if !mir.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }

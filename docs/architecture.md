@@ -43,12 +43,16 @@ let program = compiler.compile_path(path)?;
 let execution = compiler.execute(&program)?;
 ```
 
-`CompiledProgram` privately retains both the `CheckedProgram` and the single
-ownership-verified, pre-drop `MirProgram` lowered by the driver. Execution and
-`CompiledProgram::emit_mir` clone that cached MIR, apply the same drop
-elaboration and post-drop verification, then respectively hand it to
-`Backend::run_elaborated` or canonical text serialization. Production backends
-therefore never re-lower checked syntax. `CompilerError` identifies the failing
+`CompiledProgram` privately retains the `CheckedProgram`, the single
+ownership-verified, pre-drop `MirProgram` lowered by the driver, and — computed
+lazily from it exactly once — the drop-elaborated, re-verified `MirProgram`
+exposed as `CompiledProgram::elaborated_mir`. That cached post-drop program is
+the exact backend artifact: execution hands it to `Backend::run_elaborated` and
+`CompiledProgram::emit_mir` serializes it to canonical text, so both consumers
+observe one retained artifact rather than re-deriving elaboration per call.
+Post-drop verification findings fold into its `invariant_errors`, which every
+consumer refuses when non-empty. Production backends therefore never re-lower
+checked syntax. `CompilerError` identifies the failing
 stage. Individual stage functions and `Backend::run(&CheckedProgram)` remain
 public compatibility seams for tests and diagnostic tools; that stage-composed
 entry re-checks pre-drop ownership but is non-authoritative for whole-program
@@ -2831,7 +2835,10 @@ as the loading gate artifact execution sits behind; verification policy itself
 never moves out of `mir::verify`. `artifact::run_artifact` composes that gate
 with `Backend::run_elaborated` (the CLI `exec` subcommand's engine): the
 loaded program executes exactly as serialized, with no re-elaboration,
-re-verification, or ownership re-analysis.
+re-verification, or ownership re-analysis. The composition lives in
+`src/artifact.rs`, beside rather than inside `Compiler`: the artifact path
+deliberately bypasses the source pipeline, and `mir::text` cannot host it
+without layering onto `backend`.
 
 The compiler exposes a textual, flattened, versioned serialization of
 verified MIR and the metadata needed to execute it. The format is built for

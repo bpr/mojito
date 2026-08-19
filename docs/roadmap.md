@@ -59,9 +59,9 @@ Work proceeds in dependency order through the numbered sections below:
    re-probe the parity claims, and close the recorded divergences before
    freezing artifacts against a stale picture of the language. This is a
    recurring task — it reopens at every re-pin.
-3. **Close and validate the textual MIR milestone.** Confirm the cached,
-   post-drop verified artifact is the exact backend handoff and close the full
-   direct/artifact conformance gate.
+3. **Close and validate the textual MIR milestone.** Complete — the cached,
+   post-drop verified artifact is the exact backend handoff and the full
+   direct/artifact conformance gate is closed.
 4. **Build a native backend.** Evaluate Pliron first as an optional lowering
    framework below MIR, promote it stage by stage toward LLVM output, and pivot
    to Cranelift only if the feasibility or scalar-native gates expose a material
@@ -120,24 +120,22 @@ instead of the prelude binding).
 
 ### 3. Close And Validate The MIR Artifact Milestone
 
-- [ ] **MIR artifact close-out** — finish the current milestone before adding a
-  native dependency:
-  - run the complete required repository gate, including formatting, focused
-    and full relevant tests, Clippy with warnings denied, and `git diff --check`
-  - confirm every shared runnable conformance case passes direct execution,
-    canonical print → parse → print equality, and artifact execution with
-    identical output and displayed bindings
-  - retain the cached, ownership-verified, drop-elaborated and re-verified
-    `MirProgram` as the exact input to every backend
-  - keep `emit-mir | exec -` as the backend-independent producer/consumer
-    contract and guard against an unexpectedly reduced artifact corpus
-  - close any remaining documentation or fixture discrepancies and record the
-    completed behavior in the authoritative documentation homes
+Complete: the textual MIR milestone is closed. `CompiledProgram` retains the
+ownership-verified, drop-elaborated, re-verified `MirProgram` as one cached
+artifact — the exact input to every backend — consumed by both execution and
+canonical emission; `emit-mir | exec -` is the backend-independent
+producer/consumer contract; and every shared runnable conformance case pins
+direct execution, canonical print → parse → print byte equality, and artifact
+execution with identical output and displayed bindings, with corpus-shrink
+guards on the conformance and round-trip fixture sets (see the artifact rows of
+`docs/features.md` and the textual MIR/VM assembly boundary section of
+`docs/architecture.md`).
 
 ### 4. Native Backend: Pliron First, Cranelift On Material Failure
 
-Mojito is ready to begin native-backend work once the artifact close-out above
-passes. Verified MIR is the stable waist, the VM remains the semantic oracle,
+The artifact close-out has passed, so native-backend work is unblocked and
+Pliron Stage 0 below is the default next task. Verified MIR is the stable
+waist, the VM remains the semantic oracle,
 and native work does not wait for complete standard-library, packaging, or Mojo
 surface parity. Unsupported native behavior rejects with a contextual compile
 diagnostic; it never silently falls back to the VM.

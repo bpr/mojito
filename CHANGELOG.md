@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- MIR artifact milestone close-out (roadmap §3): `CompiledProgram` now retains
+  the drop-elaborated, re-verified `MirProgram` as one lazily cached artifact
+  (`CompiledProgram::elaborated_mir`) that backend execution and
+  `emit_mir`/`mojito emit-mir` both consume, unifying their previously separate
+  elaborate-and-verify paths. The milestone's contracts are validated and
+  recorded: `emit-mir | exec -` is the backend-independent producer/consumer
+  composition, every shared runnable conformance case pins direct execution,
+  canonical print → parse → print byte equality, and artifact execution with
+  identical output and displayed bindings, and corpus-shrink guards protect the
+  conformance and round-trip fixture sets. The five completed textual-MIR
+  design-note documents (schema, disassembler, assembler parser, round trips,
+  artifact execution) folded into `docs/mir-text-format.md`,
+  `docs/architecture.md`, and `docs/features.md` and were removed.
+
 - Element-call dispatch: the bare `value[i](args)` spelling over an indexable
   runtime value dispatches as subscript-then-indirect-call, matching current
   Mojo — identifier bases (`objs[0](3)`), member bases (`h.items[0](5)`), and
