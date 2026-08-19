@@ -40,6 +40,7 @@ Commands:
 | `own` | parse, type-check, and run ownership analysis |
 | `run` | compile and execute on the register VM |
 | `emit-mir` | compile and print canonical executable MIR |
+| `compile` | native-compile the scalar subset via `--backend pliron` (experimental; requires the `backend-pliron` feature and LLVM 22) |
 | `exec` | execute a verified textual MIR artifact |
 
 `FILE` is optional. Use a path, `-`, or omit it to read from standard input:
@@ -52,7 +53,17 @@ cargo run -- run assets/ok/list_and_struct.mojo
 cargo run -- emit-mir assets/ok/defines_main.mojo | cargo run -- exec -
 ```
 
-`check`, `own`, `run`, and `emit-mir` link imports. Add repeatable module roots with
+`compile` selects its output with `--emit plir|ll|bc|obj|exe` (default `ll`;
+text kinds print to stdout unless `-o PATH` is given, binary kinds require
+`-o PATH`) and rejects any program whose reachable-from-`main` call graph
+leaves the scalar subset — including `print`, until the native runtime stage:
+
+```sh
+cargo build --features backend-pliron   # needs llvm-22-dev (see docs/notes/pliron-stage1.md)
+target/debug/mojito compile pure.mojo --backend pliron --emit exe -o pure
+```
+
+`check`, `own`, `run`, `emit-mir`, and `compile` link imports. Add repeatable module roots with
 `--module-path PATH` (or `-I PATH`) and explicit standard-library roots with
 `--stdlib PATH`; either spelling also accepts `--option=PATH`. Resolution checks
 the importing file's directory first, then CLI roots in their command-line order,

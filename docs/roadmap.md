@@ -133,8 +133,8 @@ guards on the conformance and round-trip fixture sets (see the artifact rows of
 
 ### 4. Native Backend: Pliron First, Cranelift On Material Failure
 
-The artifact close-out and the Pliron Stage 0 feasibility gate have passed, so
-Pliron Stage 1 below is the default next task. Verified MIR is the stable
+The artifact close-out and the Pliron Stage 0/Stage 1 gates have passed, so
+Pliron Stage 2 below is the default next task. Verified MIR is the stable
 waist, the VM remains the semantic oracle,
 and native work does not wait for complete standard-library, packaging, or Mojo
 surface parity. Unsupported native behavior rejects with a contextual compile
@@ -228,27 +228,15 @@ classification matrix, and go verdict. The spike lives in
 `spikes/pliron-stage0/` behind `scripts/check-pliron-spike`; the default lane
 remains LLVM-free (guarded by `tests/backend_isolation_test.rs`).
 
-- [ ] **Pliron Stage 1: scalar MIR-to-native vertical slice** — connect the
-  smallest production subset to the cached executable MIR:
-  - support integer and Bool constants and arithmetic, comparisons, blocks,
-    unconditional and conditional branches, direct calls, recursion, and return
-  - lower directly to the LLVM dialect, verify before and after conversion, and
-    emit canonical Pliron text, LLVM IR/bitcode, object, and host executable
-  - add deterministic symbol mangling, MIR source-location propagation, a
-    total supported-subset match, and contextual unsupported diagnostics
-  - expose experimental `compile --backend pliron --emit ...` behind optional
-    features; text may use stdout, while binary output requires an output path
-
-  Acceptance: straight-line, diamond, loop, multi-function, and recursive
-  examples match the VM; Pliron text round-trips byte-stably; repeated builds
-  produce deterministic LLVM IR; invalid IR fails verification; and the backend
-  imports no pre-MIR semantic representation.
-
-  Passing this task authorizes broader Pliron work; it does not promote Pliron
-  to the preferred user-facing backend. If this vertical slice exposes a
-  material framework, LLVM-dialect, diagnostic, or distribution blocker, stop
-  Pliron and promote the Cranelift fallback rather than maintaining two partial
-  production backends.
+Stage 1 (scalar MIR-to-native vertical slice) is complete — the feature-gated
+`src/backend/pliron/` backend compiles the scalar subset from the cached
+post-drop artifact through the LLVM dialect to LLVM IR, bitcode, objects, and
+executables via `mojito compile --backend pliron`, with VM parity pinned by
+the JIT differential over `assets/ok/pliron_*` fixtures. See
+`docs/notes/pliron-stage1.md` for the design, mangling scheme, and recorded
+VM/native divergence policies; the LLVM lane's gate is `scripts/check-pliron`.
+Passing Stage 1 authorizes broader Pliron work; it does not promote Pliron to
+the preferred user-facing backend.
 
 - [ ] **Pliron Stage 2: complete scalar execution and conversion legality** —
   support all checked scalar operators and conversions, local storage,

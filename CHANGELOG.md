@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pliron Stage 1 scalar native backend (roadmap §4, experimental): behind the
+  `backend-pliron` feature (LLVM 22), `mojito compile [FILE] --backend pliron
+  --emit plir|ll|bc|obj|exe [-o PATH]` compiles the call-graph closure of
+  `main` for the scalar subset — Int/Bool constants and arithmetic,
+  comparisons, branches, loops, direct calls, recursion, return — from the
+  cached post-drop `elaborated_mir` artifact to Pliron's LLVM dialect and on
+  to LLVM IR, bitcode, relocatable objects, and linked host executables
+  (bitcode + clang). VM parity is pinned by a JIT differential over seven
+  `assets/ok/pliron_*` fixtures (including a FloorDiv/Mod sign matrix and
+  masked-shift cases matching `runtime.rs` exactly); canonical Pliron text is
+  a byte-stable parse/print fixpoint, repeated builds are deterministic, and
+  every construct outside the subset — including `print` until the Stage 3
+  runtime — rejects with a contextual, source-located diagnostic. Execution
+  stays on the register VM (`run`/`exec --backend pliron` still refuse). The
+  default build resolves no LLVM dependency (`tests/backend_isolation_test.rs`
+  now guards the default feature graph via `cargo tree`); the LLVM lane's
+  gate is `scripts/check-pliron`. Design record: `docs/notes/pliron-stage1.md`.
+
 - Pliron Stage 0 feasibility gate (roadmap §4): a standalone spike crate
   (`spikes/pliron-stage0/`, gated by `scripts/check-pliron-spike`) pins
   `pliron`/`pliron-llvm` 0.17.0 against LLVM 22 and proves IR construction,

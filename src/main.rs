@@ -55,6 +55,10 @@ fn main() -> ExitCode {
         cli.args.first().map(String::as_str),
         cli.args.get(1).map(String::as_str),
     );
+    if command != Some("compile") && (cli.emit.is_some() || cli.output.is_some()) {
+        eprintln!("--emit and --output are only valid with the compile command");
+        return ExitCode::FAILURE;
+    }
     match command {
         None => ExitCode::SUCCESS,
         Some("lex") => stage("lex", file, run_lex),
@@ -63,6 +67,7 @@ fn main() -> ExitCode {
         Some("own") => program_stage("own", file, &cli.link_options, run_own),
         Some("run") => stage_run(file, cli.backend, &cli.link_options),
         Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
+        Some("compile") => stage_compile(file, &cli),
         Some("exec") => stage_exec(file, cli.backend),
         Some("-h" | "--help" | "help") => {
             print_usage();
@@ -80,6 +85,11 @@ struct CliArgs {
     backend: BackendKind,
     args: Vec<String>,
     link_options: LinkOptions,
+    /// `--emit KIND` for `compile` (parsed by the backend; raw here so the
+    /// default build carries no backend types).
+    emit: Option<String>,
+    /// `-o`/`--output PATH` for `compile`.
+    output: Option<String>,
 }
 
 /// Extract global options from anywhere on the command line. Local imports win,
@@ -88,6 +98,8 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut backend = BackendKind::Vm;
     let mut args = Vec::new();
     let mut roots = Vec::<PathBuf>::new();
+    let mut emit = None;
+    let mut output = None;
     let mut iter = raw.into_iter();
     while let Some(arg) = iter.next() {
         if let Some(name) = arg.strip_prefix("--backend=") {
@@ -107,6 +119,17 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         } else if arg == "--stdlib" {
             let path = iter.next().ok_or("--stdlib requires a path")?;
             require_path("--stdlib", &path, &mut roots)?;
+        } else if let Some(kind) = arg.strip_prefix("--emit=") {
+            emit = Some(kind.to_string());
+        } else if arg == "--emit" {
+            emit = Some(iter.next().ok_or("--emit requires a kind")?);
+        } else if let Some(path) = arg.strip_prefix("--output=") {
+            output = Some(path.to_string());
+        } else if arg == "-o" || arg == "--output" {
+            output = Some(
+                iter.next()
+                    .ok_or_else(|| format!("{arg} requires a path"))?,
+            );
         } else if arg.starts_with('-') && arg != "-" && !matches!(arg.as_str(), "-h" | "--help") {
             return Err(format!("unknown option '{arg}'"));
         } else {
@@ -120,6 +143,8 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         link_options: LinkOptions {
             search_roots: roots,
         },
+        emit,
+        output,
     })
 }
 
@@ -226,6 +251,104 @@ fn stage_emit_mir(file: Option<&str>, link_options: &LinkOptions) -> ExitCode {
     }
 }
 
+/// `compile`: native compilation of the scalar subset through the Pliron
+/// backend. Text kinds (`plir`, `ll`) print to stdout unless `--output` is
+/// given; binary kinds (`bc`, `obj`, `exe`) require `--output`.
+#[cfg(feature = "backend-pliron")]
+fn stage_compile(file: Option<&str>, cli: &CliArgs) -> ExitCode {
+    match run_compile(file, cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("compile error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(feature = "backend-pliron")]
+fn run_compile(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
+    use mojito::backend::pliron;
+
+    if cli.backend != BackendKind::Pliron {
+        return Err(
+            "compile requires --backend pliron (the only native compile backend)".to_string(),
+        );
+    }
+    let emit = match cli.emit.as_deref() {
+        Some(kind) => pliron::EmitKind::parse(kind)?,
+        None => pliron::EmitKind::LlvmIr,
+    };
+    if emit.is_binary() && cli.output.is_none() {
+        return Err("--emit bc|obj|exe requires --output PATH".to_string());
+    }
+
+    // Read the source once (stdin cannot be re-read), compile it through the
+    // production pipeline, and hand the cached post-drop MIR to the backend.
+    let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
+    let label = file.unwrap_or("-").to_string();
+    let compiler = Compiler::new(cli.link_options.clone(), BackendKind::Vm);
+    let compiled = match file {
+        Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),
+        _ => compiler.compile_unlinked(&source),
+    }
+    .map_err(|error| match &error {
+        CompilerError::Module(module) => format_module_error(module, &label, &source),
+        _ => error.to_string(),
+    })?;
+    let mir = compiled.elaborated_mir();
+
+    let mut entries = vec!["main".to_string()];
+    if mir.functions.iter().any(|(name, _)| name == "__toplevel__") {
+        entries.push("__toplevel__".to_string());
+    }
+    let options = pliron::CompileOptions {
+        entries,
+        sources: vec![(label, source)],
+    };
+    let mut module = pliron::compile(mir, &options)
+        .map_err(|error| error.display_with_sources(&options.sources))?;
+
+    let write_text = |text: &str| -> Result<(), String> {
+        match &cli.output {
+            Some(path) => {
+                std::fs::write(path, text).map_err(|e| format!("cannot write {path}: {e}"))
+            }
+            None => {
+                print!("{text}");
+                Ok(())
+            }
+        }
+    };
+    let output_path = || Path::new(cli.output.as_deref().expect("checked for binary kinds"));
+    match emit {
+        pliron::EmitKind::Plir => write_text(module.plir_text()),
+        pliron::EmitKind::LlvmIr => {
+            let text = module.llvm_ir().map_err(|e| e.to_string())?;
+            write_text(&text)
+        }
+        pliron::EmitKind::Bitcode => module
+            .write_bitcode(output_path())
+            .map_err(|e| e.to_string()),
+        pliron::EmitKind::Object => module
+            .write_object(output_path())
+            .map_err(|e| e.to_string()),
+        pliron::EmitKind::Exe => module
+            .write_executable(output_path())
+            .map_err(|e| e.to_string()),
+    }
+}
+
+/// `compile` in a build without the Pliron backend: explain how to get one.
+#[cfg(not(feature = "backend-pliron"))]
+fn stage_compile(_file: Option<&str>, _cli: &CliArgs) -> ExitCode {
+    eprintln!(
+        "compile error: this mojito build lacks the `backend-pliron` feature; \
+         rebuild with `cargo build --features backend-pliron` \
+         (requires LLVM 22 — see docs/notes/pliron-stage0.md)"
+    );
+    ExitCode::FAILURE
+}
+
 fn compile_input(
     compiler: &Compiler,
     file: Option<&str>,
@@ -315,13 +438,16 @@ fn print_usage() {
          global options:\n\
          \x20 -I, --module-path PATH  add a module search root (repeatable)\n\
          \x20 --stdlib PATH          add a stdlib search root (repeatable)\n\
-         \x20 --backend NAME         select the run backend\n\n\
+         \x20 --backend NAME         select the run backend\n\
+         \x20 --emit KIND            compile output: plir|ll|bc|obj|exe (default ll)\n\
+         \x20 -o, --output PATH      compile output path (required for bc|obj|exe)\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\
          \x20 check [FILE]   type-check and report ok or the first error\n\
          \x20 run   [FILE]   evaluate and print output + final bindings\n\
          \x20 emit-mir [FILE] compile and print executable textual MIR\n\
+         \x20 compile [FILE] native-compile via --backend pliron (experimental)\n\
          \x20 exec  [FILE]   execute a verified textual MIR artifact\n\
          \x20 demo           run the built-in showcase (default)\n\n\
          FILE defaults to '-' (standard input).\n"

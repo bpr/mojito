@@ -114,11 +114,15 @@ fallback plan) and Cranelift, with a C or C++ source backend as a possible addit
 LLVM or MLIR lowering and eBPF are no longer prioritized.
 
 Native-backend work is isolated from the default build as an invariant: the
-default `mojito` build and `scripts/check` carry no LLVM or Pliron dependency
-(`tests/backend_isolation_test.rs` guards the lockfile), Pliron work lives
-under `spikes/` behind its own gate (`scripts/check-pliron-spike`) until
-Stage 1 wires an optional `backend-pliron` feature, and the exact dependency
-pins live in `docs/notes/pliron-stage0.md`.
+default `mojito` build and `scripts/check` resolve no LLVM or Pliron
+dependency (`tests/backend_isolation_test.rs` guards the default feature
+graph). The experimental Stage 1 backend lives in `src/backend/pliron/`
+behind the optional `backend-pliron` feature — a compile-only path
+(`mojito compile --backend pliron`) consuming the cached post-drop
+`elaborated_mir` artifact, with its own gate (`scripts/check-pliron`, which
+also chains the Stage 0 spike gate). Execution stays on the register VM.
+Dependency pins live in `docs/notes/pliron-stage0.md`; the Stage 1 design
+and recorded VM/native divergence policies in `docs/notes/pliron-stage1.md`.
 
 ### Source Module Boundaries
 

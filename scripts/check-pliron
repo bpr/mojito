@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Gate for the LLVM lane: the feature-gated Pliron backend inside mojito plus
+# the Stage 0 spike. Deliberately kept out of scripts/check — the default VM
+# lane must never require LLVM. Requires llvm-22-dev and clang; pins and CI
+# recipe: docs/notes/pliron-stage0.md and docs/notes/pliron-stage1.md.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+export LLVM_SYS_221_PREFIX="${LLVM_SYS_221_PREFIX:-/usr/lib/llvm-22}"
+
+echo "==> cargo fmt --check"
+cargo fmt --check
+
+echo "==> cargo clippy --features backend-pliron --all-targets -- -D warnings"
+cargo clippy --features backend-pliron --all-targets -- -D warnings
+
+echo "==> cargo nextest run --features backend-pliron (pliron tests)"
+cargo nextest run --features backend-pliron -E 'binary(pliron_backend_test) + test(pliron)'
+
+echo "==> pliron stage-0 spike gate"
+scripts/check-pliron-spike

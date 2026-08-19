@@ -1,22 +1,43 @@
-//! The default build must not link any native backend toolchain: the Pliron
-//! spike (spikes/pliron-stage0) is a standalone crate, and `mojito` itself
-//! must stay free of `pliron`/`llvm-sys` until an optional feature wires them
-//! in deliberately (roadmap section 4; docs/notes/pliron-stage0.md).
-//!
-//! Once Stage 1 adds `pliron` as an optional dependency, these packages will
-//! appear in the lockfile even for default builds; replace this guard with a
-//! feature-gated check (e.g. `cargo tree --no-default-features`) then.
+//! The default build must not link any native backend toolchain. `pliron`,
+//! `pliron-llvm`, and (transitively) `llvm-sys` exist in the lockfile as
+//! optional dependencies behind the `backend-pliron` feature, so this guard
+//! asserts the *resolved default dependency graph* — not the lockfile —
+//! stays free of them (roadmap section 4; docs/notes/pliron-stage1.md).
 
-const LOCKFILE: &str = include_str!("../Cargo.lock");
+use std::process::Command;
 
 #[test]
-fn lockfile_contains_no_llvm_or_pliron() {
+fn default_feature_graph_contains_no_llvm_or_pliron() {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let output = Command::new(cargo)
+        .args([
+            "tree",
+            "--locked",
+            "--offline",
+            "--no-default-features",
+            "-e",
+            "no-dev",
+            "--prefix",
+            "none",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("RUSTC_WRAPPER", "")
+        .output()
+        .expect("cargo tree runs");
+    assert!(
+        output.status.success(),
+        "cargo tree failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let tree = String::from_utf8_lossy(&output.stdout);
     for package in ["llvm-sys", "pliron", "pliron-llvm"] {
-        let needle = format!("name = \"{package}\"");
+        let hit = tree
+            .lines()
+            .any(|line| line.trim_start().starts_with(&format!("{package} v")));
         assert!(
-            !LOCKFILE.contains(&needle),
-            "Cargo.lock unexpectedly contains {package}; \
-             the default VM build must need no native toolchain"
+            !hit,
+            "default dependency graph unexpectedly contains {package}; \
+             the default VM build must need no native toolchain:\n{tree}"
         );
     }
 }

@@ -14,6 +14,8 @@ use crate::checked::CheckedProgram;
 use crate::error::RuntimeError;
 use crate::runtime::Value;
 
+#[cfg(feature = "backend-pliron")]
+pub mod pliron;
 mod vm;
 pub use vm::VmBackend;
 
