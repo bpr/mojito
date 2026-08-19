@@ -30,6 +30,12 @@ include = [
     "/roadmap.md",
 ]
 
+[features]
+# Reserved seam for the Pliron native backend (roadmap section 4). Kept empty
+# until Stage 1 wires an optional pliron dependency behind it; the default
+# build must stay free of LLVM. See docs/notes/pliron-stage0.md.
+backend-pliron = []
+
 [dependencies]
 num-bigint = "0.4.6"
 num-integer = "0.1.46"

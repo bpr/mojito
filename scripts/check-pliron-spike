@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Gate for the Pliron Stage 0 spike (spikes/pliron-stage0). Deliberately kept
+# out of scripts/check: the spike needs LLVM 22 dev libraries and clang, which
+# the default VM lane must never require. CI recipe and pin record:
+# docs/notes/pliron-stage0.md.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/../spikes/pliron-stage0"
+
+# llvm-sys 221 discovery: prefer an explicit prefix; the fallback matches
+# this machine's llvm-22-dev install location.
+export LLVM_SYS_221_PREFIX="${LLVM_SYS_221_PREFIX:-/usr/lib/llvm-22}"
+# expect-test resolves snapshot paths against the workspace root; the spike
+# is standalone, so pin it (matters when updating snapshots, UPDATE_EXPECT=1).
+export CARGO_WORKSPACE_DIR="$PWD"
+
+echo "==> cargo fmt --check (pliron spike)"
+cargo fmt --check
+
+echo "==> cargo nextest run (pliron spike)"
+cargo nextest run
+
+echo "==> cargo clippy --all-targets -- -D warnings (pliron spike)"
+cargo clippy --all-targets -- -D warnings

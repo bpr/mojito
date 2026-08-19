@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pliron Stage 0 feasibility gate (roadmap §4): a standalone spike crate
+  (`spikes/pliron-stage0/`, gated by `scripts/check-pliron-spike`) pins
+  `pliron`/`pliron-llvm` 0.17.0 against LLVM 22 and proves IR construction,
+  canonical textual round trips, located non-panicking verification
+  diagnostics, custom and built-in passes, a toy-dialect lowering through the
+  dialect-conversion framework, LLVM IR/bitcode export, and host execution of
+  `main -> i32` via both LLJIT and a clang-linked executable exiting 42. The
+  default build stays LLVM-free: the spike is not a workspace member,
+  `tests/backend_isolation_test.rs` guards the root lockfile, and the empty
+  `backend-pliron` feature reserves the Stage 1 seam. Pin record, ecosystem
+  audit, and facility classification: `docs/notes/pliron-stage0.md`. Verdict:
+  GO for Stage 1.
+
 - MIR artifact milestone close-out (roadmap §3): `CompiledProgram` now retains
   the drop-elaborated, re-verified `MirProgram` as one lazily cached artifact
   (`CompiledProgram::elaborated_mir`) that backend execution and

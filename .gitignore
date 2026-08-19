@@ -1,2 +1,4 @@
 /target
 Cargo.lock
+spikes/*/target/
+!spikes/*/Cargo.lock

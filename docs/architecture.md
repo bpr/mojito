@@ -113,6 +113,13 @@ LLVM dialect emits LLVM IR; `docs/roadmap.md` contains the staged adoption and
 fallback plan) and Cranelift, with a C or C++ source backend as a possible addition. Direct
 LLVM or MLIR lowering and eBPF are no longer prioritized.
 
+Native-backend work is isolated from the default build as an invariant: the
+default `mojito` build and `scripts/check` carry no LLVM or Pliron dependency
+(`tests/backend_isolation_test.rs` guards the lockfile), Pliron work lives
+under `spikes/` behind its own gate (`scripts/check-pliron-spike`) until
+Stage 1 wires an optional `backend-pliron` feature, and the exact dependency
+pins live in `docs/notes/pliron-stage0.md`.
+
 ### Source Module Boundaries
 
 Large phases keep orchestration in their root module and delegate reusable

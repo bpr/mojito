@@ -133,8 +133,8 @@ guards on the conformance and round-trip fixture sets (see the artifact rows of
 
 ### 4. Native Backend: Pliron First, Cranelift On Material Failure
 
-The artifact close-out has passed, so native-backend work is unblocked and
-Pliron Stage 0 below is the default next task. Verified MIR is the stable
+The artifact close-out and the Pliron Stage 0 feasibility gate have passed, so
+Pliron Stage 1 below is the default next task. Verified MIR is the stable
 waist, the VM remains the semantic oracle,
 and native work does not wait for complete standard-library, packaging, or Mojo
 surface parity. Unsupported native behavior rejects with a contextual compile
@@ -222,36 +222,11 @@ execution time, and supported/excluded MIR counts. Every stage is removable by
 disabling its optional feature and backend modules without changing MIR, VM, or
 source semantics.
 
-- [ ] **Pliron Stage 0: feasibility, exact pin, and dependency isolation** —
-  validate Pliron outside the production compiler before committing to it:
-  - select exact, mutually compatible `pliron` and `pliron-llvm` releases, or
-    one immutable Git revision if no release passes; retain the lockfile and
-    record source checksums, upstream commit, Rust version, LLVM version,
-    enabled features, required packages, and discovery configuration
-  - audit the current tutorial/Kaleidoscope path and the exact present-day use
-    of Pliron in CUDA Oxide and CubeCL rather than treating project names as
-    maturity evidence
-  - prove construction, parsing/printing, verification failure, rewriting,
-    dialect conversion, LLVM module/bitcode export, object emission, and host
-    execution with source-associated diagnostics
-  - classify every required facility—operations, types, attributes, blocks,
-    SSA, dominance, pass invalidation, conversion legality, LLVM dialect
-    coverage, data layout, JIT/targets, and diagnostics—as supported, locally
-    bridgeable, upstream gap, or blocker with evidence
-  - prototype optional Cargo features and CI isolation without connecting the
-    spike to `Compiler`; a clean default build must succeed with no LLVM
-  - establish Linux as the first native host, with macOS and Windows advertised
-    only after their independent object, linker, runtime, and execution gates
-
-  Acceptance: pinned Linux CI emits and executes `main -> i32`; invalid IR
-  reports a source-associated diagnostic rather than panicking; the default VM
-  lane needs no native toolchain; and no required API needs a broad Mojito fork.
-
-  Material failure means LLVM cannot be isolated from the default build,
-  required operations/export cannot be implemented without a broad fork, the
-  version/update burden is untenable, or source-aware verification cannot be
-  preserved. A material failure skips the remaining Pliron stages and promotes
-  the Cranelift fallback task below.
+Stage 0 (feasibility, exact pin, and dependency isolation) is complete — see
+`docs/notes/pliron-stage0.md` for the pin record, ecosystem audit, facility
+classification matrix, and go verdict. The spike lives in
+`spikes/pliron-stage0/` behind `scripts/check-pliron-spike`; the default lane
+remains LLVM-free (guarded by `tests/backend_isolation_test.rs`).
 
 - [ ] **Pliron Stage 1: scalar MIR-to-native vertical slice** — connect the
   smallest production subset to the cached executable MIR:
