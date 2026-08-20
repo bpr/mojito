@@ -47,11 +47,32 @@ pub struct VmBackend {
     ctfe_fuel: Option<usize>,
     frames: Vec<Frame>,
     next_frame_id: u64,
+    /// Test-only ordered lifecycle-event log: destructor dispatches,
+    /// consumes, raises, and catches, in execution order. `None` (the
+    /// default) records nothing; the native backend's trace lane compares
+    /// against this sequence.
+    lifecycle_log: Option<Vec<String>>,
 }
 
 impl VmBackend {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable the test-only ordered lifecycle-event log.
+    pub fn enable_lifecycle_log(&mut self) {
+        self.lifecycle_log = Some(Vec::new());
+    }
+
+    /// The recorded lifecycle events, in execution order.
+    pub fn lifecycle_log(&self) -> Option<&[String]> {
+        self.lifecycle_log.as_deref()
+    }
+
+    pub(super) fn record_lifecycle(&mut self, event: String) {
+        if let Some(log) = self.lifecycle_log.as_mut() {
+            log.push(event);
+        }
     }
 
     /// Execute a named top-level function and return its value without running the
@@ -1808,6 +1829,7 @@ impl VmBackend {
                 }
                 let del = format!("{name}.__deinit__");
                 if let Some(idx) = prog.index_of(&del) {
+                    self.record_lifecycle(format!("drop {name}"));
                     // `self` is the whole struct; the return value is discarded.
                     let self_val = Value::Struct {
                         name: name.clone(),

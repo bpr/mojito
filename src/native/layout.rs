@@ -101,10 +101,7 @@ impl LayoutCx<'_> {
             Ty::StringLiteral => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
             // The built-in error value: `{ message: MjString }` where
             // `MjString` is `{ data: ptr, size: i64, cap: i64 }`.
-            Ty::Error => {
-                let string = compose(&[self.pointer(), Layout::new(8, 8), Layout::new(8, 8)]);
-                Ok(compose(&[string.layout]).layout)
-            }
+            Ty::Error => Ok(self.mj_error()),
             Ty::Struct(name, _) => {
                 let Some(fields) = self.structs.get(name) else {
                     return Err(LayoutError::Unsupported(format!(
@@ -133,6 +130,18 @@ impl LayoutCx<'_> {
         Ok(compose(&laid))
     }
 
+    /// Tagged success/error outcome of a raising function:
+    /// `{ tag: u32, ok: T, err: MjError }` composed by the ordinary aggregate
+    /// rules (normative in `docs/native-abi.md`). The returned offsets are
+    /// `[tag, ok, err]`; a `None` return contributes a zero-sized ok payload.
+    pub fn outcome_layout(&self, ok: &Ty) -> Result<StructLayout, LayoutError> {
+        Ok(compose(&[
+            Layout::new(4, 4),
+            self.layout_of(ok)?,
+            self.mj_error(),
+        ]))
+    }
+
     /// Tagged-union layout: `u32` tag at offset 0, payload overlay sized and
     /// aligned to the widest alternative.
     pub fn variant_layout(&self, alternatives: &[Ty]) -> Result<VariantLayout, LayoutError> {
@@ -149,6 +158,13 @@ impl LayoutCx<'_> {
             layout: Layout::new(align_up(payload_offset + payload.size, align), align),
             payload_offset,
         })
+    }
+
+    /// The runtime's `MjError { message: MjString }` where `MjString` is
+    /// `{ data: ptr, size: i64, cap: i64 }`.
+    fn mj_error(&self) -> Layout {
+        let string = compose(&[self.pointer(), Layout::new(8, 8), Layout::new(8, 8)]);
+        compose(&[string.layout]).layout
     }
 
     fn pointer(&self) -> Layout {
@@ -290,6 +306,34 @@ mod tests {
         );
         let missing = cx.layout_of(&Ty::Struct("Absent".to_string(), vec![]));
         assert!(matches!(missing, Err(LayoutError::Unsupported(_))));
+    }
+
+    #[test]
+    fn outcome_is_tag_ok_err_by_ordinary_aggregate_rules() {
+        let structs = StructFieldIndex::default();
+        let (target, structs) = cx(&structs);
+        let cx = LayoutCx {
+            target: &target,
+            structs,
+        };
+        // { tag: u32, ok: Int, err: MjError }: tag 0, ok 8, err 16; 40/8.
+        let int = cx.outcome_layout(&Ty::Int).unwrap();
+        assert_eq!(int.offsets, vec![0, 8, 16]);
+        assert_eq!(int.layout, Layout::new(40, 8));
+        // A None return is a zero-sized ok payload: err right after the tag's
+        // padding — { tag, err } at offsets 0 and 8; 32/8.
+        let none = cx.outcome_layout(&Ty::None).unwrap();
+        assert_eq!(none.offsets, vec![0, 4, 8]);
+        assert_eq!(none.layout, Layout::new(32, 8));
+        // Bool packs into the tag's padding.
+        let boolean = cx.outcome_layout(&Ty::Bool).unwrap();
+        assert_eq!(boolean.offsets, vec![0, 4, 8]);
+        assert_eq!(boolean.layout, Layout::new(32, 8));
+        // The ok payload of an unrepresentable type rejects like any layout.
+        assert!(matches!(
+            cx.outcome_layout(&Ty::Never),
+            Err(LayoutError::Unsupported(_))
+        ));
     }
 
     #[test]

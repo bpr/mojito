@@ -19,14 +19,18 @@ part of any native ABI, and `mojito-runtime` must never depend on the
 
 ## ABI versioning
 
-- `ABI_VERSION` (currently **2**) is a monotonic `u32` declared identically in
+- `ABI_VERSION` (currently **3**) is a monotonic `u32` declared identically in
   `mojito_runtime::ABI_VERSION` and `native::rt_abi::MJRT_ABI_VERSION`. Bump
   it on any change to an exported symbol's signature or semantics, an
   exported `#[repr(C)]` type's layout, a trap category's meaning, or any rule
   in this document that generated code depends on. Version 2 introduced the
   headered allocator (zero-size requests allocate, `mjrt_dealloc` validates
   against the header), the size-less `mjrt_free`, and
-  `mjrt_unhandled_error`.
+  `mjrt_unhandled_error`. Version 3 made raising functions return tagged
+  `{tag, ok, err}` outcomes through an outcome out-pointer (a generated-code
+  rule — see [Errors and exceptional control
+  flow](#errors-and-exceptional-control-flow)) and added the
+  lifecycle-event reporter `mjrt_trace`.
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
   synthesized executable wrapper references `mjrt_version`, so every produced
@@ -132,19 +136,39 @@ specialized name). Rules:
 
 ### Errors and exceptional control flow
 
-- The built-in error value is `MjError { message: MjString }` (24/8).
-- **Pre-Stage-4 contract (current)**: no `try` lowering exists, so every
-  runtime `raise` is dynamically unhandled — raising functions compile with
-  unchanged signatures and `raise` lowers to `mjrt_unhandled_error(data,
-  len)`, which reports `unhandled error: <message>` on stderr and exits with
-  trap category 5 (exit 69). The CLI re-renders that stderr text as its
-  diagnostic for byte parity with the VM's `RuntimeError::Raised` display.
-- From Stage 4 on, a raising call produces a **tagged outcome** laid out by the ordinary
-  aggregate rules: `{ tag: u32, ok: T, err: MjError }` with `tag` 0 (`MJ_TAG_OK`)
-  or 1 (`MJ_TAG_ERR`); exactly one payload is initialized, selected by the
-  tag. Success, error, return, and `try`/`finally` cleanup paths lower as
-  **explicit CFG edges** — platform unwinding is not used and would require
-  its own semantic/ABI/portability specification first.
+- The built-in error value is `MjError { message: MjString }` (24/8): the
+  message is `size` initialized bytes of UTF-8 in a `cap`-byte `mjrt_alloc`
+  allocation, owned by whoever holds the `MjError`.
+- A `raises` function compiles as `void f(outcome*, params...)`: one
+  prepended **outcome out-pointer** (caller-allocated, replacing the plain
+  sret slot when the return type is an aggregate — a function never receives
+  both). The outcome is laid out by the ordinary aggregate rules:
+  `{ tag: u32, ok: T, err: MjError }` (`native::layout::outcome_layout`) with
+  `tag` 0 (`MJ_TAG_OK`) or 1 (`MJ_TAG_ERR`); exactly one payload is
+  initialized, selected by the tag. Success, error, return, and
+  `try`/`finally` cleanup paths lower as **explicit CFG edges** — platform
+  unwinding is not used and would require its own semantic/ABI/portability
+  specification first.
+- **MjError ownership per edge**: the raise site materializes an owned
+  `MjError` (a literal message copies into a fresh allocation; an owned
+  runtime string or `String` buffer is stolen; a re-raise moves). A handler
+  that binds the error owns it through the bound variable, whose ordinary
+  drop frees `message.data` invisibly — the built-in error has no user
+  destructor. A handler without a binder frees the message after the
+  cleanup-edge drops. Propagation byte-copies the `MjError` from the callee
+  outcome into the caller's own outcome error slot (ownership transfers). An
+  error reaching the executable wrapper passes its message to
+  `mjrt_unhandled_error(data, len)` — `unhandled error: <message>` on
+  stderr, trap category 5 (exit 69); the CLI re-renders that stderr text as
+  its diagnostic for byte parity with the VM's `RuntimeError::Raised`
+  display.
+- **The propagation path abandons locals**: matching the VM (which truncates
+  raising frames without running destructors — its arena reclaims the memory
+  invisibly), no user destructor runs on the error-propagation path out of a
+  function beyond the explicit `try` cleanup lists in the MIR. Generated code
+  frees the *buffers* of still-initialized releasable locals (the String and
+  built-in-error family) on that path without running user code; abandoned
+  locals of other droppable types are a recorded leak residue.
 
 ## Calling convention
 
@@ -205,6 +229,7 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_fmt_f64(value, out) -> u64` | Borrows `out` (≥ 32 bytes); VM display text. |
 | `mjrt_trap(category) -> !` | Reports on stderr, exits `64 + category` (clamped to 127); runs no destructors. |
 | `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
+| `mjrt_trace(kind, data, len)` | Borrows the UTF-8 payload; reports one ordered lifecycle event (`mjtrace <kind> <payload>`) on stderr. Emitted only by trace-instrumented builds, never by default emission; write errors are ignored so tracing cannot perturb behavior. Kinds: 1 drop, 2 consume, 3 cleanup, 4 raise, 5 catch. |
 
 Trap categories (shared with the backend's `TrapCategory` codes and exit
 codes `64 + category`): 1 div/mod by zero (exit 65), 2 `**` exponent range

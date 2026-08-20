@@ -1729,6 +1729,9 @@ impl VmBackend {
             }
             MirInstr::ConsumeVar { var } => {
                 let value = std::mem::replace(&mut vars[*var as usize], Value::Moved);
+                if let Value::Struct { name, .. } = &value {
+                    self.record_lifecycle(format!("consume {name}"));
+                }
                 if let Value::Struct { fields, .. } = value {
                     // The named explicit destructor has already consumed the
                     // aggregate. Its fields still receive their ordinary
@@ -1768,6 +1771,9 @@ impl VmBackend {
                     }
                     other => other.clone(),
                 };
+                if let Value::Error(message) = &error {
+                    self.record_lifecycle(format!("raise {message}"));
+                }
                 return Err(RuntimeError::Raised(error));
             }
             MirInstr::Try {
@@ -1838,6 +1844,9 @@ impl VmBackend {
                 self.run_cleanup(prog, cleanup, vars)?;
                 match handler {
                     Some((err_slot, hblocks)) => {
+                        if let Value::Error(message) = &error {
+                            self.record_lifecycle(format!("catch {message}"));
+                        }
                         if let Some(slot) = err_slot {
                             vars[*slot as usize] = error.clone();
                         }

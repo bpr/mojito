@@ -122,9 +122,9 @@ optional `backend-pliron` feature — a compile path
 advertised subset) consuming the cached post-drop `elaborated_mir` artifact,
 with its own gate (`scripts/check-pliron`, which also chains the Stage 0
 spike gate). Production execution stays on the register VM. Dependency pins
-live in `docs/notes/pliron-stage0.md`; the Stage 1/2 designs and recorded
-VM/native divergence policies in `docs/notes/pliron-stage1.md` and
-`docs/notes/pliron-stage2.md`.
+live in `docs/notes/pliron-stage0.md`; the per-stage designs and recorded
+VM/native divergence policies in `docs/notes/pliron-stage1.md` through
+`docs/notes/pliron-stage4.md`.
 
 The backend-independent half of that work has one owner: the un-gated
 `src/native/` module holds the checked build configuration (target triple

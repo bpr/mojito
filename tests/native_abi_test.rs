@@ -103,6 +103,7 @@ fn runtime_signatures_match_the_contract_table() {
     assert_sig!(mjrt_fmt_i64: fn(i64, *mut u8) -> u64);
     assert_sig!(mjrt_fmt_u64: fn(u64, *mut u8) -> u64);
     assert_sig!(mjrt_fmt_f64: fn(f64, *mut u8) -> u64);
+    assert_sig!(mjrt_trace: fn(u32, *const u8, u64) -> ());
     // `-> !` cannot go through the generic return projection on stable Rust;
     // pin the noreturn contracts by hand.
     let _: unsafe extern "C" fn(u32) -> ! = mojito_runtime::mjrt_trap;
@@ -129,7 +130,7 @@ fn runtime_signatures_match_the_contract_table() {
 fn every_table_row_has_exactly_one_check_above() {
     // Adding a runtime symbol must extend runtime_signatures_match_the
     // _contract_table; this count trips when the table grows without it.
-    assert_eq!(rt_abi::RT_SYMBOLS.len(), 10);
+    assert_eq!(rt_abi::RT_SYMBOLS.len(), 11);
     assert_eq!(rt_abi::RT_DATA_SYMBOLS.len(), 1);
     assert_eq!(rt_abi::RT_TYPES.len(), 3);
 }
@@ -161,8 +162,49 @@ fn abi_version_and_shared_constants_agree() {
     );
     assert_eq!(mojito_runtime::MJ_TAG_OK, rt_abi::MJ_TAG_OK);
     assert_eq!(mojito_runtime::MJ_TAG_ERR, rt_abi::MJ_TAG_ERR);
+    assert_eq!(mojito_runtime::TRACE_DROP, rt_abi::TRACE_DROP);
+    assert_eq!(mojito_runtime::TRACE_CONSUME, rt_abi::TRACE_CONSUME);
+    assert_eq!(mojito_runtime::TRACE_CLEANUP, rt_abi::TRACE_CLEANUP);
+    assert_eq!(mojito_runtime::TRACE_RAISE, rt_abi::TRACE_RAISE);
+    assert_eq!(mojito_runtime::TRACE_CATCH, rt_abi::TRACE_CATCH);
     // The inspectable data symbol carries the same version the table pins.
     assert_eq!(mojito_runtime::mjrt_abi_version, rt_abi::MJRT_ABI_VERSION);
+}
+
+/// The tagged outcome of a raising function is a generated-code rule (no
+/// `#[repr(C)]` type crosses the runtime ABI), but its layout must agree with
+/// what rustc's `repr(C)` would produce for the same field sequence.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn outcome_layout_matches_repr_c_composition() {
+    #[repr(C)]
+    struct OutcomeInt {
+        tag: u32,
+        ok: i64,
+        err: mojito_runtime::MjError,
+    }
+    let target = NativeTarget::new(Triple::X86_64UnknownLinuxGnu);
+    let structs = StructFieldIndex::default();
+    let cx = LayoutCx {
+        target: &target,
+        structs: &structs,
+    };
+    let outcome = cx.outcome_layout(&Ty::Int).unwrap();
+    assert_eq!(
+        (outcome.layout.size, outcome.layout.align),
+        (
+            size_of::<OutcomeInt>() as u64,
+            align_of::<OutcomeInt>() as u64
+        )
+    );
+    assert_eq!(
+        outcome.offsets,
+        vec![
+            offset_of!(OutcomeInt, tag) as u64,
+            offset_of!(OutcomeInt, ok) as u64,
+            offset_of!(OutcomeInt, err) as u64
+        ]
+    );
 }
 
 #[cfg(target_pointer_width = "64")]

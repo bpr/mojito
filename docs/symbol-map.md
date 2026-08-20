@@ -216,18 +216,24 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `runtime_declarations` (the contract table's LLVM rendering), `JitValue`,
   and the `TrapCategory` exit-code/VM-message contract (`OptLevel`/
   `EmitKind`/`NativeTarget` re-export from `native::target`). Its
-  submodules: `backend/pliron/lower.rs` (scalar MIR-to-LLVM-dialect lowering
-  over Int/UInt/Float64/Bool — operators, conversions, keyword/default call
-  binding via `call::match_call_slots`, trap guard blocks, the sanitized
-  `MIN // -1` divisor, the `mjrt_pow` helper, and the exe wrapper that
-  references `mjrt_version`),
+  submodules: `backend/pliron/lower.rs` (MIR-to-LLVM-dialect lowering —
+  scalar operators/conversions with keyword/default call binding via
+  `call::match_call_slots`, trap guard blocks, the sanitized `MIN // -1`
+  divisor, the `mjrt_pow` helper, aggregates/strings/allocation, Stage 4's
+  tagged-outcome raising ABI, structural `try`/`finally` flattening with
+  per-variable initialization flags and pending-outcome dispatch, references
+  as place addresses, `mjrt_trace` lifecycle emission under
+  `CompileOptions::trace_lifecycle`, and the exe wrapper that references
+  `mjrt_version` and consumes a raising entry's outcome),
   `backend/pliron/emit.rs` (target stamping onto every LLVM module, LLVM
   IR/bitcode/object/exe via clang `--target`, runtime-archive discovery and
   linking, plus the `opt`-subprocess `O1` pipeline), and
   `backend/pliron/jit.rs` (host-only ORC LLJIT execution typed by
   `RetKind`).
 - `backend/vm.rs` owns the `VmBackend` core: heap, value operations, method-call
-  and named-call execution, drops, and formatting. Its remaining methods are
+  and named-call execution, drops, formatting, and the test-only ordered
+  lifecycle-event log (`enable_lifecycle_log`/`lifecycle_log`) the native
+  trace differential compares against. Its remaining methods are
   split across `impl VmBackend` blocks in the submodules below.
 - `backend/vm/frames.rs` owns call-frame construction and the `drive_frames`
   dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`).

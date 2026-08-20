@@ -25,7 +25,12 @@ use std::io::Write;
 /// every allocation is freeable), [`mjrt_dealloc`] validates against the
 /// header instead of being undefined on mismatch, and
 /// [`mjrt_unhandled_error`] reports an uncaught raise.
-pub const ABI_VERSION: u32 = 2;
+///
+/// Version 3: raising functions return tagged `{tag, ok, err}` outcomes
+/// through their outcome out-pointer (generated-code rule; no new type
+/// crosses this ABI), and [`mjrt_trace`] reports ordered lifecycle events
+/// from trace-instrumented builds.
+pub const ABI_VERSION: u32 = 3;
 
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
 /// trap numbering; the process exit code is `64 + category`.
@@ -38,6 +43,14 @@ pub const TRAP_UNHANDLED_ERROR: u32 = 5;
 /// Tag values for tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
 pub const MJ_TAG_ERR: u32 = 1;
+
+/// Lifecycle-event kinds understood by [`mjrt_trace`]. Values match the
+/// contract table in `mojito::native::rt_abi`.
+pub const TRACE_DROP: u32 = 1;
+pub const TRACE_CONSUME: u32 = 2;
+pub const TRACE_CLEANUP: u32 = 3;
+pub const TRACE_RAISE: u32 = 4;
+pub const TRACE_CATCH: u32 = 5;
 
 /// A borrowed string-literal descriptor: `len` bytes of UTF-8 at `data`, not
 /// NUL-terminated, never owned by the callee.
@@ -240,6 +253,43 @@ pub unsafe extern "C" fn mjrt_unhandled_error(data: *const u8, len: u64) -> ! {
     std::process::exit(trap_exit_code(TRAP_UNHANDLED_ERROR))
 }
 
+/// Reports one ordered lifecycle event — `mjtrace <kind> <payload>` (or
+/// `mjtrace <kind>` for an empty payload) on stderr — from a
+/// trace-instrumented build. Default emission never calls this; stdout byte
+/// parity is untouched because the trace goes to stderr. Write errors are
+/// ignored: tracing must never perturb observable program behavior.
+///
+/// # Safety
+///
+/// When `len` is nonzero, `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mjrt_trace(kind: u32, data: *const u8, len: u64) {
+    let payload = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len as usize) }
+    };
+    let name = trace_kind_name(kind);
+    let mut err = std::io::stderr().lock();
+    let _ = if payload.is_empty() {
+        writeln!(err, "mjtrace {name}")
+    } else {
+        writeln!(err, "mjtrace {name} {}", String::from_utf8_lossy(payload))
+    };
+}
+
+/// The stable stderr name of a lifecycle-event kind.
+pub fn trace_kind_name(kind: u32) -> &'static str {
+    match kind {
+        TRACE_DROP => "drop",
+        TRACE_CONSUME => "consume",
+        TRACE_CLEANUP => "cleanup",
+        TRACE_RAISE => "raise",
+        TRACE_CATCH => "catch",
+        _ => "event",
+    }
+}
+
 /// The stderr text for a trap category. Known categories reuse the VM's
 /// runtime-error message text so the two backends diagnose identically.
 pub fn trap_message(category: u32) -> &'static str {
@@ -390,6 +440,18 @@ mod tests {
     #[test]
     fn write_stdout_zero_len_ignores_data() {
         unsafe { mjrt_write_stdout(std::ptr::null(), 0) };
+    }
+
+    #[test]
+    fn trace_kind_names_are_stable() {
+        assert_eq!(trace_kind_name(TRACE_DROP), "drop");
+        assert_eq!(trace_kind_name(TRACE_CONSUME), "consume");
+        assert_eq!(trace_kind_name(TRACE_CLEANUP), "cleanup");
+        assert_eq!(trace_kind_name(TRACE_RAISE), "raise");
+        assert_eq!(trace_kind_name(TRACE_CATCH), "catch");
+        assert_eq!(trace_kind_name(0), "event");
+        // A zero-length payload ignores data entirely.
+        unsafe { mjrt_trace(TRACE_RAISE, std::ptr::null(), 0) };
     }
 
     #[test]

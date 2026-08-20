@@ -20,7 +20,8 @@ echo "==> cargo clippy --features backend-pliron --all-targets -- -D warnings"
 cargo clippy --features backend-pliron --all-targets -- -D warnings
 
 echo "==> cargo nextest run --features backend-pliron (pliron tests)"
-cargo nextest run --features backend-pliron -E 'binary(pliron_backend_test) + test(pliron)'
+# --no-fail-fast: report every failure in one gate run.
+cargo nextest run --no-fail-fast --features backend-pliron -E 'binary(pliron_backend_test) + test(pliron)'
 
 echo "==> pliron stage-0 spike gate"
 scripts/check-pliron-spike

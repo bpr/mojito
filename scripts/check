@@ -12,7 +12,9 @@ cargo fmt --all --check
 echo "==> cargo nextest run --workspace"
 # nextest does not run doctests; this workspace has none. If doctests are
 # ever added, run them separately here (cargo test --doc).
-cargo nextest run --workspace
+# --no-fail-fast: a gate run reports every failure, so one early failure
+# cannot hide the true pass rate of everything queued behind it.
+cargo nextest run --workspace --no-fail-fast
 
 echo "==> cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings

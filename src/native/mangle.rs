@@ -76,17 +76,31 @@ mod tests {
 
     #[test]
     fn full_overload_names_are_c_safe_and_round_trip() {
+        // Overload spellings come from the canonical symbol module — never
+        // hand-built (see `symbol_test`'s repository hygiene guard).
+        use crate::ast::ArgConvention;
+        use crate::symbol::{SignatureKey, function_symbol, iterator_method_symbol, method_symbol};
+        use crate::types::Ty;
+        let pair = Ty::Struct("Pair".to_string(), Vec::new());
         let names = [
-            "Array.__init__$ov$T$AnyType$kw$fill",
-            "Array.__iter__$ov$SelfRef",
-            "__module$std$range$_SequentialRange$dint;",
-            "Box.__init__$ov$Int",
-            "pick$ov$Pair$Int",
+            method_symbol(
+                "Array",
+                "__init__",
+                &SignatureKey::from_tys([&Ty::Int]).with_keyword_names(vec!["fill".to_string()]),
+            ),
+            iterator_method_symbol(
+                "Array",
+                Some(ArgConvention::Ref),
+                &SignatureKey::from_tys([]),
+            ),
+            "__module$std$range$_SequentialRange$dint;".to_string(),
+            method_symbol("Box", "__init__", &SignatureKey::from_tys([&Ty::Int])),
+            function_symbol("pick", &SignatureKey::from_tys([&pair, &Ty::Int])),
         ];
-        for name in names {
+        for name in &names {
             let mangled = mangle(name);
             assert!(is_c_safe(&mangled), "{mangled}");
-            assert_eq!(demangle(&mangled).as_deref(), Some(name));
+            assert_eq!(demangle(&mangled).as_deref(), Some(name.as_str()));
         }
     }
 

@@ -1,18 +1,22 @@
-//! Experimental Pliron native backend (roadmap section 4, Stages 1-3).
+//! Experimental Pliron native backend (roadmap section 4, Stages 1-4).
 //!
 //! Compiles the checked scalar subset of verified, drop-elaborated MIR —
 //! Int/UInt/Float64/Bool constants, every scalar operator and the builtin
 //! conversions, keyword/default call binding, checked runtime traps through
 //! `mjrt_trap`, blocks, branches, direct calls, recursion, and return — plus
-//! the growing Stage 3 runtime surface (string-literal constant pools and
-//! `print` through the shared runtime ABI) to pliron's LLVM dialect and on to
-//! LLVM IR, bitcode, objects, and host executables at `O0` or `O1`. The CLI's
+//! strings, aggregates, and allocation (Stage 3) and Stage 4's exceptional
+//! control flow and references: raising functions with tagged `{tag, ok,
+//! err}` outcomes and explicit CFG edges, structural `try`/`except`/`else`/
+//! `finally`, flag-guarded destruction consuming drop-elaborated MIR exactly
+//! as emitted, references as verified place addresses, and test-lane
+//! lifecycle-event tracing — to pliron's LLVM dialect and on to LLVM IR,
+//! bitcode, objects, and host executables at `O0` or `O1`. The CLI's
 //! `run --backend pliron` executes the advertised subset through a temporary
 //! executable; every unsupported construct fails with a contextual diagnostic
 //! rather than falling back to the VM. The backend consumes `MirProgram`
 //! facts exclusively; it imports no AST, HIR, or checker representation.
-//! Pins, divergence policies, and design notes: `docs/notes/pliron-stage1.md`
-//! and `docs/notes/pliron-stage2.md`.
+//! Pins, divergence policies, and design notes: `docs/notes/pliron-stage4.md`
+//! (earlier stages: `pliron-stage1.md` through `pliron-stage3.md`).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -88,6 +92,10 @@ pub fn compile(
                 returns_value: signature.returns_value,
                 n_params: function.param_types.len(),
                 ret: signature.ret,
+                outcome: signature
+                    .outcome
+                    .as_ref()
+                    .map(|outcome| (outcome.layout, outcome.err_offset)),
             },
         );
         signatures.insert(name.clone(), signature);
@@ -99,10 +107,22 @@ pub fn compile(
         struct_decls: &struct_decls,
         layout,
         locator: &locator,
+        trace_lifecycle: options.trace_lifecycle,
     };
     for (name, function, func_op) in declared {
         lower::lower_body(&mut context, name, function, func_op, &env, &mut shared)?;
     }
+
+    // Raise lowering leaves unreachable blocks holding the dead remainders
+    // of raising MIR blocks; pliron's dominance verifier does not tolerate
+    // value uses inside unreachable blocks, so prune them before verifying.
+    let mut rewriter =
+        pliron::irbuild::rewriter::IRRewriter::<pliron::irbuild::listener::Recorder>::default();
+    pliron::opts::simplify_cfg::remove_blocks_inside_op(
+        module.get_operation(),
+        &mut context,
+        &mut rewriter,
+    );
 
     verify_module(&context, module)?;
     run_cleanup_passes(&mut context, module)?;
@@ -242,6 +262,15 @@ impl NativeModule {
                 location: None,
             });
         };
+        if meta.outcome.is_some() {
+            return Err(PlironError {
+                function: Some(entry.to_string()),
+                kind: PlironErrorKind::Emit(format!(
+                    "cannot JIT-execute raising entry `{entry}` (tagged-outcome signature)"
+                )),
+                location: None,
+            });
+        }
         jit::run_value(
             &self.context,
             self.module,
@@ -281,7 +310,7 @@ impl NativeModule {
         }
         let mut callees = Vec::new();
         if let Some(toplevel) = self.functions.get("__toplevel__") {
-            callees.push(toplevel.mangled.as_str());
+            callees.push((toplevel.mangled.clone(), toplevel.outcome));
         }
         let Some(main) = self.functions.get("main") else {
             return Err(PlironError {
@@ -302,8 +331,7 @@ impl NativeModule {
                 location: None,
             });
         }
-        callees.push(main.mangled.as_str());
-        let callees: Vec<String> = callees.iter().map(|s| s.to_string()).collect();
+        callees.push((main.mangled.clone(), main.outcome));
         lower::synthesize_exe_wrapper(&mut self.context, self.module, &callees)?;
         verify_module(&self.context, self.module)?;
         self.exe_wrapper_added = true;
@@ -317,6 +345,10 @@ struct FnMeta {
     returns_value: bool,
     n_params: usize,
     ret: RetKind,
+    /// The tagged-outcome storage layout and error-slot offset of a raising
+    /// function (the executable wrapper reports a propagated error; the JIT
+    /// refuses raising entries).
+    outcome: Option<(crate::native::layout::Layout, u64)>,
 }
 
 /// A typed result of a JIT-executed entry, tagged by the entry's [`RetKind`].
@@ -452,6 +484,11 @@ pub struct CompileOptions {
     /// The checked native target. Its triple and pinned data-layout string
     /// stamp every emitted LLVM module; JIT execution requires the host.
     pub target: NativeTarget,
+    /// Emit ordered lifecycle-event reports (`mjrt_trace`) at destructor
+    /// dispatches, consumes, raises, and catches. Test-lane only: default
+    /// emission never traces, and the trace writes to stderr so stdout byte
+    /// parity is untouched.
+    pub trace_lifecycle: bool,
 }
 
 /// A native-compilation failure with enough context to act on: the MIR
@@ -604,51 +641,102 @@ fn reachable_set<'p>(
                 }
             }
         }
-        for block in &function.blocks {
-            for instr in &block.instrs {
-                let target = match instr {
-                    // Intercepted allocation entry points lower as runtime
-                    // intrinsics; their element-erased stdlib bodies must not
-                    // be declared.
-                    MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => None,
-                    MirInstr::Call {
-                        func, args, kwargs, ..
-                    } => match functions.get_key_value(func.0.as_str()) {
-                        Some((callee, _)) => Some(*callee),
-                        None => constructor_init_target(
-                            &functions,
-                            &structs,
-                            &func.0,
-                            args.len(),
-                            kwargs,
-                        ),
-                    },
-                    // Pointer-receiver methods dispatch to runtime
-                    // intrinsics, never to compiled stdlib bodies.
-                    MirInstr::MethodCall {
-                        recv,
-                        resolved: Some(resolved),
-                        ..
-                    } => {
-                        if matches!(function.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
-                            None
-                        } else {
-                            functions
-                                .get_key_value(resolved.as_str())
-                                .map(|(callee, _)| *callee)
-                        }
-                    }
-                    _ => None,
-                };
-                if let Some(callee) = target
-                    && reachable.insert(callee)
-                {
-                    queue.push_back(callee);
+        visit_call_edges(
+            &function.blocks,
+            function,
+            &functions,
+            &structs,
+            &mut reachable,
+            &mut queue,
+        );
+    }
+    Ok(reachable)
+}
+
+/// Collect the call edges under `blocks` into the reachability worklist,
+/// recursing into `try` sub-regions (call sites inside a body, handler,
+/// `else`, or `finally` execute like any other).
+fn visit_call_edges<'p>(
+    blocks: &'p [crate::mir::MirBlock],
+    function: &'p MirFunction,
+    functions: &HashMap<&'p str, &'p MirFunction>,
+    structs: &HashMap<&str, &MirStructDeclaration>,
+    reachable: &mut HashSet<&'p str>,
+    queue: &mut VecDeque<&'p str>,
+) {
+    for block in blocks {
+        for instr in &block.instrs {
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = instr
+            {
+                visit_call_edges(body, function, functions, structs, reachable, queue);
+                if let Some((_, handler_blocks)) = handler {
+                    visit_call_edges(
+                        handler_blocks,
+                        function,
+                        functions,
+                        structs,
+                        reachable,
+                        queue,
+                    );
                 }
+                if let Some(orelse_blocks) = orelse {
+                    visit_call_edges(
+                        orelse_blocks,
+                        function,
+                        functions,
+                        structs,
+                        reachable,
+                        queue,
+                    );
+                }
+                if let Some(final_blocks) = finalbody {
+                    visit_call_edges(final_blocks, function, functions, structs, reachable, queue);
+                }
+                continue;
+            }
+            let target = match instr {
+                // Intercepted allocation entry points lower as runtime
+                // intrinsics; their element-erased stdlib bodies must not
+                // be declared.
+                MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => None,
+                MirInstr::Call {
+                    func, args, kwargs, ..
+                } => match functions.get_key_value(func.0.as_str()) {
+                    Some((callee, _)) => Some(*callee),
+                    None => {
+                        constructor_init_target(functions, structs, &func.0, args.len(), kwargs)
+                    }
+                },
+                // Pointer-receiver methods dispatch to runtime
+                // intrinsics, never to compiled stdlib bodies.
+                MirInstr::MethodCall {
+                    recv,
+                    resolved: Some(resolved),
+                    ..
+                } => {
+                    if matches!(function.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
+                        None
+                    } else {
+                        functions
+                            .get_key_value(resolved.as_str())
+                            .map(|(callee, _)| *callee)
+                    }
+                }
+                _ => None,
+            };
+            if let Some(callee) = target
+                && reachable.insert(callee)
+            {
+                queue.push_back(callee);
             }
         }
     }
-    Ok(reachable)
 }
 
 /// The `__init__` a constructor call to struct `name` executes: the exact
@@ -749,10 +837,15 @@ fn run_cleanup_passes(context: &mut Context, module: ModuleOp) -> Result<(), Pli
 
 /// Run the pliron verifier over the whole module.
 fn verify_module(context: &Context, module: ModuleOp) -> Result<(), PlironError> {
-    pliron::op::verify_op(&module, context).map_err(|error| PlironError {
-        function: None,
-        kind: PlironErrorKind::Verify(error.disp(context).to_string()),
-        location: None,
+    pliron::op::verify_op(&module, context).map_err(|error| {
+        if std::env::var_os("MOJITO_PLIRON_DUMP_ON_VERIFY_ERROR").is_some() {
+            eprintln!("{}", module.get_operation().disp(context));
+        }
+        PlironError {
+            function: None,
+            kind: PlironErrorKind::Verify(error.disp(context).to_string()),
+            location: None,
+        }
     })
 }
 
@@ -846,6 +939,11 @@ mod tests {
         }
 
         let point = Ty::Struct("Point".to_string(), Vec::new());
+        let init_symbol = crate::symbol::method_symbol(
+            "Point",
+            "__init__",
+            &crate::symbol::SignatureKey::from_tys([&Ty::Int]),
+        );
         let constructor_call = MirInstr::Call {
             dest: Reg(0),
             func: FuncRef("Point".to_string()),
@@ -864,7 +962,7 @@ mod tests {
                     test_function(Vec::new(), vec![constructor_call]),
                 ),
                 (
-                    "Point.__init__$ov$Int".to_string(),
+                    init_symbol.clone(),
                     test_function(vec![point.clone(), Ty::Int], Vec::new()),
                 ),
                 (
@@ -899,7 +997,7 @@ mod tests {
             .expect("reachability over a well-formed program succeeds");
         assert!(reachable.contains("main"));
         assert!(
-            reachable.contains("Point.__init__$ov$Int"),
+            reachable.contains(init_symbol.as_str()),
             "the unique arity overload of the constructor is a call edge"
         );
         assert!(
@@ -925,6 +1023,7 @@ mod tests {
             entries: Vec::new(),
             sources: Vec::new(),
             target: NativeTarget::host().expect("supported host"),
+            trace_lifecycle: false,
         };
         let Err(error) = compile(&program, &options) else {
             panic!("a program with invariant errors must be refused");

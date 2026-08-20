@@ -18,7 +18,7 @@ echo "==> cargo fmt --check (pliron spike)"
 cargo fmt --check
 
 echo "==> cargo nextest run (pliron spike)"
-cargo nextest run
+cargo nextest run --no-fail-fast
 
 echo "==> cargo clippy --all-targets -- -D warnings (pliron spike)"
 cargo clippy --all-targets -- -D warnings

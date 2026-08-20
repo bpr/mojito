@@ -123,7 +123,8 @@ Stage 4 replaces this with tagged outcomes and explicit cleanup edges.
 ## The acceptance harness
 
 `tests/pliron_backend_test.rs::stage3_exe_manifest_and_differential`
-generates `conformance/pliron-stage3.tsv`: every `assets/ok` fixture with a
+generated `conformance/pliron-stage3.tsv` (both superseded by Stage 4's
+`stage4_exe_manifest_and_differential` over `conformance/pliron-stage4.tsv`): every `assets/ok` fixture with a
 `main` either compiles natively — exe stdout at `O0`/`O1` must equal the
 VM's execution output byte-for-byte, and the `O0` AddressSanitizer/
 LeakSanitizer build must run clean — or records `excluded` with its first

@@ -54,6 +54,7 @@ fn native_compile(src: &str, entries: &[&str]) -> NativeModule {
         entries: entries.iter().map(|s| s.to_string()).collect(),
         sources: vec![(FIXTURE_NAME.to_string(), src.to_string())],
         target: host_target(),
+        trace_lifecycle: false,
     };
     native::compile(compiled.elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)))
@@ -340,6 +341,7 @@ fn scalar_capability_manifest_and_differential() {
             entries: vec!["compute".to_string()],
             sources: vec![(rel.clone(), src.clone())],
             target: host_target(),
+            trace_lifecycle: false,
         };
         match native::compile(compiled.elaborated_mir(), &options) {
             Err(error) => {
@@ -394,6 +396,7 @@ fn scalar_capability_manifest_and_differential() {
             entries: vec!["main".to_string()],
             sources: vec![(rel.clone(), src.clone())],
             target: host_target(),
+            trace_lifecycle: false,
         };
         let mut module = native::compile(compiled.elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
@@ -490,6 +493,7 @@ fn executable_and_object_emission() {
         entries: vec!["main".to_string()],
         sources: vec![(FIXTURE_NAME.to_string(), EXE_MAIN.to_string())],
         target: host_target(),
+        trace_lifecycle: false,
     };
     let mut module = native::compile(compiled.elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
@@ -540,6 +544,7 @@ fn print_fixture_exes_match_vm_output() {
             entries: vec!["main".to_string()],
             sources: vec![(fixture.to_string(), src.clone())],
             target: host_target(),
+            trace_lifecycle: false,
         };
         let mut module = native::compile(compiled.elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
@@ -621,12 +626,13 @@ fn aggregate_surface_prints_canonically() {
     }
 }
 
-/// The Stage 3 acceptance gate in one pass, one production compile per
+/// The Stage 4 acceptance gate in one pass, one production compile per
 /// fixture:
 ///
-/// - Every `assets/ok` fixture with a `main` entry either compiles natively —
-///   then its executable's stdout at `O0` and `O1` must equal the VM's
-///   execution output byte-for-byte with exit 0 and empty stderr, and its
+/// - Every `assets/ok` and `assets/ownership_ok` fixture with a `main` entry
+///   either compiles natively — then its executable's stdout at `O0` and
+///   `O1` must equal the VM's execution output byte-for-byte with exit 0 and
+///   empty stderr (handled raises and `finally` paths included), and its
 ///   `O0` AddressSanitizer/LeakSanitizer build must run equally clean (no
 ///   leak, double free, or invalid access anywhere in the run) — or is
 ///   recorded `excluded` with its first rejection diagnostic.
@@ -637,12 +643,14 @@ fn aggregate_surface_prints_canonically() {
 ///   stream it — a recorded CLI-level divergence, so stdout is not compared
 ///   on the raise rows.)
 ///
-/// The checked-in `conformance/pliron-stage3.tsv` manifest must match
+/// The checked-in `conformance/pliron-stage4.tsv` manifest must match
 /// regeneration byte-exactly, and the trailing guards fail if eligible
 /// coverage unexpectedly shrinks.
 #[test]
-fn stage3_exe_manifest_and_differential() {
-    let ok_rows = parallel_map(fixture_sources("assets/ok"), |(rel, src)| {
+fn stage4_exe_manifest_and_differential() {
+    let mut runnable = fixture_sources("assets/ok");
+    runnable.extend(fixture_sources("assets/ownership_ok"));
+    let ok_rows = parallel_map(runnable, |(rel, src)| {
         let compiler = Compiler::default();
         let Ok(compiled) = compiler.compile_source(&src, Path::new(&rel)) else {
             // Historical module-scope snippets compile only through the test
@@ -680,6 +688,7 @@ fn stage3_exe_manifest_and_differential() {
             entries,
             sources: vec![(rel.clone(), src.clone())],
             target: host_target(),
+            trace_lifecycle: false,
         };
         match native::compile(compiled.elaborated_mir(), &options) {
             Err(error) => {
@@ -692,13 +701,13 @@ fn stage3_exe_manifest_and_differential() {
                     .unwrap_or_else(|error| panic!("{rel}: fixture must run on the VM: {error}"));
                 let dir = tempfile::tempdir().expect("tempdir");
                 for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
-                    let exe = dir.path().join(format!("stage3-{level}"));
+                    let exe = dir.path().join(format!("stage4-{level}"));
                     module
                         .write_executable(&exe, opt)
                         .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
                     let run = std::process::Command::new(&exe)
                         .output()
-                        .expect("stage3 executable runs");
+                        .expect("stage4 executable runs");
                     assert_eq!(run.status.code(), Some(0), "{rel}: exit at {level}");
                     assert_eq!(
                         String::from_utf8_lossy(&run.stdout),
@@ -711,7 +720,7 @@ fn stage3_exe_manifest_and_differential() {
                         String::from_utf8_lossy(&run.stderr)
                     );
                 }
-                let asan_exe = dir.path().join("stage3-asan");
+                let asan_exe = dir.path().join("stage4-asan");
                 module
                     .write_executable_sanitized(&asan_exe, OptLevel::O0)
                     .unwrap_or_else(|error| panic!("{rel}: sanitized emission: {error}"));
@@ -778,6 +787,7 @@ fn stage3_exe_manifest_and_differential() {
             entries,
             sources: vec![(rel.clone(), src.clone())],
             target: host_target(),
+            trace_lifecycle: false,
         };
         let mut module = native::compile(compiled.elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
@@ -812,20 +822,20 @@ fn stage3_exe_manifest_and_differential() {
         ok_rows.into_iter().chain(raise_rows).collect();
 
     let mut manifest = String::from(
-        "# Pliron Stage 3 capability manifest (generated; schema-version 1).\n\
-         # One row per assets/ok and assets/runtime_error fixture:\n\
+        "# Pliron Stage 4 capability manifest (generated; schema-version 1).\n\
+         # One row per assets/ok, assets/ownership_ok, and assets/runtime_error fixture:\n\
          #   fixture <TAB> entry <TAB> status <TAB> detail\n\
          # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |\n\
          #         raise-differential (VM/native unhandled-raise oracle, O0+O1) |\n\
          #         excluded (native rejection diagnostic) |\n\
          #         ineligible (no runnable `main` shape for this gate)\n\
          # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \\\n\
-         #   cargo nextest run --features backend-pliron stage3_exe_manifest\n",
+         #   cargo nextest run --features backend-pliron stage4_exe_manifest\n",
     );
     for (fixture, entry, status, detail) in &rows {
         manifest.push_str(&format!("{fixture}\t{entry}\t{status}\t{detail}\n"));
     }
-    expect_test::expect_file!["../conformance/pliron-stage3.tsv"].assert_eq(&manifest);
+    expect_test::expect_file!["../conformance/pliron-stage4.tsv"].assert_eq(&manifest);
 
     // Coverage guards: the eligible sets must never silently shrink, and a
     // pliron-named fixture must never regress to excluded.
@@ -833,8 +843,8 @@ fn stage3_exe_manifest_and_differential() {
     let differential = count("exe-differential");
     let raises = count("raise-differential");
     assert!(
-        differential >= 30,
-        "exe-differential coverage unexpectedly shrank: {differential} < 30"
+        differential >= 95,
+        "exe-differential coverage unexpectedly shrank: {differential} < 95"
     );
     assert!(
         raises >= 2,
@@ -859,6 +869,7 @@ fn native_error(src: &str, entries: &[&str]) -> String {
         entries: entries.iter().map(|s| s.to_string()).collect(),
         sources: vec![(FIXTURE_NAME.to_string(), src.to_string())],
         target: host_target(),
+        trace_lifecycle: false,
     };
     let error = native::compile(compiled.elaborated_mir(), &options)
         .err()
@@ -903,10 +914,12 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             &["compute"],
             &["pliron backend:", "unsupported"],
         ),
+        // Nested function declarations carry callable-typed values — outside
+        // the supported subset until the closure stage.
         (
-            "def helper() raises -> Int:\n    raise Error(\"boom\")\n\ndef compute() -> Int:\n    try:\n        return helper()\n    except:\n        return 0\n",
+            "def compute() -> Int:\n    def inner() -> Int:\n        return 1\n    return inner()\n",
             &["compute"],
-            &["in `compute`", "unsupported"],
+            &["pliron backend:", "unsupported"],
         ),
         // Variadic calls stay outside the bound-call contract.
         (
@@ -930,6 +943,88 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
                 "diagnostic missing `{phrase}`:\n{message}\nfor source:\n{src}"
             );
         }
+    }
+}
+
+/// Negative ownership cases fail in the front end, before any backend runs:
+/// the production pipeline rejects them during ownership analysis, so
+/// `run --backend pliron` (which compiles through the same pipeline) can
+/// never hand them to the native backend.
+#[test]
+fn negative_ownership_fixtures_fail_before_the_backend() {
+    parallel_map(fixture_sources("assets/ownership_error"), |(rel, src)| {
+        let compiler = Compiler::default();
+        let error = compiler
+            .compile_source(&src, Path::new(&rel))
+            .err()
+            .unwrap_or_else(|| panic!("{rel}: ownership-error fixture must be rejected"));
+        // The rejection is a front-end diagnostic, not a backend one.
+        let message = error.to_string();
+        assert!(
+            !message.contains("pliron"),
+            "{rel}: rejection unexpectedly reached the native backend: {message}"
+        );
+    });
+}
+
+/// Ordered lifecycle traces — destructor dispatches, consumes, raises,
+/// catches — match between the VM's test-only event log and a
+/// trace-instrumented native executable: the Stage 4 ordered
+/// create/drop/error acceptance beyond stdout byte parity.
+#[test]
+fn lifecycle_event_traces_match_the_vm() {
+    for fixture in [
+        "assets/ok/exceptions.mojo",
+        "assets/ok/explicit_destroy_raising.mojo",
+        "assets/ok/inplace_raises_try.mojo",
+        "assets/ok/try_return.mojo",
+        "assets/ok/pliron_struct_drop_order.mojo",
+    ] {
+        let src = std::fs::read_to_string(fixture).expect("fixture exists");
+        let compiler = Compiler::default();
+        let compiled = compiler
+            .compile_source(&src, Path::new(fixture))
+            .unwrap_or_else(|error| panic!("{fixture}: must compile: {error}"));
+        let mut vm = mojito::backend::VmBackend::new();
+        vm.enable_lifecycle_log();
+        vm.run_elaborated(compiled.elaborated_mir().clone())
+            .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
+        let vm_events: Vec<String> = vm.lifecycle_log().expect("log enabled").to_vec();
+
+        let mut entries = vec!["main".to_string()];
+        if compiled
+            .elaborated_mir()
+            .functions
+            .iter()
+            .any(|(name, _)| name == "__toplevel__")
+        {
+            entries.push("__toplevel__".to_string());
+        }
+        let options = CompileOptions {
+            entries,
+            sources: vec![(fixture.to_string(), src.clone())],
+            target: host_target(),
+            trace_lifecycle: true,
+        };
+        let mut module = native::compile(compiled.elaborated_mir(), &options)
+            .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("traced");
+        module
+            .write_executable(&exe, OptLevel::O0)
+            .unwrap_or_else(|error| panic!("{fixture}: exe emission: {error}"));
+        let run = std::process::Command::new(&exe)
+            .output()
+            .expect("traced executable runs");
+        assert_eq!(run.status.code(), Some(0), "{fixture}: exit");
+        let native_events: Vec<String> = String::from_utf8_lossy(&run.stderr)
+            .lines()
+            .filter_map(|line| line.strip_prefix("mjtrace ").map(str::to_string))
+            .collect();
+        assert_eq!(
+            native_events, vm_events,
+            "{fixture}: ordered lifecycle traces diverge"
+        );
     }
 }
 
@@ -1252,6 +1347,7 @@ mod native_abi_cross_checks {
             declare i64 @mjrt_fmt_f64(double, ptr)
             declare void @mjrt_trap(i32) noreturn
             declare void @mjrt_unhandled_error(ptr, i64) noreturn
+            declare void @mjrt_trace(i32, ptr, i64)
         "#]]
         .assert_eq(&mojito::backend::pliron::runtime_declarations());
     }
@@ -1317,6 +1413,7 @@ def main():
                 entries: vec!["main".to_string()],
                 sources: vec![(FIXTURE_NAME.to_string(), source.to_string())],
                 target: host_target(),
+                trace_lifecycle: false,
             };
             let mut module = mojito::backend::pliron::compile(compiled.elaborated_mir(), &options)
                 .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));

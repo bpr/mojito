@@ -19,7 +19,7 @@ use crate::native::target::NativeTarget;
 /// The runtime ABI version this compiler emits against. Must equal
 /// `mojito_runtime::ABI_VERSION`; the linked runtime exports it as the
 /// inspectable data symbol [`ABI_VERSION_SYMBOL`].
-pub const MJRT_ABI_VERSION: u32 = 2;
+pub const MJRT_ABI_VERSION: u32 = 3;
 
 /// The exported `u32` data symbol carrying the runtime's ABI version.
 pub const ABI_VERSION_SYMBOL: &str = "mjrt_abi_version";
@@ -36,6 +36,14 @@ pub const TRAP_UNHANDLED_ERROR: u32 = 5;
 /// Tag values of tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
 pub const MJ_TAG_ERR: u32 = 1;
+
+/// Lifecycle-event kinds passed to `mjrt_trace` by trace-instrumented builds
+/// (never by default emission). Values are part of the symbol's contract.
+pub const TRACE_DROP: u32 = 1;
+pub const TRACE_CONSUME: u32 = 2;
+pub const TRACE_CLEANUP: u32 = 3;
+pub const TRACE_RAISE: u32 = 4;
+pub const TRACE_CATCH: u32 = 5;
 
 /// A primitive of the runtime C ABI. Exported functions pass and return only
 /// these; aggregates cross the boundary as pointers.
@@ -186,6 +194,20 @@ pub const RT_SYMBOLS: &[RtSig] = &[
                     be null only when len is 0",
         failure: "always: reports `unhandled error: <message>` on stderr and \
                   exits 64 + 5",
+    },
+    RtSig {
+        symbol: "mjrt_trace",
+        params: &[
+            ("kind", CAbiTy::U32),
+            ("data", CAbiTy::PtrConstU8),
+            ("len", CAbiTy::U64),
+        ],
+        ret: None,
+        noreturn: false,
+        since: 3,
+        ownership: "borrows the UTF-8 payload bytes for the call; data may \
+                    be null only when len is 0",
+        failure: "never fails; stderr write errors are ignored",
     },
 ];
 

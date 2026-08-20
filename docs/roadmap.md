@@ -133,9 +133,9 @@ guards on the conformance and round-trip fixture sets (see the artifact rows of
 
 ### 4. Native Backend: Pliron First, Cranelift On Material Failure
 
-The artifact close-out, the Pliron Stage 0/1/2/3 gates, and the shared native
-target/layout/runtime-ABI milestone have passed, so Pliron Stage 4 below is
-the default next task. Verified MIR is the stable waist, the VM remains the semantic oracle,
+The artifact close-out, the Pliron Stage 0/1/2/3/4 gates, and the shared
+native target/layout/runtime-ABI milestone have passed, so Pliron Stage 5
+below is the default next task. Verified MIR is the stable waist, the VM remains the semantic oracle,
 and native work does not wait for complete standard-library, packaging, or Mojo
 surface parity. Unsupported native behavior rejects with a contextual compile
 diagnostic; it never silently falls back to the VM.
@@ -175,8 +175,9 @@ Separate VM execution from native compilation. The native interface accepts
 `&MirProgram`, a target description, and an output kind, and returns textual IR,
 bitcode, an object, or an executable plus structured diagnostics.
 `run --backend pliron` executes only the advertised subset natively (since
-Stage 3: scalars, strings, aggregates, allocation, printing, and unhandled
-raises) and rejects everything else with a contextual diagnostic. Existing
+Stage 4: scalars, strings, aggregates, allocation, printing, references,
+destruction, and `try`/`except`/`else`/`finally` with tagged error outcomes)
+and rejects everything else with a contextual diagnostic. Existing
 `emit-mir` and `exec` behavior stays unchanged.
 
 The first scalar spike lowers directly to Pliron's LLVM dialect. Introduce a
@@ -269,24 +270,34 @@ pointer subscripts over ABI version 2's headered allocator and size-less
 `mjrt_free`), the nominal `String` (its literal and copy constructors are
 native bridges; `__deinit__` compiles from real MIR), and unhandled raises
 through `mjrt_unhandled_error` (exit category 5, the explicit pre-Stage-4
-error contract). Runtime traps route through `mjrt_trap`. Acceptance is
-pinned by `tests/pliron_backend_test.rs`'s Stage 3 gate over
-`conformance/pliron-stage3.tsv`: every eligible `assets/ok` fixture matches
+error contract). Runtime traps route through `mjrt_trap`. Acceptance was
+pinned by the Stage 3 exe gate (its manifest is superseded by Stage 4's
+`conformance/pliron-stage4.tsv`): every eligible `assets/ok` fixture matches
 VM stdout bytes at `O0`/`O1` and runs AddressSanitizer/LeakSanitizer-clean,
 raise fixtures match the failure category and stderr, and produced
 executables expose only the contract-table runtime symbols. Design and
 divergence records: `docs/notes/pliron-stage3.md`.
 
-- [ ] **Pliron Stage 4: references, destruction, and exceptional control flow**
-  — consume drop-elaborated MIR exactly as emitted; lower tagged success/error
-  outcomes and every `try`/`finally` cleanup edge explicitly; preserve reference
-  behavior without re-running ownership analysis; instrument ordered lifecycle
-  events in the test runtime.
-
-  Acceptance: eligible ownership/destruction cases have the same ordered
-  create/drop/error trace as the VM; negative ownership cases fail before the
-  backend; reference traps occur at the same semantic boundary; and nested
-  errors, cleanup failures, and early returns have focused differential tests.
+Stage 4 (references, destruction, and exceptional control flow) is complete —
+the backend consumes drop-elaborated MIR exactly as emitted: raising functions
+return ABI version 3's tagged `{tag, ok, err}` outcomes through a prepended
+outcome pointer, `try`/`except`/`else`/`finally` lower as explicit CFG edges
+(per-edge cleanup drops guarded by per-variable initialization flags, a
+single-instance finalbody with pending-outcome dispatch whose own outcome
+wins, escapes and returns crossing regions), handled errors are owned
+`MjError` values, references lower as verified place addresses (`mut`/`ref`
+parameters alias caller storage; ownership analysis is never re-run), and the
+propagation path frees releasable buffers without running user destructors —
+matching the VM's frame abandonment. Ordered lifecycle events (destructor
+dispatches, consumes, raises, catches) are instrumented through `mjrt_trace`
+in the test lane and differentially compared against the VM's event log.
+Acceptance is pinned by `tests/pliron_backend_test.rs`'s Stage 4 gate over
+`conformance/pliron-stage4.tsv` (now also covering `assets/ownership_ok`),
+with handled-raise and `finally` paths AddressSanitizer/LeakSanitizer-clean,
+negative ownership fixtures verified to fail before the backend, and focused
+fixtures for nested re-raises, `finally` overrides, loop escapes, early
+returns, and cleanup drop order. Design and divergence records:
+`docs/notes/pliron-stage4.md`.
 
 - [ ] **Pliron Stage 5: supported-language native parity** — grow one vertical
   slice at a time across specialized generics, retained callable forms,

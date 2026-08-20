@@ -444,6 +444,7 @@ fn compile_native_module(
         entries,
         sources: vec![(label, source)],
         target: native_target(cli)?,
+        trace_lifecycle: false,
     };
     pliron::compile(mir, &options).map_err(|error| error.display_with_sources(&options.sources))
 }

@@ -1,12 +1,12 @@
-# Pliron Stage 3 capability manifest (generated; schema-version 1).
-# One row per assets/ok and assets/runtime_error fixture:
+# Pliron Stage 4 capability manifest (generated; schema-version 1).
+# One row per assets/ok, assets/ownership_ok, and assets/runtime_error fixture:
 #   fixture <TAB> entry <TAB> status <TAB> detail
 # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |
 #         raise-differential (VM/native unhandled-raise oracle, O0+O1) |
 #         excluded (native rejection diagnostic) |
 #         ineligible (no runnable `main` shape for this gate)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
-#   cargo nextest run --features backend-pliron stage3_exe_manifest
+#   cargo nextest run --features backend-pliron stage4_exe_manifest
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	main	excluded	pliron backend: in `hail$ov$T$Speaker`: unsupported type `Param { name: "T", bounds: ["Speaker"], callable_bound: None }`
 assets/ok/add.mojo	main	exe-differential	sanitized
 assets/ok/allocation_tracked_unsafe_ptr.mojo	main	excluded	pliron backend: in `__module$std$memory$_RawAlloc.__init__`: unsupported call to unknown or builtin function `UnsafePointer.alloc` at /home/bpr/src/rust/projects/mojito/stdlib/std/memory.mojo:7022..7056
@@ -52,15 +52,15 @@ assets/ok/dunder_contains.mojo	main	exe-differential	sanitized
 assets/ok/dunder_index.mojo	main	excluded	pliron backend: in `main`: unsupported call to unknown or builtin function `len` at assets/ok/dunder_index.mojo:17:11
 assets/ok/dunder_setitem.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `MultiSet`
 assets/ok/dunder_vec2.mojo	main	excluded	pliron backend: in `main`: unsupported type `Struct("Vec2", [])` at assets/ok/dunder_vec2.mojo:20:19
-assets/ok/exceptions.mojo	main	excluded	pliron backend: in `main`: unsupported type `Error`
+assets/ok/exceptions.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
-assets/ok/explicit_destroy_raising.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Try`
+assets/ok/explicit_destroy_raising.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
 assets/ok/funarg_call_through_after_last_use.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
 assets/ok/func_styles.mojo	main	exe-differential	sanitized
 assets/ok/function_typed_kwargs.mojo	main	excluded	pliron backend: in `main`: unsupported type `Func { environment: Thin, params: [], names: [], ret: Int, required: [], variadic: None, kw_variadic: Some(Int), positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
-assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	excluded	pliron backend: in `first_count$y7:Counter`: unsupported type `Ref(RefTy { referent: Struct("Counter", []), origin: Place(OriginPlace { root: OwnerId(666), path: [] }), mutability: Immutable })`
-assets/ok/generic_copyable_iterator_refinement.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Try`
+assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	excluded	pliron backend: in `first_count$y7:Counter`: unsupported untyped variable `$iterobj3`
+assets/ok/generic_copyable_iterator_refinement.mojo	main	excluded	pliron backend: in `first$y10:IntRefIter`: unsupported untyped variable `$iterobj2`
 assets/ok/generic_ctfe_associated_value.mojo	main	excluded	pliron backend: in `__toplevel__`: unsupported type `IntLiteral`
 assets/ok/generic_ctfe_value_param.mojo	main	excluded	pliron backend: in `__toplevel__`: unsupported type `IntLiteral`
 assets/ok/hashable_bucketing.mojo	main	excluded	pliron backend: in `bucket_index$y13:StringLiteral`: unsupported type `StringLiteral`
@@ -68,10 +68,10 @@ assets/ok/hello_world.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
 assets/ok/inplace_field.mojo	main	exe-differential	sanitized
-assets/ok/inplace_raises_try.mojo	main	excluded	pliron backend: in `main`: unsupported type `Error`
+assets/ok/inplace_raises_try.mojo	main	exe-differential	sanitized
 assets/ok/inplace_subscript_multi.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `MultiIndex` at assets/ok/inplace_subscript_multi.mojo:22:1
 assets/ok/inplace_subscript_once.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Index` at assets/ok/inplace_subscript_once.mojo:26:1
-assets/ok/inplace_subscript_raises_try.mojo	main	excluded	pliron backend: in `main`: unsupported type `Error`
+assets/ok/inplace_subscript_raises_try.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Index` at assets/ok/inplace_subscript_raises_try.mojo:25:9
 assets/ok/inplace_subscript_ref.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Index` at assets/ok/inplace_subscript_ref.mojo:19:1
 assets/ok/inplace_subscript_value.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Index` at assets/ok/inplace_subscript_value.mojo:27:1
 assets/ok/inplace_var.mojo	main	exe-differential	sanitized
@@ -102,10 +102,10 @@ assets/ok/list_unsafe_ptr_multi_element.mojo	main	excluded	pliron backend: in `L
 assets/ok/loop_binding_consuming_copy.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
 assets/ok/mapping_key_iteration_reads.mojo	main	excluded	pliron backend: in `List.__init__$ov$`: unsupported allocation element layout (type has no native layout yet: T) at /home/bpr/src/rust/projects/mojito/stdlib/std/collections/list.mojo:2878..2908
 assets/ok/math_module_rounding.mojo	main	excluded	pliron backend: in `__module$std$math$floor$y3:Int`: unsupported unresolved method call `__floor__` at /home/bpr/src/rust/projects/mojito/stdlib/std/math.mojo$__module$std$math$floor$y3:Int:498..515
-assets/ok/method_mut_param.mojo	main	excluded	pliron backend: in `main`: unsupported non-positional method contract for `add_into` at assets/ok/method_mut_param.mojo:12:1
+assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
 assets/ok/mut_owned_params.mojo	-	ineligible	no-main-entry
-assets/ok/mut_ref_writeback.mojo	main	excluded	pliron backend: in `incr`: unsupported instruction `MakeRef` at assets/ok/mut_ref_writeback.mojo:3:9
+assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
 assets/ok/nested.mojo	main	excluded	pliron backend: in `outer`: unsupported type `Func { environment: Thin, params: [], names: [], ret: None, required: [], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
 assets/ok/nested_comprehensions.mojo	main	excluded	pliron backend: in `Array.__init__$ov$T$AnyType$None$kw$__list_literal__`: unsupported type `VariadicPack(Param { name: "T", bounds: ["AnyType"], callable_bound: None })`
 assets/ok/nested_def_captured_param_store.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
@@ -114,12 +114,12 @@ assets/ok/nested_recursive_call.mojo	main	excluded	pliron backend: in `test`: un
 assets/ok/nominal_string_affix.mojo	main	excluded	pliron backend: in `__module$std$string$String._matches_at`: unsupported pointer element layout (type has no native layout yet: UInt8) at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:7893..7910
 assets/ok/nominal_string_basics.mojo	main	excluded	pliron backend: in `__module$std$string$String.copy`: unsupported non-positional call contract for `__module$std$string$String` at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:3381..3399
 assets/ok/nominal_string_codepoint_from_u32.mojo	main	excluded	pliron backend: in `Optional.__init__$ov$T$AnyType`: unsupported type `Param { name: "T", bounds: ["AnyType"], callable_bound: None }`
-assets/ok/nominal_string_codepoint_type.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Try`
+assets/ok/nominal_string_codepoint_type.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `MultiIndex` at assets/ok/nominal_string_codepoint_type.mojo:4:28
 assets/ok/nominal_string_default_binding.mojo	main	excluded	pliron backend: in `__module$std$string$String._matches_at`: unsupported pointer element layout (type has no native layout yet: UInt8) at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:7893..7910
 assets/ok/nominal_string_dict_keys.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
 assets/ok/nominal_string_find.mojo	main	excluded	pliron backend: in `__module$std$string$String._matches_at`: unsupported pointer element layout (type has no native layout yet: UInt8) at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:7893..7910
-assets/ok/nominal_string_graphemes.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Try`
-assets/ok/nominal_string_indexing.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `Try`
+assets/ok/nominal_string_graphemes.mojo	main	excluded	pliron backend: in `__module$std$string$String.codepoint_count`: unsupported pointer element layout (type has no native layout yet: UInt8) at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:9353..9369
+assets/ok/nominal_string_indexing.mojo	main	excluded	pliron backend: in `__module$std$string$String.codepoint_count`: unsupported pointer element layout (type has no native layout yet: UInt8) at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:9353..9369
 assets/ok/nominal_string_keyword_slices.mojo	main	excluded	pliron backend: in `__module$std$string$String.codepoint_count`: unsupported pointer element layout (type has no native layout yet: UInt8) at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:9353..9369
 assets/ok/nominal_string_operations.mojo	main	excluded	pliron backend: in `__module$std$string$String.__iadd__`: unsupported allocation element layout (type has no native layout yet: UInt8) at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:5280..5322
 assets/ok/nominal_string_protocols.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
@@ -151,6 +151,8 @@ assets/ok/pliron_convert_uint.mojo	main	exe-differential	sanitized
 assets/ok/pliron_deep_recursion.mojo	main	exe-differential	sanitized
 assets/ok/pliron_diamond.mojo	main	exe-differential	sanitized
 assets/ok/pliron_fib.mojo	main	exe-differential	sanitized
+assets/ok/pliron_finally_early_return.mojo	main	exe-differential	sanitized
+assets/ok/pliron_finally_overrides.mojo	main	exe-differential	sanitized
 assets/ok/pliron_float_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_float_compare_nan.mojo	main	exe-differential	sanitized
 assets/ok/pliron_float_floor_mod.mojo	main	exe-differential	sanitized
@@ -164,6 +166,7 @@ assets/ok/pliron_loop.mojo	main	exe-differential	sanitized
 assets/ok/pliron_multifunc.mojo	main	exe-differential	sanitized
 assets/ok/pliron_print_scalars.mojo	main	exe-differential	sanitized
 assets/ok/pliron_print_str_literal.mojo	main	exe-differential	sanitized
+assets/ok/pliron_reference_write_back.mojo	main	exe-differential	sanitized
 assets/ok/pliron_shortcircuit.mojo	main	exe-differential	sanitized
 assets/ok/pliron_straightline.mojo	main	exe-differential	sanitized
 assets/ok/pliron_string_convert.mojo	main	exe-differential	sanitized
@@ -171,16 +174,20 @@ assets/ok/pliron_string_literal_var.mojo	main	exe-differential	sanitized
 assets/ok/pliron_struct_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/pliron_struct_fieldwise.mojo	main	exe-differential	sanitized
 assets/ok/pliron_struct_init_method.mojo	main	exe-differential	sanitized
+assets/ok/pliron_try_cleanup_drop_order.mojo	main	exe-differential	sanitized
+assets/ok/pliron_try_handled_error.mojo	main	exe-differential	sanitized
+assets/ok/pliron_try_loop_escape.mojo	main	exe-differential	sanitized
+assets/ok/pliron_try_nested_reraise.mojo	main	exe-differential	sanitized
 assets/ok/pliron_uint_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_uint_compare.mojo	main	exe-differential	sanitized
 assets/ok/pliron_uint_pow.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_int_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_pow.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_uint_arith.mojo	main	exe-differential	sanitized
-assets/ok/pointer_empty_deref.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `MakeRef` at assets/ok/pointer_empty_deref.mojo:13:13
-assets/ok/pointer_to_place.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `MakeRef` at assets/ok/pointer_to_place.mojo:5:13
-assets/ok/pointer_to_ref_binding.mojo	main	excluded	pliron backend: in `peek`: unsupported instruction `MakeRef` at assets/ok/pointer_to_ref_binding.mojo:11:13
-assets/ok/pointer_to_ref_write_through.mojo	main	excluded	pliron backend: in `main`: unsupported type `Ref(RefTy { referent: Int, origin: Place(OriginPlace { root: OwnerId(659), path: [Field("a")] }), mutability: Mutable })`
+assets/ok/pointer_empty_deref.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Int` at assets/ok/pointer_empty_deref.mojo:14:1
+assets/ok/pointer_to_place.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Int` at assets/ok/pointer_to_place.mojo:6:11
+assets/ok/pointer_to_ref_binding.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Pair` at assets/ok/pointer_to_ref_binding.mojo:17:13
+assets/ok/pointer_to_ref_write_through.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Pair` at assets/ok/pointer_to_ref_write_through.mojo:12:13
 assets/ok/pointer_unsafe_vocabulary.mojo	main	excluded	pliron backend: in `main`: unsupported constant `None` at assets/ok/pointer_unsafe_vocabulary.mojo:8:1
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	excluded	pliron backend: in `main`: unsupported untyped variable `$iterobj3`
@@ -215,14 +222,14 @@ assets/ok/span_iteration.mojo	main	excluded	pliron backend: in `List.append`: un
 assets/ok/span_move_use.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
 assets/ok/span_view_basics.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
 assets/ok/static_methods.mojo	main	exe-differential	sanitized
-assets/ok/std_traits_origin_imports.mojo	main	excluded	pliron backend: in `borrow`: unsupported instruction `MakeRef` at assets/ok/std_traits_origin_imports.mojo:16:12
+assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/string_escapes.mojo	main	excluded	pliron backend: in `main`: unsupported call to unknown or builtin function `len` at assets/ok/string_escapes.mojo:8:11
-assets/ok/string_grapheme_iteration.mojo	main	excluded	pliron backend: in `main`: unsupported type `Ref(RefTy { referent: Struct("__module$std$string$String", []), origin: Place(OriginPlace { root: OwnerId(659), path: [] }), mutability: Immutable })`
+assets/ok/string_grapheme_iteration.mojo	main	excluded	pliron backend: in `main`: unsupported untyped variable `$iterobj4`
 assets/ok/string_overload_conversion.mojo	main	excluded	pliron backend: in `pick$ov$String`: unsupported call to unknown or builtin function `len` at assets/ok/string_overload_conversion.mojo:7:12
 assets/ok/stropping.mojo	main	excluded	pliron backend: in `main`: unsupported type `Func { environment: Thin, params: [], names: [], ret: Int, required: [], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
 assets/ok/struct_value_param_layout.mojo	main	excluded	pliron backend: in `Tagged$S22:__module$layout$Layout{S24:__module$layout$IntTuple{i1;i4;i0;i0;i0;}S24:__module$layout$IntTuple{i1;i1;i0;i0;i0;}}.total`: unsupported call binding for `__module$layout$IntTuple.__init__$ov$Int$Int$Int$Int$Int` disagrees with its compiled arity at assets/ok/struct_value_param_layout.mojo$Tagged$S22:__module$layout$Layout{S24:__module$layout$IntTuple{i1;i4;i0;i0;i0;}S24:__module$layout$IntTuple{i1;i1;i0;i0;i0;}}:416..417
-assets/ok/subtree_pointer_generic_field.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `MakeRef` at assets/ok/subtree_pointer_generic_field.mojo:16:20
-assets/ok/subtree_pointer_read.mojo	main	excluded	pliron backend: in `Buf.view`: unsupported instruction `MakeRef` at assets/ok/subtree_pointer_read.mojo:10:16
+assets/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sanitized
+assets/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	excluded	pliron backend: in `scan_stats`: unsupported variadic call to `Tuple$t2[y3:Inty3:Int].__init__` at assets/ok/telemetry.mojo:4:12
 assets/ok/ternary.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
@@ -232,7 +239,7 @@ assets/ok/transferred_carrier_keeps_source_alive.mojo	main	excluded	pliron backe
 assets/ok/try_break_continue.mojo	main	excluded	pliron backend: in `main`: unsupported untyped variable `$iterobj1`
 assets/ok/try_reassign_outer.mojo	main	excluded	pliron backend: in `main`: unsupported untyped variable `$iterobj5`
 assets/ok/try_region_drop_timing.mojo	main	excluded	pliron backend: in `escapes`: unsupported untyped variable `$iterobj2`
-assets/ok/try_return.mojo	main	excluded	pliron backend: in `classify`: unsupported instruction `Try`
+assets/ok/try_return.mojo	main	exe-differential	sanitized
 assets/ok/tstring_forms.mojo	main	excluded	pliron backend: in `TString$t4[y13:StringLiteraly13:StringLiteraly13:StringLiteraly3:Int].__init__`: unsupported type `StringLiteral` at /home/bpr/src/rust/projects/mojito/stdlib/std/format/tstring.mojo$TString$t4[y13:StringLiteraly13:StringLiteraly13:StringLiteraly3:Int]:638..644
 assets/ok/tstring_generic_interpolation.mojo	main	excluded	pliron backend: in `TString$t4[y13:StringLiteraly3:Inty13:StringLiteraly3:Int].__init__`: unsupported type `StringLiteral` at /home/bpr/src/rust/projects/mojito/stdlib/std/format/tstring.mojo$TString$t4[y13:StringLiteraly3:Inty13:StringLiteraly3:Int]:638..644
 assets/ok/tstring_lazy.mojo	main	excluded	pliron backend: in `TString$t2[y13:StringLiteraly3:Int].__init__`: unsupported type `StringLiteral` at /home/bpr/src/rust/projects/mojito/stdlib/std/format/tstring.mojo$TString$t2[y13:StringLiteraly3:Int]:638..644
@@ -257,6 +264,22 @@ assets/ok/waypoints.mojo	main	excluded	pliron backend: in `List.append`: unsuppo
 assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized
 assets/ok/where_repeated_clauses.mojo	main	excluded	pliron backend: in `scaled`: unsupported untyped variable `n`
 assets/ok/while.mojo	main	exe-differential	sanitized
+assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
+assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
+assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
+assets/ownership_ok/interior_dest_rebind_releases_user_store.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
+assets/ownership_ok/interior_view_consume_before_mutation.mojo	main	exe-differential	sanitized
+assets/ownership_ok/interior_view_drop_after_mutation.mojo	main	exe-differential	sanitized
+assets/ownership_ok/mapping_mutation_after_iteration.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
+assets/ownership_ok/move_then_reinit.mojo	main	exe-differential	sanitized
+assets/ownership_ok/move_without_later_use.mojo	main	exe-differential	sanitized
+assets/ownership_ok/partial_move_reinit.mojo	main	exe-differential	sanitized
+assets/ownership_ok/partial_move_sibling.mojo	main	exe-differential	sanitized
+assets/ownership_ok/shared_iterations_coexist.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
+assets/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
+assets/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
+assets/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized
+assets/ownership_ok/transferred_loan_after_last_use.mojo	main	excluded	pliron backend: in `List.append`: unsupported type `Param { name: "T", bounds: ["Movable"], callable_bound: None }`
 assets/runtime_error/allocation_use_after_dealloc.mojo	-	ineligible	no-raise-shape
 assets/runtime_error/div_by_zero.mojo	-	ineligible	no-raise-shape
 assets/runtime_error/list_contiguous_slice_negative.mojo	-	ineligible	no-raise-shape
