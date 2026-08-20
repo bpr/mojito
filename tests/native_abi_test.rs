@@ -97,13 +97,14 @@ macro_rules! assert_type_layout {
 fn runtime_signatures_match_the_contract_table() {
     assert_sig!(mjrt_version: fn() -> u32);
     assert_sig!(mjrt_alloc: fn(u64, u64) -> *mut u8);
+    assert_sig!(mjrt_free: fn(*mut u8) -> ());
     assert_sig!(mjrt_dealloc: fn(*mut u8, u64, u64) -> ());
     assert_sig!(mjrt_write_stdout: fn(*const u8, u64) -> ());
     assert_sig!(mjrt_fmt_i64: fn(i64, *mut u8) -> u64);
     assert_sig!(mjrt_fmt_u64: fn(u64, *mut u8) -> u64);
     assert_sig!(mjrt_fmt_f64: fn(f64, *mut u8) -> u64);
     // `-> !` cannot go through the generic return projection on stable Rust;
-    // pin the noreturn contract by hand.
+    // pin the noreturn contracts by hand.
     let _: unsafe extern "C" fn(u32) -> ! = mojito_runtime::mjrt_trap;
     let trap = row("mjrt_trap");
     assert!(trap.noreturn && trap.ret.is_none());
@@ -111,13 +112,24 @@ fn runtime_signatures_match_the_contract_table() {
         trap.params.iter().map(|(_, ty)| *ty).collect::<Vec<_>>(),
         vec![CAbiTy::U32]
     );
+    let _: unsafe extern "C" fn(*const u8, u64) -> ! = mojito_runtime::mjrt_unhandled_error;
+    let unhandled = row("mjrt_unhandled_error");
+    assert!(unhandled.noreturn && unhandled.ret.is_none());
+    assert_eq!(
+        unhandled
+            .params
+            .iter()
+            .map(|(_, ty)| *ty)
+            .collect::<Vec<_>>(),
+        vec![CAbiTy::PtrConstU8, CAbiTy::U64]
+    );
 }
 
 #[test]
 fn every_table_row_has_exactly_one_check_above() {
     // Adding a runtime symbol must extend runtime_signatures_match_the
     // _contract_table; this count trips when the table grows without it.
-    assert_eq!(rt_abi::RT_SYMBOLS.len(), 8);
+    assert_eq!(rt_abi::RT_SYMBOLS.len(), 10);
     assert_eq!(rt_abi::RT_DATA_SYMBOLS.len(), 1);
     assert_eq!(rt_abi::RT_TYPES.len(), 3);
 }
@@ -142,6 +154,10 @@ fn abi_version_and_shared_constants_agree() {
     assert_eq!(
         mojito_runtime::TRAP_STDOUT_FAILURE,
         rt_abi::TRAP_STDOUT_FAILURE
+    );
+    assert_eq!(
+        mojito_runtime::TRAP_UNHANDLED_ERROR,
+        rt_abi::TRAP_UNHANDLED_ERROR
     );
     assert_eq!(mojito_runtime::MJ_TAG_OK, rt_abi::MJ_TAG_OK);
     assert_eq!(mojito_runtime::MJ_TAG_ERR, rt_abi::MJ_TAG_ERR);

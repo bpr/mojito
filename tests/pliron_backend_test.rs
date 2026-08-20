@@ -18,6 +18,31 @@ fn host_target() -> NativeTarget {
     NativeTarget::host().expect("pliron tests require a supported host target")
 }
 
+/// The linked `mojito-runtime` exports as an explicit JIT symbol mapping, so
+/// a JIT'd module referencing runtime-contract functions (`mjrt_trap` from
+/// trap guards) resolves them deterministically instead of relying on
+/// process-symbol resolution.
+fn runtime_jit_symbols() -> Vec<(&'static str, u64)> {
+    macro_rules! address {
+        ($symbol:ident) => {
+            (
+                stringify!($symbol),
+                mojito_runtime::$symbol as *const () as u64,
+            )
+        };
+    }
+    vec![
+        address!(mjrt_version),
+        address!(mjrt_alloc),
+        address!(mjrt_dealloc),
+        address!(mjrt_write_stdout),
+        address!(mjrt_fmt_i64),
+        address!(mjrt_fmt_u64),
+        address!(mjrt_fmt_f64),
+        address!(mjrt_trap),
+    ]
+}
+
 /// Compile `src` through the production pipeline and hand its cached
 /// post-drop MIR to the Pliron backend with the given entries.
 fn native_compile(src: &str, entries: &[&str]) -> NativeModule {
@@ -287,8 +312,9 @@ fn assert_jit_matches(fixture: &str, level: &str, native: JitValue, printed: &st
 /// - Every `assets/runtime_error/pliron_trap_*` fixture must trap in the VM
 ///   with a recognized [`TrapCategory`] message and exit a native executable
 ///   with that category's exit code (`64 + code`) at both levels, printing
-///   nothing. (Traps run only as subprocesses — an in-process JIT trap would
-///   `exit` the test runner.)
+///   nothing on stdout while the runtime reports the category on stderr.
+///   (Traps run only as subprocesses — an in-process JIT trap would exit the
+///   test runner.)
 /// - Everything else is recorded `ineligible`, so
 ///   `conformance/pliron-scalar.tsv` names every fixture exactly once.
 ///
@@ -325,11 +351,12 @@ fn scalar_capability_manifest_and_differential() {
                     .execute(&compiled)
                     .unwrap_or_else(|error| panic!("{rel}: fixture must run on the VM: {error}"));
                 let printed = execution.output.trim().to_string();
+                let symbols = runtime_jit_symbols();
                 let at_o0 = module
-                    .jit_value("compute", OptLevel::O0)
+                    .jit_value_with_symbols("compute", OptLevel::O0, &symbols)
                     .unwrap_or_else(|error| panic!("{rel}: JIT at O0 failed: {error}"));
                 let at_o1 = module
-                    .jit_value("compute", OptLevel::O1)
+                    .jit_value_with_symbols("compute", OptLevel::O1, &symbols)
                     .unwrap_or_else(|error| panic!("{rel}: JIT at O1 failed: {error}"));
                 assert_jit_matches(&rel, "O0", at_o0, &printed);
                 assert_jit_matches(&rel, "O1", at_o1, &printed);
@@ -386,7 +413,12 @@ fn scalar_capability_manifest_and_differential() {
             );
             assert!(
                 run.stdout.is_empty(),
-                "{rel}: trapping executable must print nothing at {level}"
+                "{rel}: trapping executable must print nothing on stdout at {level}"
+            );
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                stderr.contains(category.runtime_message()),
+                "{rel}: trap stderr lacks the runtime message at {level}: {stderr}"
             );
         }
         let detail = format!("category={category:?}");
@@ -481,6 +513,342 @@ fn executable_and_object_emission() {
     assert!(run.stdout.is_empty(), "executable must print nothing");
 }
 
+/// Native executables compose the VM's exact bytes: for each print-capable
+/// fixture — scalars, string literals, and the aggregate surface (fieldwise
+/// and `__init__` construction, methods with `mut self` write-back, copies,
+/// observable destructor order) — the emitted executable's stdout at `O0`
+/// and `O1` equals the VM's execution output byte-for-byte, exiting 0 with
+/// an empty stderr.
+#[test]
+fn print_fixture_exes_match_vm_output() {
+    for fixture in [
+        "assets/ok/pliron_print_scalars.mojo",
+        "assets/ok/pliron_print_str_literal.mojo",
+        "assets/ok/pliron_struct_fieldwise.mojo",
+        "assets/ok/pliron_struct_init_method.mojo",
+        "assets/ok/pliron_struct_drop_order.mojo",
+    ] {
+        let src = std::fs::read_to_string(fixture).expect("fixture exists");
+        let compiler = Compiler::default();
+        let compiled = compiler
+            .compile_source(&src, Path::new(fixture))
+            .unwrap_or_else(|error| panic!("{fixture}: must compile: {error}"));
+        let execution = compiler
+            .execute(&compiled)
+            .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
+        let options = CompileOptions {
+            entries: vec!["main".to_string()],
+            sources: vec![(fixture.to_string(), src.clone())],
+            target: host_target(),
+        };
+        let mut module = native::compile(compiled.elaborated_mir(), &options)
+            .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
+            let exe = dir.path().join(format!("print-{level}"));
+            module
+                .write_executable(&exe, opt)
+                .unwrap_or_else(|error| panic!("{fixture}: exe emission at {level}: {error}"));
+            let run = std::process::Command::new(&exe)
+                .output()
+                .expect("print executable runs");
+            assert_eq!(run.status.code(), Some(0), "{fixture}: exit at {level}");
+            assert_eq!(
+                String::from_utf8_lossy(&run.stdout),
+                execution.output,
+                "{fixture}: stdout bytes diverge from the VM at {level}"
+            );
+            assert!(
+                run.stderr.is_empty(),
+                "{fixture}: stderr must be empty at {level}"
+            );
+        }
+    }
+}
+
+/// String literals intern into private `mjstr_<n>` constant-pool globals on
+/// use — deduplicated by content in deterministic first-use order — and the
+/// literal-only `+`/`==` operators fold at compile time (fold-only literals
+/// never emit a global).
+#[test]
+fn string_constant_pool_interns_and_dedups() {
+    let src = "\
+def main():
+    print(\"hello\")
+    print(\"hello\", \"a\" + \"b\")
+    print(\"ab\" == \"a\" + \"b\")
+";
+    let module = native_compile(src, &["main"]);
+    let text = module.plir_text();
+    for needle in [
+        "llvm.global @mjstr_0",
+        "llvm.linkage PrivateLinkage",
+        "llvm.addressof @mjstr_0",
+        "llvm.call @mjrt_write_stdout",
+    ] {
+        assert!(
+            text.contains(needle),
+            "canonical text lacks `{needle}`:\n{text}"
+        );
+    }
+    // Pool contents in first-use order: "hello", "\n", " ", "ab" (the folded
+    // concatenation), "True", "False" — the repeated "hello" and the folded
+    // equality share entries, and the fold-only "a"/"b" never intern.
+    let globals = text.matches("llvm.global @mjstr_").count();
+    assert_eq!(globals, 6, "constant pool size changed:\n{text}");
+}
+
+/// The aggregate memory model prints canonically: layout-engine offsets
+/// realize as `i8` GEPs, aggregate copies as `llvm.memcpy` intrinsic calls,
+/// and struct storage as aligned byte allocas.
+#[test]
+fn aggregate_surface_prints_canonically() {
+    let src =
+        std::fs::read_to_string("assets/ok/pliron_struct_fieldwise.mojo").expect("fixture exists");
+    let module = native_compile(&src, &["main"]);
+    let text = module.plir_text();
+    for needle in [
+        "llvm.gep",
+        "llvm.call_intrinsic",
+        "llvm.memcpy.p0.p0.i64",
+        "llvm.alloca",
+        "[align : 8]",
+    ] {
+        assert!(
+            text.contains(needle),
+            "canonical text lacks `{needle}`:\n{text}"
+        );
+    }
+}
+
+/// The Stage 3 acceptance gate in one pass, one production compile per
+/// fixture:
+///
+/// - Every `assets/ok` fixture with a `main` entry either compiles natively —
+///   then its executable's stdout at `O0` and `O1` must equal the VM's
+///   execution output byte-for-byte with exit 0 and empty stderr, and its
+///   `O0` AddressSanitizer/LeakSanitizer build must run equally clean (no
+///   leak, double free, or invalid access anywhere in the run) — or is
+///   recorded `excluded` with its first rejection diagnostic.
+/// - Every `assets/runtime_error/pliron_raise_*` fixture must raise in the VM
+///   and exit natively with the unhandled-error category (69), reporting
+///   `unhandled error: <message>` on stderr at both levels. (The VM's `run`
+///   discards buffered partial stdout on an error while native executables
+///   stream it — a recorded CLI-level divergence, so stdout is not compared
+///   on the raise rows.)
+///
+/// The checked-in `conformance/pliron-stage3.tsv` manifest must match
+/// regeneration byte-exactly, and the trailing guards fail if eligible
+/// coverage unexpectedly shrinks.
+#[test]
+fn stage3_exe_manifest_and_differential() {
+    let ok_rows = parallel_map(fixture_sources("assets/ok"), |(rel, src)| {
+        let compiler = Compiler::default();
+        let Ok(compiled) = compiler.compile_source(&src, Path::new(&rel)) else {
+            // Historical module-scope snippets compile only through the test
+            // suite's non-conforming snippet mode.
+            return (
+                rel,
+                "-".into(),
+                "ineligible".to_string(),
+                "non-conforming-snippet".into(),
+            );
+        };
+        if !compiled
+            .elaborated_mir()
+            .functions
+            .iter()
+            .any(|(name, _)| name == "main")
+        {
+            return (
+                rel,
+                "-".into(),
+                "ineligible".to_string(),
+                "no-main-entry".into(),
+            );
+        }
+        let mut entries = vec!["main".to_string()];
+        if compiled
+            .elaborated_mir()
+            .functions
+            .iter()
+            .any(|(name, _)| name == "__toplevel__")
+        {
+            entries.push("__toplevel__".to_string());
+        }
+        let options = CompileOptions {
+            entries,
+            sources: vec![(rel.clone(), src.clone())],
+            target: host_target(),
+        };
+        match native::compile(compiled.elaborated_mir(), &options) {
+            Err(error) => {
+                let detail = error.display_with_sources(&options.sources);
+                (rel, "main".into(), "excluded".to_string(), detail)
+            }
+            Ok(mut module) => {
+                let execution = compiler
+                    .execute(&compiled)
+                    .unwrap_or_else(|error| panic!("{rel}: fixture must run on the VM: {error}"));
+                let dir = tempfile::tempdir().expect("tempdir");
+                for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
+                    let exe = dir.path().join(format!("stage3-{level}"));
+                    module
+                        .write_executable(&exe, opt)
+                        .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
+                    let run = std::process::Command::new(&exe)
+                        .output()
+                        .expect("stage3 executable runs");
+                    assert_eq!(run.status.code(), Some(0), "{rel}: exit at {level}");
+                    assert_eq!(
+                        String::from_utf8_lossy(&run.stdout),
+                        execution.output,
+                        "{rel}: stdout bytes diverge from the VM at {level}"
+                    );
+                    assert!(
+                        run.stderr.is_empty(),
+                        "{rel}: stderr must be empty at {level}: {}",
+                        String::from_utf8_lossy(&run.stderr)
+                    );
+                }
+                let asan_exe = dir.path().join("stage3-asan");
+                module
+                    .write_executable_sanitized(&asan_exe, OptLevel::O0)
+                    .unwrap_or_else(|error| panic!("{rel}: sanitized emission: {error}"));
+                let run = std::process::Command::new(&asan_exe)
+                    .env("ASAN_OPTIONS", "detect_leaks=1")
+                    .output()
+                    .expect("sanitized executable runs");
+                assert_eq!(
+                    run.status.code(),
+                    Some(0),
+                    "{rel}: sanitizer run failed:\n{}",
+                    String::from_utf8_lossy(&run.stderr)
+                );
+                assert!(
+                    run.stderr.is_empty(),
+                    "{rel}: sanitizer diagnostics:\n{}",
+                    String::from_utf8_lossy(&run.stderr)
+                );
+                (
+                    rel,
+                    "main".into(),
+                    "exe-differential".to_string(),
+                    "sanitized".into(),
+                )
+            }
+        }
+    });
+
+    let raise_rows = parallel_map(fixture_sources("assets/runtime_error"), |(rel, src)| {
+        let is_raise_fixture = rel
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("pliron_raise_"));
+        if !is_raise_fixture {
+            return (
+                rel,
+                "-".into(),
+                "ineligible".to_string(),
+                "no-raise-shape".into(),
+            );
+        }
+        let compiler = Compiler::default();
+        let compiled = compiler
+            .compile_source(&src, Path::new(&rel))
+            .unwrap_or_else(|error| panic!("{rel}: raise fixture must compile: {error}"));
+        let vm_error = compiler
+            .execute(&compiled)
+            .expect_err("raise fixture must fail on the VM")
+            .to_string();
+        assert!(
+            vm_error.starts_with("unhandled error: "),
+            "{rel}: VM error is not an unhandled raise: {vm_error}"
+        );
+        let mut entries = vec!["main".to_string()];
+        if compiled
+            .elaborated_mir()
+            .functions
+            .iter()
+            .any(|(name, _)| name == "__toplevel__")
+        {
+            entries.push("__toplevel__".to_string());
+        }
+        let options = CompileOptions {
+            entries,
+            sources: vec![(rel.clone(), src.clone())],
+            target: host_target(),
+        };
+        let mut module = native::compile(compiled.elaborated_mir(), &options)
+            .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
+            let exe = dir.path().join(format!("raise-{level}"));
+            module
+                .write_executable(&exe, opt)
+                .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
+            let run = std::process::Command::new(&exe)
+                .output()
+                .expect("raise executable runs");
+            assert_eq!(
+                run.status.code(),
+                Some(i32::from(TrapCategory::UnhandledError.exit_code())),
+                "{rel}: unhandled-raise exit status diverges at {level}"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&run.stderr),
+                format!("{vm_error}\n"),
+                "{rel}: unhandled-raise stderr diverges at {level}"
+            );
+        }
+        (
+            rel,
+            "main".into(),
+            "raise-differential".to_string(),
+            "category=UnhandledError".into(),
+        )
+    });
+    let rows: Vec<(String, String, String, String)> =
+        ok_rows.into_iter().chain(raise_rows).collect();
+
+    let mut manifest = String::from(
+        "# Pliron Stage 3 capability manifest (generated; schema-version 1).\n\
+         # One row per assets/ok and assets/runtime_error fixture:\n\
+         #   fixture <TAB> entry <TAB> status <TAB> detail\n\
+         # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |\n\
+         #         raise-differential (VM/native unhandled-raise oracle, O0+O1) |\n\
+         #         excluded (native rejection diagnostic) |\n\
+         #         ineligible (no runnable `main` shape for this gate)\n\
+         # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \\\n\
+         #   cargo nextest run --features backend-pliron stage3_exe_manifest\n",
+    );
+    for (fixture, entry, status, detail) in &rows {
+        manifest.push_str(&format!("{fixture}\t{entry}\t{status}\t{detail}\n"));
+    }
+    expect_test::expect_file!["../conformance/pliron-stage3.tsv"].assert_eq(&manifest);
+
+    // Coverage guards: the eligible sets must never silently shrink, and a
+    // pliron-named fixture must never regress to excluded.
+    let count = |status: &str| rows.iter().filter(|(_, _, s, _)| s == status).count();
+    let differential = count("exe-differential");
+    let raises = count("raise-differential");
+    assert!(
+        differential >= 30,
+        "exe-differential coverage unexpectedly shrank: {differential} < 30"
+    );
+    assert!(
+        raises >= 2,
+        "raise-differential coverage unexpectedly shrank: {raises} < 2"
+    );
+    for (fixture, _, status, detail) in &rows {
+        let name = fixture.rsplit('/').next().unwrap_or(fixture);
+        assert!(
+            !(name.starts_with("pliron_") && status == "excluded"),
+            "{fixture}: pliron fixture regressed to excluded: {detail}"
+        );
+    }
+}
+
 /// Compile a fixture expecting a backend diagnostic; return its rendering.
 fn native_error(src: &str, entries: &[&str]) -> String {
     let compiler = Compiler::default();
@@ -504,17 +872,19 @@ fn native_error(src: &str, entries: &[&str]) -> String {
 fn unsupported_constructs_produce_contextual_diagnostics() {
     // (source, entries, phrases the diagnostic must contain)
     let cases: &[(&str, &[&str], &[&str])] = &[
+        // Runtime nominal-String operators dispatch compiled stdlib byte
+        // loops; the rejection surfaces in the deepest unsupported callee.
         (
-            "def compute() -> Int:\n    var s = \"hi\"\n    return 1\n",
+            "def compute() -> Int:\n    var s = \"a\"\n    var t = s + s\n    return 1\n",
             &["compute"],
-            &["in `compute`", "unsupported"],
+            &["pliron backend:", "unsupported"],
         ),
         (
-            "def compute() -> Int:\n    print(1)\n    return 1\n",
+            "def compute() -> Int:\n    divmod(7, 3)\n    return 1\n",
             &["compute"],
             &[
                 "in `compute`",
-                "call to unknown or builtin function `print`",
+                "call to unknown or builtin function `divmod`",
                 "pliron_fixture.mojo:2:",
             ],
         ),
@@ -575,7 +945,7 @@ fn unknown_entry_is_rejected() {
 
 /// One compact function per Stage 2 surface: float arithmetic and compares,
 /// UInt operators, conversions, the div-by-zero and pow-exponent trap blocks,
-/// and the shared `mjrt_pow`/`exit` scaffolding all print canonically.
+/// and the shared `mjrt_pow`/`mjrt_trap` scaffolding all print canonically.
 const STAGE2_SURFACE: &str = "\
 def mix(a: Int, b: UInt, x: Float64) -> Float64:
     var q = a // 3
@@ -598,7 +968,8 @@ fn stage2_surface_prints_canonically() {
     // shapes are pinned structurally so unrelated numbering churn does not
     // invalidate the pin.
     for needle in [
-        "llvm.func @exit",
+        "llvm.func @mjrt_trap",
+        "llvm.call @mjrt_trap",
         "llvm.func @mjrt_pow",
         "llvm.call @mjrt_pow",
         "llvm.call_intrinsic",
@@ -616,14 +987,12 @@ fn stage2_surface_prints_canonically() {
             "canonical text lacks `{needle}`:\n{text}"
         );
     }
-    // Trap blocks call exit with the category exit codes.
-    for code in [
-        TrapCategory::DivModZero.exit_code(),
-        TrapCategory::PowExponent.exit_code(),
-    ] {
+    // Trap blocks pass the category codes to `mjrt_trap`.
+    for category in [TrapCategory::DivModZero, TrapCategory::PowExponent] {
+        let code = category.code();
         assert!(
             text.contains(&format!("<{code}: i32>")),
-            "canonical text lacks trap exit code {code}:\n{text}"
+            "canonical text lacks trap category code {code}:\n{text}"
         );
     }
 }
@@ -875,12 +1244,14 @@ mod native_abi_cross_checks {
             @mjrt_abi_version = external global i32
             declare i32 @mjrt_version()
             declare ptr @mjrt_alloc(i64, i64)
+            declare void @mjrt_free(ptr)
             declare void @mjrt_dealloc(ptr, i64, i64)
             declare void @mjrt_write_stdout(ptr, i64)
             declare i64 @mjrt_fmt_i64(i64, ptr)
             declare i64 @mjrt_fmt_u64(i64, ptr)
             declare i64 @mjrt_fmt_f64(double, ptr)
             declare void @mjrt_trap(i32) noreturn
+            declare void @mjrt_unhandled_error(ptr, i64) noreturn
         "#]]
         .assert_eq(&mojito::backend::pliron::runtime_declarations());
     }
@@ -926,67 +1297,87 @@ mod native_abi_cross_checks {
 
     /// Produced executables expose the inspectable ABI version symbol and no
     /// runtime symbols outside the contract table (plus the backend-emitted
-    /// `mjrt_pow` helper). Inspection only — the executable never runs.
+    /// `mjrt_pow` helper) — checked over both a scalar executable and a
+    /// Stage 3 executable that prints, allocates, and carries constant-pool
+    /// strings (whose `mjstr_*` globals must stay private). Inspection only —
+    /// the executables never run.
     #[test]
     fn pliron_executables_expose_only_specified_runtime_symbols() {
-        let compiler = Compiler::default();
-        let compiled = compiler
-            .compile_source(EXE_MAIN, std::path::Path::new(FIXTURE_NAME))
-            .expect("fixture compiles");
-        let options = super::CompileOptions {
-            entries: vec!["main".to_string()],
-            sources: vec![(FIXTURE_NAME.to_string(), EXE_MAIN.to_string())],
-            target: host_target(),
-        };
-        let mut module = mojito::backend::pliron::compile(compiled.elaborated_mir(), &options)
-            .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
-        let dir = tempfile::tempdir().expect("tempdir");
-        let exe = dir.path().join("abi_inspect");
-        module
-            .write_executable(&exe, super::OptLevel::O0)
-            .expect("exe emission");
+        const STAGE3_MAIN: &str = "\
+def main():
+    var s = \"symbols\"
+    print(s, 42)
+";
+        for source in [EXE_MAIN, STAGE3_MAIN] {
+            let compiler = Compiler::default();
+            let compiled = compiler
+                .compile_source(source, std::path::Path::new(FIXTURE_NAME))
+                .expect("fixture compiles");
+            let options = super::CompileOptions {
+                entries: vec!["main".to_string()],
+                sources: vec![(FIXTURE_NAME.to_string(), source.to_string())],
+                target: host_target(),
+            };
+            let mut module = mojito::backend::pliron::compile(compiled.elaborated_mir(), &options)
+                .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
+            let dir = tempfile::tempdir().expect("tempdir");
+            let exe = dir.path().join("abi_inspect");
+            module
+                .write_executable(&exe, super::OptLevel::O0)
+                .expect("exe emission");
 
-        let nm = ["llvm-nm-22", "llvm-nm", "nm"]
-            .into_iter()
-            .find(|candidate| {
-                Command::new(candidate)
-                    .arg("--version")
-                    .output()
-                    .is_ok_and(|out| out.status.success())
-            })
-            .expect("an nm tool available");
-        let output = Command::new(nm).arg(&exe).output().expect("nm runs");
-        assert!(output.status.success());
-        let text = String::from_utf8_lossy(&output.stdout);
-        let globals: Vec<&str> = text
-            .lines()
-            .filter_map(|line| {
-                let mut parts = line.split_whitespace().rev();
-                let name = parts.next()?;
-                let kind = parts.next()?;
-                (kind.len() == 1 && kind.chars().all(|c| c.is_ascii_uppercase()))
-                    .then_some((name, kind))
-            })
-            .filter(|(name, _)| name.starts_with("mjrt_"))
-            .map(|(name, _)| name)
-            .collect();
-        assert!(
-            globals.contains(&rt_abi::ABI_VERSION_SYMBOL),
-            "executable must expose {}: {globals:?}",
-            rt_abi::ABI_VERSION_SYMBOL
-        );
-        assert!(globals.contains(&"mjrt_version"), "{globals:?}");
-        let allowed: Vec<&str> = rt_abi::RT_SYMBOLS
-            .iter()
-            .map(|sig| sig.symbol)
-            .chain(rt_abi::RT_DATA_SYMBOLS.iter().map(|(name, _)| *name))
-            .chain(["mjrt_pow"])
-            .collect();
-        for symbol in &globals {
+            let nm = ["llvm-nm-22", "llvm-nm", "nm"]
+                .into_iter()
+                .find(|candidate| {
+                    Command::new(candidate)
+                        .arg("--version")
+                        .output()
+                        .is_ok_and(|out| out.status.success())
+                })
+                .expect("an nm tool available");
+            let output = Command::new(nm).arg(&exe).output().expect("nm runs");
+            assert!(output.status.success());
+            let text = String::from_utf8_lossy(&output.stdout);
+            let exported: Vec<(&str, &str)> = text
+                .lines()
+                .filter_map(|line| {
+                    let mut parts = line.split_whitespace().rev();
+                    let name = parts.next()?;
+                    let kind = parts.next()?;
+                    (kind.len() == 1 && kind.chars().all(|c| c.is_ascii_uppercase()))
+                        .then_some((name, kind))
+                })
+                .collect();
+            let globals: Vec<&str> = exported
+                .iter()
+                .filter(|(name, _)| name.starts_with("mjrt_"))
+                .map(|(name, _)| *name)
+                .collect();
             assert!(
-                allowed.contains(symbol),
-                "unexpected runtime symbol {symbol} in the executable (contract table: {allowed:?})"
+                globals.contains(&rt_abi::ABI_VERSION_SYMBOL),
+                "executable must expose {}: {globals:?}",
+                rt_abi::ABI_VERSION_SYMBOL
             );
+            assert!(globals.contains(&"mjrt_version"), "{globals:?}");
+            let allowed: Vec<&str> = rt_abi::RT_SYMBOLS
+                .iter()
+                .map(|sig| sig.symbol)
+                .chain(rt_abi::RT_DATA_SYMBOLS.iter().map(|(name, _)| *name))
+                .chain(["mjrt_pow"])
+                .collect();
+            for symbol in &globals {
+                assert!(
+                    allowed.contains(symbol),
+                    "unexpected runtime symbol {symbol} in the executable (contract table: {allowed:?})"
+                );
+            }
+            // The constant pool is private linkage — never exported.
+            for (name, _) in &exported {
+                assert!(
+                    !name.starts_with("mjstr_"),
+                    "constant-pool global {name} leaked into the export surface"
+                );
+            }
         }
     }
 }

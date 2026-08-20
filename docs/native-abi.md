@@ -19,11 +19,14 @@ part of any native ABI, and `mojito-runtime` must never depend on the
 
 ## ABI versioning
 
-- `ABI_VERSION` (currently **1**) is a monotonic `u32` declared identically in
+- `ABI_VERSION` (currently **2**) is a monotonic `u32` declared identically in
   `mojito_runtime::ABI_VERSION` and `native::rt_abi::MJRT_ABI_VERSION`. Bump
   it on any change to an exported symbol's signature or semantics, an
   exported `#[repr(C)]` type's layout, a trap category's meaning, or any rule
-  in this document that generated code depends on.
+  in this document that generated code depends on. Version 2 introduced the
+  headered allocator (zero-size requests allocate, `mjrt_dealloc` validates
+  against the header), the size-less `mjrt_free`, and
+  `mjrt_unhandled_error`.
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
   synthesized executable wrapper references `mjrt_version`, so every produced
@@ -38,6 +41,10 @@ part of any native ABI, and `mojito-runtime` must never depend on the
 
 All native build knobs are checked types in `native::target`; backends never
 receive raw strings:
+
+Native development, testing, and release gates cover the supported Linux target
+only. Adding another host or target is not a promotion requirement and requires
+its own explicit support decision and testing infrastructure.
 
 - **Target triple** — `Triple`, currently exactly
   `x86_64-unknown-linux-gnu`. Each triple carries its canonical name and its
@@ -108,17 +115,31 @@ specialized name). Rules:
 - A **string literal** (`Ty::StringLiteral`) is the borrowed descriptor
   `MjStrDesc { data: *const u8, len: u64 }` (16/8): `len` bytes of UTF-8, not
   NUL-terminated, never owned by the consumer. Literal bytes live in private
-  unnamed constant globals named `mjstr.<n>`, numbered in deterministic
-  lowering order and deduplicated by content within a module.
+  constant globals named `mjstr_<n>` (an underscore — pliron identifiers
+  admit no `.`), numbered in deterministic first-use order and deduplicated
+  by content within a module.
 - The **nominal `String`** is its declared stdlib fields laid out by the
   ordinary aggregate rules — `{ data: *mut u8, size: i64, cap: i64 }` (24/8),
   the runtime's `MjString`. `data` is `size` initialized bytes of UTF-8 in a
   `cap`-byte allocation obtained from `mjrt_alloc`.
+- Two stdlib String bodies are **bridged natively** rather than compiled
+  (their byte loops need machinery beyond this stage), mirroring the VM's own
+  literal bridge: the literal constructor fills `{data: mjrt_alloc(len, 1),
+  size: len, cap: len}` from the constant pool, and the copy constructor
+  allocates `cap` bytes and copies `size`, preserving `size`/`cap` exactly
+  like the stdlib body. `String.__deinit__` compiles from its real MIR
+  (`Pointer.unsafe_free()` lowers to `mjrt_free`).
 
 ### Errors and exceptional control flow
 
 - The built-in error value is `MjError { message: MjString }` (24/8).
-- A raising call produces a **tagged outcome** laid out by the ordinary
+- **Pre-Stage-4 contract (current)**: no `try` lowering exists, so every
+  runtime `raise` is dynamically unhandled — raising functions compile with
+  unchanged signatures and `raise` lowers to `mjrt_unhandled_error(data,
+  len)`, which reports `unhandled error: <message>` on stderr and exits with
+  trap category 5 (exit 69). The CLI re-renders that stderr text as its
+  diagnostic for byte parity with the VM's `RuntimeError::Raised` display.
+- From Stage 4 on, a raising call produces a **tagged outcome** laid out by the ordinary
   aggregate rules: `{ tag: u32, ok: T, err: MjError }` with `tag` 0 (`MJ_TAG_OK`)
   or 1 (`MJ_TAG_ERR`); exactly one payload is initialized, selected by the
   tag. Success, error, return, and `try`/`finally` cleanup paths lower as
@@ -147,10 +168,10 @@ deterministic (`src/symbol.rs`); mangling is a purely mechanical injective
 escape: prefix `mj_`, then per byte — `[A-Za-z0-9]` passes through, `_`
 becomes `_u`, any other byte becomes `_hh` (two lowercase hex digits).
 
-Reserved namespaces, all outside the `mj_` image: the wrapper `main`, the C
-`exit`, the runtime family `mjrt_*` (the `mojito-runtime` exports plus
-backend-emitted helpers like `mjrt_pow`), and the constant-pool family
-`mjstr.*`.
+Reserved namespaces, all outside the `mj_` image: the wrapper `main`, the
+runtime family `mjrt_*` (the `mojito-runtime` exports plus backend-emitted
+helpers like `mjrt_pow`), and the constant-pool family `mjstr_*` (private
+linkage — never exported from produced objects).
 
 ## Output
 
@@ -158,8 +179,10 @@ backend-emitted helpers like `mjrt_pow`), and the constant-pool family
 retries included) and traps on failure — byte-exact output parity with the VM
 is the differential contract. The formatting family `mjrt_fmt_i64/u64/f64`
 produces the same text as the VM's display (`f64` is Rust's `{:?}` shortest
-round trip — `3.0`, `1e300`, `NaN`, `inf`), so Stage 3 print parity is
-structural rather than re-implemented.
+round trip — `3.0`, `1e300`, `NaN`, `inf`), so print parity is structural
+rather than re-implemented: `print` lowers to one write per piece — each
+argument's display bytes, a single `" "` between arguments, and a trailing
+`"\n"` — composing the VM's `format_value` join byte-for-byte.
 
 ## The runtime library
 
@@ -174,19 +197,22 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | Symbol | Contract |
 | --- | --- |
 | `mjrt_abi_version` (`u32` data), `mjrt_version() -> u32` | The inspectable ABI version. |
-| `mjrt_alloc(size, align) -> *mut u8` | Caller owns; never null; zero size returns an aligned dangling pointer; traps (category 3) on exhaustion or invalid align. |
-| `mjrt_dealloc(ptr, size, align)` | Consumes an `mjrt_alloc` allocation; null/zero-size no-op; size/align must match the allocation. |
+| `mjrt_alloc(size, align) -> *mut u8` | Caller owns; never null; a hidden `{size: u64, align: u64}` header occupies the 16 bytes before the returned pointer; zero size still allocates (header-only, freeable); traps (category 3) on exhaustion or invalid align. |
+| `mjrt_free(ptr)` | Consumes any `mjrt_alloc` allocation via its header — the size-less free `Pointer.unsafe_free()` lowers to; null no-op. |
+| `mjrt_dealloc(ptr, size, align)` | Consumes an `mjrt_alloc` allocation, validating `size`/`align` against its header (mismatch traps, category 3); null no-op. |
 | `mjrt_write_stdout(data, len)` | Borrows; full write with interrupt retry; traps (category 4) on failure. |
 | `mjrt_fmt_i64/u64(value, out) -> u64` | Borrows `out` (≥ 20 bytes); returns bytes written; no NUL. |
 | `mjrt_fmt_f64(value, out) -> u64` | Borrows `out` (≥ 32 bytes); VM display text. |
 | `mjrt_trap(category) -> !` | Reports on stderr, exits `64 + category` (clamped to 127); runs no destructors. |
+| `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
 
 Trap categories (shared with the backend's `TrapCategory` codes and exit
 codes `64 + category`): 1 div/mod by zero (exit 65), 2 `**` exponent range
-(exit 66), 3 allocation failure (exit 67), 4 stdout failure (exit 68).
-Categories 1–2 reuse the VM's runtime-error message text so both backends
-diagnose identically; `run --backend pliron` maps trap exit codes back to the
-VM diagnostic.
+(exit 66), 3 allocation failure (exit 67), 4 stdout failure (exit 68),
+5 unhandled error (exit 69). Categories 1–2 reuse the VM's runtime-error
+message text so both backends diagnose identically; `run --backend pliron`
+maps trap exit codes back to the VM diagnostic (and re-renders category 5
+from the executable's stderr).
 
 ## Mechanical checks
 

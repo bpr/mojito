@@ -19,7 +19,13 @@ use std::io::Write;
 
 /// The runtime ABI version. Bump on any change to an exported symbol's
 /// signature, semantics, or to a `#[repr(C)]` type's layout.
-pub const ABI_VERSION: u32 = 1;
+///
+/// Version 2: allocations carry a `{size, align}` header (so [`mjrt_free`]
+/// releases without a size), zero-size requests allocate (header-only, so
+/// every allocation is freeable), [`mjrt_dealloc`] validates against the
+/// header instead of being undefined on mismatch, and
+/// [`mjrt_unhandled_error`] reports an uncaught raise.
+pub const ABI_VERSION: u32 = 2;
 
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
 /// trap numbering; the process exit code is `64 + category`.
@@ -27,6 +33,7 @@ pub const TRAP_DIV_MOD_ZERO: u32 = 1;
 pub const TRAP_POW_EXPONENT: u32 = 2;
 pub const TRAP_ALLOC_FAILURE: u32 = 3;
 pub const TRAP_STDOUT_FAILURE: u32 = 4;
+pub const TRAP_UNHANDLED_ERROR: u32 = 5;
 
 /// Tag values for tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
@@ -68,15 +75,16 @@ pub extern "C" fn mjrt_version() -> u32 {
     ABI_VERSION
 }
 
-/// Allocates `size` bytes aligned to `align`. Never returns null: allocation
-/// failure traps with [`TRAP_ALLOC_FAILURE`]. A zero-size request returns an
-/// aligned dangling pointer that must still be passed to [`mjrt_dealloc`]
-/// with the same `size`/`align` (where it is a no-op).
+/// Allocates `size` bytes aligned to `align`, prefixed by a hidden
+/// `{size: u64, align: u64}` header in the 16 bytes directly before the
+/// returned pointer (so [`mjrt_free`] can release without a size). Never
+/// returns null: allocation failure traps with [`TRAP_ALLOC_FAILURE`]. A
+/// zero-size request still allocates (header-only), so every returned
+/// pointer is freeable.
 ///
 /// # Safety
 ///
-/// `align` must be a nonzero power of two; `size` rounded up to `align` must
-/// not overflow `isize`.
+/// `align` must be a nonzero power of two.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mjrt_alloc(size: u64, align: u64) -> *mut u8 {
     let (Ok(size), Ok(align)) = (usize::try_from(size), usize::try_from(align)) else {
@@ -85,34 +93,67 @@ pub unsafe extern "C" fn mjrt_alloc(size: u64, align: u64) -> *mut u8 {
     if !align.is_power_of_two() {
         trap(TRAP_ALLOC_FAILURE)
     }
-    if size == 0 {
-        return align as *mut u8;
-    }
-    let Ok(layout) = Layout::from_size_align(size, align) else {
+    let header = header_bytes(align);
+    let Some(total) = header.checked_add(size) else {
         trap(TRAP_ALLOC_FAILURE)
     };
-    let ptr = unsafe { std::alloc::alloc(layout) };
-    if ptr.is_null() {
+    let Ok(layout) = Layout::from_size_align(total, header) else {
         trap(TRAP_ALLOC_FAILURE)
+    };
+    let base = unsafe { std::alloc::alloc(layout) };
+    if base.is_null() {
+        trap(TRAP_ALLOC_FAILURE)
+    }
+    let ptr = unsafe { base.add(header) };
+    unsafe {
+        (ptr.sub(16) as *mut u64).write(size as u64);
+        (ptr.sub(8) as *mut u64).write(align as u64);
     }
     ptr
 }
 
-/// Releases an allocation obtained from [`mjrt_alloc`]. A null pointer or a
-/// zero `size` is a no-op.
+/// Releases any allocation obtained from [`mjrt_alloc`] using its header —
+/// the size-less free the language's `Pointer.unsafe_free()` family lowers
+/// to. A null pointer is a no-op.
 ///
 /// # Safety
 ///
-/// A non-null `ptr` with nonzero `size` must come from [`mjrt_alloc`] with
-/// exactly this `size` and `align`, and must not be used afterwards.
+/// A non-null `ptr` must come from [`mjrt_alloc`] and must not be used
+/// afterwards.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mjrt_dealloc(ptr: *mut u8, size: u64, align: u64) {
-    if ptr.is_null() || size == 0 {
+pub unsafe extern "C" fn mjrt_free(ptr: *mut u8) {
+    if ptr.is_null() {
         return;
     }
-    let layout = Layout::from_size_align(size as usize, align as usize)
-        .expect("mjrt_dealloc: size/align must match the original mjrt_alloc");
-    unsafe { std::alloc::dealloc(ptr, layout) };
+    unsafe {
+        let size = (ptr.sub(16) as *const u64).read() as usize;
+        let align = (ptr.sub(8) as *const u64).read() as usize;
+        release(ptr, size, align);
+    }
+}
+
+/// Releases an allocation obtained from [`mjrt_alloc`], validating the
+/// caller's `size` and `align` against the allocation header — a mismatch
+/// traps with [`TRAP_ALLOC_FAILURE`] instead of corrupting the heap. A null
+/// pointer is a no-op.
+///
+/// # Safety
+///
+/// A non-null `ptr` must come from [`mjrt_alloc`] and must not be used
+/// afterwards.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mjrt_dealloc(ptr: *mut u8, size: u64, align: u64) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let header_size = (ptr.sub(16) as *const u64).read();
+        let header_align = (ptr.sub(8) as *const u64).read();
+        if header_size != size || header_align != align {
+            trap(TRAP_ALLOC_FAILURE)
+        }
+        release(ptr, size as usize, align as usize);
+    }
 }
 
 /// Writes exactly `len` bytes to stdout (retrying on interruption) and
@@ -177,6 +218,28 @@ pub extern "C" fn mjrt_trap(category: u32) -> ! {
     trap(category)
 }
 
+/// Reports an uncaught raised error — `unhandled error: <message>` on
+/// stderr — and exits with the [`TRAP_UNHANDLED_ERROR`] exit code. `data` is
+/// the borrowed UTF-8 message. Never returns; runs no destructors.
+///
+/// # Safety
+///
+/// When `len` is nonzero, `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mjrt_unhandled_error(data: *const u8, len: u64) -> ! {
+    let message = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len as usize) }
+    };
+    let _ = writeln!(
+        std::io::stderr(),
+        "unhandled error: {}",
+        String::from_utf8_lossy(message)
+    );
+    std::process::exit(trap_exit_code(TRAP_UNHANDLED_ERROR))
+}
+
 /// The stderr text for a trap category. Known categories reuse the VM's
 /// runtime-error message text so the two backends diagnose identically.
 pub fn trap_message(category: u32) -> &'static str {
@@ -185,6 +248,7 @@ pub fn trap_message(category: u32) -> &'static str {
         TRAP_POW_EXPONENT => "'**' exponent must be a non-negative Int that fits in 32 bits",
         TRAP_ALLOC_FAILURE => "allocation failed",
         TRAP_STDOUT_FAILURE => "stdout write failed",
+        TRAP_UNHANDLED_ERROR => "unhandled error",
         _ => "unknown trap",
     }
 }
@@ -201,6 +265,23 @@ fn trap(category: u32) -> ! {
         trap_message(category)
     );
     std::process::exit(trap_exit_code(category))
+}
+
+/// The hidden header size ahead of an allocation: the larger of the
+/// requested alignment and 16, so the returned pointer keeps the requested
+/// alignment and the header's two `u64` fields sit naturally aligned
+/// directly before it.
+fn header_bytes(align: usize) -> usize {
+    align.max(16)
+}
+
+/// Releases a headered allocation given its (validated) payload size and
+/// alignment.
+unsafe fn release(ptr: *mut u8, size: usize, align: usize) {
+    let header = header_bytes(align);
+    let layout = Layout::from_size_align(header + size, header)
+        .expect("a live allocation's layout was valid at mjrt_alloc time");
+    unsafe { std::alloc::dealloc(ptr.sub(header), layout) };
 }
 
 /// Copies `text` into `out`, returning its byte length. Callers guarantee the
@@ -252,11 +333,31 @@ mod tests {
     }
 
     #[test]
-    fn zero_size_alloc_is_aligned_dangling_and_dealloc_is_noop() {
+    fn alloc_header_records_size_and_align_for_sizeless_free() {
+        let ptr = unsafe { mjrt_alloc(48, 32) };
+        assert!(!ptr.is_null());
+        assert_eq!(ptr as usize % 32, 0);
+        unsafe {
+            assert_eq!((ptr.sub(16) as *const u64).read(), 48);
+            assert_eq!((ptr.sub(8) as *const u64).read(), 32);
+            ptr.write_bytes(0xCD, 48);
+            mjrt_free(ptr);
+        }
+    }
+
+    #[test]
+    fn zero_size_alloc_is_real_and_freeable() {
         let ptr = unsafe { mjrt_alloc(0, 16) };
         assert!(!ptr.is_null());
         assert_eq!(ptr as usize % 16, 0);
-        unsafe { mjrt_dealloc(ptr, 0, 16) };
+        unsafe { mjrt_free(ptr) };
+        let again = unsafe { mjrt_alloc(0, 8) };
+        unsafe { mjrt_dealloc(again, 0, 8) };
+    }
+
+    #[test]
+    fn free_and_dealloc_ignore_null() {
+        unsafe { mjrt_free(std::ptr::null_mut()) };
         unsafe { mjrt_dealloc(std::ptr::null_mut(), 64, 8) };
     }
 

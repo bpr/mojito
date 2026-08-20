@@ -138,6 +138,11 @@ per-symbol runtime rules, and the mechanical Rust/LLVM agreement checks — is
 [`docs/native-abi.md`](native-abi.md); any later backend (Cranelift
 included) consumes the same module and runtime.
 
+Native backend support and its required gates are Linux-only, currently for the
+single target defined in `docs/native-abi.md`. Supporting additional hosts or
+targets requires a separate, explicitly resourced decision; it is not a Pliron
+promotion condition.
+
 ### Source Module Boundaries
 
 Large phases keep orchestration in their root module and delegate reusable

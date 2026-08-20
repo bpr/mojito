@@ -135,7 +135,30 @@ pub(super) fn write_executable(
     opt: OptLevel,
 ) -> Result<(), PlironError> {
     let runtime = find_runtime_archive()?;
-    clang_from_bitcode(ctx, module, target, path, &[], &[runtime], opt)
+    // `-lm`: float `**` lowers to `llvm.pow.f64`, which selects to libm.
+    clang_from_bitcode(ctx, module, target, path, &["-lm"], &[runtime], opt)
+}
+
+/// [`write_executable`] instrumented with AddressSanitizer (whose interposed
+/// allocator also gives LeakSanitizer coverage of the runtime's `std::alloc`
+/// allocations) — the sanitizer acceptance lane's link mode.
+pub(super) fn write_executable_sanitized(
+    ctx: &Context,
+    module: ModuleOp,
+    target: &NativeTarget,
+    path: &Path,
+    opt: OptLevel,
+) -> Result<(), PlironError> {
+    let runtime = find_runtime_archive()?;
+    clang_from_bitcode(
+        ctx,
+        module,
+        target,
+        path,
+        &["-fsanitize=address", "-g", "-lm"],
+        &[runtime],
+        opt,
+    )
 }
 
 fn clang_from_bitcode(

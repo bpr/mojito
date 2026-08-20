@@ -3,7 +3,7 @@
 
 use pliron::builtin::ops::ModuleOp;
 use pliron::context::Context;
-use pliron_llvm::llvm_sys::lljit::LLVMLLJIT;
+use pliron_llvm::llvm_sys::lljit::{JITSymbolGenericFlags, LLVMLLJIT};
 use pliron_llvm::llvm_sys::target::initialize_native;
 
 use crate::native::target::NativeTarget;
@@ -13,8 +13,11 @@ use super::{JitValue, OptLevel, PlironError, PlironErrorKind, RetKind, emit};
 /// JIT-execute a zero-argument compiled function by its native symbol and
 /// return its typed result. `ret` is the compiled function's checked return
 /// kind; an i1 result is read through `u8` with the low bit significant (the
-/// upper bits of the return register are undefined for LLVM `i1`). The caller
-/// has already checked that `target` is the host.
+/// upper bits of the return register are undefined for LLVM `i1`). `symbols`
+/// maps external symbols the module references (runtime-contract functions)
+/// to in-process addresses — explicit and deterministic, rather than relying
+/// on process-symbol resolution. The caller has already checked that `target`
+/// is the host.
 pub(super) fn run_value(
     ctx: &Context,
     module: ModuleOp,
@@ -22,12 +25,22 @@ pub(super) fn run_value(
     symbol: &str,
     ret: RetKind,
     opt: OptLevel,
+    symbols: &[(&str, u64)],
 ) -> Result<JitValue, PlironError> {
     ensure_native_target()?;
     // The reparse context of the optimized path must outlive the JIT'd call.
     let (_llvm_ctx, llvm_module) = emit::to_llvm_optimized(ctx, module, target, opt)?;
     let jit = LLVMLLJIT::new_with_default_builder()
         .map_err(|error| jit_error(format!("LLJIT construction: {error}")))?;
+    for (name, address) in symbols {
+        jit.add_symbol_mapping(
+            name,
+            *address,
+            JITSymbolGenericFlags::JITSymbolGenericFlagsCallable
+                | JITSymbolGenericFlags::JITSymbolGenericFlagsExported,
+        )
+        .map_err(|error| jit_error(format!("LLJIT symbol mapping of `{name}`: {error}")))?;
+    }
     jit.add_module(llvm_module)
         .map_err(|error| jit_error(format!("LLJIT add_module: {error}")))?;
     let address = jit
@@ -55,6 +68,9 @@ pub(super) fn run_value(
         }
         RetKind::Void => Err(jit_error(format!(
             "JIT entry `{symbol}` returns no value; only value-returning entries are supported"
+        ))),
+        RetKind::Ptr => Err(jit_error(format!(
+            "JIT entry `{symbol}` returns a pointer; raw addresses have no VM display analog"
         ))),
     }
 }

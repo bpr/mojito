@@ -237,10 +237,11 @@ fn stage_run(file: Option<&str>, cli: &CliArgs) -> ExitCode {
 }
 
 /// `run --backend pliron`: compile the program natively (the advertised
-/// scalar, print-free subset — anything outside it rejects with the backend's
-/// contextual diagnostic, never a VM fallback), link a temporary executable,
-/// run it, and forward its output and exit status. Checked native traps map
-/// back to the VM's runtime-error text for parity.
+/// subset — scalars, string literals, and `print` through the runtime ABI;
+/// anything outside it rejects with the backend's contextual diagnostic,
+/// never a VM fallback), link a temporary executable, run it, and forward its
+/// output and exit status. Checked native traps map back to the VM's
+/// runtime-error text for parity.
 #[cfg(feature = "backend-pliron")]
 fn run_program_native(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
     use mojito::backend::pliron;
@@ -259,11 +260,34 @@ fn run_program_native(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
     let _ = std::fs::remove_file(&exe);
     let output = ran?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
-    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    let trap = output
+        .status
+        .code()
+        .and_then(pliron::TrapCategory::from_exit_code);
+    // A recognized trap already reported itself on the executable's stderr;
+    // suppress that line and re-render the category as the CLI diagnostic
+    // (VM-parity text when the category has a VM analog).
+    if trap.is_none() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    }
     match output.status.code() {
         Some(0) => Ok(()),
-        Some(code) => match pliron::TrapCategory::from_exit_code(code) {
-            Some(category) => Err(format!("Type error: {}", category.vm_message())),
+        Some(code) => match trap {
+            // The runtime wrote `unhandled error: <message>` to stderr;
+            // re-render that exact text as the CLI diagnostic — byte parity
+            // with the VM's `RuntimeError::Raised` display.
+            Some(pliron::TrapCategory::UnhandledError) => {
+                Err(String::from_utf8_lossy(&output.stderr)
+                    .trim_end()
+                    .to_string())
+            }
+            Some(category) => match category.vm_message() {
+                Some(message) => Err(format!("Type error: {message}")),
+                None => Err(format!(
+                    "native runtime trap: {}",
+                    category.runtime_message()
+                )),
+            },
             None => Err(format!("native executable exited with status {code}")),
         },
         None => Err("native executable terminated by a signal".to_string()),

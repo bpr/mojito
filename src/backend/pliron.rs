@@ -1,17 +1,18 @@
-//! Experimental Pliron native backend (roadmap section 4, Stages 1-2).
+//! Experimental Pliron native backend (roadmap section 4, Stages 1-3).
 //!
-//! Compiles the complete checked scalar subset of verified, drop-elaborated
-//! MIR — Int/UInt/Float64/Bool constants, every scalar operator and the
-//! builtin conversions, keyword/default call binding, checked div-by-zero and
-//! pow-exponent traps, blocks, branches, direct calls, recursion, and return
-//! — to pliron's LLVM dialect and on to LLVM IR, bitcode, objects, and host
-//! executables at `O0` or `O1`. The CLI's `run --backend pliron` executes the
-//! advertised (print-free) subset through a temporary executable; every
-//! unsupported construct fails with a contextual diagnostic rather than
-//! falling back to the VM. The backend consumes `MirProgram` facts
-//! exclusively; it imports no AST, HIR, or checker representation. Pins,
-//! divergence policies, and design notes: `docs/notes/pliron-stage1.md` and
-//! `docs/notes/pliron-stage2.md`.
+//! Compiles the checked scalar subset of verified, drop-elaborated MIR —
+//! Int/UInt/Float64/Bool constants, every scalar operator and the builtin
+//! conversions, keyword/default call binding, checked runtime traps through
+//! `mjrt_trap`, blocks, branches, direct calls, recursion, and return — plus
+//! the growing Stage 3 runtime surface (string-literal constant pools and
+//! `print` through the shared runtime ABI) to pliron's LLVM dialect and on to
+//! LLVM IR, bitcode, objects, and host executables at `O0` or `O1`. The CLI's
+//! `run --backend pliron` executes the advertised subset through a temporary
+//! executable; every unsupported construct fails with a contextual diagnostic
+//! rather than falling back to the VM. The backend consumes `MirProgram`
+//! facts exclusively; it imports no AST, HIR, or checker representation.
+//! Pins, divergence policies, and design notes: `docs/notes/pliron-stage1.md`
+//! and `docs/notes/pliron-stage2.md`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -24,8 +25,9 @@ use pliron::printable::Printable;
 
 use std::path::Path;
 
-use crate::mir::{MirFunction, MirInstr, MirProgram};
+use crate::mir::{MirFunction, MirInstr, MirProgram, MirStructDeclaration, Reg};
 use crate::token::SourceSpan;
+use crate::types::{Ty, TyArg};
 
 pub use crate::native::target::{EmitKind, NativeTarget, OptLevel};
 
@@ -55,6 +57,18 @@ pub fn compile(
         .iter()
         .map(|decl| (decl.lowered_name.clone(), decl.clone()))
         .collect();
+    let struct_decls: HashMap<&str, &MirStructDeclaration> = program
+        .declarations
+        .structs
+        .iter()
+        .map(|decl| (decl.name.as_str(), decl))
+        .collect();
+    let struct_index =
+        crate::native::layout::StructFieldIndex::from_declarations(&program.declarations);
+    let layout = crate::native::layout::LayoutCx {
+        target: &options.target,
+        structs: &struct_index,
+    };
 
     // Declare every reachable function first (program order, so output is
     // deterministic and calls may reference any of them), then lower bodies.
@@ -65,7 +79,8 @@ pub fn compile(
         if !reachable.contains(name.as_str()) {
             continue;
         }
-        let (func_op, signature) = lower::declare_function(&mut context, module, name, function)?;
+        let (func_op, signature) =
+            lower::declare_function(&mut context, module, name, function, &layout)?;
         functions.insert(
             name.clone(),
             FnMeta {
@@ -81,6 +96,8 @@ pub fn compile(
     let env = lower::LowerEnv {
         signatures: &signatures,
         declarations: &declarations,
+        struct_decls: &struct_decls,
+        layout,
         locator: &locator,
     };
     for (name, function, func_op) in declared {
@@ -181,9 +198,33 @@ impl NativeModule {
         emit::write_executable(&self.context, self.module, &self.target, path, opt)
     }
 
+    /// [`NativeModule::write_executable`] instrumented with AddressSanitizer
+    /// (and its leak checking) — the sanitizer acceptance lane.
+    pub fn write_executable_sanitized(
+        &mut self,
+        path: &Path,
+        opt: OptLevel,
+    ) -> Result<(), PlironError> {
+        self.ensure_exe_wrapper()?;
+        emit::write_executable_sanitized(&self.context, self.module, &self.target, path, opt)
+    }
+
     /// JIT-execute a compiled zero-argument value-returning MIR function and
     /// return its typed value. The differential harness's native side.
     pub fn jit_value(&self, entry: &str, opt: OptLevel) -> Result<JitValue, PlironError> {
+        self.jit_value_with_symbols(entry, opt, &[])
+    }
+
+    /// [`NativeModule::jit_value`] with an explicit mapping from external
+    /// symbols the module references (runtime-contract functions such as
+    /// `mjrt_trap`) to in-process addresses. The differential harness passes
+    /// the linked `mojito-runtime` exports so JIT resolution is deterministic.
+    pub fn jit_value_with_symbols(
+        &self,
+        entry: &str,
+        opt: OptLevel,
+        symbols: &[(&str, u64)],
+    ) -> Result<JitValue, PlironError> {
         if crate::native::target::Triple::host() != Some(self.target.triple) {
             return Err(PlironError {
                 function: None,
@@ -208,6 +249,7 @@ impl NativeModule {
             &meta.mangled,
             meta.ret,
             opt,
+            symbols,
         )
     }
 
@@ -300,57 +342,99 @@ pub enum RetKind {
     F64,
     /// `Ty::Bool` — i1 (read as u8, low bit significant).
     Bool,
+    /// `Ty::Pointer` — an opaque pointer. Compiles; the value-comparing JIT
+    /// harness refuses to read it (a raw address has no VM display analog).
+    Ptr,
 }
 
-/// A checked scalar runtime trap the native backend guards explicitly. Trap
-/// blocks call the C `exit` with [`TrapCategory::exit_code`], so a trapping
-/// native executable's exit status identifies the category; the same category
-/// maps onto the VM's `RuntimeError::TypeError` message for differential
-/// comparison.
+/// A checked runtime trap the native backend guards explicitly. Trap blocks
+/// call the runtime's `mjrt_trap` with [`TrapCategory::code`]; the runtime
+/// reports on stderr and exits with [`TrapCategory::exit_code`], so a
+/// trapping native executable's exit status identifies the category. The
+/// scalar categories map onto the VM's `RuntimeError::TypeError` message for
+/// differential comparison; the runtime-service categories have no VM analog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrapCategory {
     /// `//` or `%` with a zero divisor on Int/UInt (`runtime::nonzero`).
     DivModZero,
     /// `**` exponent outside `0 ..= u32::MAX` (`runtime::pow_exp`).
     PowExponent,
+    /// `mjrt_alloc` exhaustion or invalid alignment.
+    AllocFailure,
+    /// `mjrt_write_stdout` failure.
+    StdoutFailure,
+    /// An uncaught `raise` — `mjrt_unhandled_error` reports the message on
+    /// stderr and exits with this category's code (no `try` lowering exists
+    /// before Stage 4, so every runtime raise is dynamically unhandled).
+    UnhandledError,
 }
 
 impl TrapCategory {
-    /// Stable small code of this category (used in exit codes and manifests).
+    const ALL: [TrapCategory; 5] = [
+        TrapCategory::DivModZero,
+        TrapCategory::PowExponent,
+        TrapCategory::AllocFailure,
+        TrapCategory::StdoutFailure,
+        TrapCategory::UnhandledError,
+    ];
+
+    /// Stable small code of this category (used in exit codes and manifests),
+    /// in lockstep with the `rt_abi` trap constants.
     pub fn code(self) -> u8 {
-        match self {
-            TrapCategory::DivModZero => 1,
-            TrapCategory::PowExponent => 2,
-        }
+        use crate::native::rt_abi;
+        let code = match self {
+            TrapCategory::DivModZero => rt_abi::TRAP_DIV_MOD_ZERO,
+            TrapCategory::PowExponent => rt_abi::TRAP_POW_EXPONENT,
+            TrapCategory::AllocFailure => rt_abi::TRAP_ALLOC_FAILURE,
+            TrapCategory::StdoutFailure => rt_abi::TRAP_STDOUT_FAILURE,
+            TrapCategory::UnhandledError => rt_abi::TRAP_UNHANDLED_ERROR,
+        };
+        code as u8
     }
 
-    /// The process exit status a native trap block reports: `64 + code`.
+    /// The process exit status a native trap reports: `64 + code`.
     pub fn exit_code(self) -> u8 {
         64 + self.code()
     }
 
     /// The category a trapping native process reported, if any.
     pub fn from_exit_code(code: i32) -> Option<TrapCategory> {
-        [TrapCategory::DivModZero, TrapCategory::PowExponent]
+        TrapCategory::ALL
             .into_iter()
             .find(|category| i32::from(category.exit_code()) == code)
     }
 
-    /// The VM `RuntimeError::TypeError` message this trap mirrors.
-    pub fn vm_message(self) -> &'static str {
+    /// The runtime's stderr text for this category (`trap_message` in
+    /// `crates/mojito-runtime`; the scalar categories reuse the VM's
+    /// runtime-error text so both backends diagnose identically).
+    pub fn runtime_message(self) -> &'static str {
         match self {
             TrapCategory::DivModZero => "integer division or modulo by zero",
             TrapCategory::PowExponent => {
                 "'**' exponent must be a non-negative Int that fits in 32 bits"
             }
+            TrapCategory::AllocFailure => "allocation failed",
+            TrapCategory::StdoutFailure => "stdout write failed",
+            TrapCategory::UnhandledError => "unhandled error",
         }
+    }
+
+    /// The VM `RuntimeError::TypeError` message this trap mirrors, for the
+    /// categories with a VM analog.
+    pub fn vm_message(self) -> Option<&'static str> {
+        matches!(self, TrapCategory::DivModZero | TrapCategory::PowExponent)
+            .then(|| self.runtime_message())
     }
 
     /// The category whose VM message `message` carries, if any.
     pub fn from_vm_message(message: &str) -> Option<TrapCategory> {
         [TrapCategory::DivModZero, TrapCategory::PowExponent]
             .into_iter()
-            .find(|category| message.contains(category.vm_message()))
+            .find(|category| {
+                category
+                    .vm_message()
+                    .is_some_and(|text| message.contains(text))
+            })
     }
 }
 
@@ -451,9 +535,15 @@ impl fmt::Display for PlironErrorKind {
     }
 }
 
-/// The transitive call-graph closure of `entries` over `MirInstr::Call`
-/// edges. Edges to names with no MIR function (builtins, unknowns) are left
-/// for body lowering to reject with per-call context.
+/// The transitive call-graph closure of `entries`: direct `MirInstr::Call`
+/// edges, checker-resolved `MethodCall` targets, constructor calls to a
+/// declared struct (the exact `__init__` or its unique arity overload — the
+/// VM's `overload_name` policy), and lifecycle edges — every struct type a
+/// reachable function mentions (transitively through declared field types)
+/// contributes its compiled `__deinit__`/`__copyinit__`, because drops and
+/// copies execute those bodies without any call instruction naming them.
+/// Edges to names with no MIR function (builtins, unknowns) are left for body
+/// lowering to reject with per-call context.
 fn reachable_set<'p>(
     program: &'p MirProgram,
     entries: &[String],
@@ -462,6 +552,12 @@ fn reachable_set<'p>(
         .functions
         .iter()
         .map(|(name, function)| (name.as_str(), function))
+        .collect();
+    let structs: HashMap<&str, &MirStructDeclaration> = program
+        .declarations
+        .structs
+        .iter()
+        .map(|decl| (decl.name.as_str(), decl))
         .collect();
     let mut reachable = HashSet::new();
     let mut queue = VecDeque::new();
@@ -479,19 +575,149 @@ fn reachable_set<'p>(
             queue.push_back(*name);
         }
     }
+    let mut seen_structs: HashSet<&str> = HashSet::new();
     while let Some(name) = queue.pop_front() {
-        for block in &functions[name].blocks {
-            for instr in &block.instrs {
-                if let MirInstr::Call { func, .. } = instr
-                    && let Some((callee, _)) = functions.get_key_value(func.0.as_str())
+        let function = functions[name];
+        let mut discovered = Vec::new();
+        for ty in function
+            .param_types
+            .iter()
+            .chain(function.ret_ty.as_ref())
+            .chain(function.var_tys.values())
+            .chain(function.reg_types.values())
+        {
+            collect_struct_types(ty, &structs, &mut seen_structs, &mut discovered);
+        }
+        for struct_name in discovered {
+            for method in ["__deinit__", "__copyinit__"] {
+                // The nominal String's copy constructor is bridged natively
+                // (its stdlib byte loop needs machinery outside this stage);
+                // its `__deinit__` compiles from real MIR and stays an edge.
+                if method == "__copyinit__" && crate::symbol::is_stdlib_string_struct(struct_name) {
+                    continue;
+                }
+                let lifecycle = format!("{struct_name}.{method}");
+                if let Some((callee, _)) = functions.get_key_value(lifecycle.as_str())
                     && reachable.insert(*callee)
                 {
                     queue.push_back(*callee);
                 }
             }
         }
+        for block in &function.blocks {
+            for instr in &block.instrs {
+                let target = match instr {
+                    // Intercepted allocation entry points lower as runtime
+                    // intrinsics; their element-erased stdlib bodies must not
+                    // be declared.
+                    MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => None,
+                    MirInstr::Call {
+                        func, args, kwargs, ..
+                    } => match functions.get_key_value(func.0.as_str()) {
+                        Some((callee, _)) => Some(*callee),
+                        None => constructor_init_target(
+                            &functions,
+                            &structs,
+                            &func.0,
+                            args.len(),
+                            kwargs,
+                        ),
+                    },
+                    // Pointer-receiver methods dispatch to runtime
+                    // intrinsics, never to compiled stdlib bodies.
+                    MirInstr::MethodCall {
+                        recv,
+                        resolved: Some(resolved),
+                        ..
+                    } => {
+                        if matches!(function.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
+                            None
+                        } else {
+                            functions
+                                .get_key_value(resolved.as_str())
+                                .map(|(callee, _)| *callee)
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(callee) = target
+                    && reachable.insert(callee)
+                {
+                    queue.push_back(callee);
+                }
+            }
+        }
     }
     Ok(reachable)
+}
+
+/// The `__init__` a constructor call to struct `name` executes: the exact
+/// name when compiled, else the unique overload taking `argc + 1` parameters
+/// (counting `out self`) — the VM's `overload_name` policy. The
+/// `Type(copy=value)` form runs the fieldwise copy path, not `__init__`.
+fn constructor_init_target<'p>(
+    functions: &HashMap<&'p str, &'p MirFunction>,
+    structs: &HashMap<&str, &MirStructDeclaration>,
+    name: &str,
+    argc: usize,
+    kwargs: &[(String, Reg)],
+) -> Option<&'p str> {
+    if !structs.contains_key(name) {
+        return None;
+    }
+    // The nominal String constructor is the backend's literal bridge; its
+    // stdlib `__init__` bodies never lower.
+    if crate::symbol::is_stdlib_string_struct(name) {
+        return None;
+    }
+    if argc == 0 && kwargs.len() == 1 && kwargs[0].0 == "copy" {
+        return None;
+    }
+    let init = format!("{name}.__init__");
+    if let Some((callee, _)) = functions.get_key_value(init.as_str()) {
+        return Some(*callee);
+    }
+    let mut matches = functions.iter().filter(|(fname, function)| {
+        crate::symbol::is_overload_of(fname, &init) && function.n_params == argc + 1
+    });
+    let first = *matches.next()?.0;
+    matches.next().is_none().then_some(first)
+}
+
+/// Record every declared struct name `ty` mentions — transitively through
+/// declared field types — that `seen` has not recorded yet, appending fresh
+/// names to `discovered`.
+fn collect_struct_types<'p>(
+    ty: &'p Ty,
+    structs: &HashMap<&'p str, &'p MirStructDeclaration>,
+    seen: &mut HashSet<&'p str>,
+    discovered: &mut Vec<&'p str>,
+) {
+    match ty {
+        Ty::Struct(name, args) => {
+            if let Some((key, decl)) = structs.get_key_value(name.as_str())
+                && seen.insert(*key)
+            {
+                discovered.push(*key);
+                for (_, field) in &decl.fields {
+                    collect_struct_types(field, structs, seen, discovered);
+                }
+            }
+            for arg in args {
+                if let TyArg::Ty(inner) = arg {
+                    collect_struct_types(inner, structs, seen, discovered);
+                }
+            }
+        }
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            for element in elements {
+                collect_struct_types(element, structs, seen, discovered);
+            }
+        }
+        Ty::Pointer { element, .. } => collect_struct_types(element, structs, seen, discovered),
+        Ty::Ref(ref_ty) => collect_struct_types(&ref_ty.referent, structs, seen, discovered),
+        _ => {}
+    }
 }
 
 /// Rebuild SSA out of the variable-slot allocas and drop the dead scaffolding.
@@ -584,6 +810,107 @@ mod tests {
             .expect_err("a value-less return in an i64 function must fail verification");
         assert!(matches!(error.kind, PlironErrorKind::Verify(_)), "{error}");
         assert!(error.to_string().contains("verification failed"), "{error}");
+    }
+
+    /// Reachability follows constructor calls to their `__init__` overload and
+    /// pulls the lifecycle methods (`__deinit__`/`__copyinit__`) of every
+    /// struct type a reachable function mentions — those bodies run at drops
+    /// and copies without any call instruction naming them.
+    #[test]
+    fn reachability_follows_constructor_and_lifecycle_edges() {
+        use crate::mir::{FuncRef, MirDeclarations};
+
+        fn test_function(param_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
+            let n_params = param_types.len();
+            MirFunction {
+                blocks: vec![crate::mir::MirBlock {
+                    instrs,
+                    term: crate::mir::MirTerm::Return(None),
+                }],
+                n_regs: 8,
+                n_vars: n_params,
+                var_names: (0..n_params).map(|i| format!("v{i}")).collect(),
+                n_params,
+                param_types,
+                owned_params: vec![false; n_params],
+                deinit_params: vec![false; n_params],
+                ref_params: vec![false; n_params],
+                returns_reference: false,
+                var_tys: HashMap::new(),
+                ret_ty: Some(crate::types::Ty::None),
+                raises: false,
+                error_ty: None,
+                spans: Default::default(),
+                reg_types: HashMap::new(),
+            }
+        }
+
+        let point = Ty::Struct("Point".to_string(), Vec::new());
+        let constructor_call = MirInstr::Call {
+            dest: Reg(0),
+            func: FuncRef("Point".to_string()),
+            raises: None,
+            args: vec![Reg(1)],
+            kwargs: Vec::new(),
+            arg_places: vec![None],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+        };
+        let program = MirProgram {
+            functions: vec![
+                (
+                    "main".to_string(),
+                    test_function(Vec::new(), vec![constructor_call]),
+                ),
+                (
+                    "Point.__init__$ov$Int".to_string(),
+                    test_function(vec![point.clone(), Ty::Int], Vec::new()),
+                ),
+                (
+                    "Point.__deinit__".to_string(),
+                    test_function(vec![point.clone()], Vec::new()),
+                ),
+                (
+                    "Point.__copyinit__".to_string(),
+                    test_function(vec![point.clone(), point.clone()], Vec::new()),
+                ),
+                (
+                    "unrelated".to_string(),
+                    test_function(Vec::new(), Vec::new()),
+                ),
+            ],
+            declarations: MirDeclarations {
+                structs: vec![MirStructDeclaration {
+                    name: "Point".to_string(),
+                    fields: vec![("x".to_string(), Ty::Int)],
+                    mut_self_methods: Default::default(),
+                    fieldwise_init: false,
+                    param_decls: Vec::new(),
+                    explicit_destroy_message: None,
+                    explicit_destructors: Default::default(),
+                }],
+                functions: Vec::new(),
+            },
+            invariant_errors: Vec::new(),
+        };
+
+        let reachable = reachable_set(&program, &["main".to_string()])
+            .expect("reachability over a well-formed program succeeds");
+        assert!(reachable.contains("main"));
+        assert!(
+            reachable.contains("Point.__init__$ov$Int"),
+            "the unique arity overload of the constructor is a call edge"
+        );
+        assert!(
+            reachable.contains("Point.__deinit__"),
+            "struct types reachable functions mention pull their destructor"
+        );
+        assert!(
+            reachable.contains("Point.__copyinit__"),
+            "struct types reachable functions mention pull their copy constructor"
+        );
+        assert!(!reachable.contains("unrelated"));
     }
 
     /// A program carrying producer invariant errors is refused up front.

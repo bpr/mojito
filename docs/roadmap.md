@@ -133,8 +133,8 @@ guards on the conformance and round-trip fixture sets (see the artifact rows of
 
 ### 4. Native Backend: Pliron First, Cranelift On Material Failure
 
-The artifact close-out, the Pliron Stage 0/1/2 gates, and the shared native
-target/layout/runtime-ABI milestone have passed, so Pliron Stage 3 below is
+The artifact close-out, the Pliron Stage 0/1/2/3 gates, and the shared native
+target/layout/runtime-ABI milestone have passed, so Pliron Stage 4 below is
 the default next task. Verified MIR is the stable waist, the VM remains the semantic oracle,
 and native work does not wait for complete standard-library, packaging, or Mojo
 surface parity. Unsupported native behavior rejects with a contextual compile
@@ -174,9 +174,9 @@ dependency. Keep this distinction explicit in build and user documentation.
 Separate VM execution from native compilation. The native interface accepts
 `&MirProgram`, a target description, and an output kind, and returns textual IR,
 bitcode, an object, or an executable plus structured diagnostics.
-`run --backend pliron` executes only the advertised (currently print-free
-scalar) subset natively — it landed with Stage 2's conformance-eligibility
-gate and rejects everything else with a contextual diagnostic. Existing
+`run --backend pliron` executes only the advertised subset natively (since
+Stage 3: scalars, strings, aggregates, allocation, printing, and unhandled
+raises) and rejects everything else with a contextual diagnostic. Existing
 `emit-mir` and `exec` behavior stays unchanged.
 
 The first scalar spike lowers directly to Pliron's LLVM dialect. Introduce a
@@ -258,15 +258,24 @@ VM/native divergence closed), and Rust-side plus LLVM-side target-only cross
 checks pin the layouts, signatures, data-layout string, and exported symbols
 without executing generated code.
 
-- [ ] **Pliron Stage 3: runtime, strings, aggregates, allocation, and errors** —
-  add constant pools, target-layout aggregates, printing, allocation and
-  deallocation, checked traps, and explicit runtime error values through the
-  shared ABI.
-
-  Acceptance: eligible string, aggregate, allocation, and error fixtures match
-  VM output and failure category; sanitizer runs find no leak, double free,
-  misalignment, or use-after-free; and produced objects expose only the
-  specified runtime symbols.
+Stage 3 (runtime, strings, aggregates, allocation, and errors) is complete —
+the backend lowers string-literal constant pools (private `mjstr_*` globals,
+compile-time literal folds), `print` composed byte-exactly through the
+runtime's `mjrt_fmt_*`/`mjrt_write_stdout` family, target-layout aggregates
+(struct/tuple storage, fieldwise and `__init__` construction, resolved
+methods with `mut self` write-back, copies through compiled `__copyinit__`,
+drops through compiled `__deinit__`), heap allocation (`unsafe_alloc` and
+pointer subscripts over ABI version 2's headered allocator and size-less
+`mjrt_free`), the nominal `String` (its literal and copy constructors are
+native bridges; `__deinit__` compiles from real MIR), and unhandled raises
+through `mjrt_unhandled_error` (exit category 5, the explicit pre-Stage-4
+error contract). Runtime traps route through `mjrt_trap`. Acceptance is
+pinned by `tests/pliron_backend_test.rs`'s Stage 3 gate over
+`conformance/pliron-stage3.tsv`: every eligible `assets/ok` fixture matches
+VM stdout bytes at `O0`/`O1` and runs AddressSanitizer/LeakSanitizer-clean,
+raise fixtures match the failure category and stderr, and produced
+executables expose only the contract-table runtime symbols. Design and
+divergence records: `docs/notes/pliron-stage3.md`.
 
 - [ ] **Pliron Stage 4: references, destruction, and exceptional control flow**
   — consume drop-elaborated MIR exactly as emitted; lower tagged success/error
@@ -304,11 +313,11 @@ without executing generated code.
 
 - [ ] **Pliron promotion decision** — promote Pliron from experimental to the
   preferred native backend only with semantic parity for all runnable corpus
-  and conformance cases, no untracked MIR gaps, reproducible Linux tooling,
-  tested/documented macOS and Windows status, acceptable benchmarks, no broad
-  fork, at least one successful dependency-upgrade rehearsal, and a sustained
-  CI period without unresolved correctness regressions. Promotion does not
-  remove the VM or make Pliron a required internal compiler layer.
+  and conformance cases, no untracked MIR gaps, reproducible tooling on the
+  supported Linux target, acceptable benchmarks, no broad fork, at least one
+  successful dependency-upgrade rehearsal, and a sustained CI period without
+  unresolved correctness regressions. Promotion does not remove the VM or make
+  Pliron a required internal compiler layer.
 
 - [ ] **Cranelift fallback, only on material Pliron failure** — if Stage 0 or
   Stage 1 meets its explicit stop condition, record the evidence and implement
@@ -327,7 +336,8 @@ without executing generated code.
 
 - API churn or upgrade cost disproportionate to Mojito's compatibility layer
 - missing LLVM dialect/export coverage requiring a broad local fork
-- LLVM discovery or linking that cannot be made reproducible per advertised OS
+- LLVM discovery or linking that cannot be made reproducible on the supported
+  Linux target
 - semantic drift in output, errors, references, or drop ordering
 - a Mojito dialect that mechanically duplicates MIR
 - aggregate/data-layout disagreement between runtime and generated code
