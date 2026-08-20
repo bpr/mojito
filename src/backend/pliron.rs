@@ -1,14 +1,17 @@
-//! Experimental Pliron native backend (roadmap section 4, Stage 1).
+//! Experimental Pliron native backend (roadmap section 4, Stages 1-2).
 //!
-//! Compiles the scalar subset of verified, drop-elaborated MIR — Int/Bool
-//! constants, arithmetic, comparisons, blocks, branches, direct calls,
-//! recursion, and return — to pliron's LLVM dialect and on to LLVM IR,
-//! bitcode, objects, and host executables. Compilation-only: execution stays
-//! with the register VM (`run --backend pliron` is deliberately not offered),
-//! and unsupported constructs fail with contextual diagnostics rather than
-//! falling back. The backend consumes `MirProgram` facts exclusively; it
-//! imports no AST, HIR, or checker representation. Pins, divergence policies,
-//! and design notes: `docs/notes/pliron-stage1.md`.
+//! Compiles the complete checked scalar subset of verified, drop-elaborated
+//! MIR — Int/UInt/Float64/Bool constants, every scalar operator and the
+//! builtin conversions, keyword/default call binding, checked div-by-zero and
+//! pow-exponent traps, blocks, branches, direct calls, recursion, and return
+//! — to pliron's LLVM dialect and on to LLVM IR, bitcode, objects, and host
+//! executables at `O0` or `O1`. The CLI's `run --backend pliron` executes the
+//! advertised (print-free) subset through a temporary executable; every
+//! unsupported construct fails with a contextual diagnostic rather than
+//! falling back to the VM. The backend consumes `MirProgram` facts
+//! exclusively; it imports no AST, HIR, or checker representation. Pins,
+//! divergence policies, and design notes: `docs/notes/pliron-stage1.md` and
+//! `docs/notes/pliron-stage2.md`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -44,6 +47,13 @@ pub fn compile(
     let mut context = Context::new();
     let locator = lower::Locator::new(&mut context, &options.sources);
     let module = ModuleOp::new(&mut context, "mojito".try_into().expect("valid identifier"));
+    let mut shared = lower::ModuleShared::new(module);
+    let declarations: HashMap<String, crate::mir::MirFunctionDeclaration> = program
+        .declarations
+        .functions
+        .iter()
+        .map(|decl| (decl.lowered_name.clone(), decl.clone()))
+        .collect();
 
     // Declare every reachable function first (program order, so output is
     // deterministic and calls may reference any of them), then lower bodies.
@@ -61,13 +71,19 @@ pub fn compile(
                 mangled: signature.mangled.clone(),
                 returns_value: signature.returns_value,
                 n_params: function.param_types.len(),
+                ret: signature.ret,
             },
         );
         signatures.insert(name.clone(), signature);
         declared.push((name.as_str(), function, func_op));
     }
+    let env = lower::LowerEnv {
+        signatures: &signatures,
+        declarations: &declarations,
+        locator: &locator,
+    };
     for (name, function, func_op) in declared {
-        lower::lower_body(&mut context, name, function, func_op, &signatures, &locator)?;
+        lower::lower_body(&mut context, name, function, func_op, &env, &mut shared)?;
     }
 
     verify_module(&context, module)?;
@@ -104,31 +120,31 @@ impl NativeModule {
     }
 
     /// Textual LLVM IR of the converted module.
-    pub fn llvm_ir(&self) -> Result<String, PlironError> {
-        emit::llvm_ir(&self.context, self.module)
+    pub fn llvm_ir(&self, opt: OptLevel) -> Result<String, PlironError> {
+        emit::llvm_ir(&self.context, self.module, opt)
     }
 
     /// Write LLVM bitcode to `path`.
-    pub fn write_bitcode(&self, path: &Path) -> Result<(), PlironError> {
-        emit::write_bitcode(&self.context, self.module, path)
+    pub fn write_bitcode(&self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
+        emit::write_bitcode(&self.context, self.module, path, opt)
     }
 
     /// Write a relocatable object file to `path`.
-    pub fn write_object(&self, path: &Path) -> Result<(), PlironError> {
-        emit::write_object(&self.context, self.module, path)
+    pub fn write_object(&self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
+        emit::write_object(&self.context, self.module, path, opt)
     }
 
     /// Link a host executable at `path`. Requires a compiled zero-argument
     /// non-returning `main`; the synthesized C `main` wrapper calls
     /// `__toplevel__` (when compiled), then `main`, then returns 0.
-    pub fn write_executable(&mut self, path: &Path) -> Result<(), PlironError> {
+    pub fn write_executable(&mut self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
         self.ensure_exe_wrapper()?;
-        emit::write_executable(&self.context, self.module, path)
+        emit::write_executable(&self.context, self.module, path, opt)
     }
 
-    /// JIT-execute a compiled zero-argument `Int`-returning MIR function and
-    /// return its value. The differential harness's native side.
-    pub fn jit_i64(&self, entry: &str) -> Result<i64, PlironError> {
+    /// JIT-execute a compiled zero-argument value-returning MIR function and
+    /// return its typed value. The differential harness's native side.
+    pub fn jit_value(&self, entry: &str, opt: OptLevel) -> Result<JitValue, PlironError> {
         let Some(meta) = self.functions.get(entry) else {
             return Err(PlironError {
                 function: None,
@@ -136,7 +152,22 @@ impl NativeModule {
                 location: None,
             });
         };
-        jit::run_i64(&self.context, self.module, &meta.mangled)
+        jit::run_value(&self.context, self.module, &meta.mangled, meta.ret, opt)
+    }
+
+    /// JIT-execute a compiled zero-argument `Int`-returning MIR function at
+    /// `O0` and return its value.
+    pub fn jit_i64(&self, entry: &str) -> Result<i64, PlironError> {
+        match self.jit_value(entry, OptLevel::O0)? {
+            JitValue::Int(value) => Ok(value),
+            other => Err(PlironError {
+                function: None,
+                kind: PlironErrorKind::Emit(format!(
+                    "entry `{entry}` returned {other:?}, not an Int"
+                )),
+                location: None,
+            }),
+        }
     }
 
     /// The native symbol a MIR function was mangled to, when compiled.
@@ -187,6 +218,106 @@ struct FnMeta {
     mangled: String,
     returns_value: bool,
     n_params: usize,
+    ret: RetKind,
+}
+
+/// A typed result of a JIT-executed entry, tagged by the entry's [`RetKind`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum JitValue {
+    Int(i64),
+    UInt(u64),
+    Float64(f64),
+    Bool(bool),
+}
+
+/// The native optimization level. `O0` runs only the pliron-side
+/// mem2reg/DCE cleanup; `O1` additionally runs `opt -passes='default<O1>'`
+/// over the emitted bitcode before JIT, object, or executable production.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OptLevel {
+    #[default]
+    O0,
+    O1,
+}
+
+impl OptLevel {
+    pub fn parse(s: &str) -> Result<OptLevel, String> {
+        match s {
+            "0" => Ok(OptLevel::O0),
+            "1" => Ok(OptLevel::O1),
+            other => Err(format!(
+                "unknown native opt level '{other}' (expected: 0, 1)"
+            )),
+        }
+    }
+}
+
+/// The native return-value kind of a compiled function, derived from its
+/// checked MIR return type. Drives the typed JIT harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetKind {
+    /// `Ty::None` — no return value.
+    Void,
+    /// `Ty::Int` — signed i64.
+    I64,
+    /// `Ty::UInt` — the i64 bits reinterpret as u64.
+    U64,
+    /// `Ty::Float64` — f64.
+    F64,
+    /// `Ty::Bool` — i1 (read as u8, low bit significant).
+    Bool,
+}
+
+/// A checked scalar runtime trap the native backend guards explicitly. Trap
+/// blocks call the C `exit` with [`TrapCategory::exit_code`], so a trapping
+/// native executable's exit status identifies the category; the same category
+/// maps onto the VM's `RuntimeError::TypeError` message for differential
+/// comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrapCategory {
+    /// `//` or `%` with a zero divisor on Int/UInt (`runtime::nonzero`).
+    DivModZero,
+    /// `**` exponent outside `0 ..= u32::MAX` (`runtime::pow_exp`).
+    PowExponent,
+}
+
+impl TrapCategory {
+    /// Stable small code of this category (used in exit codes and manifests).
+    pub fn code(self) -> u8 {
+        match self {
+            TrapCategory::DivModZero => 1,
+            TrapCategory::PowExponent => 2,
+        }
+    }
+
+    /// The process exit status a native trap block reports: `64 + code`.
+    pub fn exit_code(self) -> u8 {
+        64 + self.code()
+    }
+
+    /// The category a trapping native process reported, if any.
+    pub fn from_exit_code(code: i32) -> Option<TrapCategory> {
+        [TrapCategory::DivModZero, TrapCategory::PowExponent]
+            .into_iter()
+            .find(|category| i32::from(category.exit_code()) == code)
+    }
+
+    /// The VM `RuntimeError::TypeError` message this trap mirrors.
+    pub fn vm_message(self) -> &'static str {
+        match self {
+            TrapCategory::DivModZero => "integer division or modulo by zero",
+            TrapCategory::PowExponent => {
+                "'**' exponent must be a non-negative Int that fits in 32 bits"
+            }
+        }
+    }
+
+    /// The category whose VM message `message` carries, if any.
+    pub fn from_vm_message(message: &str) -> Option<TrapCategory> {
+        [TrapCategory::DivModZero, TrapCategory::PowExponent]
+            .into_iter()
+            .find(|category| message.contains(category.vm_message()))
+    }
 }
 
 /// Options for a native compilation.

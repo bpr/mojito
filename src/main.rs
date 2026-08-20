@@ -59,13 +59,17 @@ fn main() -> ExitCode {
         eprintln!("--emit and --output are only valid with the compile command");
         return ExitCode::FAILURE;
     }
+    if !matches!(command, Some("compile" | "run")) && cli.native_opt.is_some() {
+        eprintln!("--native-opt is only valid with the compile and run commands");
+        return ExitCode::FAILURE;
+    }
     match command {
         None => ExitCode::SUCCESS,
         Some("lex") => stage("lex", file, run_lex),
         Some("parse") => stage_parse(file),
         Some("check") => program_stage("check", file, &cli.link_options, run_check),
         Some("own") => program_stage("own", file, &cli.link_options, run_own),
-        Some("run") => stage_run(file, cli.backend, &cli.link_options),
+        Some("run") => stage_run(file, &cli),
         Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
         Some("compile") => stage_compile(file, &cli),
         Some("exec") => stage_exec(file, cli.backend),
@@ -90,6 +94,9 @@ struct CliArgs {
     emit: Option<String>,
     /// `-o`/`--output PATH` for `compile`.
     output: Option<String>,
+    /// `--native-opt LEVEL` for `compile`/`run --backend pliron` (parsed by
+    /// the backend; raw here so the default build carries no backend types).
+    native_opt: Option<String>,
 }
 
 /// Extract global options from anywhere on the command line. Local imports win,
@@ -100,6 +107,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut roots = Vec::<PathBuf>::new();
     let mut emit = None;
     let mut output = None;
+    let mut native_opt = None;
     let mut iter = raw.into_iter();
     while let Some(arg) = iter.next() {
         if let Some(name) = arg.strip_prefix("--backend=") {
@@ -130,6 +138,10 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
                 iter.next()
                     .ok_or_else(|| format!("{arg} requires a path"))?,
             );
+        } else if let Some(level) = arg.strip_prefix("--native-opt=") {
+            native_opt = Some(level.to_string());
+        } else if arg == "--native-opt" {
+            native_opt = Some(iter.next().ok_or("--native-opt requires a level")?);
         } else if arg.starts_with('-') && arg != "-" && !matches!(arg.as_str(), "-h" | "--help") {
             return Err(format!("unknown option '{arg}'"));
         } else {
@@ -145,6 +157,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         },
         emit,
         output,
+        native_opt,
     })
 }
 
@@ -198,14 +211,62 @@ fn program_stage(
 }
 
 /// `run`, routed through the selected backend (over the linked program).
-fn stage_run(file: Option<&str>, backend: BackendKind, link_options: &LinkOptions) -> ExitCode {
-    match run_program(file, backend, link_options) {
+fn stage_run(file: Option<&str>, cli: &CliArgs) -> ExitCode {
+    let result = match cli.backend {
+        BackendKind::Pliron => run_program_native(file, cli),
+        backend => run_program(file, backend, &cli.link_options),
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("run error: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// `run --backend pliron`: compile the program natively (the advertised
+/// scalar, print-free subset — anything outside it rejects with the backend's
+/// contextual diagnostic, never a VM fallback), link a temporary executable,
+/// run it, and forward its output and exit status. Checked native traps map
+/// back to the VM's runtime-error text for parity.
+#[cfg(feature = "backend-pliron")]
+fn run_program_native(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
+    use mojito::backend::pliron;
+
+    let opt = native_opt_level(cli)?;
+    let mut module = compile_native_module(file, cli)?;
+    let exe = std::env::temp_dir().join(format!(".mojito-run.{}", std::process::id()));
+    let ran = module
+        .write_executable(&exe, opt)
+        .map_err(|e| e.to_string())
+        .and_then(|()| {
+            std::process::Command::new(&exe)
+                .output()
+                .map_err(|e| format!("cannot run native executable: {e}"))
+        });
+    let _ = std::fs::remove_file(&exe);
+    let output = ran?;
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    match output.status.code() {
+        Some(0) => Ok(()),
+        Some(code) => match pliron::TrapCategory::from_exit_code(code) {
+            Some(category) => Err(format!("Type error: {}", category.vm_message())),
+            None => Err(format!("native executable exited with status {code}")),
+        },
+        None => Err("native executable terminated by a signal".to_string()),
+    }
+}
+
+#[cfg(not(feature = "backend-pliron"))]
+fn run_program_native(_file: Option<&str>, _cli: &CliArgs) -> Result<(), String> {
+    Err(
+        "this mojito build lacks the `backend-pliron` feature; rebuild with \
+         `cargo build --features backend-pliron` (requires LLVM 22 — see \
+         docs/notes/pliron-stage0.md)"
+            .to_string(),
+    )
 }
 
 fn run_program(
@@ -281,6 +342,49 @@ fn run_compile(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
     if emit.is_binary() && cli.output.is_none() {
         return Err("--emit bc|obj|exe requires --output PATH".to_string());
     }
+    let opt = native_opt_level(cli)?;
+    let mut module = compile_native_module(file, cli)?;
+
+    let write_text = |text: &str| -> Result<(), String> {
+        match &cli.output {
+            Some(path) => {
+                std::fs::write(path, text).map_err(|e| format!("cannot write {path}: {e}"))
+            }
+            None => {
+                print!("{text}");
+                Ok(())
+            }
+        }
+    };
+    let output_path = || Path::new(cli.output.as_deref().expect("checked for binary kinds"));
+    match emit {
+        pliron::EmitKind::Plir => write_text(module.plir_text()),
+        pliron::EmitKind::LlvmIr => {
+            let text = module.llvm_ir(opt).map_err(|e| e.to_string())?;
+            write_text(&text)
+        }
+        pliron::EmitKind::Bitcode => module
+            .write_bitcode(output_path(), opt)
+            .map_err(|e| e.to_string()),
+        pliron::EmitKind::Object => module
+            .write_object(output_path(), opt)
+            .map_err(|e| e.to_string()),
+        pliron::EmitKind::Exe => module
+            .write_executable(output_path(), opt)
+            .map_err(|e| e.to_string()),
+    }
+}
+
+/// Compile the input through the production pipeline and hand the cached
+/// post-drop MIR to the Pliron backend, entering from `main` (plus
+/// `__toplevel__` when present). The shared front half of `compile` and
+/// `run --backend pliron`.
+#[cfg(feature = "backend-pliron")]
+fn compile_native_module(
+    file: Option<&str>,
+    cli: &CliArgs,
+) -> Result<mojito::backend::pliron::NativeModule, String> {
+    use mojito::backend::pliron;
 
     // Read the source once (stdin cannot be re-read), compile it through the
     // production pipeline, and hand the cached post-drop MIR to the backend.
@@ -305,36 +409,15 @@ fn run_compile(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
         entries,
         sources: vec![(label, source)],
     };
-    let mut module = pliron::compile(mir, &options)
-        .map_err(|error| error.display_with_sources(&options.sources))?;
+    pliron::compile(mir, &options).map_err(|error| error.display_with_sources(&options.sources))
+}
 
-    let write_text = |text: &str| -> Result<(), String> {
-        match &cli.output {
-            Some(path) => {
-                std::fs::write(path, text).map_err(|e| format!("cannot write {path}: {e}"))
-            }
-            None => {
-                print!("{text}");
-                Ok(())
-            }
-        }
-    };
-    let output_path = || Path::new(cli.output.as_deref().expect("checked for binary kinds"));
-    match emit {
-        pliron::EmitKind::Plir => write_text(module.plir_text()),
-        pliron::EmitKind::LlvmIr => {
-            let text = module.llvm_ir().map_err(|e| e.to_string())?;
-            write_text(&text)
-        }
-        pliron::EmitKind::Bitcode => module
-            .write_bitcode(output_path())
-            .map_err(|e| e.to_string()),
-        pliron::EmitKind::Object => module
-            .write_object(output_path())
-            .map_err(|e| e.to_string()),
-        pliron::EmitKind::Exe => module
-            .write_executable(output_path())
-            .map_err(|e| e.to_string()),
+/// The `--native-opt` level (default `O0`).
+#[cfg(feature = "backend-pliron")]
+fn native_opt_level(cli: &CliArgs) -> Result<mojito::backend::pliron::OptLevel, String> {
+    match cli.native_opt.as_deref() {
+        Some(level) => mojito::backend::pliron::OptLevel::parse(level),
+        None => Ok(mojito::backend::pliron::OptLevel::O0),
     }
 }
 
@@ -440,7 +523,8 @@ fn print_usage() {
          \x20 --stdlib PATH          add a stdlib search root (repeatable)\n\
          \x20 --backend NAME         select the run backend\n\
          \x20 --emit KIND            compile output: plir|ll|bc|obj|exe (default ll)\n\
-         \x20 -o, --output PATH      compile output path (required for bc|obj|exe)\n\n\
+         \x20 -o, --output PATH      compile output path (required for bc|obj|exe)\n\
+         \x20 --native-opt LEVEL     native optimization level: 0|1 (default 0)\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\

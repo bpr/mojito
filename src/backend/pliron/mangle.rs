@@ -10,7 +10,9 @@
 //! becomes `_u`, and every other byte becomes `_hh` (two lowercase hex
 //! digits). Injective because every `_` in the output starts an escape and
 //! `u` is not a hex digit; the `mj_` prefix keeps mangled names clear of the
-//! synthesized executable wrapper `main`.
+//! synthesized executable wrapper `main` and of the runtime scaffolding the
+//! lowering declares directly — the C `exit` and the reserved `mjrt_*`
+//! helper family (e.g. `mjrt_pow`).
 
 /// Mangle a MIR symbol name into a C-safe native symbol.
 pub(super) fn mangle(name: &str) -> String {
@@ -109,5 +111,19 @@ mod tests {
         // `mj_` prefix, so no MIR name can shadow it.
         assert_ne!(mangle("main"), "main");
         assert!(mangle("main").starts_with("mj_"));
+    }
+
+    #[test]
+    fn runtime_helper_symbols_never_collide() {
+        // `exit` and the `mjrt_*` helpers are declared unmangled by the
+        // lowering. Every mangled name starts with exactly `mj_` (third byte
+        // `_`), so `mjrt_pow` (third byte `r`) and prefix-less `exit` are
+        // outside the mangle image no matter the source name.
+        for source in ["exit", "mjrt_pow", "rt_pow", "t_pow"] {
+            let mangled = mangle(source);
+            assert!(mangled.starts_with("mj_"), "{mangled}");
+            assert_ne!(mangled, "mjrt_pow");
+            assert_ne!(mangled, "exit");
+        }
     }
 }

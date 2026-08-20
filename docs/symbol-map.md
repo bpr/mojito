@@ -37,7 +37,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Semantic types | `types::{Ty, TyArg, ParamDecl}` | Checker, checked data, MIR declarations, VM coercion. |
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
-| Native compile (experimental, `backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, PlironError}` | CLI `compile` and the JIT differential harness. |
+| Native compile (experimental, `backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, OptLevel, JitValue, TrapCategory, PlironError}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. |
 
 ## Source Versus Checked Naming
 
@@ -194,11 +194,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 - `backend/pliron.rs` (feature `backend-pliron`) owns the experimental native
   backend: `compile` orchestration (reachable closure, verify, mem2reg/DCE,
-  canonical text) and `NativeModule` emission/JIT entry points. Its submodules:
-  `backend/pliron/lower.rs` (scalar MIR-to-LLVM-dialect lowering and the exe
-  wrapper), `backend/pliron/mangle.rs` (injective C-safe symbol escaping),
-  `backend/pliron/emit.rs` (LLVM IR/bitcode/object/exe via clang), and
-  `backend/pliron/jit.rs` (ORC LLJIT execution).
+  canonical text), `NativeModule` emission/JIT entry points, `OptLevel`,
+  `JitValue`, and the `TrapCategory` exit-code/VM-message contract. Its
+  submodules: `backend/pliron/lower.rs` (scalar MIR-to-LLVM-dialect lowering
+  over Int/UInt/Float64/Bool — operators, conversions, keyword/default call
+  binding via `call::match_call_slots`, trap guard blocks, the `mjrt_pow`
+  helper, and the exe wrapper), `backend/pliron/mangle.rs` (injective C-safe
+  symbol escaping; `exit`/`mjrt_*`/`main` sit outside the mangle image),
+  `backend/pliron/emit.rs` (LLVM IR/bitcode/object/exe via clang, plus the
+  `opt`-subprocess `O1` pipeline), and `backend/pliron/jit.rs` (ORC LLJIT
+  execution typed by `RetKind`).
 - `backend/vm.rs` owns the `VmBackend` core: heap, value operations, method-call
   and named-call execution, drops, and formatting. Its remaining methods are
   split across `impl VmBackend` blocks in the submodules below.

@@ -133,9 +133,9 @@ guards on the conformance and round-trip fixture sets (see the artifact rows of
 
 ### 4. Native Backend: Pliron First, Cranelift On Material Failure
 
-The artifact close-out and the Pliron Stage 0/Stage 1 gates have passed, so
-Pliron Stage 2 below is the default next task. Verified MIR is the stable
-waist, the VM remains the semantic oracle,
+The artifact close-out and the Pliron Stage 0/1/2 gates have passed, so the
+shared native target, layout, and runtime ABI milestone below is the default
+next task. Verified MIR is the stable waist, the VM remains the semantic oracle,
 and native work does not wait for complete standard-library, packaging, or Mojo
 surface parity. Unsupported native behavior rejects with a contextual compile
 diagnostic; it never silently falls back to the VM.
@@ -173,9 +173,11 @@ dependency. Keep this distinction explicit in build and user documentation.
 
 Separate VM execution from native compilation. The native interface accepts
 `&MirProgram`, a target description, and an output kind, and returns textual IR,
-bitcode, an object, or an executable plus structured diagnostics. Add
-`run --backend pliron` only when the JIT or executable path matches the VM for
-the advertised subset. Existing `emit-mir` and `exec` behavior stays unchanged.
+bitcode, an object, or an executable plus structured diagnostics.
+`run --backend pliron` executes only the advertised (currently print-free
+scalar) subset natively — it landed with Stage 2's conformance-eligibility
+gate and rejects everything else with a contextual diagnostic. Existing
+`emit-mir` and `exec` behavior stays unchanged.
 
 The first scalar spike lowers directly to Pliron's LLVM dialect. Introduce a
 narrow `mojito` Pliron dialect only for demonstrated needs such as runtime
@@ -238,17 +240,18 @@ VM/native divergence policies; the LLVM lane's gate is `scripts/check-pliron`.
 Passing Stage 1 authorizes broader Pliron work; it does not promote Pliron to
 the preferred user-facing backend.
 
-- [ ] **Pliron Stage 2: complete scalar execution and conversion legality** —
-  support all checked scalar operators and conversions, local storage,
-  parameters/results, recursion, and supported scalar control flow; introduce
-  Mojito dialect operations only where a demonstrated semantic boundary needs
-  them; require full conversion with no residual illegal operations; define a
-  conservative optimization pipeline and optional test-only host JIT.
-
-  Acceptance: every eligible scalar `run` conformance case matches VM output,
-  result/trap category, and bindings at `O0` and the initial optimized level; a
-  generated capability manifest records every exclusion; and a guard test fails
-  if eligible coverage unexpectedly shrinks.
+Stage 2 (complete scalar execution and conversion legality) is complete — the
+backend lowers the full checked scalar operator and conversion surface over
+Int, UInt, Float64, and Bool (keyword arguments and constant defaults bind
+through the shared call-slot matcher), guards the checked div/mod-by-zero and
+pow-exponent traps as explicit exit-code trap blocks (no Mojito dialect op
+was needed), and adds `O0`/`O1` levels, a typed test JIT, and
+`run --backend pliron` for the print-free subset. The generated capability
+manifest `conformance/pliron-scalar.tsv` records every fixture's eligibility
+or exclusion with shrink guards, pinned by the VM/native value and
+trap-category differentials in `tests/pliron_backend_test.rs`. See
+`docs/notes/pliron-stage2.md` for the semantics tables, divergence records,
+and the for-range exclusion rationale.
 
 - [ ] **Shared native target, layout, and runtime ABI** — before strings,
   aggregates, collections, or references become native, define:
