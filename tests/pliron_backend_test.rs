@@ -643,11 +643,11 @@ fn aggregate_surface_prints_canonically() {
 ///   stream it — a recorded CLI-level divergence, so stdout is not compared
 ///   on the raise rows.)
 ///
-/// The checked-in `conformance/pliron-stage4.tsv` manifest must match
+/// The checked-in `conformance/pliron-parity.tsv` manifest must match
 /// regeneration byte-exactly, and the trailing guards fail if eligible
-/// coverage unexpectedly shrinks.
+/// coverage unexpectedly shrinks or exclusions grow.
 #[test]
-fn stage4_exe_manifest_and_differential() {
+fn parity_exe_manifest_and_differential() {
     let mut runnable = fixture_sources("assets/ok");
     runnable.extend(fixture_sources("assets/ownership_ok"));
     let ok_rows = parallel_map(runnable, |(rel, src)| {
@@ -701,13 +701,13 @@ fn stage4_exe_manifest_and_differential() {
                     .unwrap_or_else(|error| panic!("{rel}: fixture must run on the VM: {error}"));
                 let dir = tempfile::tempdir().expect("tempdir");
                 for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
-                    let exe = dir.path().join(format!("stage4-{level}"));
+                    let exe = dir.path().join(format!("parity-{level}"));
                     module
                         .write_executable(&exe, opt)
                         .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
                     let run = std::process::Command::new(&exe)
                         .output()
-                        .expect("stage4 executable runs");
+                        .expect("parity executable runs");
                     assert_eq!(run.status.code(), Some(0), "{rel}: exit at {level}");
                     assert_eq!(
                         String::from_utf8_lossy(&run.stdout),
@@ -720,7 +720,7 @@ fn stage4_exe_manifest_and_differential() {
                         String::from_utf8_lossy(&run.stderr)
                     );
                 }
-                let asan_exe = dir.path().join("stage4-asan");
+                let asan_exe = dir.path().join("parity-asan");
                 module
                     .write_executable_sanitized(&asan_exe, OptLevel::O0)
                     .unwrap_or_else(|error| panic!("{rel}: sanitized emission: {error}"));
@@ -822,7 +822,7 @@ fn stage4_exe_manifest_and_differential() {
         ok_rows.into_iter().chain(raise_rows).collect();
 
     let mut manifest = String::from(
-        "# Pliron Stage 4 capability manifest (generated; schema-version 1).\n\
+        "# Pliron native-parity manifest (generated; schema-version 1).\n\
          # One row per assets/ok, assets/ownership_ok, and assets/runtime_error fixture:\n\
          #   fixture <TAB> entry <TAB> status <TAB> detail\n\
          # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |\n\
@@ -830,18 +830,20 @@ fn stage4_exe_manifest_and_differential() {
          #         excluded (native rejection diagnostic) |\n\
          #         ineligible (no runnable `main` shape for this gate)\n\
          # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \\\n\
-         #   cargo nextest run --features backend-pliron stage4_exe_manifest\n",
+         #   cargo nextest run --features backend-pliron parity_exe_manifest\n",
     );
     for (fixture, entry, status, detail) in &rows {
         manifest.push_str(&format!("{fixture}\t{entry}\t{status}\t{detail}\n"));
     }
-    expect_test::expect_file!["../conformance/pliron-stage4.tsv"].assert_eq(&manifest);
+    expect_test::expect_file!["../conformance/pliron-parity.tsv"].assert_eq(&manifest);
 
-    // Coverage guards: the eligible sets must never silently shrink, and a
-    // pliron-named fixture must never regress to excluded.
+    // Coverage guards: the eligible sets must never silently shrink, the
+    // exclusion count only ratchets down toward the Stage 5 zero-exclusion
+    // target, and a pliron-named fixture must never regress to excluded.
     let count = |status: &str| rows.iter().filter(|(_, _, s, _)| s == status).count();
     let differential = count("exe-differential");
     let raises = count("raise-differential");
+    let excluded = count("excluded");
     assert!(
         differential >= 95,
         "exe-differential coverage unexpectedly shrank: {differential} < 95"
@@ -850,6 +852,10 @@ fn stage4_exe_manifest_and_differential() {
         raises >= 2,
         "raise-differential coverage unexpectedly shrank: {raises} < 2"
     );
+    assert!(
+        excluded <= 169,
+        "excluded coverage unexpectedly grew: {excluded} > 169"
+    );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
         assert!(
@@ -857,6 +863,16 @@ fn stage4_exe_manifest_and_differential() {
             "{fixture}: pliron fixture regressed to excluded: {detail}"
         );
     }
+}
+
+/// The generated capability matrix pins the advertised support surface per
+/// MIR instruction mnemonic, checked-type constructor, and runtime symbol.
+/// Module tests pin the instruction and type rows against the canonical
+/// schema vocabulary, so a new MIR form forces a capability decision here.
+#[test]
+fn capability_matrix_is_current() {
+    expect_test::expect_file!["../conformance/pliron-capability.tsv"]
+        .assert_eq(&native::capability::matrix());
 }
 
 /// Compile a fixture expecting a backend diagnostic; return its rendering.

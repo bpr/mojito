@@ -35,6 +35,8 @@ use crate::types::{Ty, TyArg};
 
 pub use crate::native::target::{EmitKind, NativeTarget, OptLevel};
 
+pub mod capability;
+
 mod emit;
 mod jit;
 mod lower;

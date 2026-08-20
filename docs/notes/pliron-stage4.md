@@ -158,8 +158,9 @@ test-only ordered log (`VmBackend::enable_lifecycle_log`), and
 
 ## The acceptance harness
 
-`tests/pliron_backend_test.rs::stage4_exe_manifest_and_differential`
-generates `conformance/pliron-stage4.tsv` over `assets/ok` **and**
+`tests/pliron_backend_test.rs::parity_exe_manifest_and_differential`
+(named `stage4_exe_manifest_and_differential` when Stage 4 landed)
+generates `conformance/pliron-parity.tsv` over `assets/ok` **and**
 `assets/ownership_ok`: every fixture with a `main` either compiles natively —
 exe stdout at `O0`/`O1` equal to the VM byte-for-byte and an
 AddressSanitizer/LeakSanitizer-clean `O0` run, handled-raise and `finally`

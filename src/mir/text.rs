@@ -236,6 +236,42 @@ pub const TERMINATOR_MNEMONICS: &[&str] = &[
     "escape",
 ];
 
+/// Canonical type-constructor spellings in `Ty` declaration order — the
+/// closed type vocabulary of the format. [`type_spelling`] is the
+/// authoritative per-constructor mapping (its exhaustive match forces a
+/// spelling decision for every new constructor); this inventory mirrors it
+/// for schema tests and generated capability tables.
+pub const TYPE_SPELLINGS: &[&str] = &[
+    "Int",
+    "UInt",
+    "Bool",
+    "StringLiteral",
+    "Float64",
+    "None",
+    "Never",
+    "IntLiteral",
+    "FloatLiteral",
+    "Infer",
+    "DType",
+    "func",
+    "generic_func",
+    "overload",
+    "param",
+    "assoc",
+    "dependent_index",
+    "Self",
+    "struct_type",
+    "simd",
+    "Error",
+    "comptime_list",
+    "tuple",
+    "runtime_pack",
+    "variadic_pack",
+    "variant",
+    "pointer",
+    "ref",
+];
+
 pub const RESERVED_WORDS: &[&str] = &[
     "absent",
     "artifact",

@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pliron Stage 5 groundwork (roadmap §4): the generated native capability
+  matrix `conformance/pliron-capability.tsv` — one row per textual-MIR
+  instruction mnemonic, checked-type constructor spelling, and exported
+  runtime symbol (`since` versions included), rendered by
+  `backend::pliron::capability` and pinned against the canonical schema
+  vocabulary (`INSTRUCTION_MNEMONICS` and the new
+  `mir::text::TYPE_SPELLINGS` inventory), so a new MIR instruction or type
+  constructor forces an explicit native capability decision. The Stage 4 exe
+  manifest is renamed to the stage-neutral `conformance/pliron-parity.tsv`
+  (test `parity_exe_manifest_and_differential`), and its coverage guards now
+  also ratchet the exclusion count downward toward the Stage 5
+  zero-exclusion target.
+
 - Shared native target, layout, and runtime ABI (roadmap §4): the normative
   contract [`docs/native-abi.md`](docs/native-abi.md), owned in code by the
   new `src/native/` module — checked build configuration (`Triple` with the

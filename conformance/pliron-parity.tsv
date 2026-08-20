@@ -1,4 +1,4 @@
-# Pliron Stage 4 capability manifest (generated; schema-version 1).
+# Pliron native-parity manifest (generated; schema-version 1).
 # One row per assets/ok, assets/ownership_ok, and assets/runtime_error fixture:
 #   fixture <TAB> entry <TAB> status <TAB> detail
 # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |
@@ -6,7 +6,7 @@
 #         excluded (native rejection diagnostic) |
 #         ineligible (no runnable `main` shape for this gate)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
-#   cargo nextest run --features backend-pliron stage4_exe_manifest
+#   cargo nextest run --features backend-pliron parity_exe_manifest
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	main	excluded	pliron backend: in `hail$ov$T$Speaker`: unsupported type `Param { name: "T", bounds: ["Speaker"], callable_bound: None }`
 assets/ok/add.mojo	main	exe-differential	sanitized
 assets/ok/allocation_tracked_unsafe_ptr.mojo	main	excluded	pliron backend: in `__module$std$memory$_RawAlloc.__init__`: unsupported call to unknown or builtin function `UnsafePointer.alloc` at /home/bpr/src/rust/projects/mojito/stdlib/std/memory.mojo:7022..7056

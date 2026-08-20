@@ -2,10 +2,10 @@
 
 use mojito::Ty;
 use mojito::mir::text::{
-    INSTRUCTION_MNEMONICS, MAGIC, RESERVED_WORDS, TERMINATOR_MNEMONICS, VERSION_MAJOR,
-    VERSION_MINOR, constant_spelling, instruction_mnemonic, intrinsic_subscript_spelling,
-    is_bare_identifier, projection_spelling, quote, terminator_mnemonic, type_spelling,
-    use_mode_spelling, version_header,
+    INSTRUCTION_MNEMONICS, MAGIC, RESERVED_WORDS, TERMINATOR_MNEMONICS, TYPE_SPELLINGS,
+    VERSION_MAJOR, VERSION_MINOR, constant_spelling, instruction_mnemonic,
+    intrinsic_subscript_spelling, is_bare_identifier, projection_spelling, quote,
+    terminator_mnemonic, type_spelling, use_mode_spelling, version_header,
 };
 use mojito::mir::{Const, MirInstr, MirIntrinsicSubscript, MirTerm, Proj, Reg, UseMode};
 use std::collections::HashSet;
@@ -82,6 +82,26 @@ fn constants_and_types_use_schema_tags() {
     );
     assert_eq!(type_spelling(&Ty::Int), "Int");
     assert_eq!(type_spelling(&Ty::Tuple(vec![Ty::Int, Ty::Bool])), "tuple");
+}
+
+#[test]
+fn type_spellings_are_canonical_and_unique() {
+    let mut seen = HashSet::new();
+    for spelling in TYPE_SPELLINGS {
+        assert!(seen.insert(spelling), "duplicate type spelling: {spelling}");
+        assert!(spelling.is_ascii());
+        assert!(!spelling.is_empty());
+    }
+    for representative in [
+        type_spelling(&Ty::Int),
+        type_spelling(&Ty::Tuple(vec![Ty::Int])),
+        type_spelling(&Ty::Variant(vec![Ty::Int])),
+    ] {
+        assert!(
+            TYPE_SPELLINGS.contains(&representative),
+            "type spelling missing from the inventory: {representative}"
+        );
+    }
 }
 
 #[test]

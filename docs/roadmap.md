@@ -271,8 +271,8 @@ pointer subscripts over ABI version 2's headered allocator and size-less
 native bridges; `__deinit__` compiles from real MIR), and unhandled raises
 through `mjrt_unhandled_error` (exit category 5, the explicit pre-Stage-4
 error contract). Runtime traps route through `mjrt_trap`. Acceptance was
-pinned by the Stage 3 exe gate (its manifest is superseded by Stage 4's
-`conformance/pliron-stage4.tsv`): every eligible `assets/ok` fixture matches
+pinned by the Stage 3 exe gate (its manifest is superseded by the native-parity
+manifest `conformance/pliron-parity.tsv`): every eligible `assets/ok` fixture matches
 VM stdout bytes at `O0`/`O1` and runs AddressSanitizer/LeakSanitizer-clean,
 raise fixtures match the failure category and stderr, and produced
 executables expose only the contract-table runtime symbols. Design and
@@ -291,8 +291,9 @@ propagation path frees releasable buffers without running user destructors —
 matching the VM's frame abandonment. Ordered lifecycle events (destructor
 dispatches, consumes, raises, catches) are instrumented through `mjrt_trace`
 in the test lane and differentially compared against the VM's event log.
-Acceptance is pinned by `tests/pliron_backend_test.rs`'s Stage 4 gate over
-`conformance/pliron-stage4.tsv` (now also covering `assets/ownership_ok`),
+Acceptance is pinned by `tests/pliron_backend_test.rs`'s exe gate over the
+native-parity manifest `conformance/pliron-parity.tsv` (now also covering
+`assets/ownership_ok`),
 with handled-raise and `finally` paths AddressSanitizer/LeakSanitizer-clean,
 negative ownership fixtures verified to fail before the backend, and focused
 fixtures for nested re-raises, `finally` overrides, loop escapes, early

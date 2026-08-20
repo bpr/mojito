@@ -166,7 +166,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   entry points (`verify_artifact`/`load_artifact`, including the mapping of
   canonical `mir::verify` finding prefixes to artifact spans), textual-schema
   version constants, reserved words, canonical escaping, and exhaustive
-  instruction/terminator spellings; `mir/text/write.rs` owns structural
+  instruction/terminator/type spellings (with the canonical
+  `INSTRUCTION_MNEMONICS`/`TYPE_SPELLINGS` inventories the native capability
+  matrix pins against); `mir/text/write.rs` owns structural
   serialization and ordering.
 - `mir/text/parse.rs` owns UTF-8 validation, the recoverable spanned schema
   parser, full-schema typed reconstruction (every instruction, terminator,
@@ -229,7 +231,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   IR/bitcode/object/exe via clang `--target`, runtime-archive discovery and
   linking, plus the `opt`-subprocess `O1` pipeline), and
   `backend/pliron/jit.rs` (host-only ORC LLJIT execution typed by
-  `RetKind`).
+  `RetKind`), and `backend/pliron/capability.rs` (the generated capability
+  matrix behind `conformance/pliron-capability.tsv`, pinned against the
+  textual-MIR schema vocabulary).
 - `backend/vm.rs` owns the `VmBackend` core: heap, value operations, method-call
   and named-call execution, drops, formatting, and the test-only ordered
   lifecycle-event log (`enable_lifecycle_log`/`lifecycle_log`) the native
