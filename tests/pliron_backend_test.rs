@@ -8,9 +8,15 @@ use std::path::Path;
 use expect_test::expect;
 use mojito::Compiler;
 use mojito::backend::pliron as native;
-use native::{CompileOptions, JitValue, NativeModule, OptLevel, TrapCategory};
+use native::{CompileOptions, JitValue, NativeModule, NativeTarget, OptLevel, TrapCategory};
 
 const FIXTURE_NAME: &str = "pliron_fixture.mojo";
+
+/// The host as a native target; every test in this binary compiles for (and
+/// JITs or runs on) the host.
+fn host_target() -> NativeTarget {
+    NativeTarget::host().expect("pliron tests require a supported host target")
+}
 
 /// Compile `src` through the production pipeline and hand its cached
 /// post-drop MIR to the Pliron backend with the given entries.
@@ -22,6 +28,7 @@ fn native_compile(src: &str, entries: &[&str]) -> NativeModule {
     let options = CompileOptions {
         entries: entries.iter().map(|s| s.to_string()).collect(),
         sources: vec![(FIXTURE_NAME.to_string(), src.to_string())],
+        target: host_target(),
     };
     native::compile(compiled.elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)))
@@ -306,6 +313,7 @@ fn scalar_capability_manifest_and_differential() {
         let options = CompileOptions {
             entries: vec!["compute".to_string()],
             sources: vec![(rel.clone(), src.clone())],
+            target: host_target(),
         };
         match native::compile(compiled.elaborated_mir(), &options) {
             Err(error) => {
@@ -358,6 +366,7 @@ fn scalar_capability_manifest_and_differential() {
         let options = CompileOptions {
             entries: vec!["main".to_string()],
             sources: vec![(rel.clone(), src.clone())],
+            target: host_target(),
         };
         let mut module = native::compile(compiled.elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
@@ -448,6 +457,7 @@ fn executable_and_object_emission() {
     let options = CompileOptions {
         entries: vec!["main".to_string()],
         sources: vec![(FIXTURE_NAME.to_string(), EXE_MAIN.to_string())],
+        target: host_target(),
     };
     let mut module = native::compile(compiled.elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
@@ -480,6 +490,7 @@ fn native_error(src: &str, entries: &[&str]) -> String {
     let options = CompileOptions {
         entries: entries.iter().map(|s| s.to_string()).collect(),
         sources: vec![(FIXTURE_NAME.to_string(), src.to_string())],
+        target: host_target(),
     };
     let error = native::compile(compiled.elaborated_mir(), &options)
         .err()
@@ -629,4 +640,353 @@ fn locations_render_in_canonical_text() {
         "{}",
         module.plir_text()
     );
+}
+
+/// LLVM-side mechanical cross checks of the shared native ABI
+/// (`mojito::native`): target-data layout agreement, the contract table's
+/// LLVM declaration rendering, the pinned data-layout string against the
+/// installed toolchain, and the runtime symbols of produced executables.
+/// Nothing in this module executes generated code — these are the
+/// "target-only cross checks" of the ABI milestone's acceptance.
+mod native_abi_cross_checks {
+    use std::ffi::CString;
+    use std::process::Command;
+
+    use expect_test::expect;
+    use llvm_sys::core::{
+        LLVMContextCreate, LLVMContextDispose, LLVMDoubleTypeInContext, LLVMInt1TypeInContext,
+        LLVMInt32TypeInContext, LLVMInt64TypeInContext, LLVMPointerTypeInContext,
+        LLVMStructTypeInContext,
+    };
+    use llvm_sys::prelude::{LLVMContextRef, LLVMTypeRef};
+    use llvm_sys::target::{
+        LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMCreateTargetData, LLVMDisposeTargetData,
+        LLVMOffsetOfElement, LLVMTargetDataRef,
+    };
+    use mojito::Compiler;
+    use mojito::native::layout::{LayoutCx, StructFieldIndex, StructLayout};
+    use mojito::native::rt_abi::{self, CAbiTy, RtFieldTy};
+    use mojito::native::target::{NativeTarget, Triple};
+    use mojito::types::Ty;
+
+    use super::{EXE_MAIN, FIXTURE_NAME, host_target};
+
+    /// LLVM target data built from the pinned data-layout string alone — no
+    /// module, no code generation, no execution.
+    struct TargetData {
+        ctx: LLVMContextRef,
+        td: LLVMTargetDataRef,
+    }
+
+    impl TargetData {
+        fn new(triple: Triple) -> TargetData {
+            let layout = CString::new(triple.data_layout()).expect("no NUL in data layout");
+            unsafe {
+                TargetData {
+                    ctx: LLVMContextCreate(),
+                    td: LLVMCreateTargetData(layout.as_ptr()),
+                }
+            }
+        }
+
+        fn prim(&self, ty: CAbiTy) -> LLVMTypeRef {
+            unsafe {
+                match ty {
+                    CAbiTy::U32 => LLVMInt32TypeInContext(self.ctx),
+                    CAbiTy::U64 | CAbiTy::I64 => LLVMInt64TypeInContext(self.ctx),
+                    CAbiTy::F64 => LLVMDoubleTypeInContext(self.ctx),
+                    CAbiTy::PtrConstU8 | CAbiTy::PtrMutU8 => LLVMPointerTypeInContext(self.ctx, 0),
+                }
+            }
+        }
+
+        fn strukt(&self, fields: &[LLVMTypeRef]) -> LLVMTypeRef {
+            let mut fields = fields.to_vec();
+            unsafe {
+                LLVMStructTypeInContext(self.ctx, fields.as_mut_ptr(), fields.len() as u32, 0)
+            }
+        }
+
+        fn rt_type(&self, spec: &rt_abi::RtTypeSpec) -> LLVMTypeRef {
+            let fields: Vec<LLVMTypeRef> = spec
+                .fields
+                .iter()
+                .map(|field| match field.ty {
+                    RtFieldTy::Prim(prim) => self.prim(prim),
+                    RtFieldTy::Named(name) => {
+                        self.rt_type(rt_abi::find_type(name).expect("known type"))
+                    }
+                })
+                .collect();
+            self.strukt(&fields)
+        }
+
+        /// The LLVM realization of a checked type under the shared layout
+        /// rules (scalars, pointers, descriptor/error structs, tuples, and
+        /// nominal structs; Variant's overlay is realized only in Stage 4).
+        fn ty(&self, structs: &StructFieldIndex, ty: &Ty) -> LLVMTypeRef {
+            unsafe {
+                match ty {
+                    Ty::Int | Ty::UInt => LLVMInt64TypeInContext(self.ctx),
+                    Ty::Bool => LLVMInt1TypeInContext(self.ctx),
+                    Ty::Float64 => LLVMDoubleTypeInContext(self.ctx),
+                    Ty::None => self.strukt(&[]),
+                    Ty::Pointer { .. } | Ty::Ref(_) => LLVMPointerTypeInContext(self.ctx, 0),
+                    Ty::StringLiteral => {
+                        let ptr = LLVMPointerTypeInContext(self.ctx, 0);
+                        let len = LLVMInt64TypeInContext(self.ctx);
+                        self.strukt(&[ptr, len])
+                    }
+                    Ty::Error => {
+                        let string = self.rt_type(rt_abi::find_type("MjString").expect("known"));
+                        self.strukt(&[string])
+                    }
+                    Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+                        let fields: Vec<LLVMTypeRef> = elements
+                            .iter()
+                            .map(|element| self.ty(structs, element))
+                            .collect();
+                        self.strukt(&fields)
+                    }
+                    Ty::Struct(name, _) => {
+                        let fields: Vec<LLVMTypeRef> = structs
+                            .get(name)
+                            .expect("struct in index")
+                            .iter()
+                            .map(|field| self.ty(structs, field))
+                            .collect();
+                        self.strukt(&fields)
+                    }
+                    other => panic!("no LLVM realization in this test for {other}"),
+                }
+            }
+        }
+
+        fn assert_agrees(&self, label: &str, llvm_ty: LLVMTypeRef, expected: &StructLayout) {
+            unsafe {
+                assert_eq!(
+                    LLVMABISizeOfType(self.td, llvm_ty),
+                    expected.layout.size,
+                    "{label}: size"
+                );
+                assert_eq!(
+                    u64::from(LLVMABIAlignmentOfType(self.td, llvm_ty)),
+                    expected.layout.align,
+                    "{label}: align"
+                );
+                for (index, offset) in expected.offsets.iter().enumerate() {
+                    assert_eq!(
+                        LLVMOffsetOfElement(self.td, llvm_ty, index as u32),
+                        *offset,
+                        "{label}: offset of field {index}"
+                    );
+                }
+            }
+        }
+    }
+
+    impl Drop for TargetData {
+        fn drop(&mut self) {
+            unsafe {
+                LLVMDisposeTargetData(self.td);
+                LLVMContextDispose(self.ctx);
+            }
+        }
+    }
+
+    /// Every exported runtime type and a representative checked-type matrix
+    /// lay out identically under the shared layout engine and LLVM's own
+    /// target data for the pinned data-layout string.
+    #[test]
+    fn pliron_layout_engine_agrees_with_llvm_target_data() {
+        let triple = Triple::X86_64UnknownLinuxGnu;
+        let target = NativeTarget::new(triple);
+        let td = TargetData::new(triple);
+
+        for spec in rt_abi::RT_TYPES {
+            let expected = rt_abi::type_layout(spec, &target);
+            td.assert_agrees(spec.name, td.rt_type(spec), &expected);
+        }
+
+        let mut structs = StructFieldIndex::default();
+        structs.insert("Pair".to_string(), vec![Ty::Int, Ty::Bool]);
+        structs.insert(
+            "Outer".to_string(),
+            vec![
+                Ty::Struct("Pair".to_string(), vec![]),
+                Ty::Bool,
+                Ty::Float64,
+            ],
+        );
+        let cx = LayoutCx {
+            target: &target,
+            structs: &structs,
+        };
+        let aggregate_cases: &[(&str, Vec<Ty>)] = &[
+            ("bool_int_bool", vec![Ty::Bool, Ty::Int, Ty::Bool]),
+            ("bool_bool_int", vec![Ty::Bool, Ty::Bool, Ty::Int]),
+            ("empty", vec![]),
+            (
+                "mixed",
+                vec![
+                    Ty::Float64,
+                    Ty::Bool,
+                    Ty::StringLiteral,
+                    Ty::Struct("Outer".to_string(), vec![]),
+                ],
+            ),
+        ];
+        for (label, fields) in aggregate_cases {
+            let expected = cx.struct_layout(fields).expect("layout");
+            let llvm_ty = td.ty(&structs, &Ty::Tuple(fields.clone()));
+            td.assert_agrees(label, llvm_ty, &expected);
+        }
+        let scalar_cases = [
+            Ty::Int,
+            Ty::UInt,
+            Ty::Bool,
+            Ty::Float64,
+            Ty::StringLiteral,
+            Ty::Error,
+            Ty::Struct("Outer".to_string(), vec![]),
+        ];
+        for ty in scalar_cases {
+            let expected = cx.layout_of(&ty).expect("layout");
+            let llvm_ty = td.ty(&structs, &ty);
+            unsafe {
+                assert_eq!(
+                    LLVMABISizeOfType(td.td, llvm_ty),
+                    expected.size,
+                    "{ty}: size"
+                );
+                assert_eq!(
+                    u64::from(LLVMABIAlignmentOfType(td.td, llvm_ty)),
+                    expected.align,
+                    "{ty}: align"
+                );
+            }
+        }
+    }
+
+    /// The mechanical LLVM rendering of the runtime contract table.
+    #[test]
+    fn pliron_runtime_declarations_render_the_contract_table() {
+        expect![[r#"
+            @mjrt_abi_version = external global i32
+            declare i32 @mjrt_version()
+            declare ptr @mjrt_alloc(i64, i64)
+            declare void @mjrt_dealloc(ptr, i64, i64)
+            declare void @mjrt_write_stdout(ptr, i64)
+            declare i64 @mjrt_fmt_i64(i64, ptr)
+            declare i64 @mjrt_fmt_u64(i64, ptr)
+            declare i64 @mjrt_fmt_f64(double, ptr)
+            declare void @mjrt_trap(i32) noreturn
+        "#]]
+        .assert_eq(&mojito::backend::pliron::runtime_declarations());
+    }
+
+    /// The pinned data-layout string equals what the installed clang produces
+    /// for the same triple, so `opt`, `clang`, and the layout engine agree.
+    #[test]
+    fn pliron_pinned_data_layout_matches_installed_clang() {
+        let triple = Triple::X86_64UnknownLinuxGnu;
+        let clang = ["clang-22", "clang"]
+            .into_iter()
+            .find(|candidate| {
+                Command::new(candidate)
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|out| out.status.success())
+            })
+            .expect("clang available (the pliron lane requires it)");
+        let output = Command::new(clang)
+            .args([
+                &format!("--target={}", triple.name()),
+                "-x",
+                "c",
+                "/dev/null",
+                "-S",
+                "-emit-llvm",
+                "-o",
+                "-",
+            ])
+            .output()
+            .expect("clang runs");
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("target datalayout = "))
+            .expect("clang output has a data-layout line");
+        assert_eq!(
+            line,
+            format!("target datalayout = \"{}\"", triple.data_layout())
+        );
+    }
+
+    /// Produced executables expose the inspectable ABI version symbol and no
+    /// runtime symbols outside the contract table (plus the backend-emitted
+    /// `mjrt_pow` helper). Inspection only — the executable never runs.
+    #[test]
+    fn pliron_executables_expose_only_specified_runtime_symbols() {
+        let compiler = Compiler::default();
+        let compiled = compiler
+            .compile_source(EXE_MAIN, std::path::Path::new(FIXTURE_NAME))
+            .expect("fixture compiles");
+        let options = super::CompileOptions {
+            entries: vec!["main".to_string()],
+            sources: vec![(FIXTURE_NAME.to_string(), EXE_MAIN.to_string())],
+            target: host_target(),
+        };
+        let mut module = mojito::backend::pliron::compile(compiled.elaborated_mir(), &options)
+            .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("abi_inspect");
+        module
+            .write_executable(&exe, super::OptLevel::O0)
+            .expect("exe emission");
+
+        let nm = ["llvm-nm-22", "llvm-nm", "nm"]
+            .into_iter()
+            .find(|candidate| {
+                Command::new(candidate)
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|out| out.status.success())
+            })
+            .expect("an nm tool available");
+        let output = Command::new(nm).arg(&exe).output().expect("nm runs");
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        let globals: Vec<&str> = text
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace().rev();
+                let name = parts.next()?;
+                let kind = parts.next()?;
+                (kind.len() == 1 && kind.chars().all(|c| c.is_ascii_uppercase()))
+                    .then_some((name, kind))
+            })
+            .filter(|(name, _)| name.starts_with("mjrt_"))
+            .map(|(name, _)| name)
+            .collect();
+        assert!(
+            globals.contains(&rt_abi::ABI_VERSION_SYMBOL),
+            "executable must expose {}: {globals:?}",
+            rt_abi::ABI_VERSION_SYMBOL
+        );
+        assert!(globals.contains(&"mjrt_version"), "{globals:?}");
+        let allowed: Vec<&str> = rt_abi::RT_SYMBOLS
+            .iter()
+            .map(|sig| sig.symbol)
+            .chain(rt_abi::RT_DATA_SYMBOLS.iter().map(|(name, _)| *name))
+            .chain(["mjrt_pow"])
+            .collect();
+        for symbol in &globals {
+            assert!(
+                allowed.contains(symbol),
+                "unexpected runtime symbol {symbol} in the executable (contract table: {allowed:?})"
+            );
+        }
+    }
 }

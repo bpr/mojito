@@ -76,10 +76,10 @@ executable wrapper is plain `main`, which no mangled name can collide with.
 
 ## Recorded VM/native divergence policies
 
-- **Int overflow** (add/sub/mul): the VM uses plain Rust arithmetic — a
-  debug-build panic, with no defined language semantics. Native lowers to
-  wrapping LLVM `add`/`sub`/`mul`. Differential fixtures avoid overflow;
-  revisit when Stage 2 defines trap categories.
+- **Int overflow** (add/sub/mul): *closed by the shared native ABI milestone*
+  — overflow is defined two's-complement wrapping on both backends
+  (`docs/native-abi.md`; the VM's `int_op`/`uint_op` now use `wrapping_*`),
+  pinned by the `assets/ok/pliron_wrap_*` differential fixtures.
 - **Division by zero** (`//`, `%`): the VM raises a `RuntimeError`; native
   `sdiv`/`srem` by zero is UB (in practice a trap). No guard is emitted in
   Stage 1; fixtures avoid zero divisors.

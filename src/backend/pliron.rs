@@ -27,10 +27,11 @@ use std::path::Path;
 use crate::mir::{MirFunction, MirInstr, MirProgram};
 use crate::token::SourceSpan;
 
+pub use crate::native::target::{EmitKind, NativeTarget, OptLevel};
+
 mod emit;
 mod jit;
 mod lower;
-mod mangle;
 
 /// Compile the call-graph closure of `options.entries` to an LLVM-dialect
 /// module: verify the constructed IR, run the mem2reg/DCE cleanup pipeline,
@@ -98,8 +99,44 @@ pub fn compile(
         module,
         canonical_text,
         functions,
+        target: options.target,
         exe_wrapper_added: false,
     })
+}
+
+/// Render the textual LLVM declarations of the runtime ABI contract table
+/// (`crate::native::rt_abi`): every exported data symbol and function, in
+/// table order. This is the declaration set generated code links against once
+/// it starts calling the runtime (Stage 3); until then the backend tests pin
+/// it as the mechanical LLVM-side rendering of the contract.
+pub fn runtime_declarations() -> String {
+    use crate::native::rt_abi::{CAbiTy, RT_DATA_SYMBOLS, RT_SYMBOLS};
+
+    fn llvm_ty(ty: CAbiTy) -> &'static str {
+        match ty {
+            CAbiTy::U32 => "i32",
+            // LLVM integers are signless; U64 and I64 share i64.
+            CAbiTy::U64 | CAbiTy::I64 => "i64",
+            CAbiTy::F64 => "double",
+            CAbiTy::PtrConstU8 | CAbiTy::PtrMutU8 => "ptr",
+        }
+    }
+
+    let mut out = String::new();
+    for (symbol, ty) in RT_DATA_SYMBOLS {
+        out.push_str(&format!("@{symbol} = external global {}\n", llvm_ty(*ty)));
+    }
+    for sig in RT_SYMBOLS {
+        let ret = sig.ret.map(llvm_ty).unwrap_or("void");
+        let params: Vec<&str> = sig.params.iter().map(|(_, ty)| llvm_ty(*ty)).collect();
+        let attrs = if sig.noreturn { " noreturn" } else { "" };
+        out.push_str(&format!(
+            "declare {ret} @{}({}){attrs}\n",
+            sig.symbol,
+            params.join(", ")
+        ));
+    }
+    out
 }
 
 /// A compiled LLVM-dialect module plus its cached canonical text and the
@@ -109,6 +146,7 @@ pub struct NativeModule {
     module: ModuleOp,
     canonical_text: String,
     functions: HashMap<String, FnMeta>,
+    target: NativeTarget,
     exe_wrapper_added: bool,
 }
 
@@ -121,30 +159,41 @@ impl NativeModule {
 
     /// Textual LLVM IR of the converted module.
     pub fn llvm_ir(&self, opt: OptLevel) -> Result<String, PlironError> {
-        emit::llvm_ir(&self.context, self.module, opt)
+        emit::llvm_ir(&self.context, self.module, &self.target, opt)
     }
 
     /// Write LLVM bitcode to `path`.
     pub fn write_bitcode(&self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
-        emit::write_bitcode(&self.context, self.module, path, opt)
+        emit::write_bitcode(&self.context, self.module, &self.target, path, opt)
     }
 
     /// Write a relocatable object file to `path`.
     pub fn write_object(&self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
-        emit::write_object(&self.context, self.module, path, opt)
+        emit::write_object(&self.context, self.module, &self.target, path, opt)
     }
 
-    /// Link a host executable at `path`. Requires a compiled zero-argument
-    /// non-returning `main`; the synthesized C `main` wrapper calls
+    /// Link an executable at `path`. Requires a compiled zero-argument
+    /// non-returning `main`; the synthesized C `main` wrapper checks in the
+    /// linked `mojito-runtime` (referencing its version symbol), calls
     /// `__toplevel__` (when compiled), then `main`, then returns 0.
     pub fn write_executable(&mut self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
         self.ensure_exe_wrapper()?;
-        emit::write_executable(&self.context, self.module, path, opt)
+        emit::write_executable(&self.context, self.module, &self.target, path, opt)
     }
 
     /// JIT-execute a compiled zero-argument value-returning MIR function and
     /// return its typed value. The differential harness's native side.
     pub fn jit_value(&self, entry: &str, opt: OptLevel) -> Result<JitValue, PlironError> {
+        if crate::native::target::Triple::host() != Some(self.target.triple) {
+            return Err(PlironError {
+                function: None,
+                kind: PlironErrorKind::Emit(format!(
+                    "cannot JIT-execute target '{}' on this host",
+                    self.target.triple.name()
+                )),
+                location: None,
+            });
+        }
         let Some(meta) = self.functions.get(entry) else {
             return Err(PlironError {
                 function: None,
@@ -152,7 +201,14 @@ impl NativeModule {
                 location: None,
             });
         };
-        jit::run_value(&self.context, self.module, &meta.mangled, meta.ret, opt)
+        jit::run_value(
+            &self.context,
+            self.module,
+            &self.target,
+            &meta.mangled,
+            meta.ret,
+            opt,
+        )
     }
 
     /// JIT-execute a compiled zero-argument `Int`-returning MIR function at
@@ -228,28 +284,6 @@ pub enum JitValue {
     UInt(u64),
     Float64(f64),
     Bool(bool),
-}
-
-/// The native optimization level. `O0` runs only the pliron-side
-/// mem2reg/DCE cleanup; `O1` additionally runs `opt -passes='default<O1>'`
-/// over the emitted bitcode before JIT, object, or executable production.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OptLevel {
-    #[default]
-    O0,
-    O1,
-}
-
-impl OptLevel {
-    pub fn parse(s: &str) -> Result<OptLevel, String> {
-        match s {
-            "0" => Ok(OptLevel::O0),
-            "1" => Ok(OptLevel::O1),
-            other => Err(format!(
-                "unknown native opt level '{other}' (expected: 0, 1)"
-            )),
-        }
-    }
 }
 
 /// The native return-value kind of a compiled function, derived from its
@@ -331,41 +365,9 @@ pub struct CompileOptions {
     /// `(source name, source text)` pairs used to convert MIR span byte
     /// offsets into line/column locations for diagnostics and IR locations.
     pub sources: Vec<(String, String)>,
-}
-
-/// What `compile --emit` should produce.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EmitKind {
-    /// Canonical Pliron textual IR (stdout-friendly).
-    Plir,
-    /// Textual LLVM IR (stdout-friendly).
-    LlvmIr,
-    /// LLVM bitcode (requires an output path).
-    Bitcode,
-    /// A relocatable object file (requires an output path).
-    Object,
-    /// A linked host executable (requires an output path).
-    Exe,
-}
-
-impl EmitKind {
-    pub fn parse(s: &str) -> Result<EmitKind, String> {
-        match s {
-            "plir" => Ok(EmitKind::Plir),
-            "ll" => Ok(EmitKind::LlvmIr),
-            "bc" => Ok(EmitKind::Bitcode),
-            "obj" => Ok(EmitKind::Object),
-            "exe" => Ok(EmitKind::Exe),
-            other => Err(format!(
-                "unknown emit kind '{other}' (expected: plir, ll, bc, obj, exe)"
-            )),
-        }
-    }
-
-    /// Binary kinds must go to a file; text kinds may print to stdout.
-    pub fn is_binary(self) -> bool {
-        matches!(self, EmitKind::Bitcode | EmitKind::Object | EmitKind::Exe)
-    }
+    /// The checked native target. Its triple and pinned data-layout string
+    /// stamp every emitted LLVM module; JIT execution requires the host.
+    pub target: NativeTarget,
 }
 
 /// A native-compilation failure with enough context to act on: the MIR
@@ -595,6 +597,7 @@ mod tests {
         let options = CompileOptions {
             entries: Vec::new(),
             sources: Vec::new(),
+            target: NativeTarget::host().expect("supported host"),
         };
         let Err(error) = compile(&program, &options) else {
             panic!("a program with invariant errors must be refused");

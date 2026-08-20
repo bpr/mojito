@@ -8,6 +8,40 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Shared native target, layout, and runtime ABI (roadmap §4): the normative
+  contract [`docs/native-abi.md`](docs/native-abi.md), owned in code by the
+  new `src/native/` module — checked build configuration (`Triple` with the
+  pinned LLVM-22 data-layout string, `CpuFeatures`, `OptLevel`, `EmitKind`,
+  and the new `--target TRIPLE` CLI flag on `compile`/`run`), the shared
+  layout engine (declaration-order C-style aggregates, `u32`-tag Variant
+  overlays, `MjStrDesc`/`MjString`/`MjError` string and error
+  representations, pointer-sized origin-erased references), the relocated
+  injective `mj_` mangler, and the `rt_abi` runtime contract table. The
+  repository is now a Cargo workspace whose second member,
+  `crates/mojito-runtime`, is the independently versioned, dependency-free
+  C-ABI runtime (ABI version 1: `mjrt_version`/`mjrt_abi_version`,
+  `mjrt_alloc`/`mjrt_dealloc`, `mjrt_write_stdout`, the VM-display
+  `mjrt_fmt_i64/u64/f64` formatters, and `mjrt_trap` with exit codes
+  `64 + category`); every Pliron-emitted LLVM module is stamped with the
+  target triple and data-layout string, every produced executable links the
+  runtime archive and exposes the inspectable `mjrt_abi_version` symbol, and
+  agreement is pinned mechanically from both sides — Rust signature/layout
+  checks in the default lane (`tests/native_abi_test.rs`) and target-only
+  LLVM cross checks in the pliron lane (target-data agreement, declaration
+  snapshots, a clang data-layout pin, and `llvm-nm` symbol inspection).
+
+### Changed
+
+- Int/UInt overflow is now defined two's-complement wrapping on both the VM
+  and the native backend — `+ - *`, unary negation, and `**` wrap
+  (square-and-multiply over wrapping multiplication), and the single
+  overflowing signed-division case is defined as `Int.MIN // -1 == Int.MIN`
+  with `Int.MIN % -1 == 0` (the native lowering sanitizes the LLVM
+  `sdiv`/`srem` poison case). This closes the overflow divergence recorded in
+  the Stage 1/2 notes; the zero-divisor and `**`-exponent traps are
+  unchanged. New `assets/ok/pliron_wrap_*` fixtures pin the wrap points
+  through both backends at `O0` and `O1`.
+
 - Pliron Stage 1 scalar native backend (roadmap §4, experimental): behind the
   `backend-pliron` feature (LLVM 22), `mojito compile [FILE] --backend pliron
   --emit plir|ll|bc|obj|exe [-o PATH]` compiles the call-graph closure of

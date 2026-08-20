@@ -28,6 +28,9 @@ Read these documents before changing behavior:
 - `docs/architecture.md` — pipeline invariants and phase design.
 - `docs/grammar.md` and `docs/frontend.md` — accepted syntax and parser design.
 - `docs/roadmap.md` — current direction, pending work, and task lifecycle policy.
+- `docs/native-abi.md` — the normative native target/layout/runtime-ABI
+  contract; owned in code by `src/native/` and implemented by the
+  `crates/mojito-runtime` workspace member.
 
 Do not copy the feature inventory into this file. Update `docs/features.md` when
 support changes and update `docs/symbol-map.md` when ownership or entry points

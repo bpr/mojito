@@ -13,16 +13,24 @@ use std::process::Command;
 use pliron::builtin::ops::ModuleOp;
 use pliron::context::Context;
 use pliron::printable::Printable;
-use pliron_llvm::llvm_sys::core::{LLVMContext, LLVMModule};
+use pliron_llvm::llvm_sys::core::{LLVMContext, LLVMMemoryBuffer, LLVMModule};
 use pliron_llvm::to_llvm_ir;
+
+use crate::native::target::NativeTarget;
 
 use super::{OptLevel, PlironError, PlironErrorKind};
 
-/// Convert the pliron module into a verified LLVM module. The returned
-/// [`LLVMContext`] owns the module's storage and must stay alive with it.
+/// Convert the pliron module into a verified LLVM module stamped with the
+/// target's triple and pinned data-layout string. The returned [`LLVMContext`]
+/// owns the module's storage and must stay alive with it.
+///
+/// Stamping goes through print → prepend → reparse: pliron-llvm 0.17 keeps
+/// its raw `LLVMModuleRef` private, so `LLVMSetTarget`/`LLVMSetDataLayout`
+/// are unreachable in-process. The reparsed module re-verifies before use.
 pub(super) fn to_llvm(
     ctx: &Context,
     module: ModuleOp,
+    target: &NativeTarget,
 ) -> Result<(LLVMContext, LLVMModule), PlironError> {
     let llvm_ctx = LLVMContext::default();
     let llvm_module = to_llvm_ir::convert_module(ctx, &llvm_ctx, module)
@@ -30,7 +38,27 @@ pub(super) fn to_llvm(
     llvm_module
         .verify()
         .map_err(|error| emit_error(format!("LLVM module verification failed: {error}")))?;
-    Ok((llvm_ctx, llvm_module))
+    let text = llvm_module.to_string();
+    if text.contains("target datalayout") || text.contains("target triple") {
+        return Err(emit_error(
+            "converted module unexpectedly carries a target header already".to_string(),
+        ));
+    }
+    let stamped_text = format!(
+        "target datalayout = \"{}\"\ntarget triple = \"{}\"\n{text}",
+        target.triple.data_layout(),
+        target.triple.name(),
+    );
+    let stamped_ctx = LLVMContext::default();
+    let buffer = LLVMMemoryBuffer::from_str(&stamped_text, "mojito-target-stamp");
+    let stamped_module = LLVMModule::from_ir_in_memory_buffer(&stamped_ctx, buffer)
+        .map_err(|error| emit_error(format!("target-stamped module reparse failed: {error}")))?;
+    stamped_module.verify().map_err(|error| {
+        emit_error(format!(
+            "target-stamped module verification failed: {error}"
+        ))
+    })?;
+    Ok((stamped_ctx, stamped_module))
 }
 
 /// Convert and, at [`OptLevel::O1`], round-trip the module through `opt`
@@ -39,9 +67,10 @@ pub(super) fn to_llvm(
 pub(super) fn to_llvm_optimized(
     ctx: &Context,
     module: ModuleOp,
+    target: &NativeTarget,
     opt: OptLevel,
 ) -> Result<(LLVMContext, LLVMModule), PlironError> {
-    let (llvm_ctx, llvm_module) = to_llvm(ctx, module)?;
+    let (llvm_ctx, llvm_module) = to_llvm(ctx, module, target)?;
     if matches!(opt, OptLevel::O0) {
         return Ok((llvm_ctx, llvm_module));
     }
@@ -64,9 +93,10 @@ pub(super) fn to_llvm_optimized(
 pub(super) fn llvm_ir(
     ctx: &Context,
     module: ModuleOp,
+    target: &NativeTarget,
     opt: OptLevel,
 ) -> Result<String, PlironError> {
-    let (_llvm_ctx, llvm_module) = to_llvm_optimized(ctx, module, opt)?;
+    let (_llvm_ctx, llvm_module) = to_llvm_optimized(ctx, module, target, opt)?;
     Ok(llvm_module.to_string())
 }
 
@@ -74,10 +104,11 @@ pub(super) fn llvm_ir(
 pub(super) fn write_bitcode(
     ctx: &Context,
     module: ModuleOp,
+    target: &NativeTarget,
     path: &Path,
     opt: OptLevel,
 ) -> Result<(), PlironError> {
-    let (_llvm_ctx, llvm_module) = to_llvm(ctx, module)?;
+    let (_llvm_ctx, llvm_module) = to_llvm(ctx, module, target)?;
     bitcode_to(&llvm_module, path)?;
     optimize_bitcode(path, opt)
 }
@@ -86,39 +117,47 @@ pub(super) fn write_bitcode(
 pub(super) fn write_object(
     ctx: &Context,
     module: ModuleOp,
+    target: &NativeTarget,
     path: &Path,
     opt: OptLevel,
 ) -> Result<(), PlironError> {
-    clang_from_bitcode(ctx, module, path, &["-c"], opt)
+    clang_from_bitcode(ctx, module, target, path, &["-c"], &[], opt)
 }
 
-/// Link a host executable at `path` (bitcode + `clang`). The module must
-/// already contain the synthesized `main` wrapper.
+/// Link an executable at `path` (bitcode + `clang`), linking the versioned
+/// `mojito-runtime` static archive. The module must already contain the
+/// synthesized `main` wrapper (which references the runtime's version symbol).
 pub(super) fn write_executable(
     ctx: &Context,
     module: ModuleOp,
+    target: &NativeTarget,
     path: &Path,
     opt: OptLevel,
 ) -> Result<(), PlironError> {
-    clang_from_bitcode(ctx, module, path, &[], opt)
+    let runtime = find_runtime_archive()?;
+    clang_from_bitcode(ctx, module, target, path, &[], &[runtime], opt)
 }
 
 fn clang_from_bitcode(
     ctx: &Context,
     module: ModuleOp,
+    target: &NativeTarget,
     path: &Path,
     extra_args: &[&str],
+    link_inputs: &[PathBuf],
     opt: OptLevel,
 ) -> Result<(), PlironError> {
-    let (_llvm_ctx, llvm_module) = to_llvm(ctx, module)?;
+    let (_llvm_ctx, llvm_module) = to_llvm(ctx, module, target)?;
     let bitcode = temp_bitcode_path(path);
     let prepared =
         bitcode_to(&llvm_module, &bitcode).and_then(|()| optimize_bitcode(&bitcode, opt));
     let output = prepared.and_then(|()| {
         let clang = find_clang()?;
         let run = Command::new(clang)
+            .arg(format!("--target={}", target.triple.name()))
             .args(extra_args)
             .arg(&bitcode)
+            .args(link_inputs)
             .arg("-o")
             .arg(path)
             .output()
@@ -134,6 +173,36 @@ fn clang_from_bitcode(
         )));
     }
     Ok(())
+}
+
+/// Locate the `mojito-runtime` static archive to link into executables:
+/// an explicit `MOJITO_RUNTIME_LIB` wins; otherwise search the compiler
+/// executable's directory and its ancestors (which covers `target/debug` and
+/// `target/debug/deps` in development builds).
+fn find_runtime_archive() -> Result<PathBuf, PlironError> {
+    if let Ok(path) = std::env::var("MOJITO_RUNTIME_LIB") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(emit_error(format!(
+            "MOJITO_RUNTIME_LIB points at a missing file: {}",
+            path.display()
+        )));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        for dir in exe.ancestors().skip(1).take(3) {
+            let candidate = dir.join("libmojito_runtime.a");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err(emit_error(
+        "cannot find libmojito_runtime.a; build it with `cargo build -p mojito-runtime` \
+         or point MOJITO_RUNTIME_LIB at the archive"
+            .to_string(),
+    ))
 }
 
 /// Run the conservative optimization pipeline over a bitcode file in place.

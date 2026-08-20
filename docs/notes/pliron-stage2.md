@@ -101,11 +101,12 @@ wrapper `main`) sit outside the injective `mj_` mangle image.
 
 ## Recorded VM/native divergence policies
 
-- **Int/UInt `+ - *` overflow** (unchanged from Stage 1): VM = plain Rust
-  arithmetic (debug panic, no defined semantics); native wraps. This now also
-  covers multiplication inside `**` (`i64::pow` panics on debug overflow;
-  `mjrt_pow` wraps) and `sdiv` of `i64::MIN // -1` (VM debug-panics; native
-  UB). Fixtures avoid overflow.
+- **Int/UInt `+ - *` overflow**: *closed by the shared native ABI milestone*
+  (`docs/native-abi.md`) — defined two's-complement wrapping on both
+  backends, including wrapping `**` (VM `wrapping_pow` = native `mjrt_pow`)
+  and the defined `i64::MIN // -1 == i64::MIN` / `MIN % -1 == 0` case (the
+  native lowering sanitizes the `sdiv`/`srem` poison divisor). Pinned by the
+  `assets/ok/pliron_wrap_*` differential fixtures at `O0`/`O1`.
 - **Float `**`**: VM `f64::powf` and native `llvm.pow.f64` both resolve to
   the host libm `pow` — exact match on one host, unspecified across libms.
   Cross-platform bit-exactness is deliberately not claimed.

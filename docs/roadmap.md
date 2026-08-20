@@ -133,9 +133,9 @@ guards on the conformance and round-trip fixture sets (see the artifact rows of
 
 ### 4. Native Backend: Pliron First, Cranelift On Material Failure
 
-The artifact close-out and the Pliron Stage 0/1/2 gates have passed, so the
-shared native target, layout, and runtime ABI milestone below is the default
-next task. Verified MIR is the stable waist, the VM remains the semantic oracle,
+The artifact close-out, the Pliron Stage 0/1/2 gates, and the shared native
+target/layout/runtime-ABI milestone have passed, so Pliron Stage 3 below is
+the default next task. Verified MIR is the stable waist, the VM remains the semantic oracle,
 and native work does not wait for complete standard-library, packaging, or Mojo
 surface parity. Unsupported native behavior rejects with a contextual compile
 diagnostic; it never silently falls back to the VM.
@@ -189,23 +189,17 @@ any residual illegal operation.
 
 #### Shared semantic and ABI rules
 
-Native layout has one owner shared by Pliron, Cranelift, and any later backend.
-Specialized MIR functions map to deterministically mangled native symbols;
-origin and ownership facts erase after validation, while explicit drop and
-cleanup instructions remain executable behavior. References lower to a native
-pointer plus only the runtime metadata their checked type requires. Strings use
-a specified descriptor and constant pool. Aggregates use target-owned layouts,
-never Rust's unspecified `repr(Rust)` layout.
-
-Initially lower errors and `try`/`finally` as tagged outcomes and explicit CFG
-edges so every success, error, return, and cleanup path is differential-testable.
-Do not use platform unwinding until it has a separate semantic, ABI, and
+Implemented and normative in [`docs/native-abi.md`](docs/native-abi.md): one
+layout owner (`src/native/`) shared by Pliron, Cranelift, and any later
+backend; checked build configuration; defined scalar/overflow/conversion
+semantics; deterministic mangling; string/reference/pointer/allocation/
+output/error representations; and the independently versioned `mojito-runtime`
+C ABI (which never exposes the VM's internal `Value`), mechanically checked
+from both the Rust and LLVM sides. Origin and ownership facts erase after
+validation, while explicit drop and cleanup instructions remain executable
+behavior. Errors and `try`/`finally` lower as tagged outcomes and explicit CFG
+edges; platform unwinding stays out until it has its own semantic, ABI, and
 portability specification.
-
-The runtime is a small, independently versioned Rust library with a C ABI. It
-must not expose the VM's internal `Value` representation. Its contract defines
-size, alignment, ownership, nullability, allocation responsibility, failure
-behavior, and ABI-version mismatch handling for every exported symbol.
 
 #### Cross-stage testing and rollback
 
@@ -253,21 +247,16 @@ trap-category differentials in `tests/pliron_backend_test.rs`. See
 `docs/notes/pliron-stage2.md` for the semantics tables, divergence records,
 and the for-range exclusion rationale.
 
-- [ ] **Shared native target, layout, and runtime ABI** — before strings,
-  aggregates, collections, or references become native, define:
-  - target triple, CPU features, optimization level, output kind, and output
-    path as checked build configuration
-  - integer, Bool, floating-point, overflow, conversion, NaN, and signed-zero
-    behavior
-  - size, alignment, padding, aggregate field order, calling convention,
-    parameter/result lowering, and deterministic symbol mangling
-  - string, reference, pointer, allocation, output, and error representations
-  - a versioned runtime C ABI with mechanically checked Rust/LLVM signatures
-    and target-data layout tests
-
-  Acceptance: Rust/runtime and generated native layouts and signatures agree;
-  target-only cross checks work without executing foreign code; runtime symbols
-  carry an inspectable ABI version; and no native ABI depends on VM `Value`.
+The shared native target, layout, and runtime ABI milestone is complete — the
+normative contract lives in [`docs/native-abi.md`](docs/native-abi.md), owned
+in code by `src/native/` (checked build configuration incl. `--target`, the
+layout engine, mangling, and the runtime contract table) and the versioned
+`crates/mojito-runtime` C-ABI library that every produced executable links
+and exposes via the inspectable `mjrt_abi_version` symbol. Integer overflow
+is now defined two's-complement wrapping on both backends (the recorded
+VM/native divergence closed), and Rust-side plus LLVM-side target-only cross
+checks pin the layouts, signatures, data-layout string, and exported symbols
+without executing generated code.
 
 - [ ] **Pliron Stage 3: runtime, strings, aggregates, allocation, and errors** —
   add constant pools, target-layout aggregates, printing, allocation and

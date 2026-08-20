@@ -1,0 +1,17 @@
+[package]
+name = "mojito-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+description = "Mojito's versioned native runtime: the C-ABI library native backends link"
+license = "MIT"
+repository = "https://github.com/bpr/mojito"
+publish = false
+
+# The runtime is independently versioned and must stay dependency-free: it can
+# never depend on the `mojito` crate (which owns the VM `Value` representation)
+# or on any native toolchain. Its exported contract is specified by
+# `mojito::native::rt_abi` and docs/native-abi.md.
+
+[lib]
+crate-type = ["rlib", "staticlib"]

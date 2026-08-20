@@ -59,8 +59,10 @@ fn main() -> ExitCode {
         eprintln!("--emit and --output are only valid with the compile command");
         return ExitCode::FAILURE;
     }
-    if !matches!(command, Some("compile" | "run")) && cli.native_opt.is_some() {
-        eprintln!("--native-opt is only valid with the compile and run commands");
+    if !matches!(command, Some("compile" | "run"))
+        && (cli.native_opt.is_some() || cli.target.is_some())
+    {
+        eprintln!("--native-opt and --target are only valid with the compile and run commands");
         return ExitCode::FAILURE;
     }
     match command {
@@ -97,6 +99,9 @@ struct CliArgs {
     /// `--native-opt LEVEL` for `compile`/`run --backend pliron` (parsed by
     /// the backend; raw here so the default build carries no backend types).
     native_opt: Option<String>,
+    /// `--target TRIPLE` for `compile`/`run --backend pliron` (parsed into
+    /// the checked native target; raw here for the same reason).
+    target: Option<String>,
 }
 
 /// Extract global options from anywhere on the command line. Local imports win,
@@ -108,6 +113,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut emit = None;
     let mut output = None;
     let mut native_opt = None;
+    let mut target = None;
     let mut iter = raw.into_iter();
     while let Some(arg) = iter.next() {
         if let Some(name) = arg.strip_prefix("--backend=") {
@@ -142,6 +148,10 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             native_opt = Some(level.to_string());
         } else if arg == "--native-opt" {
             native_opt = Some(iter.next().ok_or("--native-opt requires a level")?);
+        } else if let Some(triple) = arg.strip_prefix("--target=") {
+            target = Some(triple.to_string());
+        } else if arg == "--target" {
+            target = Some(iter.next().ok_or("--target requires a triple")?);
         } else if arg.starts_with('-') && arg != "-" && !matches!(arg.as_str(), "-h" | "--help") {
             return Err(format!("unknown option '{arg}'"));
         } else {
@@ -158,6 +168,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         emit,
         output,
         native_opt,
+        target,
     })
 }
 
@@ -408,6 +419,7 @@ fn compile_native_module(
     let options = pliron::CompileOptions {
         entries,
         sources: vec![(label, source)],
+        target: native_target(cli)?,
     };
     pliron::compile(mir, &options).map_err(|error| error.display_with_sources(&options.sources))
 }
@@ -418,6 +430,19 @@ fn native_opt_level(cli: &CliArgs) -> Result<mojito::backend::pliron::OptLevel, 
     match cli.native_opt.as_deref() {
         Some(level) => mojito::backend::pliron::OptLevel::parse(level),
         None => Ok(mojito::backend::pliron::OptLevel::O0),
+    }
+}
+
+/// The checked `--target` (default: the build host, when supported).
+#[cfg(feature = "backend-pliron")]
+fn native_target(cli: &CliArgs) -> Result<mojito::native::target::NativeTarget, String> {
+    use mojito::native::target::{NativeTarget, Triple};
+    match cli.target.as_deref() {
+        Some(triple) => Ok(NativeTarget::new(Triple::parse(triple)?)),
+        None => NativeTarget::host().ok_or_else(|| {
+            "this host is not a supported native target; pass an explicit --target TRIPLE"
+                .to_string()
+        }),
     }
 }
 
@@ -524,7 +549,8 @@ fn print_usage() {
          \x20 --backend NAME         select the run backend\n\
          \x20 --emit KIND            compile output: plir|ll|bc|obj|exe (default ll)\n\
          \x20 -o, --output PATH      compile output path (required for bc|obj|exe)\n\
-         \x20 --native-opt LEVEL     native optimization level: 0|1 (default 0)\n\n\
+         \x20 --native-opt LEVEL     native optimization level: 0|1 (default 0)\n\
+         \x20 --target TRIPLE        native target triple (default: the host)\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\

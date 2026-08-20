@@ -15,6 +15,7 @@ pub mod lexer;
 pub mod literal;
 pub mod mir;
 pub mod module;
+pub mod native;
 pub mod origin;
 pub mod parser;
 pub mod runtime;

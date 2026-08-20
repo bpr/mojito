@@ -514,7 +514,7 @@ pub(crate) fn builtin_hash(value: &Value) -> Result<u64, RuntimeError> {
 /// VM-backed compile-time evaluation.
 pub(crate) fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeError> {
     match (op, value) {
-        (PrefixOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
+        (PrefixOp::Neg, Value::Int(n)) => Ok(Value::Int(n.wrapping_neg())),
         (PrefixOp::Neg, Value::Float64(x)) => Ok(Value::Float64(-x)),
         (PrefixOp::Neg, Value::IntLiteral(value)) => Ok(Value::IntLiteral(value.neg())),
         (PrefixOp::Neg, Value::FloatLiteral(value)) => Ok(Value::FloatLiteral(value.neg())),
@@ -1379,10 +1379,12 @@ fn nonzero(y: i64) -> Result<i64, RuntimeError> {
         .ok_or_else(|| RuntimeError::TypeError("integer division or modulo by zero".to_string()))
 }
 
-/// Python/Mojo floor division: round toward negative infinity.
+/// Python/Mojo floor division: round toward negative infinity. The one
+/// overflowing case, `i64::MIN // -1`, is defined to wrap to `i64::MIN`
+/// (its remainder is 0, so no floor adjustment applies).
 fn floor_div(x: i64, y: i64) -> i64 {
-    let q = x / y;
-    let r = x % y;
+    let q = x.wrapping_div(y);
+    let r = x.wrapping_rem(y);
     if r != 0 && ((r < 0) != (y < 0)) {
         q - 1
     } else {
@@ -1397,8 +1399,9 @@ fn nonzero_u(y: u64) -> Result<u64, RuntimeError> {
 }
 
 /// Python/Mojo modulo: the result takes the sign of the divisor.
+/// `i64::MIN % -1` is 0 (see `floor_div` on the wrapped quotient).
 fn floor_mod(x: i64, y: i64) -> i64 {
-    let r = x % y;
+    let r = x.wrapping_rem(y);
     if r != 0 && ((r < 0) != (y < 0)) {
         r + y
     } else {
@@ -1929,12 +1932,15 @@ fn numeric_op(op: InfixOp, a: Num, b: Num) -> Result<Value, RuntimeError> {
 fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
     use InfixOp::*;
     Ok(match op {
-        Add => Value::Int(x + y),
-        Sub => Value::Int(x - y),
-        Mul => Value::Int(x * y),
+        // Int overflow is defined two's-complement wrapping (the native ABI
+        // contract, docs/native-abi.md); `//`, `%`, and `**` keep their
+        // checked zero-divisor/exponent traps.
+        Add => Value::Int(x.wrapping_add(y)),
+        Sub => Value::Int(x.wrapping_sub(y)),
+        Mul => Value::Int(x.wrapping_mul(y)),
         FloorDiv => Value::Int(floor_div(x, nonzero(y)?)),
         Mod => Value::Int(floor_mod(x, nonzero(y)?)),
-        Pow => Value::Int(x.pow(pow_exp(y)?)),
+        Pow => Value::Int(x.wrapping_pow(pow_exp(y)?)),
         Shl => Value::Int(x.wrapping_shl(y as u32)),
         Shr => Value::Int(x.wrapping_shr(y as u32)),
         BitAnd => Value::Int(x & y),
@@ -1957,13 +1963,14 @@ fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
 fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
     use InfixOp::*;
     Ok(match op {
-        Add => Value::UInt(x + y),
-        Sub => Value::UInt(x - y),
-        Mul => Value::UInt(x * y),
+        // UInt overflow wraps mod 2^64 (the native ABI contract).
+        Add => Value::UInt(x.wrapping_add(y)),
+        Sub => Value::UInt(x.wrapping_sub(y)),
+        Mul => Value::UInt(x.wrapping_mul(y)),
         // Unsigned: floor division/modulo are plain `/` and `%`.
         FloorDiv => Value::UInt(x / nonzero_u(y)?),
         Mod => Value::UInt(x % nonzero_u(y)?),
-        Pow => Value::UInt(x.pow(pow_exp(y as i64)?)),
+        Pow => Value::UInt(x.wrapping_pow(pow_exp(y as i64)?)),
         Shl => Value::UInt(x.wrapping_shl(y as u32)),
         Shr => Value::UInt(x.wrapping_shr(y as u32)),
         BitAnd => Value::UInt(x & y),
@@ -2148,6 +2155,38 @@ pub(crate) fn builtin_abs(v: Value) -> Result<Value, RuntimeError> {
 mod tests {
     use super::*;
     use crate::literal::{FloatLiteral, IntLiteral};
+
+    /// Int/UInt overflow is defined two's-complement wrapping (the native ABI
+    /// contract, docs/native-abi.md) — including the single overflowing
+    /// signed-division case and wrapping `**`.
+    #[test]
+    fn integer_overflow_wraps_by_definition() {
+        let int = |value| Value::Int(value);
+        assert_eq!(int_op(InfixOp::Add, i64::MAX, 1).unwrap(), int(i64::MIN));
+        assert_eq!(int_op(InfixOp::Sub, i64::MIN, 1).unwrap(), int(i64::MAX));
+        assert_eq!(int_op(InfixOp::Mul, i64::MAX, 2).unwrap(), int(-2));
+        assert_eq!(
+            int_op(InfixOp::FloorDiv, i64::MIN, -1).unwrap(),
+            int(i64::MIN)
+        );
+        assert_eq!(int_op(InfixOp::Mod, i64::MIN, -1).unwrap(), int(0));
+        assert_eq!(
+            int_op(InfixOp::Pow, 3, 41).unwrap(),
+            int(3i64.wrapping_pow(41))
+        );
+        // Zero divisors still trap; only overflow got defined.
+        assert!(int_op(InfixOp::FloorDiv, 1, 0).is_err());
+        assert!(int_op(InfixOp::Pow, 2, -1).is_err());
+
+        let uint = |value| Value::UInt(value);
+        assert_eq!(uint_op(InfixOp::Sub, 0, 1).unwrap(), uint(u64::MAX));
+        assert_eq!(uint_op(InfixOp::Add, u64::MAX, 1).unwrap(), uint(0));
+        assert_eq!(
+            uint_op(InfixOp::Mul, u64::MAX, 2).unwrap(),
+            uint(u64::MAX - 1)
+        );
+        assert!(uint_op(InfixOp::Mod, 1, 0).is_err());
+    }
 
     #[test]
     fn exact_signed_zero_uses_numeric_equality_abs_and_hashing() {

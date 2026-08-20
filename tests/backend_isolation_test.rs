@@ -12,6 +12,8 @@ fn default_feature_graph_contains_no_llvm_or_pliron() {
     let output = Command::new(cargo)
         .args([
             "tree",
+            "-p",
+            "mojito",
             "--locked",
             "--offline",
             "--no-default-features",

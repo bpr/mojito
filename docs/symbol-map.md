@@ -37,7 +37,8 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Semantic types | `types::{Ty, TyArg, ParamDecl}` | Checker, checked data, MIR declarations, VM coercion. |
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
-| Native compile (experimental, `backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, OptLevel, JitValue, TrapCategory, PlironError}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. |
+| Native compile (experimental, `backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. |
+| Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
 
 ## Source Versus Checked Naming
 
@@ -192,18 +193,39 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 ### VM and Comptime
 
+- `native.rs` (un-gated; normative contract `docs/native-abi.md`) owns the
+  shared native target, layout, and runtime ABI consumed by every native
+  backend: `native/target.rs` (checked build configuration — `Triple` with
+  the pinned data-layout string, `CpuFeatures`, `NativeTarget`,
+  `BuildConfig`, `OptLevel`, `EmitKind`), `native/layout.rs` (the layout
+  owner — `LayoutCx`, `StructFieldIndex`, `Layout`/`StructLayout`/
+  `VariantLayout`, `compose`), `native/mangle.rs` (injective C-safe `mj_`
+  symbol escaping; `exit`/`mjrt_*`/`mjstr.*`/`main` sit outside the mangle
+  image), and `native/rt_abi.rs` (the runtime C ABI contract table —
+  `MJRT_ABI_VERSION`, trap categories, `RT_SYMBOLS`/`RT_DATA_SYMBOLS`/
+  `RT_TYPES`, `type_layout`).
+- `crates/mojito-runtime` (workspace member, independently versioned,
+  dependency-free) implements that contract as the linked `mjrt_*` C ABI:
+  version symbols, `mjrt_alloc`/`mjrt_dealloc`, `mjrt_write_stdout`, the
+  VM-display `mjrt_fmt_*` formatters, and `mjrt_trap`. It must never depend
+  on the `mojito` crate (the VM `Value` stays out of the ABI);
+  `tests/native_abi_test.rs` pins the Rust-side agreement.
 - `backend/pliron.rs` (feature `backend-pliron`) owns the experimental native
   backend: `compile` orchestration (reachable closure, verify, mem2reg/DCE,
-  canonical text), `NativeModule` emission/JIT entry points, `OptLevel`,
-  `JitValue`, and the `TrapCategory` exit-code/VM-message contract. Its
+  canonical text), `NativeModule` emission/JIT entry points,
+  `runtime_declarations` (the contract table's LLVM rendering), `JitValue`,
+  and the `TrapCategory` exit-code/VM-message contract (`OptLevel`/
+  `EmitKind`/`NativeTarget` re-export from `native::target`). Its
   submodules: `backend/pliron/lower.rs` (scalar MIR-to-LLVM-dialect lowering
   over Int/UInt/Float64/Bool — operators, conversions, keyword/default call
-  binding via `call::match_call_slots`, trap guard blocks, the `mjrt_pow`
-  helper, and the exe wrapper), `backend/pliron/mangle.rs` (injective C-safe
-  symbol escaping; `exit`/`mjrt_*`/`main` sit outside the mangle image),
-  `backend/pliron/emit.rs` (LLVM IR/bitcode/object/exe via clang, plus the
-  `opt`-subprocess `O1` pipeline), and `backend/pliron/jit.rs` (ORC LLJIT
-  execution typed by `RetKind`).
+  binding via `call::match_call_slots`, trap guard blocks, the sanitized
+  `MIN // -1` divisor, the `mjrt_pow` helper, and the exe wrapper that
+  references `mjrt_version`),
+  `backend/pliron/emit.rs` (target stamping onto every LLVM module, LLVM
+  IR/bitcode/object/exe via clang `--target`, runtime-archive discovery and
+  linking, plus the `opt`-subprocess `O1` pipeline), and
+  `backend/pliron/jit.rs` (host-only ORC LLJIT execution typed by
+  `RetKind`).
 - `backend/vm.rs` owns the `VmBackend` core: heap, value operations, method-call
   and named-call execution, drops, and formatting. Its remaining methods are
   split across `impl VmBackend` blocks in the submodules below.

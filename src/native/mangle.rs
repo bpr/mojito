@@ -10,12 +10,12 @@
 //! becomes `_u`, and every other byte becomes `_hh` (two lowercase hex
 //! digits). Injective because every `_` in the output starts an escape and
 //! `u` is not a hex digit; the `mj_` prefix keeps mangled names clear of the
-//! synthesized executable wrapper `main` and of the runtime scaffolding the
-//! lowering declares directly — the C `exit` and the reserved `mjrt_*`
-//! helper family (e.g. `mjrt_pow`).
+//! synthesized executable wrapper `main`, the C `exit`, and the reserved
+//! `mjrt_*` runtime namespace — the `mojito-runtime` crate's exports and
+//! backend-emitted helpers (e.g. `mjrt_pow`) alike.
 
 /// Mangle a MIR symbol name into a C-safe native symbol.
-pub(super) fn mangle(name: &str) -> String {
+pub fn mangle(name: &str) -> String {
     let mut out = String::with_capacity(3 + name.len());
     out.push_str("mj_");
     for byte in name.bytes() {

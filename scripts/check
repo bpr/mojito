@@ -6,13 +6,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "==> parity manifest"
 scripts/check-parity-manifest
 
-echo "==> cargo fmt --check"
-cargo fmt --check
+echo "==> cargo fmt --all --check"
+cargo fmt --all --check
 
-echo "==> cargo nextest run"
-# nextest does not run doctests; this crate has none. If doctests are
+echo "==> cargo nextest run --workspace"
+# nextest does not run doctests; this workspace has none. If doctests are
 # ever added, run them separately here (cargo test --doc).
-cargo nextest run
+cargo nextest run --workspace
 
-echo "==> cargo clippy --all-targets -- -D warnings"
-cargo clippy --all-targets -- -D warnings
+echo "==> cargo clippy --workspace --all-targets -- -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings

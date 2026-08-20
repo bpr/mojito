@@ -30,14 +30,23 @@ include = [
     "/roadmap.md",
 ]
 
+[workspace]
+# The root package plus the independently versioned native runtime. The
+# `spikes/` crates deliberately stay outside (each carries its own empty
+# `[workspace]` table) so the default lane never builds LLVM.
+members = ["crates/mojito-runtime"]
+
 [features]
 # Experimental Pliron native backend (roadmap section 4, Stage 1). Requires
 # LLVM 22 dev libraries (llvm-sys 221; discovery via LLVM_SYS_221_PREFIX).
 # The default build must stay free of LLVM: tests/backend_isolation_test.rs
 # guards the default dependency graph. See docs/notes/pliron-stage0.md.
-backend-pliron = ["dep:pliron", "dep:pliron-llvm"]
+backend-pliron = ["dep:pliron", "dep:pliron-llvm", "dep:llvm-sys"]
 
 [dependencies]
+# Direct llvm-sys (same 221/LLVM-22 pin pliron-llvm resolves) powers the
+# target-data layout cross checks in tests/pliron_backend_test.rs.
+llvm-sys = { version = "221", optional = true }
 num-bigint = "0.4.6"
 num-integer = "0.1.46"
 num-rational = "0.4.2"
@@ -49,6 +58,7 @@ pliron-llvm = { version = "=0.17.0", optional = true }
 [dev-dependencies]
 expect-test = "1.5.1"
 libtest-mimic = "0.8.2"
+mojito-runtime = { path = "crates/mojito-runtime" }
 tempfile = "3.20.0"
 
 [[test]]

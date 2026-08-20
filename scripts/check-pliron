@@ -9,6 +9,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 export LLVM_SYS_221_PREFIX="${LLVM_SYS_221_PREFIX:-/usr/lib/llvm-22}"
 
+echo "==> cargo build -p mojito-runtime (native runtime archive)"
+cargo build -p mojito-runtime
+export MOJITO_RUNTIME_LIB="${MOJITO_RUNTIME_LIB:-$PWD/target/debug/libmojito_runtime.a}"
+
 echo "==> cargo fmt --check"
 cargo fmt --check
 

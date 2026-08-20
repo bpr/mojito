@@ -6,22 +6,26 @@ use pliron::context::Context;
 use pliron_llvm::llvm_sys::lljit::LLVMLLJIT;
 use pliron_llvm::llvm_sys::target::initialize_native;
 
+use crate::native::target::NativeTarget;
+
 use super::{JitValue, OptLevel, PlironError, PlironErrorKind, RetKind, emit};
 
 /// JIT-execute a zero-argument compiled function by its native symbol and
 /// return its typed result. `ret` is the compiled function's checked return
 /// kind; an i1 result is read through `u8` with the low bit significant (the
-/// upper bits of the return register are undefined for LLVM `i1`).
+/// upper bits of the return register are undefined for LLVM `i1`). The caller
+/// has already checked that `target` is the host.
 pub(super) fn run_value(
     ctx: &Context,
     module: ModuleOp,
+    target: &NativeTarget,
     symbol: &str,
     ret: RetKind,
     opt: OptLevel,
 ) -> Result<JitValue, PlironError> {
     ensure_native_target()?;
     // The reparse context of the optimized path must outlive the JIT'd call.
-    let (_llvm_ctx, llvm_module) = emit::to_llvm_optimized(ctx, module, opt)?;
+    let (_llvm_ctx, llvm_module) = emit::to_llvm_optimized(ctx, module, target, opt)?;
     let jit = LLVMLLJIT::new_with_default_builder()
         .map_err(|error| jit_error(format!("LLJIT construction: {error}")))?;
     jit.add_module(llvm_module)

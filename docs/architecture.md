@@ -116,13 +116,27 @@ LLVM or MLIR lowering and eBPF are no longer prioritized.
 Native-backend work is isolated from the default build as an invariant: the
 default `mojito` build and `scripts/check` resolve no LLVM or Pliron
 dependency (`tests/backend_isolation_test.rs` guards the default feature
-graph). The experimental Stage 1 backend lives in `src/backend/pliron/`
-behind the optional `backend-pliron` feature — a compile-only path
-(`mojito compile --backend pliron`) consuming the cached post-drop
-`elaborated_mir` artifact, with its own gate (`scripts/check-pliron`, which
-also chains the Stage 0 spike gate). Execution stays on the register VM.
-Dependency pins live in `docs/notes/pliron-stage0.md`; the Stage 1 design
-and recorded VM/native divergence policies in `docs/notes/pliron-stage1.md`.
+graph). The experimental backend lives in `src/backend/pliron/` behind the
+optional `backend-pliron` feature — a compile path
+(`mojito compile --backend pliron`, plus `run --backend pliron` for the
+advertised subset) consuming the cached post-drop `elaborated_mir` artifact,
+with its own gate (`scripts/check-pliron`, which also chains the Stage 0
+spike gate). Production execution stays on the register VM. Dependency pins
+live in `docs/notes/pliron-stage0.md`; the Stage 1/2 designs and recorded
+VM/native divergence policies in `docs/notes/pliron-stage1.md` and
+`docs/notes/pliron-stage2.md`.
+
+The backend-independent half of that work has one owner: the un-gated
+`src/native/` module holds the checked build configuration (target triple
+with a pinned data-layout string, CPU features, optimization level, output
+kind), the layout engine, the injective symbol mangler, and the runtime ABI
+contract table, and the workspace crate `crates/mojito-runtime` implements
+the versioned `mjrt_*` C ABI every produced executable links (never
+depending on the `mojito` crate or the VM's `Value`). The normative contract
+— scalar semantics, layouts, calling convention, reserved symbol namespaces,
+per-symbol runtime rules, and the mechanical Rust/LLVM agreement checks — is
+[`docs/native-abi.md`](native-abi.md); any later backend (Cranelift
+included) consumes the same module and runtime.
 
 ### Source Module Boundaries
 

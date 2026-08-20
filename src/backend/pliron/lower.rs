@@ -55,7 +55,9 @@ use crate::mir::{
 use crate::token::SourceSpan;
 use crate::types::Ty;
 
-use super::{PlironError, PlironErrorKind, RetKind, TrapCategory, mangle};
+use crate::native::mangle;
+
+use super::{PlironError, PlironErrorKind, RetKind, TrapCategory};
 
 /// The callable identity of one reachable function: its mangled symbol,
 /// LLVM-dialect function type, and scalar parameter/result kinds. Built by
@@ -209,8 +211,11 @@ pub(super) fn lower_body(
     lowering.run(ctx, func_op)
 }
 
-/// Synthesize the executable's C `main`: call each (void, zero-arg) callee in
-/// order, then return `0: i32`. Callees are already-mangled native symbols.
+/// Synthesize the executable's C `main`: reference the linked runtime's
+/// version entry point (`mjrt_version`, keeping the inspectable
+/// `mjrt_abi_version` data symbol in every produced binary), call each
+/// (void, zero-arg) callee in order, then return `0: i32`. Callees are
+/// already-mangled native symbols.
 pub(super) fn synthesize_exe_wrapper(
     ctx: &mut Context,
     module: ModuleOp,
@@ -218,6 +223,13 @@ pub(super) fn synthesize_exe_wrapper(
 ) -> Result<(), PlironError> {
     let void = VoidType::get(ctx).to_handle();
     let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+    let version_ty = FuncType::get(ctx, i32_ty, vec![], false);
+    let version = FuncOp::new(
+        ctx,
+        "mjrt_version".try_into().expect("valid identifier"),
+        version_ty,
+    );
+    module.append_operation(ctx, version.get_operation(), 0);
     let wrapper_ty = FuncType::get(ctx, i32_ty, vec![], false);
     let wrapper = FuncOp::new(
         ctx,
@@ -227,6 +239,13 @@ pub(super) fn synthesize_exe_wrapper(
     module.append_operation(ctx, wrapper.get_operation(), 0);
     let entry = wrapper.get_or_create_entry_block(ctx);
 
+    let version_call = CallOp::new(
+        ctx,
+        CallOpCallable::Direct("mjrt_version".try_into().expect("valid identifier")),
+        version_ty,
+        vec![],
+    );
+    version_call.get_operation().insert_at_back(entry, ctx);
     for callee in callees {
         let callee_ty = FuncType::get(ctx, void, vec![], false);
         let identifier: Identifier = callee
@@ -1004,10 +1023,12 @@ impl<'a> FnLowering<'a> {
             }
             InfixOp::FloorDiv => {
                 self.emit_div_zero_guard(ctx, rhs, dest)?;
+                let rhs = self.sanitized_divisor(ctx, dest, lhs, rhs)?;
                 self.lower_floor_div(ctx, dest, lhs, rhs)
             }
             InfixOp::Mod => {
                 self.emit_div_zero_guard(ctx, rhs, dest)?;
+                let rhs = self.sanitized_divisor(ctx, dest, lhs, rhs)?;
                 self.lower_floor_mod(ctx, dest, lhs, rhs)
             }
             InfixOp::Pow => self.lower_pow(ctx, dest, lhs, rhs),
@@ -1330,6 +1351,35 @@ impl<'a> FnLowering<'a> {
             remainder.get_result(ctx),
         );
         self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
+    }
+
+    /// Replace the divisor with `1` in the single overflowing signed case
+    /// (`lhs == i64::MIN && rhs == -1`): LLVM `sdiv`/`srem` are poison there,
+    /// while the ABI defines the wrapped results `i64::MIN` and `0` — exactly
+    /// what the floor expansions produce for a divisor of `1`.
+    fn sanitized_divisor(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        lhs: Value,
+        rhs: Value,
+    ) -> Result<Value, PlironError> {
+        let min = self.int_constant(ctx, i64::MIN);
+        let minus_one = self.int_constant(ctx, -1);
+        let lhs_is_min = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, lhs, min);
+        self.append(ctx, lhs_is_min.get_operation(), Some(dest));
+        let rhs_is_minus_one = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, rhs, minus_one);
+        self.append(ctx, rhs_is_minus_one.get_operation(), Some(dest));
+        let overflowing = AndOp::new(
+            ctx,
+            lhs_is_min.get_result(ctx),
+            rhs_is_minus_one.get_result(ctx),
+        );
+        self.append(ctx, overflowing.get_operation(), Some(dest));
+        let one = self.int_constant(ctx, 1);
+        let safe = SelectOp::new(ctx, overflowing.get_result(ctx), one, rhs);
+        self.append(ctx, safe.get_operation(), Some(dest));
+        Ok(safe.get_result(ctx))
     }
 
     /// `(srem(lhs, rhs) != 0) & ((srem(lhs, rhs) ^ rhs) < 0)` — true exactly
