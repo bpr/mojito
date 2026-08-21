@@ -860,16 +860,16 @@ fn parity_exe_manifest_and_differential() {
     let raises = count("raise-differential");
     let excluded = count("excluded");
     assert!(
-        differential >= 115,
-        "exe-differential coverage unexpectedly shrank: {differential} < 115"
+        differential >= 129,
+        "exe-differential coverage unexpectedly shrank: {differential} < 129"
     );
     assert!(
-        raises >= 2,
-        "raise-differential coverage unexpectedly shrank: {raises} < 2"
+        raises >= 4,
+        "raise-differential coverage unexpectedly shrank: {raises} < 4"
     );
     assert!(
-        excluded <= 157,
-        "excluded coverage unexpectedly grew: {excluded} > 157"
+        excluded <= 149,
+        "excluded coverage unexpectedly grew: {excluded} > 149"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
@@ -930,14 +930,20 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
                 "pliron_fixture.mojo:2:",
             ],
         ),
-        // Production `range(...)` iterates the self-hosted stdlib range
-        // structs (methods, raising `__next__`) — a manifest-recorded
-        // exclusion until the struct/method stage; the rejection surfaces in
-        // the deepest unsupported stdlib callee.
+        // A raising iterator element with a user destructor rejects: the
+        // exhausted edge leaves zeroed element bytes, and running a user
+        // `__deinit__` over them would diverge from the VM's inert `None`.
         (
-            "def compute() -> Int:\n    var s = 0\n    for i in range(4):\n        s = s + i\n    return s\n",
+            "from std.iterable import StopIteration\n\n@fieldwise_init\nstruct Elem(Movable):\n    var v: Int\n\n    def __deinit__(deinit self):\n        pass\n\n@fieldwise_init\nstruct ElemIter:\n    var n: Int\n\n    def __next__(mut self) raises StopIteration -> Elem:\n        if self.n <= 0:\n            raise StopIteration()\n        self.n = self.n - 1\n        return Elem(self.n)\n\n@fieldwise_init\nstruct Elems:\n    var n: Int\n\n    def __iter__(ref self) -> ElemIter:\n        return ElemIter(self.n)\n\ndef compute() -> Int:\n    var s = 0\n    for e in Elems(3):\n        s = s + e.v\n    return s\n",
             &["compute"],
-            &["pliron backend:", "unsupported"],
+            &["iterator element `Elem` with a user destructor"],
+        ),
+        // A raising `__iter__` preparation step stays outside the lowered
+        // chain contract.
+        (
+            "@fieldwise_init\nstruct RIter:\n    var n: Int\n\n    def __len__(self) -> Int:\n        return self.n\n\n    def __next__(mut self) -> Int:\n        self.n = self.n - 1\n        return self.n\n\n@fieldwise_init\nstruct RSrc:\n    var n: Int\n\n    def __iter__(ref self) raises -> RIter:\n        if self.n < 0:\n            raise Error(\"bad\")\n        return RIter(self.n)\n\ndef compute() raises -> Int:\n    var s = 0\n    var src = RSrc(3)\n    for x in src:\n        s = s + x\n    return s\n",
+            &["compute"],
+            &["raising iterator preparation `RSrc.__iter__`"],
         ),
         // Multi-lane SIMD stays excluded until the SIMD slice; width-1
         // scalar aliases lower.
@@ -1019,6 +1025,7 @@ fn lifecycle_event_traces_match_the_vm() {
         "assets/ok/inplace_raises_try.mojo",
         "assets/ok/try_return.mojo",
         "assets/ok/pliron_struct_drop_order.mojo",
+        "assets/ok/pliron_iter_drop_order.mojo",
     ] {
         let src = std::fs::read_to_string(fixture).expect("fixture exists");
         let compiler = Compiler::default();

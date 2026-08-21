@@ -58,10 +58,10 @@ instruction	drop.var	partial	flag-guarded compiled destructors; dynamic-residue 
 instruction	consume.var	supported	clears the initialization flag
 instruction	consume.place	partial	no droppable residual fields
 instruction	unsupported	unsupported	explicit lowering marker; rejects by definition
-instruction	iter.init	unsupported	Stage 5: iterators
-instruction	iter.has_next	unsupported	Stage 5: iterators
-instruction	iter.next	unsupported	Stage 5: iterators
-instruction	iter.try_next	unsupported	Stage 5: iterators
+instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject
+instruction	iter.has_next	partial	bounded nominal `__len__() > 0`; the compiler-private pack fallback rejects
+instruction	iter.next	partial	nominal `__next__(mut self)` aliasing the iterator slot: value results, reference results, and the `CopyIteratorReference` adapter; the pack fallback rejects
+instruction	iter.try_next	partial	tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge; elements with user destructors and reference-yielding raising iterators reject
 type	Int	supported	signless i64
 type	UInt	supported	signless i64; unsigned operator selection
 type	Bool	supported	i1

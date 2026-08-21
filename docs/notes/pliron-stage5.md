@@ -102,3 +102,79 @@ serialized `.mir` bytes unchanged.
   now share `symbol::resolve_callable_symbol` and
   `symbol::resolve_method_symbol`, including abstract receiver retargeting and
   borrowed-iterator alternate probing.
+
+## Iterator protocol (S5.3)
+
+`GetIter`/`HasNext`/`Next`/`TryNext` now lower; raising value-yielding
+iterators run over the tagged-outcome ABI. Design decisions and recorded
+divergences:
+
+- **Mono owns iterator normalization.** A dedicated pre-pass folds every
+  `GetIter` before call rewriting: each `prepare` step resolves through the
+  shared `symbol::resolve_method_symbol` (borrowed-alternate probing
+  included), rewrites to its concrete instance, and the chain's final return
+  type becomes the iterator variable's type — HIR leaves the split
+  `$iterobjN` slot untyped, which was the first diagnostic on 13 fixtures.
+  The pre-pass exists because block order does not put a `GetIter` before
+  the advances that read its slot (comprehension loops interleave).
+  Dynamic `__trait_dispatch.` steps unroll statically against the concrete
+  receiver under the VM's budget of 8, rejecting on non-convergence; an
+  untyped source (a compiler-private pack loop) passes through for the
+  backend's own boundary. `HasNext.method` and `(Try)Next.call.target`
+  retarget the same way, and reachability follows all iterator symbols.
+  Reachability also exposed direct `List.__init__`-style constructor calls:
+  their destination is the `out self`, not the declared `None` return —
+  `infer_call` now binds it as the receiver.
+- **Receiver conventions mirror the VM.** A borrowed (`ref`/`mut`) `__iter__`
+  step aliases the current storage (step 0 aliases the source slot — the
+  VM's reference-handle seam, so borrowing iterators root at the loop
+  frame); a `read` step passes a plain byte copy (the VM's `current.clone()`
+  runs no lifecycle copy); an owned (`var`) step consumes the storage in
+  place, which lands the same user-visible destructor sequence as the VM's
+  clone-then-consume. `__next__` passes the iterator variable's own storage
+  as its `mut self`, so in-place advance is the write-back — and the VM's
+  `rebase_iterator_result` needs no native counterpart: a yielded reference
+  into `self` already points at caller-owned iterator storage. Superseded
+  `read`-step intermediates release invisibly (or reject when they carry
+  destructor work); raising `__iter__` steps and stepless heap-owning
+  splits reject.
+- **TryNext's error edge is statically the StopIteration edge.** MjError
+  carries no type tag, and none is needed: verify pins
+  `call.raises == Some(exhaustion)` and raise effects are single-typed, so
+  any error out of the callee is exactly the caught exhaustion. The VM's
+  "other raise propagates" arm is dynamically unreachable post-check. The
+  exhausted edge frees the caught error's message (LSan-clean), zeroes the
+  ok payload, and joins; `yielded` is the ok-tag comparison. The zeroed
+  element flows through the unconditional `DefVar raw` — release-safe
+  because null-free is a no-op — so elements whose type carries a user
+  `__deinit__` reject until the Collections slice brings real per-field
+  flags. Raising reference-yielding `__next__` (List/Span iterators) keeps
+  the Stage-4 `declare_function` rejection; the residue moved to the S5.5
+  Collections roadmap bullet.
+- **`raise StopIteration()` lowers as a nullary error-struct raise.** A
+  zero-sized error struct materializes an owned MjError spelling the VM's
+  `Display` of the value (`Name()`), giving byte parity for unhandled
+  propagation (`unhandled error: __module$std$iterable$StopIteration()`).
+  The VM's lifecycle log records only `Value::Error` raises, so the native
+  trace stays silent for struct raises.
+- **Bounded protocol.** `HasNext` calls the nominal `__len__` on a plain
+  byte-copied receiver and compares `> 0`; `Next` requires the non-raising
+  concrete target. The compiler-private pack fallbacks (`method: absent`,
+  `call: absent`) reject contextually. The `CopyIteratorReference` adapter
+  consults the concrete signature: a reference-returning target reads
+  through the returned pointer with the VM's lifecycle copy
+  (`copy_aggregate`), a value-returning target passes through.
+- Not pinned by a fixture: the dispatch-unrolling budget rejection (a
+  nine-deep `Iterable` chain is not constructible in reasonable fixture
+  size) and the non-raising concrete-reference `Next` path (every candidate
+  fixture is blocked on List generics until S5.5; the VM oracle covers it
+  when those unblock).
+- **Two latent S5.2 unification gaps surfaced and fixed.** The dest-unify in
+  `infer_call` compared a reference-returning callee's declared referent
+  against the caller's `ref`-typed destination (both spell `Int` — the
+  manifest committed with S5.2 was stale and hid the break); `unify_result`
+  now strips `ref` layers on both sides for every result unification. And a
+  literal-typed argument register (`IntLiteral` displays as `Int`, making
+  the mismatch invisible) failed against the concrete parameter the checker
+  had admitted; `unify` now accepts literal-typed actuals without binding —
+  `MaterializeLiteral` converts the value at the lowering boundary.

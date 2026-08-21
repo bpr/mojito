@@ -218,10 +218,18 @@ impl<'a> Specializer<'a> {
                 )
             })?
             .clone();
-        substitute_function(&mut function, &bindings)?;
+        substitute_function(&mut function, &bindings).map_err(|mut e| {
+            e.function.get_or_insert_with(|| key.template.clone());
+            e
+        })?;
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.blocks);
+        // Iterator normalization first: block order does not put every
+        // `GetIter` before the `HasNext`/`Next`/`TryNext` that reads its
+        // destination (comprehension loops interleave), and the advance
+        // rewrites need the iterator slot types this pass records.
+        self.rewrite_iterator_inits(&key.template, &mut function, &mut blocks)?;
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
         function.blocks = blocks;
         ensure_concrete_function(&key.template, &function)?;
@@ -302,8 +310,14 @@ impl<'a> Specializer<'a> {
                             }
                             continue;
                         }
-                        let (target, bindings, arguments) =
-                            self.infer_call(owner, function, &func.0, None, *dest, args, kwargs)?;
+                        // A direct constructor call's destination is its
+                        // `out self`, not the declared `None` return — bind
+                        // it as the receiver.
+                        let receiver = (func.0.contains(".__init__")
+                            && function.reg_types.contains_key(&dest.0))
+                        .then_some(*dest);
+                        let (target, bindings, arguments) = self
+                            .infer_call(owner, function, &func.0, receiver, *dest, args, kwargs)?;
                         func.0 = self.enqueue(&target, bindings, arguments)?;
                     }
                     MirInstr::MethodCall {
@@ -345,6 +359,42 @@ impl<'a> Specializer<'a> {
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *resolved = Some(concrete);
+                    }
+                    // An untyped iterator slot passes through: it belongs to
+                    // a compiler-private pack loop the backend rejects at its
+                    // own boundary.
+                    MirInstr::HasNext {
+                        iter,
+                        method: Some(method),
+                        ..
+                    } => {
+                        if let Some(receiver) = function.var_tys.get(iter).cloned() {
+                            let (target, _) = self.resolve_iterator_step(
+                                owner,
+                                &receiver,
+                                "__len__",
+                                Some(method),
+                                None,
+                            )?;
+                            *method = target;
+                        }
+                    }
+                    MirInstr::Next {
+                        iter,
+                        call: Some(call),
+                        ..
+                    }
+                    | MirInstr::TryNext { iter, call, .. } => {
+                        if let Some(receiver) = function.var_tys.get(iter).cloned() {
+                            let (target, _) = self.resolve_iterator_step(
+                                owner,
+                                &receiver,
+                                "__next__",
+                                Some(&call.target),
+                                Some(&call.result_ty),
+                            )?;
+                            call.target = target;
+                        }
                     }
                     _ => {}
                 }
@@ -435,7 +485,7 @@ impl<'a> Specializer<'a> {
         if receiver != Some(dest)
             && let Some(actual) = caller.reg_types.get(&dest.0)
         {
-            unify(&declaration.ret_ty, actual, &mut bindings).map_err(|e| {
+            unify_result(&declaration.ret_ty, actual, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing `{target}` return: {e}"),
@@ -445,6 +495,221 @@ impl<'a> Specializer<'a> {
         apply_defaults(&declaration.param_decls, &mut bindings)?;
         let arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
         Ok((target.to_string(), bindings, arguments))
+    }
+
+    /// Walk `blocks` (recursing into `try` regions) folding every `GetIter`
+    /// before the main call rewrite reads iterator slot types.
+    fn rewrite_iterator_inits(
+        &mut self,
+        owner: &str,
+        function: &mut MirFunction,
+        blocks: &mut [MirBlock],
+    ) -> Result<(), MonoError> {
+        for block in blocks {
+            for instruction in &mut block.instrs {
+                match instruction {
+                    MirInstr::Try {
+                        body,
+                        handler,
+                        orelse,
+                        finalbody,
+                        ..
+                    } => {
+                        self.rewrite_iterator_inits(owner, function, body)?;
+                        if let Some((_, blocks)) = handler {
+                            self.rewrite_iterator_inits(owner, function, blocks)?;
+                        }
+                        if let Some(blocks) = orelse {
+                            self.rewrite_iterator_inits(owner, function, blocks)?;
+                        }
+                        if let Some(blocks) = finalbody {
+                            self.rewrite_iterator_inits(owner, function, blocks)?;
+                        }
+                    }
+                    MirInstr::GetIter {
+                        source,
+                        dest,
+                        mode: _,
+                        prepare,
+                    } => {
+                        let (source, dest) = (*source, *dest);
+                        self.rewrite_get_iter(owner, function, source, dest, prepare)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Fold a `GetIter` normalization chain: retarget every `prepare` step to
+    /// its concrete instance, statically unroll dynamic `__trait_dispatch.`
+    /// normalization (the VM repeats that step at runtime until the value has a
+    /// `__next__`; the receiver is concrete here), and record the chain's final
+    /// return type as the iterator variable's type — HIR leaves the split
+    /// `$iterobj` slot untyped.
+    fn rewrite_get_iter(
+        &mut self,
+        owner: &str,
+        function: &mut MirFunction,
+        source: crate::hir::VarId,
+        dest: crate::hir::VarId,
+        prepare: &mut Vec<String>,
+    ) -> Result<(), MonoError> {
+        let Some(mut current) = function.var_tys.get(&source).cloned() else {
+            // An untyped source belongs to a compiler-private pack loop the
+            // backend rejects at its own boundary.
+            return Ok(());
+        };
+        // A borrowed named source binds the slot to a reference; follow it to
+        // the underlying iterable type, as the VM does for name resolution.
+        if let Ty::Ref(reference) = &current {
+            current = (*reference.referent).clone();
+        }
+        let dispatch = prepare
+            .iter()
+            .find(|symbol| symbol.starts_with("__trait_dispatch."))
+            .cloned();
+        for selected in prepare.iter_mut() {
+            let (target, result) =
+                self.resolve_iterator_step(owner, &current, "__iter__", Some(selected), None)?;
+            *selected = target;
+            current = result;
+        }
+        if let Some(selected) = dispatch {
+            let mut budget = 8u32;
+            while !self.has_iterator_next(&current) {
+                if budget == 0 {
+                    return Err(self.error(
+                        Some(owner),
+                        "iterator normalization did not converge within the dispatch budget",
+                    ));
+                }
+                budget -= 1;
+                let (target, result) =
+                    self.resolve_iterator_step(owner, &current, "__iter__", Some(&selected), None)?;
+                prepare.push(target);
+                current = result;
+            }
+        }
+        function.var_tys.insert(dest, current);
+        Ok(())
+    }
+
+    /// Resolve one nullary iterator-protocol operation against a concrete
+    /// receiver type, enqueue the target instance, and return its concrete
+    /// name plus its substituted result type.
+    fn resolve_iterator_step(
+        &mut self,
+        owner: &str,
+        receiver: &Ty,
+        method: &str,
+        selected: Option<&str>,
+        result: Option<&Ty>,
+    ) -> Result<(String, Ty), MonoError> {
+        let Ty::Struct(receiver_name, _) = receiver else {
+            return Err(self.error(
+                Some(owner),
+                format!("iterator `{method}` operation applied to non-struct type `{receiver}`"),
+            ));
+        };
+        let target = crate::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(receiver_name),
+            method,
+            selected,
+            0,
+        );
+        if !self.functions.contains_key(target.as_str()) {
+            return Err(self.error(
+                Some(owner),
+                format!("iterator method `{target}` is missing from the MIR program"),
+            ));
+        }
+        let (bindings, arguments, result) =
+            self.infer_receiver_call(owner, &target, receiver, result)?;
+        let concrete = self.enqueue(&target, bindings, arguments)?;
+        Ok((concrete, result))
+    }
+
+    /// The receiver-typed sibling of [`Self::infer_call`] for nullary method
+    /// calls carried by iterator instructions, which name their receiver as a
+    /// variable slot rather than a register.
+    fn infer_receiver_call(
+        &self,
+        owner: &str,
+        target: &str,
+        receiver: &Ty,
+        result: Option<&Ty>,
+    ) -> Result<(Bindings, Vec<InstanceArg>, Ty), MonoError> {
+        let declaration = self.declarations.get(target).copied().ok_or_else(|| {
+            self.error(
+                Some(owner),
+                format!("callee `{target}` lacks declaration facts"),
+            )
+        })?;
+        let mut bindings = Bindings::default();
+        if let Ty::Struct(receiver_name, arguments) = receiver
+            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
+        {
+            bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
+                self.error(
+                    Some(owner),
+                    format!("monomorphizing receiver for `{target}`: {e}"),
+                )
+            })?;
+        }
+        let receiver_pattern = self
+            .functions
+            .get(target)
+            .and_then(|function| function.param_types.first())
+            .ok_or_else(|| {
+                self.error(
+                    Some(owner),
+                    format!("method `{target}` lacks a receiver type"),
+                )
+            })?;
+        unify(receiver_pattern, receiver, &mut bindings)
+            .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
+        if let Some(result) = result {
+            unify_result(&declaration.ret_ty, result, &mut bindings).map_err(|e| {
+                self.error(
+                    Some(owner),
+                    format!("monomorphizing `{target}` return: {e}"),
+                )
+            })?;
+        }
+        apply_defaults(&declaration.param_decls, &mut bindings)?;
+        let arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
+        let result = substitute_ty(&declaration.ret_ty, &bindings).map_err(|e| {
+            self.error(
+                Some(owner),
+                format!("monomorphizing `{target}` result: {}", e.construct),
+            )
+        })?;
+        Ok((bindings, arguments, result))
+    }
+
+    /// Whether the concrete receiver type resolves a nullary `__next__` — the
+    /// VM's runtime convergence test for dynamic iterator normalization.
+    fn has_iterator_next(&self, receiver: &Ty) -> bool {
+        let Ty::Struct(name, _) = receiver else {
+            return false;
+        };
+        let target = crate::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(name),
+            "__next__",
+            None,
+            0,
+        );
+        self.functions.contains_key(target.as_str())
     }
 
     fn discover_structs(&mut self, owner: &str, function: &MirFunction) -> Result<(), MonoError> {
@@ -606,6 +871,16 @@ fn bind_ty_args(
 fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), String> {
     match pattern {
         Ty::Param { name, .. } => bind_type(name, actual, bindings),
+        // A literal-typed register materializes into whatever concrete
+        // storage the checker admitted (`MaterializeLiteral` converts the
+        // value at the boundary); the pattern constrains nothing here.
+        _ if matches!(
+            actual,
+            Ty::IntLiteral | Ty::FloatLiteral | Ty::StringLiteral
+        ) && pattern != actual =>
+        {
+            Ok(())
+        }
         Ty::Struct(pn, pa) => match actual {
             Ty::Struct(an, _) if nominal_template(pn) == nominal_template(an) && pa.is_empty() => {
                 Ok(())
@@ -640,6 +915,21 @@ fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), Strin
         _ if pattern == actual => Ok(()),
         _ => Err(format!("expected `{pattern}`, found `{actual}`")),
     }
+}
+
+/// Unify a callee's declared result against the caller's checked result type,
+/// stripping `ref` layers on both sides first: a reference-returning call
+/// spells its declared referent and the checked handle with differing layers.
+fn unify_result(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), String> {
+    let mut pattern = pattern;
+    while let Ty::Ref(reference) = pattern {
+        pattern = &reference.referent;
+    }
+    let mut actual = actual;
+    while let Ty::Ref(reference) = actual {
+        actual = &reference.referent;
+    }
+    unify(pattern, actual, bindings)
 }
 
 fn unify_arg(pattern: &TyArg, actual: &TyArg, bindings: &mut Bindings) -> Result<(), String> {
@@ -769,10 +1059,16 @@ fn substitute_instruction(
         }
         | UninitStorageDestroy {
             element: target, ..
-        }
-        | TryNext {
-            exhaustion: target, ..
         } => *target = substitute_ty(target, bindings)?,
+        Next {
+            call: Some(call), ..
+        } => substitute_iterator_call(call, bindings)?,
+        TryNext {
+            call, exhaustion, ..
+        } => {
+            substitute_iterator_call(call, bindings)?;
+            *exhaustion = substitute_ty(exhaustion, bindings)?;
+        }
         DefVar {
             binding_ty: Some(ty),
             ..
@@ -940,6 +1236,16 @@ fn sub_ref_opt(
     if let Some(ty) = ty {
         *ty.referent = substitute_ty(&ty.referent, bindings)?;
     }
+    Ok(())
+}
+
+fn substitute_iterator_call(
+    call: &mut crate::checked::CheckedIteratorCall,
+    bindings: &Bindings,
+) -> Result<(), MonoError> {
+    call.result_ty = substitute_ty(&call.result_ty, bindings)?;
+    sub_opt_ty(&mut call.raises, bindings)?;
+    sub_ref_opt(&mut call.reference_result, bindings)?;
     Ok(())
 }
 
@@ -1214,6 +1520,214 @@ fn nominal_template(name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn specialized_main(source: &str) -> SpecializedProgram {
+        let compiler = crate::Compiler::default().with_snippet_module_scope();
+        let compiled = compiler
+            .compile_source(source, std::path::Path::new("mono_test.mojo"))
+            .expect("compile iterator program");
+        specialize(compiled.elaborated_mir(), &["main".to_string()])
+            .expect("specialize iterator program")
+    }
+
+    fn instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
+        let mut result = Vec::new();
+        for block in blocks {
+            for instruction in &block.instrs {
+                if let MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } = instruction
+                {
+                    result.extend(instructions(body));
+                    if let Some((_, blocks)) = handler {
+                        result.extend(instructions(blocks));
+                    }
+                    if let Some(blocks) = orelse {
+                        result.extend(instructions(blocks));
+                    }
+                    if let Some(blocks) = finalbody {
+                        result.extend(instructions(blocks));
+                    }
+                } else {
+                    result.push(instruction);
+                }
+            }
+        }
+        result
+    }
+
+    fn function<'a>(program: &'a SpecializedProgram, name: &str) -> &'a MirFunction {
+        &program
+            .program
+            .functions
+            .iter()
+            .find(|(known, _)| known == name)
+            .unwrap_or_else(|| panic!("specialized program lacks `{name}`"))
+            .1
+    }
+
+    #[test]
+    fn bounded_user_iterator_types_the_split_slot_and_retargets_its_operations() {
+        let source = "@fieldwise_init\n\
+                      struct RangeIter:\n\
+                      \x20   var cur: Int\n\
+                      \x20   var stop: Int\n\
+                      \n\
+                      \x20   def __len__(self) -> Int:\n\
+                      \x20       return self.stop - self.cur\n\
+                      \n\
+                      \x20   def __next__(mut self) -> Int:\n\
+                      \x20       var v: Int = self.cur\n\
+                      \x20       self.cur = self.cur + 1\n\
+                      \x20       return v\n\
+                      \n\
+                      @fieldwise_init\n\
+                      struct Countdown:\n\
+                      \x20   var n: Int\n\
+                      \n\
+                      \x20   def __iter__(self) -> RangeIter:\n\
+                      \x20       return RangeIter(0, self.n)\n\
+                      \n\
+                      def main():\n\
+                      \x20   var total: Int = 0\n\
+                      \x20   for x in Countdown(5):\n\
+                      \x20       total = total + x\n\
+                      \x20   print(total)\n";
+        let specialized = specialized_main(source);
+        let main = function(&specialized, "main");
+        let instrs = instructions(&main.blocks);
+        let (dest, prepare) = instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::GetIter { dest, prepare, .. } => Some((*dest, prepare)),
+                _ => None,
+            })
+            .expect("main normalizes its iterable");
+        assert!(
+            matches!(main.var_tys.get(&dest), Some(Ty::Struct(name, _)) if name == "RangeIter"),
+            "the split iterator slot must be typed by the prepare chain: {:?}",
+            main.var_tys.get(&dest)
+        );
+        for step in prepare {
+            assert!(
+                specialized
+                    .program
+                    .functions
+                    .iter()
+                    .any(|(name, _)| name == step),
+                "prepare step `{step}` must name a specialized function"
+            );
+        }
+        let method = instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::HasNext {
+                    method: Some(method),
+                    ..
+                } => Some(method),
+                _ => None,
+            })
+            .expect("bounded iteration reads a length method");
+        assert!(
+            specialized
+                .program
+                .functions
+                .iter()
+                .any(|(name, _)| name == method),
+            "`{method}` must name a specialized function"
+        );
+        let target = instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Next {
+                    call: Some(call), ..
+                } => Some(&call.target),
+                _ => None,
+            })
+            .expect("bounded iteration advances through `__next__`");
+        assert!(
+            specialized
+                .program
+                .functions
+                .iter()
+                .any(|(name, _)| name == target),
+            "`{target}` must name a specialized function"
+        );
+    }
+
+    #[test]
+    fn raising_range_iteration_types_the_slot_and_reaches_its_operations() {
+        let specialized =
+            specialized_main("def main():\n    for x in range(3):\n        print(x)\n");
+        let main = function(&specialized, "main");
+        let instrs = instructions(&main.blocks);
+        let dest = instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::GetIter { dest, .. } => Some(*dest),
+                _ => None,
+            })
+            .expect("range iteration normalizes its iterable");
+        assert!(
+            matches!(main.var_tys.get(&dest), Some(Ty::Struct(..))),
+            "the range iterator slot must be struct-typed: {:?}",
+            main.var_tys.get(&dest)
+        );
+        let call = instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::TryNext { call, .. } => Some(call),
+                _ => None,
+            })
+            .expect("range iteration advances through a raising `__next__`");
+        assert!(
+            specialized
+                .program
+                .functions
+                .iter()
+                .any(|(name, _)| name == &call.target),
+            "`{}` must name a specialized function",
+            call.target
+        );
+    }
+
+    #[test]
+    fn generic_dispatch_iteration_unrolls_to_a_typed_concrete_chain() {
+        let source = include_str!("../../assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo");
+        let specialized = specialized_main(source);
+        let first_count = specialized
+            .program
+            .functions
+            .iter()
+            .find(|(name, _)| name.starts_with("first_count"))
+            .expect("the generic loop body was specialized");
+        let instrs = instructions(&first_count.1.blocks);
+        let (dest, prepare) = instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::GetIter { dest, prepare, .. } => Some((*dest, prepare)),
+                _ => None,
+            })
+            .expect("the generic loop normalizes its iterable");
+        assert!(
+            !prepare
+                .iter()
+                .any(|step| step.starts_with("__trait_dispatch.")),
+            "dispatch steps must resolve statically post-mono: {prepare:?}"
+        );
+        assert!(
+            matches!(
+                first_count.1.var_tys.get(&dest),
+                Some(Ty::Struct(name, _)) if name.starts_with("CountIter")
+            ),
+            "the dispatched iterator slot must be concretely typed: {:?}",
+            first_count.1.var_tys.get(&dest)
+        );
+    }
 
     #[test]
     fn structural_inference_rejects_conflicting_solutions() {

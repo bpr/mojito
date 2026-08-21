@@ -8,6 +8,28 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pliron Stage 5 slice 3 — the iterator protocol: native `for` loops over user
+  iterators and the scalar ranges. Monomorphization folds each `GetIter`
+  prepare chain (typing the split iterator slot, retargeting `__iter__`/
+  `__len__`/`__next__` symbols to concrete instances, and statically unrolling
+  dynamic trait dispatch under the VM's budget), the bounded `__len__`/
+  `__next__(mut self)` protocol advances the iterator slot in place, raising
+  iterators run over the tagged-outcome ABI with a statically typed
+  StopIteration exhausted edge, the `CopyIteratorReference` adapter
+  lifecycle-copies through concrete reference returns, and
+  `raise StopIteration()` lowers nullary error structs to owned `MjError`s
+  with byte-exact unhandled messages. Elements with user destructors and
+  raising reference-yielding `__next__` (List/Span iterators) reject until the
+  Collections slice. New `pliron_iter_*`/`pliron_raise_iter_*` fixtures join
+  the exe, raise, ASan, and lifecycle-trace gates; the parity manifest's
+  exe floor and exclusion ceiling ratchet accordingly (116→129
+  exe-differential, 158→149 excluded, 2→4 raise-differential). The slice
+  also fixes two latent monomorphization unification gaps: a
+  reference-returning call's declared referent now unifies with the
+  caller's `ref` handle (restoring `pliron_reference_write_back`), and
+  literal-typed argument registers unify with the concrete storage the
+  checker admitted (restoring `implicit_conversion`).
+
 - Pliron Stage 5 slice 2 adds backend-private monomorphization below the stable
   MIR waist. Native compilation now discovers concrete generic function,
   method, struct, constructor, and lifecycle instances from entry-reachable MIR,

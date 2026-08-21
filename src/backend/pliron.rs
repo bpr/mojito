@@ -732,17 +732,27 @@ fn visit_call_edges<'p>(
                 }
                 continue;
             }
-            let target = match instr {
+            let mut targets: Vec<&'p str> = Vec::new();
+            let push_named = |targets: &mut Vec<&'p str>, name: &str| {
+                if let Some((callee, _)) = functions.get_key_value(name) {
+                    targets.push(*callee);
+                }
+            };
+            match instr {
                 // Intercepted allocation entry points lower as runtime
                 // intrinsics; their element-erased stdlib bodies must not
                 // be declared.
-                MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => None,
+                MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => {}
                 MirInstr::Call {
                     func, args, kwargs, ..
                 } => match functions.get_key_value(func.0.as_str()) {
-                    Some((callee, _)) => Some(*callee),
+                    Some((callee, _)) => targets.push(*callee),
                     None => {
-                        constructor_init_target(functions, structs, &func.0, args.len(), kwargs)
+                        if let Some(callee) =
+                            constructor_init_target(functions, structs, &func.0, args.len(), kwargs)
+                        {
+                            targets.push(callee);
+                        }
                     }
                 },
                 // Pointer-receiver methods dispatch to runtime
@@ -752,20 +762,32 @@ fn visit_call_edges<'p>(
                     resolved: Some(resolved),
                     ..
                 } => {
-                    if matches!(function.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
-                        None
-                    } else {
-                        functions
-                            .get_key_value(resolved.as_str())
-                            .map(|(callee, _)| *callee)
+                    if !matches!(function.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
+                        push_named(&mut targets, resolved);
                     }
                 }
-                _ => None,
-            };
-            if let Some(callee) = target
-                && reachable.insert(callee)
-            {
-                queue.push_back(callee);
+                // Iterator instructions carry their targets as symbols rather
+                // than call edges; monomorphization has already retargeted
+                // them to concrete instances.
+                MirInstr::GetIter { prepare, .. } => {
+                    for step in prepare {
+                        push_named(&mut targets, step);
+                    }
+                }
+                MirInstr::HasNext {
+                    method: Some(method),
+                    ..
+                } => push_named(&mut targets, method),
+                MirInstr::Next {
+                    call: Some(call), ..
+                }
+                | MirInstr::TryNext { call, .. } => push_named(&mut targets, &call.target),
+                _ => {}
+            }
+            for callee in targets {
+                if reachable.insert(callee) {
+                    queue.push_back(callee);
+                }
             }
         }
     }

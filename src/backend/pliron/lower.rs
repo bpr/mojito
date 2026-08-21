@@ -1286,6 +1286,19 @@ impl<'a> FnLowering<'a> {
             }
             // Everything below is outside the supported subset. Every variant
             // is named so that new instructions force a decision here.
+            MirInstr::HasNext { dest, iter, method } => {
+                self.lower_has_next(ctx, *dest, *iter, method.as_deref())
+            }
+            MirInstr::Next { dest, iter, call } => {
+                self.lower_next(ctx, *dest, *iter, call.as_ref())
+            }
+            MirInstr::TryNext {
+                dest,
+                yielded,
+                iter,
+                call,
+                exhaustion: _,
+            } => self.lower_try_next(ctx, *dest, *yielded, *iter, call),
             MirInstr::MakeClosure { dest, .. }
             | MirInstr::CallIndirect { dest, .. }
             | MirInstr::Index { dest, .. }
@@ -1299,10 +1312,7 @@ impl<'a> FnLowering<'a> {
             | MirInstr::SimdShuffle { dest, .. }
             | MirInstr::PointerStorageTake { dest, .. }
             | MirInstr::UninitStorage { dest, .. }
-            | MirInstr::UninitStorageTake { dest, .. }
-            | MirInstr::HasNext { dest, .. }
-            | MirInstr::Next { dest, .. }
-            | MirInstr::TryNext { dest, .. } => {
+            | MirInstr::UninitStorageTake { dest, .. } => {
                 Err(self.unsupported_reg(format!("instruction `{}`", instr_name(instr)), *dest))
             }
             MirInstr::MakeSimd {
@@ -1332,8 +1342,13 @@ impl<'a> FnLowering<'a> {
                 finalbody.as_deref(),
                 cleanup,
             ),
-            MirInstr::GetIter { .. }
-            | MirInstr::VariantSet { .. }
+            MirInstr::GetIter {
+                source,
+                dest,
+                mode: _,
+                prepare,
+            } => self.lower_get_iter(ctx, *source, *dest, prepare),
+            MirInstr::VariantSet { .. }
             | MirInstr::VariantSetInitWith { .. }
             | MirInstr::VariantDeinitWith { .. }
             | MirInstr::MultiSet { .. }
@@ -2883,6 +2898,430 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
+    /// `GetIter`: normalize the iterable variable through its checker-selected
+    /// (and mono-retargeted) `__iter__` chain into the iterator variable.
+    /// Receiver conventions mirror the VM: a borrowed (`ref`/`mut`) step
+    /// aliases the current storage — for step 0 that is the source slot, the
+    /// VM's reference-handle seam, so a borrowing iterator roots at the loop
+    /// frame — a `read` step passes a plain byte copy (the VM's
+    /// `current.clone()`, no lifecycle copy), and an owned (`var`) step
+    /// consumes the current storage in place.
+    fn lower_get_iter(
+        &mut self,
+        ctx: &mut Context,
+        source: u32,
+        dest: u32,
+        prepare: &[String],
+    ) -> Result<(), PlironError> {
+        if prepare.is_empty() && source == dest {
+            // Identity normalization: the slot already holds the iterator.
+            return Ok(());
+        }
+        let LowerTy::Aggregate {
+            layout: dest_layout,
+            ..
+        } = self.var_lower_ty(dest)?
+        else {
+            return Err(self.unsupported("non-aggregate iterator variable".into(), None));
+        };
+        // A borrowed named source binds its slot to a reference handle; load
+        // it to reach the iterable's storage, as the VM dereferences for
+        // method resolution.
+        let source_ty = self.func.var_tys.get(&source).cloned().ok_or_else(|| {
+            self.unsupported(
+                format!(
+                    "untyped variable `{}`",
+                    self.func
+                        .var_names
+                        .get(source as usize)
+                        .map(String::as_str)
+                        .unwrap_or("?")
+                ),
+                None,
+            )
+        })?;
+        let (mut current, mut current_ty) = if let Ty::Ref(reference) = &source_ty {
+            let handle = ScalarTy::Ptr.handle(ctx);
+            let load = LoadOp::new(ctx, self.var_slots[source as usize], handle);
+            self.append(ctx, load.get_operation(), None);
+            (load.get_result(ctx), (*reference.referent).clone())
+        } else {
+            (self.var_slots[source as usize], source_ty)
+        };
+        // Whether `current` is a chain temporary this instruction owns (the
+        // source variable owns its own storage).
+        let mut owns_current = false;
+        for selected in prepare {
+            let Some(signature) = self.signatures.get(selected) else {
+                return Err(self.unsupported(
+                    format!("iterator preparation via uncompiled `{selected}`"),
+                    None,
+                ));
+            };
+            if signature.outcome.is_some() {
+                return Err(
+                    self.unsupported(format!("raising iterator preparation `{selected}`"), None)
+                );
+            }
+            let Some(receiver_param) = signature.params.first().cloned() else {
+                return Err(self.unsupported(
+                    format!("iterator preparation `{selected}` without a receiver"),
+                    None,
+                ));
+            };
+            let Some(result_layout) = signature.sret else {
+                return Err(self.unsupported(
+                    format!("iterator preparation `{selected}` without an aggregate result"),
+                    None,
+                ));
+            };
+            let callee: Identifier = signature
+                .mangled
+                .as_str()
+                .try_into()
+                .expect("mangled names are identifier-safe");
+            let func_ty = signature.func_ty;
+            let borrowed = signature.ref_params.first().copied().unwrap_or(false)
+                || matches!(
+                    self.declarations
+                        .get(selected)
+                        .and_then(|decl| decl.receiver_convention.as_ref()),
+                    Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
+                );
+            let owned = signature.owned_params.first().copied().unwrap_or(false);
+            let (receiver, release_current) = if borrowed || owned {
+                // Aliased or consumed in place; a consumed chain temporary
+                // needs no release (the callee destroyed it).
+                (current, false)
+            } else {
+                let LowerTy::Aggregate { layout, .. } = receiver_param else {
+                    return Err(self.unsupported(
+                        format!("iterator preparation `{selected}` on a scalar receiver"),
+                        None,
+                    ));
+                };
+                let copy = self.entry_alloca(ctx, layout.size, layout.align);
+                self.mem_copy(ctx, copy, current, layout.size, Reg(u32::MAX));
+                (copy, owns_current)
+            };
+            let result = self.entry_alloca(ctx, result_layout.size, result_layout.align);
+            let call = CallOp::new(
+                ctx,
+                CallOpCallable::Direct(callee),
+                func_ty,
+                vec![result, receiver],
+            );
+            self.append(ctx, call.get_operation(), None);
+            if release_current {
+                // The VM's superseded intermediate drops silently (no user
+                // destructor); free its heap invisibly or reject.
+                if self.owns_heap(&current_ty) {
+                    if self.releasable(&current_ty) {
+                        self.emit_release_storage(ctx, current, &current_ty)?;
+                    } else {
+                        return Err(self.unsupported(
+                            format!(
+                                "iterator preparation abandoning `{current_ty}` with destructor work"
+                            ),
+                            None,
+                        ));
+                    }
+                }
+            }
+            current = result;
+            current_ty = self
+                .declarations
+                .get(selected)
+                .map(|decl| decl.ret_ty.clone())
+                .ok_or_else(|| {
+                    self.unsupported(
+                        format!("iterator preparation `{selected}` without declaration facts"),
+                        None,
+                    )
+                })?;
+            owns_current = true;
+        }
+        if prepare.is_empty() && self.owns_heap(&current_ty) {
+            // A stepless split binds a plain clone of the source; a byte copy
+            // of heap-owning storage would double-release at the two drops.
+            return Err(self.unsupported(
+                format!("borrowed iteration of `{current_ty}` without a preparation step"),
+                None,
+            ));
+        }
+        self.mem_copy(
+            ctx,
+            self.var_slots[dest as usize],
+            current,
+            dest_layout.size,
+            Reg(u32::MAX),
+        );
+        self.set_drop_flag(ctx, dest, true);
+        Ok(())
+    }
+
+    /// `HasNext`: the bounded protocol's pure length read — call the
+    /// iterator's `__len__` and compare greater-than-zero. The receiver
+    /// passes as a plain byte copy (the VM clones its value for the call).
+    fn lower_has_next(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        iter: u32,
+        method: Option<&str>,
+    ) -> Result<(), PlironError> {
+        let Some(method) = method else {
+            // Compiler-private pack/comptime storage never reaches the
+            // native path with a nominal method.
+            return Err(self.unsupported_reg("method-free iterator length read".into(), dest));
+        };
+        let Some(signature) = self.signatures.get(method) else {
+            return Err(
+                self.unsupported_reg(format!("iterator length via uncompiled `{method}`"), dest)
+            );
+        };
+        if signature.outcome.is_some() || signature.sret.is_some() {
+            return Err(
+                self.unsupported_reg(format!("iterator length contract of `{method}`"), dest)
+            );
+        }
+        if signature.ret != RetKind::I64 {
+            return Err(self.unsupported_reg(format!("iterator length result of `{method}`"), dest));
+        }
+        let Some(LowerTy::Aggregate { layout, .. }) = signature.params.first().cloned() else {
+            return Err(
+                self.unsupported_reg(format!("iterator length receiver of `{method}`"), dest)
+            );
+        };
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let receiver = self.entry_alloca(ctx, layout.size, layout.align);
+        self.mem_copy(
+            ctx,
+            receiver,
+            self.var_slots[iter as usize],
+            layout.size,
+            dest,
+        );
+        let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, vec![receiver]);
+        self.append(ctx, call.get_operation(), Some(dest));
+        let zero = self.int_constant(ctx, 0);
+        let has_next = ICmpOp::new(ctx, ICmpPredicateAttr::SGT, call.get_result(ctx), zero);
+        self.define(
+            ctx,
+            dest,
+            has_next.get_operation(),
+            has_next.get_result(ctx),
+        )
+    }
+
+    /// `Next`: advance the iterator in place through its non-raising
+    /// `__next__(mut self)`. The receiver operand is the iterator variable's
+    /// own storage, so the mutation is the write-back; a reference result
+    /// binds the returned place pointer, and the `CopyIteratorReference`
+    /// adapter reads through it with the VM's lifecycle copy.
+    fn lower_next(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        iter: u32,
+        call: Option<&crate::checked::CheckedIteratorCall>,
+    ) -> Result<(), PlironError> {
+        let Some(call) = call else {
+            return Err(self.unsupported_reg("method-free iterator advance".into(), dest));
+        };
+        let signature = self.iterator_next_signature(&call.target, dest)?;
+        if signature.outcome.is_some() {
+            return Err(self.unsupported_reg(
+                format!("raising bounded `__next__` `{}`", call.target),
+                dest,
+            ));
+        }
+        let receiver = self.var_slots[iter as usize];
+        if call.result_adapter.is_some() && signature.ret == RetKind::Ptr {
+            // The abstract call promised a value; the concrete target returns
+            // a reference — read through it and lifecycle-copy the element.
+            let callee: Identifier = signature
+                .mangled
+                .as_str()
+                .try_into()
+                .expect("mangled names are identifier-safe");
+            let func_ty = signature.func_ty;
+            let call_op = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, vec![receiver]);
+            self.append(ctx, call_op.get_operation(), Some(dest));
+            let element = call_op.get_result(ctx);
+            return match lower_ty(
+                self.name,
+                &call.result_ty,
+                &self.layout,
+                self.reg_span(dest),
+            )? {
+                LowerTy::Scalar(scalar) => {
+                    let handle = scalar.handle(ctx);
+                    let load = LoadOp::new(ctx, element, handle);
+                    self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
+                }
+                LowerTy::Aggregate { ty, layout } => {
+                    self.copy_aggregate(ctx, dest, &ty, layout, element)
+                }
+                LowerTy::ZeroSized => {
+                    self.erased.insert(dest.0);
+                    Ok(())
+                }
+            };
+        }
+        self.emit_bound_call(ctx, dest, &call.target, vec![receiver])
+    }
+
+    /// `TryNext`: advance through the raising `__next__` over the tagged
+    /// outcome. The error edge is statically the exhaustion edge — the
+    /// checker pins `call.raises == Some(exhaustion)`, so any raise out of
+    /// the callee is exactly the caught `StopIteration` — it releases the
+    /// caught error's message and zeroes the ok payload, leaving `dest`
+    /// inert. `yielded` is the ok-tag comparison.
+    fn lower_try_next(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        yielded: Reg,
+        iter: u32,
+        call: &crate::checked::CheckedIteratorCall,
+    ) -> Result<(), PlironError> {
+        let signature = self.iterator_next_signature(&call.target, dest)?;
+        let Some(outcome) = signature.outcome.clone() else {
+            return Err(self.unsupported_reg(
+                format!(
+                    "non-raising `__next__` `{}` on the raising path",
+                    call.target
+                ),
+                dest,
+            ));
+        };
+        if signature.ret == RetKind::Ptr || call.reference_result.is_some() {
+            // Unreachable in practice: a raising reference-returning callee
+            // already rejected at declaration.
+            return Err(self.unsupported_reg(
+                format!("reference-yielding raising `__next__` `{}`", call.target),
+                dest,
+            ));
+        }
+        // The exhausted edge leaves zeroed element bytes in `dest`; releasing
+        // zeroed heap fields is a null-free no-op, but a user destructor
+        // observing zeroed fields would diverge from the VM's inert `None`.
+        if self.has_nested_lifecycle(&call.result_ty, "__deinit__") {
+            return Err(self.unsupported_reg(
+                format!(
+                    "iterator element `{}` with a user destructor",
+                    call.result_ty
+                ),
+                dest,
+            ));
+        }
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let storage = self.entry_alloca(ctx, outcome.layout.size, outcome.layout.align);
+        let receiver = self.var_slots[iter as usize];
+        let call_op = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            vec![storage, receiver],
+        );
+        self.append(ctx, call_op.get_operation(), Some(dest));
+        let i32_handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        let tag = LoadOp::new(ctx, storage, i32_handle);
+        self.append(ctx, tag.get_operation(), Some(dest));
+        let ok_tag = self.tag_constant(ctx, crate::native::rt_abi::MJ_TAG_OK);
+        let is_ok = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), ok_tag);
+        self.define(ctx, yielded, is_ok.get_operation(), is_ok.get_result(ctx))?;
+        let region = self.region.expect("lowering is inside a function");
+        let exhausted_block = BasicBlock::new(ctx, None, vec![]);
+        exhausted_block.insert_at_back(region, ctx);
+        let join_block = BasicBlock::new(ctx, None, vec![]);
+        join_block.insert_at_back(region, ctx);
+        let branch = CondBrOp::new(
+            ctx,
+            is_ok.get_result(ctx),
+            join_block,
+            vec![],
+            exhausted_block,
+            vec![],
+        );
+        self.append(ctx, branch.get_operation(), Some(dest));
+        self.current = Some(exhausted_block);
+        let err_address = self.offset_address(ctx, storage, outcome.err_offset);
+        self.emit_release_storage(ctx, err_address, &Ty::Error)?;
+        let ok_size = match &outcome.ok {
+            LowerTy::ZeroSized => 0,
+            _ => {
+                self.layout
+                    .layout_of(&call.result_ty)
+                    .map_err(|error| {
+                        self.unsupported_reg(format!("iterator element layout ({error})"), dest)
+                    })?
+                    .size
+            }
+        };
+        if ok_size > 0 {
+            let ok_address = self.offset_address(ctx, storage, outcome.ok_offset);
+            self.mem_zero(ctx, ok_address, ok_size);
+        }
+        let jump = BrOp::new(ctx, join_block, vec![]);
+        self.append(ctx, jump.get_operation(), None);
+        self.current = Some(join_block);
+        match outcome.ok {
+            LowerTy::Scalar(scalar) => {
+                let address = self.offset_address(ctx, storage, outcome.ok_offset);
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, address, handle);
+                self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
+            }
+            LowerTy::Aggregate { .. } => {
+                let address = self.offset_address(ctx, storage, outcome.ok_offset);
+                // Deliberately not an owned temporary: the following
+                // `DefVar` copies the element out, and the zeroed exhausted
+                // bytes must never release.
+                self.reg_values.insert(dest.0, address);
+                Ok(())
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+                Ok(())
+            }
+        }
+    }
+
+    /// The compiled signature of an iterator `__next__` target, requiring the
+    /// VM's `mut self` receiver contract.
+    fn iterator_next_signature(
+        &self,
+        target: &str,
+        dest: Reg,
+    ) -> Result<&FnSignature, PlironError> {
+        if !matches!(
+            self.declarations
+                .get(target)
+                .and_then(|decl| decl.receiver_convention.as_ref()),
+            Some(crate::ast::ArgConvention::Mut)
+        ) {
+            return Err(self.unsupported_reg(
+                format!("iterator `__next__` `{target}` without a `mut self` receiver"),
+                dest,
+            ));
+        }
+        self.signatures
+            .get(target)
+            .ok_or_else(|| self.unsupported_reg(format!("call to uncompiled `{target}`"), dest))
+    }
+
     /// A constructor call to declared struct `name`: the fieldwise copy form
     /// (`Type(copy=value)`), the compiled `__init__` overload with fresh
     /// storage as its `out self`, or fieldwise per-field stores — the VM's
@@ -3401,6 +3840,26 @@ impl<'a> FnLowering<'a> {
                 self.owned_temps.remove(&src.0);
                 Ok(())
             }
+            // A nullary error struct (`raise StopIteration()`) carries no
+            // runtime payload; its owned message is the VM's `Display` of the
+            // value, `Name()`. Structs with fields keep rejecting: their
+            // display embeds runtime field values.
+            Some(ty @ Ty::Struct(name, _))
+                if self
+                    .layout
+                    .layout_of(ty)
+                    .is_ok_and(|layout| layout.size == 0) =>
+            {
+                let message = format!("{name}()").into_bytes();
+                let len = message.len() as u64;
+                let len_value = self.uint_constant(ctx, len);
+                let data = self.emit_alloc(ctx, len_value, 1, src);
+                let global = self.shared.intern_string(ctx, &message);
+                let literal = self.global_address(ctx, &global, src);
+                self.mem_copy(ctx, data, literal, len, src);
+                self.store_string_fields(ctx, storage, data, len_value, len_value, src);
+                Ok(())
+            }
             _ => Err(self.unsupported_reg(format!("raised value in register %r{}", src.0), src)),
         }
     }
@@ -3453,7 +3912,11 @@ impl<'a> FnLowering<'a> {
     fn lower_raise(&mut self, ctx: &mut Context, src: Reg) -> Result<(), PlironError> {
         let err_slot = self.ensure_err_slot(ctx);
         self.store_error_into(ctx, err_slot, src)?;
-        if self.trace_lifecycle {
+        // The VM's lifecycle log records only `Value::Error` raises; a raised
+        // error struct (`raise StopIteration()`) stays silent there.
+        let struct_raise = matches!(self.func.reg_types.get(&src.0), Some(Ty::Struct(name, _))
+            if !crate::symbol::is_stdlib_string_struct(name));
+        if self.trace_lifecycle && !struct_raise {
             self.emit_trace_err_slot(ctx, crate::native::rt_abi::TRACE_RAISE);
         }
         // A raise inside a finalbody overrides the pending outcome; the VM

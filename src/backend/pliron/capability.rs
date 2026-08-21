@@ -321,23 +321,23 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "iter.init",
-        CapabilityStatus::Unsupported,
-        "Stage 5: iterators",
+        CapabilityStatus::Partial,
+        "concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject",
     ),
     (
         "iter.has_next",
-        CapabilityStatus::Unsupported,
-        "Stage 5: iterators",
+        CapabilityStatus::Partial,
+        "bounded nominal `__len__() > 0`; the compiler-private pack fallback rejects",
     ),
     (
         "iter.next",
-        CapabilityStatus::Unsupported,
-        "Stage 5: iterators",
+        CapabilityStatus::Partial,
+        "nominal `__next__(mut self)` aliasing the iterator slot: value results, reference results, and the `CopyIteratorReference` adapter; the pack fallback rejects",
     ),
     (
         "iter.try_next",
-        CapabilityStatus::Unsupported,
-        "Stage 5: iterators",
+        CapabilityStatus::Partial,
+        "tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge; elements with user destructors and reference-yielding raising iterators reject",
     ),
 ];
 

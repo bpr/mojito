@@ -162,6 +162,10 @@ assets/ok/pliron_float_pow.mojo	compute	differential	ret=Float64
 assets/ok/pliron_floor_signs.mojo	compute	differential	ret=Int
 assets/ok/pliron_int_pow.mojo	compute	differential	ret=Int
 assets/ok/pliron_int_truediv.mojo	compute	differential	ret=Float64
+assets/ok/pliron_iter_borrowed.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_iter_bounded.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_iter_drop_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_iter_range.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_kwargs_defaults.mojo	compute	differential	ret=Int
 assets/ok/pliron_literal_materialize.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_loop.mojo	compute	differential	ret=Int
@@ -283,6 +287,8 @@ assets/runtime_error/nominal_string_split_empty_sep.mojo	-	ineligible	no-scalar-
 assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/optional_take_empty_aborts.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_raise_error_value.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/pliron_raise_iter_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_raise_unhandled.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_trap_div_zero.mojo	main	trap-differential	category=DivModZero
 assets/runtime_error/pliron_trap_mod_zero.mojo	main	trap-differential	category=DivModZero

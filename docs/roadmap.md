@@ -35,17 +35,17 @@ Stage 5 acceptance: canonical `.mir` artifacts behave identically through VM
 and native paths, the native backend never accepts rejected source, and
 promotion requires zero exclusions across Mojito's advertised runnable subset.
 
-- [ ] **Iterator protocol** — `GetIter`/`HasNext`/`Next`/`TryNext`, the
-  reference-result copy adapter, and prepare-chain-typed iterator slots,
-  including raising iterators over the tagged-outcome ABI.
 - [ ] **Pointer and uninit storage intrinsics, builtins** — pointer-storage
   take/destroy, inline uninit storage with per-slot flags, `UnsafePointer`
   allocation, and the `len`/`abs`/`divmod`/`input`/`__floor__` builtins
   (`input` adds a runtime `mjrt_read_line`; ABI bump).
 - [ ] **Collections** — general nominal and intrinsic subscripts
   (`Index`/`Slice`/`MultiIndex`/`MultiSet`), keyword/default call contracts,
-  variadic direct calls and runtime packs, and per-field initialization flags
-  for partial-move drops; unlocks the List/Dict/Set/Tuple/Array fixture
+  variadic direct calls and runtime packs, per-field initialization flags
+  for partial-move drops, and the raising reference-yielding `__next__`
+  residue (a tagged outcome whose ok payload is a place pointer, plus
+  destructor-bearing iterator elements over real flags — the S5.3 iterator
+  slice rejects both); unlocks the List/Dict/Set/Tuple/Array fixture
   clusters.
 - [ ] **Retained callables, closures, indirect calls** — two-word
   `{invoke, env}` native `Func` values with per-function thunks matching the
