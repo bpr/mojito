@@ -72,6 +72,40 @@ pub(super) fn run_value(
         RetKind::Ptr => Err(jit_error(format!(
             "JIT entry `{symbol}` returns a pointer; raw addresses have no VM display analog"
         ))),
+        // A sized scalar reads back as the VM's mathematical lane value.
+        RetKind::Sized(crate::ast::Dtype::Float32) => {
+            let function = unsafe { std::mem::transmute::<u64, extern "C" fn() -> f32>(address) };
+            Ok(JitValue::Float64(f64::from(function())))
+        }
+        RetKind::Sized(dtype) => {
+            let Some((bits, signed)) = crate::runtime::integer_dtype_bits(dtype) else {
+                return Err(jit_error(format!(
+                    "JIT entry `{symbol}` returns an unreadable sized scalar ({dtype:?})"
+                )));
+            };
+            macro_rules! read_ret {
+                ($ty:ty) => {{
+                    let function =
+                        unsafe { std::mem::transmute::<u64, extern "C" fn() -> $ty>(address) };
+                    function()
+                }};
+            }
+            if signed {
+                Ok(JitValue::Int(match bits {
+                    8 => i64::from(read_ret!(i8)),
+                    16 => i64::from(read_ret!(i16)),
+                    32 => i64::from(read_ret!(i32)),
+                    _ => read_ret!(i64),
+                }))
+            } else {
+                Ok(JitValue::UInt(match bits {
+                    8 => u64::from(read_ret!(u8)),
+                    16 => u64::from(read_ret!(u16)),
+                    32 => u64::from(read_ret!(u32)),
+                    _ => read_ret!(u64),
+                }))
+            }
+        }
     }
 }
 

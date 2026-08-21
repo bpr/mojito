@@ -924,11 +924,20 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             &["compute"],
             &["pliron backend:", "unsupported"],
         ),
-        // Width-1 SIMD scalar aliases (Int32, UInt8, ...) stay excluded.
+        // Multi-lane SIMD stays excluded until the SIMD slice; width-1
+        // scalar aliases lower.
         (
-            "def compute() -> Int:\n    var x: Int32 = 5\n    return 1\n",
+            "def compute() -> Int:\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    return 1\n",
             &["compute"],
             &["pliron backend:", "unsupported"],
+        ),
+        // An IntLiteral constant that exceeds i64 storage rejects instead of
+        // wrapping — the VM keeps arbitrary precision in literal-typed slots
+        // (materialization to concrete scalar widths wraps VM-exactly).
+        (
+            "comptime BIG = 2 ** 80\n\ndef main():\n    print(Int(BIG))\n",
+            &["main", "__toplevel__"],
+            &["integer literal 1208925819614629174706176 does not fit IntLiteral storage (i64)"],
         ),
         // Nested function declarations carry callable-typed values — outside
         // the supported subset until the closure stage.

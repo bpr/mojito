@@ -9,13 +9,16 @@
 //! they never derive layout from Rust's unspecified `repr(Rust)` or from LLVM
 //! defaults.
 //!
-//! Types with no (single) native representation — SIMD until its lowering
-//! stage, packs, callables, unmaterialized literal types — reject with
-//! [`LayoutError::Unsupported`] so backends surface a contextual diagnostic
-//! instead of guessing.
+//! Width-1 SIMD scalars store at their lane width ([`lane_layout`]); literal
+//! value types store at their materialized width (`IntLiteral` as i64,
+//! `FloatLiteral` as f64, `StringLiteral` as the borrowed descriptor). Types
+//! with no (single) native representation — multi-lane SIMD until its lowering
+//! stage, packs, callables — reject with [`LayoutError::Unsupported`] so
+//! backends surface a contextual diagnostic instead of guessing.
 
 use std::collections::HashMap;
 
+use crate::ast::Dtype;
 use crate::mir::MirDeclarations;
 use crate::native::target::NativeTarget;
 use crate::types::Ty;
@@ -115,6 +118,10 @@ impl LayoutCx<'_> {
             }
             Ty::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
             Ty::Pointer { .. } | Ty::Ref(_) => Ok(self.pointer()),
+            Ty::Simd { dtype, width: 1 } => Ok(lane_layout(*dtype)),
+            // Literal-typed storage holds the value at its default
+            // materialized width; a value that exceeds it rejects at lowering.
+            Ty::IntLiteral | Ty::FloatLiteral => Ok(Layout::new(8, 8)),
             unsupported => Err(LayoutError::Unsupported(format!(
                 "type has no native layout yet: {unsupported}"
             ))),
@@ -190,6 +197,17 @@ impl std::fmt::Display for LayoutError {
     }
 }
 
+/// The storage layout of one SIMD lane — equally, of the width-1 scalar alias
+/// (`Int8`, `UInt32`, `Float32`, …): the lane's natural width and alignment.
+pub fn lane_layout(dtype: Dtype) -> Layout {
+    match dtype {
+        Dtype::Int8 | Dtype::UInt8 | Dtype::Bool => Layout::new(1, 1),
+        Dtype::Int16 | Dtype::UInt16 => Layout::new(2, 2),
+        Dtype::Int32 | Dtype::UInt32 | Dtype::Float32 => Layout::new(4, 4),
+        Dtype::Int | Dtype::Int64 | Dtype::UInt64 | Dtype::Float64 => Layout::new(8, 8),
+    }
+}
+
 /// Compose already-computed field layouts into a C-style aggregate: each field
 /// at the next offset aligned for it, total size padded to the aggregate
 /// alignment (the max field alignment, at least 1).
@@ -241,6 +259,40 @@ mod tests {
         assert_eq!(layout_of(&Ty::Float64), Ok(Layout::new(8, 8)));
         assert_eq!(layout_of(&Ty::Bool), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&Ty::None), Ok(Layout::ZERO));
+    }
+
+    #[test]
+    fn width_one_simd_scalars_store_at_lane_width() {
+        let scalar = |dtype| Ty::Simd { dtype, width: 1 };
+        assert_eq!(layout_of(&scalar(Dtype::Int8)), Ok(Layout::new(1, 1)));
+        assert_eq!(layout_of(&scalar(Dtype::UInt8)), Ok(Layout::new(1, 1)));
+        assert_eq!(layout_of(&scalar(Dtype::Int16)), Ok(Layout::new(2, 2)));
+        assert_eq!(layout_of(&scalar(Dtype::UInt16)), Ok(Layout::new(2, 2)));
+        assert_eq!(layout_of(&scalar(Dtype::Int32)), Ok(Layout::new(4, 4)));
+        assert_eq!(layout_of(&scalar(Dtype::UInt32)), Ok(Layout::new(4, 4)));
+        assert_eq!(layout_of(&scalar(Dtype::Float32)), Ok(Layout::new(4, 4)));
+        assert_eq!(layout_of(&scalar(Dtype::Int64)), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&scalar(Dtype::UInt64)), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&scalar(Dtype::Int)), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&scalar(Dtype::Float64)), Ok(Layout::new(8, 8)));
+        // Narrow fields pad C-style like any other member.
+        let structs = StructFieldIndex::default();
+        let (target, structs) = cx(&structs);
+        let cx = LayoutCx {
+            target: &target,
+            structs,
+        };
+        let mixed = cx
+            .struct_layout(&[scalar(Dtype::UInt8), scalar(Dtype::Int32), Ty::Int])
+            .unwrap();
+        assert_eq!(mixed.offsets, vec![0, 4, 8]);
+        assert_eq!(mixed.layout, Layout::new(16, 8));
+    }
+
+    #[test]
+    fn literal_storage_uses_materialized_widths() {
+        assert_eq!(layout_of(&Ty::IntLiteral), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&Ty::FloatLiteral), Ok(Layout::new(8, 8)));
     }
 
     #[test]
@@ -358,15 +410,14 @@ mod tests {
     fn unrepresentable_types_reject_loudly() {
         for ty in [
             Ty::Never,
-            Ty::IntLiteral,
-            Ty::FloatLiteral,
             Ty::Infer,
             Ty::Dtype,
             Ty::SelfType,
             Ty::VariadicPack(Box::new(Ty::Int)),
             Ty::ComptimeList(Box::new(Ty::Int)),
+            // Multi-lane SIMD stays unrepresentable until its lowering stage.
             Ty::Simd {
-                dtype: crate::ast::Dtype::Float64,
+                dtype: Dtype::Float64,
                 width: 4,
             },
         ] {

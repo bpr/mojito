@@ -1,4 +1,4 @@
-//! Pliron Stage 0 feasibility spike (roadmap section 4, Stage 0).
+//! Pliron Stage 0 feasibility spike (roadmap: native backend, Stage 0).
 //!
 //! Validates pliron + pliron-llvm 0.17.0 against LLVM 22 outside the
 //! production compiler: IR construction, textual round-trips, verification

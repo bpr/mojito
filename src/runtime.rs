@@ -1503,7 +1503,10 @@ fn pow_exp(y: i64) -> Result<u32, RuntimeError> {
     })
 }
 
-fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
+/// The `(bits, signed)` lane shape of an integer SIMD dtype, or `None` for
+/// the float and bool dtypes. Shared with the native backends so their width
+/// tables cannot drift from the VM's.
+pub(crate) fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
     Some(match dtype {
         Dtype::Int => (64, true),
         Dtype::Int8 => (8, true),

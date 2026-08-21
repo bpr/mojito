@@ -104,8 +104,12 @@ The architecture prioritizes:
 
 mojito is not trying to reproduce Mojo's production architecture. First-pass
 parity targets single-threaded CPU language semantics and excludes GPU,
-concurrency/parallelism, distributed execution, Python interoperability, and any
-requirement that MLIR be the compiler's internal IR layer. The register VM is
+concurrency/parallelism, distributed execution, Python interoperability, any
+requirement that MLIR (or any backend IR — Pliron and Cranelift sit below the
+verified-MIR waist) be the compiler's internal IR layer, legacy `fn`/`owned`
+and other removed source spellings beyond clear rejection diagnostics, and
+escaping closures with the removed `escaping` effect — first-pass closure
+parity targets Mojo's current non-escaping capture-list model. The register VM is
 the executable specification. A versioned textual MIR/VM assembly form is the
 next representation boundary; the prioritized native backends are the
 Rust-native, MLIR-inspired [Pliron](https://github.com/pliron-org/pliron) (its
@@ -142,6 +146,70 @@ Native backend support and its required gates are Linux-only, currently for the
 single target defined in `docs/native-abi.md`. Supporting additional hosts or
 targets requires a separate, explicitly resourced decision; it is not a Pliron
 promotion condition.
+
+### Native Backend Contract
+
+The preferred native architecture sits entirely below the verified-MIR waist:
+
+```text
+source -> Compiler -> ownership-verified, post-drop verified MIR
+                            |                 |
+                            |                 +-> VM / canonical .mir artifact
+                            v
+                    Pliron lowering
+                            |
+             Mojito ops only where justified
+                            |
+                    Pliron LLVM dialect
+                            |
+            LLVM IR / bitcode / object / executable
+                            |
+                    versioned runtime ABI
+```
+
+Pliron never replaces Mojito MIR: it is an optional lowering, verification,
+transformation, and optimization framework below the serialized MIR handoff. A
+backend consumes `MirProgram`; it does not import AST, HIR, checker,
+ownership, or call-binding policy. The native interface accepts a
+`&MirProgram`, a target description, and an output kind, and returns textual
+IR, bitcode, an object, or an executable plus structured diagnostics;
+`run --backend pliron` executes only the advertised subset natively and
+rejects everything else with a contextual diagnostic — never a silent VM
+fallback. Origin and ownership facts erase after validation, while explicit
+drop and cleanup instructions remain executable behavior. Errors and
+`try`/`finally` lower as tagged outcomes and explicit CFG edges; platform
+unwinding stays out until it has its own semantic, ABI, and portability
+specification.
+
+Dialect policy: lower directly to Pliron's LLVM dialect, and introduce a
+narrow `mojito` Pliron dialect only for demonstrated needs such as runtime
+calls, checked traps, explicit error propagation, target-independent
+aggregate constants, or lifecycle normalization. Do not reproduce the MIR
+schema as a second operation set. Every custom operation needs textual
+syntax, a verifier, negative coverage, and a total conversion rule; LLVM
+emission rejects any residual illegal operation. Missing Pliron facilities
+are upstreamed as narrowly scoped patches rather than accumulating an
+untracked local fork.
+
+Every backend stage is tested through four complementary layers:
+
+1. IR unit tests for each lowering, verifier, rewrite, conversion, ABI type,
+   and unsupported diagnostic.
+2. Canonical Pliron/LLVM snapshots with UTF-8, LF, and one trailing newline.
+3. VM/native differential tests comparing stdout bytes, bindings or result,
+   error category, and ordered lifecycle events at `O0` and optimized levels.
+4. Artifact tests proving `.mir -> VM` and `.mir -> native` consume the same
+   serialized program.
+
+Track compile time, peak memory, IR size at each boundary, object size,
+execution time, and supported/excluded MIR counts (the generated
+`conformance/pliron-parity.tsv` and `conformance/pliron-capability.tsv`
+manifests). Every stage is removable by disabling its optional feature and
+backend modules without changing MIR, VM, or source semantics. The default
+response to a correctness failure is to keep Pliron experimental or disable
+the offending optimization; the default response to an upstream or
+distribution failure is the Cranelift fallback recorded in `docs/roadmap.md`,
+not erosion of the MIR/VM contracts.
 
 ### Source Module Boundaries
 

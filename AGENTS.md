@@ -18,8 +18,8 @@ staged adoption and fallback plan — and Cranelift, with a C or C++ source back
 additional target. Direct LLVM or MLIR lowering and eBPF are no longer
 prioritized. No backend IR is a *required internal* compiler layer: backends sit
 below the MIR waist, MIR remains the serialized backend-independent handoff, and
-the VM remains the executable semantic oracle. See `docs/roadmap.md` section 4 for
-the ordering.
+the VM remains the executable semantic oracle. See the native-backend section
+of `docs/roadmap.md` for the ordering.
 
 Read these documents before changing behavior:
 

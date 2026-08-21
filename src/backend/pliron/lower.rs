@@ -16,12 +16,12 @@
 use std::collections::{HashMap, HashSet};
 
 use pliron::basic_block::BasicBlock;
-use pliron::builtin::attributes::{BytesAttr, FPDoubleAttr, IntegerAttr, StringAttr};
+use pliron::builtin::attributes::{BytesAttr, FPDoubleAttr, FPSingleAttr, IntegerAttr, StringAttr};
 use pliron::builtin::op_interfaces::{
     CallOpCallable, OneResultInterface, SingleBlockRegionInterface,
 };
 use pliron::builtin::ops::ModuleOp;
-use pliron::builtin::types::{FP64Type, IntegerType, Signedness};
+use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::identifier::Identifier;
 use pliron::location::{Located, Location};
@@ -39,13 +39,14 @@ use pliron_llvm::op_interfaces::{
 };
 use pliron_llvm::ops::{
     AShrOp, AddOp, AddressOfOp, AllocaOp, AndOp, BrOp, CallIntrinsicOp, CallOp, CondBrOp,
-    ConstantOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp, FSubOp, FuncOp, GepIndex, GetElementPtrOp,
-    GlobalOp, ICmpOp, LShrOp, LoadOp, MulOp, OrOp, ReturnOp, SDivOp, SIToFPOp, SRemOp, SelectOp,
-    ShlOp, StoreOp, SubOp, UDivOp, UIToFPOp, URemOp, UnreachableOp, XorOp, ZExtOp,
+    ConstantOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp, FPExtOp, FPTruncOp, FSubOp, FuncOp,
+    GepIndex, GetElementPtrOp, GlobalOp, ICmpOp, LShrOp, LoadOp, MulOp, OrOp, ReturnOp, SDivOp,
+    SExtOp, SIToFPOp, SRemOp, SelectOp, ShlOp, StoreOp, SubOp, TruncOp, UDivOp, UIToFPOp, URemOp,
+    UnreachableOp, XorOp, ZExtOp,
 };
 use pliron_llvm::types::{ArrayType, FuncType, PointerType, VoidType};
 
-use crate::ast::{InfixOp, PrefixOp};
+use crate::ast::{Dtype, InfixOp, PrefixOp};
 use crate::call::{ArgSlot, CallVariadics, match_call_slots};
 use crate::checked::CheckedConst;
 use crate::literal::{FloatLiteral, IntLiteral};
@@ -603,7 +604,8 @@ impl Locator {
 
 /// The scalar value types the backend lowers. `Int` and `UInt` share the
 /// signless i64 representation and differ only in operator selection; `Ptr`
-/// is one opaque target pointer (checked `Pointer` values, origins erased).
+/// is one opaque target pointer (checked `Pointer` values, origins erased);
+/// `Sized` is a width-1 SIMD scalar alias at its lane width.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ScalarTy {
     Int,
@@ -611,9 +613,35 @@ pub(super) enum ScalarTy {
     Float64,
     Bool,
     Ptr,
+    /// A sized scalar alias (`Int8`…`Int64`, `UInt8`…`UInt64`, `Float32`).
+    /// The `int`, `float64`, and `bool` dtypes canonicalize to the variants
+    /// above through [`ScalarTy::of_dtype`] and never appear here.
+    Sized(Dtype),
 }
 
 impl ScalarTy {
+    /// The scalar lowering of a width-1 SIMD dtype.
+    fn of_dtype(dtype: Dtype) -> ScalarTy {
+        match dtype {
+            Dtype::Int => ScalarTy::Int,
+            Dtype::Float64 => ScalarTy::Float64,
+            Dtype::Bool => ScalarTy::Bool,
+            sized => ScalarTy::Sized(sized),
+        }
+    }
+
+    /// An integer scalar's `(bits, signed)` lane shape — `Int`/`UInt` are
+    /// 64-bit signed/unsigned, sized integers use the VM's lane table — or
+    /// `None` for floats, `Bool`, and `Ptr`.
+    fn int_shape(self) -> Option<(u32, bool)> {
+        match self {
+            ScalarTy::Int => Some((64, true)),
+            ScalarTy::UInt => Some((64, false)),
+            ScalarTy::Sized(dtype) => crate::runtime::integer_dtype_bits(dtype),
+            _ => None,
+        }
+    }
+
     fn handle(self, ctx: &mut Context) -> TypeHandle {
         match self {
             ScalarTy::Int | ScalarTy::UInt => {
@@ -622,6 +650,12 @@ impl ScalarTy {
             ScalarTy::Float64 => FP64Type::get(ctx).into(),
             ScalarTy::Bool => IntegerType::get(ctx, 1, Signedness::Signless).into(),
             ScalarTy::Ptr => PointerType::get(ctx, 0).into(),
+            ScalarTy::Sized(Dtype::Float32) => FP32Type::get(ctx).into(),
+            ScalarTy::Sized(dtype) => {
+                let (bits, _) = crate::runtime::integer_dtype_bits(dtype)
+                    .expect("of_dtype leaves only sized integers and Float32 in Sized");
+                IntegerType::get(ctx, bits, Signedness::Signless).into()
+            }
         }
     }
 
@@ -632,6 +666,7 @@ impl ScalarTy {
             ScalarTy::Float64 => RetKind::F64,
             ScalarTy::Bool => RetKind::Bool,
             ScalarTy::Ptr => RetKind::Ptr,
+            ScalarTy::Sized(dtype) => RetKind::Sized(dtype),
         }
     }
 
@@ -642,6 +677,7 @@ impl ScalarTy {
             ScalarTy::Float64 => "Float64",
             ScalarTy::Bool => "Bool",
             ScalarTy::Ptr => "Pointer",
+            ScalarTy::Sized(dtype) => dtype.scalar_alias().unwrap_or_else(|| dtype.name()),
         }
     }
 }
@@ -658,11 +694,12 @@ pub(super) enum LowerTy {
     ZeroSized,
 }
 
-/// Classify a checked type for lowering: the four scalars stay SSA; `None`
-/// is zero-sized; struct and tuple aggregates take their shared-engine
-/// layout; everything else (pointers, variants, errors, references, SIMD,
-/// literal types) stays outside the supported subset with a contextual
-/// rejection.
+/// Classify a checked type for lowering: scalars (including width-1 SIMD
+/// aliases and the i64/f64 storage of `IntLiteral`/`FloatLiteral`-typed
+/// registers) stay SSA; `None` is zero-sized; struct, tuple, and
+/// `StringLiteral`-descriptor aggregates take their shared-engine layout;
+/// everything else (multi-lane SIMD, packs, callables) stays outside the
+/// supported subset with a contextual rejection.
 fn lower_ty(
     function: &str,
     ty: &Ty,
@@ -674,13 +711,20 @@ fn lower_ty(
         Ty::UInt => Ok(LowerTy::Scalar(ScalarTy::UInt)),
         Ty::Float64 => Ok(LowerTy::Scalar(ScalarTy::Float64)),
         Ty::Bool => Ok(LowerTy::Scalar(ScalarTy::Bool)),
+        Ty::Simd { dtype, width: 1 } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
+        // Literal-typed storage holds the default materialized value; a
+        // constant that exceeds it rejects at the storage boundary rather
+        // than wrapping (the VM keeps arbitrary precision).
+        Ty::IntLiteral => Ok(LowerTy::Scalar(ScalarTy::Int)),
+        Ty::FloatLiteral => Ok(LowerTy::Scalar(ScalarTy::Float64)),
         // Origins and ownership facts erase after validation; a pointer is
         // one opaque target pointer regardless of its element type.
         Ty::Pointer { .. } | Ty::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
         Ty::None => Ok(LowerTy::ZeroSized),
         // The built-in error value is `MjError { message: MjString }` storage;
         // its message buffer frees invisibly on drop (no user destructor).
-        Ty::Error | Ty::Struct(..) | Ty::Tuple(_) | Ty::RuntimePack(_) => {
+        // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor.
+        Ty::Error | Ty::Struct(..) | Ty::Tuple(_) | Ty::RuntimePack(_) | Ty::StringLiteral => {
             match layout.layout_of(ty) {
                 Ok(computed) => Ok(LowerTy::Aggregate {
                     ty: Box::new(ty.clone()),
@@ -1252,8 +1296,6 @@ impl<'a> FnLowering<'a> {
             | MirInstr::VariantGet { dest, .. }
             | MirInstr::VariantTake { dest, .. }
             | MirInstr::VariantReplace { dest, .. }
-            | MirInstr::MakeSimd { dest, .. }
-            | MirInstr::SimdCast { dest, .. }
             | MirInstr::SimdShuffle { dest, .. }
             | MirInstr::PointerStorageTake { dest, .. }
             | MirInstr::UninitStorage { dest, .. }
@@ -1263,6 +1305,18 @@ impl<'a> FnLowering<'a> {
             | MirInstr::TryNext { dest, .. } => {
                 Err(self.unsupported_reg(format!("instruction `{}`", instr_name(instr)), *dest))
             }
+            MirInstr::MakeSimd {
+                dest,
+                dtype,
+                width,
+                elems,
+            } => self.lower_make_simd(ctx, *dest, *dtype, *width, elems),
+            MirInstr::SimdCast {
+                dest,
+                value,
+                dtype,
+                width,
+            } => self.lower_simd_cast(ctx, *dest, *value, *dtype, *width),
             MirInstr::Raise { src } => self.lower_raise(ctx, *src),
             MirInstr::Try {
                 body,
@@ -1524,10 +1578,40 @@ impl<'a> FnLowering<'a> {
             return Ok(());
         }
 
-        let source = self
-            .concrete_scalar_ty(arg)?
-            .ok_or_else(|| self.unsupported_reg("untyped conversion operand".into(), dest))?;
+        let source = match self.concrete_scalar_ty(arg)? {
+            Some(ty) => ty,
+            // A runtime literal-typed value converts at its storage kind
+            // (its constant was range-checked when it entered storage).
+            None => match self.func.reg_types.get(&arg.0) {
+                Some(Ty::FloatLiteral) => ScalarTy::Float64,
+                Some(Ty::IntLiteral) => ScalarTy::Int,
+                _ => return Err(self.unsupported_reg("untyped conversion operand".into(), dest)),
+            },
+        };
         let value = self.reg_value(ctx, arg, source)?;
+        // A sized operand converts through its mathematical lane value (the
+        // VM's `builtin_convert` width-1 arm): integers sign/zero-extend to
+        // i64, a `Float32` converts through its f64 view. The normalized
+        // kind then takes the ordinary scalar conversion arms.
+        let (source, value) = match source {
+            ScalarTy::Sized(Dtype::Float32) => {
+                (ScalarTy::Float64, self.f32_to_f64(ctx, value, dest))
+            }
+            ScalarTy::Sized(dtype) => {
+                let (_, signed) =
+                    crate::runtime::integer_dtype_bits(dtype).expect("Float32 is matched above");
+                let wide = self.sized_to_i64(ctx, value, dtype, dest);
+                (
+                    if signed {
+                        ScalarTy::Int
+                    } else {
+                        ScalarTy::UInt
+                    },
+                    wide,
+                )
+            }
+            other => (other, value),
+        };
         match (source, target) {
             // Same-representation moves are pure aliases.
             (ScalarTy::Int | ScalarTy::UInt, ScalarTy::Int | ScalarTy::UInt)
@@ -1587,7 +1671,212 @@ impl<'a> FnLowering<'a> {
                 Err(self
                     .unsupported_reg(format!("conversion `{name}` over a Pointer operand"), dest))
             }
+            (ScalarTy::Sized(_), _) | (_, ScalarTy::Sized(_)) => {
+                unreachable!("sized sources normalize above; conversion targets are builtins")
+            }
         }
+    }
+
+    /// `MakeSimd` at width 1 — scalar-alias construction (`Int8(x)`,
+    /// `Float32(x)`, `SIMD[DType.<dt>, 1](x)`): convert the single element
+    /// with the VM's lane builders (`runtime::value_to_int_lane`/
+    /// `value_to_float_lane`). Multi-lane construction stays out of the
+    /// subset until the SIMD slice.
+    fn lower_make_simd(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        dtype: Dtype,
+        width: usize,
+        elems: &[Reg],
+    ) -> Result<(), PlironError> {
+        if width != 1 || elems.len() != 1 {
+            return Err(self.unsupported_reg(
+                format!("multi-lane SIMD construction (width {width})"),
+                dest,
+            ));
+        }
+        let elem = elems[0];
+        let target = ScalarTy::of_dtype(dtype);
+        // A literal element folds with the exact conversions (integers wrap
+        // at the lane width, `Float32` rounds from the exact rational).
+        if let Some(literal) = self.pending_literals.get(&elem.0).cloned() {
+            let constant = self.materialize_pending(ctx, &literal, target, dest)?;
+            self.reg_values.insert(dest.0, constant);
+            return Ok(());
+        }
+        let source = match self.concrete_scalar_ty(elem)? {
+            Some(ty) => ty,
+            None => match self.func.reg_types.get(&elem.0) {
+                Some(Ty::FloatLiteral) => ScalarTy::Float64,
+                _ => ScalarTy::Int,
+            },
+        };
+        let value = self.reg_value(ctx, elem, source)?;
+        let converted = self.convert_lane(ctx, source, target, value, dest)?;
+        self.reg_values.insert(dest.0, converted);
+        Ok(())
+    }
+
+    /// `SimdCast` at width 1 (`x.cast[DType.<dt>]()`) — the VM's
+    /// `runtime::simd_cast`: int→int rewraps at the new width, int→float
+    /// converts through f64 (`Float32` rounds), float→float widens or
+    /// rounds, and float→int truncates toward zero saturating at the
+    /// 128-bit intermediate before wrapping — saturation must happen at
+    /// i128, not the target width, or large magnitudes wrap differently
+    /// than the VM. Bool casts reject (VM parity); multi-lane casts stay
+    /// out of the subset.
+    fn lower_simd_cast(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: Reg,
+        dtype: Dtype,
+        width: usize,
+    ) -> Result<(), PlironError> {
+        if width != 1 {
+            return Err(self.unsupported_reg(format!("multi-lane SIMD cast (width {width})"), dest));
+        }
+        if dtype == Dtype::Bool {
+            return Err(self.unsupported_reg("bool SIMD dtype cast".into(), dest));
+        }
+        let source = self.concrete_scalar_ty(value)?.ok_or_else(|| {
+            self.unsupported_reg("SIMD cast of an unmaterialized literal".into(), dest)
+        })?;
+        if matches!(source, ScalarTy::Bool | ScalarTy::Ptr) {
+            return Err(
+                self.unsupported_reg(format!("SIMD cast of a {} operand", source.name()), dest)
+            );
+        }
+        let target = ScalarTy::of_dtype(dtype);
+        let lane = self.reg_value(ctx, value, source)?;
+        let converted = match target {
+            ScalarTy::Float64 => self.lane_to_f64(ctx, source, lane, dest)?,
+            ScalarTy::Sized(Dtype::Float32) => {
+                let wide = self.lane_to_f64(ctx, source, lane, dest)?;
+                self.f64_to_f32(ctx, wide, dest)
+            }
+            integer => {
+                let (to_bits, _) = integer
+                    .int_shape()
+                    .expect("bool targets are rejected above");
+                match source.int_shape() {
+                    Some(from) => self.resize_int(ctx, lane, from, to_bits, dest),
+                    // Float source: truncate toward zero, saturating at the
+                    // 128-bit intermediate (Rust `as i128`, NaN → 0), then
+                    // wrap to the lane width.
+                    None => {
+                        let wide = self.lane_to_f64(ctx, source, lane, dest)?;
+                        let saturated = self.fptosi_sat_i128(ctx, wide, dest);
+                        self.resize_int(ctx, saturated, (128, true), to_bits, dest)
+                    }
+                }
+            }
+        };
+        self.reg_values.insert(dest.0, converted);
+        Ok(())
+    }
+
+    /// One scalar value as a `target` SIMD lane — the VM's lane builders:
+    /// integer lanes wrap the source's mathematical value at the lane width
+    /// (`value_to_int_lane`; Bool reads as 0/1), float lanes convert through
+    /// f64 with `Float32` rounding (`value_to_float_lane`), bool lanes only
+    /// accept Bool. Sources the VM cannot read as the lane's kind reject.
+    fn convert_lane(
+        &mut self,
+        ctx: &mut Context,
+        source: ScalarTy,
+        target: ScalarTy,
+        value: Value,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        match target {
+            ScalarTy::Bool => {
+                match source {
+                    ScalarTy::Bool => Ok(value),
+                    other => Err(self
+                        .unsupported_reg(format!("{} as a bool SIMD element", other.name()), dest)),
+                }
+            }
+            ScalarTy::Float64 => self.lane_to_f64(ctx, source, value, dest),
+            ScalarTy::Sized(Dtype::Float32) => {
+                let wide = self.lane_to_f64(ctx, source, value, dest)?;
+                Ok(self.f64_to_f32(ctx, wide, dest))
+            }
+            integer => {
+                let (to_bits, _) = integer
+                    .int_shape()
+                    .expect("of_dtype yields scalars, Bool, or floats only");
+                let widened = match source {
+                    // `value_to_int` reads Bool as 0/1.
+                    ScalarTy::Bool => {
+                        let i64_ty: TypeHandle =
+                            IntegerType::get(ctx, 64, Signedness::Signless).into();
+                        let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
+                        self.append(ctx, cast.get_operation(), Some(dest));
+                        (cast.get_result(ctx), (64, false))
+                    }
+                    other => match other.int_shape() {
+                        Some(from) => (value, from),
+                        None => {
+                            return Err(self.unsupported_reg(
+                                format!("{} as an integer SIMD element", other.name()),
+                                dest,
+                            ));
+                        }
+                    },
+                };
+                let (value, from) = widened;
+                Ok(self.resize_int(ctx, value, from, to_bits, dest))
+            }
+        }
+    }
+
+    /// One scalar value's floating content as f64 (the VM's
+    /// `value_to_float`): integers convert by signedness, a `Float32` widens
+    /// to its exact f64 view, Bool and pointers reject.
+    fn lane_to_f64(
+        &mut self,
+        ctx: &mut Context,
+        source: ScalarTy,
+        value: Value,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        match source {
+            ScalarTy::Float64 => Ok(value),
+            ScalarTy::Sized(Dtype::Float32) => Ok(self.f32_to_f64(ctx, value, dest)),
+            ScalarTy::Int => Ok(self.int_to_f64(ctx, value, dest)),
+            ScalarTy::UInt => Ok(self.uint_to_f64(ctx, value, dest)),
+            ScalarTy::Sized(dtype) => {
+                let (_, signed) =
+                    crate::runtime::integer_dtype_bits(dtype).expect("Float32 is matched above");
+                let wide = self.sized_to_i64(ctx, value, dtype, dest);
+                Ok(if signed {
+                    self.int_to_f64(ctx, wide, dest)
+                } else {
+                    self.uint_to_f64(ctx, wide, dest)
+                })
+            }
+            other => {
+                Err(self.unsupported_reg(format!("{} as a float SIMD element", other.name()), dest))
+            }
+        }
+    }
+
+    /// `llvm.fptosi.sat.i128.f64` — Rust's saturating `as i128` on an f64
+    /// (NaN becomes 0, infinities clamp to the i128 bounds).
+    fn fptosi_sat_i128(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
+        let i128_ty: TypeHandle = IntegerType::get(ctx, 128, Signedness::Signless).into();
+        let f64_ty: TypeHandle = FP64Type::get(ctx).into();
+        let fn_ty = FuncType::get(ctx, i128_ty, vec![f64_ty], false);
+        let call = CallIntrinsicOp::new(
+            ctx,
+            StringAttr::new("llvm.fptosi.sat.i128.f64".to_string()),
+            fn_ty,
+            vec![value],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        call.get_result(ctx)
     }
 
     /// `UseVar`: scalars load from their slot; aggregate copies run the VM's
@@ -1650,13 +1939,13 @@ impl<'a> FnLowering<'a> {
     fn lower_def_var(&mut self, ctx: &mut Context, var: u32, src: Reg) -> Result<(), PlironError> {
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(expected) => {
-                let value = self.reg_value(ctx, src, expected)?;
+                let value = self.literal_slot_value(ctx, var, src, expected)?;
                 let store = StoreOp::new(ctx, value, self.var_slots[var as usize]);
                 self.append(ctx, store.get_operation(), None);
                 Ok(())
             }
             LowerTy::Aggregate { layout, .. } => {
-                let ptr = self.reg_ptr(src)?;
+                let ptr = self.reg_ptr(ctx, src)?;
                 let slot = self.var_slots[var as usize];
                 self.mem_copy(ctx, slot, ptr, layout.size, src);
                 // The variable owns the value now; the temporary transfers.
@@ -1666,6 +1955,27 @@ impl<'a> FnLowering<'a> {
             }
             LowerTy::ZeroSized => Ok(()),
         }
+    }
+
+    /// The SSA value of `src` for a store into variable `var`'s scalar slot:
+    /// a pending literal entering `IntLiteral`/`FloatLiteral`-typed storage
+    /// converts exactly (rejecting what the storage cannot hold) instead of
+    /// wrapping at the consumer's kind.
+    fn literal_slot_value(
+        &mut self,
+        ctx: &mut Context,
+        var: u32,
+        src: Reg,
+        expected: ScalarTy,
+    ) -> Result<Value, PlironError> {
+        if let Some(ty @ (Ty::IntLiteral | Ty::FloatLiteral)) = self.func.var_tys.get(&var).cloned()
+            && let Some(literal) = self.pending_literals.get(&src.0).cloned()
+        {
+            let constant = self.exact_literal_storage(ctx, &literal, &ty, src)?;
+            self.reg_values.insert(src.0, constant);
+            return Ok(constant);
+        }
+        self.reg_value(ctx, src, expected)
     }
 
     /// `CopyValue` — materialize an owned copy of a register: scalars and
@@ -1698,7 +2008,7 @@ impl<'a> FnLowering<'a> {
                 Ok(())
             }
             LowerTy::Aggregate { ty, layout } => {
-                let src = self.reg_ptr(value)?;
+                let src = self.reg_ptr(ctx, value)?;
                 self.copy_aggregate(ctx, dest, &ty, layout, src)
             }
             LowerTy::ZeroSized => {
@@ -2404,7 +2714,7 @@ impl<'a> FnLowering<'a> {
             return Err(self.unsupported_reg(format!("untyped field base %r{}", base.0), dest));
         };
         let (offset, field_ty) = self.field_offset(&base_ty, field, dest)?;
-        let base_ptr = self.reg_ptr(base)?;
+        let base_ptr = self.reg_ptr(ctx, base)?;
         let address = if offset == 0 {
             base_ptr
         } else {
@@ -2566,7 +2876,7 @@ impl<'a> FnLowering<'a> {
                 );
             };
             let size = layout.size;
-            let recv_ptr = self.reg_ptr(recv)?;
+            let recv_ptr = self.reg_ptr(ctx, recv)?;
             let (address, _) = self.place_address(ctx, place, dest)?;
             self.mem_copy(ctx, address, recv_ptr, size, dest);
         }
@@ -2597,7 +2907,7 @@ impl<'a> FnLowering<'a> {
             return Err(self.unsupported_reg(format!("constructor for `{name}`"), dest));
         };
         if args.is_empty() && kwargs.len() == 1 && kwargs[0].0 == "copy" {
-            let src = self.reg_ptr(kwargs[0].1)?;
+            let src = self.reg_ptr(ctx, kwargs[0].1)?;
             return self.copy_aggregate(ctx, dest, &ty, layout, src);
         }
         if let Some(init) = self.constructor_init(name, args.len()) {
@@ -2706,6 +3016,14 @@ impl<'a> FnLowering<'a> {
                 data
             };
             self.store_string_fields(ctx, storage, data, descriptor.len, descriptor.len, dest);
+        } else if matches!(self.func.reg_types.get(&source.0), Some(Ty::StringLiteral)) {
+            // A runtime StringLiteral value (typed storage): copy the bytes
+            // its borrowed descriptor points at.
+            let ptr = self.reg_ptr(ctx, source)?;
+            let (src_data, len) = self.string_parts(ctx, ptr, dest);
+            let data = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, src_data, len, dest);
+            self.store_string_fields(ctx, storage, data, len, len, dest);
         } else {
             return Err(
                 self.unsupported_reg("String constructor over an unsupported source".into(), dest)
@@ -2745,7 +3063,23 @@ impl<'a> FnLowering<'a> {
             && let Ty::Struct(name, _) = ty
             && crate::symbol::is_stdlib_string_struct(name)
         {
-            let ptr = self.reg_ptr(arg)?;
+            let ptr = self.reg_ptr(ctx, arg)?;
+            let (data, len) = self.string_parts(ctx, ptr, dest);
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: false,
+                },
+            );
+            return Ok(());
+        }
+        // A runtime StringLiteral value reads back as a borrowed string.
+        if matches!(self.func.reg_types.get(&arg.0), Some(Ty::StringLiteral))
+            && !self.pending_literals.contains_key(&arg.0)
+        {
+            let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
             self.str_runtime.insert(
                 dest.0,
@@ -2759,8 +3093,18 @@ impl<'a> FnLowering<'a> {
         }
         let ty = match self.concrete_scalar_ty(arg)? {
             Some(ty) => ty,
+            // A runtime FloatLiteral value rejects — the VM formats its
+            // exact rational, which f64 storage cannot reproduce.
             None => match self.func.reg_types.get(&arg.0) {
-                Some(Ty::FloatLiteral) => ScalarTy::Float64,
+                Some(Ty::FloatLiteral) => {
+                    if !self.pending_literals.contains_key(&arg.0) {
+                        return Err(self.unsupported_reg(
+                            "String conversion of a runtime FloatLiteral value".into(),
+                            dest,
+                        ));
+                    }
+                    ScalarTy::Float64
+                }
                 _ => ScalarTy::Int,
             },
         };
@@ -3037,7 +3381,7 @@ impl<'a> FnLowering<'a> {
         }
         match self.func.reg_types.get(&src.0) {
             Some(Ty::Struct(name, _)) if crate::symbol::is_stdlib_string_struct(name) => {
-                let ptr = self.reg_ptr(src)?;
+                let ptr = self.reg_ptr(ctx, src)?;
                 if self.owned_temps.remove(&src.0).is_some() {
                     // The temporary transfers its whole allocation.
                     let (data, size) = self.string_parts(ctx, ptr, src);
@@ -3052,7 +3396,7 @@ impl<'a> FnLowering<'a> {
                 Ok(())
             }
             Some(Ty::Error) => {
-                let ptr = self.reg_ptr(src)?;
+                let ptr = self.reg_ptr(ctx, src)?;
                 self.mem_copy(ctx, storage, ptr, 24, src);
                 self.owned_temps.remove(&src.0);
                 Ok(())
@@ -3628,7 +3972,7 @@ impl<'a> FnLowering<'a> {
                 }
                 (LowerTy::Aggregate { layout, .. }, Some(reg)) => {
                     let size = layout.size;
-                    let ptr = self.reg_ptr(reg)?;
+                    let ptr = self.reg_ptr(ctx, reg)?;
                     let address = self.offset_address(ctx, outcome_ptr, outcome.ok_offset);
                     self.mem_copy(ctx, address, ptr, size, reg);
                     self.owned_temps.remove(&reg.0);
@@ -3642,7 +3986,7 @@ impl<'a> FnLowering<'a> {
                 let sret = self
                     .sret_ptr
                     .expect("aggregate-returning functions receive an sret pointer");
-                let ptr = self.reg_ptr(reg)?;
+                let ptr = self.reg_ptr(ctx, reg)?;
                 self.mem_copy(ctx, sret, ptr, layout.size, reg);
                 self.owned_temps.remove(&reg.0);
             }
@@ -3796,13 +4140,13 @@ impl<'a> FnLowering<'a> {
         }
         match self.func.reg_types.get(&reg.0) {
             Some(Ty::Struct(name, _)) if crate::symbol::is_stdlib_string_struct(name) => {
-                let ptr = self.reg_ptr(reg)?;
+                let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }
             // An error value displays as its bare message (the VM's
             // `format_value` over `Value::Error`).
             Some(Ty::Error) => {
-                let ptr = self.reg_ptr(reg)?;
+                let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }
             _ => Err(self.unsupported_reg(format!("string value in register %r{}", reg.0), dest)),
@@ -4095,7 +4439,7 @@ impl<'a> FnLowering<'a> {
         }
         match expected {
             LowerTy::Scalar(scalar) => self.reg_value(ctx, reg, *scalar),
-            LowerTy::Aggregate { .. } => self.reg_ptr(reg),
+            LowerTy::Aggregate { .. } => self.reg_ptr(ctx, reg),
             LowerTy::ZeroSized => Err(self.unsupported_reg("zero-sized argument".into(), dest)),
         }
     }
@@ -4263,13 +4607,23 @@ impl<'a> FnLowering<'a> {
     ) -> Result<(), PlironError> {
         match lower_ty(self.name, ty, &self.layout, self.reg_span(src))? {
             LowerTy::Scalar(scalar) => {
-                let value = self.reg_value(ctx, src, scalar)?;
+                // A pending literal entering literal-typed storage converts
+                // exactly (reject-never-wrap) rather than at the slot kind.
+                let value = if matches!(ty, Ty::IntLiteral | Ty::FloatLiteral)
+                    && let Some(literal) = self.pending_literals.get(&src.0).cloned()
+                {
+                    let constant = self.exact_literal_storage(ctx, &literal, ty, src)?;
+                    self.reg_values.insert(src.0, constant);
+                    constant
+                } else {
+                    self.reg_value(ctx, src, scalar)?
+                };
                 let store = StoreOp::new(ctx, value, address);
                 self.append(ctx, store.get_operation(), Some(src));
                 Ok(())
             }
             LowerTy::Aggregate { layout, .. } => {
-                let ptr = self.reg_ptr(src)?;
+                let ptr = self.reg_ptr(ctx, src)?;
                 self.mem_copy(ctx, address, ptr, layout.size, src);
                 // The designated storage owns the value now.
                 self.owned_temps.remove(&src.0);
@@ -4279,14 +4633,30 @@ impl<'a> FnLowering<'a> {
         }
     }
 
-    /// The storage pointer of an aggregate-valued register.
-    fn reg_ptr(&self, reg: Reg) -> Result<Value, PlironError> {
-        self.reg_values.get(&reg.0).copied().ok_or_else(|| {
-            self.unsupported(
-                format!("read of undefined aggregate register %r{}", reg.0),
-                self.reg_span(reg),
-            )
-        })
+    /// The storage pointer of an aggregate-valued register. A compile-time
+    /// StringLiteral consumed as storage materializes on first use as a
+    /// borrowed `MjStrDesc` over its interned constant bytes.
+    fn reg_ptr(&mut self, ctx: &mut Context, reg: Reg) -> Result<Value, PlironError> {
+        if let Some(value) = self.reg_values.get(&reg.0) {
+            return Ok(*value);
+        }
+        if let Some(bytes) = self.str_consts.get(&reg.0).cloned() {
+            let storage = self.entry_alloca(ctx, 16, 8);
+            let global = self.shared.intern_string(ctx, &bytes);
+            let data = self.global_address(ctx, &global, reg);
+            let store_data = StoreOp::new(ctx, data, storage);
+            self.append(ctx, store_data.get_operation(), Some(reg));
+            let len_address = self.gep_byte(ctx, storage, 8, reg);
+            let len = self.uint_constant(ctx, bytes.len() as u64);
+            let store_len = StoreOp::new(ctx, len, len_address);
+            self.append(ctx, store_len.get_operation(), Some(reg));
+            self.reg_values.insert(reg.0, storage);
+            return Ok(storage);
+        }
+        Err(self.unsupported(
+            format!("read of undefined aggregate register %r{}", reg.0),
+            self.reg_span(reg),
+        ))
     }
 
     /// `base + offset` bytes as an opaque pointer (a GEP over `i8`).
@@ -4400,7 +4770,7 @@ impl<'a> FnLowering<'a> {
         if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0)
             && crate::symbol::is_stdlib_string_struct(name)
         {
-            let ptr = self.reg_ptr(arg)?;
+            let ptr = self.reg_ptr(ctx, arg)?;
             let (data, size) = self.string_parts(ctx, ptr, dest);
             self.write_stdout(ctx, data, size, dest);
             return Ok(());
@@ -4408,7 +4778,7 @@ impl<'a> FnLowering<'a> {
         // An error value prints its bare message (the VM's `format_value`
         // over `Value::Error`).
         if matches!(self.func.reg_types.get(&arg.0), Some(Ty::Error)) {
-            let ptr = self.reg_ptr(arg)?;
+            let ptr = self.reg_ptr(ctx, arg)?;
             let (data, size) = self.string_parts(ctx, ptr, dest);
             self.write_stdout(ctx, data, size, dest);
             return Ok(());
@@ -4419,11 +4789,29 @@ impl<'a> FnLowering<'a> {
             self.write_literal_bytes(ctx, b"None", dest);
             return Ok(());
         }
+        // A runtime StringLiteral value (typed storage) prints its
+        // descriptor's bytes.
+        if matches!(self.func.reg_types.get(&arg.0), Some(Ty::StringLiteral)) {
+            let ptr = self.reg_ptr(ctx, arg)?;
+            let (data, len) = self.string_parts(ctx, ptr, dest);
+            self.write_stdout(ctx, data, len, dest);
+            return Ok(());
+        }
         let ty = match self.concrete_scalar_ty(arg)? {
             Some(ty) => ty,
             // A bare literal argument materializes at the VM's default kind.
+            // A runtime FloatLiteral value rejects: the VM displays its
+            // exact rational (`1/10`), which f64 storage cannot reproduce.
             None => match self.func.reg_types.get(&arg.0) {
-                Some(Ty::FloatLiteral) => ScalarTy::Float64,
+                Some(Ty::FloatLiteral) => {
+                    if !self.pending_literals.contains_key(&arg.0) {
+                        return Err(self.unsupported_reg(
+                            "display of a runtime FloatLiteral value".into(),
+                            dest,
+                        ));
+                    }
+                    ScalarTy::Float64
+                }
                 _ => ScalarTy::Int,
             },
         };
@@ -4456,10 +4844,27 @@ impl<'a> FnLowering<'a> {
         value: Value,
         dest: Reg,
     ) -> Result<(Value, Value), PlironError> {
-        let symbol = match ty {
-            ScalarTy::Int => "mjrt_fmt_i64",
-            ScalarTy::UInt => "mjrt_fmt_u64",
-            ScalarTy::Float64 => "mjrt_fmt_f64",
+        let (symbol, value) = match ty {
+            ScalarTy::Int => ("mjrt_fmt_i64", value),
+            ScalarTy::UInt => ("mjrt_fmt_u64", value),
+            ScalarTy::Float64 => ("mjrt_fmt_f64", value),
+            // A `Float32` displays as its f64 view (the VM formats the lane's
+            // stored f64 with the same shortest-round-trip rules).
+            ScalarTy::Sized(Dtype::Float32) => ("mjrt_fmt_f64", self.f32_to_f64(ctx, value, dest)),
+            // Sized integers display their mathematical value.
+            ScalarTy::Sized(dtype) => {
+                let (_, signed) =
+                    crate::runtime::integer_dtype_bits(dtype).expect("Float32 is matched above");
+                let wide = self.sized_to_i64(ctx, value, dtype, dest);
+                (
+                    if signed {
+                        "mjrt_fmt_i64"
+                    } else {
+                        "mjrt_fmt_u64"
+                    },
+                    wide,
+                )
+            }
             ScalarTy::Ptr => {
                 return Err(self.unsupported_reg("display of a Pointer".into(), dest));
             }
@@ -4633,6 +5038,24 @@ impl<'a> FnLowering<'a> {
             Ty::Int => ScalarTy::Int,
             Ty::UInt => ScalarTy::UInt,
             Ty::Float64 => ScalarTy::Float64,
+            Ty::Simd { dtype, width: 1 } => ScalarTy::of_dtype(*dtype),
+            // Literal-typed storage holds the exact value at its default
+            // width, rejecting what i64/f64 cannot represent.
+            Ty::IntLiteral | Ty::FloatLiteral => {
+                let Some(literal) = self.pending_literals.get(&value.0).cloned() else {
+                    if let Some(materialized) = self.reg_values.get(&value.0).copied() {
+                        self.reg_values.insert(dest.0, materialized);
+                        return Ok(());
+                    }
+                    return Err(self.unsupported_reg(
+                        "literal materialization of a non-literal register".into(),
+                        dest,
+                    ));
+                };
+                let constant = self.exact_literal_storage(ctx, &literal, target, dest)?;
+                self.reg_values.insert(dest.0, constant);
+                return Ok(());
+            }
             other => {
                 return Err(
                     self.unsupported_reg(format!("literal materialization to `{other:?}`"), dest)
@@ -4654,6 +5077,56 @@ impl<'a> FnLowering<'a> {
         let constant = self.materialize_pending(ctx, &literal, target, dest)?;
         self.reg_values.insert(dest.0, constant);
         Ok(())
+    }
+
+    /// A pending literal as its typed-storage constant: `IntLiteral` storage
+    /// is an exact i64 and `FloatLiteral` storage the literal's f64 value.
+    /// A constant the storage cannot hold rejects — the VM keeps arbitrary
+    /// precision in literal-typed slots, so wrapping here would silently
+    /// diverge from the oracle (the recorded reject-never-wrap policy).
+    fn exact_literal_storage(
+        &mut self,
+        ctx: &mut Context,
+        literal: &PendingLiteral,
+        target: &Ty,
+        span_reg: Reg,
+    ) -> Result<Value, PlironError> {
+        match (literal, target) {
+            (PendingLiteral::Int(literal), Ty::IntLiteral) => {
+                let value = literal.to_i64().ok_or_else(|| {
+                    self.literal_out_of_range(
+                        literal.as_bigint().to_string(),
+                        "IntLiteral storage (i64)",
+                        span_reg,
+                    )
+                })?;
+                Ok(self.int_constant(ctx, value))
+            }
+            (PendingLiteral::Int(literal), _) => {
+                let value = literal.to_f64().ok_or_else(|| {
+                    self.literal_out_of_range(
+                        literal.as_bigint().to_string(),
+                        "FloatLiteral storage (f64)",
+                        span_reg,
+                    )
+                })?;
+                Ok(self.float_constant(ctx, value))
+            }
+            (PendingLiteral::Float(literal), Ty::FloatLiteral) => {
+                let value = literal.to_f64().ok_or_else(|| {
+                    self.literal_out_of_range(
+                        literal.to_string(),
+                        "FloatLiteral storage (f64)",
+                        span_reg,
+                    )
+                })?;
+                Ok(self.float_constant(ctx, value))
+            }
+            (PendingLiteral::Float(literal), _) => Err(self.unsupported(
+                format!("float literal `{literal}` as IntLiteral storage"),
+                self.reg_span(span_reg),
+            )),
+        }
     }
 
     fn lower_unop(
@@ -4695,6 +5168,18 @@ impl<'a> FnLowering<'a> {
                 let one = self.bool_constant(ctx, true);
                 let not = XorOp::new(ctx, value, one);
                 self.define(ctx, dest, not.get_operation(), not.get_result(ctx))
+            }
+            // Sized-lane negation: `0 - x` wraps at the lane width for
+            // integers; f32 negation is exact, so no widen/round dance.
+            (PrefixOp::Neg, ScalarTy::Sized(Dtype::Float32)) => {
+                let neg =
+                    FNegOp::new_with_fast_math_flags(ctx, value, FastmathFlagsAttr::default());
+                self.define(ctx, dest, neg.get_operation(), neg.get_result(ctx))
+            }
+            (PrefixOp::Neg, ScalarTy::Sized(dtype)) => {
+                let zero = self.sized_int_constant(ctx, dtype, 0);
+                let neg = SubOp::new_with_overflow_flag(ctx, zero, value, no_overflow_flags());
+                self.define(ctx, dest, neg.get_operation(), neg.get_result(ctx))
             }
             (op, other) => Err(self.unsupported_reg(
                 format!("operator `{op:?}` on `{}` operand", other.name()),
@@ -4755,10 +5240,91 @@ impl<'a> FnLowering<'a> {
             ScalarTy::Float64 => self.lower_float_binop(ctx, op, dest, lhs, rhs),
             ScalarTy::Int => self.lower_int_binop(ctx, op, dest, lhs, rhs),
             ScalarTy::UInt => self.lower_uint_binop(ctx, op, dest, lhs, rhs),
+            ScalarTy::Sized(Dtype::Float32) => self.lower_f32_binop(ctx, op, dest, lhs, rhs),
+            ScalarTy::Sized(dtype) => self.lower_sized_int_binop(ctx, op, dest, lhs, rhs, dtype),
             ScalarTy::Ptr => {
                 Err(self.unsupported_reg(format!("operator `{op:?}` on Pointer operands"), dest))
             }
         }
+    }
+
+    /// Sized integer lanes support exactly the checker's SIMD operator set:
+    /// wrapping `+`/`-`/`*` at the lane width (native iN arithmetic wraps by
+    /// construction, matching `runtime::wrap` after exact i128 arithmetic).
+    /// Comparisons split off earlier; everything else is rejected here as a
+    /// backstop — the checker refuses it before MIR exists.
+    fn lower_sized_int_binop(
+        &mut self,
+        ctx: &mut Context,
+        op: InfixOp,
+        dest: Reg,
+        lhs: Value,
+        rhs: Value,
+        dtype: Dtype,
+    ) -> Result<(), PlironError> {
+        match op {
+            InfixOp::Add => {
+                let add = AddOp::new_with_overflow_flag(ctx, lhs, rhs, no_overflow_flags());
+                self.define(ctx, dest, add.get_operation(), add.get_result(ctx))
+            }
+            InfixOp::Sub => {
+                let sub = SubOp::new_with_overflow_flag(ctx, lhs, rhs, no_overflow_flags());
+                self.define(ctx, dest, sub.get_operation(), sub.get_result(ctx))
+            }
+            InfixOp::Mul => {
+                let mul = MulOp::new_with_overflow_flag(ctx, lhs, rhs, no_overflow_flags());
+                self.define(ctx, dest, mul.get_operation(), mul.get_result(ctx))
+            }
+            other => Err(self.unsupported_reg(
+                format!(
+                    "operator `{other:?}` on {} operands",
+                    ScalarTy::Sized(dtype).name()
+                ),
+                dest,
+            )),
+        }
+    }
+
+    /// `Float32` arithmetic: the VM computes each operation at f64 and rounds
+    /// the result to single precision (`round_lane`), so the lowering widens,
+    /// operates at f64, and truncates — never direct f32 arithmetic, whose
+    /// single rounding differs from the VM's double rounding in edge cases.
+    fn lower_f32_binop(
+        &mut self,
+        ctx: &mut Context,
+        op: InfixOp,
+        dest: Reg,
+        lhs: Value,
+        rhs: Value,
+    ) -> Result<(), PlironError> {
+        let flags = FastmathFlagsAttr::default;
+        let wide_lhs = self.f32_to_f64(ctx, lhs, dest);
+        let wide_rhs = self.f32_to_f64(ctx, rhs, dest);
+        let wide = match op {
+            InfixOp::Add => {
+                let add = FAddOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
+                self.append(ctx, add.get_operation(), Some(dest));
+                add.get_result(ctx)
+            }
+            InfixOp::Sub => {
+                let sub = FSubOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
+                self.append(ctx, sub.get_operation(), Some(dest));
+                sub.get_result(ctx)
+            }
+            InfixOp::Mul => {
+                let mul = FMulOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
+                self.append(ctx, mul.get_operation(), Some(dest));
+                mul.get_result(ctx)
+            }
+            other => {
+                return Err(
+                    self.unsupported_reg(format!("operator `{other:?}` on Float32 operands"), dest)
+                );
+            }
+        };
+        let rounded = self.f64_to_f32(ctx, wide, dest);
+        self.reg_values.insert(dest.0, rounded);
+        Ok(())
     }
 
     fn lower_int_binop(
@@ -5005,8 +5571,34 @@ impl<'a> FnLowering<'a> {
                 dest,
             ));
         }
+        // Sized integer lanes have no `/` (the checker admits SIMD division
+        // on float lanes only); reject as a backstop rather than promote.
+        if let ScalarTy::Sized(dtype) = operand_ty
+            && dtype != Dtype::Float32
+        {
+            return Err(self.unsupported_reg(
+                format!("operator `Div` on {} operands", operand_ty.name()),
+                dest,
+            ));
+        }
         let lhs = self.reg_value(ctx, a, operand_ty)?;
         let rhs = self.reg_value(ctx, b, operand_ty)?;
+        // `Float32 / Float32` stays a Float32 lane: divide at f64 and round
+        // (`runtime::simd_binop`), unlike the scalar promotions below.
+        if operand_ty == ScalarTy::Sized(Dtype::Float32) {
+            let wide_lhs = self.f32_to_f64(ctx, lhs, dest);
+            let wide_rhs = self.f32_to_f64(ctx, rhs, dest);
+            let div = FDivOp::new_with_fast_math_flags(
+                ctx,
+                wide_lhs,
+                wide_rhs,
+                FastmathFlagsAttr::default(),
+            );
+            self.append(ctx, div.get_operation(), Some(dest));
+            let rounded = self.f64_to_f32(ctx, div.get_result(ctx), dest);
+            self.reg_values.insert(dest.0, rounded);
+            return Ok(());
+        }
         let (lhs, rhs) = match operand_ty {
             ScalarTy::Float64 => (lhs, rhs),
             ScalarTy::Int => (
@@ -5017,7 +5609,7 @@ impl<'a> FnLowering<'a> {
                 self.uint_to_f64(ctx, lhs, dest),
                 self.uint_to_f64(ctx, rhs, dest),
             ),
-            ScalarTy::Bool | ScalarTy::Ptr => unreachable!("rejected above"),
+            ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Sized(_) => unreachable!("rejected above"),
         };
         let div = FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, FastmathFlagsAttr::default());
         self.define(ctx, dest, div.get_operation(), div.get_result(ctx))
@@ -5035,6 +5627,77 @@ impl<'a> FnLowering<'a> {
         let cast = UIToFPOp::new_with_nneg(ctx, value, f64_ty, false);
         self.append(ctx, cast.get_operation(), Some(dest));
         cast.get_result(ctx)
+    }
+
+    /// Widen a `Float32` SSA value to its f64 view (exact — the VM stores
+    /// f32 lanes as f64 views).
+    fn f32_to_f64(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
+        let f64_ty: TypeHandle = FP64Type::get(ctx).into();
+        let cast = FPExtOp::new(ctx, value, f64_ty);
+        cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
+        self.append(ctx, cast.get_operation(), Some(dest));
+        cast.get_result(ctx)
+    }
+
+    /// Round an f64 value to single precision (the VM's `round_f32`).
+    fn f64_to_f32(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
+        let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+        let cast = FPTruncOp::new(ctx, value, f32_ty);
+        cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
+        self.append(ctx, cast.get_operation(), Some(dest));
+        cast.get_result(ctx)
+    }
+
+    /// A sized integer lane's mathematical value as i64: sign-extend a
+    /// signed lane, zero-extend an unsigned one (the VM's i128 lane content,
+    /// which always fits i64 bits for 64-bit-and-under lanes).
+    fn sized_to_i64(&mut self, ctx: &mut Context, value: Value, dtype: Dtype, dest: Reg) -> Value {
+        let (bits, signed) = crate::runtime::integer_dtype_bits(dtype)
+            .expect("sized_to_i64 takes integer dtypes only");
+        if bits == 64 {
+            return value;
+        }
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        if signed {
+            let cast = SExtOp::new(ctx, value, i64_ty);
+            self.append(ctx, cast.get_operation(), Some(dest));
+            cast.get_result(ctx)
+        } else {
+            let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
+            self.append(ctx, cast.get_operation(), Some(dest));
+            cast.get_result(ctx)
+        }
+    }
+
+    /// Resize an integer value from `from` to `to` bits along its
+    /// mathematical value (`from_signed` selects the extension): the VM's
+    /// `wrap` at the target width.
+    fn resize_int(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        from: (u32, bool),
+        to: u32,
+        dest: Reg,
+    ) -> Value {
+        let (from_bits, from_signed) = from;
+        if from_bits == to {
+            return value;
+        }
+        let to_ty: TypeHandle = IntegerType::get(ctx, to, Signedness::Signless).into();
+        if to < from_bits {
+            let cast = TruncOp::new(ctx, value, to_ty);
+            self.append(ctx, cast.get_operation(), Some(dest));
+            cast.get_result(ctx)
+        } else if from_signed {
+            let cast = SExtOp::new(ctx, value, to_ty);
+            self.append(ctx, cast.get_operation(), Some(dest));
+            cast.get_result(ctx)
+        } else {
+            let cast = ZExtOp::new_with_nneg(ctx, value, to_ty, false);
+            self.append(ctx, cast.get_operation(), Some(dest));
+            cast.get_result(ctx)
+        }
     }
 
     fn lower_compare(
@@ -5086,8 +5749,21 @@ impl<'a> FnLowering<'a> {
             }
             // Rust f64 comparisons: `!=` is true for NaN operands (UNE), the
             // ordered comparisons are false (`runtime::float_op`).
-            ScalarTy::Float64 => {
+            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
                 let cmp = self.fcmp(ctx, float_predicate(op), lhs, rhs);
+                self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))
+            }
+            // Sized integer lanes compare on their mathematical values
+            // (`runtime::int_cmp` over the sign-carrying i128 lane).
+            ScalarTy::Sized(dtype) => {
+                let (_, signed) = crate::runtime::integer_dtype_bits(dtype)
+                    .expect("float dtypes are matched above");
+                let predicate = if signed {
+                    signed_predicate(op)
+                } else {
+                    unsigned_predicate(op)
+                };
+                let cmp = ICmpOp::new(ctx, predicate, lhs, rhs);
                 self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))
             }
         }
@@ -5400,7 +6076,7 @@ impl<'a> FnLowering<'a> {
                 let sret = self
                     .sret_ptr
                     .expect("aggregate-returning functions receive an sret pointer");
-                let ptr = self.reg_ptr(reg)?;
+                let ptr = self.reg_ptr(ctx, reg)?;
                 self.mem_copy(ctx, sret, ptr, layout.size, reg);
                 self.owned_temps.remove(&reg.0);
                 None
@@ -5449,7 +6125,7 @@ impl<'a> FnLowering<'a> {
             }
             (LowerTy::Aggregate { layout, .. }, Some(reg)) => {
                 let size = layout.size;
-                let ptr = self.reg_ptr(reg)?;
+                let ptr = self.reg_ptr(ctx, reg)?;
                 let address = self.offset_address(ctx, outcome_ptr, outcome.ok_offset);
                 self.mem_copy(ctx, address, ptr, size, reg);
                 // The caller owns the payload now.
@@ -5494,6 +6170,31 @@ impl<'a> FnLowering<'a> {
     /// Emit an f64 constant in the current block and return its value.
     fn float_constant(&mut self, ctx: &mut Context, value: f64) -> Value {
         let attr = FPDoubleAttr::from(value);
+        let op = ConstantOp::new(ctx, Box::new(attr));
+        self.append(ctx, op.get_operation(), None);
+        op.get_result(ctx)
+    }
+
+    /// Emit an f32 constant in the current block and return its value.
+    fn f32_constant(&mut self, ctx: &mut Context, value: f32) -> Value {
+        let attr = FPSingleAttr::from(value);
+        let op = ConstantOp::new(ctx, Box::new(attr));
+        self.append(ctx, op.get_operation(), None);
+        op.get_result(ctx)
+    }
+
+    /// Emit an integer constant at a sized lane width, carrying `value`'s
+    /// low `bits` bits.
+    fn sized_int_constant(&mut self, ctx: &mut Context, dtype: Dtype, value: u64) -> Value {
+        let (bits, _) = crate::runtime::integer_dtype_bits(dtype)
+            .expect("sized_int_constant takes integer dtypes only");
+        let masked = if bits == 64 {
+            value
+        } else {
+            value & ((1u64 << bits) - 1)
+        };
+        let int_ty = IntegerType::get(ctx, bits, Signedness::Signless);
+        let attr = IntegerAttr::new(int_ty, APInt::from_u64(masked, bw(bits as usize)));
         let op = ConstantOp::new(ctx, Box::new(attr));
         self.append(ctx, op.get_operation(), None);
         op.get_result(ctx)
@@ -5610,6 +6311,47 @@ impl<'a> FnLowering<'a> {
                     self.literal_out_of_range(literal.to_string(), "Float64 (f64)", span_reg)
                 })?;
                 Ok(self.float_constant(ctx, value))
+            }
+            // Sized lanes materialize with the VM's exact conversions:
+            // integers wrap at the lane width, `Float32` rounds correctly
+            // from the exact literal (never through an f64 intermediate).
+            (PendingLiteral::Int(literal), ScalarTy::Sized(Dtype::Float32)) => {
+                let value = FloatLiteral::from_int(literal).to_f32().ok_or_else(|| {
+                    self.literal_out_of_range(
+                        literal.as_bigint().to_string(),
+                        "Float32 (f32)",
+                        span_reg,
+                    )
+                })?;
+                Ok(self.f32_constant(ctx, value))
+            }
+            (PendingLiteral::Float(literal), ScalarTy::Sized(Dtype::Float32)) => {
+                let value = literal.to_f32().ok_or_else(|| {
+                    self.literal_out_of_range(literal.to_string(), "Float32 (f32)", span_reg)
+                })?;
+                Ok(self.f32_constant(ctx, value))
+            }
+            (PendingLiteral::Int(literal), ScalarTy::Sized(dtype)) => {
+                let (bits, signed) =
+                    crate::runtime::integer_dtype_bits(dtype).ok_or_else(|| {
+                        self.unsupported(
+                            format!("literal materialization to `{}`", expected.name()),
+                            self.reg_span(span_reg),
+                        )
+                    })?;
+                let value = if signed {
+                    literal.wrapping_signed(bits).map(|value| value as u64)
+                } else {
+                    literal.wrapping_unsigned(bits)
+                }
+                .ok_or_else(|| {
+                    self.literal_out_of_range(
+                        literal.as_bigint().to_string(),
+                        ScalarTy::Sized(dtype).name(),
+                        span_reg,
+                    )
+                })?;
+                Ok(self.sized_int_constant(ctx, dtype, value))
             }
             (PendingLiteral::Float(literal), other) => Err(self.unsupported(
                 format!(
@@ -5865,6 +6607,7 @@ fn scalar_type(
         Ty::UInt => Ok(ScalarTy::UInt),
         Ty::Float64 => Ok(ScalarTy::Float64),
         Ty::Bool => Ok(ScalarTy::Bool),
+        Ty::Simd { dtype, width: 1 } => Ok(ScalarTy::of_dtype(*dtype)),
         other => Err(PlironError {
             function: Some(function.to_string()),
             kind: PlironErrorKind::Unsupported {

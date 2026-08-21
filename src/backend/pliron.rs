@@ -1,4 +1,4 @@
-//! Experimental Pliron native backend (roadmap section 4, Stages 1-4).
+//! Experimental Pliron native backend (roadmap: native backend, Stages 1-4).
 //!
 //! Compiles the checked scalar subset of verified, drop-elaborated MIR —
 //! Int/UInt/Float64/Bool constants, every scalar operator and the builtin
@@ -379,6 +379,11 @@ pub enum RetKind {
     /// `Ty::Pointer` — an opaque pointer. Compiles; the value-comparing JIT
     /// harness refuses to read it (a raw address has no VM display analog).
     Ptr,
+    /// A width-1 SIMD scalar alias (`Ty::Simd { dtype, width: 1 }`): the
+    /// native return is the lane type; the JIT reads it back as the VM's
+    /// mathematical lane value (sign/zero-extended integer, f64 view of a
+    /// `Float32`).
+    Sized(crate::ast::Dtype),
 }
 
 /// A checked runtime trap the native backend guards explicitly. Trap blocks

@@ -153,6 +153,7 @@ assets/ok/pliron_diamond.mojo	compute	differential	ret=Int
 assets/ok/pliron_fib.mojo	compute	differential	ret=Int
 assets/ok/pliron_finally_early_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_finally_overrides.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_float32_semantics.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_float_arith.mojo	compute	differential	ret=Float64
 assets/ok/pliron_float_compare_nan.mojo	compute	differential	ret=Int
 assets/ok/pliron_float_floor_mod.mojo	compute	differential	ret=Float64
@@ -162,15 +163,19 @@ assets/ok/pliron_floor_signs.mojo	compute	differential	ret=Int
 assets/ok/pliron_int_pow.mojo	compute	differential	ret=Int
 assets/ok/pliron_int_truediv.mojo	compute	differential	ret=Float64
 assets/ok/pliron_kwargs_defaults.mojo	compute	differential	ret=Int
+assets/ok/pliron_literal_materialize.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_loop.mojo	compute	differential	ret=Int
 assets/ok/pliron_multifunc.mojo	compute	differential	ret=Int
 assets/ok/pliron_print_scalars.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_print_str_literal.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_reference_write_back.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_scalar_casts.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_scalar_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_shortcircuit.mojo	compute	differential	ret=Int
 assets/ok/pliron_straightline.mojo	compute	differential	ret=Int
 assets/ok/pliron_string_convert.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_string_literal_var.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_stringliteral_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_struct_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_struct_fieldwise.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_struct_init_method.mojo	-	ineligible	no-scalar-entry-shape

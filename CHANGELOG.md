@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pliron Stage 5 slice 1 — narrow scalars and literal value types: the native
+  backend now lowers the width-1 SIMD scalar aliases (`Int8`…`Int64`,
+  `UInt8`…`UInt64`, `Float32`) at their lane width with VM-exact wrapping
+  arithmetic, signedness-correct comparisons, width-1 construction and
+  `cast[DType.x]()` (float→int truncation saturates at the 128-bit
+  intermediate before wrapping, like the VM), and builtin conversions over
+  sized operands; `Float32` computes and prints through its f64 view, so
+  formatting reuses `mjrt_fmt_f64` and the runtime ABI stays at v3. The
+  literal value types lower as first-class storage: materialization into
+  scalars and sized lanes wraps VM-exactly (`Float32` correctly rounded from
+  the exact rational literal), `IntLiteral`/`FloatLiteral`-typed storage is
+  exact i64/f64 — a constant exceeding i64 rejects with `LiteralOutOfRange`
+  instead of silently diverging from the VM's arbitrary precision — and
+  `StringLiteral`-typed values (variables, parameters, returns, fields) use
+  the borrowed `MjStrDesc` descriptor with printing and `String(x)`
+  conversion. This unlocks narrow struct fields, `UInt8` pointer/allocation
+  elements (nominal-String internals), and the CTFE literal-variable
+  fixtures in the parity manifest; design notes and recorded divergences in
+  `docs/notes/pliron-stage5.md`.
+
 - Pliron Stage 5 groundwork (roadmap §4): the generated native capability
   matrix `conformance/pliron-capability.tsv` — one row per textual-MIR
   instruction mnemonic, checked-type constructor spelling, and exported
@@ -44,6 +64,14 @@ to evolve under the `0.x` compatibility rules.
   snapshots, a clang data-layout pin, and `llvm-nm` symbol inspection).
 
 ### Changed
+
+- `docs/roadmap.md` is restructured into a lean ordered checklist: the
+  "Where Mojito Stands" overview moved to `docs/features.md`, the native
+  backend architecture/dialect/testing contract moved to
+  `docs/architecture.md` ("Native Backend Contract"), completed-milestone
+  prose was deleted per the task lifecycle policy, the Pliron Stage 5 work is
+  itemized as ordered slice checkboxes, and recurring/unordered sections are
+  marked explicitly.
 
 - Int/UInt overflow is now defined two's-complement wrapping on both the VM
   and the native backend — `+ - *`, unary negation, and `**` wrap

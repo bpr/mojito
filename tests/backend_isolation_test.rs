@@ -2,7 +2,7 @@
 //! `pliron-llvm`, and (transitively) `llvm-sys` exist in the lockfile as
 //! optional dependencies behind the `backend-pliron` feature, so this guard
 //! asserts the *resolved default dependency graph* — not the lockfile —
-//! stays free of them (roadmap section 4; docs/notes/pliron-stage1.md).
+//! stays free of them (roadmap: native backend; docs/notes/pliron-stage1.md).
 
 use std::process::Command;
 

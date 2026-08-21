@@ -1,4 +1,4 @@
-//! The generated native capability matrix (roadmap section 4, Stage 5).
+//! The generated native capability matrix (roadmap: native backend, Stage 5).
 //!
 //! Renders `conformance/pliron-capability.tsv`: one row per textual-MIR
 //! instruction mnemonic, one per checked-type constructor spelling, and one
@@ -121,7 +121,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "literal.materialize",
         CapabilityStatus::Partial,
-        "scalar targets; out-of-range literals reject",
+        "scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects",
     ),
     ("var.use", CapabilityStatus::Supported, "copy/move/borrow"),
     (
@@ -271,13 +271,13 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "simd.make",
-        CapabilityStatus::Unsupported,
-        "Stage 5: SIMD scalar semantics",
+        CapabilityStatus::Partial,
+        "width-1 scalar aliases with the VM's lane conversions; multi-lane construction rejects (Stage 5 SIMD slice)",
     ),
     (
         "simd.cast",
-        CapabilityStatus::Unsupported,
-        "Stage 5: SIMD scalar semantics",
+        CapabilityStatus::Partial,
+        "width-1 casts (int rewrap, f64-mediated float conversion, i128-saturating float→int); multi-lane and bool casts reject",
     ),
     (
         "simd.shuffle",
@@ -353,8 +353,8 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ("Bool", CapabilityStatus::Supported, "i1"),
     (
         "StringLiteral",
-        CapabilityStatus::Partial,
-        "constant-pool literal registers; typed literal storage rejects (Stage 5)",
+        CapabilityStatus::Supported,
+        "constant-pool literal registers and typed storage (borrowed MjStrDesc descriptor)",
     ),
     ("Float64", CapabilityStatus::Supported, "f64"),
     ("None", CapabilityStatus::Supported, "zero-sized"),
@@ -366,12 +366,12 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "IntLiteral",
         CapabilityStatus::Partial,
-        "pending-literal registers until materialization; typed literal storage rejects (Stage 5)",
+        "pending-literal registers and exact i64 typed storage; a constant exceeding i64 rejects (the VM keeps arbitrary precision)",
     ),
     (
         "FloatLiteral",
         CapabilityStatus::Partial,
-        "pending-literal registers until materialization; typed literal storage rejects (Stage 5)",
+        "pending-literal registers and f64 typed storage; displaying a runtime value rejects (the VM prints the exact rational)",
     ),
     (
         "Infer",
@@ -413,8 +413,8 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "simd",
-        CapabilityStatus::Unsupported,
-        "Stage 5: scalar-width aliases and scalar-semantics vectors",
+        CapabilityStatus::Partial,
+        "width-1 scalar aliases at their lane width with VM-exact arithmetic/conversion/formatting; multi-lane vectors reject (Stage 5 SIMD slice)",
     ),
     ("Error", CapabilityStatus::Supported, "MjError storage"),
     (
