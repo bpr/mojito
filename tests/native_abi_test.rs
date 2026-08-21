@@ -104,6 +104,7 @@ fn runtime_signatures_match_the_contract_table() {
     assert_sig!(mjrt_fmt_u64: fn(u64, *mut u8) -> u64);
     assert_sig!(mjrt_fmt_f64: fn(f64, *mut u8) -> u64);
     assert_sig!(mjrt_trace: fn(u32, *const u8, u64) -> ());
+    assert_sig!(mjrt_read_line: fn(*mut u8) -> ());
     // `-> !` cannot go through the generic return projection on stable Rust;
     // pin the noreturn contracts by hand.
     let _: unsafe extern "C" fn(u32) -> ! = mojito_runtime::mjrt_trap;
@@ -130,7 +131,7 @@ fn runtime_signatures_match_the_contract_table() {
 fn every_table_row_has_exactly_one_check_above() {
     // Adding a runtime symbol must extend runtime_signatures_match_the
     // _contract_table; this count trips when the table grows without it.
-    assert_eq!(rt_abi::RT_SYMBOLS.len(), 11);
+    assert_eq!(rt_abi::RT_SYMBOLS.len(), 12);
     assert_eq!(rt_abi::RT_DATA_SYMBOLS.len(), 1);
     assert_eq!(rt_abi::RT_TYPES.len(), 3);
 }
@@ -159,6 +160,10 @@ fn abi_version_and_shared_constants_agree() {
     assert_eq!(
         mojito_runtime::TRAP_UNHANDLED_ERROR,
         rt_abi::TRAP_UNHANDLED_ERROR
+    );
+    assert_eq!(
+        mojito_runtime::TRAP_STDIN_FAILURE,
+        rt_abi::TRAP_STDIN_FAILURE
     );
     assert_eq!(mojito_runtime::MJ_TAG_OK, rt_abi::MJ_TAG_OK);
     assert_eq!(mojito_runtime::MJ_TAG_ERR, rt_abi::MJ_TAG_ERR);

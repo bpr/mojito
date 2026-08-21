@@ -19,7 +19,7 @@ use crate::native::target::NativeTarget;
 /// The runtime ABI version this compiler emits against. Must equal
 /// `mojito_runtime::ABI_VERSION`; the linked runtime exports it as the
 /// inspectable data symbol [`ABI_VERSION_SYMBOL`].
-pub const MJRT_ABI_VERSION: u32 = 3;
+pub const MJRT_ABI_VERSION: u32 = 4;
 
 /// The exported `u32` data symbol carrying the runtime's ABI version.
 pub const ABI_VERSION_SYMBOL: &str = "mjrt_abi_version";
@@ -32,6 +32,7 @@ pub const TRAP_POW_EXPONENT: u32 = 2;
 pub const TRAP_ALLOC_FAILURE: u32 = 3;
 pub const TRAP_STDOUT_FAILURE: u32 = 4;
 pub const TRAP_UNHANDLED_ERROR: u32 = 5;
+pub const TRAP_STDIN_FAILURE: u32 = 6;
 
 /// Tag values of tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
@@ -208,6 +209,19 @@ pub const RT_SYMBOLS: &[RtSig] = &[
         ownership: "borrows the UTF-8 payload bytes for the call; data may \
                     be null only when len is 0",
         failure: "never fails; stderr write errors are ignored",
+    },
+    RtSig {
+        symbol: "mjrt_read_line",
+        params: &[("out", CAbiTy::PtrMutU8)],
+        ret: None,
+        noreturn: false,
+        since: 4,
+        ownership: "borrows out (>= 24 writable bytes, caller-owned) and \
+                    writes an MjString whose data is a fresh mjrt_alloc \
+                    allocation the caller owns (size == cap == line length, \
+                    trailing \\n then \\r stripped); EOF yields size 0 with a \
+                    valid header-only allocation",
+        failure: "traps (stdin-failure) on a read error; EOF is not an error",
     },
 ];
 

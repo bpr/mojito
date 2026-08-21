@@ -253,7 +253,10 @@ fn run_program_native(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
         .write_executable(&exe, opt)
         .map_err(|e| e.to_string())
         .and_then(|()| {
+            // `output()` would silently null the child's stdin; `input()`
+            // programs must see the CLI's own stdin (EOF included).
             std::process::Command::new(&exe)
+                .stdin(std::process::Stdio::inherit())
                 .output()
                 .map_err(|e| format!("cannot run native executable: {e}"))
         });

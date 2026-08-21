@@ -178,3 +178,114 @@ divergences:
   the mismatch invisible) failed against the concrete parameter the checker
   had admitted; `unify` now accepts literal-typed actuals without binding —
   `MaterializeLiteral` converts the value at the lowering boundary.
+
+## Pointer/uninit storage intrinsics and builtins (S5.4)
+
+The five storage instructions (`PointerStorageTake`/`PointerStorageDestroy`,
+`UninitStorage`/`UninitStorageTake`/`UninitStorageDestroy`), the
+`UnsafePointer` allocation family, and the `len`/`abs`/`min`/`max`/`round`/
+`divmod`/`input` builtins plus the scalar
+`__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics now lower.
+Runtime ABI v4 adds `mjrt_read_line` and the stdin-failure trap category (6).
+Design decisions and recorded divergences:
+
+- **Storage is payload-only; no tombstones, no init flags.** The VM tracks
+  slot initialization structurally (`Value::Moved` tombstones in heap
+  slots, the `Option` payload of `Value::UninitStorage`), but ownership
+  verification guarantees the runnable subset never takes or destroys an
+  uninitialized slot and never double-takes — so a native take is a raw
+  byte move (`heap_take`'s `mem::replace`, no `__copyinit__`) and a destroy
+  reuses `emit_drop_value` at the element address (compiled-`__deinit__`
+  dispatch, droppable-field/raising rejections, and lifecycle-trace events
+  included). The misuse traps live in off-gate `runtime_error` fixtures.
+  `__UninitStorage[T]` instances lay out as their bare payload
+  (`layout_of` resolves them through a `$mono`-aware
+  `types::uninit_storage_element`) with deliberately **no synthesized MIR
+  declaration**: a nominal struct without declared fields drops as a no-op,
+  which is exactly the VM's leak-by-design `Value::UninitStorage` drop.
+  `Proj::UninitPayload` is an identity projection under that layout, so
+  `unsafe_write` stays the raw no-drop overwrite. Leaked payloads are
+  inline, so LSan stays clean as long as leak-path payloads own no heap —
+  a constraint on fixture design, not on the lowering.
+- **Builtins split between mono and the backend by the VM's own split.**
+  Nominal-receiver `len`/`abs`/`round` are the VM's by-name
+  `call_dunder` dispatches, so mono rewrites them into unresolved
+  `MethodCall`s and the existing rewrite arm resolves them through the
+  shared `symbol::resolve_method_symbol` (invariant-6 anti-divergence);
+  the same rewrite turns a struct-lhs `BinOp` into its operator method
+  (`String.__add__` runs the compiled stdlib byte loop natively —
+  `apply_binop`'s struct arm). The scalar forms intercept in `lower_call`:
+  `abs` is `select`-based `wrapping_abs` on Int (`abs(i64::MIN) ==
+  i64::MIN`), identity on UInt, `llvm.fabs.f64`; `min`/`max` promote
+  statically by the VM's rank (Int < UInt < Float64) and pick by ordered
+  `<=` (left-biased ties, NaN loses either side); mixed **concrete**
+  Int/UInt rejects — the VM compares those exactly, which one unsigned
+  compare cannot reproduce; `round` is `llvm.round.f64` (ties away, always
+  Float64); `divmod` reuses the operators' flooring expansions (zero trap,
+  `i64::MIN` divisor sanitizing) and stores `(q, r)` into the checker's
+  nominal Tuple layout; `len` covers string bytes and static pack counts.
+  Scalar `__floor__`/`__ceil__`/`__trunc__` are integer identity /
+  `llvm.*.f64`; `__ceildiv__` is the negated flooring division (Int; the
+  VM's non-wrapping negate would panic on `-i64::MIN` — an unexercised
+  recorded divergence, native wraps), remainder-carry (UInt), or
+  `ceil(a / b)` (Float64).
+- **`input()` = prompt bytes + `mjrt_read_line` (ABI v4).** The prompt
+  writes through the string machinery (no newline; `mjrt_write_stdout`
+  flushes per call, so ordering holds even piped). The runtime fills a
+  caller-owned 24-byte `MjString` whose first words double as the
+  `MjStrDesc` the checker's `StringLiteral`-typed result reads —
+  the nominal wrap is a separate constructor conversion. EOF yields the
+  empty string (never blocks); a read *error* traps with the new category 6
+  (the VM raises `RuntimeError::Unsupported` — unobservable in the corpus,
+  recorded). Differential testing injects identical bytes into a test-only
+  `VmBackend::set_input_override` (prompts append to the captured output;
+  default behavior untouched) and the executables' piped stdin, so
+  `input.mojo` is a true exe-differential row. `run --backend pliron` now
+  inherits the CLI's stdin (`Command::output()` silently nulls it).
+- **Pointer vocabulary.** `unsafe_offset` is MIR pointer `+`: a
+  size-scaled byte GEP (the VM adds to its element-counted offset with an
+  overflow check natively elided — off-gate); pointer `-` keeps a
+  contextual rejection. `UnsafePointer.alloc`/`alloc_aligned` share the
+  `unsafe_alloc` core (`mjrt_alloc`, count-overflow trap);
+  `unsafe_dangling` is `ptr null` — the VM errors on `free` of a dangling
+  pointer while `mjrt_free(null)` is a no-op, a recorded off-gate
+  divergence. `Const::None` lowers as a zero-sized erased register
+  (consumers read nothing), which the statement-position pointer intrinsics
+  produce.
+- **Direct `__init__` calls bind their destination as `out self`.** The
+  checker's specialized constructor symbols (and their `$mono` instances)
+  arrive as plain `Call`s whose declaration facts exclude the receiver;
+  `lower_call` now allocates the result storage and binds the remaining
+  arguments past the receiver — the struct-name constructor path's exact
+  contract. This unblocked every `$ov$$mono$` constructor arity failure.
+- **Mono hardening.** `bind_type` merges literal-typed actuals with
+  concrete bindings order-independently (receiver-first and result-last
+  shapes both bound `T` twice; `Int` and `IntLiteral` display identically,
+  producing the absurd "conflicting solutions for `T`: `Int` and `Int`" —
+  conflict messages now carry the structural forms). `discover_structs`
+  seeds destroy/take `element` types so element lifecycle methods always
+  join the walk, and **rejects instance-identity collisions**: output
+  declarations dedupe by name, and a checker-concrete generic application
+  keeps its template name, so two instantiations of one template
+  (`UnsafeMaybeUninit[Int]` + `UnsafeMaybeUninit[Recorder]`) would
+  silently share whichever declaration was discovered first. Sharing is
+  tolerated only when the field substitutions are equivalent **modulo
+  pointer element types** — every pointer is one opaque target word and
+  drops inertly, which keeps the ubiquitous `_RawAlloc`/`List`/`Array`
+  shapes (fields differing only behind `UnsafePointer[T]`) compiling as
+  before; payload-carrying differences reject — with distinct layouts or
+  per-instance destructor identities, sharing would be wrong, not merely
+  imprecise. Renaming concrete applications (and bare in-body `Self`
+  references) to instance symbols is the Collections slice's
+  canonicalization prerequisite; until then those fixtures stay excluded
+  with a contextual diagnostic.
+- **Scope shifts.** `Slice` descriptor construction moved to S5.5 beside
+  its consumers (no manifest row blocks on the instruction alone; the
+  `slice.get` capability row already said Collections). The S5.3 rejection
+  pins that S5.4 made compile (nominal `String +`, discarded `divmod`)
+  were replaced with the generic-constructor-instance and pointer-`Sub`
+  rejections.
+- Not pinned by a fixture: the mixed concrete-Int/UInt `min`/`max`
+  rejection and the stdin-failure trap (neither shape is constructible as
+  a runnable `ok` fixture; the capability matrix and unit paths cover the
+  decisions).

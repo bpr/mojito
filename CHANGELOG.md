@@ -8,6 +8,35 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pliron Stage 5 slice 4 — pointer/uninit-storage intrinsics and builtins:
+  the compiler-private `UnsafePointer` storage instructions lower natively
+  (raw single-take moves, in-place element destructors at computed element
+  offsets, `unsafe_offset` pointer `+` arithmetic, the
+  `UnsafePointer.alloc`/`alloc_aligned`/`unsafe_dangling` family), inline
+  `__UninitStorage[T]` storage is payload-only (raw writes/takes, in-place
+  destroys, the VM's leak-by-design no-op drop, no synthesized declaration),
+  and the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input` builtins plus the
+  scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics run
+  VM-exactly — nominal receivers (and struct-lhs binary operators, notably
+  `String.__add__`) monomorphize to their dunder methods through the shared
+  resolver, so compiled stdlib byte loops execute natively. `input()` reads
+  through the runtime ABI v4 `mjrt_read_line` (stdin-failure trap category 6;
+  EOF yields `""`), with a test-only `VmBackend` input override feeding both
+  backends identical bytes so `input.mojo` becomes a true exe-differential
+  row (`run --backend pliron` now inherits the CLI's stdin). Direct
+  specialized-`__init__` calls bind their destination as the `out self`
+  receiver (unblocking the `$ov$$mono$` constructor-arity family), `None`
+  constants lower as erased zero-sized registers, and monomorphization fixes
+  the order-dependent literal/concrete binding conflict (`Int` vs
+  `IntLiteral` both display as `Int`) and rejects struct instance-identity
+  collisions (two instantiations of one generic template) contextually —
+  tolerating fields equivalent modulo pointer element types — until the
+  Collections slice canonicalizes instance names. Five new `pliron_*`
+  fixtures join the exe/ASan gates (the pointer-lifecycle one also joins the
+  lifecycle-trace lane); the parity manifest ratchets 129→147
+  exe-differential and 149→136 excluded. `Slice` descriptor construction
+  moved to the Collections slice.
+
 - Pliron Stage 5 slice 3 — the iterator protocol: native `for` loops over user
   iterators and the scalar ranges. Monomorphization folds each `GetIter`
   prepare chain (typing the split iterator slot, retargeting `__iter__`/

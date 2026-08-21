@@ -35,18 +35,19 @@ Stage 5 acceptance: canonical `.mir` artifacts behave identically through VM
 and native paths, the native backend never accepts rejected source, and
 promotion requires zero exclusions across Mojito's advertised runnable subset.
 
-- [ ] **Pointer and uninit storage intrinsics, builtins** — pointer-storage
-  take/destroy, inline uninit storage with per-slot flags, `UnsafePointer`
-  allocation, and the `len`/`abs`/`divmod`/`input`/`__floor__` builtins
-  (`input` adds a runtime `mjrt_read_line`; ABI bump).
 - [ ] **Collections** — general nominal and intrinsic subscripts
-  (`Index`/`Slice`/`MultiIndex`/`MultiSet`), keyword/default call contracts,
-  variadic direct calls and runtime packs, per-field initialization flags
-  for partial-move drops, and the raising reference-yielding `__next__`
-  residue (a tagged outcome whose ok payload is a place pointer, plus
-  destructor-bearing iterator elements over real flags — the S5.3 iterator
-  slice rejects both); unlocks the List/Dict/Set/Tuple/Array fixture
-  clusters.
+  (`Index`/`Slice`/`MultiIndex`/`MultiSet`), `Slice` descriptor construction
+  (deferred from the S5.4 pointer/builtin slice — no manifest row blocks on
+  the instruction alone), mono instance-identity canonicalization (rename
+  checker-concrete generic applications and bare in-body `Self` references
+  to instance symbols — S5.4 rejects the collision contextually, keeping
+  multi-instantiation generics like `OwnedPointer`/`UnsafeMaybeUninit`
+  fixtures excluded), keyword/default call contracts, variadic direct calls
+  and runtime packs, per-field initialization flags for partial-move drops,
+  and the raising reference-yielding `__next__` residue (a tagged outcome
+  whose ok payload is a place pointer, plus destructor-bearing iterator
+  elements over real flags — the S5.3 iterator slice rejects both); unlocks
+  the List/Dict/Set/Tuple/Array fixture clusters.
 - [ ] **Retained callables, closures, indirect calls** — two-word
   `{invoke, env}` native `Func` values with per-function thunks matching the
   VM's captures-as-leading-arguments contract; nominal callable structs

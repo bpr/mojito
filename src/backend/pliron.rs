@@ -431,15 +431,18 @@ pub enum TrapCategory {
     /// stderr and exits with this category's code (no `try` lowering exists
     /// before Stage 4, so every runtime raise is dynamically unhandled).
     UnhandledError,
+    /// `mjrt_read_line` stdin read failure (EOF is not a failure).
+    StdinFailure,
 }
 
 impl TrapCategory {
-    const ALL: [TrapCategory; 5] = [
+    const ALL: [TrapCategory; 6] = [
         TrapCategory::DivModZero,
         TrapCategory::PowExponent,
         TrapCategory::AllocFailure,
         TrapCategory::StdoutFailure,
         TrapCategory::UnhandledError,
+        TrapCategory::StdinFailure,
     ];
 
     /// Stable small code of this category (used in exit codes and manifests),
@@ -452,6 +455,7 @@ impl TrapCategory {
             TrapCategory::AllocFailure => rt_abi::TRAP_ALLOC_FAILURE,
             TrapCategory::StdoutFailure => rt_abi::TRAP_STDOUT_FAILURE,
             TrapCategory::UnhandledError => rt_abi::TRAP_UNHANDLED_ERROR,
+            TrapCategory::StdinFailure => rt_abi::TRAP_STDIN_FAILURE,
         };
         code as u8
     }
@@ -480,6 +484,7 @@ impl TrapCategory {
             TrapCategory::AllocFailure => "allocation failed",
             TrapCategory::StdoutFailure => "stdout write failed",
             TrapCategory::UnhandledError => "unhandled error",
+            TrapCategory::StdinFailure => "stdin read failed",
         }
     }
 

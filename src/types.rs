@@ -279,11 +279,15 @@ pub fn array_element(ty: &Ty) -> Option<&Ty> {
 }
 
 /// The payload type of compiler-private inline uninit storage
-/// (`__UninitStorage[T]`), including specialization-mangled instantiations.
+/// (`__UninitStorage[T]`), including specialization-mangled and
+/// backend-monomorphized (`…$mono$…`) instantiations — mono renames the
+/// struct while keeping its substituted argument list, so the payload stays
+/// recoverable from the arguments.
 pub fn uninit_storage_element(ty: &Ty) -> Option<&Ty> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
     };
+    let name = name.split("$mono").next().unwrap_or(name);
     if name != UNINIT_STORAGE_TYPE_NAME && !name.ends_with(&format!("${UNINIT_STORAGE_TYPE_NAME}"))
     {
         return None;
@@ -888,6 +892,28 @@ mod collection_representation_tests {
         assert_eq!(
             Ty::ComptimeList(Box::new(Ty::Int)).to_string(),
             "<comptime-list[Int]>"
+        );
+    }
+
+    #[test]
+    fn uninit_storage_element_recognizes_every_mangled_spelling() {
+        let storage = |name: &str| Ty::Struct(name.to_string(), vec![TyArg::Ty(Ty::Int)]);
+        for name in [
+            "__UninitStorage",
+            "mono_test$__UninitStorage",
+            "__UninitStorage$mono$TInt",
+            "mono_test$__UninitStorage$mono$TRecorder",
+        ] {
+            assert_eq!(
+                uninit_storage_element(&storage(name)),
+                Some(&Ty::Int),
+                "{name}"
+            );
+        }
+        assert_eq!(uninit_storage_element(&storage("Storageish")), None);
+        assert_eq!(
+            uninit_storage_element(&Ty::Struct("__UninitStorage".into(), vec![])),
+            None
         );
     }
 }

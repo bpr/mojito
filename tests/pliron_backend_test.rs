@@ -40,6 +40,7 @@ fn runtime_jit_symbols() -> Vec<(&'static str, u64)> {
         address!(mjrt_fmt_u64),
         address!(mjrt_fmt_f64),
         address!(mjrt_trap),
+        address!(mjrt_read_line),
     ]
 }
 
@@ -661,6 +662,45 @@ fn aggregate_surface_prints_canonically() {
 /// The checked-in `conformance/pliron-parity.tsv` manifest must match
 /// regeneration byte-exactly, and the trailing guards fail if eligible
 /// coverage unexpectedly shrinks or exclusions grow.
+/// Stdin bytes for fixtures that call `input()`. The same bytes feed the
+/// in-process VM (via `VmBackend::set_input_override`) and every native
+/// executable's piped stdin, so `input()` rows are true exe differentials.
+/// Doubles as the "reads stdin" predicate: a hit must never run with
+/// inherited stdin or the manifest test blocks under Cargo.
+fn fixture_stdin(rel: &str) -> Option<&'static [u8]> {
+    match rel.rsplit('/').next()? {
+        "input.mojo" => Some(b"World\n"),
+        "pliron_input_echo.mojo" => Some(b"echoed line\n"),
+        _ => None,
+    }
+}
+
+/// Run a parity executable, piping `stdin` bytes when present (an absent
+/// entry inherits the test runner's stdin, which never blocks because such
+/// fixtures don't read it).
+fn run_executable(exe: &Path, stdin: Option<&[u8]>, envs: &[(&str, &str)]) -> std::process::Output {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut command = Command::new(exe);
+    command.envs(envs.iter().copied());
+    let Some(bytes) = stdin else {
+        return command.output().expect("parity executable runs");
+    };
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("parity executable spawns");
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(bytes)
+        .expect("stdin bytes reach the executable");
+    child.wait_with_output().expect("parity executable runs")
+}
+
 #[test]
 fn parity_exe_manifest_and_differential() {
     let mut runnable = fixture_sources("assets/ok");
@@ -711,22 +751,39 @@ fn parity_exe_manifest_and_differential() {
                 (rel, "main".into(), "excluded".to_string(), detail)
             }
             Ok(mut module) => {
-                let execution = compiler
-                    .execute(&compiled)
-                    .unwrap_or_else(|error| panic!("{rel}: fixture must run on the VM: {error}"));
+                let stdin = fixture_stdin(&rel);
+                let vm_output = match stdin {
+                    // `input()` fixtures run on a VM with the same bytes the
+                    // executables get piped, prompts captured in the output.
+                    Some(bytes) => {
+                        let mut vm = mojito::backend::VmBackend::new();
+                        vm.set_input_override(bytes.to_vec());
+                        vm.run_elaborated(compiled.elaborated_mir().clone())
+                            .unwrap_or_else(|error| {
+                                panic!("{rel}: fixture must run on the VM: {error}")
+                            });
+                        vm.output()
+                    }
+                    None => {
+                        compiler
+                            .execute(&compiled)
+                            .unwrap_or_else(|error| {
+                                panic!("{rel}: fixture must run on the VM: {error}")
+                            })
+                            .output
+                    }
+                };
                 let dir = tempfile::tempdir().expect("tempdir");
                 for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
                     let exe = dir.path().join(format!("parity-{level}"));
                     module
                         .write_executable(&exe, opt)
                         .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
-                    let run = std::process::Command::new(&exe)
-                        .output()
-                        .expect("parity executable runs");
+                    let run = run_executable(&exe, stdin, &[]);
                     assert_eq!(run.status.code(), Some(0), "{rel}: exit at {level}");
                     assert_eq!(
                         String::from_utf8_lossy(&run.stdout),
-                        execution.output,
+                        vm_output,
                         "{rel}: stdout bytes diverge from the VM at {level}"
                     );
                     assert!(
@@ -739,10 +796,7 @@ fn parity_exe_manifest_and_differential() {
                 module
                     .write_executable_sanitized(&asan_exe, OptLevel::O0)
                     .unwrap_or_else(|error| panic!("{rel}: sanitized emission: {error}"));
-                let run = std::process::Command::new(&asan_exe)
-                    .env("ASAN_OPTIONS", "detect_leaks=1")
-                    .output()
-                    .expect("sanitized executable runs");
+                let run = run_executable(&asan_exe, stdin, &[("ASAN_OPTIONS", "detect_leaks=1")]);
                 assert_eq!(
                     run.status.code(),
                     Some(0),
@@ -860,16 +914,16 @@ fn parity_exe_manifest_and_differential() {
     let raises = count("raise-differential");
     let excluded = count("excluded");
     assert!(
-        differential >= 129,
-        "exe-differential coverage unexpectedly shrank: {differential} < 129"
+        differential >= 147,
+        "exe-differential coverage unexpectedly shrank: {differential} < 147"
     );
     assert!(
         raises >= 4,
         "raise-differential coverage unexpectedly shrank: {raises} < 4"
     );
     assert!(
-        excluded <= 149,
-        "excluded coverage unexpectedly grew: {excluded} > 149"
+        excluded <= 136,
+        "excluded coverage unexpectedly grew: {excluded} > 136"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
@@ -914,21 +968,20 @@ fn native_error(src: &str, entries: &[&str]) -> String {
 fn unsupported_constructs_produce_contextual_diagnostics() {
     // (source, entries, phrases the diagnostic must contain)
     let cases: &[(&str, &[&str], &[&str])] = &[
-        // Runtime nominal-String operators dispatch compiled stdlib byte
-        // loops; the rejection surfaces in the deepest unsupported callee.
+        // A struct-name constructor call over a backend-monomorphized
+        // generic instance stays outside the direct-call contract until the
+        // Collections slice canonicalizes instance identities.
         (
-            "def compute() -> Int:\n    var s = \"a\"\n    var t = s + s\n    return 1\n",
+            "struct Res(Movable, Deinitable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n\nstruct Box[T: Movable & Deinitable](Deinitable):\n    var value: Self.T\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n    def __deinit__(deinit self):\n        print(\"box gone\")\n\ndef compute() -> Int:\n    var b = Box[Res](Res(7))\n    return 1\n",
             &["compute"],
-            &["pliron backend:", "unsupported"],
+            &["constructor for `Box` without a compiled `__init__`"],
         ),
+        // Pointer element arithmetic lowers `+` only (the `unsafe_offset`
+        // form); `-` keeps a contextual rejection.
         (
-            "def compute() -> Int:\n    divmod(7, 3)\n    return 1\n",
+            "from std.memory import unsafe_alloc\n\ndef compute() -> Int:\n    var p = unsafe_alloc[Int](2)\n    var q = p + 1\n    var d = q - 1\n    p.unsafe_free()\n    return 1\n",
             &["compute"],
-            &[
-                "in `compute`",
-                "call to unknown or builtin function `divmod`",
-                "pliron_fixture.mojo:2:",
-            ],
+            &["operator `Sub` on Pointer operands"],
         ),
         // A raising iterator element with a user destructor rejects: the
         // exhausted edge leaves zeroed element bytes, and running a user
@@ -1023,6 +1076,7 @@ fn lifecycle_event_traces_match_the_vm() {
         "assets/ok/exceptions.mojo",
         "assets/ok/explicit_destroy_raising.mojo",
         "assets/ok/inplace_raises_try.mojo",
+        "assets/ok/pliron_pointer_lifecycle.mojo",
         "assets/ok/try_return.mojo",
         "assets/ok/pliron_struct_drop_order.mojo",
         "assets/ok/pliron_iter_drop_order.mojo",
@@ -1395,6 +1449,7 @@ mod native_abi_cross_checks {
             declare void @mjrt_trap(i32) noreturn
             declare void @mjrt_unhandled_error(ptr, i64) noreturn
             declare void @mjrt_trace(i32, ptr, i64)
+            declare void @mjrt_read_line(ptr)
         "#]]
         .assert_eq(&mojito::backend::pliron::runtime_declarations());
     }

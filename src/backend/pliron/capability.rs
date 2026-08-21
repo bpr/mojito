@@ -116,7 +116,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "const",
         CapabilityStatus::Partial,
-        "Int/Float/Bool/Str (literals stay pending until materialization); `None` and function-reference constants reject",
+        "Int/Float/Bool/Str/None (literals stay pending until materialization); function-reference constants reject",
     ),
     (
         "literal.materialize",
@@ -142,12 +142,12 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "binary",
         CapabilityStatus::Partial,
-        "checked scalar operand types; unsupported operand or overload forms reject",
+        "checked scalar operand types plus pointer `+` element arithmetic; nominal left operands monomorphize to operator-method calls; other forms reject",
     ),
     (
         "call",
         CapabilityStatus::Partial,
-        "positional arguments and constant defaults; keyword places, captures, and value param-args reject",
+        "positional arguments and constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input` builtins and the `UnsafePointer` allocation family; keyword places, captures, and value param-args reject",
     ),
     (
         "call.indirect",
@@ -157,32 +157,32 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "call.method",
         CapabilityStatus::Partial,
-        "positional contracts on compiled targets; reference-result adapters reject",
+        "positional contracts on compiled targets plus the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics; reference-result adapters reject",
     ),
     (
         "pointer.take",
-        CapabilityStatus::Unsupported,
-        "Stage 5: pointer storage intrinsics",
+        CapabilityStatus::Partial,
+        "element-offset raw move out of ownership-verified single-take storage; unlayoutable elements reject",
     ),
     (
         "pointer.destroy",
-        CapabilityStatus::Unsupported,
-        "Stage 5: pointer storage intrinsics",
+        CapabilityStatus::Partial,
+        "in-place element destructor at the element offset; raising or droppable-field destructors reject",
     ),
     (
         "uninit.make",
-        CapabilityStatus::Unsupported,
-        "Stage 5: uninit storage intrinsics",
+        CapabilityStatus::Partial,
+        "payload-only frame storage, no init flag (verified programs never take or destroy uninitialized slots)",
     ),
     (
         "uninit.take",
-        CapabilityStatus::Unsupported,
-        "Stage 5: uninit storage intrinsics",
+        CapabilityStatus::Partial,
+        "raw byte move of the payload",
     ),
     (
         "uninit.destroy",
-        CapabilityStatus::Unsupported,
-        "Stage 5: uninit storage intrinsics",
+        CapabilityStatus::Partial,
+        "in-place payload destructor; raising or droppable-field destructors reject",
     ),
     (
         "field.get",

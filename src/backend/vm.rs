@@ -52,6 +52,11 @@ pub struct VmBackend {
     /// default) records nothing; the native backend's trace lane compares
     /// against this sequence.
     lifecycle_log: Option<Vec<String>>,
+    /// Test-only `input()` source override. `None` (the default) reads process
+    /// stdin unchanged; `Some` serves `input()` lines from the buffer and
+    /// appends prompts to `output` so differential harnesses can feed the VM
+    /// and a native executable identical bytes.
+    input_override: Option<std::io::Cursor<Vec<u8>>>,
 }
 
 impl VmBackend {
@@ -67,6 +72,13 @@ impl VmBackend {
     /// The recorded lifecycle events, in execution order.
     pub fn lifecycle_log(&self) -> Option<&[String]> {
         self.lifecycle_log.as_deref()
+    }
+
+    /// Serve `input()` from `bytes` instead of process stdin (test-only).
+    /// Prompts are appended to the captured output, matching a native
+    /// executable that writes prompts to stdout.
+    pub fn set_input_override(&mut self, bytes: Vec<u8>) {
+        self.input_override = Some(std::io::Cursor::new(bytes));
     }
 
     pub(super) fn record_lifecycle(&mut self, event: String) {
@@ -619,6 +631,35 @@ impl VmBackend {
         bound.extend(user_args);
         let (_, frame_vars) = self.call_frame(prog, fidx, bound, &[])?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
+    }
+
+    /// `input()` under [`Self::set_input_override`]: append the prompt to the
+    /// captured output (a native executable writes prompts to stdout, which the
+    /// differential compares byte-for-byte), then serve one line from the
+    /// override buffer — trailing `\n` then `\r` stripped, EOF → `""`.
+    fn input_from_override(&mut self, prompt: Value) -> Result<Value, RuntimeError> {
+        let Value::Str(prompt) = prompt else {
+            return Err(RuntimeError::TypeError(format!(
+                "input() expects a String prompt, got {}",
+                crate::runtime::type_name(&prompt)
+            )));
+        };
+        self.output.push_str(&prompt);
+        let cursor = self
+            .input_override
+            .as_mut()
+            .expect("input_from_override requires an installed override");
+        let mut line = String::new();
+        std::io::BufRead::read_line(cursor, &mut line).map_err(|e| {
+            RuntimeError::Unsupported(format!("input(): failed to read stdin: {e}"))
+        })?;
+        if line.ends_with('\n') {
+            line.pop();
+            if line.ends_with('\r') {
+                line.pop();
+            }
+        }
+        Ok(Value::Str(line))
     }
 
     /// Read a nominal `String` value's byte buffer back into a builtin
@@ -2143,6 +2184,9 @@ impl VmBackend {
                 {
                     prompt = self.string_struct_literal(&prompt)?;
                 }
+                if self.input_override.is_some() {
+                    return self.input_from_override(prompt);
+                }
                 builtin_input(prompt)
             }
             "Int" | "Float64" | "Bool" => {
@@ -3459,5 +3503,39 @@ mod pointer_storage_tests {
         .expect("no-op drop");
         vm.drop_value(&empty_program(), Value::UninitStorage(None))
             .expect("no-op drop of uninitialized storage");
+    }
+}
+
+#[cfg(test)]
+mod input_override_tests {
+    use super::*;
+
+    #[test]
+    fn input_override_serves_lines_and_echoes_prompts_to_output() {
+        let mut vm = VmBackend::default();
+        vm.set_input_override(b"World\r\n".to_vec());
+
+        let first = vm
+            .input_from_override(Value::Str("Name: ".to_string()))
+            .expect("first injected line");
+        assert_eq!(first, Value::Str("World".to_string()));
+
+        // The buffer is exhausted: EOF reads back as the empty string, the
+        // same as builtin_input on closed stdin.
+        let second = vm
+            .input_from_override(Value::Str("Again: ".to_string()))
+            .expect("EOF read");
+        assert_eq!(second, Value::Str(String::new()));
+
+        // Prompts land in the captured output byte-for-byte (no newline),
+        // matching a native executable writing prompts to stdout.
+        assert_eq!(vm.output(), "Name: Again: ");
+    }
+
+    #[test]
+    fn input_override_rejects_a_non_string_prompt() {
+        let mut vm = VmBackend::default();
+        vm.set_input_override(Vec::new());
+        assert!(vm.input_from_override(Value::Int(3)).is_err());
     }
 }

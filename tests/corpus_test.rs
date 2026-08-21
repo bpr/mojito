@@ -80,10 +80,12 @@ fn stem(path: &Path) -> String {
         .into_owned()
 }
 
-/// `input.mojo` is an interactive smoke fixture. Running it from a test
-/// inherits Cargo's stdin and can block indefinitely.
+/// `input()` fixtures are interactive smoke tests. Running one from a test
+/// inherits Cargo's stdin and can block indefinitely. (The pliron parity
+/// harness runs them instead, piping fixed bytes to both backends.)
 fn reads_stdin(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == "input.mojo")
+    path.file_name()
+        .is_some_and(|name| name == "input.mojo" || name == "pliron_input_echo.mojo")
 }
 
 /// The `# expect: <substring>` directive (if any), pinning the error message.

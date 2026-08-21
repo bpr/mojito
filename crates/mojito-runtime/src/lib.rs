@@ -30,7 +30,10 @@ use std::io::Write;
 /// through their outcome out-pointer (generated-code rule; no new type
 /// crosses this ABI), and [`mjrt_trace`] reports ordered lifecycle events
 /// from trace-instrumented builds.
-pub const ABI_VERSION: u32 = 3;
+///
+/// Version 4: [`mjrt_read_line`] reads one stdin line for the `input()`
+/// builtin.
+pub const ABI_VERSION: u32 = 4;
 
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
 /// trap numbering; the process exit code is `64 + category`.
@@ -39,6 +42,7 @@ pub const TRAP_POW_EXPONENT: u32 = 2;
 pub const TRAP_ALLOC_FAILURE: u32 = 3;
 pub const TRAP_STDOUT_FAILURE: u32 = 4;
 pub const TRAP_UNHANDLED_ERROR: u32 = 5;
+pub const TRAP_STDIN_FAILURE: u32 = 6;
 
 /// Tag values for tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
@@ -278,6 +282,40 @@ pub unsafe extern "C" fn mjrt_trace(kind: u32, data: *const u8, len: u64) {
     };
 }
 
+/// Reads one line from stdin for the `input()` builtin, writing an
+/// [`MjString`] into `out`: `data` is a fresh [`mjrt_alloc`] allocation the
+/// caller owns, with `size == cap ==` the line length after stripping the
+/// trailing `\n` (then `\r`). EOF yields size 0 with a valid header-only
+/// allocation, so every result is uniformly freeable and noninteractive runs
+/// never block. A read error traps with [`TRAP_STDIN_FAILURE`].
+///
+/// # Safety
+///
+/// `out` must point to at least 24 writable bytes (one [`MjString`]).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mjrt_read_line(out: *mut u8) {
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line).is_err() {
+        trap(TRAP_STDIN_FAILURE)
+    }
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+    let len = line.len();
+    let data = unsafe { mjrt_alloc(len as u64, 1) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(line.as_ptr(), data, len);
+        out.cast::<MjString>().write_unaligned(MjString {
+            data,
+            size: len as i64,
+            cap: len as i64,
+        });
+    }
+}
+
 /// The stable stderr name of a lifecycle-event kind.
 pub fn trace_kind_name(kind: u32) -> &'static str {
     match kind {
@@ -299,6 +337,7 @@ pub fn trap_message(category: u32) -> &'static str {
         TRAP_ALLOC_FAILURE => "allocation failed",
         TRAP_STDOUT_FAILURE => "stdout write failed",
         TRAP_UNHANDLED_ERROR => "unhandled error",
+        TRAP_STDIN_FAILURE => "stdin read failed",
         _ => "unknown trap",
     }
 }
@@ -460,6 +499,7 @@ mod tests {
         assert_eq!(trap_exit_code(TRAP_POW_EXPONENT), 66);
         assert_eq!(trap_exit_code(TRAP_ALLOC_FAILURE), 67);
         assert_eq!(trap_exit_code(TRAP_STDOUT_FAILURE), 68);
+        assert_eq!(trap_exit_code(TRAP_STDIN_FAILURE), 70);
         assert_eq!(trap_exit_code(u32::MAX), 64 + 63);
         assert_eq!(
             trap_message(TRAP_DIV_MOD_ZERO),

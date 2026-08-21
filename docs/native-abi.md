@@ -19,7 +19,7 @@ part of any native ABI, and `mojito-runtime` must never depend on the
 
 ## ABI versioning
 
-- `ABI_VERSION` (currently **3**) is a monotonic `u32` declared identically in
+- `ABI_VERSION` (currently **4**) is a monotonic `u32` declared identically in
   `mojito_runtime::ABI_VERSION` and `native::rt_abi::MJRT_ABI_VERSION`. Bump
   it on any change to an exported symbol's signature or semantics, an
   exported `#[repr(C)]` type's layout, a trap category's meaning, or any rule
@@ -30,7 +30,8 @@ part of any native ABI, and `mojito-runtime` must never depend on the
   `{tag, ok, err}` outcomes through an outcome out-pointer (a generated-code
   rule — see [Errors and exceptional control
   flow](#errors-and-exceptional-control-flow)) and added the
-  lifecycle-event reporter `mjrt_trace`.
+  lifecycle-event reporter `mjrt_trace`. Version 4 added the `input()`
+  line reader `mjrt_read_line` and its stdin-failure trap category (6).
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
   synthesized executable wrapper references `mjrt_version`, so every produced
@@ -230,14 +231,15 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_trap(category) -> !` | Reports on stderr, exits `64 + category` (clamped to 127); runs no destructors. |
 | `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
 | `mjrt_trace(kind, data, len)` | Borrows the UTF-8 payload; reports one ordered lifecycle event (`mjtrace <kind> <payload>`) on stderr. Emitted only by trace-instrumented builds, never by default emission; write errors are ignored so tracing cannot perturb behavior. Kinds: 1 drop, 2 consume, 3 cleanup, 4 raise, 5 catch. |
+| `mjrt_read_line(out)` | Borrows `out` (≥ 24 bytes) and writes an `MjString` whose `data` is a fresh caller-owned `mjrt_alloc` allocation (`size == cap ==` line length, trailing `\n` then `\r` stripped). EOF yields size 0 with a valid header-only allocation (uniformly freeable, never blocks noninteractive runs); a read error traps (category 6). |
 
 Trap categories (shared with the backend's `TrapCategory` codes and exit
 codes `64 + category`): 1 div/mod by zero (exit 65), 2 `**` exponent range
 (exit 66), 3 allocation failure (exit 67), 4 stdout failure (exit 68),
-5 unhandled error (exit 69). Categories 1–2 reuse the VM's runtime-error
-message text so both backends diagnose identically; `run --backend pliron`
-maps trap exit codes back to the VM diagnostic (and re-renders category 5
-from the executable's stderr).
+5 unhandled error (exit 69), 6 stdin failure (exit 70). Categories 1–2 reuse
+the VM's runtime-error message text so both backends diagnose identically;
+`run --backend pliron` maps trap exit codes back to the VM diagnostic (and
+re-renders category 5 from the executable's stderr).
 
 ## Mechanical checks
 

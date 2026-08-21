@@ -16,21 +16,21 @@ instruction	value.copy	partial	compiled `__copyinit__` only; raising or uncompil
 instruction	ref.write	partial	typed referent registers
 instruction	closure.make	unsupported	Stage 5: closures
 instruction	lifetime.keep_alive	supported	erased
-instruction	const	partial	Int/Float/Bool/Str (literals stay pending until materialization); `None` and function-reference constants reject
+instruction	const	partial	Int/Float/Bool/Str/None (literals stay pending until materialization); function-reference constants reject
 instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
 instruction	var.use	supported	copy/move/borrow
 instruction	place.move	partial	marks the root partially initialized; later whole-variable drops of it reject
 instruction	var.store	supported	sets the initialization flag
 instruction	unary	partial	checked scalar operand types
-instruction	binary	partial	checked scalar operand types; unsupported operand or overload forms reject
-instruction	call	partial	positional arguments and constant defaults; keyword places, captures, and value param-args reject
+instruction	binary	partial	checked scalar operand types plus pointer `+` element arithmetic; nominal left operands monomorphize to operator-method calls; other forms reject
+instruction	call	partial	positional arguments and constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input` builtins and the `UnsafePointer` allocation family; keyword places, captures, and value param-args reject
 instruction	call.indirect	unsupported	Stage 5: indirect calls
-instruction	call.method	partial	positional contracts on compiled targets; reference-result adapters reject
-instruction	pointer.take	unsupported	Stage 5: pointer storage intrinsics
-instruction	pointer.destroy	unsupported	Stage 5: pointer storage intrinsics
-instruction	uninit.make	unsupported	Stage 5: uninit storage intrinsics
-instruction	uninit.take	unsupported	Stage 5: uninit storage intrinsics
-instruction	uninit.destroy	unsupported	Stage 5: uninit storage intrinsics
+instruction	call.method	partial	positional contracts on compiled targets plus the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics; reference-result adapters reject
+instruction	pointer.take	partial	element-offset raw move out of ownership-verified single-take storage; unlayoutable elements reject
+instruction	pointer.destroy	partial	in-place element destructor at the element offset; raising or droppable-field destructors reject
+instruction	uninit.make	partial	payload-only frame storage, no init flag (verified programs never take or destroy uninitialized slots)
+instruction	uninit.take	partial	raw byte move of the payload
+instruction	uninit.destroy	partial	in-place payload destructor; raising or droppable-field destructors reject
 instruction	field.get	partial	layoutable base aggregates
 instruction	index.get	partial	the `pointer` intrinsic subscript only
 instruction	slice.get	unsupported	Stage 5: collections
@@ -101,4 +101,5 @@ runtime	mjrt_fmt_f64	supported	since=v1
 runtime	mjrt_trap	supported	since=v1
 runtime	mjrt_unhandled_error	supported	since=v2
 runtime	mjrt_trace	supported	since=v3
-runtime	mjrt_abi_version	supported	data symbol; current version 3
+runtime	mjrt_read_line	supported	since=v4
+runtime	mjrt_abi_version	supported	data symbol; current version 4

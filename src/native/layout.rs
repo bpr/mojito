@@ -95,6 +95,15 @@ pub struct LayoutCx<'a> {
 impl LayoutCx<'_> {
     /// The layout of one checked type.
     pub fn layout_of(&self, ty: &Ty) -> Result<Layout, LayoutError> {
+        // Compiler-private inline uninit storage is payload-only: no tag, no
+        // init flag (verified programs never take or destroy an uninitialized
+        // slot — misuse fixtures live off the exe gate). Deliberately no
+        // synthesized MIR declaration either: a nominal struct without
+        // declared fields drops as a no-op, which is exactly the VM's
+        // leak-by-design drop of `Value::UninitStorage`.
+        if let Some(element) = crate::types::uninit_storage_element(ty) {
+            return self.layout_of(element);
+        }
         match ty {
             Ty::Int | Ty::UInt | Ty::Float64 => Ok(Layout::new(8, 8)),
             Ty::Bool => Ok(Layout::new(1, 1)),
@@ -167,11 +176,14 @@ impl LayoutCx<'_> {
         })
     }
 
-    /// The runtime's `MjError { message: MjString }` where `MjString` is
-    /// `{ data: ptr, size: i64, cap: i64 }`.
+    /// The runtime's `MjString { data: ptr, size: i64, cap: i64 }`.
+    pub fn mj_string(&self) -> Layout {
+        compose(&[self.pointer(), Layout::new(8, 8), Layout::new(8, 8)]).layout
+    }
+
+    /// The runtime's `MjError { message: MjString }`.
     fn mj_error(&self) -> Layout {
-        let string = compose(&[self.pointer(), Layout::new(8, 8), Layout::new(8, 8)]);
-        compose(&[string.layout]).layout
+        compose(&[self.mj_string()]).layout
     }
 
     fn pointer(&self) -> Layout {
@@ -293,6 +305,40 @@ mod tests {
     fn literal_storage_uses_materialized_widths() {
         assert_eq!(layout_of(&Ty::IntLiteral), Ok(Layout::new(8, 8)));
         assert_eq!(layout_of(&Ty::FloatLiteral), Ok(Layout::new(8, 8)));
+    }
+
+    #[test]
+    fn uninit_storage_is_payload_only() {
+        let storage = |name: &str, element: Ty| {
+            Ty::Struct(name.to_string(), vec![crate::types::TyArg::Ty(element)])
+        };
+        assert_eq!(
+            layout_of(&storage("__UninitStorage", Ty::Int)),
+            Ok(Layout::new(8, 8))
+        );
+        assert_eq!(
+            layout_of(&storage("__UninitStorage", Ty::Bool)),
+            Ok(Layout::new(1, 1))
+        );
+        // Backend-monomorphized instance names keep their argument list, so
+        // the payload stays recoverable through the mangled spelling.
+        assert_eq!(
+            layout_of(&storage("__UninitStorage$mono$TInt", Ty::Int)),
+            Ok(Layout::new(8, 8))
+        );
+        // Payload-only storage composes into an enclosing aggregate like a
+        // bare field of the element type.
+        let structs = StructFieldIndex::default();
+        let (target, structs) = cx(&structs);
+        let cx = LayoutCx {
+            target: &target,
+            structs,
+        };
+        let nested = cx
+            .struct_layout(&[Ty::Bool, storage("__UninitStorage", Ty::Int)])
+            .unwrap();
+        assert_eq!(nested.offsets, vec![0, 8]);
+        assert_eq!(nested.layout, Layout::new(16, 8));
     }
 
     #[test]

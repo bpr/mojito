@@ -42,7 +42,7 @@ use pliron_llvm::ops::{
     ConstantOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp, FPExtOp, FPTruncOp, FSubOp, FuncOp,
     GepIndex, GetElementPtrOp, GlobalOp, ICmpOp, LShrOp, LoadOp, MulOp, OrOp, ReturnOp, SDivOp,
     SExtOp, SIToFPOp, SRemOp, SelectOp, ShlOp, StoreOp, SubOp, TruncOp, UDivOp, UIToFPOp, URemOp,
-    UnreachableOp, XorOp, ZExtOp,
+    UnreachableOp, XorOp, ZExtOp, ZeroOp,
 };
 use pliron_llvm::types::{ArrayType, FuncType, PointerType, VoidType};
 
@@ -1299,6 +1299,29 @@ impl<'a> FnLowering<'a> {
                 call,
                 exhaustion: _,
             } => self.lower_try_next(ctx, *dest, *yielded, *iter, call),
+            MirInstr::PointerStorageTake {
+                dest,
+                pointer,
+                index,
+                element,
+            } => self.lower_pointer_storage_take(ctx, *dest, *pointer, *index, element),
+            MirInstr::PointerStorageDestroy {
+                dest,
+                pointer,
+                index,
+                element,
+            } => self.lower_pointer_storage_destroy(ctx, *dest, *pointer, *index, element),
+            MirInstr::UninitStorage { dest, init } => self.lower_uninit_storage(ctx, *dest, *init),
+            MirInstr::UninitStorageTake {
+                dest,
+                storage,
+                element,
+            } => self.lower_uninit_storage_take(ctx, *dest, *storage, element),
+            MirInstr::UninitStorageDestroy {
+                dest,
+                storage,
+                element,
+            } => self.lower_uninit_storage_destroy(ctx, *dest, *storage, element),
             MirInstr::MakeClosure { dest, .. }
             | MirInstr::CallIndirect { dest, .. }
             | MirInstr::Index { dest, .. }
@@ -1309,10 +1332,7 @@ impl<'a> FnLowering<'a> {
             | MirInstr::VariantGet { dest, .. }
             | MirInstr::VariantTake { dest, .. }
             | MirInstr::VariantReplace { dest, .. }
-            | MirInstr::SimdShuffle { dest, .. }
-            | MirInstr::PointerStorageTake { dest, .. }
-            | MirInstr::UninitStorage { dest, .. }
-            | MirInstr::UninitStorageTake { dest, .. } => {
+            | MirInstr::SimdShuffle { dest, .. } => {
                 Err(self.unsupported_reg(format!("instruction `{}`", instr_name(instr)), *dest))
             }
             MirInstr::MakeSimd {
@@ -1352,8 +1372,6 @@ impl<'a> FnLowering<'a> {
             | MirInstr::VariantSetInitWith { .. }
             | MirInstr::VariantDeinitWith { .. }
             | MirInstr::MultiSet { .. }
-            | MirInstr::PointerStorageDestroy { .. }
-            | MirInstr::UninitStorageDestroy { .. }
             | MirInstr::Drop { .. } => {
                 Err(self.unsupported(format!("instruction `{}`", instr_name(instr)), None))
             }
@@ -1400,6 +1418,41 @@ impl<'a> FnLowering<'a> {
             if self.struct_decls.contains_key(name) {
                 return self.lower_constructor(ctx, dest, name, args, kwargs);
             }
+            // The numeric/IO builtins the VM's `call_named` implements
+            // directly. Nominal-receiver `len`/`abs`/`round` were rewritten
+            // to `__len__`/`__abs__`/`__round__` method calls during
+            // monomorphization; only the scalar/pack forms arrive here.
+            match name {
+                "len" => return self.lower_len_builtin(ctx, dest, args, kwargs),
+                "abs" => return self.lower_abs_builtin(ctx, dest, args, kwargs),
+                "min" | "max" => {
+                    return self.lower_min_max_builtin(ctx, dest, name == "min", args, kwargs);
+                }
+                "round" => return self.lower_round_builtin(ctx, dest, args, kwargs),
+                "divmod" => return self.lower_divmod_builtin(ctx, dest, args, kwargs),
+                "input" => return self.lower_input_builtin(ctx, dest, args, kwargs),
+                "UnsafePointer.alloc" if kwargs.is_empty() && args.len() == 1 => {
+                    return self.lower_alloc_core(ctx, dest, args[0], None);
+                }
+                "UnsafePointer.alloc_aligned" => {
+                    let alignment = match (args, kwargs) {
+                        ([_, alignment], []) => *alignment,
+                        ([_], [(name, alignment)]) if name == "alignment" => *alignment,
+                        _ => {
+                            return Err(
+                                self.unsupported_reg("allocation call contract".into(), dest)
+                            );
+                        }
+                    };
+                    return self.lower_alloc_core(ctx, dest, args[0], Some(alignment));
+                }
+                "UnsafePointer.unsafe_dangling" | "Pointer.unsafe_dangling"
+                    if args.is_empty() && kwargs.is_empty() =>
+                {
+                    return self.lower_dangling_builtin(ctx, dest);
+                }
+                _ => {}
+            }
             return Err(self.unsupported_reg(
                 format!("call to unknown or builtin function `{name}`"),
                 dest,
@@ -1409,6 +1462,39 @@ impl<'a> FnLowering<'a> {
         let params = self.signatures[name].params.clone();
         let owned = self.signatures[name].owned_params.clone();
         let by_reference = self.signatures[name].ref_params.clone();
+        // A direct call to a compiled `__init__` (the checker's specialized
+        // constructor symbols and their mono instances) binds its destination
+        // as the `out self` receiver: allocate the result storage and bind
+        // the remaining arguments past the receiver — the struct-name
+        // constructor path's exact contract.
+        if name.contains(".__init__")
+            && !params.is_empty()
+            && let Some(struct_ty @ Ty::Struct(..)) = self.func.reg_types.get(&dest.0).cloned()
+        {
+            let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
+            let LowerTy::Aggregate { layout, .. } = lowered else {
+                return Err(self.unsupported_reg(format!("constructor result `{struct_ty}`"), dest));
+            };
+            let storage = self.entry_alloca(ctx, layout.size, layout.align);
+            let rest = &params[1..];
+            let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
+            let mut lowered = vec![storage];
+            if kwargs.is_empty() && args.len() == rest.len() {
+                for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
+                    let owned = rest_owned.get(i).copied().unwrap_or(false);
+                    lowered.push(self.arg_value(ctx, *arg, expected, owned, dest)?);
+                }
+            } else {
+                lowered
+                    .extend(self.bind_call_slots(ctx, dest, name, rest, rest_owned, args, kwargs)?);
+            }
+            self.emit_bound_call(ctx, dest, name, lowered)?;
+            // `__init__` returns nothing; the constructed value is the
+            // storage its `out self` wrote through.
+            self.erased.remove(&dest.0);
+            self.reg_values.insert(dest.0, storage);
+            return Ok(());
+        }
         let lowered_args = if kwargs.is_empty() && args.len() == params.len() {
             let mut lowered = Vec::with_capacity(args.len());
             for (i, (arg, expected)) in args.iter().zip(&params).enumerate() {
@@ -2046,14 +2132,6 @@ impl<'a> FnLowering<'a> {
         args: &[Reg],
         kwargs: &[(String, Reg)],
     ) -> Result<(), PlironError> {
-        let Some(Ty::Pointer { element, .. }) = self.func.reg_types.get(&dest.0).cloned() else {
-            return Err(
-                self.unsupported_reg("allocation without a concrete pointer result".into(), dest)
-            );
-        };
-        let element_layout = self.layout.layout_of(&element).map_err(|error| {
-            self.unsupported_reg(format!("allocation element layout ({error})"), dest)
-        })?;
         if args.len() != 1 {
             return Err(self.unsupported_reg("allocation call contract".into(), dest));
         }
@@ -2064,7 +2142,29 @@ impl<'a> FnLowering<'a> {
                 return Err(self.unsupported_reg("allocation call contract".into(), dest));
             }
         };
-        let count = self.reg_value(ctx, args[0], ScalarTy::Int)?;
+        self.lower_alloc_core(ctx, dest, args[0], alignment)
+    }
+
+    /// The shared allocation core behind `unsafe_alloc` and the
+    /// `UnsafePointer.alloc`/`alloc_aligned` builtins: `mjrt_alloc` of
+    /// `count * sizeof(element)` bytes at the element's natural alignment
+    /// (or the requested one; `0` selects natural).
+    fn lower_alloc_core(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        count: Reg,
+        alignment: Option<Reg>,
+    ) -> Result<(), PlironError> {
+        let Some(Ty::Pointer { element, .. }) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(
+                self.unsupported_reg("allocation without a concrete pointer result".into(), dest)
+            );
+        };
+        let element_layout = self.layout.layout_of(&element).map_err(|error| {
+            self.unsupported_reg(format!("allocation element layout ({error})"), dest)
+        })?;
+        let count = self.reg_value(ctx, count, ScalarTy::Int)?;
         // Guard the byte-size multiplication: any count above the safe bound
         // (negative counts arrive as huge unsigned values) traps.
         let element_size = element_layout.size.max(1);
@@ -2104,6 +2204,394 @@ impl<'a> FnLowering<'a> {
         self.define(ctx, dest, call.get_operation(), call.get_result(ctx))
     }
 
+    /// `UnsafePointer.unsafe_dangling` / `Pointer.unsafe_dangling`: the null
+    /// pointer (the VM's `allocation: 0` sentinel). Dereference and free
+    /// misuse are off-gate runtime errors; the VM rejects `free` of a
+    /// dangling pointer while `mjrt_free(null)` is a no-op — a recorded
+    /// divergence.
+    fn lower_dangling_builtin(&mut self, ctx: &mut Context, dest: Reg) -> Result<(), PlironError> {
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let null = ZeroOp::new(ctx, ptr_ty);
+        self.define(ctx, dest, null.get_operation(), null.get_result(ctx))
+    }
+
+    /// `len(x)` over the non-nominal shapes (the VM's `call_named` arm):
+    /// string byte length, or the static element count of a pack. Nominal
+    /// receivers were rewritten to `__len__` method calls during
+    /// monomorphization.
+    fn lower_len_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+    ) -> Result<(), PlironError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(self.unsupported_reg("`len` call contract".into(), dest));
+        }
+        let arg = args[0];
+        if let Some(bytes) = self.str_consts.get(&arg.0) {
+            let length = self.int_constant(ctx, bytes.len() as i64);
+            self.reg_values.insert(dest.0, length);
+            return Ok(());
+        }
+        if let Some(descriptor) = self.str_runtime.get(&arg.0).copied() {
+            self.reg_values.insert(dest.0, descriptor.len);
+            return Ok(());
+        }
+        match self.func.reg_types.get(&arg.0).cloned() {
+            Some(Ty::StringLiteral) => {
+                let ptr = self.reg_ptr(ctx, arg)?;
+                let (_, len) = self.string_parts(ctx, ptr, dest);
+                self.reg_values.insert(dest.0, len);
+                Ok(())
+            }
+            Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)) => {
+                let length = self.int_constant(ctx, elements.len() as i64);
+                self.reg_values.insert(dest.0, length);
+                Ok(())
+            }
+            other => Err(self.unsupported_reg(
+                format!(
+                    "`len` over `{}`",
+                    other.map_or_else(|| "an untyped value".to_string(), |ty| ty.to_string())
+                ),
+                dest,
+            )),
+        }
+    }
+
+    /// `abs(x)` — the VM's `builtin_abs`: `wrapping_abs` on Int (including
+    /// `abs(i64::MIN) == i64::MIN`), identity on UInt, `fabs` on Float64.
+    fn lower_abs_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+    ) -> Result<(), PlironError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(self.unsupported_reg("`abs` call contract".into(), dest));
+        }
+        let arg = args[0];
+        match self.func.reg_types.get(&arg.0).cloned() {
+            Some(Ty::Int | Ty::IntLiteral) => {
+                let value = self.reg_value(ctx, arg, ScalarTy::Int)?;
+                let zero = self.int_constant(ctx, 0);
+                let negated = SubOp::new_with_overflow_flag(ctx, zero, value, no_overflow_flags());
+                self.append(ctx, negated.get_operation(), Some(dest));
+                let negative = ICmpOp::new(ctx, ICmpPredicateAttr::SLT, value, zero);
+                self.append(ctx, negative.get_operation(), Some(dest));
+                let select = SelectOp::new(
+                    ctx,
+                    negative.get_result(ctx),
+                    negated.get_result(ctx),
+                    value,
+                );
+                self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
+            }
+            Some(Ty::UInt) => {
+                let value = self.reg_value(ctx, arg, ScalarTy::UInt)?;
+                self.reg_values.insert(dest.0, value);
+                Ok(())
+            }
+            Some(Ty::Float64 | Ty::FloatLiteral) => {
+                let value = self.reg_value(ctx, arg, ScalarTy::Float64)?;
+                let result = self.float_unary(ctx, "llvm.fabs.f64", value, dest);
+                self.reg_values.insert(dest.0, result);
+                Ok(())
+            }
+            other => Err(self.unsupported_reg(
+                format!(
+                    "`abs` over `{}`",
+                    other.map_or_else(|| "an untyped value".to_string(), |ty| ty.to_string())
+                ),
+                dest,
+            )),
+        }
+    }
+
+    /// `min(a, b)` / `max(a, b)` — the VM's `builtin_min_max`: promote to the
+    /// higher numeric kind (Int < UInt < Float64) and pick by `x <= y`
+    /// (left-biased on ties; NaN loses either side, matching the VM's
+    /// ordered `<=`). Post-mono both operand types are concrete, so the
+    /// promotion is static. Mixed concrete Int/UInt rejects: the VM compares
+    /// those exactly, which one unsigned compare cannot reproduce.
+    fn lower_min_max_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        is_min: bool,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+    ) -> Result<(), PlironError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(self.unsupported_reg("`min`/`max` call contract".into(), dest));
+        }
+        let rank = |ty: &Ty| match ty {
+            Ty::Int | Ty::IntLiteral => Some(0),
+            Ty::UInt => Some(1),
+            Ty::Float64 | Ty::FloatLiteral => Some(2),
+            _ => None,
+        };
+        let ty_of = |this: &Self, reg: Reg| this.func.reg_types.get(&reg.0).cloned();
+        let (Some(lhs_ty), Some(rhs_ty)) = (ty_of(self, args[0]), ty_of(self, args[1])) else {
+            return Err(self.unsupported_reg("`min`/`max` over untyped operands".into(), dest));
+        };
+        let (Some(lhs_rank), Some(rhs_rank)) = (rank(&lhs_ty), rank(&rhs_ty)) else {
+            return Err(
+                self.unsupported_reg(format!("`min`/`max` over `{lhs_ty}` and `{rhs_ty}`"), dest)
+            );
+        };
+        let common = lhs_rank.max(rhs_rank);
+        if common == 1 && (lhs_ty == Ty::Int || rhs_ty == Ty::Int) {
+            return Err(
+                self.unsupported_reg("`min`/`max` over mixed Int and UInt operands".into(), dest)
+            );
+        }
+        let promote = |this: &mut Self, ctx: &mut Context, reg: Reg, ty: &Ty| match (common, ty) {
+            (2, Ty::Int) => {
+                let value = this.reg_value(ctx, reg, ScalarTy::Int)?;
+                Ok(this.int_to_f64(ctx, value, dest))
+            }
+            (2, Ty::UInt) => {
+                let value = this.reg_value(ctx, reg, ScalarTy::UInt)?;
+                Ok(this.uint_to_f64(ctx, value, dest))
+            }
+            (2, _) => this.reg_value(ctx, reg, ScalarTy::Float64),
+            (1, _) => this.reg_value(ctx, reg, ScalarTy::UInt),
+            _ => this.reg_value(ctx, reg, ScalarTy::Int),
+        };
+        let x = promote(self, ctx, args[0], &lhs_ty)?;
+        let y = promote(self, ctx, args[1], &rhs_ty)?;
+        let le = match common {
+            2 => {
+                let cmp = self.fcmp(ctx, FCmpPredicateAttr::OLE, x, y);
+                self.append(ctx, cmp.get_operation(), Some(dest));
+                cmp.get_result(ctx)
+            }
+            1 => {
+                let cmp = ICmpOp::new(ctx, ICmpPredicateAttr::ULE, x, y);
+                self.append(ctx, cmp.get_operation(), Some(dest));
+                cmp.get_result(ctx)
+            }
+            _ => {
+                let cmp = ICmpOp::new(ctx, ICmpPredicateAttr::SLE, x, y);
+                self.append(ctx, cmp.get_operation(), Some(dest));
+                cmp.get_result(ctx)
+            }
+        };
+        let (on_le, on_gt) = if is_min { (x, y) } else { (y, x) };
+        let select = SelectOp::new(ctx, le, on_le, on_gt);
+        self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
+    }
+
+    /// `round(x)` — the VM's `builtin_round`: nearest `Float64`, ties away
+    /// from zero (`llvm.round.f64` == `f64::round`); integers convert first
+    /// and the result is always `Float64`.
+    fn lower_round_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+    ) -> Result<(), PlironError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(self.unsupported_reg("`round` call contract".into(), dest));
+        }
+        let arg = args[0];
+        let value = match self.func.reg_types.get(&arg.0).cloned() {
+            Some(Ty::Int) => {
+                let value = self.reg_value(ctx, arg, ScalarTy::Int)?;
+                self.int_to_f64(ctx, value, dest)
+            }
+            Some(Ty::UInt) => {
+                let value = self.reg_value(ctx, arg, ScalarTy::UInt)?;
+                self.uint_to_f64(ctx, value, dest)
+            }
+            Some(Ty::Float64 | Ty::FloatLiteral | Ty::IntLiteral) => {
+                self.reg_value(ctx, arg, ScalarTy::Float64)?
+            }
+            other => {
+                return Err(self.unsupported_reg(
+                    format!(
+                        "`round` over `{}`",
+                        other.map_or_else(|| "an untyped value".to_string(), |ty| ty.to_string())
+                    ),
+                    dest,
+                ));
+            }
+        };
+        let result = self.float_unary(ctx, "llvm.round.f64", value, dest);
+        self.reg_values.insert(dest.0, result);
+        Ok(())
+    }
+
+    /// `divmod(a, b)` — the VM's `builtin_divmod`: `(a // b, a % b)` with
+    /// the operators' exact flooring rules and zero traps, stored into the
+    /// checker-selected nominal `Tuple` (whose single `storage` field is the
+    /// private pack).
+    fn lower_divmod_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+    ) -> Result<(), PlironError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(self.unsupported_reg("`divmod` call contract".into(), dest));
+        }
+        let Some(dest_ty) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg("untyped `divmod` result".into(), dest));
+        };
+        // The result pack: either the nominal Tuple's single `storage` field
+        // or (defensively) a bare private pack.
+        let elements = match &dest_ty {
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements.clone(),
+            Ty::Struct(name, _) => match self.struct_decls.get(name.as_str()) {
+                Some(decl)
+                    if decl.fields.len() == 1
+                        && matches!(&decl.fields[0].1, Ty::Tuple(_) | Ty::RuntimePack(_)) =>
+                {
+                    let (Ty::Tuple(elements) | Ty::RuntimePack(elements)) = &decl.fields[0].1
+                    else {
+                        unreachable!("guard matched a pack field");
+                    };
+                    elements.clone()
+                }
+                _ => {
+                    return Err(
+                        self.unsupported_reg(format!("`divmod` result shape `{dest_ty}`"), dest)
+                    );
+                }
+            },
+            _ => {
+                return Err(
+                    self.unsupported_reg(format!("`divmod` result shape `{dest_ty}`"), dest)
+                );
+            }
+        };
+        let [element, _] = elements.as_slice() else {
+            return Err(self.unsupported_reg(format!("`divmod` result shape `{dest_ty}`"), dest));
+        };
+        let element = element.clone();
+        let (quotient, remainder) = match &element {
+            Ty::Int | Ty::IntLiteral => {
+                let lhs = self.reg_value(ctx, args[0], ScalarTy::Int)?;
+                let rhs = self.reg_value(ctx, args[1], ScalarTy::Int)?;
+                self.emit_div_zero_guard(ctx, rhs, dest)?;
+                let rhs = self.sanitized_divisor(ctx, dest, lhs, rhs)?;
+                let quotient = self.floor_div_value(ctx, dest, lhs, rhs)?;
+                let remainder = self.floor_mod_value(ctx, dest, lhs, rhs)?;
+                (quotient, remainder)
+            }
+            Ty::UInt => {
+                let lhs = self.reg_value(ctx, args[0], ScalarTy::UInt)?;
+                let rhs = self.reg_value(ctx, args[1], ScalarTy::UInt)?;
+                self.emit_div_zero_guard(ctx, rhs, dest)?;
+                let div = UDivOp::new(ctx, lhs, rhs);
+                self.append(ctx, div.get_operation(), Some(dest));
+                let rem = URemOp::new(ctx, lhs, rhs);
+                self.append(ctx, rem.get_operation(), Some(dest));
+                (div.get_result(ctx), rem.get_result(ctx))
+            }
+            Ty::Float64 | Ty::FloatLiteral => {
+                let lhs = self.reg_value(ctx, args[0], ScalarTy::Float64)?;
+                let rhs = self.reg_value(ctx, args[1], ScalarTy::Float64)?;
+                let flags = FastmathFlagsAttr::default;
+                let div = FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                self.append(ctx, div.get_operation(), Some(dest));
+                let floored = self.float_floor(ctx, div.get_result(ctx), dest);
+                let scaled = FMulOp::new_with_fast_math_flags(ctx, rhs, floored, flags());
+                self.append(ctx, scaled.get_operation(), Some(dest));
+                let rem =
+                    FSubOp::new_with_fast_math_flags(ctx, lhs, scaled.get_result(ctx), flags());
+                self.append(ctx, rem.get_operation(), Some(dest));
+                (floored, rem.get_result(ctx))
+            }
+            other => {
+                return Err(self.unsupported_reg(format!("`divmod` over `{other}` operands"), dest));
+            }
+        };
+        let layout = self
+            .layout
+            .layout_of(&dest_ty)
+            .map_err(|error| self.unsupported_reg(format!("`divmod` result ({error})"), dest))?;
+        let inner = self.struct_layout_of(&elements, dest)?;
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        for (value, offset) in [(quotient, inner.offsets[0]), (remainder, inner.offsets[1])] {
+            let address = if offset == 0 {
+                storage
+            } else {
+                self.gep_byte(ctx, storage, offset, dest)
+            };
+            let store = StoreOp::new(ctx, value, address);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// `input(prompt)` — the VM's `builtin_input`: write the prompt bytes
+    /// (no newline; `mjrt_write_stdout` flushes per call, so the prompt lands
+    /// before the read even when piped), then `mjrt_read_line` fills the
+    /// nominal String result. The caller owns the line buffer under the
+    /// existing String release rule.
+    fn lower_input_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+    ) -> Result<(), PlironError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(self.unsupported_reg("`input` call contract".into(), dest));
+        }
+        // The checker types the call result `StringLiteral` (a separate
+        // constructor conversion wraps it into the nominal String when
+        // needed). The 24-byte `MjString` the runtime fills starts with the
+        // same `{data, len}` words an `MjStrDesc` reads, so one storage
+        // shape serves either destination type.
+        let dest_ty = self.func.reg_types.get(&dest.0).cloned();
+        let Some(dest_ty) = dest_ty.filter(|ty| {
+            matches!(ty, Ty::StringLiteral)
+                || matches!(ty, Ty::Struct(name, _)
+                    if crate::symbol::is_stdlib_string_struct(name))
+        }) else {
+            return Err(self.unsupported_reg("`input` without a String result".into(), dest));
+        };
+        if !self.try_write_string_bytes(ctx, args[0], dest)? {
+            return Err(self.unsupported_reg("`input` prompt shape".into(), dest));
+        }
+        let layout = self.layout.mj_string();
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        let read_ty = self.shared.ensure_rt(ctx, "mjrt_read_line");
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct("mjrt_read_line".try_into().expect("valid identifier")),
+            read_ty,
+            vec![storage],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        self.reg_values.insert(dest.0, storage);
+        // The line buffer is owned: a StringLiteral result registers the
+        // owned runtime descriptor (the release rule frees StringLiteral
+        // temporaries through `str_runtime`, exactly like `String(x)`
+        // stringify); a nominal String result releases through its storage.
+        if matches!(dest_ty, Ty::StringLiteral) {
+            let (data, len) = self.string_parts(ctx, storage, dest);
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+        }
+        self.mark_owned_temp(dest, dest_ty)
+    }
+
     /// Pointer-receiver method intrinsics — the VM's `Value::Pointer` method
     /// dispatch: `free`/`unsafe_free` release through the runtime's size-less
     /// free. Everything else stays unsupported.
@@ -2130,6 +2618,112 @@ impl<'a> FnLowering<'a> {
                 Ok(())
             }
             other => Err(self.unsupported_reg(format!("Pointer method `{other}`"), dest)),
+        }
+    }
+
+    /// `__floor__`/`__ceil__`/`__trunc__` on a scalar receiver — the VM's
+    /// `builtin_round_dir`: integers are already whole (identity), Float64
+    /// rounds toward the requested direction.
+    fn lower_round_dir(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        recv_ty: &Ty,
+        method: &str,
+    ) -> Result<(), PlironError> {
+        match recv_ty {
+            Ty::Int | Ty::UInt => {
+                let scalar = if matches!(recv_ty, Ty::UInt) {
+                    ScalarTy::UInt
+                } else {
+                    ScalarTy::Int
+                };
+                let value = self.reg_value(ctx, recv, scalar)?;
+                self.reg_values.insert(dest.0, value);
+                Ok(())
+            }
+            _ => {
+                let intrinsic = match method {
+                    "__floor__" => "llvm.floor.f64",
+                    "__ceil__" => "llvm.ceil.f64",
+                    _ => "llvm.trunc.f64",
+                };
+                let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
+                let result = self.float_unary(ctx, intrinsic, value, dest);
+                self.reg_values.insert(dest.0, result);
+                Ok(())
+            }
+        }
+    }
+
+    /// `__ceildiv__` on a scalar receiver — the VM's `builtin_ceildiv`:
+    /// ceiling division preserving the operand type. Int is the negated
+    /// flooring division of the negated numerator (with the shared zero trap
+    /// and `i64::MIN` divisor sanitizing; the VM's non-wrapping negate would
+    /// panic on `-i64::MIN` — an unexercised recorded divergence, native
+    /// wraps). UInt adds one when the remainder is nonzero; Float64 is
+    /// `ceil(a / b)` with no trap.
+    fn lower_ceildiv(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        denominator: Reg,
+        recv_ty: &Ty,
+    ) -> Result<(), PlironError> {
+        match recv_ty {
+            Ty::Int => {
+                let numerator = self.reg_value(ctx, recv, ScalarTy::Int)?;
+                let divisor = self.reg_value(ctx, denominator, ScalarTy::Int)?;
+                self.emit_div_zero_guard(ctx, divisor, dest)?;
+                let zero = self.int_constant(ctx, 0);
+                let negated =
+                    SubOp::new_with_overflow_flag(ctx, zero, numerator, no_overflow_flags());
+                self.append(ctx, negated.get_operation(), Some(dest));
+                let divisor =
+                    self.sanitized_divisor(ctx, dest, negated.get_result(ctx), divisor)?;
+                let floored = self.floor_div_value(ctx, dest, negated.get_result(ctx), divisor)?;
+                let result = SubOp::new_with_overflow_flag(ctx, zero, floored, no_overflow_flags());
+                self.define(ctx, dest, result.get_operation(), result.get_result(ctx))
+            }
+            Ty::UInt => {
+                let numerator = self.reg_value(ctx, recv, ScalarTy::UInt)?;
+                let divisor = self.reg_value(ctx, denominator, ScalarTy::UInt)?;
+                self.emit_div_zero_guard(ctx, divisor, dest)?;
+                let quotient = UDivOp::new(ctx, numerator, divisor);
+                self.append(ctx, quotient.get_operation(), Some(dest));
+                let remainder = URemOp::new(ctx, numerator, divisor);
+                self.append(ctx, remainder.get_operation(), Some(dest));
+                let zero = self.int_constant(ctx, 0);
+                let inexact =
+                    ICmpOp::new(ctx, ICmpPredicateAttr::NE, remainder.get_result(ctx), zero);
+                self.append(ctx, inexact.get_operation(), Some(dest));
+                let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+                let carry = ZExtOp::new_with_nneg(ctx, inexact.get_result(ctx), i64_ty, false);
+                self.append(ctx, carry.get_operation(), Some(dest));
+                let result = AddOp::new_with_overflow_flag(
+                    ctx,
+                    quotient.get_result(ctx),
+                    carry.get_result(ctx),
+                    no_overflow_flags(),
+                );
+                self.define(ctx, dest, result.get_operation(), result.get_result(ctx))
+            }
+            _ => {
+                let numerator = self.reg_value(ctx, recv, ScalarTy::Float64)?;
+                let divisor = self.reg_value(ctx, denominator, ScalarTy::Float64)?;
+                let div = FDivOp::new_with_fast_math_flags(
+                    ctx,
+                    numerator,
+                    divisor,
+                    FastmathFlagsAttr::default(),
+                );
+                self.append(ctx, div.get_operation(), Some(dest));
+                let result = self.float_unary(ctx, "llvm.ceil.f64", div.get_result(ctx), dest);
+                self.reg_values.insert(dest.0, result);
+                Ok(())
+            }
         }
     }
 
@@ -2177,6 +2771,112 @@ impl<'a> FnLowering<'a> {
         );
         self.append(ctx, gep.get_operation(), Some(dest));
         Ok(gep.get_result(ctx))
+    }
+
+    /// `PointerStorageTake`: move an initialized element out of
+    /// `UnsafePointer` collection storage — the VM's `heap_take`
+    /// (`mem::replace`): a raw byte move with no `__copyinit__` and no
+    /// tombstone. Ownership verification guarantees single-take on the
+    /// runnable subset; the uninitialized-misuse traps live in off-gate
+    /// runtime_error fixtures.
+    fn lower_pointer_storage_take(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        pointer: Reg,
+        index: Reg,
+        element: &Ty,
+    ) -> Result<(), PlironError> {
+        let ptr = self.reg_value(ctx, pointer, ScalarTy::Ptr)?;
+        let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
+        self.load_from(ctx, address, element, dest)?;
+        // The destination owns the moved value now: free its heap buffers if
+        // it dies as a discarded temporary (the VM's Rust runtime frees
+        // register temporaries invisibly).
+        self.mark_owned_temp(dest, element.clone())
+    }
+
+    /// `PointerStorageDestroy`: run the element destructor in place at the
+    /// element address — the VM's `heap_destroy` (`heap_take` +
+    /// `drop_value`). `emit_drop_value` supplies the compiled-`__deinit__`
+    /// dispatch, rejection of raising/droppable-field destructors, and the
+    /// lifecycle-trace event.
+    fn lower_pointer_storage_destroy(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        pointer: Reg,
+        index: Reg,
+        element: &Ty,
+    ) -> Result<(), PlironError> {
+        let ptr = self.reg_value(ctx, pointer, ScalarTy::Ptr)?;
+        let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
+        self.emit_drop_value(ctx, address, element, false)?;
+        self.erased.insert(dest.0);
+        Ok(())
+    }
+
+    /// `UninitStorage`: payload-only frame storage for `__UninitStorage[T]`
+    /// (no init flag — see the layout arm). An `init` payload moves in raw
+    /// (the VM's `mem::replace`, no `__moveinit__`).
+    fn lower_uninit_storage(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        init: Option<Reg>,
+    ) -> Result<(), PlironError> {
+        let Some(dest_ty) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg("untyped uninit storage result".into(), dest));
+        };
+        let Some(element) = crate::types::uninit_storage_element(&dest_ty).cloned() else {
+            return Err(self.unsupported_reg(
+                format!("uninit storage of non-storage type `{dest_ty}`"),
+                dest,
+            ));
+        };
+        let layout = self
+            .layout
+            .layout_of(&dest_ty)
+            .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
+        if layout.size == 0 {
+            self.erased.insert(dest.0);
+            return Ok(());
+        }
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        if let Some(src) = init {
+            self.store_to(ctx, storage, &element, src)?;
+        }
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// `UninitStorageTake`: move the payload out of inline uninit storage —
+    /// a raw byte move (the VM's `mem::replace` of the payload box).
+    fn lower_uninit_storage_take(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        storage: Reg,
+        element: &Ty,
+    ) -> Result<(), PlironError> {
+        let ptr = self.reg_ptr(ctx, storage)?;
+        self.load_from(ctx, ptr, element, dest)?;
+        self.mark_owned_temp(dest, element.clone())
+    }
+
+    /// `UninitStorageDestroy`: run the payload destructor in place — the
+    /// VM's take-then-`drop_value`.
+    fn lower_uninit_storage_destroy(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        storage: Reg,
+        element: &Ty,
+    ) -> Result<(), PlironError> {
+        let ptr = self.reg_ptr(ctx, storage)?;
+        self.emit_drop_value(ctx, ptr, element, false)?;
+        self.erased.insert(dest.0);
+        Ok(())
     }
 
     /// An owned copy of an aggregate — the VM's `clone_value`: the nominal
@@ -2672,6 +3372,20 @@ impl<'a> FnLowering<'a> {
                     )?;
                     ty = element;
                 }
+                Proj::UninitPayload => {
+                    let Some(element) = crate::types::uninit_storage_element(&ty).cloned() else {
+                        return Err(self.unsupported_reg(
+                            format!("uninit-payload projection on `{ty}`"),
+                            dest,
+                        ));
+                    };
+                    // Payload-only storage: the payload sits at the storage's
+                    // own address, so the projection changes only the
+                    // designated type. Stores through it overwrite raw — the
+                    // old payload leaks by design, exactly the VM's
+                    // `unsafe_write`.
+                    ty = element;
+                }
                 other => {
                     return Err(self.unsupported_reg(format!("place projection `{other:?}`"), dest));
                 }
@@ -2790,6 +3504,23 @@ impl<'a> FnLowering<'a> {
         // stdlib bodies.
         if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
+        }
+        // Unresolved scalar-receiver dunders are the VM's non-struct
+        // intrinsic dispatch (`builtin_round_dir`/`builtin_ceildiv`); a
+        // struct receiver with its own method arrives resolved instead.
+        if resolved.is_none()
+            && let Some(recv_ty) = self.func.reg_types.get(&recv.0).cloned()
+            && matches!(recv_ty, Ty::Int | Ty::UInt | Ty::Float64)
+        {
+            match (method, args.len()) {
+                ("__floor__" | "__ceil__" | "__trunc__", 0) => {
+                    return self.lower_round_dir(ctx, dest, recv, &recv_ty, method);
+                }
+                ("__ceildiv__", 1) => {
+                    return self.lower_ceildiv(ctx, dest, recv, args[0], &recv_ty);
+                }
+                _ => {}
+            }
         }
         let Some(resolved) = resolved else {
             return Err(self.unsupported_reg(format!("unresolved method call `{method}`"), dest));
@@ -5218,24 +5949,44 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// Emit the display bytes of one `print` argument.
-    fn print_value(&mut self, ctx: &mut Context, arg: Reg, dest: Reg) -> Result<(), PlironError> {
+    /// Write the UTF-8 bytes of a string-valued register to stdout when the
+    /// register holds one of the supported string shapes — an interned
+    /// constant, a runtime StringLiteral (descriptor or typed storage), or a
+    /// nominal String. Returns whether the register was such a string.
+    fn try_write_string_bytes(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        dest: Reg,
+    ) -> Result<bool, PlironError> {
         if let Some(bytes) = self.str_consts.get(&arg.0).cloned() {
             self.write_literal_bytes(ctx, &bytes, dest);
-            return Ok(());
+            return Ok(true);
         }
         if let Some(descriptor) = self.str_runtime.get(&arg.0).copied() {
             self.write_stdout(ctx, descriptor.data, descriptor.len, dest);
-            return Ok(());
+            return Ok(true);
         }
-        // A nominal String prints its byte buffer (the VM's `write_to`
-        // bridge reads the same bytes).
-        if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0)
-            && crate::symbol::is_stdlib_string_struct(name)
-        {
+        // A nominal String's byte buffer (the VM's `write_to` bridge reads
+        // the same bytes), or a runtime StringLiteral value's (typed
+        // storage) descriptor bytes.
+        let is_string = match self.func.reg_types.get(&arg.0) {
+            Some(Ty::Struct(name, _)) => crate::symbol::is_stdlib_string_struct(name),
+            Some(Ty::StringLiteral) => true,
+            _ => false,
+        };
+        if is_string {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, size) = self.string_parts(ctx, ptr, dest);
             self.write_stdout(ctx, data, size, dest);
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Emit the display bytes of one `print` argument.
+    fn print_value(&mut self, ctx: &mut Context, arg: Reg, dest: Reg) -> Result<(), PlironError> {
+        if self.try_write_string_bytes(ctx, arg, dest)? {
             return Ok(());
         }
         // An error value prints its bare message (the VM's `format_value`
@@ -5250,14 +6001,6 @@ impl<'a> FnLowering<'a> {
         // the (erased) register.
         if matches!(self.func.reg_types.get(&arg.0), Some(Ty::None)) {
             self.write_literal_bytes(ctx, b"None", dest);
-            return Ok(());
-        }
-        // A runtime StringLiteral value (typed storage) prints its
-        // descriptor's bytes.
-        if matches!(self.func.reg_types.get(&arg.0), Some(Ty::StringLiteral)) {
-            let ptr = self.reg_ptr(ctx, arg)?;
-            let (data, len) = self.string_parts(ctx, ptr, dest);
-            self.write_stdout(ctx, data, len, dest);
             return Ok(());
         }
         let ty = match self.concrete_scalar_ty(arg)? {
@@ -5484,7 +6227,14 @@ impl<'a> FnLowering<'a> {
                 self.str_consts.insert(dest.0, text.as_bytes().to_vec());
                 Ok(())
             }
-            MirConst::Function(_) | MirConst::None => {
+            // The unit constant is zero-sized: consumers type it `None` and
+            // never read a materialized value (`print` writes its constant
+            // text, stores are no-ops).
+            MirConst::None => {
+                self.erased.insert(dest.0);
+                Ok(())
+            }
+            MirConst::Function(_) => {
                 Err(self.unsupported_reg(format!("constant `{}`", const_name(k)), dest))
             }
         }
@@ -5665,6 +6415,20 @@ impl<'a> FnLowering<'a> {
         }
         if self.str_consts.contains_key(&a.0) || self.str_consts.contains_key(&b.0) {
             return self.lower_str_literal_binop(ctx, op, dest, a, b);
+        }
+        // `pointer + i` — provenance-preserving element arithmetic (the MIR
+        // form of `unsafe_offset`): the address `i * sizeof(element)` bytes
+        // on (the VM adds `i` to its element-counted offset).
+        if let Some(Ty::Pointer { element, .. }) = self.func.reg_types.get(&a.0).cloned() {
+            if !matches!(op, InfixOp::Add) {
+                return Err(
+                    self.unsupported_reg(format!("operator `{op:?}` on Pointer operands"), dest)
+                );
+            }
+            let ptr = self.reg_value(ctx, a, ScalarTy::Ptr)?;
+            let address = self.pointer_element_address(ctx, ptr, b, &element, dest)?;
+            self.reg_values.insert(dest.0, address);
+            return Ok(());
         }
         let operand_ty = self.binop_operand_ty(a, b)?;
 
@@ -5977,11 +6741,23 @@ impl<'a> FnLowering<'a> {
 
     /// `llvm.floor.f64` over one value.
     fn float_floor(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
+        self.float_unary(ctx, "llvm.floor.f64", value, dest)
+    }
+
+    /// One unary f64 → f64 LLVM intrinsic (`llvm.floor.f64`,
+    /// `llvm.ceil.f64`, `llvm.trunc.f64`, `llvm.round.f64`, `llvm.fabs.f64`).
+    fn float_unary(
+        &mut self,
+        ctx: &mut Context,
+        intrinsic: &str,
+        value: Value,
+        dest: Reg,
+    ) -> Value {
         let f64_ty: TypeHandle = FP64Type::get(ctx).into();
         let fn_ty = FuncType::get(ctx, f64_ty, vec![f64_ty], false);
         let call = CallIntrinsicOp::new(
             ctx,
-            StringAttr::new("llvm.floor.f64".to_string()),
+            StringAttr::new(intrinsic.to_string()),
             fn_ty,
             vec![value],
         );
@@ -6253,20 +7029,35 @@ impl<'a> FnLowering<'a> {
         lhs: Value,
         rhs: Value,
     ) -> Result<(), PlironError> {
+        let value = self.floor_div_value(ctx, dest, lhs, rhs)?;
+        self.reg_values.insert(dest.0, value);
+        Ok(())
+    }
+
+    /// The flooring quotient as a bare value (shared with `divmod`, which
+    /// computes both halves for one destination).
+    fn floor_div_value(
+        &mut self,
+        ctx: &mut Context,
+        span_reg: Reg,
+        lhs: Value,
+        rhs: Value,
+    ) -> Result<Value, PlironError> {
         let quotient = SDivOp::new(ctx, lhs, rhs);
-        self.append(ctx, quotient.get_operation(), Some(dest));
-        let adjust = self.floor_adjust_flag(ctx, dest, lhs, rhs)?;
+        self.append(ctx, quotient.get_operation(), Some(span_reg));
+        let adjust = self.floor_adjust_flag(ctx, span_reg, lhs, rhs)?;
         let one = self.int_constant(ctx, 1);
         let minus_one =
             SubOp::new_with_overflow_flag(ctx, quotient.get_result(ctx), one, no_overflow_flags());
-        self.append(ctx, minus_one.get_operation(), Some(dest));
+        self.append(ctx, minus_one.get_operation(), Some(span_reg));
         let select = SelectOp::new(
             ctx,
             adjust,
             minus_one.get_result(ctx),
             quotient.get_result(ctx),
         );
-        self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
+        self.append(ctx, select.get_operation(), Some(span_reg));
+        Ok(select.get_result(ctx))
     }
 
     /// `floor_mod`: `srem` takes the dividend's sign; add the divisor when the
@@ -6278,19 +7069,33 @@ impl<'a> FnLowering<'a> {
         lhs: Value,
         rhs: Value,
     ) -> Result<(), PlironError> {
-        let adjust = self.floor_adjust_flag(ctx, dest, lhs, rhs)?;
+        let value = self.floor_mod_value(ctx, dest, lhs, rhs)?;
+        self.reg_values.insert(dest.0, value);
+        Ok(())
+    }
+
+    /// The flooring remainder as a bare value (shared with `divmod`).
+    fn floor_mod_value(
+        &mut self,
+        ctx: &mut Context,
+        span_reg: Reg,
+        lhs: Value,
+        rhs: Value,
+    ) -> Result<Value, PlironError> {
+        let adjust = self.floor_adjust_flag(ctx, span_reg, lhs, rhs)?;
         let remainder = SRemOp::new(ctx, lhs, rhs);
-        self.append(ctx, remainder.get_operation(), Some(dest));
+        self.append(ctx, remainder.get_operation(), Some(span_reg));
         let plus_divisor =
             AddOp::new_with_overflow_flag(ctx, remainder.get_result(ctx), rhs, no_overflow_flags());
-        self.append(ctx, plus_divisor.get_operation(), Some(dest));
+        self.append(ctx, plus_divisor.get_operation(), Some(span_reg));
         let select = SelectOp::new(
             ctx,
             adjust,
             plus_divisor.get_result(ctx),
             remainder.get_result(ctx),
         );
-        self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
+        self.append(ctx, select.get_operation(), Some(span_reg));
+        Ok(select.get_result(ctx))
     }
 
     /// Replace the divisor with `1` in the single overflowing signed case

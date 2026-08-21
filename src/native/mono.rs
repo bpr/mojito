@@ -274,6 +274,54 @@ impl<'a> Specializer<'a> {
                     }
                     continue;
                 }
+                // `len`/`abs`/`round` on a nominal receiver are checker-typed
+                // dunder dispatches the VM performs by name (`call_dunder`);
+                // rewrite them into ordinary method calls so the shared
+                // resolver and the `MethodCall` arm below monomorphize the
+                // dunder instance like any other method. Non-struct operands
+                // pass through for the backend's scalar interception.
+                if let MirInstr::Call {
+                    dest,
+                    func,
+                    args,
+                    kwargs,
+                    ..
+                } = instruction
+                {
+                    let dunder = match func.0.as_str() {
+                        "len" => Some("__len__"),
+                        "abs" => Some("__abs__"),
+                        "round" => Some("__round__"),
+                        _ => None,
+                    };
+                    if let Some(method) = dunder
+                        && !self.functions.contains_key(func.0.as_str())
+                        && kwargs.is_empty()
+                        && args.len() == 1
+                        && matches!(function.reg_types.get(&args[0].0), Some(Ty::Struct(..)))
+                    {
+                        *instruction = dunder_method_call(*dest, args[0], method, None, Vec::new());
+                    }
+                }
+                // A binary operator on a nominal left operand is the same VM
+                // dunder dispatch (`apply_binop` → `call_dunder`): rewrite to
+                // the operator method so the shared resolver monomorphizes
+                // the compiled instance (`String.__add__`, user `__eq__`, …).
+                // `in`/`not in` dispatch on the right operand and stay
+                // untouched (they keep their contextual rejection).
+                if let MirInstr::BinOp {
+                    op,
+                    dest,
+                    a,
+                    b,
+                    resolved,
+                } = instruction
+                    && let Some(method) = op.dunder()
+                    && !matches!(op, crate::ast::InfixOp::In | crate::ast::InfixOp::NotIn)
+                    && matches!(function.reg_types.get(&a.0), Some(Ty::Struct(..)))
+                {
+                    *instruction = dunder_method_call(*dest, *a, method, resolved.take(), vec![*b]);
+                }
                 match instruction {
                     MirInstr::Call {
                         dest,
@@ -714,14 +762,16 @@ impl<'a> Specializer<'a> {
 
     fn discover_structs(&mut self, owner: &str, function: &MirFunction) -> Result<(), MonoError> {
         let mut types = function_types(function).cloned().collect::<Vec<_>>();
+        // Storage take/destroy intrinsics name their element type directly on
+        // the instruction; seed it so the element's lifecycle methods
+        // (notably `__deinit__` for the destroy forms) always join the walk
+        // even when no register or variable carries the bare element type.
+        push_storage_element_types(&function.blocks, &mut types);
         while let Some(ty) = types.pop() {
             collect_nested_types(&ty, &mut types);
             let Ty::Struct(name, arguments) = ty else {
                 continue;
             };
-            if self.output_structs.iter().any(|decl| decl.name == name) {
-                continue;
-            }
             let template_name = name.split("$mono").next().unwrap_or(&name).to_string();
             let Some(template) = self.structs.get(template_name.as_str()).copied() else {
                 continue;
@@ -742,6 +792,34 @@ impl<'a> Specializer<'a> {
             }
             declaration.name = name;
             declaration.param_decls.clear();
+            if let Some(existing) = self
+                .output_structs
+                .iter()
+                .find(|decl| decl.name == declaration.name)
+            {
+                // Output declarations dedupe by name, but a checker-concrete
+                // generic application keeps its template name — two distinct
+                // instantiations would silently share whichever declaration
+                // was discovered first. Sharing is benign only when the field
+                // substitutions are equivalent modulo pointer element types
+                // (every pointer is one opaque target word and drops inertly
+                // — the `_RawAlloc`/`List` shape); anything else rejects
+                // contextually instead of laying out against the wrong
+                // instance. Renaming concrete applications to instance
+                // symbols is the Collections slice's canonicalization
+                // prerequisite.
+                if !fields_equivalent(&existing.fields, &declaration.fields) {
+                    return Err(self.error(
+                        Some(owner),
+                        format!(
+                            "struct instance `{}` has conflicting field \
+                             substitutions (instance identity collision)",
+                            declaration.name
+                        ),
+                    ));
+                }
+                continue;
+            }
             types.extend(declaration.fields.iter().map(|(_, ty)| ty.clone()));
             self.output_structs.push(declaration);
             for method in ["__init__", "__copyinit__", "__moveinit__", "__deinit__"] {
@@ -781,6 +859,63 @@ impl<'a> Specializer<'a> {
             function: function.map(str::to_string),
             construct: construct.into(),
         }
+    }
+}
+
+/// Field-list equivalence for name-colliding struct instances: strict
+/// structural equality except that pointer types collapse (one opaque
+/// target word, drop-inert), recursing through nested aggregate shapes.
+fn fields_equivalent(a: &[(String, Ty)], b: &[(String, Ty)]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|((a_name, a_ty), (b_name, b_ty))| a_name == b_name && ty_equivalent(a_ty, b_ty))
+}
+
+fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
+    match (a, b) {
+        (Ty::Pointer { .. }, Ty::Pointer { .. }) => true,
+        (Ty::Struct(a_name, a_args), Ty::Struct(b_name, b_args)) => {
+            a_name == b_name
+                && a_args.len() == b_args.len()
+                && a_args.iter().zip(b_args).all(|(a, b)| match (a, b) {
+                    (TyArg::Ty(a), TyArg::Ty(b)) => ty_equivalent(a, b),
+                    _ => a == b,
+                })
+        }
+        (Ty::Tuple(a), Ty::Tuple(b)) | (Ty::RuntimePack(a), Ty::RuntimePack(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equivalent(a, b))
+        }
+        _ => a == b,
+    }
+}
+
+/// An unresolved method-call shell for a VM by-name dunder dispatch
+/// (`call_dunder`): the `MethodCall` rewrite arm resolves and retargets it
+/// through the shared resolver like any source-level method call.
+fn dunder_method_call(
+    dest: Reg,
+    recv: Reg,
+    method: &str,
+    resolved: Option<String>,
+    args: Vec<Reg>,
+) -> MirInstr {
+    MirInstr::MethodCall {
+        dest,
+        recv,
+        method: method.to_string(),
+        resolved,
+        raises: None,
+        reference_result: None,
+        result_adapter: None,
+        args,
+        kwargs: Vec::new(),
+        recv_place: None,
+        arg_places: Vec::new(),
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        param_decls: Vec::new(),
     }
 }
 
@@ -946,9 +1081,22 @@ fn bind_type(name: &str, ty: &Ty, bindings: &mut Bindings) -> Result<(), String>
     if is_symbolic(ty) {
         return Err(format!("solution for `{name}` is not concrete: `{ty}`"));
     }
+    let literal = |ty: &Ty| matches!(ty, Ty::IntLiteral | Ty::FloatLiteral | Ty::StringLiteral);
     match bindings.types.get(name) {
+        // A literal-typed actual materializes into whatever concrete storage
+        // is already bound, and a concrete solution upgrades an earlier
+        // literal-only binding — mirroring `unify`'s literal escape. Binding
+        // order varies by call shape (receiver-first vs result-last), so the
+        // merge must be order-independent.
+        Some(old) if literal(ty) && !literal(old) => Ok(()),
+        Some(old) if literal(old) && !literal(ty) => {
+            bindings.types.insert(name.to_string(), ty.clone());
+            Ok(())
+        }
+        // `Ty`'s `Display` collapses distinct types (`IntLiteral` renders as
+        // `Int`), so the conflict text carries the structural form too.
         Some(old) if old != ty => Err(format!(
-            "conflicting solutions for `{name}`: `{old}` and `{ty}`"
+            "conflicting solutions for `{name}`: `{old}` ({old:?}) and `{ty}` ({ty:?})"
         )),
         Some(_) => Ok(()),
         None => {
@@ -963,8 +1111,11 @@ fn bind_value(name: &str, value: &CtValue, bindings: &mut Bindings) -> Result<()
         return Err(format!("solution for `{name}` is not constant"));
     }
     match bindings.values.get(name) {
+        // As in `bind_type`, `Display` can collapse distinct values (an Int
+        // and a UInt render alike), so the conflict text carries the
+        // structural forms.
         Some(old) if old != value => Err(format!(
-            "conflicting solutions for `{name}`: `{old}` and `{value}`"
+            "conflicting solutions for `{name}`: `{old}` ({old:?}) and `{value}` ({value:?})"
         )),
         Some(_) => Ok(()),
         None => {
@@ -1484,6 +1635,40 @@ fn function_types(function: &MirFunction) -> impl Iterator<Item = &Ty> {
         .chain(function.var_tys.values())
         .chain(function.reg_types.values())
 }
+
+/// Collect the (already-substituted) `element` type each storage take/destroy
+/// intrinsic names on the instruction itself, recursing into `try` regions.
+fn push_storage_element_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
+    for block in blocks {
+        for instruction in &block.instrs {
+            match instruction {
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    push_storage_element_types(body, out);
+                    if let Some((_, blocks)) = handler {
+                        push_storage_element_types(blocks, out);
+                    }
+                    if let Some(blocks) = orelse {
+                        push_storage_element_types(blocks, out);
+                    }
+                    if let Some(blocks) = finalbody {
+                        push_storage_element_types(blocks, out);
+                    }
+                }
+                MirInstr::PointerStorageTake { element, .. }
+                | MirInstr::PointerStorageDestroy { element, .. }
+                | MirInstr::UninitStorageTake { element, .. }
+                | MirInstr::UninitStorageDestroy { element, .. } => out.push(element.clone()),
+                _ => {}
+            }
+        }
+    }
+}
 fn ensure_concrete_function(name: &str, function: &MirFunction) -> Result<(), MonoError> {
     if let Some(ty) = function_types(function).find(|ty| is_symbolic(ty)) {
         Err(MonoError {
@@ -1743,6 +1928,140 @@ mod tests {
                 .unwrap_err()
                 .contains("conflicting")
         );
+    }
+
+    #[test]
+    fn literal_actuals_merge_with_concrete_bindings_in_either_order() {
+        let mut bindings = Bindings::default();
+        // Receiver-first: `T := Int` from the concrete receiver, then a
+        // literal-typed actual (`41 : IntLiteral`) — compatible, keeps `Int`.
+        bind_type("T", &Ty::Int, &mut bindings).unwrap();
+        bind_type("T", &Ty::IntLiteral, &mut bindings).unwrap();
+        assert_eq!(bindings.types.get("T"), Some(&Ty::Int));
+
+        // Result-last: the literal actual binds first, the concrete result
+        // type upgrades it.
+        let mut bindings = Bindings::default();
+        bind_type("T", &Ty::IntLiteral, &mut bindings).unwrap();
+        bind_type("T", &Ty::Int, &mut bindings).unwrap();
+        assert_eq!(bindings.types.get("T"), Some(&Ty::Int));
+
+        // Genuinely distinct concrete solutions still conflict, and the
+        // message carries the structural forms (`Display` collapses
+        // `IntLiteral` to `Int`).
+        let mut bindings = Bindings::default();
+        bind_type("T", &Ty::Int, &mut bindings).unwrap();
+        let error = bind_type("T", &Ty::Float64, &mut bindings).unwrap_err();
+        assert!(error.contains("conflicting"), "{error}");
+        // Two different literal kinds conflict too.
+        let mut bindings = Bindings::default();
+        bind_type("T", &Ty::IntLiteral, &mut bindings).unwrap();
+        assert!(bind_type("T", &Ty::FloatLiteral, &mut bindings).is_err());
+    }
+
+    #[test]
+    fn value_constructor_literal_arguments_bind_against_the_receiver_solution() {
+        // The owned_pointer_api shape: the receiver's type arguments solve
+        // `T := Int`, then the literal-typed constructor argument must merge
+        // rather than conflict ("`Int` and `Int`").
+        let source = "struct Box[T: Movable]:\n\
+                      \x20   var value: Self.T\n\
+                      \n\
+                      \x20   def __init__(out self, var value: Self.T):\n\
+                      \x20       self.value = value^\n\
+                      \n\
+                      def main():\n\
+                      \x20   var b = Box[Int](41)\n\
+                      \x20   print(b.value)\n";
+        let specialized = specialized_main(source);
+        assert!(
+            specialized
+                .program
+                .functions
+                .iter()
+                .any(|(name, _)| name.contains("Box.__init__") && name.contains("$mono$")),
+            "the constructor instance must materialize"
+        );
+    }
+
+    #[test]
+    fn nominal_len_rewrites_to_a_resolved_dunder_method_call() {
+        let source = "@fieldwise_init\n\
+                      struct Sized:\n\
+                      \x20   var n: Int\n\
+                      \n\
+                      \x20   def __len__(self) -> Int:\n\
+                      \x20       return self.n\n\
+                      \n\
+                      def main():\n\
+                      \x20   print(len(Sized(3)))\n";
+        let specialized = specialized_main(source);
+        let main = function(&specialized, "main");
+        let instrs = instructions(&main.blocks);
+        let resolved = instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::MethodCall {
+                    method,
+                    resolved: Some(resolved),
+                    ..
+                } if method == "__len__" => Some(resolved.clone()),
+                _ => None,
+            })
+            .expect("`len(nominal)` must rewrite to a resolved `__len__` call");
+        assert!(
+            specialized
+                .program
+                .functions
+                .iter()
+                .any(|(name, _)| *name == resolved),
+            "the rewritten target `{resolved}` must be a specialized function"
+        );
+        assert!(
+            !instrs.iter().any(|instruction| matches!(
+                instruction,
+                MirInstr::Call { func, .. } if func.0 == "len"
+            )),
+            "no bare `len` builtin call may survive the rewrite"
+        );
+    }
+
+    #[test]
+    fn colliding_instances_share_only_modulo_pointer_elements() {
+        let pointer = |element: Ty| Ty::Pointer {
+            element: Box::new(element),
+            origin: crate::origin::PointerOrigin::Static,
+        };
+        // The `_RawAlloc`/`List` shape: fields differing only behind a
+        // pointer are one opaque word and drop inertly — benign to share.
+        assert!(fields_equivalent(
+            &[("ptr".into(), pointer(Ty::Int))],
+            &[("ptr".into(), pointer(Ty::Float64))],
+        ));
+        // A payload-carrying difference (the `__UninitStorage` shape) is a
+        // genuine layout/lifecycle hazard.
+        assert!(!fields_equivalent(
+            &[(
+                "_storage".into(),
+                Ty::Struct("__UninitStorage".into(), vec![TyArg::Ty(Ty::Int)]),
+            )],
+            &[(
+                "_storage".into(),
+                Ty::Struct(
+                    "__UninitStorage".into(),
+                    vec![TyArg::Ty(Ty::Struct("Recorder".into(), vec![]))],
+                ),
+            )],
+        ));
+        // Field names and non-pointer types stay strict.
+        assert!(!fields_equivalent(
+            &[("a".into(), Ty::Int)],
+            &[("b".into(), Ty::Int)],
+        ));
+        assert!(!fields_equivalent(
+            &[("a".into(), Ty::Int)],
+            &[("a".into(), Ty::Float64)],
+        ));
     }
 
     #[test]
