@@ -2507,24 +2507,17 @@ impl Prog {
     /// non-overloaded nominal `__call__`. Checker-resolved concrete overloads
     /// carry their exact lowered callee and never depend on this fallback.
     fn overload_name(&self, name: &str, argc: usize) -> String {
-        if self.index_of(name).is_some() {
-            return name.to_string();
-        }
-        let expected_params = if name.contains('.') { argc + 1 } else { argc };
-        let mut matches = self
-            .mir
-            .functions
-            .iter()
-            .filter(|(fname, f)| {
-                crate::symbol::is_overload_of(fname, name) && f.n_params == expected_params
-            })
-            .map(|(fname, _)| fname.clone())
-            .collect::<Vec<_>>();
-        if matches.len() == 1 {
-            matches.remove(0)
-        } else {
-            name.to_string()
-        }
+        crate::symbol::resolve_callable_symbol(
+            self.mir
+                .functions
+                .iter()
+                .map(|(name, function)| crate::symbol::CallableCandidate {
+                    name,
+                    n_params: function.n_params,
+                }),
+            name,
+            argc,
+        )
     }
 
     /// Resolve a selected method signature against the receiver's concrete
@@ -2538,17 +2531,19 @@ impl Prog {
         resolved: Option<&str>,
         argc: usize,
     ) -> String {
-        if let Some(selected) = resolved {
-            if let Some(retargeted) = crate::symbol::retarget_method_symbol(selected, receiver_type)
-                && self.index_of(&retargeted).is_some()
-            {
-                return retargeted;
-            }
-            if self.index_of(selected).is_some() {
-                return selected.to_string();
-            }
-        }
-        self.overload_name(&format!("{receiver_type}.{method}"), argc)
+        crate::symbol::resolve_method_symbol(
+            self.mir
+                .functions
+                .iter()
+                .map(|(name, function)| crate::symbol::CallableCandidate {
+                    name,
+                    n_params: function.n_params,
+                }),
+            receiver_type,
+            method,
+            resolved,
+            argc,
+        )
     }
 }
 

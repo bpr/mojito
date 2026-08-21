@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pliron Stage 5 slice 2 adds backend-private monomorphization below the stable
+  MIR waist. Native compilation now discovers concrete generic function,
+  method, struct, constructor, and lifecycle instances from entry-reachable MIR,
+  substitutes their retained type/value facts, and rejects unresolved symbolic
+  state before layout. VM/native callable and method dispatch share the symbol
+  layer; cached/canonical MIR and VM execution are unchanged.
+
 - Pliron Stage 5 slice 1 — narrow scalars and literal value types: the native
   backend now lowers the width-1 SIMD scalar aliases (`Int8`…`Int64`,
   `UInt8`…`UInt64`, `Float32`) at their lane width with VM-exact wrapping

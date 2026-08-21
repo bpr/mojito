@@ -35,13 +35,6 @@ Stage 5 acceptance: canonical `.mir` artifacts behave identically through VM
 and native paths, the native backend never accepts rejected source, and
 promotion requires zero exclusions across Mojito's advertised runnable subset.
 
-- [ ] **Backend-side monomorphization** — a feature-independent
-  `src/native/mono.rs` pass walks the instantiation graph from the entries,
-  infers per-call-site type/value environments from concrete receiver and
-  argument types, and clones functions and structs under instance mangles; the
-  VM's runtime method-resolution policy is extracted into `src/symbol.rs` and
-  shared, so native dispatch can never diverge from the oracle. The canonical
-  `.mir` artifact and the VM are untouched.
 - [ ] **Iterator protocol** — `GetIter`/`HasNext`/`Next`/`TryNext`, the
   reference-result copy adapter, and prepare-chain-typed iterator slots,
   including raising iterators over the tagged-outcome ABI.

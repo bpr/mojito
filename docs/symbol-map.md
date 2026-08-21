@@ -29,7 +29,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 |---|---|---|
 | Structural call binding | `call::{match_call_slots, ArgSlot, CallSlots}` | Checker and VM call adapters. |
 | Parser-to-call marker normalization | `call::{regular_marker_index, effective_keyword_only_index}` | Checker and MIR declaration lowering. |
-| Callable identity and overload names | `symbol::{SignatureKey, OverloadSets, lowered_def_name, lowered_method_name, function_symbol, method_symbol}` | Checker, MIR, VM registries, symbol tests. `SignatureKey` retains positional types, keyword-only names, and the keyword-variadic collector role. |
+| Callable identity, overload/dispatch, and native instance names | `symbol::{SignatureKey, InstanceArg, OverloadSets, resolve_callable_symbol, resolve_method_symbol, instance_symbol, lowered_def_name, lowered_method_name}` | Checker, MIR, VM, native monomorphization, symbol tests. Runtime and native method retargeting share one declaration-view policy. |
 | Checked semantic facts | `checked::{CheckedProgram, CheckedConst, AnnotationSite, CheckedCallContract, CheckedIteratorCall, CheckedResultAdapter}` | MIR, ownership driver, backends. |
 | Source annotation syntax | `ast::SourceType` (alias of the AST `Type` node) | Parser, checker input, HIR/MIR source metadata. |
 | Source location/provenance | `token::{Span, SourceSpan}` | AST, checker side tables, MIR diagnostics. |
@@ -39,6 +39,7 @@ refactors; implementation details belong in `docs/architecture.md`.
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
 | Native compile (experimental, `backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. |
 | Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
+| Backend-side monomorphization | `native::mono::{specialize, SpecializedProgram, MonoError}` | Native backends. Clones an entry-rooted concrete MIR graph; canonical MIR and VM execution remain unchanged. |
 
 ## Source Versus Checked Naming
 

@@ -51,7 +51,23 @@ pub fn compile(
     options: &CompileOptions,
 ) -> Result<NativeModule, PlironError> {
     check_invariants(program)?;
-    let reachable = reachable_set(program, &options.entries)?;
+    let specialized =
+        crate::native::mono::specialize(program, &options.entries).map_err(|error| {
+            PlironError {
+                function: error.function,
+                kind: PlironErrorKind::Unsupported {
+                    construct: error.construct,
+                },
+                location: None,
+            }
+        })?;
+    let program = &specialized.program;
+    let concrete_entries = options
+        .entries
+        .iter()
+        .map(|entry| specialized.entries[entry].clone())
+        .collect::<Vec<_>>();
+    let reachable = reachable_set(program, &concrete_entries)?;
 
     let mut context = Context::new();
     let locator = lower::Locator::new(&mut context, &options.sources);
@@ -138,6 +154,7 @@ pub fn compile(
         module,
         canonical_text,
         functions,
+        entries: specialized.entries,
         target: options.target,
         exe_wrapper_added: false,
     })
@@ -185,6 +202,7 @@ pub struct NativeModule {
     module: ModuleOp,
     canonical_text: String,
     functions: HashMap<String, FnMeta>,
+    entries: HashMap<String, String>,
     target: NativeTarget,
     exe_wrapper_added: bool,
 }
@@ -257,7 +275,8 @@ impl NativeModule {
                 location: None,
             });
         }
-        let Some(meta) = self.functions.get(entry) else {
+        let concrete_entry = self.entries.get(entry).map_or(entry, String::as_str);
+        let Some(meta) = self.functions.get(concrete_entry) else {
             return Err(PlironError {
                 function: None,
                 kind: PlironErrorKind::Emit(format!("function `{entry}` was not compiled")),
@@ -301,6 +320,7 @@ impl NativeModule {
 
     /// The native symbol a MIR function was mangled to, when compiled.
     pub fn mangled_name(&self, mir_name: &str) -> Option<&str> {
+        let mir_name = self.entries.get(mir_name).map_or(mir_name, String::as_str);
         self.functions
             .get(mir_name)
             .map(|meta| meta.mangled.as_str())
@@ -311,10 +331,15 @@ impl NativeModule {
             return Ok(());
         }
         let mut callees = Vec::new();
-        if let Some(toplevel) = self.functions.get("__toplevel__") {
+        let toplevel_name = self
+            .entries
+            .get("__toplevel__")
+            .map_or("__toplevel__", String::as_str);
+        if let Some(toplevel) = self.functions.get(toplevel_name) {
             callees.push((toplevel.mangled.clone(), toplevel.outcome));
         }
-        let Some(main) = self.functions.get("main") else {
+        let main_name = self.entries.get("main").map_or("main", String::as_str);
+        let Some(main) = self.functions.get(main_name) else {
             return Err(PlironError {
                 function: None,
                 kind: PlironErrorKind::Emit(

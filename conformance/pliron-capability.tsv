@@ -17,7 +17,7 @@ instruction	ref.write	partial	typed referent registers
 instruction	closure.make	unsupported	Stage 5: closures
 instruction	lifetime.keep_alive	supported	erased
 instruction	const	partial	Int/Float/Bool/Str (literals stay pending until materialization); `None` and function-reference constants reject
-instruction	literal.materialize	partial	scalar targets; out-of-range literals reject
+instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
 instruction	var.use	supported	copy/move/borrow
 instruction	place.move	partial	marks the root partially initialized; later whole-variable drops of it reject
 instruction	var.store	supported	sets the initialization flag
@@ -48,8 +48,8 @@ instruction	variant.take	unsupported	Stage 5: Variant
 instruction	variant.set_init_with	unsupported	Stage 5: Variant
 instruction	variant.deinit_with	unsupported	Stage 5: Variant
 instruction	variant.replace	unsupported	Stage 5: Variant
-instruction	simd.make	unsupported	Stage 5: SIMD scalar semantics
-instruction	simd.cast	unsupported	Stage 5: SIMD scalar semantics
+instruction	simd.make	partial	width-1 scalar aliases with the VM's lane conversions; multi-lane construction rejects (Stage 5 SIMD slice)
+instruction	simd.cast	partial	width-1 casts (int rewrap, f64-mediated float conversion, i128-saturating float→int); multi-lane and bool casts reject
 instruction	simd.shuffle	unsupported	Stage 5: SIMD scalar semantics
 instruction	raise	supported	tagged-outcome error edge
 instruction	try	supported	structural flattening with cleanup drops and finally dispatch
@@ -65,12 +65,12 @@ instruction	iter.try_next	unsupported	Stage 5: iterators
 type	Int	supported	signless i64
 type	UInt	supported	signless i64; unsigned operator selection
 type	Bool	supported	i1
-type	StringLiteral	partial	constant-pool literal registers; typed literal storage rejects (Stage 5)
+type	StringLiteral	supported	constant-pool literal registers and typed storage (borrowed MjStrDesc descriptor)
 type	Float64	supported	f64
 type	None	supported	zero-sized
 type	Never	unsupported	uninhabited; no lowering
-type	IntLiteral	partial	pending-literal registers until materialization; typed literal storage rejects (Stage 5)
-type	FloatLiteral	partial	pending-literal registers until materialization; typed literal storage rejects (Stage 5)
+type	IntLiteral	partial	pending-literal registers and exact i64 typed storage; a constant exceeding i64 rejects (the VM keeps arbitrary precision)
+type	FloatLiteral	partial	pending-literal registers and f64 typed storage; displaying a runtime value rejects (the VM prints the exact rational)
 type	Infer	unsupported	checker-internal; must not reach verified MIR
 type	DType	unsupported	compile-time only
 type	func	unsupported	Stage 5: retained callables
@@ -81,7 +81,7 @@ type	assoc	unsupported	semantic-only; Stage 5 monomorphization target
 type	dependent_index	unsupported	semantic-only; Stage 5 monomorphization target
 type	Self	unsupported	semantic-only
 type	struct_type	partial	concrete field layouts only
-type	simd	unsupported	Stage 5: scalar-width aliases and scalar-semantics vectors
+type	simd	partial	width-1 scalar aliases at their lane width with VM-exact arithmetic/conversion/formatting; multi-lane vectors reject (Stage 5 SIMD slice)
 type	Error	supported	MjError storage
 type	comptime_list	unsupported	CTFE bridge; no runtime values
 type	tuple	partial	concrete element layouts only

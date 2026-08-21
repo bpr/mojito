@@ -13,5 +13,6 @@
 
 pub mod layout;
 pub mod mangle;
+pub mod mono;
 pub mod rt_abi;
 pub mod target;

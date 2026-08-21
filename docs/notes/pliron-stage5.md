@@ -78,3 +78,27 @@ lower. Design decisions and recorded divergences:
   no ownership, and `String(x)` over a runtime descriptor copies the bytes
   out. The owned-temp release rule is untouched (a descriptor register
   without an owned runtime string entry releases nothing).
+
+## Backend-side monomorphization (S5.2)
+
+The feature-independent `native::mono` pass now sits between the cached
+post-drop MIR handoff and Pliron reachability. It borrows the canonical
+`MirProgram`, builds an owned entry-rooted graph, and leaves VM execution and
+serialized `.mir` bytes unchanged.
+
+- Instance keys retain the template plus declaration-ordered concrete type and
+  frozen value arguments; origins erase from native identity. `symbol` owns the
+  deterministic instance spelling, while `native::mangle` remains the sole
+  LLVM-name transform.
+- One structural unifier combines concrete receiver, call-slot-bound runtime
+  arguments, and result types. Duplicate solutions must agree; incomplete,
+  non-constant, dependent-index, and missing associated-type facts reject as
+  contextual unsupported monomorphization gaps.
+- Substitution covers function/declaration types, register and variable tables,
+  places, call metadata, instruction-owned types, and nested `try` regions.
+  Concrete struct declarations and lifecycle edges are discovered transitively.
+- Direct and method targets are rewritten through a recursion-safe instance
+  worklist with a bounded polymorphic-recursion guard. VM and native dispatch
+  now share `symbol::resolve_callable_symbol` and
+  `symbol::resolve_method_symbol`, including abstract receiver retargeting and
+  borrowed-iterator alternate probing.

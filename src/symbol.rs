@@ -26,7 +26,97 @@ use crate::ast::{
     ArgConvention, Expr, ExprKind, FnParam, Method, ParamArg, ParamKind, Stmt, StmtKind, Type,
     TypeParam,
 };
+use crate::ct::CtValue;
 use crate::types::{Ty, TyArg};
+
+/// One declaration visible to phase-neutral runtime/backend dispatch.
+#[derive(Debug, Clone, Copy)]
+pub struct CallableCandidate<'a> {
+    pub name: &'a str,
+    pub n_params: usize,
+}
+
+/// One concrete argument in a backend-private function or struct instance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstanceArg {
+    Ty(Ty),
+    Value(CtValue),
+}
+
+/// Resolve a source callable name, preserving an exact declaration and using
+/// arity only when precisely one overload is viable.
+pub fn resolve_callable_symbol<'a>(
+    declarations: impl IntoIterator<Item = CallableCandidate<'a>>,
+    name: &str,
+    argc: usize,
+) -> String {
+    let declarations = declarations.into_iter().collect::<Vec<_>>();
+    if declarations.iter().any(|candidate| candidate.name == name) {
+        return name.to_string();
+    }
+    let expected_params = if name.contains('.') { argc + 1 } else { argc };
+    let mut matches = declarations.iter().filter(|candidate| {
+        is_overload_of(candidate.name, name) && candidate.n_params == expected_params
+    });
+    let Some(first) = matches.next() else {
+        return name.to_string();
+    };
+    if matches.next().is_none() {
+        first.name.to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Resolve a checker-selected method against a concrete receiver declaration
+/// view, including the borrowed-iterator alternate used by VM protocol calls.
+pub fn resolve_method_symbol<'a>(
+    declarations: impl IntoIterator<Item = CallableCandidate<'a>> + Clone,
+    receiver_type: &str,
+    method: &str,
+    resolved: Option<&str>,
+    argc: usize,
+) -> String {
+    if let Some(selected) = resolved {
+        let mut selected_symbols = vec![selected.to_string()];
+        if let Some(alternate) = borrowed_iterator_dispatch_alternate(selected) {
+            selected_symbols.push(alternate);
+        }
+        for selected in selected_symbols {
+            if let Some(retargeted) = retarget_method_symbol(&selected, receiver_type)
+                && declarations
+                    .clone()
+                    .into_iter()
+                    .any(|candidate| candidate.name == retargeted)
+            {
+                return retargeted;
+            }
+            if declarations
+                .clone()
+                .into_iter()
+                .any(|candidate| candidate.name == selected)
+            {
+                return selected;
+            }
+        }
+    }
+    resolve_callable_symbol(declarations, &format!("{receiver_type}.{method}"), argc)
+}
+
+/// Deterministic MIR identity for a concrete generic instance. Origins have
+/// already been erased from `arguments` and therefore cannot split ABI identity.
+pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
+    let mut result = format!("{template}$mono");
+    for argument in arguments {
+        result.push('$');
+        let raw = match argument {
+            InstanceArg::Ty(ty) => format!("T{}", ty_raw(ty)),
+            InstanceArg::Value(value) => format!("V{value}"),
+        };
+        result.push_str(&sanitize(&raw));
+    }
+    result
+}
 
 /// The canonical mangled spelling of one parameter type. Only this module can
 /// construct one, so every signature part obeys the same sanitization rules.

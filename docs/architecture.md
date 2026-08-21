@@ -156,6 +156,8 @@ source -> Compiler -> ownership-verified, post-drop verified MIR
                             |                 |
                             |                 +-> VM / canonical .mir artifact
                             v
+              backend-private monomorphization
+                            |
                     Pliron lowering
                             |
              Mojito ops only where justified

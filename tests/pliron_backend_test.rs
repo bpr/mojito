@@ -139,6 +139,21 @@ fn fib_lowers_verifies_and_prints_canonically() {
 }
 
 #[test]
+fn backend_monomorphizes_one_generic_function_at_multiple_types() {
+    let source = "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef int_value() -> Int:\n    return identity(42)\n\ndef bool_value() -> Bool:\n    return identity(True)\n";
+    let module = native_compile(source, &["int_value", "bool_value"]);
+
+    assert_eq!(module.jit_i64("int_value").unwrap(), 42);
+    assert_eq!(
+        module.jit_value("bool_value", OptLevel::O0).unwrap(),
+        JitValue::Bool(true)
+    );
+    let text = module.plir_text();
+    assert!(text.contains("identity_24y3_3aInt"), "{text}");
+    assert!(text.contains("identity_24y4_3aBool"), "{text}");
+}
+
+#[test]
 fn compilation_is_deterministic() {
     let first = native_compile(FIB, &["compute"]);
     let second = native_compile(FIB, &["compute"]);
@@ -845,16 +860,16 @@ fn parity_exe_manifest_and_differential() {
     let raises = count("raise-differential");
     let excluded = count("excluded");
     assert!(
-        differential >= 95,
-        "exe-differential coverage unexpectedly shrank: {differential} < 95"
+        differential >= 115,
+        "exe-differential coverage unexpectedly shrank: {differential} < 115"
     );
     assert!(
         raises >= 2,
         "raise-differential coverage unexpectedly shrank: {raises} < 2"
     );
     assert!(
-        excluded <= 169,
-        "excluded coverage unexpectedly grew: {excluded} > 169"
+        excluded <= 157,
+        "excluded coverage unexpectedly grew: {excluded} > 157"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
