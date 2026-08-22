@@ -127,6 +127,10 @@ impl LayoutCx<'_> {
             }
             Ty::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
             Ty::Pointer { .. } | Ty::Ref(_) => Ok(self.pointer()),
+            // A retained callable is the two-word `{ invoke: ptr, env: ptr }`
+            // value; the environment record it points at is frame-local
+            // storage of its creating `MakeClosure`, not part of the value.
+            Ty::Func { .. } => Ok(compose(&[self.pointer(), self.pointer()]).layout),
             Ty::Simd { dtype, width: 1 } => Ok(lane_layout(*dtype)),
             // Literal-typed storage holds the value at its default
             // materialized width; a value that exceeds it rejects at lowering.

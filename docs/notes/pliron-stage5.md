@@ -495,3 +495,99 @@ the `List.grow` unresolved-`T` group alone was 43 excluded rows.
   ships no `TryNext` flag machinery.
 - Ratchets: 206 → 229+ exe-differential, 83 → ≤61 excluded (set to
   observed counts at regen; two new pliron rows join the manifest).
+
+## Retained callables, closures, indirect calls (S5.6)
+
+Closes the callable-value family: `Ty::Func` values, `MakeClosure`,
+`CallIndirect`, `Const::Function`, capturing environments with owned
+droppable captures, and nominal-callable devirtualization. Sixteen rows
+flipped (nested defs, the lambda family, callable structs, the three
+layout-tensor rows, plus `dict_insert_linear_capable` via environment
+normalization); three new `pliron_*` fixtures joined the manifest.
+
+- **Representation.** `Ty::Func` is the uniform two-word aggregate
+  `{ invoke: ptr, env: ptr }` (16/8, `docs/native-abi.md` "Retained
+  callables"). It rides the ordinary aggregate rules everywhere —
+  by-pointer parameters, sret returns, field storage, shallow copies
+  (`owns_heap` false). `Ty::GenericFunc` values stay rejected.
+- **One indirect path.** A load-bearing MIR fact: nested-def-by-name
+  calls do *not* emit a direct `Call` with capture arguments —
+  `lower_nested_call` emits `MakeClosure` + `CallIndirect`
+  (`resolved: None`), so a single `lower_call_indirect` covers lambdas,
+  nested defs, and function-typed locals. The only direct-call change is
+  erasing `capture_accesses` (static facts the VM also erases).
+- **Thunks.** One `mjthunk_<n>` per (compiled target, capture-mode
+  vector), signature `[outcome*|sret*], env*, params...` — out-pointer
+  first, matching the existing insert-at-0 call machinery; the tagged
+  outcome flows through untouched and the *caller* branches on the tag.
+  Every capture parameter of a lifted body is a reference parameter, so
+  the thunk passes a `Reference` slot's stored place address and an owned
+  slot's own address — the record is the stable storage the VM's
+  owned-capture re-referencing (`RefProjection::Capture`) demands, with
+  no `callee_place` requirement natively. The caller derives the same
+  physical signature from the callee register's checked contract
+  (`contract_abi`); `check_contract_target` rejects any classification
+  disagreement instead of miscompiling.
+- **Capture records.** Per `MakeClosure` site: one entry allocation
+  `{ drop: ptr, slots... }`, slots re-stored per execution (the VM's
+  snapshot-per-evaluation for `{var}` in loops). Reference slots hold
+  place addresses; owned slots relocate (`m`) or fork (`c`, heap owners)
+  the value inline. A projected (non-whole-root) move capture rejects —
+  the leaf-flag pre-scan does not cover it. Owned captures of types with
+  a *user* `__copyinit__`/`__moveinit__` reject (the VM runs them; bytes
+  would not) — `ImplicitlyCopyable` makes the copy side checker-
+  unreachable, so the pinned rejection case is a user `__moveinit__`.
+- **Drops (drop-thunk header).** `needs_drop(Func)` is true; dropping a
+  callable is a null-guarded header dispatch: env null (thin/bare) and
+  header null (nothing droppable) are no-ops, else `mjdrop_<n>` destroys
+  owned droppable slots in reverse capture order and *tombstones the
+  header* — drops are idempotent per record, which keeps aliasing
+  two-word copies sound. The thunk body is ordinary `emit_drop_value`
+  output emitted with the cursor retargeted into the thunk (trace events
+  fire at drop time, so the lifecycle lane matches the VM exactly).
+  `ConsumeVar` on a callable stays a flag-clear no-op (VM parity).
+- **Trace parity for move captures.** The VM's move capture runs the
+  compiled stdlib `__moveinit__`, whose `deinit other` teardown logs one
+  consume event; the native relocation is that constructor's exact
+  semantics and mirrors the event synthetically when tracing.
+- **Mono.** `MakeClosure`/`Const::Function` targets enqueue with
+  `base_bindings()` — **not** `Bindings::default()`, whose empty
+  `generic_templates` set silently disables instance renaming in
+  `substitute_ty` and leaks template-named receivers into materialized
+  bodies (surfaced as `List.grow: unresolved type parameter T`).
+  Callable-environment normalization: `unify` and
+  `ty_equal_modulo_origins` gained `Ty::Func` arms that compare runtime
+  structure and ignore `environment`/origins, and `bind_type`
+  canonicalizes solutions (`capturing[origin@N]` ≡ `thin` ≡
+  `capturing[_]` — one instance). Nominal callables devirtualize:
+  `CallIndirect` over a struct callee rewrites to a direct `__call__`
+  `MethodCall` (receiver = callee, `recv_place` = `callee_place`),
+  reusing the whole method lowering; one surviving at lowering rejects.
+- **Baseline fixes landed with the slice.** (1) `__toplevel__` abandons
+  module-binding residuals the VM's arena hides; native releases them at
+  toplevel exit through the invisible-release rule (stdlib chains only —
+  a chain reaching a user destructor rejects, since the VM runs nothing
+  there). (2) ABI v5: zero-size `mjrt_alloc` returns the aligned
+  dangling sentinel and sentinel frees are no-ops, so the stdlib's
+  `unsafe_alloc[T](0)` neutralization idiom (`__iter__(var self)` and
+  friends) abandons nothing — both were LSan failures the S5.5B regen
+  surfaced (`comptime_tuple`, `owned_iteration_iterator_owned_type`).
+- **Recorded divergences.** Native closure copies alias their
+  environment record (the VM deep-copies captures) — observable only by
+  post-copy mutation or per-copy drop traces of owned captures, shapes
+  no supported fixture exercises. Zero-size allocations share one
+  sentinel address per alignment (VM arena rows are distinct).
+- **Residuals.** `function_typed_kwargs` (kw-variadic contract; now
+  blocked deeper in `StringDict.__copyinit__`), `lambda_generic_comptime`
+  (generic entry), `callable_element_call_dispatch` (List-vs-Array mono
+  unify — a collections issue), defaulted arguments at indirect sites
+  (the VM binds them from the runtime callee's declaration, invisible
+  behind the thunk), variadic indirect contracts, and droppable owned
+  captures behind composite destructors.
+- Fixtures: `pliron_thin_callables` (bare references, downward funargs,
+  raising contract through the thunk inside `try`),
+  `pliron_closure_env` (reference write-back, `{var}` loop snapshots,
+  environment-forwarding recursion), `pliron_closure_drop_order` (owned
+  String and user-destructor captures through the drop thunk; lifecycle
+  lane), `pliron_callable_struct` (mut-self, raising, and consuming
+  `__call__`).

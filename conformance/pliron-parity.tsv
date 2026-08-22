@@ -11,9 +11,9 @@ assets/ok/abstract_dispatch_effect_free_conformers.mojo	main	exe-differential	sa
 assets/ok/add.mojo	main	exe-differential	sanitized
 assets/ok/allocation_tracked_unsafe_ptr.mojo	main	exe-differential	sanitized
 assets/ok/arithmetic.mojo	main	exe-differential	sanitized
-assets/ok/array_element_assignment.mojo	main	excluded	pliron backend: in `Array$mono$TInt$V3.__init__$ov$T$AnyType$None$kw$__list_literal__`: unsupported type `VariadicPack(Int)`
-assets/ok/array_fixed_size_core.mojo	main	excluded	pliron backend: in `Array$mono$TInt$V3.__init__$ov$T$AnyType$None$kw$__list_literal__`: unsupported type `VariadicPack(Int)`
-assets/ok/array_struct_elements_and_fill.mojo	main	excluded	pliron backend: in `Array$mono$TBox$V2.__init__$ov$T$AnyType$None$kw$__list_literal__`: unsupported type `VariadicPack(Struct("Box", []))`
+assets/ok/array_element_assignment.mojo	main	exe-differential	sanitized
+assets/ok/array_fixed_size_core.mojo	main	exe-differential	sanitized
+assets/ok/array_struct_elements_and_fill.mojo	main	exe-differential	sanitized
 assets/ok/associated_trait_self_element.mojo	main	exe-differential	sanitized
 assets/ok/associated_type_return.mojo	main	exe-differential	sanitized
 assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
@@ -21,20 +21,20 @@ assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	excluded	pliron backend: in `main`: unsupported monomorphizing `Grid.__init__`: expected `List[Doubler]`, found `Array$mono$TDoubler$V4[Doubler, 4]`
-assets/ok/callable_struct_element_invocation.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `CallIndirect` at assets/ok/callable_struct_element_invocation.mojo:15:12
-assets/ok/callable_struct_transfer_after_last_use.mojo	main	excluded	pliron backend: in `main`: unsupported instruction `CallIndirect` at assets/ok/callable_struct_transfer_after_last_use.mojo:17:1
-assets/ok/captured_store_local_carrier.mojo	main	excluded	pliron backend: in `main`: unsupported type `Func { environment: Capturing(Concrete([CaptureOrigin { origin: Param(OriginParamId(0)), access: Read }, CaptureOrigin { origin: Place(OriginPlace { root: OwnerId(661), path: [] }), access: Write }, CaptureOrigin { origin: Place(OriginPlace { root: OwnerId(662), path: [] }), access: Write }])), params: [], names: [], ret: None, required: [], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
+assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
+assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
+assets/ok/captured_store_local_carrier.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison.mojo	main	exe-differential	sanitized
-assets/ok/closures.mojo	main	excluded	pliron backend: in `adder`: unsupported type `Func { environment: Capturing(Concrete([CaptureOrigin { origin: Place(OriginPlace { root: OwnerId(661), path: [] }), access: Read }])), params: [Int], names: ["x"], ret: Int, required: [true], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [None], ref_params: [None], ref_return: None, transfers: TransferSet([]) }`
+assets/ok/closures.mojo	main	exe-differential	sanitized
 assets/ok/comparable_ordered_algorithms.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_borrowed_named_source.mojo	main	excluded	pliron backend: in `main`: unsupported destructor of `Numbers` with droppable fields
 assets/ok/comprehension_temporary_source_drop.mojo	main	exe-differential	sanitized
-assets/ok/comptime_alias_generic.mojo	main	excluded	pliron backend: in `main`: unsupported variadic call to `Tuple$t2[y3:Inty3:Int].__init__` at assets/ok/comptime_alias_generic.mojo:15:27
+assets/ok/comptime_alias_generic.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
-assets/ok/comptime_tuple.mojo	main	excluded	pliron backend: in `Array$mono$TInt$V3.__init__$ov$T$AnyType$None$kw$__list_literal__`: unsupported type `VariadicPack(Int)`
+assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized
 assets/ok/container_owning_family_apis.mojo	main	excluded	pliron backend: in `main`: unsupported generic entry `main` has unresolved parameters
 assets/ok/copy_return.mojo	main	exe-differential	sanitized
 assets/ok/copyable.mojo	main	exe-differential	sanitized
@@ -43,7 +43,7 @@ assets/ok/copyinit_moveinit.mojo	main	excluded	pliron backend: in `main`: unsupp
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
-assets/ok/dict_insert_linear_capable.mojo	main	excluded	pliron backend: in `main`: unsupported monomorphizing `Dict.deinit_with`: expected `def(K, V) capturing[_] -> None`, found `def(Int, Conn) thin -> None`
+assets/ok/dict_insert_linear_capable.mojo	main	exe-differential	sanitized
 assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
 assets/ok/dtype_struct_param.mojo	main	exe-differential	sanitized
@@ -51,14 +51,14 @@ assets/ok/dtype_value_param.mojo	main	excluded	pliron backend: in `splat_two$din
 assets/ok/dunder_contains.mojo	main	exe-differential	sanitized
 assets/ok/dunder_index.mojo	main	exe-differential	sanitized
 assets/ok/dunder_setitem.mojo	main	exe-differential	sanitized
-assets/ok/dunder_vec2.mojo	main	excluded	pliron backend: in `main`: unsupported type `Struct("Vec2", [])` at assets/ok/dunder_vec2.mojo:21:18
+assets/ok/dunder_vec2.mojo	main	exe-differential	sanitized
 assets/ok/exceptions.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_raising.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/ok/funarg_call_through_after_last_use.mojo	main	excluded	pliron backend: in `feed`: unsupported monomorphization cannot resolve parameter `callback`
 assets/ok/func_styles.mojo	main	exe-differential	sanitized
-assets/ok/function_typed_kwargs.mojo	main	excluded	pliron backend: in `main`: unsupported type `Func { environment: Thin, params: [], names: [], ret: Int, required: [], variadic: None, kw_variadic: Some(Int), positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
+assets/ok/function_typed_kwargs.mojo	main	excluded	pliron backend: in `StringDict$mono$TInt.__copyinit__`: unsupported copy of `List$mono$TList$u24$mono$u24$TInt$Int[List$mono$TInt[Int]]` with pointer-owning elements at /home/bpr/src/rust/projects/mojito/stdlib/std/collections/string_dict.mojo:1561..1594
 assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	exe-differential	sanitized
 assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
@@ -79,20 +79,20 @@ assets/ok/input.mojo	main	exe-differential	sanitized
 assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/ok/iterable_associated_element.mojo	-	ineligible	no-main-entry
 assets/ok/keyword_call.mojo	main	exe-differential	sanitized
-assets/ok/keyword_only.mojo	main	excluded	pliron backend: in `with_variadic`: unsupported type `VariadicPack(Int)`
+assets/ok/keyword_only.mojo	main	exe-differential	sanitized
 assets/ok/keyword_slice_subscripts.mojo	main	exe-differential	sanitized
 assets/ok/keyword_subscript_user_struct.mojo	main	exe-differential	sanitized
 assets/ok/kwargs.mojo	main	excluded	pliron backend: in `StringDict$mono$TInt.__copyinit__`: unsupported copy of `List$mono$TList$u24$mono$u24$TInt$Int[List$mono$TInt[Int]]` with pointer-owning elements at /home/bpr/src/rust/projects/mojito/stdlib/std/collections/string_dict.mojo:1561..1594
-assets/ok/lambda_basic.mojo	main	excluded	pliron backend: in `main`: unsupported type `Func { environment: Thin, params: [Int], names: ["x"], ret: Int, required: [true], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [None], ref_params: [None], ref_return: None, transfers: TransferSet([]) }`
-assets/ok/lambda_captures.mojo	main	excluded	pliron backend: in `main`: unsupported monomorphizing `call`: expected `def() capturing[_] -> Int`, found `def() capturing[origin@661] -> Int`
+assets/ok/lambda_basic.mojo	main	exe-differential	sanitized
+assets/ok/lambda_captures.mojo	main	exe-differential	sanitized
 assets/ok/lambda_generic_comptime.mojo	main	excluded	pliron backend: in `main`: unsupported generic entry `main` has unresolved parameters
-assets/ok/lambda_hof.mojo	main	excluded	pliron backend: in `main`: unsupported monomorphizing `transform`: expected `def(Int) -> Int`, found `def(Int) thin -> Int`
-assets/ok/lambda_in_control_flow.mojo	main	excluded	pliron backend: in `pick`: unsupported type `Func { environment: Thin, params: [], names: [], ret: Int, required: [], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
+assets/ok/lambda_hof.mojo	main	exe-differential	sanitized
+assets/ok/lambda_in_control_flow.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
 assets/ok/layout_comptime_freeze.mojo	main	exe-differential	sanitized
-assets/ok/layout_runtime.mojo	main	excluded	pliron backend: in `__module$layout$Layout.row_major`: unsupported type `VariadicPack(Int)`
-assets/ok/layout_tensor_1d.mojo	main	excluded	pliron backend: in `__module$layout$LayoutTensor$dint32;$S22:__module$layout$Layout{S24:__module$layout$IntTuple{i1;i4;i0;i0;i0;}S24:__module$layout$IntTuple{i1;i1;i0;i0;i0;}}.__getitem__$ov$Int`: unsupported instruction `CallIndirect` at /home/bpr/src/rust/projects/mojito/stdlib/layout/__init__.mojo$__module$layout$LayoutTensor$dint32;$S22:__module$layout$Layout{S24:__module$layout$IntTuple{i1;i4;i0;i0;i0;}S24:__module$layout$IntTuple{i1;i1;i0;i0;i0;}}:6862..6878
-assets/ok/layout_tensor_2d.mojo	main	excluded	pliron backend: in `__module$layout$LayoutTensor$dfloat32;$S22:__module$layout$Layout{S24:__module$layout$IntTuple{i2;i2;i3;i0;i0;}S24:__module$layout$IntTuple{i2;i1;i2;i0;i0;}}.__getitem__$ov$Int$Int`: unsupported instruction `CallIndirect` at /home/bpr/src/rust/projects/mojito/stdlib/layout/__init__.mojo$__module$layout$LayoutTensor$dfloat32;$S22:__module$layout$Layout{S24:__module$layout$IntTuple{i2;i2;i3;i0;i0;}S24:__module$layout$IntTuple{i2;i1;i2;i0;i0;}}:7003..7022
+assets/ok/layout_runtime.mojo	main	exe-differential	sanitized
+assets/ok/layout_tensor_1d.mojo	main	exe-differential	sanitized
+assets/ok/layout_tensor_2d.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_deprecated_spellings.mojo	main	exe-differential	sanitized
 assets/ok/line_continuation.mojo	main	exe-differential	sanitized
 assets/ok/list_and_struct.mojo	main	exe-differential	sanitized
@@ -106,11 +106,11 @@ assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
 assets/ok/mut_owned_params.mojo	-	ineligible	no-main-entry
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
-assets/ok/nested.mojo	main	excluded	pliron backend: in `outer`: unsupported type `Func { environment: Thin, params: [], names: [], ret: None, required: [], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
-assets/ok/nested_comprehensions.mojo	main	excluded	pliron backend: in `Array$mono$TInt$V3.__init__$ov$T$AnyType$None$kw$__list_literal__`: unsupported type `VariadicPack(Int)`
-assets/ok/nested_def_captured_param_store.mojo	main	excluded	pliron backend: in `Holder.stash_param`: unsupported type `Func { environment: Capturing(Concrete([CaptureOrigin { origin: Param(OriginParamId(0)), access: Read }, CaptureOrigin { origin: Place(OriginPlace { root: OwnerId(658), path: [] }), access: Write }, CaptureOrigin { origin: Place(OriginPlace { root: OwnerId(659), path: [] }), access: Write }])), params: [], names: [], ret: None, required: [], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
+assets/ok/nested.mojo	main	exe-differential	sanitized
+assets/ok/nested_comprehensions.mojo	main	excluded	pliron backend: in `Array$mono$TArray$u24$mono$u24$TInt$u24$V3$Int$V3$V3.__init__$ov$T$AnyType$None$kw$__list_literal__$mono$V3`: unsupported pack iteration over lifecycle element `Array$mono$TInt$V3[Int, 3]`
+assets/ok/nested_def_captured_param_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized
-assets/ok/nested_recursive_call.mojo	main	excluded	pliron backend: in `test`: unsupported type `Func { environment: Thin, params: [Int], names: ["b"], ret: Int, required: [true], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [None], ref_params: [None], ref_return: None, transfers: TransferSet([]) }`
+assets/ok/nested_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_basics.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_codepoint_from_u32.mojo	main	excluded	pliron backend: in `__module$std$string$String.__getitem__$ov$Int$kw$codepoint`: unsupported String struct-to-literal bridge at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:9068..9093
@@ -122,22 +122,22 @@ assets/ok/nominal_string_graphemes.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_indexing.mojo	main	excluded	pliron backend: in `__module$std$string$String.__getitem__$ov$Int$kw$codepoint`: unsupported String struct-to-literal bridge at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:9068..9093
 assets/ok/nominal_string_keyword_slices.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_operations.mojo	main	exe-differential	sanitized
-assets/ok/nominal_string_protocols.mojo	main	excluded	pliron backend: in `Dict$mono$TString$TInt.__moveinit__`: unsupported variable consumption with droppable fields
+assets/ok/nominal_string_protocols.mojo	main	excluded	pliron backend: in `main`: unsupported call to unknown or builtin function `repr` at assets/ok/nominal_string_protocols.mojo:9:11
 assets/ok/nominal_string_split.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_writer.mojo	main	excluded	pliron backend: in `main`: unsupported `LitSink.write_string` without a nominal String payload at assets/ok/nominal_string_writer.mojo:27:1
 assets/ok/number_and_string_literals.mojo	main	exe-differential	sanitized
 assets/ok/numeric_operation_traits.mojo	main	exe-differential	sanitized
-assets/ok/optional_owning_api.mojo	main	excluded	pliron backend: in `main`: unsupported monomorphizing `Optional.__init__$ov$def$$$capturing$$$$$$$T$kw$init_with`: expected `def() capturing[_] -> T`, found `def() capturing[origin@667] -> Int`
+assets/ok/optional_owning_api.mojo	main	excluded	pliron backend: in `__module$std$optional$_OptionalIter$mono$TInt.__next__`: unsupported field access on `ref Optional$mono$TInt[Int]` at /home/bpr/src/rust/projects/mojito/stdlib/std/optional.mojo:1458..1472
 assets/ok/overloading_arity.mojo	main	exe-differential	sanitized
 assets/ok/overloading_literal_default.mojo	main	exe-differential	sanitized
 assets/ok/overloading_struct_params.mojo	main	exe-differential	sanitized
-assets/ok/owned_iteration_iterator_owned_type.mojo	main	excluded	pliron backend: in `Array$mono$TThing$V3.__init__$ov$T$AnyType$None$kw$__list_literal__`: unsupported type `VariadicPack(Struct("Thing", []))`
+assets/ok/owned_iteration_iterator_owned_type.mojo	main	exe-differential	sanitized
 assets/ok/owned_pointer_api.mojo	main	exe-differential	sanitized
 assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
-assets/ok/pack_struct_getitem.mojo	main	excluded	pliron backend: in `Pair$t2[y6:Stringy3:Int].__init__`: unsupported drop of partially-moved variable `args`
-assets/ok/pack_struct_pair.mojo	main	excluded	pliron backend: in `main`: unsupported variadic call to `Tuple$t2[y3:Inty4:Bool].__init__` at assets/ok/pack_struct_pair.mojo:17:46
-assets/ok/pack_struct_variadic_init.mojo	main	excluded	pliron backend: in `Pair$t3[y3:Inty6:Stringy4:Bool].__init__`: unsupported drop of partially-moved variable `args`
-assets/ok/pack_struct_writable.mojo	main	excluded	pliron backend: in `Lazy$t3[y6:Stringy4:Oncey6:String].__init__`: unsupported drop of partially-moved variable `args`
+assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
+assets/ok/pack_struct_pair.mojo	main	exe-differential	sanitized
+assets/ok/pack_struct_variadic_init.mojo	main	exe-differential	sanitized
+assets/ok/pack_struct_writable.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_concrete.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized
@@ -146,6 +146,9 @@ assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parametric_mut_iterator_read.mojo	main	exe-differential	sanitized
 assets/ok/pliron_alloc_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/pliron_builtin_numeric_edges.mojo	main	exe-differential	sanitized
+assets/ok/pliron_callable_struct.mojo	main	exe-differential	sanitized
+assets/ok/pliron_closure_drop_order.mojo	main	exe-differential	sanitized
+assets/ok/pliron_closure_env.mojo	main	exe-differential	sanitized
 assets/ok/pliron_convert_bool.mojo	main	exe-differential	sanitized
 assets/ok/pliron_convert_int_float.mojo	main	exe-differential	sanitized
 assets/ok/pliron_convert_uint.mojo	main	exe-differential	sanitized
@@ -177,6 +180,7 @@ assets/ok/pliron_loop.mojo	main	exe-differential	sanitized
 assets/ok/pliron_math_rounding_edges.mojo	main	exe-differential	sanitized
 assets/ok/pliron_multifunc.mojo	main	exe-differential	sanitized
 assets/ok/pliron_multiindex_kw.mojo	main	exe-differential	sanitized
+assets/ok/pliron_partial_move_drop.mojo	main	exe-differential	sanitized
 assets/ok/pliron_pointer_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/pliron_print_scalars.mojo	main	exe-differential	sanitized
 assets/ok/pliron_print_str_literal.mojo	main	exe-differential	sanitized
@@ -193,10 +197,12 @@ assets/ok/pliron_struct_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/pliron_struct_fieldwise.mojo	main	exe-differential	sanitized
 assets/ok/pliron_struct_init_method.mojo	main	exe-differential	sanitized
 assets/ok/pliron_subscript_ref.mojo	main	exe-differential	sanitized
+assets/ok/pliron_thin_callables.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_cleanup_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_handled_error.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_loop_escape.mojo	main	exe-differential	sanitized
 assets/ok/pliron_try_nested_reraise.mojo	main	exe-differential	sanitized
+assets/ok/pliron_tuple_pack.mojo	main	exe-differential	sanitized
 assets/ok/pliron_uint_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_uint_compare.mojo	main	exe-differential	sanitized
 assets/ok/pliron_uint_pow.mojo	main	exe-differential	sanitized
@@ -228,7 +234,7 @@ assets/ok/self_hosted_algorithms.mojo	main	excluded	pliron backend: in `__module
 assets/ok/self_hosted_dict.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_vec.mojo	main	exe-differential	sanitized
 assets/ok/set_reference_iteration_write_through.mojo	main	exe-differential	sanitized
-assets/ok/shadowing_constants.mojo	main	excluded	pliron backend: in `main`: unsupported type `Func { environment: Capturing(Concrete([CaptureOrigin { origin: Place(OriginPlace { root: OwnerId(659), path: [] }), access: Read }])), params: [], names: [], ret: None, required: [], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
+assets/ok/shadowing_constants.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast.mojo	main	excluded	pliron backend: in `main`: unsupported type `Simd { dtype: Int32, width: 4 }`
 assets/ok/simd_floats.mojo	main	excluded	pliron backend: in `main`: unsupported type `Simd { dtype: Float64, width: 4 }`
 assets/ok/simd_generic_width.mojo	main	excluded	pliron backend: in `splat$i2;`: unsupported type `Simd { dtype: Int32, width: 2 }`
@@ -246,11 +252,11 @@ assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/string_escapes.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
 assets/ok/string_overload_conversion.mojo	main	exe-differential	sanitized
-assets/ok/stropping.mojo	main	excluded	pliron backend: in `main`: unsupported type `Func { environment: Thin, params: [], names: [], ret: Int, required: [], variadic: None, kw_variadic: None, positional_only: None, keyword_only: None, raises: false, error: None, conventions: [], ref_params: [], ref_return: None, transfers: TransferSet([]) }`
+assets/ok/stropping.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_layout.mojo	main	exe-differential	sanitized
 assets/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sanitized
 assets/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
-assets/ok/telemetry.mojo	main	excluded	pliron backend: in `scan_stats`: unsupported variadic call to `Tuple$t2[y3:Inty3:Int].__init__` at assets/ok/telemetry.mojo:4:12
+assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/ternary.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	-	ineligible	no-main-entry
@@ -260,11 +266,11 @@ assets/ok/try_break_continue.mojo	main	exe-differential	sanitized
 assets/ok/try_reassign_outer.mojo	main	exe-differential	sanitized
 assets/ok/try_region_drop_timing.mojo	main	exe-differential	sanitized
 assets/ok/try_return.mojo	main	exe-differential	sanitized
-assets/ok/tstring_forms.mojo	main	excluded	pliron backend: in `TString$t4[y13:StringLiteraly13:StringLiteraly13:StringLiteraly3:Int].__init__`: unsupported variadic call to `Tuple$t4[y13:StringLiteraly13:StringLiteraly13:StringLiteraly3:Int].__init__` at /home/bpr/src/rust/projects/mojito/stdlib/std/format/tstring.mojo$TString$t4[y13:StringLiteraly13:StringLiteraly13:StringLiteraly3:Int]:632..645
-assets/ok/tstring_generic_interpolation.mojo	main	excluded	pliron backend: in `TString$t4[y13:StringLiteraly3:Inty13:StringLiteraly3:Int].__init__`: unsupported variadic call to `Tuple$t4[y13:StringLiteraly3:Inty13:StringLiteraly3:Int].__init__` at /home/bpr/src/rust/projects/mojito/stdlib/std/format/tstring.mojo$TString$t4[y13:StringLiteraly3:Inty13:StringLiteraly3:Int]:632..645
-assets/ok/tstring_lazy.mojo	main	excluded	pliron backend: in `TString$t2[y13:StringLiteraly3:Int].__init__`: unsupported variadic call to `Tuple$t2[y13:StringLiteraly3:Int].__init__` at /home/bpr/src/rust/projects/mojito/stdlib/std/format/tstring.mojo$TString$t2[y13:StringLiteraly3:Int]:632..645
-assets/ok/tuple_unpack.mojo	main	excluded	pliron backend: in `main`: unsupported variadic call to `Tuple$t2[y3:Inty3:Int].__init__` at assets/ok/tuple_unpack.mojo:3:34
-assets/ok/tuple_unpack_call.mojo	main	excluded	pliron backend: in `pair`: unsupported variadic call to `Tuple$t2[y3:Inty13:StringLiteral].__init__` at assets/ok/tuple_unpack_call.mojo:3:12
+assets/ok/tstring_forms.mojo	main	excluded	pliron backend: in `main`: unsupported owned string bytes entering drop-inert literal storage at assets/ok/tstring_forms.mojo:1:1
+assets/ok/tstring_generic_interpolation.mojo	main	exe-differential	sanitized
+assets/ok/tstring_lazy.mojo	main	exe-differential	sanitized
+assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
+assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
 assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/typelist_where_clauses.mojo	main	exe-differential	sanitized
@@ -274,7 +280,7 @@ assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized
 assets/ok/user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/value_params.mojo	main	excluded	pliron backend: in `scaled`: unsupported monomorphization cannot resolve parameter `factor`
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized
-assets/ok/variadic_args.mojo	main	excluded	pliron backend: in `sum`: unsupported type `VariadicPack(Int)`
+assets/ok/variadic_args.mojo	main	exe-differential	sanitized
 assets/ok/variant_deinit_with_linear_payload.mojo	main	excluded	pliron backend: in `main`: unsupported type `Variant([Struct("Conn", [])])`
 assets/ok/variant_nominal_string_payload.mojo	main	excluded	pliron backend: in `main`: unsupported type `Variant([Int, Struct("__module$std$string$String", [])])`
 assets/ok/variant_owning_api.mojo	main	excluded	pliron backend: in `main`: unsupported type `Variant([Int, Struct("__module$std$string$String", [])])`
@@ -285,17 +291,17 @@ assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized
 assets/ok/where_repeated_clauses.mojo	main	excluded	pliron backend: in `scaled`: unsupported monomorphization cannot resolve parameter `n`
 assets/ok/while.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
-assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	excluded	pliron backend: in `Dict$mono$TString$TInt.__moveinit__`: unsupported variable consumption with droppable fields
-assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	excluded	pliron backend: in `Dict$mono$TString$TInt.__moveinit__`: unsupported variable consumption with droppable fields
+assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	exe-differential	sanitized
+assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	exe-differential	sanitized
 assets/ownership_ok/interior_dest_rebind_releases_user_store.mojo	main	exe-differential	sanitized
 assets/ownership_ok/interior_view_consume_before_mutation.mojo	main	exe-differential	sanitized
 assets/ownership_ok/interior_view_drop_after_mutation.mojo	main	exe-differential	sanitized
-assets/ownership_ok/mapping_mutation_after_iteration.mojo	main	excluded	pliron backend: in `Dict$mono$TString$TInt.__moveinit__`: unsupported variable consumption with droppable fields
+assets/ownership_ok/mapping_mutation_after_iteration.mojo	main	exe-differential	sanitized
 assets/ownership_ok/move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/move_without_later_use.mojo	main	exe-differential	sanitized
 assets/ownership_ok/partial_move_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/partial_move_sibling.mojo	main	exe-differential	sanitized
-assets/ownership_ok/shared_iterations_coexist.mojo	main	excluded	pliron backend: in `Dict$mono$TString$TInt.__moveinit__`: unsupported variable consumption with droppable fields
+assets/ownership_ok/shared_iterations_coexist.mojo	main	exe-differential	sanitized
 assets/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
 assets/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
 assets/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized

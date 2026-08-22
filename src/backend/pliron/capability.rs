@@ -109,14 +109,14 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "closure.make",
-        CapabilityStatus::Unsupported,
-        "Stage 5: closures",
+        CapabilityStatus::Partial,
+        "two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject",
     ),
     ("lifetime.keep_alive", CapabilityStatus::Supported, "erased"),
     (
         "const",
         CapabilityStatus::Partial,
-        "Int/Float/Bool/Str/None (literals stay pending until materialization); function-reference constants reject",
+        "Int/Float/Bool/Str/None (literals stay pending until materialization) and function references as two-word callable values",
     ),
     (
         "literal.materialize",
@@ -147,17 +147,17 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "call",
         CapabilityStatus::Partial,
-        "positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; captures and value param-args reject",
+        "positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject",
     ),
     (
         "call.indirect",
-        CapabilityStatus::Unsupported,
-        "Stage 5: indirect calls",
+        CapabilityStatus::Partial,
+        "contract-bound positional and keyword arguments through `{invoke, env}` values, raising contracts included; variadic/keyword-variadic contracts, defaulted arguments, reference returns, generic callable values, and un-devirtualized nominal callables reject",
     ),
     (
         "call.method",
         CapabilityStatus::Partial,
-        "positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; reference-result adapters and captures reject",
+        "positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; reference-result adapters reject",
     ),
     (
         "pointer.take",
@@ -381,8 +381,8 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ("DType", CapabilityStatus::Unsupported, "compile-time only"),
     (
         "func",
-        CapabilityStatus::Unsupported,
-        "Stage 5: retained callables",
+        CapabilityStatus::Partial,
+        "two-word `{invoke, env}` value; the environment record is frame-local",
     ),
     (
         "generic_func",

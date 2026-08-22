@@ -35,10 +35,6 @@ Stage 5 acceptance: canonical `.mir` artifacts behave identically through VM
 and native paths, the native backend never accepts rejected source, and
 promotion requires zero exclusions across Mojito's advertised runnable subset.
 
-- [ ] **Retained callables, closures, indirect calls** — two-word
-  `{invoke, env}` native `Func` values with per-function thunks matching the
-  VM's captures-as-leading-arguments contract; nominal callable structs
-  devirtualize to direct `__call__` calls during monomorphization.
 - [ ] **Variant, scalar-semantics SIMD, move residues** — all Variant owning
   operations over the existing tag/payload layout, SIMD values as element-wise
   scalar aggregates (native vector types stay in the later SIMD task), user

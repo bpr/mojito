@@ -33,7 +33,13 @@ use std::io::Write;
 ///
 /// Version 4: [`mjrt_read_line`] reads one stdin line for the `input()`
 /// builtin.
-pub const ABI_VERSION: u32 = 4;
+///
+/// Version 5: zero-size [`mjrt_alloc`] requests return the aligned dangling
+/// sentinel instead of a header-only allocation, and
+/// [`mjrt_free`]/[`mjrt_dealloc`] treat sentinel addresses (below the lowest
+/// mappable page) as no-ops — an abandoned zero-size allocation leaks
+/// nothing.
+pub const ABI_VERSION: u32 = 5;
 
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
 /// trap numbering; the process exit code is `64 + category`.
@@ -96,8 +102,11 @@ pub extern "C" fn mjrt_version() -> u32 {
 /// `{size: u64, align: u64}` header in the 16 bytes directly before the
 /// returned pointer (so [`mjrt_free`] can release without a size). Never
 /// returns null: allocation failure traps with [`TRAP_ALLOC_FAILURE`]. A
-/// zero-size request still allocates (header-only), so every returned
-/// pointer is freeable.
+/// zero-size request allocates nothing and returns the aligned dangling
+/// sentinel (`align` as an address — the same "aligned, never null" family
+/// as dangling ZST pointers); [`mjrt_free`]/[`mjrt_dealloc`] recognize
+/// sentinels as no-ops, so every returned pointer is freeable and an
+/// abandoned zero-size allocation leaks nothing.
 ///
 /// # Safety
 ///
@@ -109,6 +118,9 @@ pub unsafe extern "C" fn mjrt_alloc(size: u64, align: u64) -> *mut u8 {
     };
     if !align.is_power_of_two() {
         trap(TRAP_ALLOC_FAILURE)
+    }
+    if size == 0 {
+        return align as *mut u8;
     }
     let header = header_bytes(align);
     let Some(total) = header.checked_add(size) else {
@@ -129,17 +141,25 @@ pub unsafe extern "C" fn mjrt_alloc(size: u64, align: u64) -> *mut u8 {
     ptr
 }
 
+/// Whether `ptr` is a null or aligned-dangling sentinel rather than a real
+/// allocation: sentinel addresses sit below the lowest mappable page
+/// (`mmap_min_addr`, 65536 on the supported Linux target), where no
+/// [`mjrt_alloc`] result can live.
+fn is_dangling_sentinel(ptr: *const u8) -> bool {
+    (ptr as usize) < 65536
+}
+
 /// Releases any allocation obtained from [`mjrt_alloc`] using its header —
 /// the size-less free the language's `Pointer.unsafe_free()` family lowers
-/// to. A null pointer is a no-op.
+/// to. A null pointer or a zero-size aligned-dangling sentinel is a no-op.
 ///
 /// # Safety
 ///
-/// A non-null `ptr` must come from [`mjrt_alloc`] and must not be used
+/// A non-sentinel `ptr` must come from [`mjrt_alloc`] and must not be used
 /// afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mjrt_free(ptr: *mut u8) {
-    if ptr.is_null() {
+    if is_dangling_sentinel(ptr) {
         return;
     }
     unsafe {
@@ -152,15 +172,15 @@ pub unsafe extern "C" fn mjrt_free(ptr: *mut u8) {
 /// Releases an allocation obtained from [`mjrt_alloc`], validating the
 /// caller's `size` and `align` against the allocation header — a mismatch
 /// traps with [`TRAP_ALLOC_FAILURE`] instead of corrupting the heap. A null
-/// pointer is a no-op.
+/// pointer or a zero-size aligned-dangling sentinel is a no-op.
 ///
 /// # Safety
 ///
-/// A non-null `ptr` must come from [`mjrt_alloc`] and must not be used
+/// A non-sentinel `ptr` must come from [`mjrt_alloc`] and must not be used
 /// afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mjrt_dealloc(ptr: *mut u8, size: u64, align: u64) {
-    if ptr.is_null() {
+    if is_dangling_sentinel(ptr) {
         return;
     }
     unsafe {
@@ -435,12 +455,13 @@ mod tests {
     }
 
     #[test]
-    fn zero_size_alloc_is_real_and_freeable() {
+    fn zero_size_alloc_is_the_freeable_dangling_sentinel() {
         let ptr = unsafe { mjrt_alloc(0, 16) };
         assert!(!ptr.is_null());
-        assert_eq!(ptr as usize % 16, 0);
+        assert_eq!(ptr as usize, 16);
         unsafe { mjrt_free(ptr) };
         let again = unsafe { mjrt_alloc(0, 8) };
+        assert_eq!(again as usize, 8);
         unsafe { mjrt_dealloc(again, 0, 8) };
     }
 

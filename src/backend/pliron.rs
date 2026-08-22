@@ -851,6 +851,19 @@ fn visit_call_edges<'p>(
                     call: Some(call), ..
                 } => push_named(&mut targets, &call.target),
                 MirInstr::MultiSet { call, .. } => push_named(&mut targets, &call.target),
+                // A retained callable names its lifted body on the
+                // instruction; the per-target thunk calls it, so the body
+                // must be declared and compiled even when every invocation
+                // is indirect.
+                MirInstr::MakeClosure { function, .. } => {
+                    push_named(&mut targets, function);
+                }
+                MirInstr::Const {
+                    k: crate::mir::Const::Function(function),
+                    ..
+                } => {
+                    push_named(&mut targets, function);
+                }
                 // A `^` transfer of a struct with a user `__moveinit__` runs
                 // it (the VM's `move_value`); the edge exists only in the
                 // lowered expansion.

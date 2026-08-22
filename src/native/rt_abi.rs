@@ -19,7 +19,7 @@ use crate::native::target::NativeTarget;
 /// The runtime ABI version this compiler emits against. Must equal
 /// `mojito_runtime::ABI_VERSION`; the linked runtime exports it as the
 /// inspectable data symbol [`ABI_VERSION_SYMBOL`].
-pub const MJRT_ABI_VERSION: u32 = 4;
+pub const MJRT_ABI_VERSION: u32 = 5;
 
 /// The exported `u32` data symbol carrying the runtime's ABI version.
 pub const ABI_VERSION_SYMBOL: &str = "mjrt_abi_version";

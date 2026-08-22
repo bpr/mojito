@@ -919,16 +919,16 @@ fn parity_exe_manifest_and_differential() {
     let raises = count("raise-differential");
     let excluded = count("excluded");
     assert!(
-        differential >= 229,
-        "exe-differential coverage unexpectedly shrank: {differential} < 229"
+        differential >= 251,
+        "exe-differential coverage unexpectedly shrank: {differential} < 251"
     );
     assert!(
         raises >= 4,
         "raise-differential coverage unexpectedly shrank: {raises} < 4"
     );
     assert!(
-        excluded <= 61,
-        "excluded coverage unexpectedly grew: {excluded} > 61"
+        excluded <= 44,
+        "excluded coverage unexpectedly grew: {excluded} > 44"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
@@ -1018,12 +1018,13 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             &["main", "__toplevel__"],
             &["integer literal 1208925819614629174706176 does not fit IntLiteral storage (i64)"],
         ),
-        // Nested function declarations carry callable-typed values — outside
-        // the supported subset until the closure stage.
+        // An owned closure capture whose type declares a user move
+        // constructor rejects: the VM runs `__moveinit__` at capture time,
+        // and the native record's byte relocation would silently skip it.
         (
-            "def compute() -> Int:\n    def inner() -> Int:\n        return 1\n    return inner()\n",
+            "struct Loud(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __moveinit__(out self, deinit other: Self):\n        self.v = other.v\n\ndef compute() -> Int:\n    var l = Loud(3)\n    var peek: def() capturing[_] -> Int = lambda {var l^} -> Int: l.v\n    return peek()\n",
             &["compute"],
-            &["pliron backend:", "unsupported"],
+            &["owned closure capture of `Loud` with a user `__moveinit__`"],
         ),
     ];
     for (src, entries, phrases) in cases {
@@ -1073,6 +1074,7 @@ fn lifecycle_event_traces_match_the_vm() {
         "assets/ok/pliron_struct_drop_order.mojo",
         "assets/ok/pliron_iter_drop_order.mojo",
         "assets/ok/pliron_partial_move_drop.mojo",
+        "assets/ok/pliron_closure_drop_order.mojo",
         // pliron_list_core stays out of this lane even with instance names
         // normalized to bare templates: generic-collection copy/consume
         // events differ structurally (compiled destructor chains trace

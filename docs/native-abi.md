@@ -19,7 +19,7 @@ part of any native ABI, and `mojito-runtime` must never depend on the
 
 ## ABI versioning
 
-- `ABI_VERSION` (currently **4**) is a monotonic `u32` declared identically in
+- `ABI_VERSION` (currently **5**) is a monotonic `u32` declared identically in
   `mojito_runtime::ABI_VERSION` and `native::rt_abi::MJRT_ABI_VERSION`. Bump
   it on any change to an exported symbol's signature or semantics, an
   exported `#[repr(C)]` type's layout, a trap category's meaning, or any rule
@@ -32,6 +32,9 @@ part of any native ABI, and `mojito-runtime` must never depend on the
   flow](#errors-and-exceptional-control-flow)) and added the
   lifecycle-event reporter `mjrt_trace`. Version 4 added the `input()`
   line reader `mjrt_read_line` and its stdin-failure trap category (6).
+  Version 5 made zero-size `mjrt_alloc` requests return the aligned dangling
+  sentinel (no allocation) with sentinel-address frees as no-ops — the
+  stdlib's `unsafe_alloc[T](0)` neutralization idiom abandons nothing.
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
   synthesized executable wrapper references `mjrt_version`, so every produced
@@ -111,9 +114,15 @@ specialized name). Rules:
   the type — the ordering is part of the type) with every payload overlaid at
   the first offset aligned to the widest alternative; size pads to
   `max(4, payload align)`.
+- A **retained callable** (`Ty::Func`) is the two-word value
+  `{ invoke: ptr, env: ptr }` (16/8). `invoke` is a backend-interned thunk
+  (`mjthunk_<n>`, outside the `mj_` mangle image); `env` points at the
+  frame-local environment record of the creating `MakeClosure`, or is null
+  for a bare function value or empty-capture closure. Generic callable
+  values (`Ty::GenericFunc`) have no representation and reject.
 - Types with no defined native representation (SIMD until its lowering stage,
-  packs, callables, unmaterialized literal types) reject with a contextual
-  diagnostic — backends never guess.
+  packs, unmaterialized literal types) reject with a contextual diagnostic —
+  backends never guess.
 
 ### Strings and the constant pool
 
@@ -170,6 +179,34 @@ specialized name). Rules:
   frees the *buffers* of still-initialized releasable locals (the String and
   built-in-error family) on that path without running user code; abandoned
   locals of other droppable types are a recorded leak residue.
+
+### Retained callables
+
+- The `invoke` thunk of a `{ invoke, env }` callable value has the contract's
+  physical signature with the environment pointer prepended **after** the
+  out-pointer: `[outcome*|sret*], env*, params...` — parameter kinds classify
+  exactly as a compiled callee's (scalars by value, aggregates and `mut`/`ref`
+  places by pointer, zero-sized parameters skipped). A raising contract's
+  tagged outcome flows through the thunk untouched: the thunk forwards its
+  out-pointer to the target and the **caller** branches on the tag.
+- One thunk is interned per (compiled target, capture-mode vector). The thunk
+  rebuilds the target's leading capture arguments from the environment
+  record and calls the target directly; every capture parameter of a lifted
+  body is a reference parameter, so a `Reference` slot passes its stored
+  place address and an owned (`copy`/`move`) slot passes the slot's own
+  address — the record is the stable storage whose in-place mutation across
+  repeated invocations the VM achieves by re-referencing the closure value.
+- The **environment record** is frame-local storage of the creating
+  `MakeClosure` (one entry allocation per site, slots re-stored on each
+  execution): `{ drop: ptr, slots... }` laid out by the ordinary aggregate
+  rules. A `Reference` capture slot holds the captured place's address; an
+  owned capture slot holds the value inline. `drop` is null unless some
+  owned slot needs drop work, in which case it names a per-site teardown
+  thunk that destroys owned slots in reverse order and then nulls the header
+  (drops are idempotent per record — a two-word copy aliases the record, so
+  the first teardown wins; the VM's deep-copying closure clones are a
+  recorded divergence). No runtime symbol participates: the value, record,
+  and thunks are entirely compiler-side.
 
 ## Calling convention
 

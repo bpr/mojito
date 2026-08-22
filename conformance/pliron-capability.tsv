@@ -14,18 +14,18 @@ instruction	ref.make	supported	materializes a verified place address
 instruction	ref.read	partial	typed referent registers
 instruction	value.copy	partial	compiled `__copyinit__` only; raising or uncompiled copy constructors reject
 instruction	ref.write	partial	typed referent registers
-instruction	closure.make	unsupported	Stage 5: closures
+instruction	closure.make	partial	two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject
 instruction	lifetime.keep_alive	supported	erased
-instruction	const	partial	Int/Float/Bool/Str/None (literals stay pending until materialization); function-reference constants reject
+instruction	const	partial	Int/Float/Bool/Str/None (literals stay pending until materialization) and function references as two-word callable values
 instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
 instruction	var.use	supported	copy/move/borrow
 instruction	place.move	partial	marks the root partially initialized; later whole-variable drops of it reject
 instruction	var.store	supported	sets the initialization flag
 instruction	unary	partial	checked scalar operand types
 instruction	binary	partial	checked scalar operand types plus pointer `+` element arithmetic; nominal left operands monomorphize to operator-method calls; other forms reject
-instruction	call	partial	positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; captures and value param-args reject
-instruction	call.indirect	unsupported	Stage 5: indirect calls
-instruction	call.method	partial	positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; reference-result adapters and captures reject
+instruction	call	partial	positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject
+instruction	call.indirect	partial	contract-bound positional and keyword arguments through `{invoke, env}` values, raising contracts included; variadic/keyword-variadic contracts, defaulted arguments, reference returns, generic callable values, and un-devirtualized nominal callables reject
+instruction	call.method	partial	positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; reference-result adapters reject
 instruction	pointer.take	partial	element-offset raw move out of ownership-verified single-take storage; unlayoutable elements reject
 instruction	pointer.destroy	partial	in-place element destructor at the element offset; raising or droppable-field destructors reject
 instruction	uninit.make	partial	payload-only frame storage, no init flag (verified programs never take or destroy uninitialized slots)
@@ -73,7 +73,7 @@ type	IntLiteral	partial	pending-literal registers and exact i64 typed storage; a
 type	FloatLiteral	partial	pending-literal registers and f64 typed storage; displaying a runtime value rejects (the VM prints the exact rational)
 type	Infer	unsupported	checker-internal; must not reach verified MIR
 type	DType	unsupported	compile-time only
-type	func	unsupported	Stage 5: retained callables
+type	func	partial	two-word `{invoke, env}` value; the environment record is frame-local
 type	generic_func	unsupported	semantic-only; Stage 5 monomorphization target
 type	overload	unsupported	semantic-only
 type	param	unsupported	monomorphization substitutes receiver-bound instances; a residual parameter is a contextual rejection
@@ -102,4 +102,4 @@ runtime	mjrt_trap	supported	since=v1
 runtime	mjrt_unhandled_error	supported	since=v2
 runtime	mjrt_trace	supported	since=v3
 runtime	mjrt_read_line	supported	since=v4
-runtime	mjrt_abi_version	supported	data symbol; current version 4
+runtime	mjrt_abi_version	supported	data symbol; current version 5

@@ -46,13 +46,13 @@ use pliron_llvm::ops::{
 };
 use pliron_llvm::types::{ArrayType, FuncType, PointerType, VoidType};
 
-use crate::ast::{Dtype, InfixOp, PrefixOp};
+use crate::ast::{ArgConvention, Dtype, InfixOp, PrefixOp};
 use crate::call::{ArgSlot, CallVariadics, match_call_slots};
 use crate::checked::CheckedConst;
 use crate::literal::{FloatLiteral, IntLiteral};
 use crate::mir::{
-    Const as MirConst, MirBlock, MirBlockId, MirFunction, MirFunctionDeclaration, MirInstr,
-    MirPlace, MirStructDeclaration, MirTerm, Proj, Reg, UseMode,
+    Const as MirConst, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture, MirFunction,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj, Reg, UseMode,
 };
 use crate::token::SourceSpan;
 use crate::types::Ty;
@@ -109,15 +109,50 @@ pub(super) struct OutcomeAbi {
     pub ok_is_reference: bool,
 }
 
+/// The physical ABI of an indirect call, derived from the callee register's
+/// checked `Ty::Func` contract by the same classification rules
+/// [`declare_function`] applies to a compiled callee. The `invoke` thunk a
+/// callable value carries has exactly this signature with the environment
+/// pointer prepended after the out-pointer: `[outcome*|sret*], env*,
+/// params...` (never both an sret and an outcome — the inherited invariant).
+pub(super) struct ContractAbi {
+    /// The `invoke` call type, including the `env*` parameter.
+    pub func_ty: TypedHandle<FuncType>,
+    pub returns_value: bool,
+    pub params: Vec<LowerTy>,
+    pub sret: Option<Layout>,
+    pub outcome: Option<OutcomeAbi>,
+    /// Whether each contract parameter is consuming (`var`/`deinit`).
+    pub owned_params: Vec<bool>,
+    /// Whether each contract parameter is a `mut`/`ref`/`out` reference.
+    pub ref_params: Vec<bool>,
+    /// Structural binding facts, for keyword-argument slot matching.
+    pub names: Vec<String>,
+    pub required: Vec<bool>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+}
+
 /// Module-level lowering state shared by every function: the module itself
 /// plus the lazily declared runtime-contract symbols (trap blocks call
-/// `mjrt_trap`) and the emitted `mjrt_pow` helper. The `mjrt_` prefix, like
-/// `main`, is outside the injective `mj_` mangle image (see `mangle`).
+/// `mjrt_trap`), the emitted `mjrt_pow` helper, and the interned per-target
+/// `invoke` thunks of retained callables (`mjthunk_<n>`). The `mjrt_` and
+/// `mjthunk_` prefixes, like `main`, are outside the injective `mj_` mangle
+/// image (see `mangle`).
 pub(super) struct ModuleShared {
     module: ModuleOp,
     rt_types: HashMap<&'static str, TypedHandle<FuncType>>,
     strings: HashMap<Vec<u8>, Identifier>,
     pow_ty: Option<TypedHandle<FuncType>>,
+    /// Interned callable thunks, keyed by (mangled target, capture-mode
+    /// string — `r`/`c`/`m` per leading capture parameter). One lifted body
+    /// gets distinct thunks per mode vector because declaration sites
+    /// capture with real modes while in-body forwarding sites re-capture
+    /// everything by reference.
+    thunks: HashMap<(String, String), Identifier>,
+    /// Interned capture-record teardown thunks (`mjdrop_<n>`), keyed like
+    /// [`Self::thunks`] by (target, capture-mode string).
+    drop_thunks: HashMap<(String, String), Identifier>,
 }
 
 impl ModuleShared {
@@ -127,6 +162,8 @@ impl ModuleShared {
             rt_types: HashMap::new(),
             strings: HashMap::new(),
             pow_ty: None,
+            thunks: HashMap::new(),
+            drop_thunks: HashMap::new(),
         }
     }
 
@@ -205,6 +242,58 @@ impl ModuleShared {
         emit_pow_body(ctx, func);
         self.pow_ty = Some(pow_ty);
         pow_ty
+    }
+
+    /// Intern the `invoke` thunk adapting compiled `target` to the uniform
+    /// indirect-call ABI and return its symbol. `modes` encodes the leading
+    /// capture parameters (`r` reference / `c` copy / `m` move — empty for a
+    /// bare function value); `capture_offsets` gives each capture's byte
+    /// offset in the environment record. The thunk takes
+    /// `[outcome*|sret*], env*, params...`, rebuilds the target's leading
+    /// capture arguments from the record — a `Reference` slot holds the
+    /// captured place's address (loaded), an owned slot holds the value
+    /// inline (its address is the argument, since every capture parameter is
+    /// a reference parameter) — and forwards everything else unchanged,
+    /// out-pointer included, so a raising target's tagged outcome flows
+    /// through untouched.
+    fn ensure_thunk(
+        &mut self,
+        ctx: &mut Context,
+        target: &FnSignature,
+        modes: &str,
+        capture_offsets: &[u64],
+    ) -> Identifier {
+        let key = (target.mangled.clone(), modes.to_string());
+        if let Some(name) = self.thunks.get(&key) {
+            return name.clone();
+        }
+        let name: Identifier = format!("mjthunk_{}", self.thunks.len())
+            .try_into()
+            .expect("thunk names are identifier-safe");
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let captures = modes.len();
+        let has_out = target.sret.is_some() || target.outcome.is_some();
+        let mut param_handles: Vec<TypeHandle> = Vec::new();
+        if has_out {
+            param_handles.push(ptr_ty);
+        }
+        param_handles.push(ptr_ty);
+        for (index, param) in target.params.iter().enumerate().skip(captures) {
+            let by_reference = target.ref_params.get(index).copied().unwrap_or(false);
+            match param {
+                _ if by_reference => param_handles.push(ptr_ty),
+                LowerTy::Scalar(scalar) => param_handles.push(scalar.handle(ctx)),
+                LowerTy::Aggregate { .. } => param_handles.push(ptr_ty),
+                LowerTy::ZeroSized => {}
+            }
+        }
+        let result = target.func_ty.deref(ctx).result_type();
+        let thunk_ty = FuncType::get(ctx, result, param_handles, false);
+        let func = FuncOp::new(ctx, name.clone(), thunk_ty);
+        self.module.append_operation(ctx, func.get_operation(), 0);
+        emit_thunk_body(ctx, func, target, modes, capture_offsets, has_out);
+        self.thunks.insert(key, name.clone());
+        name
     }
 }
 
@@ -730,8 +819,9 @@ pub(super) enum LowerTy {
 /// Classify a checked type for lowering: scalars (including width-1 SIMD
 /// aliases and the i64/f64 storage of `IntLiteral`/`FloatLiteral`-typed
 /// registers) stay SSA; `None` is zero-sized; struct, tuple, and
-/// `StringLiteral`-descriptor aggregates take their shared-engine layout;
-/// everything else (multi-lane SIMD, packs, callables) stays outside the
+/// `StringLiteral`-descriptor aggregates take their shared-engine layout, as
+/// does the two-word `{ invoke, env }` retained-callable value; everything
+/// else (multi-lane SIMD, generic callable values) stays outside the
 /// supported subset with a contextual rejection.
 fn lower_ty(
     function: &str,
@@ -757,21 +847,25 @@ fn lower_ty(
         // The built-in error value is `MjError { message: MjString }` storage;
         // its message buffer frees invisibly on drop (no user destructor).
         // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor.
-        Ty::Error | Ty::Struct(..) | Ty::Tuple(_) | Ty::RuntimePack(_) | Ty::StringLiteral => {
-            match layout.layout_of(ty) {
-                Ok(computed) => Ok(LowerTy::Aggregate {
-                    ty: Box::new(ty.clone()),
-                    layout: computed,
-                }),
-                Err(error) => Err(PlironError {
-                    function: Some(function.to_string()),
-                    kind: PlironErrorKind::Unsupported {
-                        construct: format!("type `{ty:?}` ({error})"),
-                    },
-                    location,
-                }),
-            }
-        }
+        // A retained callable is the two-word `{ invoke, env }` value.
+        Ty::Error
+        | Ty::Struct(..)
+        | Ty::Tuple(_)
+        | Ty::RuntimePack(_)
+        | Ty::StringLiteral
+        | Ty::Func { .. } => match layout.layout_of(ty) {
+            Ok(computed) => Ok(LowerTy::Aggregate {
+                ty: Box::new(ty.clone()),
+                layout: computed,
+            }),
+            Err(error) => Err(PlironError {
+                function: Some(function.to_string()),
+                kind: PlironErrorKind::Unsupported {
+                    construct: format!("type `{ty:?}` ({error})"),
+                },
+                location,
+            }),
+        },
         other => Err(PlironError {
             function: Some(function.to_string()),
             kind: PlironErrorKind::Unsupported {
@@ -1318,13 +1412,13 @@ impl<'a> FnLowering<'a> {
                         self.unsupported_reg("reference-result method adapter".into(), *dest)
                     );
                 }
-                // Erased type-parameter slots (`value: None`) carry no
-                // runtime data and are permitted; argument places matter
+                // Capture accesses are static ownership facts execution
+                // erases. Erased type-parameter slots (`value: None`) carry
+                // no runtime data and are permitted; argument places matter
                 // only at `mut`/`ref` parameter positions (borrowed read
                 // arguments pass their value copy).
-                if !capture_accesses.is_empty()
-                    || param_arg_regs.iter().any(|arg| arg.value.is_some())
-                {
+                let _ = capture_accesses;
+                if param_arg_regs.iter().any(|arg| arg.value.is_some()) {
                     return Err(self.unsupported_reg(
                         format!("non-positional method contract for `{method}`"),
                         *dest,
@@ -1357,13 +1451,13 @@ impl<'a> FnLowering<'a> {
                 // The callee's compiled signature is authoritative for the
                 // raising ABI.
                 let _ = raises;
-                // Erased type-parameter slots (`value: None`) carry no
-                // runtime data and are permitted; argument places matter
+                // Capture accesses are static ownership facts execution
+                // erases. Erased type-parameter slots (`value: None`) carry
+                // no runtime data and are permitted; argument places matter
                 // only at `mut`/`ref` parameter positions (borrowed read
                 // arguments pass their value copy).
-                if !capture_accesses.is_empty()
-                    || param_arg_regs.iter().any(|arg| arg.value.is_some())
-                {
+                let _ = capture_accesses;
+                if param_arg_regs.iter().any(|arg| arg.value.is_some()) {
                     return Err(self.unsupported_reg(
                         format!("non-positional call contract for `{}`", func.0),
                         *dest,
@@ -1584,9 +1678,60 @@ impl<'a> FnLowering<'a> {
                     &keywords,
                 )
             }
-            MirInstr::MakeClosure { dest, .. }
-            | MirInstr::CallIndirect { dest, .. }
-            | MirInstr::Index { dest, .. }
+            MirInstr::MakeClosure {
+                dest,
+                function,
+                captures,
+            } => self.lower_make_closure(ctx, *dest, function, captures),
+            MirInstr::CallIndirect {
+                dest,
+                callee,
+                resolved,
+                raises,
+                args,
+                kwargs,
+                callee_place,
+                arg_places,
+                kwarg_places,
+                capture_accesses,
+                param_arg_regs,
+                param_decls,
+                instantiated_contract,
+                instantiated_args,
+            } => {
+                // The contract is authoritative for the raising ABI; the
+                // checker-selected nominal target is consumed by
+                // monomorphization's devirtualization; capture accesses are
+                // static facts execution erases; the callable value itself
+                // needs no stable storage natively — its environment record
+                // is the stable storage.
+                let _ = (
+                    resolved,
+                    raises,
+                    callee_place,
+                    capture_accesses,
+                    instantiated_args,
+                );
+                // A generic-callable contract that still carries value
+                // parameter arguments or unresolved declarations at lowering
+                // is outside the monomorphized subset.
+                if param_arg_regs.iter().any(|arg| arg.value.is_some()) || !param_decls.is_empty() {
+                    return Err(
+                        self.unsupported_reg("generic callable value invocation".into(), *dest)
+                    );
+                }
+                self.lower_call_indirect(
+                    ctx,
+                    *dest,
+                    *callee,
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
+                    instantiated_contract.as_ref(),
+                )
+            }
+            MirInstr::Index { dest, .. }
             | MirInstr::Slice { dest, .. }
             | MirInstr::MultiIndex { dest, .. }
             | MirInstr::MakeVariant { dest, .. }
@@ -2009,6 +2154,558 @@ impl<'a> FnLowering<'a> {
                         ));
                     };
                     self.checked_const_value(ctx, default, scalar, dest)?
+                }
+            };
+            lowered.push(value);
+        }
+        Ok(lowered)
+    }
+
+    /// Derive the physical indirect-call ABI from a checked `Ty::Func`
+    /// contract, by the same classification rules `declare_function` applies
+    /// to a compiled callee (a raising contract returns through a prepended
+    /// outcome out-pointer, an aggregate return through prepended sret
+    /// storage, never both). Contract shapes the thunk cannot bind reject
+    /// contextually.
+    fn contract_abi(
+        &mut self,
+        ctx: &mut Context,
+        contract: &Ty,
+        dest: Reg,
+    ) -> Result<ContractAbi, PlironError> {
+        let Ty::Func {
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            conventions,
+            ref_params,
+            ref_return,
+            ..
+        } = contract
+        else {
+            let construct = match contract {
+                Ty::GenericFunc { .. } => "generic callable value invocation".to_string(),
+                other => format!("indirect call through `{other}`"),
+            };
+            return Err(self.unsupported_reg(construct, dest));
+        };
+        if variadic.is_some() {
+            return Err(self.unsupported_reg("variadic indirect-call contract".into(), dest));
+        }
+        if kw_variadic.is_some() {
+            return Err(
+                self.unsupported_reg("keyword-variadic indirect-call contract".into(), dest)
+            );
+        }
+        if ref_return.is_some() {
+            return Err(self.unsupported_reg("reference-returning indirect call".into(), dest));
+        }
+        let (result, returns_value, sret, outcome) = if *raises {
+            let ok = lower_ty(self.name, ret, &self.layout, self.reg_span(dest))?;
+            let composed = self.layout.outcome_layout(ret).map_err(|error| {
+                self.unsupported_reg(
+                    format!("raising indirect return of `{ret}` ({error})"),
+                    dest,
+                )
+            })?;
+            let outcome = OutcomeAbi {
+                layout: composed.layout,
+                ok_offset: composed.offsets[1],
+                err_offset: composed.offsets[2],
+                ok,
+                ok_is_reference: false,
+            };
+            (VoidType::get(ctx).to_handle(), false, None, Some(outcome))
+        } else {
+            match lower_ty(self.name, ret, &self.layout, self.reg_span(dest))? {
+                LowerTy::ZeroSized => (VoidType::get(ctx).to_handle(), false, None, None),
+                LowerTy::Scalar(scalar) => (scalar.handle(ctx), true, None, None),
+                LowerTy::Aggregate { layout, .. } => {
+                    (VoidType::get(ctx).to_handle(), false, Some(layout), None)
+                }
+            }
+        };
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let mut param_handles: Vec<TypeHandle> = Vec::new();
+        if sret.is_some() || outcome.is_some() {
+            param_handles.push(ptr_ty);
+        }
+        // The environment pointer rides every indirect call (null for a
+        // bare function value); the thunk unpacks it.
+        param_handles.push(ptr_ty);
+        let mut lowered_params = Vec::with_capacity(params.len());
+        let mut owned_params = Vec::with_capacity(params.len());
+        let mut by_reference = Vec::with_capacity(params.len());
+        for (index, ty) in params.iter().enumerate() {
+            let lowered = lower_ty(self.name, ty, &self.layout, self.reg_span(dest))?;
+            let convention = conventions.get(index).copied().flatten();
+            let by_ref = matches!(
+                convention,
+                Some(ArgConvention::Mut | ArgConvention::Ref | ArgConvention::Out)
+            ) || ref_params.get(index).is_some_and(Option::is_some);
+            let owned = matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit));
+            match &lowered {
+                _ if by_ref => param_handles.push(ptr_ty),
+                LowerTy::Scalar(scalar) => param_handles.push(scalar.handle(ctx)),
+                LowerTy::Aggregate { .. } => param_handles.push(ptr_ty),
+                LowerTy::ZeroSized => {}
+            }
+            lowered_params.push(lowered);
+            owned_params.push(owned);
+            by_reference.push(by_ref);
+        }
+        let func_ty = FuncType::get(ctx, result, param_handles, false);
+        Ok(ContractAbi {
+            func_ty,
+            returns_value,
+            params: lowered_params,
+            sret,
+            outcome,
+            owned_params,
+            ref_params: by_reference,
+            names: names.clone(),
+            required: required.clone(),
+            positional_only: *positional_only,
+            keyword_only: *keyword_only,
+        })
+    }
+
+    /// Check that the physical shape an indirect caller derives from its
+    /// contract agrees with the compiled target the thunk forwards to —
+    /// out-pointer kind, parameter classification, and reference-ness must
+    /// match slot for slot after the capture prefix, or the call would pass
+    /// values where pointers are expected. Checked programs agree here; a
+    /// disagreement is surfaced as a contextual rejection, never a silent
+    /// miscompile.
+    fn check_contract_target(
+        &self,
+        abi: &ContractAbi,
+        target: &FnSignature,
+        captures: usize,
+        name: &str,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let disagree = |lowering: &Self| -> PlironError {
+            lowering.unsupported_reg(
+                format!("indirect-call contract disagreeing with compiled `{name}`"),
+                dest,
+            )
+        };
+        if abi.outcome.is_some() != target.outcome.is_some()
+            || target.outcome.as_ref().is_some_and(|o| o.ok_is_reference)
+            || abi.sret.is_some() != target.sret.is_some()
+            || abi.params.len() + captures != target.params.len()
+        {
+            return Err(disagree(self));
+        }
+        for (index, param) in abi.params.iter().enumerate() {
+            let target_index = captures + index;
+            let target_param = &target.params[target_index];
+            let contract_ref = abi.ref_params.get(index).copied().unwrap_or(false);
+            let target_ref = target
+                .ref_params
+                .get(target_index)
+                .copied()
+                .unwrap_or(false);
+            let agree = contract_ref == target_ref
+                && match (param, target_param) {
+                    (LowerTy::Scalar(a), LowerTy::Scalar(b)) => a == b,
+                    (LowerTy::Aggregate { .. }, LowerTy::Aggregate { .. }) => true,
+                    (LowerTy::ZeroSized, LowerTy::ZeroSized) => true,
+                    _ => false,
+                };
+            if !agree {
+                return Err(disagree(self));
+            }
+        }
+        Ok(())
+    }
+
+    /// Build the two-word `{ invoke, env }` value of a retained callable:
+    /// intern the target's `invoke` thunk and store its address next to the
+    /// environment pointer. Bare function values and empty-capture closures
+    /// carry a null environment.
+    fn lower_make_closure(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        function: &str,
+        captures: &[MirClosureCapture],
+    ) -> Result<(), PlironError> {
+        let Some(contract) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg("untyped closure result".into(), dest));
+        };
+        let abi = self.contract_abi(ctx, &contract, dest)?;
+        let signatures = self.signatures;
+        let Some(target) = signatures.get(function) else {
+            return Err(self.unsupported_reg(format!("closure over uncompiled `{function}`"), dest));
+        };
+        self.check_contract_target(&abi, target, captures.len(), function, dest)?;
+        // The environment record: `{ drop: ptr, slots... }`. A `Reference`
+        // slot stores the captured place's address; an owned (`copy`/`move`)
+        // slot stores the value inline — the record is the stable storage
+        // whose address the invoke thunk passes as the capture's reference
+        // parameter (in-place mutation across repeated invocations, the
+        // VM's owned-capture re-referencing).
+        let pointer_slot = Ty::Pointer {
+            element: Box::new(Ty::None),
+            origin: crate::origin::PointerOrigin::Untracked { mutable: true },
+        };
+        let mut modes = String::with_capacity(captures.len());
+        let mut slot_tys = vec![pointer_slot.clone()];
+        for capture in captures {
+            let (mode, slot_ty) = match capture.mode {
+                MirCaptureMode::Reference => ('r', pointer_slot.clone()),
+                MirCaptureMode::Copy | MirCaptureMode::Move => {
+                    let Some(ty) = capture
+                        .place
+                        .ty
+                        .clone()
+                        .or_else(|| self.func.var_tys.get(&capture.place.root).cloned())
+                    else {
+                        return Err(self.unsupported_reg("untyped closure capture".into(), dest));
+                    };
+                    // The VM's owned capture runs the user's copy/move
+                    // constructor; the native record relocates or forks
+                    // bytes, so a user-observable constructor rejects. The
+                    // nominal String's bridged constructors are exactly the
+                    // native fork/relocation semantics.
+                    let ctor = if capture.mode == MirCaptureMode::Copy {
+                        "__copyinit__"
+                    } else {
+                        "__moveinit__"
+                    };
+                    if self.chain_runs_user_lifecycle(&ty, ctor) {
+                        return Err(self.unsupported_reg(
+                            format!("owned closure capture of `{ty}` with a user `{ctor}`"),
+                            dest,
+                        ));
+                    }
+                    if capture.mode == MirCaptureMode::Move && !capture.place.proj.is_empty() {
+                        // A projected move capture leaves a residual
+                        // aggregate whose partial-drop bookkeeping the
+                        // leaf-flag pre-scan does not cover here.
+                        return Err(
+                            self.unsupported_reg("projected move closure capture".into(), dest)
+                        );
+                    }
+                    (
+                        if capture.mode == MirCaptureMode::Copy {
+                            'c'
+                        } else {
+                            'm'
+                        },
+                        ty,
+                    )
+                }
+            };
+            modes.push(mode);
+            slot_tys.push(slot_ty);
+        }
+        let (env, capture_offsets) = if captures.is_empty() {
+            let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+            let null = ZeroOp::new(ctx, ptr_ty);
+            self.append(ctx, null.get_operation(), Some(dest));
+            (null.get_result(ctx), Vec::new())
+        } else {
+            let composed = self.struct_layout_of(&slot_tys, dest)?;
+            let record = self.entry_alloca(ctx, composed.layout.size, composed.layout.align);
+            // Header: the per-site drop thunk when some owned slot needs
+            // drop work, else null. Re-stored on every execution — a loop
+            // re-creating a dropped closure revives the tombstoned header.
+            let droppable: Vec<(char, Ty, u64)> = modes
+                .chars()
+                .zip(&slot_tys[1..])
+                .zip(&composed.offsets[1..])
+                .map(|((mode, ty), offset)| (mode, ty.clone(), *offset))
+                .collect();
+            let header = if droppable
+                .iter()
+                .any(|(mode, ty, _)| *mode != 'r' && self.needs_drop(ty))
+            {
+                let thunk = self.ensure_capture_drop_thunk(ctx, function, &modes, &droppable)?;
+                let address = AddressOfOp::new(ctx, thunk, 0);
+                self.append(ctx, address.get_operation(), Some(dest));
+                address.get_result(ctx)
+            } else {
+                let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+                let null = ZeroOp::new(ctx, ptr_ty);
+                self.append(ctx, null.get_operation(), Some(dest));
+                null.get_result(ctx)
+            };
+            let store_header = StoreOp::new(ctx, header, record);
+            self.append(ctx, store_header.get_operation(), Some(dest));
+            for (capture, ((mode, ty, _), offset)) in captures
+                .iter()
+                .zip(droppable.iter().zip(&composed.offsets[1..]))
+            {
+                let slot = if *offset == 0 {
+                    record
+                } else {
+                    self.gep_byte(ctx, record, *offset, dest)
+                };
+                let place = capture.place.clone();
+                let (source, _) = self.place_address(ctx, &place, dest)?;
+                if *mode == 'r' {
+                    let store = StoreOp::new(ctx, source, slot);
+                    self.append(ctx, store.get_operation(), Some(dest));
+                    continue;
+                }
+                let layout = self.layout.layout_of(ty).map_err(|error| {
+                    self.unsupported_reg(format!("closure capture layout ({error})"), dest)
+                })?;
+                if *mode == 'c' && self.owns_heap(ty) {
+                    // A copy capture of a borrowed heap owner forks; a byte
+                    // copy would alias buffers both owners release.
+                    self.fork_value_into(ctx, slot, ty, layout, source, dest)?;
+                } else {
+                    self.mem_copy(ctx, slot, source, layout.size, dest);
+                }
+                if *mode == 'm' {
+                    // The VM's move capture runs the compiled stdlib
+                    // `__moveinit__` (`move_value`), whose `deinit other`
+                    // teardown reports one consume event; the byte
+                    // relocation above is that constructor's exact
+                    // semantics, so mirror the event.
+                    if self.trace_lifecycle
+                        && let Ty::Struct(name, _) = ty
+                        && self
+                            .declarations
+                            .contains_key(&format!("{name}.__moveinit__"))
+                    {
+                        let name = name.clone();
+                        self.emit_trace_text(ctx, crate::native::rt_abi::TRACE_CONSUME, &name);
+                    }
+                    // A whole-root move capture: ownership analysis already
+                    // suppressed the source's ordinary drop; clearing the
+                    // flag mirrors the VM's tombstoned source.
+                    self.set_drop_flag(ctx, place.root, false);
+                }
+            }
+            (record, composed.offsets[1..].to_vec())
+        };
+        let thunk = self
+            .shared
+            .ensure_thunk(ctx, target, &modes, &capture_offsets);
+        let storage = self.entry_alloca(ctx, 16, 8);
+        let invoke = AddressOfOp::new(ctx, thunk, 0);
+        self.append(ctx, invoke.get_operation(), Some(dest));
+        let store_invoke = StoreOp::new(ctx, invoke.get_result(ctx), storage);
+        self.append(ctx, store_invoke.get_operation(), Some(dest));
+        let env_address = self.gep_byte(ctx, storage, 8, dest);
+        let store_env = StoreOp::new(ctx, env, env_address);
+        self.append(ctx, store_env.get_operation(), Some(dest));
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// Emit (once per `(target, modes)`) the teardown thunk a capture
+    /// record's header names: destroy the owned droppable slots in reverse
+    /// capture order (the VM's closure-drop order), then null the header —
+    /// drops are idempotent per record, which is what keeps aliasing
+    /// two-word copies sound.
+    fn ensure_capture_drop_thunk(
+        &mut self,
+        ctx: &mut Context,
+        function: &str,
+        modes: &str,
+        slots: &[(char, Ty, u64)],
+    ) -> Result<Identifier, PlironError> {
+        let key = (function.to_string(), modes.to_string());
+        if let Some(name) = self.shared.drop_thunks.get(&key) {
+            return Ok(name.clone());
+        }
+        let name: Identifier = format!("mjdrop_{}", self.shared.drop_thunks.len())
+            .try_into()
+            .expect("thunk names are identifier-safe");
+        let void = VoidType::get(ctx).to_handle();
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let thunk_ty = FuncType::get(ctx, void, vec![ptr_ty], false);
+        let func = FuncOp::new(ctx, name.clone(), thunk_ty);
+        self.shared
+            .module
+            .append_operation(ctx, func.get_operation(), 0);
+        let entry = func.get_or_create_entry_block(ctx);
+        let region = func
+            .get_operation()
+            .deref(ctx)
+            .regions()
+            .next()
+            .expect("llvm.func has a body region");
+        // Retarget the emission cursor into the thunk body: the drop chain
+        // is ordinary `emit_drop_value` output (trace events included, so
+        // capture drops report at drop time like the VM's).
+        let saved_current = self.current;
+        let saved_region = self.region;
+        self.current = Some(entry);
+        self.region = Some(region);
+        let emit = |lowering: &mut Self, ctx: &mut Context| -> Result<(), PlironError> {
+            let env = entry.deref(ctx).get_argument(0);
+            for (mode, ty, offset) in slots.iter().rev() {
+                if *mode == 'r' || !lowering.needs_drop(ty) {
+                    continue;
+                }
+                let address = if *offset == 0 {
+                    env
+                } else {
+                    lowering.gep_byte_unspanned(ctx, env, *offset)
+                };
+                lowering.emit_drop_value(ctx, address, ty, false)?;
+            }
+            let null = ZeroOp::new(ctx, ptr_ty);
+            lowering.append(ctx, null.get_operation(), None);
+            let tombstone = StoreOp::new(ctx, null.get_result(ctx), env);
+            lowering.append(ctx, tombstone.get_operation(), None);
+            let ret = ReturnOp::new(ctx, None);
+            lowering.append(ctx, ret.get_operation(), None);
+            Ok(())
+        };
+        let emitted = emit(self, ctx);
+        self.current = saved_current;
+        self.region = saved_region;
+        emitted?;
+        self.shared.drop_thunks.insert(key, name.clone());
+        Ok(name)
+    }
+
+    /// Call through a retained callable value: bind the arguments against
+    /// the callee register's checked contract, load `{ invoke, env }`, and
+    /// call `invoke` indirectly with the environment pointer prepended
+    /// (after the outcome/sret out-pointer, when one exists).
+    #[allow(clippy::too_many_arguments)]
+    fn lower_call_indirect(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        callee: Reg,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+        arg_places: &[Option<MirPlace>],
+        kwarg_places: &[Option<MirPlace>],
+        instantiated_contract: Option<&Ty>,
+    ) -> Result<(), PlironError> {
+        let contract = instantiated_contract
+            .cloned()
+            .or_else(|| self.func.reg_types.get(&callee.0).cloned());
+        let Some(mut contract) = contract else {
+            return Err(self.unsupported_reg("untyped indirect callee".into(), dest));
+        };
+        while let Ty::Ref(reference) = contract {
+            contract = *reference.referent;
+        }
+        if let Ty::Struct(name, _) = &contract {
+            // Monomorphization devirtualizes nominal callables into direct
+            // `__call__` method calls; one that survives to lowering is a
+            // shape it could not rewrite.
+            return Err(self.unsupported_reg(
+                format!("indirect call through nominal callable `{name}`"),
+                dest,
+            ));
+        }
+        let abi = self.contract_abi(ctx, &contract, dest)?;
+        let bound =
+            self.bind_contract_slots(ctx, dest, &abi, args, kwargs, arg_places, kwarg_places)?;
+        let base = self.reg_ptr(ctx, callee)?;
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let invoke = LoadOp::new(ctx, base, ptr_ty);
+        self.append(ctx, invoke.get_operation(), Some(dest));
+        let env_address = self.gep_byte(ctx, base, 8, dest);
+        let env = LoadOp::new(ctx, env_address, ptr_ty);
+        self.append(ctx, env.get_operation(), Some(dest));
+        let mut operands = Vec::with_capacity(bound.len() + 1);
+        operands.push(env.get_result(ctx));
+        operands.extend(bound);
+        self.emit_call_shaped(
+            ctx,
+            dest,
+            CallOpCallable::Indirect(invoke.get_result(ctx)),
+            abi.func_ty,
+            abi.returns_value,
+            abi.sret,
+            abi.outcome.clone(),
+            operands,
+        )
+    }
+
+    /// Resolve an indirect call's arguments into the contract's positional
+    /// parameter order via `call::match_call_slots` — the same structural
+    /// binding as `bind_call_slots`, off the `Ty::Func` contract instead of
+    /// a compiled declaration. Defaults reject: the VM binds an omitted
+    /// argument from the runtime callee's declaration, which the native
+    /// caller cannot see behind the thunk.
+    #[allow(clippy::too_many_arguments)]
+    fn bind_contract_slots(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        abi: &ContractAbi,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+        arg_places: &[Option<MirPlace>],
+        kwarg_places: &[Option<MirPlace>],
+    ) -> Result<Vec<Value>, PlironError> {
+        let kw_names: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+        let matched = match_call_slots(
+            &abi.names,
+            &abi.required,
+            abi.positional_only,
+            abi.keyword_only,
+            args.len(),
+            &kw_names,
+            CallVariadics {
+                positional: false,
+                keyword: false,
+            },
+        )
+        .map_err(|error| {
+            self.unsupported_reg(format!("indirect-call binding failed: {error:?}"), dest)
+        })?;
+        if matched.slots.len() != abi.params.len() {
+            return Err(self.unsupported_reg(
+                "indirect-call binding disagrees with the contract arity".into(),
+                dest,
+            ));
+        }
+        let mut lowered = Vec::with_capacity(abi.params.len());
+        for (index, (slot, expected)) in matched.slots.iter().zip(&abi.params).enumerate() {
+            if matches!(expected, LowerTy::ZeroSized) {
+                continue;
+            }
+            let expected = expected.clone();
+            let owned = abi.owned_params.get(index).copied().unwrap_or(false);
+            let by_ref = abi.ref_params.get(index).copied().unwrap_or(false);
+            let place_address = |lowering: &mut Self,
+                                 ctx: &mut Context,
+                                 place: Option<&MirPlace>|
+             -> Result<Value, PlironError> {
+                let Some(place) = place.cloned() else {
+                    return Err(lowering.unsupported_reg(
+                        "`mut`/`ref` indirect argument without a place".into(),
+                        dest,
+                    ));
+                };
+                Ok(lowering.place_address(ctx, &place, dest)?.0)
+            };
+            let value = match slot {
+                ArgSlot::Positional(p) if by_ref => {
+                    place_address(self, ctx, arg_places.get(*p).and_then(Option::as_ref))?
+                }
+                ArgSlot::Keyword(k) if by_ref => {
+                    place_address(self, ctx, kwarg_places.get(*k).and_then(Option::as_ref))?
+                }
+                ArgSlot::Positional(p) => self.arg_value(ctx, args[*p], &expected, owned, dest)?,
+                ArgSlot::Keyword(k) => self.arg_value(ctx, kwargs[*k].1, &expected, owned, dest)?,
+                ArgSlot::Default => {
+                    return Err(self.unsupported_reg(
+                        "defaulted argument at an indirect call site".into(),
+                        dest,
+                    ));
                 }
             };
             lowered.push(value);
@@ -7236,6 +7933,27 @@ impl<'a> FnLowering<'a> {
         cont
     }
 
+    /// Branch on `value != null` into a fresh guarded-work block, returning
+    /// the continuation block — the pointer analogue of
+    /// [`Self::begin_flag_guard`], closed by the same
+    /// [`Self::end_flag_guard`].
+    fn begin_nonnull_guard(&mut self, ctx: &mut Context, value: Value) -> Ptr<BasicBlock> {
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let null = ZeroOp::new(ctx, ptr_ty);
+        self.append(ctx, null.get_operation(), None);
+        let compare = ICmpOp::new(ctx, ICmpPredicateAttr::NE, value, null.get_result(ctx));
+        self.append(ctx, compare.get_operation(), None);
+        let region = self.region.expect("lowering is inside a function");
+        let work = BasicBlock::new(ctx, None, vec![]);
+        work.insert_at_back(region, ctx);
+        let cont = BasicBlock::new(ctx, None, vec![]);
+        cont.insert_at_back(region, ctx);
+        let branch = CondBrOp::new(ctx, compare.get_result(ctx), work, vec![], cont, vec![]);
+        self.append(ctx, branch.get_operation(), None);
+        self.current = Some(work);
+        cont
+    }
+
     /// Close a [`Self::begin_flag_guard`] region: jump to and continue in the
     /// continuation block.
     fn end_flag_guard(&mut self, ctx: &mut Context, cont: Ptr<BasicBlock>) {
@@ -7361,6 +8079,37 @@ impl<'a> FnLowering<'a> {
                 self.emit_free(ctx, data.get_result(ctx));
                 Ok(())
             }
+            // A retained callable's teardown lives behind its record header:
+            // env null (thin/bare value) and header null (no owned droppable
+            // captures) are no-ops, and the drop thunk nulls the header
+            // after running, so drops of aliasing two-word copies are
+            // idempotent per record — the VM's deep-copying closure clones
+            // are a recorded divergence.
+            Ty::Func { .. } => {
+                let handle = ScalarTy::Ptr.handle(ctx);
+                let env_address = self.gep_byte_unspanned(ctx, ptr, 8);
+                let env = LoadOp::new(ctx, env_address, handle);
+                self.append(ctx, env.get_operation(), None);
+                let env = env.get_result(ctx);
+                let cont_env = self.begin_nonnull_guard(ctx, env);
+                let drop_thunk = LoadOp::new(ctx, env, handle);
+                self.append(ctx, drop_thunk.get_operation(), None);
+                let drop_thunk = drop_thunk.get_result(ctx);
+                let cont_thunk = self.begin_nonnull_guard(ctx, drop_thunk);
+                let void = VoidType::get(ctx).to_handle();
+                let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+                let thunk_ty = FuncType::get(ctx, void, vec![ptr_ty], false);
+                let call = CallOp::new(
+                    ctx,
+                    CallOpCallable::Indirect(drop_thunk),
+                    thunk_ty,
+                    vec![env],
+                );
+                self.append(ctx, call.get_operation(), None);
+                self.end_flag_guard(ctx, cont_thunk);
+                self.end_flag_guard(ctx, cont_env);
+                Ok(())
+            }
             Ty::Struct(name, _) => {
                 let deinit = format!("{name}.__deinit__");
                 if !skip_whole_deinit && self.declarations.contains_key(&deinit) {
@@ -7445,10 +8194,12 @@ impl<'a> FnLowering<'a> {
     }
 
     /// Whether dropping a value of `ty` performs any work: a struct with a
-    /// `__deinit__`, any transitive field/element that does, or the built-in
-    /// error (its message buffer frees on drop).
+    /// `__deinit__`, any transitive field/element that does, the built-in
+    /// error (its message buffer frees on drop), or a retained callable
+    /// (its environment record may carry owned droppable captures — a
+    /// null-guarded header dispatch, free when there are none).
     fn needs_drop(&self, ty: &Ty) -> bool {
-        matches!(ty, Ty::Error)
+        matches!(ty, Ty::Error | Ty::Func { .. })
             || self.has_lifecycle_method(ty, "__deinit__")
             || self.fields_need_drop(ty)
     }
@@ -7562,7 +8313,7 @@ impl<'a> FnLowering<'a> {
         ctx: &mut Context,
         dest: Reg,
         name: &str,
-        mut operands: Vec<Value>,
+        operands: Vec<Value>,
     ) -> Result<(), PlironError> {
         let signature = &self.signatures[name];
         let callee: Identifier = signature
@@ -7570,15 +8321,47 @@ impl<'a> FnLowering<'a> {
             .as_str()
             .try_into()
             .expect("mangled names are identifier-safe");
-        let (func_ty, returns_value, sret) =
-            (signature.func_ty, signature.returns_value, signature.sret);
-        if let Some(outcome) = signature.outcome.clone() {
-            return self.emit_raising_call(ctx, dest, callee, func_ty, outcome, operands);
+        let (func_ty, returns_value, sret, outcome) = (
+            signature.func_ty,
+            signature.returns_value,
+            signature.sret,
+            signature.outcome.clone(),
+        );
+        self.emit_call_shaped(
+            ctx,
+            dest,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            returns_value,
+            sret,
+            outcome,
+            operands,
+        )
+    }
+
+    /// Emit a direct or indirect call with fully bound operands under the
+    /// shared result shape: a raising callee branches on its tagged outcome,
+    /// an aggregate return takes prepended fresh sret storage, and `dest` is
+    /// defined or erased by the result kind.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_call_shaped(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        callable: CallOpCallable,
+        func_ty: TypedHandle<FuncType>,
+        returns_value: bool,
+        sret: Option<Layout>,
+        outcome: Option<OutcomeAbi>,
+        mut operands: Vec<Value>,
+    ) -> Result<(), PlironError> {
+        if let Some(outcome) = outcome {
+            return self.emit_raising_call(ctx, dest, callable, func_ty, outcome, operands);
         }
         if let Some(layout) = sret {
             let storage = self.entry_alloca(ctx, layout.size, layout.align);
             operands.insert(0, storage);
-            let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, operands);
+            let call = CallOp::new(ctx, callable, func_ty, operands);
             self.append(ctx, call.get_operation(), Some(dest));
             self.reg_values.insert(dest.0, storage);
             // The callee's return transferred ownership here; a discarded or
@@ -7590,7 +8373,7 @@ impl<'a> FnLowering<'a> {
             }
             Ok(())
         } else {
-            let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, operands);
+            let call = CallOp::new(ctx, callable, func_ty, operands);
             if returns_value {
                 self.define(ctx, dest, call.get_operation(), call.get_result(ctx))
             } else {
@@ -7610,7 +8393,7 @@ impl<'a> FnLowering<'a> {
         &mut self,
         ctx: &mut Context,
         dest: Reg,
-        callee: Identifier,
+        callable: CallOpCallable,
         func_ty: TypedHandle<FuncType>,
         outcome: OutcomeAbi,
         mut operands: Vec<Value>,
@@ -7620,7 +8403,7 @@ impl<'a> FnLowering<'a> {
         // as that handle — the checked `reference_result` contract.
         let storage = self.entry_alloca(ctx, outcome.layout.size, outcome.layout.align);
         operands.insert(0, storage);
-        let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, operands);
+        let call = CallOp::new(ctx, callable, func_ty, operands);
         self.append(ctx, call.get_operation(), Some(dest));
         let i32_handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
         let tag = LoadOp::new(ctx, storage, i32_handle);
@@ -8476,9 +9259,9 @@ impl<'a> FnLowering<'a> {
                 self.erased.insert(dest.0);
                 Ok(())
             }
-            MirConst::Function(_) => {
-                Err(self.unsupported_reg(format!("constant `{}`", const_name(k)), dest))
-            }
+            // A bare function value is the two-word callable with a null
+            // environment; its thunk ignores the environment argument.
+            MirConst::Function(name) => self.lower_make_closure(ctx, dest, name, &[]),
         }
     }
 
@@ -9588,6 +10371,9 @@ impl<'a> FnLowering<'a> {
     /// The function-exit half of a return terminator (scope-exit cleanups
     /// already ran): store/copy the value per the return ABI and return.
     fn lower_return(&mut self, ctx: &mut Context, value: Option<Reg>) -> Result<(), PlironError> {
+        if self.name == "__toplevel__" {
+            self.emit_toplevel_binding_releases(ctx)?;
+        }
         self.emit_frame_exit_error_releases(ctx)?;
         if let Some(outcome) = self.signatures[self.name].outcome.clone() {
             return self.lower_raising_return(ctx, value, &outcome);
@@ -9621,6 +10407,81 @@ impl<'a> FnLowering<'a> {
         let ret = ReturnOp::new(ctx, lowered);
         self.append(ctx, ret.get_operation(), value);
         Ok(())
+    }
+
+    /// Release `__toplevel__`'s heap-carrying bindings at its exit. Module
+    /// scope admits only declarations, so the runtime values of `comptime`
+    /// bindings are pure materialization residue: the VM abandons them to
+    /// its arena (no destructor ever runs), and every later use reads a
+    /// compile-time folded copy. The native release is the same invisible
+    /// bookkeeping as the owned-temporary rule — stdlib-authored destructor
+    /// chains are pure frees; a chain that would run a user destructor
+    /// rejects rather than diverging from the VM's silence.
+    fn emit_toplevel_binding_releases(&mut self, ctx: &mut Context) -> Result<(), PlironError> {
+        for var in (0..self.func.n_vars as u32).rev() {
+            let Some(ty) = self.func.var_tys.get(&var).cloned() else {
+                continue;
+            };
+            if !matches!(self.var_lower_ty(var)?, LowerTy::Aggregate { .. })
+                || !(self.needs_drop(&ty) || self.owns_heap(&ty))
+            {
+                continue;
+            }
+            if self.chain_runs_user_lifecycle(&ty, "__deinit__") {
+                return Err(self.unsupported(
+                    format!("module-level binding of `{ty}` whose teardown runs a user destructor"),
+                    None,
+                ));
+            }
+            let Some(flag) = self.drop_flags.get(&var).copied() else {
+                return Err(self.unsupported(
+                    format!("module-level binding of `{ty}` without a guarded slot"),
+                    None,
+                ));
+            };
+            let ptr = self.var_slots[var as usize];
+            let cont = self.begin_flag_guard(ctx, flag);
+            let traced = self.trace_lifecycle;
+            self.trace_lifecycle = false;
+            let released = self.emit_drop_value(ctx, ptr, &ty, false);
+            self.trace_lifecycle = traced;
+            released?;
+            self.set_drop_flag(ctx, var, false);
+            self.end_flag_guard(ctx, cont);
+        }
+        Ok(())
+    }
+
+    /// Whether `ty`'s teardown/copy chain can reach a user-authored
+    /// lifecycle method (`__deinit__`/`__copyinit__`/`__moveinit__`),
+    /// walking struct fields and pointer element types (a container reaches
+    /// pointed-to elements through its compiled chain). Stdlib-authored
+    /// chains are exempt: pure frees/relocations, nothing user-observable.
+    fn chain_runs_user_lifecycle(&self, ty: &Ty, method: &str) -> bool {
+        match ty {
+            Ty::Struct(name, _) => {
+                let template = name.split("$mono").next().unwrap_or(name);
+                let stdlib = template.starts_with("__module$std$")
+                    || crate::symbol::is_stdlib_string_struct(name)
+                    || matches!(
+                        template,
+                        "List" | "Dict" | "Set" | "Optional" | "Array" | "Span" | "StringSpan"
+                    );
+                if !stdlib && self.declarations.contains_key(&format!("{name}.{method}")) {
+                    return true;
+                }
+                self.struct_decls.get(name.as_str()).is_some_and(|decl| {
+                    decl.fields
+                        .iter()
+                        .any(|(_, field)| self.chain_runs_user_lifecycle(field, method))
+                })
+            }
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+                .iter()
+                .any(|element| self.chain_runs_user_lifecycle(element, method)),
+            Ty::Pointer { element, .. } => self.chain_runs_user_lifecycle(element, method),
+            _ => false,
+        }
     }
 
     /// A normal return from a raising function: store the ok payload into the
@@ -9987,6 +10848,86 @@ impl<'a> FnLowering<'a> {
 /// range-guarded; overflow of the accumulating multiplications wraps, in the
 /// same recorded-divergence class as the plain `+`/`-`/`*` operators (the VM's
 /// `i64::pow` has no defined overflow semantics).
+/// Emit the body of an `invoke` thunk (see [`ModuleShared::ensure_thunk`]):
+/// load/take the capture arguments out of the environment record, forward
+/// the out-pointer and every user argument unchanged, call the lifted
+/// target directly, and return its result.
+fn emit_thunk_body(
+    ctx: &mut Context,
+    func: FuncOp,
+    target: &FnSignature,
+    modes: &str,
+    capture_offsets: &[u64],
+    has_out: bool,
+) {
+    let entry = func.get_or_create_entry_block(ctx);
+    let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+    let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+    let mut next_argument = 0;
+    let argument = |ctx: &Context, next: &mut usize| {
+        let value = entry.deref(ctx).get_argument(*next);
+        *next += 1;
+        value
+    };
+    let mut operands = Vec::new();
+    if has_out {
+        operands.push(argument(ctx, &mut next_argument));
+    }
+    let env = argument(ctx, &mut next_argument);
+    for (mode, offset) in modes.chars().zip(capture_offsets) {
+        let slot = if *offset == 0 {
+            env
+        } else {
+            let index = u32::try_from(*offset).expect("environment offsets fit u32");
+            let gep = GetElementPtrOp::new(ctx, env, vec![GepIndex::Constant(index)], i8_ty);
+            gep.get_operation().insert_at_back(entry, ctx);
+            gep.get_result(ctx)
+        };
+        // Every capture parameter is a reference parameter (the lifted
+        // environment prefix): a `Reference` slot stores the captured
+        // place's address, an owned (`c`/`m`) slot stores the value inline
+        // and passes its own address — the record is the stable storage the
+        // VM's owned-capture re-referencing requires.
+        if mode == 'r' {
+            let load = LoadOp::new(ctx, slot, ptr_ty);
+            load.get_operation().insert_at_back(entry, ctx);
+            operands.push(load.get_result(ctx));
+        } else {
+            operands.push(slot);
+        }
+    }
+    let physical_captures = modes.len();
+    let mut remaining = target
+        .params
+        .iter()
+        .enumerate()
+        .skip(physical_captures)
+        .filter(|(index, param)| {
+            !matches!(param, LowerTy::ZeroSized)
+                || target.ref_params.get(*index).copied().unwrap_or(false)
+        })
+        .count();
+    while remaining > 0 {
+        operands.push(argument(ctx, &mut next_argument));
+        remaining -= 1;
+    }
+    let callee: Identifier = target
+        .mangled
+        .as_str()
+        .try_into()
+        .expect("mangled names are identifier-safe");
+    let call = CallOp::new(
+        ctx,
+        CallOpCallable::Direct(callee),
+        target.func_ty,
+        operands,
+    );
+    call.get_operation().insert_at_back(entry, ctx);
+    let result = target.returns_value.then(|| call.get_result(ctx));
+    let ret = ReturnOp::new(ctx, result);
+    ret.get_operation().insert_at_back(entry, ctx);
+}
+
 fn emit_pow_body(ctx: &mut Context, func: FuncOp) {
     let entry = func.get_or_create_entry_block(ctx);
     let region = func
@@ -10458,18 +11399,5 @@ fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::Next { .. } => "Next",
         MirInstr::TryNext { .. } => "TryNext",
         MirInstr::Unsupported(_) => "Unsupported",
-    }
-}
-
-fn const_name(k: &MirConst) -> &'static str {
-    match k {
-        MirConst::Int(_) => "Int",
-        MirConst::Float(_) => "Float",
-        MirConst::IntLiteral(_) => "IntLiteral",
-        MirConst::FloatLiteral(_) => "FloatLiteral",
-        MirConst::Bool(_) => "Bool",
-        MirConst::Str(_) => "Str",
-        MirConst::Function(_) => "Function",
-        MirConst::None => "None",
     }
 }

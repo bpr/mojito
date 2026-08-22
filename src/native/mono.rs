@@ -214,6 +214,7 @@ impl<'a> Specializer<'a> {
                 None
             }
         });
+
         let key = InstanceKey {
             template: template.to_string(),
             arguments,
@@ -569,6 +570,100 @@ impl<'a> Specializer<'a> {
                         for param_arg in param_arg_regs.iter_mut() {
                             param_arg.value = None;
                         }
+                    }
+                    // An indirect call whose callee is a nominal callable
+                    // struct devirtualizes into a direct `__call__` method
+                    // call — the VM's `runtime_method_name` dispatch, made
+                    // static — so the ordinary method lowering (mut-receiver
+                    // write-back, outcome, sret) serves it. Func-typed
+                    // callees keep the instruction and lower through their
+                    // two-word `{invoke, env}` value.
+                    MirInstr::CallIndirect {
+                        dest,
+                        callee,
+                        resolved,
+                        raises,
+                        args,
+                        kwargs,
+                        callee_place,
+                        arg_places,
+                        kwarg_places,
+                        param_arg_regs,
+                        ..
+                    } => {
+                        let Some(receiver) = function.reg_types.get(&callee.0) else {
+                            continue;
+                        };
+                        let Ty::Struct(receiver_name, _) = peel_refs(receiver) else {
+                            continue;
+                        };
+                        let target = crate::symbol::resolve_method_symbol(
+                            self.functions.iter().map(|(name, f)| CallableCandidate {
+                                name,
+                                n_params: f.n_params,
+                            }),
+                            nominal_template(receiver_name),
+                            "__call__",
+                            resolved.as_deref(),
+                            args.len() + kwargs.len(),
+                        );
+                        if !self.functions.contains_key(target.as_str()) {
+                            continue;
+                        }
+                        let (target, bindings, arguments) = self.infer_call(
+                            owner,
+                            function,
+                            &target,
+                            Some(*callee),
+                            *dest,
+                            args,
+                            kwargs,
+                        )?;
+                        let concrete = self.enqueue(&target, bindings, arguments)?;
+                        *instruction = MirInstr::MethodCall {
+                            dest: *dest,
+                            recv: *callee,
+                            method: "__call__".to_string(),
+                            resolved: Some(concrete),
+                            raises: raises.clone(),
+                            reference_result: None,
+                            result_adapter: None,
+                            args: std::mem::take(args),
+                            kwargs: std::mem::take(kwargs),
+                            recv_place: callee_place.take(),
+                            arg_places: std::mem::take(arg_places),
+                            kwarg_places: std::mem::take(kwarg_places),
+                            capture_accesses: Vec::new(),
+                            param_arg_regs: std::mem::take(param_arg_regs),
+                            param_decls: Vec::new(),
+                        };
+                    }
+                    // A retained callable names its lifted body on the
+                    // instruction; enqueue it so the reachable graph carries
+                    // the compiled target the thunk will call. Lifted bodies
+                    // are monomorphic in the supported subset — one whose
+                    // signature still spells generic parameters (a lambda
+                    // inside an unspecialized generic) rejects contextually.
+                    MirInstr::MakeClosure {
+                        function: target, ..
+                    }
+                    | MirInstr::Const {
+                        k: Const::Function(target),
+                        ..
+                    } => {
+                        let Some(body) = self.functions.get(target.as_str()).copied() else {
+                            continue;
+                        };
+                        if let Some(ty) = function_types(body).find(|ty| is_symbolic(ty)) {
+                            return Err(self.error(
+                                Some(owner),
+                                format!(
+                                    "retained callable `{target}` over unresolved generic \
+                                     parameters (`{ty}`)"
+                                ),
+                            ));
+                        }
+                        *target = self.enqueue(target, self.base_bindings(), Vec::new())?;
                     }
                     // A value-parameter read (`Self.length`) resolves to
                     // the bound constant carried by the receiver instance's
@@ -1507,7 +1602,114 @@ fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
         (Ty::ComptimeList(a), Ty::ComptimeList(b)) | (Ty::VariadicPack(a), Ty::VariadicPack(b)) => {
             ty_equal_modulo_origins(a, b)
         }
+        // Callable environments (`thin` vs `capturing[origin@N]`) and
+        // parameter-name/convention spellings erase from the runtime ABI:
+        // one two-word value shape serves every `def(...)` contract with the
+        // same parameter/return/raising structure.
+        (
+            Ty::Func {
+                params: a_params,
+                ret: a_ret,
+                required: a_required,
+                variadic: a_variadic,
+                kw_variadic: a_kw_variadic,
+                positional_only: a_positional_only,
+                keyword_only: a_keyword_only,
+                raises: a_raises,
+                error: a_error,
+                ..
+            },
+            Ty::Func {
+                params: b_params,
+                ret: b_ret,
+                required: b_required,
+                variadic: b_variadic,
+                kw_variadic: b_kw_variadic,
+                positional_only: b_positional_only,
+                keyword_only: b_keyword_only,
+                raises: b_raises,
+                error: b_error,
+                ..
+            },
+        ) => {
+            let option_eq = |a: &Option<Box<Ty>>, b: &Option<Box<Ty>>| match (a, b) {
+                (Some(a), Some(b)) => ty_equal_modulo_origins(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            a_raises == b_raises
+                && a_required == b_required
+                && a_positional_only == b_positional_only
+                && a_keyword_only == b_keyword_only
+                && a_params.len() == b_params.len()
+                && a_params
+                    .iter()
+                    .zip(b_params)
+                    .all(|(a, b)| ty_equal_modulo_origins(a, b))
+                && ty_equal_modulo_origins(a_ret, b_ret)
+                && option_eq(a_variadic, b_variadic)
+                && option_eq(a_kw_variadic, b_kw_variadic)
+                && option_eq(a_error, b_error)
+        }
         _ => a == b,
+    }
+}
+
+/// Erase the callable-environment spelling from every `Ty::Func` in `ty`,
+/// recursively. Environments (`thin` vs `capturing[...]`) are semantic
+/// origin facts with no runtime ABI: instance identity and binding solutions
+/// must not split on them (`capturing[_]` vs `capturing[origin@N]` is the
+/// same closure value).
+fn canonicalize_callable(ty: &Ty) -> Ty {
+    let mut canonical = ty.clone();
+    erase_callable_environments(&mut canonical);
+    canonical
+}
+
+fn erase_callable_environments(ty: &mut Ty) {
+    match ty {
+        Ty::Func {
+            environment,
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            error,
+            ..
+        } => {
+            *environment = crate::origin::CallableEnvironment::Default;
+            for param in params {
+                erase_callable_environments(param);
+            }
+            erase_callable_environments(ret);
+            if let Some(variadic) = variadic {
+                erase_callable_environments(variadic);
+            }
+            if let Some(kw_variadic) = kw_variadic {
+                erase_callable_environments(kw_variadic);
+            }
+            if let Some(error) = error {
+                erase_callable_environments(error);
+            }
+        }
+        Ty::Struct(_, args) => {
+            for arg in args {
+                if let TyArg::Ty(ty) = arg {
+                    erase_callable_environments(ty);
+                }
+            }
+        }
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            for element in elements {
+                erase_callable_environments(element);
+            }
+        }
+        Ty::ComptimeList(element) | Ty::VariadicPack(element) => {
+            erase_callable_environments(element);
+        }
+        Ty::Pointer { element, .. } => erase_callable_environments(element),
+        Ty::Ref(reference) => erase_callable_environments(&mut reference.referent),
+        _ => {}
     }
 }
 
@@ -1649,6 +1851,59 @@ fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), Strin
             Ty::Ref(a) if p.mutability == a.mutability => unify(&p.referent, &a.referent, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
+        // Callable contracts unify on their runtime structure — parameters,
+        // return, raising — never on the environment (`thin` vs
+        // `capturing[...]`) or origin spellings, which erase from the ABI.
+        Ty::Func {
+            params: p_params,
+            ret: p_ret,
+            required: p_required,
+            variadic: p_variadic,
+            kw_variadic: p_kw_variadic,
+            positional_only: p_positional_only,
+            keyword_only: p_keyword_only,
+            raises: p_raises,
+            error: p_error,
+            ..
+        } => match actual {
+            Ty::Func {
+                params: a_params,
+                ret: a_ret,
+                required: a_required,
+                variadic: a_variadic,
+                kw_variadic: a_kw_variadic,
+                positional_only: a_positional_only,
+                keyword_only: a_keyword_only,
+                raises: a_raises,
+                error: a_error,
+                ..
+            } if p_params.len() == a_params.len()
+                && p_required == a_required
+                && p_positional_only == a_positional_only
+                && p_keyword_only == a_keyword_only
+                && p_raises == a_raises =>
+            {
+                let unify_option = |p: &Option<Box<Ty>>,
+                                    a: &Option<Box<Ty>>,
+                                    bindings: &mut Bindings|
+                 -> Result<(), String> {
+                    match (p, a) {
+                        (Some(p), Some(a)) => unify(p, a, bindings),
+                        (None, None) => Ok(()),
+                        _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+                    }
+                };
+                p_params
+                    .iter()
+                    .zip(a_params)
+                    .try_for_each(|(p, a)| unify(p, a, bindings))?;
+                unify(p_ret, a_ret, bindings)?;
+                unify_option(p_variadic, a_variadic, bindings)?;
+                unify_option(p_kw_variadic, a_kw_variadic, bindings)?;
+                unify_option(p_error, a_error, bindings)
+            }
+            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+        },
         _ if pattern == actual => Ok(()),
         _ => Err(format!("expected `{pattern}`, found `{actual}`")),
     }
@@ -1683,6 +1938,10 @@ fn bind_type(name: &str, ty: &Ty, bindings: &mut Bindings) -> Result<(), String>
     if is_symbolic(ty) {
         return Err(format!("solution for `{name}` is not concrete: `{ty}`"));
     }
+    // Solutions join instance identity: erase callable-environment spellings
+    // so `capturing[origin@N]` and `thin` variants of one contract are one
+    // instance.
+    let ty = &canonicalize_callable(ty);
     let literal = |ty: &Ty| matches!(ty, Ty::IntLiteral | Ty::FloatLiteral | Ty::StringLiteral);
     match bindings.types.get(name) {
         // A literal-typed actual materializes into whatever concrete storage

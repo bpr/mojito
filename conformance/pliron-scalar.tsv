@@ -146,6 +146,9 @@ assets/ok/parameterized_assoc_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_mut_iterator_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_alloc_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_builtin_numeric_edges.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_callable_struct.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_closure_drop_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_closure_env.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_convert_bool.mojo	compute	differential	ret=Int
 assets/ok/pliron_convert_int_float.mojo	compute	differential	ret=Int
 assets/ok/pliron_convert_uint.mojo	compute	differential	ret=Int
@@ -194,6 +197,7 @@ assets/ok/pliron_struct_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_struct_fieldwise.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_struct_init_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_subscript_ref.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pliron_thin_callables.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_try_cleanup_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_try_handled_error.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_try_loop_escape.mojo	-	ineligible	no-scalar-entry-shape
