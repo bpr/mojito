@@ -326,15 +326,10 @@ pub(super) fn declare_function(
             _ if by_reference => param_handles.push(PointerType::get(ctx, 0).into()),
             LowerTy::Scalar(scalar) => param_handles.push(scalar.handle(ctx)),
             LowerTy::Aggregate { .. } => param_handles.push(PointerType::get(ctx, 0).into()),
-            LowerTy::ZeroSized => {
-                return Err(PlironError {
-                    function: Some(name.to_string()),
-                    kind: PlironErrorKind::Unsupported {
-                        construct: "zero-sized parameter".into(),
-                    },
-                    location: None,
-                });
-            }
+            // A zero-sized parameter (a `NoneType` overload marker like
+            // `__list_literal__`) carries no runtime data: it keeps its
+            // signature entry but no physical argument.
+            LowerTy::ZeroSized => {}
         }
         params.push(lowered);
     }
@@ -397,6 +392,7 @@ pub(super) fn lower_body(
         trace_lifecycle: env.trace_lifecycle,
         reg_values: HashMap::new(),
         pending_literals: HashMap::new(),
+        pack_positions: HashMap::new(),
         str_consts: HashMap::new(),
         str_runtime: HashMap::new(),
         owned_temps: HashMap::new(),
@@ -404,6 +400,7 @@ pub(super) fn lower_body(
         position: (0, 0),
         erased: HashSet::new(),
         partially_moved: HashSet::new(),
+        leaf_flags: HashMap::new(),
         pointer_slot_refs: HashSet::new(),
         drop_flags: HashMap::new(),
         var_slots: Vec::new(),
@@ -894,6 +891,9 @@ struct FnLowering<'a> {
     reg_values: HashMap<u32, Value>,
     /// Registers holding a not-yet-materialized literal.
     pending_literals: HashMap<u32, PendingLiteral>,
+    /// Backend-side advance positions of pack-fallback iterator slots
+    /// (the slot itself keeps the pack layout), keyed by iterator variable.
+    pack_positions: HashMap<u32, Value>,
     /// Registers holding a compile-time string literal (its exact bytes).
     str_consts: HashMap<u32, Vec<u8>>,
     /// Registers holding a runtime string as a `(data, len)` SSA pair.
@@ -918,6 +918,12 @@ struct FnLowering<'a> {
     /// variable must skip the moved parts (the VM tombstones them); when the
     /// drop would emit destructor work, lowering rejects instead of guessing.
     partially_moved: HashSet<u32>,
+    /// Per-variable `i1` presence flags for top-level leaves (struct fields
+    /// or pack elements) that a depth-1 `MovePlace` moves out somewhere in
+    /// the body — the VM's `Value::Moved` tombstones. Drops and consumption
+    /// destroy exactly the surviving leaves and suppress the whole-value
+    /// destructor when any tracked leaf is absent.
+    leaf_flags: HashMap<u32, std::collections::BTreeMap<usize, Value>>,
     /// `MakeRef` results that address pointer-typed storage: a value access
     /// through such a handle first loads the stored pointer (the VM's
     /// reference-pointer boundary). A plain pointer value (a loaded pointer
@@ -1039,12 +1045,29 @@ impl<'a> FnLowering<'a> {
                 || (param_ty.is_some() && ref_params.get(var).copied().unwrap_or(false))
         };
         let one = self.int_constant(ctx, 1);
+        // Zero-sized parameters have no physical argument; later parameters'
+        // argument indexes shift left past them.
+        let physical_index = |var: usize| {
+            arg_offset
+                + param_tys[..var]
+                    .iter()
+                    .filter(|ty| !matches!(ty, Some(LowerTy::ZeroSized)))
+                    .count()
+        };
         for (var, param_ty) in param_tys.iter().enumerate() {
             match param_ty {
+                // A zero-sized parameter's slot is never read (its uses
+                // erase); a null placeholder keeps the slot indexes aligned.
+                Some(LowerTy::ZeroSized) => {
+                    let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+                    let null = ZeroOp::new(ctx, ptr_ty);
+                    self.append(ctx, null.get_operation(), None);
+                    self.var_slots.push(null.get_result(ctx));
+                }
                 // Aggregate and `mut`/`ref` parameter slots alias the
                 // incoming pointer (write-through).
                 _ if param_by_pointer(var, param_ty) => {
-                    let incoming = entry.deref(ctx).get_argument(arg_offset + var);
+                    let incoming = entry.deref(ctx).get_argument(physical_index(var));
                     self.var_slots.push(incoming);
                 }
                 _ => {
@@ -1077,10 +1100,10 @@ impl<'a> FnLowering<'a> {
             }
         }
         for (param, param_ty) in param_tys.iter().take(self.func.n_params).enumerate() {
-            if param_by_pointer(param, param_ty) {
+            if param_by_pointer(param, param_ty) || matches!(param_ty, Some(LowerTy::ZeroSized)) {
                 continue;
             }
-            let value = entry.deref(ctx).get_argument(arg_offset + param);
+            let value = entry.deref(ctx).get_argument(physical_index(param));
             let store = StoreOp::new(ctx, value, self.var_slots[param]);
             self.append(ctx, store.get_operation(), None);
         }
@@ -1106,6 +1129,39 @@ impl<'a> FnLowering<'a> {
             let store = StoreOp::new(ctx, init, alloca.get_result(ctx));
             self.append(ctx, store.get_operation(), None);
             self.drop_flags.insert(var as u32, alloca.get_result(ctx));
+        }
+        // Depth-1 projected moves leave a variable partially initialized;
+        // give each moved top-level leaf a presence flag so later drops and
+        // consumption destroy exactly the surviving leaves.
+        let mut move_places = Vec::new();
+        collect_projected_move_places(&self.func.blocks, &mut move_places);
+        let leaf_targets: Vec<(u32, usize)> = move_places
+            .iter()
+            .filter_map(|place| self.leaf_position(place).map(|pos| (place.root, pos)))
+            .collect();
+        for (var, position) in leaf_targets {
+            let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)? else {
+                continue;
+            };
+            if !self.needs_drop(&ty) {
+                continue;
+            }
+            if self
+                .leaf_flags
+                .get(&var)
+                .is_some_and(|leaves| leaves.contains_key(&position))
+            {
+                continue;
+            }
+            let alloca = AllocaOp::new(ctx, i1, one);
+            self.append(ctx, alloca.get_operation(), None);
+            let init = self.bool_constant(ctx, true);
+            let store = StoreOp::new(ctx, init, alloca.get_result(ctx));
+            self.append(ctx, store.get_operation(), None);
+            self.leaf_flags
+                .entry(var)
+                .or_default()
+                .insert(position, alloca.get_result(ctx));
         }
         let jump = BrOp::new(ctx, self.blocks[0], vec![]);
         self.append(ctx, jump.get_operation(), None);
@@ -1159,10 +1215,28 @@ impl<'a> FnLowering<'a> {
             }
             MirInstr::MovePlace { dest, place } => {
                 // Moving out of a projection leaves the variable partially
-                // initialized; record it so a later whole-variable drop can
-                // refuse destructor work instead of double-freeing.
+                // initialized. A tracked top-level leaf clears its presence
+                // flag (later drops skip it, like the VM's `Value::Moved`
+                // tombstone); anything deeper records the blanket marker so
+                // a whole-variable drop refuses destructor work instead of
+                // double-freeing.
                 if !place.proj.is_empty() {
-                    self.partially_moved.insert(place.root);
+                    let flagged = self.leaf_position(place).and_then(|position| {
+                        self.leaf_flags
+                            .get(&place.root)
+                            .and_then(|leaves| leaves.get(&position))
+                            .copied()
+                    });
+                    match flagged {
+                        Some(flag) => {
+                            let absent = self.bool_constant(ctx, false);
+                            let store = StoreOp::new(ctx, absent, flag);
+                            self.append(ctx, store.get_operation(), None);
+                        }
+                        None => {
+                            self.partially_moved.insert(place.root);
+                        }
+                    }
                 }
                 let (address, ty) = self.place_address(ctx, place, *dest)?;
                 // A move relocates the bytes — ownership transfers to the
@@ -1195,9 +1269,19 @@ impl<'a> FnLowering<'a> {
                 // plain store/copy is exact.
                 let (address, ty) = self.place_address(ctx, place, *src)?;
                 self.store_to(ctx, address, &ty, *src)?;
-                // A whole-variable store (re)initializes the slot.
+                // A whole-variable store (re)initializes the slot; a store
+                // into a tracked leaf restores that leaf's presence.
                 if place.proj.is_empty() && place.through.is_none() {
                     self.set_drop_flag(ctx, place.root, true);
+                } else if let Some(position) = self.leaf_position(place)
+                    && let Some(&flag) = self
+                        .leaf_flags
+                        .get(&place.root)
+                        .and_then(|leaves| leaves.get(&position))
+                {
+                    let present = self.bool_constant(ctx, true);
+                    let store = StoreOp::new(ctx, present, flag);
+                    self.append(ctx, store.get_operation(), None);
                 }
                 Ok(())
             }
@@ -1674,9 +1758,14 @@ impl<'a> FnLowering<'a> {
                 &[]
             };
             let mut lowered = vec![storage];
+            // A variadic callee always binds through the slot matcher: an
+            // argument count that happens to equal the physical parameter
+            // count (arity one against the single pack slot) must still
+            // build pack storage, never pass the argument as the pack.
             if kwargs.is_empty()
                 && args.len() == rest.len()
                 && !rest_by_reference.iter().any(|&by_ref| by_ref)
+                && !self.variadic_callee(name)
             {
                 for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
                     let owned = rest_owned.get(i).copied().unwrap_or(false);
@@ -1703,41 +1792,42 @@ impl<'a> FnLowering<'a> {
             self.reg_values.insert(dest.0, storage);
             return Ok(());
         }
-        let lowered_args = if kwargs.is_empty() && args.len() == params.len() {
-            let mut lowered = Vec::with_capacity(args.len());
-            for (i, (arg, expected)) in args.iter().zip(&params).enumerate() {
-                let owned = owned.get(i).copied().unwrap_or(false);
-                let value = if by_reference.get(i).copied().unwrap_or(false) {
-                    // A `mut`/`ref` argument passes the address of the
-                    // caller's designated storage (write-through).
-                    let Some(place) = arg_places.get(i).and_then(Option::as_ref) else {
-                        return Err(self.unsupported_reg(
-                            format!("`mut`/`ref` argument of `{name}` without a place"),
-                            dest,
-                        ));
+        let lowered_args =
+            if kwargs.is_empty() && args.len() == params.len() && !self.variadic_callee(name) {
+                let mut lowered = Vec::with_capacity(args.len());
+                for (i, (arg, expected)) in args.iter().zip(&params).enumerate() {
+                    let owned = owned.get(i).copied().unwrap_or(false);
+                    let value = if by_reference.get(i).copied().unwrap_or(false) {
+                        // A `mut`/`ref` argument passes the address of the
+                        // caller's designated storage (write-through).
+                        let Some(place) = arg_places.get(i).and_then(Option::as_ref) else {
+                            return Err(self.unsupported_reg(
+                                format!("`mut`/`ref` argument of `{name}` without a place"),
+                                dest,
+                            ));
+                        };
+                        let place = place.clone();
+                        self.place_address(ctx, &place, dest)?.0
+                    } else {
+                        self.arg_value(ctx, *arg, expected, owned, dest)?
                     };
-                    let place = place.clone();
-                    self.place_address(ctx, &place, dest)?.0
-                } else {
-                    self.arg_value(ctx, *arg, expected, owned, dest)?
-                };
-                lowered.push(value);
-            }
-            lowered
-        } else {
-            self.bind_call_slots(
-                ctx,
-                dest,
-                name,
-                &params,
-                &owned,
-                &by_reference,
-                args,
-                kwargs,
-                arg_places,
-                kwarg_places,
-            )?
-        };
+                    lowered.push(value);
+                }
+                lowered
+            } else {
+                self.bind_call_slots(
+                    ctx,
+                    dest,
+                    name,
+                    &params,
+                    &owned,
+                    &by_reference,
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
+                )?
+            };
         self.emit_bound_call(ctx, dest, name, lowered_args)
     }
 
@@ -1770,9 +1860,10 @@ impl<'a> FnLowering<'a> {
                 dest,
             ));
         };
-        if decl.variadic.is_some() || decl.kw_variadic.is_some() {
-            return Err(self.unsupported_reg(format!("variadic call to `{name}`"), dest));
+        if decl.kw_variadic.is_some() {
+            return Err(self.unsupported_reg(format!("keyword-variadic call to `{name}`"), dest));
         }
+        let variadic = decl.variadic.clone().map(|ty| (ty, decl.variadic_index));
         let kw_names: Vec<&str> = kwargs.iter().map(|(n, _)| n.as_str()).collect();
         let matched = match_call_slots(
             &decl.param_names,
@@ -1782,23 +1873,99 @@ impl<'a> FnLowering<'a> {
             args.len(),
             &kw_names,
             CallVariadics {
-                positional: false,
+                positional: variadic.is_some(),
                 keyword: false,
             },
         )
         .map_err(|error| {
             self.unsupported_reg(format!("call binding for `{name}` failed: {error:?}"), dest)
         })?;
-        if matched.slots.len() != params.len() {
+        let defaults = decl.defaults.clone();
+        // The physical parameter list is the named parameters with the
+        // collected pack inserted at `variadic_index` (the VM's `bind_args`
+        // packs positional overflow into one tuple-shaped argument).
+        let pack = match variadic {
+            None => None,
+            Some((pack_ty, index)) => {
+                let Some(index) = index else {
+                    return Err(self.unsupported_reg(
+                        format!("variadic call to `{name}` without a recorded pack position"),
+                        dest,
+                    ));
+                };
+                let elements = match &pack_ty {
+                    Ty::RuntimePack(elements) | Ty::Tuple(elements) => elements.clone(),
+                    other => {
+                        return Err(self.unsupported_reg(
+                            format!("variadic call to `{name}` over unspecialized `{other}`"),
+                            dest,
+                        ));
+                    }
+                };
+                if matched.positional_overflow.len() != elements.len() {
+                    return Err(self.unsupported_reg(
+                        format!(
+                            "variadic call to `{name}`: {} overflow arguments against a \
+                             {}-element pack",
+                            matched.positional_overflow.len(),
+                            elements.len()
+                        ),
+                        dest,
+                    ));
+                }
+                let composed = self.struct_layout_of(&elements, dest)?;
+                let storage = self.entry_alloca(
+                    ctx,
+                    composed.layout.size.max(1),
+                    composed.layout.align.max(1),
+                );
+                for ((arg, element), offset) in matched
+                    .positional_overflow
+                    .iter()
+                    .zip(&elements)
+                    .zip(&composed.offsets)
+                {
+                    let address = if *offset == 0 {
+                        storage
+                    } else {
+                        self.gep_byte(ctx, storage, *offset, dest)
+                    };
+                    // Overflow arguments relocate into the pack (the VM's
+                    // `Tuple(*args^)` move); `store_to` transfers owned
+                    // temporaries and forks borrowed heap-owners.
+                    self.store_to(ctx, address, element, args[*arg])?;
+                }
+                Some((index, storage))
+            }
+        };
+        let named = matched.slots.len() + usize::from(pack.is_some());
+        if named != params.len() {
             return Err(self.unsupported_reg(
                 format!("call binding for `{name}` disagrees with its compiled arity"),
                 dest,
             ));
         }
-        let defaults = decl.defaults.clone();
         let mut lowered = Vec::with_capacity(params.len());
-        for (i, slot) in matched.slots.iter().enumerate() {
-            let expected = params[i].clone();
+        let mut slots = matched.slots.iter().enumerate();
+        for (i, param) in params.iter().enumerate() {
+            if let Some((pack_index, storage)) = pack
+                && i == pack_index
+            {
+                lowered.push(storage);
+                continue;
+            }
+            let Some((slot_index, slot)) = slots.next() else {
+                return Err(self.unsupported_reg(
+                    format!("call binding for `{name}` disagrees with its compiled arity"),
+                    dest,
+                ));
+            };
+            let expected = param.clone();
+            // A zero-sized marker parameter (`__list_literal__`) has no
+            // physical operand; its slot is consumed and skipped.
+            if matches!(expected, LowerTy::ZeroSized) {
+                continue;
+            }
             let owned = owned.get(i).copied().unwrap_or(false);
             let by_ref = by_reference.get(i).copied().unwrap_or(false);
             let place_address = |lowering: &mut Self,
@@ -1829,7 +1996,7 @@ impl<'a> FnLowering<'a> {
                             dest,
                         ));
                     }
-                    let Some(default) = defaults.get(i).and_then(Option::as_ref) else {
+                    let Some(default) = defaults.get(slot_index).and_then(Option::as_ref) else {
                         return Err(self.unsupported_reg(
                             format!("non-constant default argument in call to `{name}`"),
                             dest,
@@ -3249,10 +3416,18 @@ impl<'a> FnLowering<'a> {
                 format!("copy of `{ty}` with a nested user `__copyinit__`"),
                 dest,
             ));
+        } else if self.owns_heap(ty) {
+            // Drop elaboration may destroy the owning variable immediately
+            // after its last use — before this temporary is read — so
+            // aliasing its buffers is not an option under real frees: fork
+            // the copy and release it after its own last use (the VM's
+            // arena-shared plain clone, made explicit).
+            self.fork_value_into(ctx, storage, ty, layout, src_ptr, dest)?;
+            self.reg_values.insert(dest.0, storage);
+            self.mark_owned_temp(dest, ty.clone())?;
+            return Ok(());
         } else {
-            // A byte copy shares any heap its fields point at (the VM's plain
-            // clone does too); the owning variable's drop releases it, so the
-            // temporary must not.
+            // A byte copy of a heap-less value carries everything it needs.
             self.mem_copy(ctx, storage, src_ptr, layout.size, dest);
         }
         self.reg_values.insert(dest.0, storage);
@@ -3366,6 +3541,16 @@ impl<'a> FnLowering<'a> {
         }
     }
 
+    /// Whether `name`'s declaration takes a variadic pack. Such callees
+    /// always bind through the slot matcher — an argument count equal to the
+    /// physical parameter count (arity one against the pack slot) must still
+    /// build pack storage.
+    fn variadic_callee(&self, name: &str) -> bool {
+        self.declarations
+            .get(name)
+            .is_some_and(|decl| decl.variadic.is_some())
+    }
+
     /// Record `dest` as an owned heap-carrying temporary, released after its
     /// final use in this block. A temporary whose final use sits in another
     /// block would need liveness analysis — reject instead of leaking.
@@ -3381,6 +3566,9 @@ impl<'a> FnLowering<'a> {
                 "owned heap-carrying temporary used across blocks".into(),
                 dest,
             ));
+        }
+        if std::env::var_os("MOJITO_PLIRON_DBG_TEMPS").is_some() {
+            eprintln!("TEMP-DBG {} mark %r{} {ty}", self.name, dest.0);
         }
         self.owned_temps.insert(dest.0, ty);
         Ok(())
@@ -3400,6 +3588,9 @@ impl<'a> FnLowering<'a> {
             .collect();
         for (reg, ty) in due {
             self.owned_temps.remove(&reg);
+            if std::env::var_os("MOJITO_PLIRON_DBG_TEMPS").is_some() {
+                eprintln!("TEMP-DBG {} release %r{} {ty}", self.name, reg);
+            }
             self.emit_release_reg(ctx, reg, &ty)?;
         }
         Ok(())
@@ -4191,7 +4382,7 @@ impl<'a> FnLowering<'a> {
             &[]
         };
         let mut lowered = vec![recv_value];
-        if kwargs.is_empty() && args.len() == rest.len() {
+        if kwargs.is_empty() && args.len() == rest.len() && !self.variadic_callee(resolved) {
             for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
                 let owned = rest_owned.get(i).copied().unwrap_or(false);
                 let value = if rest_by_reference.get(i).copied().unwrap_or(false) {
@@ -4496,6 +4687,9 @@ impl<'a> FnLowering<'a> {
         let mut operands = vec![recv_value];
         for (i, slot) in matched.slots.iter().enumerate() {
             let expected = rest[i].clone();
+            if matches!(expected, LowerTy::ZeroSized) {
+                continue;
+            }
             let owned = rest_owned.get(i).copied().unwrap_or(false);
             let by_ref = rest_by_reference.get(i).copied().unwrap_or(false);
             let actual = match slot {
@@ -4805,6 +4999,20 @@ impl<'a> FnLowering<'a> {
         dest: u32,
         prepare: &[String],
     ) -> Result<(), PlironError> {
+        // The compiler-private pack fallback (the VM's `remove(0)` loop):
+        // the split slot keeps the pack layout; a backend-side shadow slot
+        // holds the advance position. Handled before the identity check —
+        // in-place normalization still zeroes the position.
+        if prepare.is_empty()
+            && let Some(elements) = self.pack_iter_elements(dest)
+            && (source == dest
+                || matches!(
+                    self.func.var_tys.get(&source),
+                    Some(Ty::RuntimePack(_) | Ty::Tuple(_))
+                ))
+        {
+            return self.lower_pack_iter_init(ctx, source, dest, &elements);
+        }
         if prepare.is_empty() && source == dest {
             // Identity normalization: the slot already holds the iterator.
             return Ok(());
@@ -4955,6 +5163,60 @@ impl<'a> FnLowering<'a> {
     /// `HasNext`: the bounded protocol's pure length read — call the
     /// iterator's `__len__` and compare greater-than-zero. The receiver
     /// passes as a plain byte copy (the VM clones its value for the call).
+    /// The pack element list of `iter`'s split slot, when the monomorphizer
+    /// typed it for the compiler-private pack fallback.
+    fn pack_iter_elements(&self, iter: u32) -> Option<Vec<Ty>> {
+        match self.func.var_tys.get(&iter) {
+            Some(Ty::RuntimePack(elements) | Ty::Tuple(elements)) => Some(elements.clone()),
+            _ => None,
+        }
+    }
+
+    /// The backend-side advance position of a pack-fallback iterator slot
+    /// (the slot itself keeps the pack layout), created on first use.
+    fn pack_position_slot(&mut self, ctx: &mut Context, iter: u32) -> Value {
+        if let Some(slot) = self.pack_positions.get(&iter) {
+            return *slot;
+        }
+        // A typed slot: mem2reg promotes an alloca at its element type, and
+        // a byte-array slot would promote as `i8` under the i64 loads.
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let slot = self.entry_typed_alloca(ctx, i64_handle);
+        self.pack_positions.insert(iter, slot);
+        slot
+    }
+
+    /// Initialize a pack-fallback iterator: position zero, and — for a
+    /// distinct destination slot — the pack bytes relocated (a raw move,
+    /// the VM's iterator-slot pack copy).
+    fn lower_pack_iter_init(
+        &mut self,
+        ctx: &mut Context,
+        source: u32,
+        dest: u32,
+        elements: &[Ty],
+    ) -> Result<(), PlironError> {
+        for element in elements {
+            if self.owns_heap(element) || self.has_nested_lifecycle(element, "__deinit__") {
+                return Err(self.unsupported(
+                    format!("pack iteration over lifecycle element `{element}`"),
+                    None,
+                ));
+            }
+        }
+        let position = self.pack_position_slot(ctx, dest);
+        let zero = self.int_constant(ctx, 0);
+        let store = StoreOp::new(ctx, zero, position);
+        self.append(ctx, store.get_operation(), None);
+        if source != dest {
+            let composed = self.struct_layout_of(elements, Reg(u32::MAX))?;
+            let from = self.var_slots[source as usize];
+            let to = self.var_slots[dest as usize];
+            self.mem_copy(ctx, to, from, composed.layout.size, Reg(u32::MAX));
+        }
+        Ok(())
+    }
+
     fn lower_has_next(
         &mut self,
         ctx: &mut Context,
@@ -4963,8 +5225,18 @@ impl<'a> FnLowering<'a> {
         method: Option<&str>,
     ) -> Result<(), PlironError> {
         let Some(method) = method else {
-            // Compiler-private pack/comptime storage never reaches the
-            // native path with a nominal method.
+            // The compiler-private pack fallback: the shadow position
+            // against the static element count.
+            if let Some(elements) = self.pack_iter_elements(iter) {
+                let position_slot = self.pack_position_slot(ctx, iter);
+                let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+                let position = LoadOp::new(ctx, position_slot, i64_handle);
+                self.append(ctx, position.get_operation(), Some(dest));
+                let count = self.int_constant(ctx, elements.len() as i64);
+                let more =
+                    ICmpOp::new(ctx, ICmpPredicateAttr::SLT, position.get_result(ctx), count);
+                return self.define(ctx, dest, more.get_operation(), more.get_result(ctx));
+            }
             return Err(self.unsupported_reg("method-free iterator length read".into(), dest));
         };
         let Some(signature) = self.signatures.get(method) else {
@@ -5024,6 +5296,75 @@ impl<'a> FnLowering<'a> {
         call: Option<&crate::checked::CheckedIteratorCall>,
     ) -> Result<(), PlironError> {
         let Some(call) = call else {
+            // The compiler-private pack fallback: read the element at the
+            // cursor position and advance (the VM's `remove(0)` pop, with
+            // the position standing in for the shift).
+            if let Some(elements) = self.pack_iter_elements(iter) {
+                let Some(first) = elements.first() else {
+                    // An empty pack's advance is dead code (`HasNext` is
+                    // statically false); define a zeroed destination.
+                    match lower_ty(
+                        self.name,
+                        self.func.reg_types.get(&dest.0).unwrap_or(&Ty::Int),
+                        &self.layout,
+                        self.reg_span(dest),
+                    )? {
+                        LowerTy::Scalar(_) => {
+                            let zero = self.int_constant(ctx, 0);
+                            self.reg_values.insert(dest.0, zero);
+                        }
+                        LowerTy::Aggregate { layout, .. } => {
+                            let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                            self.reg_values.insert(dest.0, storage);
+                        }
+                        LowerTy::ZeroSized => {
+                            self.erased.insert(dest.0);
+                        }
+                    }
+                    return Ok(());
+                };
+                if elements.iter().any(|element| element != first) {
+                    return Err(self.unsupported_reg("heterogeneous pack advance".into(), dest));
+                }
+                let composed = self.struct_layout_of(&elements, dest)?;
+                let stride = if elements.len() > 1 {
+                    composed.offsets[1] - composed.offsets[0]
+                } else {
+                    0
+                };
+                let slot = self.var_slots[iter as usize];
+                let position_slot = self.pack_position_slot(ctx, iter);
+                let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+                let position = LoadOp::new(ctx, position_slot, i64_handle);
+                self.append(ctx, position.get_operation(), Some(dest));
+                let stride_value = self.int_constant(ctx, stride as i64);
+                let scaled = MulOp::new_with_overflow_flag(
+                    ctx,
+                    position.get_result(ctx),
+                    stride_value,
+                    no_overflow_flags(),
+                );
+                self.append(ctx, scaled.get_operation(), Some(dest));
+                let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+                let address = GetElementPtrOp::new(
+                    ctx,
+                    slot,
+                    vec![GepIndex::Value(scaled.get_result(ctx))],
+                    i8_ty,
+                );
+                self.append(ctx, address.get_operation(), Some(dest));
+                let one = self.int_constant(ctx, 1);
+                let next = AddOp::new_with_overflow_flag(
+                    ctx,
+                    position.get_result(ctx),
+                    one,
+                    no_overflow_flags(),
+                );
+                self.append(ctx, next.get_operation(), Some(dest));
+                let store = StoreOp::new(ctx, next.get_result(ctx), position_slot);
+                self.append(ctx, store.get_operation(), Some(dest));
+                return self.load_from(ctx, address.get_result(ctx), first, dest);
+            }
             return Err(self.unsupported_reg("method-free iterator advance".into(), dest));
         };
         let signature = self.iterator_next_signature(&call.target, dest)?;
@@ -5437,6 +5778,20 @@ impl<'a> FnLowering<'a> {
             // storage its `out self` wrote through.
             self.erased.remove(&dest.0);
             self.reg_values.insert(dest.0, storage);
+            // The constructed value owns its heap: consumers relocate it
+            // (`DefVar`, stores) and a discarded result releases invisibly.
+            // Without the mark, a store forks the value and the original's
+            // buffers lose their releasing owner. A cross-block lifetime
+            // keeps the pre-existing shared-bytes behavior instead of
+            // rejecting.
+            if self.owns_heap(&ty)
+                && self
+                    .last_uses
+                    .get(&dest.0)
+                    .is_none_or(|(block, _)| *block == self.position.0)
+            {
+                self.mark_owned_temp(dest, (*ty).clone())?;
+            }
             return Ok(());
         }
         let decl = self.struct_decls[name];
@@ -5602,6 +5957,30 @@ impl<'a> FnLowering<'a> {
             );
             return Ok(());
         }
+        // A nominal struct converts through its `write_to` conformance over
+        // a fresh accumulator — the VM's `format_value` struct arm. The
+        // accumulated buffer transfers into the resulting owned string.
+        if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
+            && !crate::symbol::is_stdlib_string_struct(&name)
+        {
+            let writer = self.entry_alloca(ctx, 16, 8);
+            self.mem_zero(ctx, writer, 16);
+            self.append_struct_via_write_to(ctx, arg, &name, writer, dest)?;
+            let (data, len) = self.string_parts(ctx, writer, dest);
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+            // The accumulator alloca is exactly the 16-byte `MjStrDesc`
+            // StringLiteral storage; aggregate consumers read it directly.
+            self.reg_values.insert(dest.0, writer);
+            self.mark_owned_temp(dest, Ty::StringLiteral)?;
+            return Ok(());
+        }
         let ty = match self.concrete_scalar_ty(arg)? {
             Some(ty) => ty,
             // A runtime FloatLiteral value rejects — the VM formats its
@@ -5748,6 +6127,11 @@ impl<'a> FnLowering<'a> {
 
     /// A lifecycle event with a compile-time payload (a type name).
     fn emit_trace_text(&mut self, ctx: &mut Context, kind: u32, text: &str) {
+        // Lifecycle events name types as the VM logs them: the bare template
+        // (`List`), never the backend's monomorphized instance spelling
+        // (`List$mono$TInt`). Checker-specialized names (`Tuple$t2[…]`) are
+        // the runtime struct name on both sides and pass through.
+        let text = text.split("$mono").next().unwrap_or(text);
         let global = self.shared.intern_string(ctx, text.as_bytes());
         let data = self.global_address(ctx, &global, Reg(u32::MAX));
         let len = self.uint_constant(ctx, text.len() as u64);
@@ -6749,6 +7133,41 @@ impl<'a> FnLowering<'a> {
                 }
                 let ptr = self.var_slots[var as usize];
                 let flag = self.drop_flags.get(&var).copied();
+                if let Some(leaves) = self.leaf_flags.get(&var).cloned() {
+                    // Tracked depth-1 moves: destroy the surviving leaves;
+                    // any absent leaf suppresses the whole-value destructor
+                    // (the VM's partial-aggregate rule).
+                    let cont = flag.map(|flag| self.begin_flag_guard(ctx, flag));
+                    if self.has_lifecycle_method(&ty, "__deinit__") {
+                        if self.fields_need_drop(&ty) {
+                            let name = match ty.as_ref() {
+                                Ty::Struct(name, _) => name.as_str(),
+                                _ => "?",
+                            };
+                            return Err(self.unsupported(
+                                format!("destructor of `{name}` with droppable fields"),
+                                None,
+                            ));
+                        }
+                        // `__deinit__` runs only when every tracked leaf
+                        // survives.
+                        let guards: Vec<Ptr<BasicBlock>> = leaves
+                            .values()
+                            .map(|&leaf| self.begin_flag_guard(ctx, leaf))
+                            .collect();
+                        self.emit_drop_value(ctx, ptr, &ty, false)?;
+                        for guard in guards.into_iter().rev() {
+                            self.end_flag_guard(ctx, guard);
+                        }
+                    } else {
+                        self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves)?;
+                    }
+                    self.set_drop_flag(ctx, var, false);
+                    if let Some(cont) = cont {
+                        self.end_flag_guard(ctx, cont);
+                    }
+                    return Ok(());
+                }
                 match flag {
                     Some(flag) => {
                         let cont = self.begin_flag_guard(ctx, flag);
@@ -6770,16 +7189,28 @@ impl<'a> FnLowering<'a> {
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
             LowerTy::Aggregate { ty, .. } => {
-                if self.fields_need_drop(&ty) {
-                    return Err(
-                        self.unsupported("variable consumption with droppable fields".into(), None)
-                    );
-                }
                 if self.trace_lifecycle
                     && let Ty::Struct(name, _) = ty.as_ref()
                 {
                     let name = name.clone();
                     self.emit_trace_text(ctx, crate::native::rt_abi::TRACE_CONSUME, &name);
+                }
+                if self.fields_need_drop(&ty) {
+                    // The named explicit destructor consumed the aggregate;
+                    // its surviving fields still receive their ordinary
+                    // reverse-order destruction (the VM's `ConsumeVar`).
+                    // Only struct consumption destroys fields, and deeper
+                    // untracked moves reject rather than guess.
+                    if !matches!(ty.as_ref(), Ty::Struct(..)) || self.partially_moved.contains(&var)
+                    {
+                        return Err(self.unsupported(
+                            "variable consumption with droppable fields".into(),
+                            None,
+                        ));
+                    }
+                    let leaves = self.leaf_flags.get(&var).cloned().unwrap_or_default();
+                    let ptr = self.var_slots[var as usize];
+                    self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves)?;
                 }
                 self.set_drop_flag(ctx, var, false);
                 Ok(())
@@ -6816,12 +7247,97 @@ impl<'a> FnLowering<'a> {
     /// Store `value` into `var`'s initialization flag; a no-op for variables
     /// without one (nothing droppable to guard).
     fn set_drop_flag(&mut self, ctx: &mut Context, var: u32, value: bool) {
+        // A whole-value (re)initialization makes every tracked leaf present
+        // again.
+        if value && let Some(leaves) = self.leaf_flags.get(&var) {
+            let leaves: Vec<Value> = leaves.values().copied().collect();
+            let present = self.bool_constant(ctx, true);
+            for flag in leaves {
+                let store = StoreOp::new(ctx, present, flag);
+                self.append(ctx, store.get_operation(), None);
+            }
+        }
         let Some(&flag) = self.drop_flags.get(&var) else {
             return;
         };
         let constant = self.bool_constant(ctx, value);
         let store = StoreOp::new(ctx, constant, flag);
         self.append(ctx, store.get_operation(), None);
+    }
+
+    /// Destroy the surviving droppable top-level leaves of partially-tracked
+    /// storage: leaves with a presence flag drop under that flag's guard, the
+    /// rest unconditionally. Struct fields destroy in reverse declaration
+    /// order and pack elements left-to-right — the VM's `drop_value` orders.
+    fn emit_surviving_leaf_drops(
+        &mut self,
+        ctx: &mut Context,
+        ptr: Value,
+        ty: &Ty,
+        leaves: &std::collections::BTreeMap<usize, Value>,
+    ) -> Result<(), PlironError> {
+        let (element_tys, forward) = match ty {
+            Ty::Struct(name, _) => {
+                let Some(decl) = self.struct_decls.get(name.as_str()).copied() else {
+                    return Ok(());
+                };
+                let tys: Vec<Ty> = decl.fields.iter().map(|(_, field)| field.clone()).collect();
+                (tys, false)
+            }
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => (elements.clone(), true),
+            _ => return Ok(()),
+        };
+        let composed = self
+            .layout
+            .struct_layout(&element_tys)
+            .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
+        let order: Vec<usize> = if forward {
+            (0..element_tys.len()).collect()
+        } else {
+            (0..element_tys.len()).rev().collect()
+        };
+        for position in order {
+            let element = element_tys[position].clone();
+            if !self.needs_drop(&element) {
+                continue;
+            }
+            let offset = composed.offsets[position];
+            let address = if offset == 0 {
+                ptr
+            } else {
+                self.gep_byte_unspanned(ctx, ptr, offset)
+            };
+            match leaves.get(&position).copied() {
+                Some(flag) => {
+                    let cont = self.begin_flag_guard(ctx, flag);
+                    self.emit_drop_value(ctx, address, &element, false)?;
+                    self.end_flag_guard(ctx, cont);
+                }
+                None => self.emit_drop_value(ctx, address, &element, false)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// The top-level leaf position a depth-1 projection addresses — a
+    /// declared field of a struct-typed variable or a constant element of
+    /// tuple/pack storage. These are the only shapes the per-leaf presence
+    /// flags track; anything else keeps the blanket partially-moved marker.
+    fn leaf_position(&self, place: &MirPlace) -> Option<usize> {
+        if place.proj.len() != 1 || place.through.is_some() {
+            return None;
+        }
+        let ty = self.func.var_tys.get(&place.root)?;
+        match (ty, &place.proj[0]) {
+            (Ty::Struct(name, _), Proj::Field(field)) => self
+                .struct_decls
+                .get(name.as_str())
+                .and_then(|decl| decl.fields.iter().position(|(name, _)| name == field)),
+            (Ty::Tuple(elements) | Ty::RuntimePack(elements), Proj::ConstIndex(index)) => {
+                (*index < elements.len()).then_some(*index)
+            }
+            _ => None,
+        }
     }
 
     /// Emit the VM's `drop_value` over storage: the struct's compiled
@@ -7231,6 +7747,16 @@ impl<'a> FnLowering<'a> {
             }
             LowerTy::Aggregate { ty, layout } => {
                 let ptr = self.reg_ptr(ctx, src)?;
+                // Owned string bytes cannot enter literal-typed storage:
+                // the literal value model is drop-inert, so the buffer would
+                // lose its releasing owner (the recorded literal-ownership
+                // gap behind the struct-to-literal bridge rejection).
+                if matches!(*ty, Ty::StringLiteral) && self.owned_temps.contains_key(&src.0) {
+                    return Err(self.unsupported(
+                        "owned string bytes entering drop-inert literal storage".into(),
+                        self.reg_span(src),
+                    ));
+                }
                 // An owned temporary transfers into the designated storage;
                 // a borrowed heap-owning source clones instead — its byte
                 // copy would alias buffers both owners release.
@@ -7418,6 +7944,55 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
+    /// Append one nominal struct's display text into an existing
+    /// builtin-string writer by calling its unique compiled `write_to`
+    /// instance with that writer — the VM's `format_value` recursion when a
+    /// `Writer.write` argument is itself a struct.
+    fn append_struct_via_write_to(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        name: &str,
+        writer: Value,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let prefix = format!("{name}.write_to");
+        let mut candidates = self
+            .signatures
+            .iter()
+            .filter(|(fname, _)| fname.starts_with(&prefix));
+        let Some((_, signature)) = candidates.next() else {
+            return Err(self.unsupported_reg(
+                format!("display of `{name}` without a compiled `write_to`"),
+                dest,
+            ));
+        };
+        if candidates.next().is_some() {
+            return Err(self.unsupported_reg(
+                format!("display of `{name}` with ambiguous `write_to` instances"),
+                dest,
+            ));
+        }
+        if signature.outcome.is_some() {
+            return Err(self.unsupported_reg(format!("raising `{prefix}`"), dest));
+        }
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let recv_ptr = self.reg_ptr(ctx, arg)?;
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            vec![recv_ptr, writer],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        Ok(())
+    }
+
     /// The builtin-string writer's `write`: grow-and-append each argument's
     /// display text into the `mut`-aliased `{data, len}` descriptor — the
     /// VM's `Value::Str` writer.
@@ -7440,6 +8015,12 @@ impl<'a> FnLowering<'a> {
         let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
         for arg in args {
+            if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
+                && !crate::symbol::is_stdlib_string_struct(&name)
+            {
+                self.append_struct_via_write_to(ctx, *arg, &name, descriptor, dest)?;
+                continue;
+            }
             let (chunk, chunk_len) = self.writer_argument_text(ctx, *arg, dest)?;
             let data = LoadOp::new(ctx, descriptor, ptr_handle);
             self.append(ctx, data.get_operation(), Some(dest));
@@ -7683,6 +8264,136 @@ impl<'a> FnLowering<'a> {
     /// on `Value::Str`: `+` concatenates into a new interned literal, `==` and
     /// `!=` fold to Bool constants. Both operands must be compile-time
     /// literals — no runtime StringLiteral representation exists.
+    /// The `(data, len)` byte pair of a string-shaped operand: an interned
+    /// constant, a runtime string pair, or StringLiteral/String descriptor
+    /// storage.
+    fn string_operand_parts(
+        &mut self,
+        ctx: &mut Context,
+        reg: Reg,
+        dest: Reg,
+    ) -> Result<(Value, Value), PlironError> {
+        if let Some(bytes) = self.str_consts.get(&reg.0).cloned() {
+            let global = self.shared.intern_string(ctx, &bytes);
+            let data = self.global_address(ctx, &global, dest);
+            let len = self.uint_constant(ctx, bytes.len() as u64);
+            return Ok((data, len));
+        }
+        if let Some(descriptor) = self.str_runtime.get(&reg.0).copied() {
+            return Ok((descriptor.data, descriptor.len));
+        }
+        match self.func.reg_types.get(&reg.0) {
+            Some(Ty::StringLiteral | Ty::Error) => {
+                let ptr = self.reg_ptr(ctx, reg)?;
+                Ok(self.string_parts(ctx, ptr, dest))
+            }
+            Some(Ty::Struct(name, _)) if crate::symbol::is_stdlib_string_struct(name) => {
+                let ptr = self.reg_ptr(ctx, reg)?;
+                Ok(self.string_parts(ctx, ptr, dest))
+            }
+            _ => Err(self.unsupported_reg("string operand".into(), dest)),
+        }
+    }
+
+    /// Runtime string equality: equal lengths and equal bytes, via an inline
+    /// byte-compare loop over slot-backed state (mem2reg promotes it).
+    fn lower_str_runtime_eq(
+        &mut self,
+        ctx: &mut Context,
+        op: InfixOp,
+        dest: Reg,
+        a: Reg,
+        b: Reg,
+    ) -> Result<(), PlironError> {
+        let (a_data, a_len) = self.string_operand_parts(ctx, a, dest)?;
+        let (b_data, b_len) = self.string_operand_parts(ctx, b, dest)?;
+        let i1_handle: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let i8_handle: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let result_slot = self.entry_typed_alloca(ctx, i1_handle);
+        let index_slot = self.entry_typed_alloca(ctx, i64_handle);
+        let len_eq = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, a_len, b_len);
+        self.append(ctx, len_eq.get_operation(), Some(dest));
+        let store = StoreOp::new(ctx, len_eq.get_result(ctx), result_slot);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let zero = self.int_constant(ctx, 0);
+        let store = StoreOp::new(ctx, zero, index_slot);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let region = self.region.expect("lowering is inside a function");
+        let head = BasicBlock::new(ctx, None, vec![]);
+        head.insert_at_back(region, ctx);
+        let body = BasicBlock::new(ctx, None, vec![]);
+        body.insert_at_back(region, ctx);
+        let done = BasicBlock::new(ctx, None, vec![]);
+        done.insert_at_back(region, ctx);
+        let enter = BrOp::new(ctx, head, vec![]);
+        self.append(ctx, enter.get_operation(), Some(dest));
+        // head: continue while `index < len` and no mismatch was found.
+        self.current = Some(head);
+        let index = LoadOp::new(ctx, index_slot, i64_handle);
+        self.append(ctx, index.get_operation(), Some(dest));
+        let result = LoadOp::new(ctx, result_slot, i1_handle);
+        self.append(ctx, result.get_operation(), Some(dest));
+        let in_range = ICmpOp::new(ctx, ICmpPredicateAttr::ULT, index.get_result(ctx), a_len);
+        self.append(ctx, in_range.get_operation(), Some(dest));
+        let live = AndOp::new(ctx, in_range.get_result(ctx), result.get_result(ctx));
+        self.append(ctx, live.get_operation(), Some(dest));
+        let branch = CondBrOp::new(ctx, live.get_result(ctx), body, vec![], done, vec![]);
+        self.append(ctx, branch.get_operation(), Some(dest));
+        // body: compare one byte, fold into the result, advance.
+        self.current = Some(body);
+        let index = LoadOp::new(ctx, index_slot, i64_handle);
+        self.append(ctx, index.get_operation(), Some(dest));
+        let a_byte_ptr = GetElementPtrOp::new(
+            ctx,
+            a_data,
+            vec![GepIndex::Value(index.get_result(ctx))],
+            i8_handle,
+        );
+        self.append(ctx, a_byte_ptr.get_operation(), Some(dest));
+        let a_byte = LoadOp::new(ctx, a_byte_ptr.get_result(ctx), i8_handle);
+        self.append(ctx, a_byte.get_operation(), Some(dest));
+        let b_byte_ptr = GetElementPtrOp::new(
+            ctx,
+            b_data,
+            vec![GepIndex::Value(index.get_result(ctx))],
+            i8_handle,
+        );
+        self.append(ctx, b_byte_ptr.get_operation(), Some(dest));
+        let b_byte = LoadOp::new(ctx, b_byte_ptr.get_result(ctx), i8_handle);
+        self.append(ctx, b_byte.get_operation(), Some(dest));
+        let byte_eq = ICmpOp::new(
+            ctx,
+            ICmpPredicateAttr::EQ,
+            a_byte.get_result(ctx),
+            b_byte.get_result(ctx),
+        );
+        self.append(ctx, byte_eq.get_operation(), Some(dest));
+        let store = StoreOp::new(ctx, byte_eq.get_result(ctx), result_slot);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let one = self.int_constant(ctx, 1);
+        let next =
+            AddOp::new_with_overflow_flag(ctx, index.get_result(ctx), one, no_overflow_flags());
+        self.append(ctx, next.get_operation(), Some(dest));
+        let store = StoreOp::new(ctx, next.get_result(ctx), index_slot);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let advance = BrOp::new(ctx, head, vec![]);
+        self.append(ctx, advance.get_operation(), Some(dest));
+        // done: the folded verdict, negated for `!=`.
+        self.current = Some(done);
+        let result = LoadOp::new(ctx, result_slot, i1_handle);
+        self.append(ctx, result.get_operation(), Some(dest));
+        let mut value = result.get_result(ctx);
+        if matches!(op, InfixOp::Ne) {
+            let truth = self.bool_constant(ctx, true);
+            let flipped = XorOp::new(ctx, value, truth);
+            self.append(ctx, flipped.get_operation(), Some(dest));
+            value = flipped.get_result(ctx);
+        }
+        self.reg_values.insert(dest.0, value);
+        Ok(())
+    }
+
     fn lower_str_literal_binop(
         &mut self,
         ctx: &mut Context,
@@ -7943,6 +8654,22 @@ impl<'a> FnLowering<'a> {
     ) -> Result<(), PlironError> {
         if let Some(target) = resolved {
             return Err(self.unsupported_reg(format!("nominal operator overload `{target}`"), dest));
+        }
+        if self.str_consts.contains_key(&a.0) && self.str_consts.contains_key(&b.0) {
+            return self.lower_str_literal_binop(ctx, op, dest, a, b);
+        }
+        // Equality over runtime string-literal values (a `Dict[StringLiteral,
+        // …]` key probe) compares bytes — the VM's `Value::Str` equality.
+        let string_shaped = |lowering: &Self, reg: Reg| {
+            lowering.str_consts.contains_key(&reg.0)
+                || lowering.str_runtime.contains_key(&reg.0)
+                || matches!(lowering.func.reg_types.get(&reg.0), Some(Ty::StringLiteral))
+        };
+        if matches!(op, InfixOp::Eq | InfixOp::Ne)
+            && string_shaped(self, a)
+            && string_shaped(self, b)
+        {
+            return self.lower_str_runtime_eq(ctx, op, dest, a, b);
         }
         if self.str_consts.contains_key(&a.0) || self.str_consts.contains_key(&b.0) {
             return self.lower_str_literal_binop(ctx, op, dest, a, b);
@@ -9392,6 +10119,41 @@ fn c_abi_type(ctx: &mut Context, ty: crate::native::rt_abi::CAbiTy) -> TypeHandl
         CAbiTy::U64 | CAbiTy::I64 => IntegerType::get(ctx, 64, Signedness::Signless).into(),
         CAbiTy::F64 => FP64Type::get(ctx).into(),
         CAbiTy::PtrConstU8 | CAbiTy::PtrMutU8 => PointerType::get(ctx, 0).into(),
+    }
+}
+
+/// Collect every `MovePlace` with a projection under `blocks`, recursing
+/// into `try` sub-regions — the pre-scan that decides which variables need
+/// per-leaf presence flags in the entry block.
+fn collect_projected_move_places<'m>(
+    blocks: &'m [crate::mir::MirBlock],
+    out: &mut Vec<&'m MirPlace>,
+) {
+    for block in blocks {
+        for instr in &block.instrs {
+            match instr {
+                MirInstr::MovePlace { place, .. } if !place.proj.is_empty() => out.push(place),
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    collect_projected_move_places(body, out);
+                    if let Some((_, handler_blocks)) = handler {
+                        collect_projected_move_places(handler_blocks, out);
+                    }
+                    if let Some(orelse_blocks) = orelse {
+                        collect_projected_move_places(orelse_blocks, out);
+                    }
+                    if let Some(final_blocks) = finalbody {
+                        collect_projected_move_places(final_blocks, out);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 

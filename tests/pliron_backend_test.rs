@@ -919,16 +919,16 @@ fn parity_exe_manifest_and_differential() {
     let raises = count("raise-differential");
     let excluded = count("excluded");
     assert!(
-        differential >= 206,
-        "exe-differential coverage unexpectedly shrank: {differential} < 206"
+        differential >= 229,
+        "exe-differential coverage unexpectedly shrank: {differential} < 229"
     );
     assert!(
         raises >= 4,
         "raise-differential coverage unexpectedly shrank: {raises} < 4"
     );
     assert!(
-        excluded <= 83,
-        "excluded coverage unexpectedly grew: {excluded} > 83"
+        excluded <= 61,
+        "excluded coverage unexpectedly grew: {excluded} > 61"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
@@ -973,13 +973,13 @@ fn native_error(src: &str, entries: &[&str]) -> String {
 fn unsupported_constructs_produce_contextual_diagnostics() {
     // (source, entries, phrases the diagnostic must contain)
     let cases: &[(&str, &[&str], &[&str])] = &[
-        // A struct-name constructor call over a backend-monomorphized
-        // generic instance stays outside the direct-call contract until the
-        // Collections slice canonicalizes instance identities.
+        // A whole-value destructor combined with independently droppable
+        // fields destroys only dynamically knowable residues — the S5.7
+        // dynamic-residue drop family.
         (
             "struct Res(Movable, Deinitable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n\nstruct Box[T: Movable & Deinitable](Deinitable):\n    var value: Self.T\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n    def __deinit__(deinit self):\n        print(\"box gone\")\n\ndef compute() -> Int:\n    var b = Box[Res](Res(7))\n    return 1\n",
             &["compute"],
-            &["constructor for `Box` without a compiled `__init__`"],
+            &["destructor of `Box$mono$TRes` with droppable fields"],
         ),
         // Pointer element arithmetic lowers `+` only (the `unsafe_offset`
         // form); `-` keeps a contextual rejection.
@@ -1022,19 +1022,6 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
         // the supported subset until the closure stage.
         (
             "def compute() -> Int:\n    def inner() -> Int:\n        return 1\n    return inner()\n",
-            &["compute"],
-            &["pliron backend:", "unsupported"],
-        ),
-        // Variadic calls stay outside the bound-call contract.
-        (
-            "def total(*xs: Int) -> Int:\n    var s = 0\n    for x in xs:\n        s = s + x\n    return s\n\ndef compute() -> Int:\n    return total(1, 2, 3)\n",
-            &["compute"],
-            &["pliron backend:", "unsupported"],
-        ),
-        // Collections drag stdlib helpers into the reachable closure; the
-        // rejection may surface in the deepest unsupported callee.
-        (
-            "def compute() -> Int:\n    var xs = List[Int]()\n    return 1\n",
             &["compute"],
             &["pliron backend:", "unsupported"],
         ),
@@ -1085,10 +1072,11 @@ fn lifecycle_event_traces_match_the_vm() {
         "assets/ok/try_return.mojo",
         "assets/ok/pliron_struct_drop_order.mojo",
         "assets/ok/pliron_iter_drop_order.mojo",
-        // pliron_list_core stays out of this lane: native traces spell
-        // canonicalized instance names (`List$mono$TInt`) where the VM logs
-        // bare templates, and generic-collection copy/consume event parity
-        // is the Collections part-B trace-normalization item.
+        "assets/ok/pliron_partial_move_drop.mojo",
+        // pliron_list_core stays out of this lane even with instance names
+        // normalized to bare templates: generic-collection copy/consume
+        // events differ structurally (compiled destructor chains trace
+        // element drops the VM's arena never performs).
     ] {
         let src = std::fs::read_to_string(fixture).expect("fixture exists");
         let compiler = Compiler::default();

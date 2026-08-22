@@ -410,6 +410,88 @@ the `List.grow` unresolved-`T` group alone was 43 excluded rows.
   lifecycle-trace lane keeps its prior fixtures: native traces spell
   canonicalized instance names (`List$mono$TInt`) where the VM logs bare
   templates — trace-name normalization joins part B.
-- Part B (variadic packs, per-field initialization flags, the
-  destructor-bearing iterator element residue, trace-name normalization)
-  follows as the slice's second ratchet point.
+### Part B — variadic packs, per-leaf flags, trace normalization
+
+- **Variadic direct calls and runtime packs.** Monomorphization
+  specializes a variadic callee per call-site arity: each overflow
+  positional unifies against the declared pack *element* type (the
+  declaration records the element — a concrete `RuntimePack`/`Tuple`
+  spelling means the checker already specialized it), the arity joins the
+  instance identity as a value argument (`sum$mono$V3`), and substitution
+  reifies both the parameter and `VariadicPack(T)` spellings into concrete
+  `RuntimePack([T'; n])`. Lowering builds pack storage at the declaration's
+  recorded pack position by *relocating* each overflow argument
+  (`store_to` transfers owned temporaries — the VM's `Tuple(*args^)`
+  move); zero-sized marker parameters (`__list_literal__`'s `NoneType`)
+  keep signature entries but no physical arguments. A variadic callee
+  always binds through the slot matcher: an argument count equal to the
+  physical parameter count (arity one against the single pack slot) must
+  still build pack storage. Pack-fallback iteration advances a
+  backend-side position slot (a typed `i64` entry alloca — byte-array
+  slots mispromote under mem2reg) over the uniform-stride element layout;
+  an empty pack's advance is a zeroed dead-code edge.
+- **Value parameters.** A value-parameter member read (`Self.length`)
+  folds to the bound constant carried by the receiver instance's type
+  arguments in both its MIR spellings (`GetField`, and `place.load` with
+  one `Field` projection); the redundant call-site value registers erase
+  after a successful resolve (the instance identity carries the
+  solutions). A comptime-specialized subscript accessor
+  (`Tuple$tN.__getitem_param__$i`) joins its constant index to the
+  instance identity — receiver-only identity collapsed same-element-type
+  indexes onto one body.
+- **Per-leaf presence flags (partial-move drops).** A depth-1 `MovePlace`
+  out of a struct field or pack element clears a per-leaf `i1` presence
+  flag (allocated in the entry block for every leaf some move targets);
+  whole-variable stores and `DefVar` restore them. `DropVar` over a
+  tracked variable destroys exactly the surviving leaves — struct fields
+  in reverse declaration order, pack elements left-to-right (the VM's
+  `drop_value` orders) — and any tombstoned leaf suppresses whole-value
+  `__deinit__` work (nested flag guards; the destructor-with-
+  droppable-fields combination still rejects). `ConsumeVar` with
+  droppable fields destroys the surviving droppable struct leaves the
+  same way (the VM's post-named-destructor field destruction); deeper
+  untracked moves keep the blanket contextual rejection.
+- **Ownership fixes forced by the new coverage** (each caught by the
+  per-row LSan/ASan lane): a compiled-init constructor result is an owned
+  temporary when it owns heap — unmarked results made a later
+  `self.field = Ctor(...)` store *fork*, stranding the original's buffers
+  with no releasing owner; a plain byte copy of a heap-owning value
+  (`UseMode::Copy` without any copy-constructor chain) forks and releases
+  after its own last use — drop elaboration destroys the owning variable
+  immediately after its last use, before the temporary's read; and owned
+  string bytes may never enter drop-inert literal-typed storage (the
+  recorded literal-ownership gap behind the struct-to-literal bridge) —
+  the `String(writable_struct)` snapshot capture rejects there, so
+  `tstring_forms` returns to the excluded set with a precise reason.
+- **Struct display recursion.** `Writer.write` on the builtin-string
+  accumulator appends nominal arguments through their own compiled
+  `write_to` over the *same* descriptor (the VM's `format_value`
+  recursion); `String(x)` over a nominal struct accumulates through
+  `write_to` into a fresh descriptor that doubles as the 16-byte
+  StringLiteral storage aggregate consumers read. Reachability edges
+  cover both (`print`/`String` calls and str-writer `write` arguments).
+- **Runtime string equality.** `==`/`!=` over runtime string-shaped
+  operands (a `Dict[StringLiteral, _]` key probe in `find_index`) lower
+  as an inline length-then-bytes compare loop over slot-backed state;
+  compile-time constant pairs keep folding.
+- **Trace-name normalization.** Lifecycle events spell the bare template
+  (`List`) the VM logs, splitting off the `$mono` instance suffix;
+  checker-specialized names (`Tuple$t2[…]`) are the runtime struct name
+  on both sides and pass through. `pliron_list_core` still stays out of
+  the trace lane: generic-collection copy/consume event *sets* differ
+  structurally (compiled destructor chains trace element drops the VM's
+  arena never performs).
+- Fixtures: `pliron_tuple_pack` (public Tuple + `*args` at arities 0/1/3;
+  pack relocation under the sanitizer lane) and `pliron_partial_move_drop`
+  (conditional depth-1 field move, early return, surviving-leaf drops;
+  also in the lifecycle-trace lane). Debug: `MOJITO_PLIRON_DBG_TEMPS=1`
+  prints owned-temporary marks and releases per function.
+- Flips beyond the plan's list: `dunder_vec2`, `comptime_alias_generic`,
+  `self_hosted_algorithms`, and the four Dict-iteration ownership rows
+  (`__moveinit__` consumption now destroys surviving leaves; their keys
+  compare as runtime literals). `generic_copyable_iterator_refinement`
+  landed with part A's raising-reference `__next__` — the
+  destructor-bearing-element residue had no remaining rows, so part B
+  ships no `TryNext` flag machinery.
+- Ratchets: 206 → 229+ exe-differential, 83 → ≤61 excluded (set to
+  observed counts at regen; two new pliron rows join the manifest).

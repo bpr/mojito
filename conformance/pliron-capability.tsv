@@ -39,7 +39,7 @@ instruction	index.multi_set	supported	`__setitem__` dispatch with the keyword or
 instruction	place.store	supported	whole-variable stores set the initialization flag
 instruction	place.store_ref	supported	stores the reference handle
 instruction	place.load	partial	layoutable, typed places
-instruction	tuple.make	partial	typed element lists
+instruction	tuple.make	supported	typed element lists; variadic call sites build packs by relocation
 instruction	variant.make	unsupported	Stage 5: Variant
 instruction	variant.is	unsupported	Stage 5: Variant
 instruction	variant.get	unsupported	Stage 5: Variant
@@ -54,8 +54,8 @@ instruction	simd.shuffle	unsupported	Stage 5: SIMD scalar semantics
 instruction	raise	supported	tagged-outcome error edge
 instruction	try	supported	structural flattening with cleanup drops and finally dispatch
 instruction	drop.reg	unsupported	reserved for the future assembler VM; the VM rejects it too
-instruction	drop.var	partial	flag-guarded compiled destructors; dynamic-residue drops (partial moves, droppable-field consumes) reject
-instruction	consume.var	supported	clears the initialization flag
+instruction	drop.var	partial	flag-guarded compiled destructors; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject
+instruction	consume.var	supported	clears the initialization flag; surviving droppable struct fields destroy in reverse order under the per-leaf flags
 instruction	consume.place	partial	no droppable residual fields
 instruction	unsupported	unsupported	explicit lowering marker; rejects by definition
 instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject
@@ -86,7 +86,7 @@ type	Error	supported	MjError storage
 type	comptime_list	unsupported	CTFE bridge; no runtime values
 type	tuple	partial	concrete element layouts only
 type	runtime_pack	partial	concrete element layouts only
-type	variadic_pack	unsupported	Stage 5 monomorphization substitutes concrete packs
+type	variadic_pack	partial	monomorphization reifies call-site arities into concrete runtime packs; unspecialized packs never reach lowering
 type	variant	unsupported	Stage 5: Variant
 type	pointer	supported	one opaque pointer; element layouts checked at use sites
 type	ref	supported	one opaque place address

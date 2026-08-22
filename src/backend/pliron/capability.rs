@@ -226,8 +226,8 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "tuple.make",
-        CapabilityStatus::Partial,
-        "typed element lists",
+        CapabilityStatus::Supported,
+        "typed element lists; variadic call sites build packs by relocation",
     ),
     (
         "variant.make",
@@ -302,12 +302,12 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "drop.var",
         CapabilityStatus::Partial,
-        "flag-guarded compiled destructors; dynamic-residue drops (partial moves, droppable-field consumes) reject",
+        "flag-guarded compiled destructors; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject",
     ),
     (
         "consume.var",
         CapabilityStatus::Supported,
-        "clears the initialization flag",
+        "clears the initialization flag; surviving droppable struct fields destroy in reverse order under the per-leaf flags",
     ),
     (
         "consume.place",
@@ -434,8 +434,8 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "variadic_pack",
-        CapabilityStatus::Unsupported,
-        "Stage 5 monomorphization substitutes concrete packs",
+        CapabilityStatus::Partial,
+        "monomorphization reifies call-site arities into concrete runtime packs; unspecialized packs never reach lowering",
     ),
     ("variant", CapabilityStatus::Unsupported, "Stage 5: Variant"),
     (

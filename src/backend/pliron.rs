@@ -757,9 +757,11 @@ fn visit_call_edges<'p>(
                 // intrinsics; their element-erased stdlib bodies must not
                 // be declared.
                 MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => {}
-                // `print` of a nominal struct calls its `write_to` instance
-                // in the lowered expansion.
-                MirInstr::Call { func, args, .. } if func.0 == "print" => {
+                // `print` or `String(...)` of a nominal struct calls its
+                // `write_to` instance in the lowered expansion.
+                MirInstr::Call { func, args, .. }
+                    if matches!(func.0.as_str(), "print" | "String") =>
+                {
                     for arg in args {
                         if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
                             let prefix = format!("{name}.write_to");
@@ -795,15 +797,30 @@ fn visit_call_edges<'p>(
                     }
                 }
                 // The VM-synthesized `Writer.write` dispatch lowers to
-                // `write_string` calls that exist only in the expansion.
+                // `write_string` calls that exist only in the expansion; the
+                // builtin-string writer displays nominal arguments through
+                // their `write_to` instances.
                 MirInstr::MethodCall {
                     recv,
                     method,
                     resolved: None,
+                    args,
                     ..
                 } if method == "write" => {
                     if let Some(Ty::Struct(name, _)) = function.reg_types.get(&recv.0) {
                         push_named(&mut targets, &format!("{name}.write_string"));
+                    }
+                    if matches!(function.reg_types.get(&recv.0), Some(Ty::StringLiteral)) {
+                        for arg in args {
+                            if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
+                                let prefix = format!("{name}.write_to");
+                                for (fname, _) in functions.iter() {
+                                    if fname.starts_with(prefix.as_str()) {
+                                        targets.push(*fname);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 // Iterator instructions carry their targets as symbols rather

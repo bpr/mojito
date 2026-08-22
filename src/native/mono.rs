@@ -9,8 +9,8 @@ use std::rc::Rc;
 use crate::call::{ArgSlot, CallVariadics, match_call_slots};
 use crate::ct::{CtExpr, CtValue};
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirProgram,
-    MirStructDeclaration, Reg,
+    Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
+    MirProgram, MirStructDeclaration, Reg,
 };
 use crate::symbol::{CallableCandidate, InstanceArg};
 use crate::types::{DependentType, ParamDecl, Ty, TyArg};
@@ -62,6 +62,9 @@ struct Bindings {
     /// instance symbol; checker-specialized structs with empty `param_decls`
     /// (the `Tuple$tN` family) keep their names.
     generic_templates: Rc<HashSet<String>>,
+    /// The call-site arity of an unspecialized variadic callee: substitution
+    /// rewrites `VariadicPack(T)` into the concrete `RuntimePack([T'; n])`.
+    variadic_arity: Option<usize>,
 }
 
 struct Specializer<'a> {
@@ -396,6 +399,7 @@ impl<'a> Specializer<'a> {
                         func,
                         args,
                         kwargs,
+                        param_arg_regs,
                         ..
                     } => {
                         if !self.functions.contains_key(func.0.as_str()) {
@@ -403,7 +407,7 @@ impl<'a> Specializer<'a> {
                             // `write_to` over the builtin-string writer (the
                             // VM's `format_value` dispatch); enqueue the
                             // instances the lowered expansion calls.
-                            if func.0 == "print" {
+                            if matches!(func.0.as_str(), "print" | "String") {
                                 for arg in args.clone() {
                                     self.enqueue_display_instance(owner, function, arg)?;
                                 }
@@ -447,6 +451,14 @@ impl<'a> Specializer<'a> {
                                         kwargs,
                                     )?;
                                     self.enqueue(&target, bindings, arguments)?;
+                                    // The instance identity now carries every
+                                    // compile-time solution; the call-site
+                                    // value registers are redundant (a body
+                                    // that still needs one fails its own
+                                    // contextual check).
+                                    for param_arg in param_arg_regs.iter_mut() {
+                                        param_arg.value = None;
+                                    }
                                 }
                                 // A generic struct's output declaration is
                                 // instance-named; respell the constructor
@@ -470,6 +482,9 @@ impl<'a> Specializer<'a> {
                         let (target, bindings, arguments) = self
                             .infer_call(owner, function, &func.0, receiver, *dest, args, kwargs)?;
                         func.0 = self.enqueue(&target, bindings, arguments)?;
+                        for param_arg in param_arg_regs.iter_mut() {
+                            param_arg.value = None;
+                        }
                     }
                     MirInstr::MethodCall {
                         dest,
@@ -478,11 +493,23 @@ impl<'a> Specializer<'a> {
                         resolved,
                         args,
                         kwargs,
+                        param_arg_regs,
                         ..
                     } => {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
                             self.error(Some(owner), "method receiver lacks a MIR type")
                         })?;
+                        // `write` on the builtin-string accumulator (the
+                        // `Value::Str` writer inside a `write_to` expansion)
+                        // formats nominal arguments through their own
+                        // `write_to` conformance — enqueue those instances
+                        // for the lowered recursion.
+                        if method == "write" && matches!(peel_refs(receiver), Ty::StringLiteral) {
+                            for arg in args.clone() {
+                                self.enqueue_display_instance(owner, function, arg)?;
+                            }
+                            continue;
+                        }
                         // A borrowed receiver dispatches on its referent, as
                         // the VM dereferences `Value::Ref` receivers.
                         let Ty::Struct(receiver_name, _) = peel_refs(receiver) else {
@@ -539,6 +566,43 @@ impl<'a> Specializer<'a> {
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *resolved = Some(concrete);
+                        for param_arg in param_arg_regs.iter_mut() {
+                            param_arg.value = None;
+                        }
+                    }
+                    // A value-parameter read (`Self.length`) resolves to
+                    // the bound constant carried by the receiver instance's
+                    // type arguments — the VM's `get_field` value-parameter
+                    // fallback over reified `value_params`.
+                    MirInstr::GetField { dest, base, field } => {
+                        let Some(receiver) = function.reg_types.get(&base.0) else {
+                            continue;
+                        };
+                        let Some(constant) = self.value_param_constant(receiver, field) else {
+                            continue;
+                        };
+                        *instruction = MirInstr::Const {
+                            dest: *dest,
+                            k: constant,
+                        };
+                    }
+                    MirInstr::LoadPlace { dest, place }
+                        if place.proj.len() == 1
+                            && matches!(&place.proj[0], crate::mir::Proj::Field(_)) =>
+                    {
+                        let crate::mir::Proj::Field(field) = &place.proj[0] else {
+                            continue;
+                        };
+                        let Some(receiver) = function.var_tys.get(&place.root) else {
+                            continue;
+                        };
+                        let Some(constant) = self.value_param_constant(receiver, field) else {
+                            continue;
+                        };
+                        *instruction = MirInstr::Const {
+                            dest: *dest,
+                            k: constant,
+                        };
                     }
                     // Checker-selected subscript invocations retarget to
                     // their concrete instances exactly like method calls;
@@ -613,6 +677,36 @@ impl<'a> Specializer<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The constant a value-parameter member read (`Self.length`) resolves
+    /// to, when `field` names a value parameter (not a declared field) of
+    /// the receiver's template and the instance type carries its solution.
+    fn value_param_constant(&self, receiver: &Ty, field: &str) -> Option<Const> {
+        let Ty::Struct(name, type_args) = peel_refs(receiver) else {
+            return None;
+        };
+        let struct_decl = self.structs.get(nominal_template(name)).copied()?;
+        if struct_decl
+            .fields
+            .iter()
+            .any(|(field_name, _)| field_name == field)
+        {
+            return None;
+        }
+        let position = struct_decl
+            .param_decls
+            .iter()
+            .position(|decl| matches!(decl, ParamDecl::Value { name, .. } if name == field))?;
+        let TyArg::Val(value) = type_args.get(position)? else {
+            return None;
+        };
+        match value {
+            CtValue::Int(v) => Some(Const::Int(*v)),
+            CtValue::UInt(v) => Some(Const::Int(*v as i64)),
+            CtValue::Bool(v) => Some(Const::Bool(*v)),
+            _ => None,
+        }
     }
 
     /// Enqueue the `write_to` instance a lowered `print` of a nominal struct
@@ -735,8 +829,29 @@ impl<'a> Specializer<'a> {
         } else {
             dest.and_then(|dest| function.reg_types.get(&dest.0))
         };
-        let (bindings, arguments, _) =
+        let (mut bindings, mut arguments, _) =
             self.infer_receiver_call(owner, &target, &receiver_ty, result)?;
+        // A comptime-specialized accessor (`Tuple$tN.__getitem__[i: Int]`)
+        // varies by its value parameter: the constant index joins the
+        // instance identity — sharing on the receiver alone would collapse
+        // same-element-type indexes onto one body — and binds for the
+        // instance body's value-parameter reads.
+        for (decl, param_arg) in call.param_decls.iter().zip(&call.param_arg_regs) {
+            let ParamDecl::Value { name, .. } = decl else {
+                continue;
+            };
+            if bindings.values.contains_key(name.as_str()) {
+                continue;
+            }
+            let value = param_arg
+                .value
+                .and_then(|reg| const_reg_value(function, reg));
+            let Some(value) = value else {
+                return Ok(());
+            };
+            bindings.values.insert(name.clone(), value.clone());
+            arguments.push(InstanceArg::Value(value));
+        }
         call.target = self.enqueue(&target, bindings, arguments)?;
         Ok(())
     }
@@ -832,6 +947,26 @@ impl<'a> Specializer<'a> {
                 })?;
             }
         }
+        // An unspecialized variadic callee instantiates at its call-site
+        // arity: each overflow positional unifies against the pack element
+        // and the arity joins the instance identity. Checker-specialized
+        // packs (`Tuple$tN`'s concrete `RuntimePack`) keep their identity.
+        let variadic_arity = match &declaration.variadic {
+            // The declaration records the pack ELEMENT type; a concrete
+            // `RuntimePack`/`Tuple` spelling means the checker already
+            // specialized the pack (`Tuple$tN`).
+            Some(element) if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)) => {
+                for index in &slots.positional_overflow {
+                    let actual = reg_ty(caller, args[*index], owner)?;
+                    unify(element, actual, &mut bindings).map_err(|e| {
+                        self.error(Some(owner), format!("monomorphizing `{target}` pack: {e}"))
+                    })?;
+                }
+                bindings.variadic_arity = Some(slots.positional_overflow.len());
+                Some(slots.positional_overflow.len())
+            }
+            _ => None,
+        };
         if receiver != Some(dest)
             && let Some(actual) = caller.reg_types.get(&dest.0)
         {
@@ -848,6 +983,9 @@ impl<'a> Specializer<'a> {
         // `param_decls`) is already carried by the instance's `owner`
         // identity; keep only the method's own parameters.
         arguments.drain(..owner_covered);
+        if let Some(arity) = variadic_arity {
+            arguments.push(InstanceArg::Value(CtValue::Int(arity as i64)));
+        }
         Ok((target.to_string(), bindings, arguments))
     }
 
@@ -915,6 +1053,14 @@ impl<'a> Specializer<'a> {
             // backend rejects at its own boundary.
             return Ok(());
         };
+        // A pack-typed source is the compiler-private pack fallback (the
+        // VM's `remove(0)` loop): no nominal protocol resolves. The split
+        // slot keeps the pack layout; lowering tracks the advance position
+        // in a backend-side shadow slot.
+        if matches!(&current, Ty::RuntimePack(_) | Ty::Tuple(_)) {
+            function.var_tys.insert(dest, current);
+            return Ok(());
+        }
         // A borrowed named source binds the slot to a reference; follow it to
         // the underlying iterable type, as the VM does for name resolution.
         if let Ty::Ref(reference) = &current {
@@ -1203,6 +1349,13 @@ impl<'a> Specializer<'a> {
                     else {
                         continue;
                     };
+                    // An unspecialized variadic overload cannot materialize
+                    // without a call-site arity; those sites enqueue it.
+                    if matches!(&function_decl.variadic, Some(element)
+                        if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)))
+                    {
+                        continue;
+                    }
                     let Ok(mut method_arguments) =
                         ordered_arguments(&function_decl.param_decls, &bindings, &candidate)
                     else {
@@ -1259,6 +1412,29 @@ fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
 /// An unresolved method-call shell for a VM by-name dunder dispatch
 /// (`call_dunder`): the `MethodCall` rewrite arm resolves and retargets it
 /// through the shared resolver like any source-level method call.
+/// The compile-time value of a register defined by a `Const` in `function`,
+/// when that constant has a `CtValue` form — the resolver for value-parameter
+/// arguments spelled as materialized literal registers.
+fn const_reg_value(function: &MirFunction, reg: Reg) -> Option<CtValue> {
+    for block in &function.blocks {
+        for instr in &block.instrs {
+            let MirInstr::Const { dest, k } = instr else {
+                continue;
+            };
+            if *dest != reg {
+                continue;
+            }
+            return match k {
+                Const::Int(value) => Some(CtValue::Int(*value)),
+                Const::IntLiteral(literal) => literal.to_i64().map(CtValue::Int),
+                Const::Bool(value) => Some(CtValue::Bool(*value)),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
 fn dunder_method_call(
     dest: Reg,
     recv: Reg,
@@ -1581,6 +1757,13 @@ fn substitute_declaration(
     }
     if let Some(ty) = &mut decl.variadic {
         *ty = substitute_ty(ty, bindings)?;
+        // An arity-specialized instance's pack reifies as the concrete
+        // tuple shape the call site collected.
+        if let Some(arity) = bindings.variadic_arity
+            && !matches!(ty, Ty::RuntimePack(_) | Ty::Tuple(_))
+        {
+            *ty = Ty::RuntimePack(vec![ty.clone(); arity]);
+        }
     }
     if let Some(ty) = &mut decl.kw_variadic {
         *ty = substitute_ty(ty, bindings)?;
@@ -1886,7 +2069,15 @@ fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
         Ty::Variant(v) => Ty::Variant(sub_types(v, bindings)?),
         Ty::Overload(v) => Ty::Overload(sub_types(v, bindings)?),
         Ty::ComptimeList(v) => Ty::ComptimeList(Box::new(substitute_ty(v, bindings)?)),
-        Ty::VariadicPack(v) => Ty::VariadicPack(Box::new(substitute_ty(v, bindings)?)),
+        Ty::VariadicPack(v) => {
+            let element = substitute_ty(v, bindings)?;
+            match bindings.variadic_arity {
+                // An unspecialized variadic callee instantiates at its
+                // call-site arity: the pack becomes a concrete tuple shape.
+                Some(arity) => Ty::RuntimePack(vec![element; arity]),
+                None => Ty::VariadicPack(Box::new(element)),
+            }
+        }
         Ty::Pointer { element, origin } => Ty::Pointer {
             element: Box::new(substitute_ty(element, bindings)?),
             origin: origin.clone(),
@@ -2518,8 +2709,10 @@ mod tests {
 
     #[test]
     fn substitution_resolves_nested_type_and_value_arguments() {
-        let mut bindings = Bindings::default();
-        bindings.generic_templates = Rc::new(HashSet::from(["Buffer".to_string()]));
+        let mut bindings = Bindings {
+            generic_templates: Rc::new(HashSet::from(["Buffer".to_string()])),
+            ..Bindings::default()
+        };
         bindings.types.insert("T".into(), Ty::UInt);
         bindings.values.insert("n".into(), CtValue::Int(4));
         let ty = Ty::Struct(
@@ -2640,5 +2833,62 @@ mod tests {
             mutability: crate::origin::Mutability::Mutable,
         });
         assert!(bind_type("T", &mutable, &mut bindings).is_err());
+    }
+
+    #[test]
+    fn variadic_arity_joins_the_instance_identity_and_reifies_the_pack() {
+        let source = "def total(*values: Int) -> Int:\n\
+                      \x20   var acc: Int = 0\n\
+                      \x20   for value in values:\n\
+                      \x20       acc = acc + value\n\
+                      \x20   return acc\n\
+                      \n\
+                      def main():\n\
+                      \x20   print(total(), total(7), total(1, 2, 3))\n";
+        let specialized = specialized_main(source);
+        let arities: Vec<&str> = specialized
+            .program
+            .functions
+            .iter()
+            .filter(|(name, _)| name.starts_with("total$mono$"))
+            .map(|(name, _)| name.as_str())
+            .collect();
+        for expected in ["total$mono$V0", "total$mono$V1", "total$mono$V3"] {
+            assert!(
+                arities.contains(&expected),
+                "each call-site arity gets its own instance: {arities:?}"
+            );
+        }
+        let one = function(&specialized, "total$mono$V1");
+        assert!(
+            one.var_tys
+                .values()
+                .any(|ty| matches!(ty, Ty::RuntimePack(elements) if elements == &[Ty::Int])),
+            "the pack parameter reifies to a one-element runtime pack: {:?}",
+            one.var_tys
+        );
+    }
+
+    #[test]
+    fn subscript_value_parameters_join_the_accessor_instance_identity() {
+        let source = "def main():\n\
+                      \x20   var pair: Tuple[Int, Int] = (10, 32)\n\
+                      \x20   print(pair[0] + pair[1])\n";
+        let specialized = specialized_main(source);
+        let main = function(&specialized, "main");
+        let targets: std::collections::HashSet<&str> = instructions(&main.blocks)
+            .iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::Index {
+                    call: Some(call), ..
+                } => Some(call.target.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            targets.len() >= 2,
+            "distinct constant indexes must dispatch distinct accessor \
+             instances: {targets:?}"
+        );
     }
 }
