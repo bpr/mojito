@@ -3,7 +3,8 @@
 //! This pass consumes only verified, drop-elaborated MIR and returns an owned
 //! entry-rooted concrete graph. It never mutates the canonical MIR artifact.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
 use crate::call::{ArgSlot, CallVariadics, match_call_slots};
 use crate::ct::{CtExpr, CtValue};
@@ -40,12 +41,27 @@ pub fn specialize(
 struct InstanceKey {
     template: String,
     arguments: Vec<InstanceArg>,
+    /// The concrete owner instance of a generic struct's method (for example
+    /// `List$mono$TInt` for `List.grow`). Methods carry their owner's identity
+    /// here rather than in `arguments`, which hold only the method's own
+    /// generic parameters.
+    owner: Option<String>,
 }
 
 #[derive(Clone, Default)]
 struct Bindings {
     types: HashMap<String, Ty>,
     values: HashMap<String, CtValue>,
+    /// When materializing a generic struct's method: the owner's template name
+    /// and its concrete instance type. Substitution rewrites the bare in-body
+    /// `self` spelling (`Struct(template, [])`) to the concrete instance so
+    /// nested method calls can bind the owner's parameters from the receiver.
+    self_instance: Option<(String, Ty)>,
+    /// The names of every generic struct template in the source program.
+    /// Substitution renames a concrete application of one of these to its
+    /// instance symbol; checker-specialized structs with empty `param_decls`
+    /// (the `Tuple$tN` family) keep their names.
+    generic_templates: Rc<HashSet<String>>,
 }
 
 struct Specializer<'a> {
@@ -53,6 +69,7 @@ struct Specializer<'a> {
     functions: HashMap<&'a str, &'a MirFunction>,
     declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
     structs: HashMap<&'a str, &'a MirStructDeclaration>,
+    generic_templates: Rc<HashSet<String>>,
     queue: VecDeque<(InstanceKey, Bindings)>,
     instances: Vec<(InstanceKey, String)>,
     output_functions: Vec<(String, MirFunction)>,
@@ -81,6 +98,15 @@ impl<'a> Specializer<'a> {
                 .iter()
                 .map(|d| (d.name.as_str(), d))
                 .collect(),
+            generic_templates: Rc::new(
+                source
+                    .declarations
+                    .structs
+                    .iter()
+                    .filter(|d| !d.param_decls.is_empty())
+                    .map(|d| d.name.clone())
+                    .collect(),
+            ),
             queue: VecDeque::new(),
             instances: Vec::new(),
             output_functions: Vec::new(),
@@ -107,7 +133,7 @@ impl<'a> Specializer<'a> {
                     format!("generic entry `{entry}` has unresolved parameters"),
                 ));
             }
-            let name = self.enqueue(entry, Bindings::default(), Vec::new())?;
+            let name = self.enqueue(entry, self.base_bindings(), Vec::new())?;
             entry_map.insert(entry.clone(), name);
         }
         while let Some((key, bindings)) = self.queue.pop_front() {
@@ -165,20 +191,50 @@ impl<'a> Specializer<'a> {
         })
     }
 
+    fn base_bindings(&self) -> Bindings {
+        Bindings {
+            generic_templates: Rc::clone(&self.generic_templates),
+            ..Bindings::default()
+        }
+    }
+
     fn enqueue(
         &mut self,
         template: &str,
         bindings: Bindings,
         arguments: Vec<InstanceArg>,
     ) -> Result<String, MonoError> {
+        let owner = bindings.self_instance.as_ref().and_then(|(_, ty)| {
+            if let Ty::Struct(name, _) = ty {
+                Some(name.clone())
+            } else {
+                None
+            }
+        });
         let key = InstanceKey {
             template: template.to_string(),
             arguments,
+            owner,
         };
         if let Some((_, name)) = self.instances.iter().find(|(known, _)| known == &key) {
             return Ok(name.clone());
         }
-        let name = if key.arguments.is_empty() {
+        // A generic struct's method takes its concrete owner's spelling
+        // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
+        // overload lookups against the instance struct name keep working.
+        let name = if let Some(owner) = &key.owner {
+            let base = crate::symbol::retarget_method_symbol(template, owner).ok_or_else(|| {
+                self.error(
+                    Some(template),
+                    format!("owner-bound instance `{template}` is not a method symbol"),
+                )
+            })?;
+            if key.arguments.is_empty() {
+                base
+            } else {
+                crate::symbol::instance_symbol(&base, &key.arguments)
+            }
+        } else if key.arguments.is_empty() {
             template.to_string()
         } else {
             crate::symbol::instance_symbol(template, &key.arguments)
@@ -292,13 +348,22 @@ impl<'a> Specializer<'a> {
                         "len" => Some("__len__"),
                         "abs" => Some("__abs__"),
                         "round" => Some("__round__"),
+                        // Conversion builtins over a nominal receiver are the
+                        // same VM dunder dispatch (`builtin_convert`'s struct
+                        // arm).
+                        "Int" => Some("__int__"),
+                        "Float64" => Some("__float__"),
+                        "Bool" => Some("__bool__"),
                         _ => None,
                     };
                     if let Some(method) = dunder
                         && !self.functions.contains_key(func.0.as_str())
                         && kwargs.is_empty()
                         && args.len() == 1
-                        && matches!(function.reg_types.get(&args[0].0), Some(Ty::Struct(..)))
+                        && matches!(
+                            function.reg_types.get(&args[0].0).map(peel_refs),
+                            Some(Ty::Struct(..))
+                        )
                     {
                         *instruction = dunder_method_call(*dest, args[0], method, None, Vec::new());
                     }
@@ -318,7 +383,10 @@ impl<'a> Specializer<'a> {
                 } = instruction
                     && let Some(method) = op.dunder()
                     && !matches!(op, crate::ast::InfixOp::In | crate::ast::InfixOp::NotIn)
-                    && matches!(function.reg_types.get(&a.0), Some(Ty::Struct(..)))
+                    && matches!(
+                        function.reg_types.get(&a.0).map(peel_refs),
+                        Some(Ty::Struct(..))
+                    )
                 {
                     *instruction = dunder_method_call(*dest, *a, method, resolved.take(), vec![*b]);
                 }
@@ -331,9 +399,34 @@ impl<'a> Specializer<'a> {
                         ..
                     } => {
                         if !self.functions.contains_key(func.0.as_str()) {
+                            // `print` of a nominal struct displays through
+                            // `write_to` over the builtin-string writer (the
+                            // VM's `format_value` dispatch); enqueue the
+                            // instances the lowered expansion calls.
+                            if func.0 == "print" {
+                                for arg in args.clone() {
+                                    self.enqueue_display_instance(owner, function, arg)?;
+                                }
+                            }
                             if self.structs.contains_key(func.0.as_str())
                                 && !crate::symbol::is_stdlib_string_struct(&func.0)
                             {
+                                // `Type(copy=value)` runs `__copyinit__` (the
+                                // VM's `construct_via_copy`), which struct
+                                // discovery enqueues per instance — never an
+                                // `__init__` contract.
+                                let copy_form =
+                                    args.is_empty() && kwargs.len() == 1 && kwargs[0].0 == "copy";
+                                if copy_form {
+                                    if let Some(Ty::Struct(concrete, _)) =
+                                        function.reg_types.get(&dest.0)
+                                        && concrete != &func.0
+                                        && nominal_template(concrete) == func.0.as_str()
+                                    {
+                                        func.0 = concrete.clone();
+                                    }
+                                    continue;
+                                }
                                 let init_base = format!("{}.__init__", func.0);
                                 let init = crate::symbol::resolve_callable_symbol(
                                     self.functions.iter().map(|(name, f)| CallableCandidate {
@@ -354,6 +447,16 @@ impl<'a> Specializer<'a> {
                                         kwargs,
                                     )?;
                                     self.enqueue(&target, bindings, arguments)?;
+                                }
+                                // A generic struct's output declaration is
+                                // instance-named; respell the constructor
+                                // call so lowering's struct lookup matches.
+                                if let Some(Ty::Struct(concrete, _)) =
+                                    function.reg_types.get(&dest.0)
+                                    && concrete != &func.0
+                                    && nominal_template(concrete) == func.0.as_str()
+                                {
+                                    func.0 = concrete.clone();
                                 }
                             }
                             continue;
@@ -380,20 +483,49 @@ impl<'a> Specializer<'a> {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
                             self.error(Some(owner), "method receiver lacks a MIR type")
                         })?;
-                        let Ty::Struct(receiver_name, _) = receiver else {
+                        // A borrowed receiver dispatches on its referent, as
+                        // the VM dereferences `Value::Ref` receivers.
+                        let Ty::Struct(receiver_name, _) = peel_refs(receiver) else {
                             continue;
                         };
+                        // Source methods are declared under the template name;
+                        // an instance-named receiver (`List$mono$TInt`) still
+                        // resolves against `List.*` and gets its instance
+                        // identity from `infer_call`'s receiver binding.
                         let target = crate::symbol::resolve_method_symbol(
                             self.functions.iter().map(|(name, f)| CallableCandidate {
                                 name,
                                 n_params: f.n_params,
                             }),
-                            receiver_name,
+                            nominal_template(receiver_name),
                             method,
                             resolved.as_deref(),
                             args.len() + kwargs.len(),
                         );
                         if !self.functions.contains_key(target.as_str()) {
+                            // The VM-synthesized `Writer.write` dispatch calls
+                            // the receiver's `write_string`; enqueue its
+                            // instance for the lowered expansion.
+                            if method == "write" {
+                                let write_string = crate::symbol::resolve_callable_symbol(
+                                    self.functions.iter().map(|(name, f)| CallableCandidate {
+                                        name,
+                                        n_params: f.n_params,
+                                    }),
+                                    &format!("{}.write_string", nominal_template(receiver_name)),
+                                    1,
+                                );
+                                if self.functions.contains_key(write_string.as_str()) {
+                                    let receiver_ty = peel_refs(receiver).clone();
+                                    let (bindings, arguments, _) = self.infer_receiver_call(
+                                        owner,
+                                        &write_string,
+                                        &receiver_ty,
+                                        None,
+                                    )?;
+                                    self.enqueue(&write_string, bindings, arguments)?;
+                                }
+                            }
                             continue;
                         }
                         let (target, bindings, arguments) = self.infer_call(
@@ -407,6 +539,38 @@ impl<'a> Specializer<'a> {
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *resolved = Some(concrete);
+                    }
+                    // Checker-selected subscript invocations retarget to
+                    // their concrete instances exactly like method calls;
+                    // intrinsic storage subscripts carry no nominal call and
+                    // pass through.
+                    MirInstr::Index {
+                        dest,
+                        base,
+                        call: Some(call),
+                        ..
+                    } => {
+                        let (dest, base) = (*dest, *base);
+                        self.rewrite_subscript_call(owner, function, base, Some(dest), call)?;
+                    }
+                    MirInstr::Slice {
+                        dest,
+                        object,
+                        call: Some(call),
+                        ..
+                    }
+                    | MirInstr::MultiIndex {
+                        dest,
+                        object,
+                        call: Some(call),
+                        ..
+                    } => {
+                        let (dest, object) = (*dest, *object);
+                        self.rewrite_subscript_call(owner, function, object, Some(dest), call)?;
+                    }
+                    MirInstr::MultiSet { receiver, call, .. } => {
+                        let receiver = *receiver;
+                        self.rewrite_subscript_call(owner, function, receiver, None, call)?;
                     }
                     // An untyped iterator slot passes through: it belongs to
                     // a compiler-private pack loop the backend rejects at its
@@ -451,6 +615,132 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
+    /// Enqueue the `write_to` instance a lowered `print` of a nominal struct
+    /// calls — the VM's `format_value` dispatch. The receiver binds the
+    /// owner's parameters; the writer parameter instantiates at the builtin
+    /// string (the VM's `Value::Str` accumulator).
+    fn enqueue_display_instance(
+        &mut self,
+        owner: &str,
+        function: &MirFunction,
+        arg: Reg,
+    ) -> Result<(), MonoError> {
+        let Some(ty) = function.reg_types.get(&arg.0) else {
+            return Ok(());
+        };
+        let ty = peel_refs(ty).clone();
+        let Ty::Struct(name, arguments) = &ty else {
+            return Ok(());
+        };
+        if crate::symbol::is_stdlib_string_struct(name) {
+            return Ok(());
+        }
+        let target = crate::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(name),
+            "write_to",
+            None,
+            1,
+        );
+        if !self.functions.contains_key(target.as_str()) {
+            return Ok(());
+        }
+        let Some(declaration) = self.declarations.get(target.as_str()).copied() else {
+            return Ok(());
+        };
+        let mut bindings = self.base_bindings();
+        let mut owner_covered = 0;
+        if let Some(struct_decl) = self.structs.get(nominal_template(name)).copied() {
+            bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
+                self.error(
+                    Some(owner),
+                    format!("monomorphizing receiver for `{target}`: {e}"),
+                )
+            })?;
+            if nominal_template(name) != name.as_str() {
+                bindings.self_instance = Some((nominal_template(name).to_string(), ty.clone()));
+                owner_covered =
+                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+            }
+        }
+        for decl in &declaration.param_decls {
+            if let ParamDecl::Type { name, .. } = decl
+                && !bindings.types.contains_key(name.as_str())
+            {
+                bindings.types.insert(name.clone(), Ty::StringLiteral);
+            }
+        }
+        // The `Some[Writer]` sugar parameter is infer-only (absent from
+        // `param_decls`); bind its spelling from the declared type.
+        for ty in &declaration.param_types {
+            if let Ty::Param { name, .. } = ty
+                && !bindings.types.contains_key(name.as_str())
+            {
+                bindings.types.insert(name.clone(), Ty::StringLiteral);
+            }
+        }
+        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
+        arguments.drain(..owner_covered);
+        self.enqueue(&target, bindings, arguments)?;
+        Ok(())
+    }
+
+    /// Retarget one checker-selected subscript invocation (the
+    /// `__getitem__`/`__setitem__` family) to its concrete instance. The
+    /// receiver binds the owner's parameters and the destination's checked
+    /// type anchors the result, mirroring the nullary iterator-step
+    /// inference; subscript actuals are `Int` indexes or slice descriptors
+    /// and never carry generic solutions of their own.
+    fn rewrite_subscript_call(
+        &mut self,
+        owner: &str,
+        function: &MirFunction,
+        receiver: Reg,
+        dest: Option<Reg>,
+        call: &mut crate::mir::MirSubscriptCall,
+    ) -> Result<(), MonoError> {
+        let Some(receiver_ty) = function.reg_types.get(&receiver.0) else {
+            return Ok(());
+        };
+        let receiver_ty = peel_refs(receiver_ty).clone();
+        let Ty::Struct(receiver_name, _) = &receiver_ty else {
+            return Ok(());
+        };
+        let method = if dest.is_some() {
+            "__getitem__"
+        } else {
+            "__setitem__"
+        };
+        let target = crate::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(receiver_name),
+            method,
+            Some(&call.target),
+            call.arguments.len(),
+        );
+        if !self.functions.contains_key(target.as_str()) {
+            return Ok(());
+        }
+        // A reference-yielding subscript's destination is a handle whose
+        // `ref` layers are indistinguishable from a reference element type;
+        // the receiver's arguments already carry every solution.
+        let result = if call.reference_result.is_some() {
+            None
+        } else {
+            dest.and_then(|dest| function.reg_types.get(&dest.0))
+        };
+        let (bindings, arguments, _) =
+            self.infer_receiver_call(owner, &target, &receiver_ty, result)?;
+        call.target = self.enqueue(&target, bindings, arguments)?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn infer_call(
         &self,
@@ -468,9 +758,10 @@ impl<'a> Specializer<'a> {
                 format!("callee `{target}` lacks declaration facts"),
             )
         })?;
-        let mut bindings = Bindings::default();
+        let mut bindings = self.base_bindings();
+        let mut owner_covered = 0;
         if let Some(receiver) = receiver {
-            let actual_receiver = reg_ty(caller, receiver, owner)?;
+            let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
             if let Ty::Struct(receiver_name, arguments) = actual_receiver
                 && let Some(struct_decl) =
                     self.structs.get(nominal_template(receiver_name)).copied()
@@ -481,6 +772,17 @@ impl<'a> Specializer<'a> {
                         format!("monomorphizing receiver for `{target}`: {e}"),
                     )
                 })?;
+                // An instance-named receiver carries the owner's concrete
+                // identity: record it so the method instance is named under
+                // the owner and its body's bare `self` spelling resolves.
+                if nominal_template(receiver_name) != receiver_name {
+                    bindings.self_instance = Some((
+                        nominal_template(receiver_name).to_string(),
+                        actual_receiver.clone(),
+                    ));
+                    owner_covered =
+                        owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+                }
             }
             let receiver_pattern = self
                 .functions
@@ -541,7 +843,11 @@ impl<'a> Specializer<'a> {
             })?;
         }
         apply_defaults(&declaration.param_decls, &mut bindings)?;
-        let arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
+        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
+        // The owner-restating prefix (`__init__` prepends the struct's
+        // `param_decls`) is already carried by the instance's `owner`
+        // identity; keep only the method's own parameters.
+        arguments.drain(..owner_covered);
         Ok((target.to_string(), bindings, arguments))
     }
 
@@ -699,7 +1005,8 @@ impl<'a> Specializer<'a> {
                 format!("callee `{target}` lacks declaration facts"),
             )
         })?;
-        let mut bindings = Bindings::default();
+        let mut bindings = self.base_bindings();
+        let mut owner_covered = 0;
         if let Ty::Struct(receiver_name, arguments) = receiver
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
         {
@@ -709,6 +1016,14 @@ impl<'a> Specializer<'a> {
                     format!("monomorphizing receiver for `{target}`: {e}"),
                 )
             })?;
+            if nominal_template(receiver_name) != receiver_name {
+                bindings.self_instance = Some((
+                    nominal_template(receiver_name).to_string(),
+                    receiver.clone(),
+                ));
+                owner_covered =
+                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+            }
         }
         let receiver_pattern = self
             .functions
@@ -731,7 +1046,8 @@ impl<'a> Specializer<'a> {
             })?;
         }
         apply_defaults(&declaration.param_decls, &mut bindings)?;
-        let arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
+        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
+        arguments.drain(..owner_covered);
         let result = substitute_ty(&declaration.ret_ty, &bindings).map_err(|e| {
             self.error(
                 Some(owner),
@@ -772,6 +1088,29 @@ impl<'a> Specializer<'a> {
             let Ty::Struct(name, arguments) = ty else {
                 continue;
             };
+            // The checker-virtual slice descriptors have no source template;
+            // give them the backend's raw layout (three i64 bounds plus a
+            // presence bitmask — the VM's `Value::Slice` `Option<i64>` fields)
+            // so descriptor-typed parameters and locals lay out.
+            if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") {
+                if !self.output_structs.iter().any(|decl| decl.name == name) {
+                    self.output_structs.push(MirStructDeclaration {
+                        name,
+                        fields: vec![
+                            ("start".to_string(), Ty::Int),
+                            ("end".to_string(), Ty::Int),
+                            ("step".to_string(), Ty::Int),
+                            ("flags".to_string(), Ty::Int),
+                        ],
+                        mut_self_methods: Default::default(),
+                        fieldwise_init: false,
+                        param_decls: Vec::new(),
+                        explicit_destroy_message: None,
+                        explicit_destructors: Default::default(),
+                    });
+                }
+                continue;
+            }
             let template_name = name.split("$mono").next().unwrap_or(&name).to_string();
             let Some(template) = self.structs.get(template_name.as_str()).copied() else {
                 continue;
@@ -779,19 +1118,41 @@ impl<'a> Specializer<'a> {
             if arguments.len() < template.param_decls.len() {
                 continue;
             }
-            let mut bindings = Bindings::default();
+            let mut bindings = self.base_bindings();
             bind_ty_args(&template.param_decls, &arguments, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing struct `{template_name}`: {e}"),
                 )
             })?;
+            if name != template_name {
+                bindings.self_instance = Some((
+                    template_name.clone(),
+                    Ty::Struct(name.clone(), arguments.clone()),
+                ));
+            }
             let mut declaration = template.clone();
             for (_, field) in &mut declaration.fields {
                 *field = substitute_ty(field, &bindings)?;
             }
             declaration.name = name;
             declaration.param_decls.clear();
+            // Overload-qualified `mut self` entries name the template
+            // (`List.pop$ov$Int`); respell them under the instance so
+            // lowering's receiver write-back check matches the retargeted
+            // method symbols. Bare method-name entries stay as they are.
+            declaration.mut_self_methods = declaration
+                .mut_self_methods
+                .iter()
+                .map(|entry| {
+                    if entry.contains('.') {
+                        crate::symbol::retarget_method_symbol(entry, &declaration.name)
+                            .unwrap_or_else(|| entry.clone())
+                    } else {
+                        entry.clone()
+                    }
+                })
+                .collect();
             if let Some(existing) = self
                 .output_structs
                 .iter()
@@ -842,11 +1203,16 @@ impl<'a> Specializer<'a> {
                     else {
                         continue;
                     };
-                    let Ok(method_arguments) =
+                    let Ok(mut method_arguments) =
                         ordered_arguments(&function_decl.param_decls, &bindings, &candidate)
                     else {
                         continue;
                     };
+                    if bindings.self_instance.is_some() {
+                        let covered =
+                            owner_covered_prefix(&template.param_decls, &function_decl.param_decls);
+                        method_arguments.drain(..covered);
+                    }
                     self.enqueue(&candidate, bindings.clone(), method_arguments)?;
                 }
             }
@@ -917,6 +1283,66 @@ fn dunder_method_call(
         param_arg_regs: Vec::new(),
         param_decls: Vec::new(),
     }
+}
+
+/// How many leading method `param_decls` restate the owner struct's own
+/// parameters: `__init__` declarations prepend them (`src/mir.rs`), and the
+/// owner-bound instance identity already carries their solutions.
+fn owner_covered_prefix(struct_params: &[ParamDecl], method_params: &[ParamDecl]) -> usize {
+    if struct_params.is_empty() || method_params.len() < struct_params.len() {
+        return 0;
+    }
+    if struct_params
+        .iter()
+        .zip(method_params)
+        .all(|(s, m)| s.name() == m.name())
+    {
+        struct_params.len()
+    } else {
+        0
+    }
+}
+
+/// Structural type equality that ignores `ref` and pointer origin components
+/// (which erase from the runtime ABI and vary per call site), while still
+/// requiring mutability agreement.
+fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
+    match (a, b) {
+        (Ty::Ref(a), Ty::Ref(b)) => {
+            a.mutability == b.mutability && ty_equal_modulo_origins(&a.referent, &b.referent)
+        }
+        (Ty::Pointer { element: a, .. }, Ty::Pointer { element: b, .. }) => {
+            ty_equal_modulo_origins(a, b)
+        }
+        (Ty::Struct(a_name, a_args), Ty::Struct(b_name, b_args)) => {
+            a_name == b_name
+                && a_args.len() == b_args.len()
+                && a_args.iter().zip(b_args).all(|(a, b)| match (a, b) {
+                    (TyArg::Ty(a), TyArg::Ty(b)) => ty_equal_modulo_origins(a, b),
+                    (TyArg::Origin(_), TyArg::Origin(_)) => true,
+                    _ => a == b,
+                })
+        }
+        (Ty::Tuple(a), Ty::Tuple(b))
+        | (Ty::RuntimePack(a), Ty::RuntimePack(b))
+        | (Ty::Variant(a), Ty::Variant(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equal_modulo_origins(a, b))
+        }
+        (Ty::ComptimeList(a), Ty::ComptimeList(b)) | (Ty::VariadicPack(a), Ty::VariadicPack(b)) => {
+            ty_equal_modulo_origins(a, b)
+        }
+        _ => a == b,
+    }
+}
+
+/// The referent behind any number of reference layers — the VM dereferences
+/// `Value::Ref` operands before nominal dispatch.
+fn peel_refs(ty: &Ty) -> &Ty {
+    let mut ty = ty;
+    while let Ty::Ref(reference) = ty {
+        ty = &reference.referent;
+    }
+    ty
 }
 
 fn reg_ty<'a>(function: &'a MirFunction, reg: Reg, owner: &str) -> Result<&'a Ty, MonoError> {
@@ -1093,9 +1519,11 @@ fn bind_type(name: &str, ty: &Ty, bindings: &mut Bindings) -> Result<(), String>
             bindings.types.insert(name.to_string(), ty.clone());
             Ok(())
         }
+        // Origins erase from the runtime ABI, so solutions differing only in
+        // `ref`/pointer origins are one instance — the first spelling wins.
         // `Ty`'s `Display` collapses distinct types (`IntLiteral` renders as
         // `Int`), so the conflict text carries the structural form too.
-        Some(old) if old != ty => Err(format!(
+        Some(old) if old != ty && !ty_equal_modulo_origins(old, ty) => Err(format!(
             "conflicting solutions for `{name}`: `{old}` ({old:?}) and `{ty}` ({ty:?})"
         )),
         Some(_) => Ok(()),
@@ -1412,27 +1840,45 @@ fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
             .cloned()
             .ok_or_else(|| unsupported(format!("unresolved type parameter `{name}`")))?,
         Ty::Struct(name, args) => {
-            let was_symbolic = args.iter().any(arg_has_symbolic);
+            if args.is_empty() {
+                // The bare in-body `self` spelling of a generic owner resolves
+                // to the concrete instance being materialized; other bare
+                // names are non-generic (or unresolvable, failing later).
+                if let Some((template, concrete)) = &bindings.self_instance
+                    && template == name
+                {
+                    return Ok(concrete.clone());
+                }
+                return Ok(Ty::Struct(name.clone(), Vec::new()));
+            }
             let args = args
                 .iter()
                 .map(|arg| substitute_arg(arg, bindings))
                 .collect::<Result<Vec<_>, _>>()?;
-            let concrete_name =
-                if !was_symbolic || args.iter().any(arg_has_symbolic) || args.is_empty() {
-                    name.clone()
-                } else {
-                    crate::symbol::instance_symbol(
-                        name,
-                        &args
-                            .iter()
-                            .filter_map(|arg| match arg {
-                                TyArg::Ty(ty) => Some(InstanceArg::Ty(ty.clone())),
-                                TyArg::Val(value) => Some(InstanceArg::Value(value.clone())),
-                                TyArg::Origin(_) => None,
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                };
+            // Every concrete application of a generic template takes its
+            // instance symbol, so distinct instantiations get distinct output
+            // declarations. Checker-specialized structs (empty `param_decls`)
+            // and already-renamed instances keep their names; symbolic
+            // applications stay for a later substitution or a contextual
+            // rejection.
+            let concrete_name = if args.iter().any(arg_has_symbolic)
+                || nominal_template(name) != name
+                || !bindings.generic_templates.contains(name.as_str())
+            {
+                name.clone()
+            } else {
+                crate::symbol::instance_symbol(
+                    name,
+                    &args
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            TyArg::Ty(ty) => Some(InstanceArg::Ty(ty.clone())),
+                            TyArg::Val(value) => Some(InstanceArg::Value(value.clone())),
+                            TyArg::Origin(_) => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            };
             Ty::Struct(concrete_name, args)
         }
         Ty::Tuple(v) => Ty::Tuple(sub_types(v, bindings)?),
@@ -1979,8 +2425,14 @@ mod tests {
                 .program
                 .functions
                 .iter()
-                .any(|(name, _)| name.contains("Box.__init__") && name.contains("$mono$")),
-            "the constructor instance must materialize"
+                .any(|(name, _)| name == "Box$mono$TInt.__init__"),
+            "the constructor instance must materialize under the owner instance: {:?}",
+            specialized
+                .program
+                .functions
+                .iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -2067,6 +2519,7 @@ mod tests {
     #[test]
     fn substitution_resolves_nested_type_and_value_arguments() {
         let mut bindings = Bindings::default();
+        bindings.generic_templates = Rc::new(HashSet::from(["Buffer".to_string()]));
         bindings.types.insert("T".into(), Ty::UInt);
         bindings.values.insert("n".into(), CtValue::Int(4));
         let ty = Ty::Struct(
@@ -2085,5 +2538,107 @@ mod tests {
         };
         assert!(name.contains("$mono$"));
         assert_eq!(args, vec![TyArg::Ty(Ty::UInt), TyArg::Val(CtValue::Int(4))]);
+    }
+
+    #[test]
+    fn distinct_instantiations_split_into_owner_named_instances() {
+        // The `List.grow` shape: `refresh` reaches `set` through the bare
+        // in-body `self` receiver, which must carry the owner instance's
+        // binding for `T` rather than the shared template spelling.
+        let source = "struct Pairing[T: Copyable & Movable]:\n\
+                      \x20   var value: Self.T\n\
+                      \n\
+                      \x20   def __init__(out self, var value: Self.T):\n\
+                      \x20       self.value = value^\n\
+                      \n\
+                      \x20   def get(self) -> Self.T:\n\
+                      \x20       return self.value\n\
+                      \n\
+                      \x20   def refresh(mut self, var value: Self.T):\n\
+                      \x20       self.set(value^)\n\
+                      \n\
+                      \x20   def set(mut self, var value: Self.T):\n\
+                      \x20       self.value = value^\n\
+                      \n\
+                      def main():\n\
+                      \x20   var a = Pairing[Int](1)\n\
+                      \x20   var b = Pairing[Bool](True)\n\
+                      \x20   a.refresh(3)\n\
+                      \x20   b.refresh(False)\n\
+                      \x20   print(a.get())\n\
+                      \x20   print(b.get())\n";
+        let specialized = specialized_main(source);
+        for expected in [
+            "Pairing$mono$TInt.refresh",
+            "Pairing$mono$TBool.refresh",
+            "Pairing$mono$TInt.set",
+            "Pairing$mono$TBool.set",
+            "Pairing$mono$TInt.__init__",
+            "Pairing$mono$TBool.__init__",
+        ] {
+            assert!(
+                specialized
+                    .program
+                    .functions
+                    .iter()
+                    .any(|(name, _)| name == expected),
+                "missing instance `{expected}`: {:?}",
+                specialized
+                    .program
+                    .functions
+                    .iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>()
+            );
+        }
+        let field_ty = |instance: &str| {
+            specialized
+                .program
+                .declarations
+                .structs
+                .iter()
+                .find(|decl| decl.name == instance)
+                .unwrap_or_else(|| panic!("missing struct instance `{instance}`"))
+                .fields[0]
+                .1
+                .clone()
+        };
+        assert_eq!(field_ty("Pairing$mono$TInt"), Ty::Int);
+        assert_eq!(field_ty("Pairing$mono$TBool"), Ty::Bool);
+        assert!(
+            !specialized
+                .program
+                .declarations
+                .structs
+                .iter()
+                .any(|decl| decl.name == "Pairing"),
+            "the shared template declaration must not survive canonicalization"
+        );
+    }
+
+    #[test]
+    fn binding_solutions_ignore_reference_origins() {
+        let referent = Box::new(Ty::Int);
+        let first = Ty::Ref(crate::origin::RefTy {
+            referent: referent.clone(),
+            origin: crate::origin::Origin::Static,
+            mutability: crate::origin::Mutability::Immutable,
+        });
+        let second = Ty::Ref(crate::origin::RefTy {
+            referent,
+            origin: crate::origin::Origin::Untracked { mutable: false },
+            mutability: crate::origin::Mutability::Immutable,
+        });
+        let mut bindings = Bindings::default();
+        bind_type("T", &first, &mut bindings).unwrap();
+        bind_type("T", &second, &mut bindings).unwrap();
+        // First solution wins; a mutability disagreement still conflicts.
+        assert_eq!(bindings.types.get("T"), Some(&first));
+        let mutable = Ty::Ref(crate::origin::RefTy {
+            referent: Box::new(Ty::Int),
+            origin: crate::origin::Origin::Static,
+            mutability: crate::origin::Mutability::Mutable,
+        });
+        assert!(bind_type("T", &mutable, &mut bindings).is_err());
     }
 }

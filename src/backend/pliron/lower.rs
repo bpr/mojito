@@ -103,6 +103,10 @@ pub(super) struct OutcomeAbi {
     pub err_offset: u64,
     /// The lowered ok payload (`ZeroSized` for a `None` return).
     pub ok: LowerTy,
+    /// Whether the ok payload is a place pointer rather than the value — the
+    /// reference-returning raising `__next__` convention. Only `TryNext`
+    /// consumes this shape; the generic raising-call path rejects it.
+    pub ok_is_reference: bool,
 }
 
 /// Module-level lowering state shared by every function: the module itself
@@ -124,6 +128,12 @@ impl ModuleShared {
             strings: HashMap::new(),
             pow_ty: None,
         }
+    }
+
+    /// Whether body lowering already declared the runtime symbol (the
+    /// executable wrapper must not redeclare it).
+    pub(super) fn declared_rt(&self, symbol: &str) -> bool {
+        self.rt_types.contains_key(symbol)
     }
 
     /// Intern `bytes` as a private constant-pool global `mjstr_<n>` —
@@ -217,23 +227,47 @@ pub(super) fn declare_function(
     })?;
     let (result, returns_value, ret, sret, outcome) = if func.returns_reference {
         if func.raises {
-            return Err(PlironError {
-                function: Some(name.to_string()),
-                kind: PlironErrorKind::Unsupported {
-                    construct: "raising reference-returning function".into(),
-                },
-                location: None,
-            });
+            // A raising reference return rides the tagged outcome with a
+            // single place pointer as the ok payload (the reference-yielding
+            // raising `__next__` convention).
+            let pointer = Ty::Pointer {
+                element: Box::new(ret_ty.clone()),
+                origin: crate::origin::PointerOrigin::Untracked { mutable: true },
+            };
+            let composed = layout
+                .outcome_layout(&pointer)
+                .map_err(|error| PlironError {
+                    function: Some(name.to_string()),
+                    kind: PlironErrorKind::Unsupported {
+                        construct: format!("raising reference return ({error})"),
+                    },
+                    location: None,
+                })?;
+            let outcome = OutcomeAbi {
+                layout: composed.layout,
+                ok_offset: composed.offsets[1],
+                err_offset: composed.offsets[2],
+                ok: LowerTy::Scalar(ScalarTy::Ptr),
+                ok_is_reference: true,
+            };
+            (
+                VoidType::get(ctx).to_handle(),
+                false,
+                RetKind::Void,
+                None,
+                Some(outcome),
+            )
+        } else {
+            // A reference returns as one pointer to caller-owned referent
+            // storage; the checked return type names the referent.
+            (
+                PointerType::get(ctx, 0).into(),
+                true,
+                RetKind::Ptr,
+                None,
+                None,
+            )
         }
-        // A reference returns as one pointer to caller-owned referent
-        // storage; the checked return type names the referent.
-        (
-            PointerType::get(ctx, 0).into(),
-            true,
-            RetKind::Ptr,
-            None,
-            None,
-        )
     } else if func.raises {
         // A raising function returns `void` through a prepended outcome
         // out-pointer; its ok payload (any kind) lives inline in the outcome.
@@ -250,6 +284,7 @@ pub(super) fn declare_function(
             ok_offset: composed.offsets[1],
             err_offset: composed.offsets[2],
             ok,
+            ok_is_reference: false,
         };
         (
             VoidType::get(ctx).to_handle(),
@@ -403,6 +438,7 @@ pub(super) fn synthesize_exe_wrapper(
     ctx: &mut Context,
     module: ModuleOp,
     callees: &[(String, Option<(Layout, u64)>)],
+    unhandled_error_declared: bool,
 ) -> Result<(), PlironError> {
     let void = VoidType::get(ctx).to_handle();
     let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
@@ -422,7 +458,7 @@ pub(super) fn synthesize_exe_wrapper(
     // it as the unhandled-error trap (stderr text and exit 69 unchanged from
     // an in-callee report).
     let unhandled_ty = FuncType::get(ctx, void, vec![ptr_ty, i64_ty], false);
-    if callees.iter().any(|(_, outcome)| outcome.is_some()) {
+    if callees.iter().any(|(_, outcome)| outcome.is_some()) && !unhandled_error_declared {
         let unhandled = FuncOp::new(
             ctx,
             "mjrt_unhandled_error".try_into().expect("valid identifier"),
@@ -1129,7 +1165,29 @@ impl<'a> FnLowering<'a> {
                     self.partially_moved.insert(place.root);
                 }
                 let (address, ty) = self.place_address(ctx, place, *dest)?;
-                self.load_from(ctx, address, &ty, *dest)
+                // A move relocates the bytes — ownership transfers to the
+                // destination (the VM's `mem::replace`; no clone runs), so
+                // the moved value is an owned temporary until consumed.
+                match lower_ty(self.name, &ty, &self.layout, self.reg_span(*dest))? {
+                    LowerTy::Scalar(scalar) => {
+                        let handle = scalar.handle(ctx);
+                        let load = LoadOp::new(ctx, address, handle);
+                        self.define(ctx, *dest, load.get_operation(), load.get_result(ctx))
+                    }
+                    LowerTy::Aggregate { ty, layout } => {
+                        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                        self.mem_copy(ctx, storage, address, layout.size, *dest);
+                        self.reg_values.insert(dest.0, storage);
+                        if self.owns_heap(&ty) || self.stdlib_deinit_temp(&ty) {
+                            self.mark_owned_temp(*dest, (*ty).clone())?;
+                        }
+                        Ok(())
+                    }
+                    LowerTy::ZeroSized => {
+                        self.erased.insert(dest.0);
+                        Ok(())
+                    }
+                }
             }
             MirInstr::Store { place, src } => {
                 // The VM overwrites the designated storage without dropping
@@ -1180,8 +1238,7 @@ impl<'a> FnLowering<'a> {
                 // runtime data and are permitted; argument places matter
                 // only at `mut`/`ref` parameter positions (borrowed read
                 // arguments pass their value copy).
-                if kwarg_places.iter().any(Option::is_some)
-                    || !capture_accesses.is_empty()
+                if !capture_accesses.is_empty()
                     || param_arg_regs.iter().any(|arg| arg.value.is_some())
                 {
                     return Err(self.unsupported_reg(
@@ -1198,6 +1255,7 @@ impl<'a> FnLowering<'a> {
                     args,
                     kwargs,
                     arg_places,
+                    kwarg_places,
                     recv_place.as_ref(),
                 )
             }
@@ -1219,8 +1277,7 @@ impl<'a> FnLowering<'a> {
                 // runtime data and are permitted; argument places matter
                 // only at `mut`/`ref` parameter positions (borrowed read
                 // arguments pass their value copy).
-                if kwarg_places.iter().any(Option::is_some)
-                    || !capture_accesses.is_empty()
+                if !capture_accesses.is_empty()
                     || param_arg_regs.iter().any(|arg| arg.value.is_some())
                 {
                     return Err(self.unsupported_reg(
@@ -1228,7 +1285,7 @@ impl<'a> FnLowering<'a> {
                         *dest,
                     ));
                 }
-                self.lower_call(ctx, *dest, &func.0, args, kwargs, arg_places)
+                self.lower_call(ctx, *dest, &func.0, args, kwargs, arg_places, kwarg_places)
             }
             MirInstr::DropVar { var } => self.lower_drop_var(ctx, *var),
             MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var),
@@ -1322,6 +1379,127 @@ impl<'a> FnLowering<'a> {
                 storage,
                 element,
             } => self.lower_uninit_storage_destroy(ctx, *dest, *storage, element),
+            MirInstr::Index {
+                dest,
+                base,
+                index,
+                base_place,
+                index_place,
+                call: Some(call),
+                intrinsic: _,
+            } => {
+                // A parameterless specialized accessor (a Tuple element
+                // getter) takes only `self`; an overloaded `__getitem__`
+                // receives the runtime index — the VM's `call.arguments`
+                // distinction.
+                let positional = if call.arguments.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![SubscriptActual::Reg(*index, index_place.as_ref())]
+                };
+                self.lower_subscript_call(
+                    ctx,
+                    *dest,
+                    "__getitem__",
+                    call,
+                    *base,
+                    base_place.as_ref(),
+                    &positional,
+                    &[],
+                )
+            }
+            MirInstr::Index {
+                dest,
+                base,
+                index,
+                intrinsic: Some(intrinsic),
+                ..
+            } => self.lower_index_intrinsic(ctx, *dest, *base, *index, intrinsic),
+            MirInstr::Slice {
+                dest,
+                object,
+                lower,
+                upper,
+                step,
+                object_place,
+                call: Some(call),
+                ..
+            } => {
+                let descriptor = self.build_slice_descriptor(ctx, *dest, *lower, *upper, *step)?;
+                self.lower_subscript_call(
+                    ctx,
+                    *dest,
+                    "__getitem__",
+                    call,
+                    *object,
+                    object_place.as_ref(),
+                    &[SubscriptActual::Descriptor(descriptor)],
+                    &[],
+                )
+            }
+            MirInstr::MultiIndex {
+                dest,
+                object,
+                args,
+                object_place,
+                arg_places,
+                kwargs,
+                kwarg_places,
+                call: Some(call),
+            } => {
+                let positional = self.subscript_actuals(ctx, *dest, args, arg_places)?;
+                let mut keywords = Vec::with_capacity(kwargs.len());
+                for (i, (name, arg)) in kwargs.iter().enumerate() {
+                    let actual = self.subscript_actual(
+                        ctx,
+                        *dest,
+                        arg,
+                        kwarg_places.get(i).and_then(Option::as_ref),
+                    )?;
+                    keywords.push((name.as_str(), actual));
+                }
+                self.lower_subscript_call(
+                    ctx,
+                    *dest,
+                    "__getitem__",
+                    call,
+                    *object,
+                    object_place.as_ref(),
+                    &positional,
+                    &keywords,
+                )
+            }
+            MirInstr::MultiSet {
+                receiver,
+                receiver_place,
+                args,
+                arg_places,
+                value,
+                value_place,
+                value_keyword,
+                call,
+            } => {
+                // The discarded `__setitem__` result binds to a scratch
+                // register outside the function's register space.
+                let scratch = Reg(u32::MAX);
+                let mut positional = self.subscript_actuals(ctx, scratch, args, arg_places)?;
+                let mut keywords = Vec::new();
+                if *value_keyword {
+                    keywords.push(("value", SubscriptActual::Reg(*value, value_place.as_ref())));
+                } else {
+                    positional.push(SubscriptActual::Reg(*value, value_place.as_ref()));
+                }
+                self.lower_subscript_call(
+                    ctx,
+                    scratch,
+                    "__setitem__",
+                    call,
+                    *receiver,
+                    receiver_place.as_ref(),
+                    &positional,
+                    &keywords,
+                )
+            }
             MirInstr::MakeClosure { dest, .. }
             | MirInstr::CallIndirect { dest, .. }
             | MirInstr::Index { dest, .. }
@@ -1371,7 +1549,6 @@ impl<'a> FnLowering<'a> {
             MirInstr::VariantSet { .. }
             | MirInstr::VariantSetInitWith { .. }
             | MirInstr::VariantDeinitWith { .. }
-            | MirInstr::MultiSet { .. }
             | MirInstr::Drop { .. } => {
                 Err(self.unsupported(format!("instruction `{}`", instr_name(instr)), None))
             }
@@ -1385,6 +1562,7 @@ impl<'a> FnLowering<'a> {
     /// exactly like the VM; everything else binds against the compiled
     /// signature, resolving keywords and constant defaults through the shared
     /// call-slot matcher.
+    #[allow(clippy::too_many_arguments)]
     fn lower_call(
         &mut self,
         ctx: &mut Context,
@@ -1393,6 +1571,7 @@ impl<'a> FnLowering<'a> {
         args: &[Reg],
         kwargs: &[(String, Reg)],
         arg_places: &[Option<MirPlace>],
+        kwarg_places: &[Option<MirPlace>],
     ) -> Result<(), PlironError> {
         if intercepted_call(name) {
             return self.lower_unsafe_alloc(ctx, dest, args, kwargs);
@@ -1416,7 +1595,15 @@ impl<'a> FnLowering<'a> {
                 return self.lower_error_builtin(ctx, dest, args, kwargs);
             }
             if self.struct_decls.contains_key(name) {
-                return self.lower_constructor(ctx, dest, name, args, kwargs);
+                return self.lower_constructor(
+                    ctx,
+                    dest,
+                    name,
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
+                );
             }
             // The numeric/IO builtins the VM's `call_named` implements
             // directly. Nominal-receiver `len`/`abs`/`round` were rewritten
@@ -1451,6 +1638,9 @@ impl<'a> FnLowering<'a> {
                 {
                     return self.lower_dangling_builtin(ctx, dest);
                 }
+                "_mojito_abort" if args.len() == 1 && kwargs.is_empty() => {
+                    return self.lower_abort_builtin(ctx, dest, args[0]);
+                }
                 _ => {}
             }
             return Err(self.unsupported_reg(
@@ -1478,15 +1668,33 @@ impl<'a> FnLowering<'a> {
             let storage = self.entry_alloca(ctx, layout.size, layout.align);
             let rest = &params[1..];
             let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
+            let rest_by_reference = if by_reference.len() > 1 {
+                &by_reference[1..]
+            } else {
+                &[]
+            };
             let mut lowered = vec![storage];
-            if kwargs.is_empty() && args.len() == rest.len() {
+            if kwargs.is_empty()
+                && args.len() == rest.len()
+                && !rest_by_reference.iter().any(|&by_ref| by_ref)
+            {
                 for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
                     let owned = rest_owned.get(i).copied().unwrap_or(false);
                     lowered.push(self.arg_value(ctx, *arg, expected, owned, dest)?);
                 }
             } else {
-                lowered
-                    .extend(self.bind_call_slots(ctx, dest, name, rest, rest_owned, args, kwargs)?);
+                lowered.extend(self.bind_call_slots(
+                    ctx,
+                    dest,
+                    name,
+                    rest,
+                    rest_owned,
+                    rest_by_reference,
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
+                )?);
             }
             self.emit_bound_call(ctx, dest, name, lowered)?;
             // `__init__` returns nothing; the constructed value is the
@@ -1517,13 +1725,18 @@ impl<'a> FnLowering<'a> {
             }
             lowered
         } else {
-            if by_reference.iter().any(|&by_ref| by_ref) {
-                return Err(self.unsupported_reg(
-                    format!("keyword-bound `mut`/`ref` argument of `{name}`"),
-                    dest,
-                ));
-            }
-            self.bind_call_slots(ctx, dest, name, &params, &owned, args, kwargs)?
+            self.bind_call_slots(
+                ctx,
+                dest,
+                name,
+                &params,
+                &owned,
+                &by_reference,
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+            )?
         };
         self.emit_bound_call(ctx, dest, name, lowered_args)
     }
@@ -1531,8 +1744,12 @@ impl<'a> FnLowering<'a> {
     /// Resolve keyword arguments and constant defaults into the callee's
     /// positional parameter order via `call::match_call_slots` — the same
     /// structural binding the VM applies (`src/call.rs` owns the policy).
-    /// `params` is the expected slice of value parameters: a method or
-    /// constructor caller passes its signature minus the receiver.
+    /// `params`, `owned`, and `by_reference` are the expected slices of value
+    /// parameters: a method or constructor caller passes its signature minus
+    /// the receiver. A `mut`/`ref` slot passes the address of its checked
+    /// place, taken from the source array the matched slot names —
+    /// `arg_places[p]` for `Positional(p)`, `kwarg_places[k]` for
+    /// `Keyword(k)` — never the parameter position.
     #[allow(clippy::too_many_arguments)]
     fn bind_call_slots(
         &mut self,
@@ -1541,8 +1758,11 @@ impl<'a> FnLowering<'a> {
         name: &str,
         params: &[LowerTy],
         owned: &[bool],
+        by_reference: &[bool],
         args: &[Reg],
         kwargs: &[(String, Reg)],
+        arg_places: &[Option<MirPlace>],
+        kwarg_places: &[Option<MirPlace>],
     ) -> Result<Vec<Value>, PlironError> {
         let Some(decl) = self.declarations.get(name) else {
             return Err(self.unsupported_reg(
@@ -1580,10 +1800,35 @@ impl<'a> FnLowering<'a> {
         for (i, slot) in matched.slots.iter().enumerate() {
             let expected = params[i].clone();
             let owned = owned.get(i).copied().unwrap_or(false);
+            let by_ref = by_reference.get(i).copied().unwrap_or(false);
+            let place_address = |lowering: &mut Self,
+                                 ctx: &mut Context,
+                                 place: Option<&MirPlace>|
+             -> Result<Value, PlironError> {
+                let Some(place) = place.cloned() else {
+                    return Err(lowering.unsupported_reg(
+                        format!("`mut`/`ref` argument of `{name}` without a place"),
+                        dest,
+                    ));
+                };
+                Ok(lowering.place_address(ctx, &place, dest)?.0)
+            };
             let value = match slot {
+                ArgSlot::Positional(p) if by_ref => {
+                    place_address(self, ctx, arg_places.get(*p).and_then(Option::as_ref))?
+                }
+                ArgSlot::Keyword(k) if by_ref => {
+                    place_address(self, ctx, kwarg_places.get(*k).and_then(Option::as_ref))?
+                }
                 ArgSlot::Positional(p) => self.arg_value(ctx, args[*p], &expected, owned, dest)?,
                 ArgSlot::Keyword(k) => self.arg_value(ctx, kwargs[*k].1, &expected, owned, dest)?,
                 ArgSlot::Default => {
+                    if by_ref {
+                        return Err(self.unsupported_reg(
+                            format!("defaulted `mut`/`ref` parameter of `{name}`"),
+                            dest,
+                        ));
+                    }
                     let Some(default) = defaults.get(i).and_then(Option::as_ref) else {
                         return Err(self.unsupported_reg(
                             format!("non-constant default argument in call to `{name}`"),
@@ -2014,6 +2259,25 @@ impl<'a> FnLowering<'a> {
                     let stdlib_string = matches!(ty.as_ref(), Ty::Struct(name, _)
                         if crate::symbol::is_stdlib_string_struct(name));
                     if !stdlib_string && self.has_lifecycle_method(&ty, "__moveinit__") {
+                        // A `^` transfer of a struct with a compiled
+                        // `__moveinit__` runs it — the VM's `move_value` —
+                        // when the type also owns its allocations through a
+                        // destructor. A destructor-less pointer owner leaks
+                        // under real frees (the VM's arena tolerates it) and
+                        // stays rejected until the S5.7 move-residues slice.
+                        if let Ty::Struct(name, _) = ty.as_ref()
+                            && self
+                                .signatures
+                                .contains_key(&format!("{name}.__moveinit__"))
+                            && (self.stdlib_deinit_temp(&ty)
+                                || self
+                                    .declarations
+                                    .contains_key(&format!("{name}.__deinit__"))
+                                || !self.type_owns_pointer(&ty))
+                        {
+                            let name = name.clone();
+                            return self.move_via_moveinit(ctx, dest, var, &name, layout);
+                        }
                         return Err(self.unsupported_reg(
                             format!("move of `{ty}` with a user `__moveinit__`"),
                             dest,
@@ -2023,8 +2287,12 @@ impl<'a> FnLowering<'a> {
                     self.mem_copy(ctx, storage, src, layout.size, dest);
                     self.reg_values.insert(dest.0, storage);
                     // The move vacates the slot (the VM tombstones it); a
-                    // later cleanup-edge drop must find it empty.
+                    // later cleanup-edge drop must find it empty. The moved
+                    // value is an owned temporary until consumed.
                     self.set_drop_flag(ctx, var, false);
+                    if self.owns_heap(&ty) || self.stdlib_deinit_temp(&ty) {
+                        self.mark_owned_temp(dest, (*ty).clone())?;
+                    }
                     Ok(())
                 }
             }
@@ -2950,9 +3218,30 @@ impl<'a> FnLowering<'a> {
                 vec![storage, src_ptr],
             );
             self.append(ctx, call.get_operation(), Some(dest));
-            // A user copy constructor may have allocated; release only what
-            // the invisible-release rule understands (String buffers).
-            if self.releasable(ty) {
+            // A compiled copy chain byte-copies elements that own raw
+            // pointer storage (the VM's arena-safe shallow clone); releasing
+            // such a copy through its destructor would free the shared
+            // buffers, and leaving it leaks — reject the copy instead.
+            if let Ty::Struct(_, args) = ty
+                && args.iter().any(|arg| match arg {
+                    crate::types::TyArg::Ty(element) => {
+                        self.type_owns_pointer(element)
+                            && matches!(element, Ty::Struct(element_name, _)
+                                if self.declarations.contains_key(
+                                    &format!("{element_name}.__deinit__")))
+                    }
+                    _ => false,
+                })
+            {
+                return Err(self.unsupported_reg(
+                    format!("copy of `{ty}` with pointer-owning elements"),
+                    dest,
+                ));
+            }
+            // A copy constructor may have allocated; release what the
+            // invisible rule understands (String buffers) or, for a stdlib
+            // collection copy, its own compiled destructor chain.
+            if self.releasable(ty) || self.stdlib_deinit_temp(ty) {
                 self.mark_owned_temp(dest, ty.clone())?;
             }
         } else if self.has_nested_lifecycle(ty, "__copyinit__") {
@@ -2967,6 +3256,72 @@ impl<'a> FnLowering<'a> {
             self.mem_copy(ctx, storage, src_ptr, layout.size, dest);
         }
         self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// Fork the value at `src_ptr` into `dst`: a byte copy whose
+    /// String/Error components are re-duplicated so each copy owns its own
+    /// buffers — the native analog of the VM's arena-shared plain clone
+    /// (whose aliasing is invisible because the arena never reclaims). User
+    /// copy constructors never run here; the VM's plain clone does not run
+    /// them either. Values owning raw pointer storage cannot fork bufferwise
+    /// and reject contextually.
+    fn fork_value_into(
+        &mut self,
+        ctx: &mut Context,
+        dst: Value,
+        ty: &Ty,
+        layout: Layout,
+        src_ptr: Value,
+        span: Reg,
+    ) -> Result<(), PlironError> {
+        if let Ty::Struct(name, _) = ty
+            && crate::symbol::is_stdlib_string_struct(name)
+        {
+            let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
+            let src_cap = self.string_cap(ctx, src_ptr, span);
+            let new_data = self.emit_alloc(ctx, src_cap, 1, span);
+            self.mem_copy_dynamic(ctx, new_data, src_data, src_size, span);
+            self.store_string_fields(ctx, dst, new_data, src_size, src_cap, span);
+            return Ok(());
+        }
+        if matches!(ty, Ty::Error) {
+            let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
+            let new_data = self.emit_alloc(ctx, src_size, 1, span);
+            self.mem_copy_dynamic(ctx, new_data, src_data, src_size, span);
+            self.store_string_fields(ctx, dst, new_data, src_size, src_size, span);
+            return Ok(());
+        }
+        let elements: Vec<(Ty, u64)> = match ty {
+            Ty::Struct(name, _) => {
+                let Some(decl) = self.struct_decls.get(name.as_str()) else {
+                    return Err(self.unsupported_reg(format!("fork of undeclared `{ty}`"), span));
+                };
+                let fields: Vec<Ty> = decl.fields.iter().map(|(_, ty)| ty.clone()).collect();
+                let composed = self.struct_layout_of(&fields, span)?;
+                fields.into_iter().zip(composed.offsets).collect()
+            }
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+                let elements = elements.clone();
+                let composed = self.struct_layout_of(&elements, span)?;
+                elements.into_iter().zip(composed.offsets).collect()
+            }
+            other => {
+                return Err(self.unsupported_reg(format!("fork of `{other}`"), span));
+            }
+        };
+        self.mem_copy(ctx, dst, src_ptr, layout.size, span);
+        for (element, offset) in elements {
+            if !self.owns_heap(&element) {
+                continue;
+            }
+            let element_layout = self.layout.layout_of(&element).map_err(|error| {
+                self.unsupported_reg(format!("fork element layout ({error})"), span)
+            })?;
+            let src_field = self.gep_byte(ctx, src_ptr, offset, span);
+            let dst_field = self.gep_byte(ctx, dst, offset, span);
+            self.fork_value_into(ctx, dst_field, &element, element_layout, src_field, span)?;
+        }
         Ok(())
     }
 
@@ -3015,7 +3370,8 @@ impl<'a> FnLowering<'a> {
     /// final use in this block. A temporary whose final use sits in another
     /// block would need liveness analysis — reject instead of leaking.
     fn mark_owned_temp(&mut self, dest: Reg, ty: Ty) -> Result<(), PlironError> {
-        if !self.owns_heap(&ty) && !matches!(ty, Ty::StringLiteral) {
+        if !self.owns_heap(&ty) && !matches!(ty, Ty::StringLiteral) && !self.stdlib_deinit_temp(&ty)
+        {
             return Ok(());
         }
         if let Some((block, _)) = self.last_uses.get(&dest.0)
@@ -3068,7 +3424,60 @@ impl<'a> FnLowering<'a> {
         let Some(storage) = self.reg_values.get(&reg).copied() else {
             return Ok(());
         };
+        // A discarded stdlib collection temporary (a printed slice result,
+        // a read-receiver copy) releases through its compiled destructor —
+        // a pure free chain the VM's never-reclaiming arena leaves to the
+        // collector. The invisible rule stays first where it covers the
+        // type (String shapes — untraced, like the VM, which never drops
+        // register temporaries), and the destructor dispatch here is
+        // untraced for the same reason; user destructors stay under the
+        // invisible rule.
+        if self.stdlib_deinit_temp(ty) && !self.owns_heap(ty) {
+            let traced = self.trace_lifecycle;
+            self.trace_lifecycle = false;
+            let released = self.emit_drop_value(ctx, storage, ty, false);
+            self.trace_lifecycle = traced;
+            return released;
+        }
         self.emit_release_storage(ctx, storage, ty)
+    }
+
+    /// Whether `ty` transitively stores a raw pointer field — an allocation
+    /// only a destructor (or explicit free) can release.
+    fn type_owns_pointer(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Pointer { .. } => true,
+            // The nominal String is opaque here: its buffer pointer is
+            // handled by the native deep-copy/release bridges, so
+            // String-carrying shapes copy and move soundly.
+            Ty::Struct(name, _) if crate::symbol::is_stdlib_string_struct(name) => false,
+            Ty::Struct(name, _) => self.struct_decls.get(name.as_str()).is_some_and(|decl| {
+                decl.fields
+                    .iter()
+                    .any(|(_, field)| self.type_owns_pointer(field))
+            }),
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+                .iter()
+                .any(|element| self.type_owns_pointer(element)),
+            _ => false,
+        }
+    }
+
+    /// Whether `ty` is a stdlib-owned aggregate whose compiled destructor may
+    /// release a discarded temporary: the destructor chain is
+    /// stdlib-authored (pure frees, nothing user-observable).
+    fn stdlib_deinit_temp(&self, ty: &Ty) -> bool {
+        let Ty::Struct(name, _) = ty else {
+            return false;
+        };
+        let template = name.split("$mono").next().unwrap_or(name);
+        let stdlib = template.starts_with("__module$std$")
+            || matches!(
+                template,
+                "List" | "Dict" | "Set" | "Optional" | "Array" | "Span" | "StringSpan"
+            );
+        stdlib
+            && (self.signatures.contains_key(&format!("{name}.__deinit__")) || self.needs_drop(ty))
     }
 
     /// Recursively free the owned heap buffers inside `ty`-typed storage.
@@ -3348,6 +3757,34 @@ impl<'a> FnLowering<'a> {
                     ty = elements[*index].clone();
                 }
                 Proj::Index(index) => {
+                    // A literal index into pack storage projects statically,
+                    // like `Proj::ConstIndex` (the Tuple accessor bodies'
+                    // `self.storage[0]` shape).
+                    if let Ty::Tuple(elements) | Ty::RuntimePack(elements) = &ty {
+                        let elements = elements.clone();
+                        let Some(PendingLiteral::Int(literal)) =
+                            self.pending_literals.get(&index.0).cloned()
+                        else {
+                            return Err(self.unsupported_reg(
+                                "runtime subscript projection into pack storage".into(),
+                                dest,
+                            ));
+                        };
+                        let element = literal
+                            .to_i64()
+                            .and_then(|value| usize::try_from(value).ok())
+                            .filter(|value| *value < elements.len())
+                            .ok_or_else(|| {
+                                self.unsupported_reg(
+                                    "pack subscript projection index out of range".into(),
+                                    dest,
+                                )
+                            })?;
+                        let composed = self.struct_layout_of(&elements, dest)?;
+                        offset += composed.offsets[element];
+                        ty = elements[element].clone();
+                        continue;
+                    }
                     let Ty::Pointer { element, .. } = &ty else {
                         return Err(
                             self.unsupported_reg(format!("subscript projection on `{ty}`"), dest)
@@ -3442,6 +3879,11 @@ impl<'a> FnLowering<'a> {
         let Some(base_ty) = self.func.reg_types.get(&base.0).cloned() else {
             return Err(self.unsupported_reg(format!("untyped field base %r{}", base.0), dest));
         };
+        // A slice-descriptor bound access materializes a fresh `Optional`
+        // through its compiled constructor — the VM's `slice_bound_optional`.
+        if slice_struct_name(&base_ty).is_some() && matches!(field, "start" | "end" | "step") {
+            return self.lower_slice_bound_field(ctx, dest, base, field);
+        }
         let (offset, field_ty) = self.field_offset(&base_ty, field, dest)?;
         let base_ptr = self.reg_ptr(ctx, base)?;
         let address = if offset == 0 {
@@ -3450,6 +3892,142 @@ impl<'a> FnLowering<'a> {
             self.gep_byte(ctx, base_ptr, offset, dest)
         };
         self.load_from(ctx, address, &field_ty, dest)
+    }
+
+    /// Move a variable through its compiled `__moveinit__` — the VM's
+    /// `move_value` over a `^` transfer: fresh `out self` storage, the source
+    /// storage as the consumed `move` argument, and a vacated source slot.
+    fn move_via_moveinit(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        var: u32,
+        name: &str,
+        layout: Layout,
+    ) -> Result<(), PlironError> {
+        let moveinit = format!("{name}.__moveinit__");
+        let signature = &self.signatures[&moveinit];
+        if signature.outcome.is_some() {
+            return Err(self.unsupported_reg(format!("raising `{moveinit}`"), dest));
+        }
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        let src = self.var_slots[var as usize];
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            vec![storage, src],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        self.reg_values.insert(dest.0, storage);
+        // The move vacates the slot (the VM tombstones it); the moved value
+        // is an owned temporary until consumed.
+        self.set_drop_flag(ctx, var, false);
+        if let Some(ty) = self.func.reg_types.get(&dest.0).cloned()
+            && (self.owns_heap(&ty) || self.stdlib_deinit_temp(&ty))
+        {
+            self.mark_owned_temp(dest, ty)?;
+        }
+        Ok(())
+    }
+
+    /// One bound of the raw 32-byte slice descriptor (`{start, end, step,
+    /// flags}` i64 fields — the layout `discover_structs` synthesizes),
+    /// materialized as a real `Optional` by calling the destination type's
+    /// compiled positional constructor: 1-argument when the bound's flag bit
+    /// is set, 0-argument otherwise — the VM's `slice_bound_optional`.
+    /// One bound of the raw 32-byte slice descriptor (`{start, end, step,
+    /// flags}` i64 fields — the layout `discover_structs` synthesizes),
+    /// materialized as an `Optional` value over a frame-backed payload slot:
+    /// `{data → payload, _size ∈ {0, 1}}` — the observable state the VM's
+    /// `slice_bound_optional` constructor calls produce, with no heap
+    /// allocation to own.
+    fn lower_slice_bound_field(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        base: Reg,
+        field: &str,
+    ) -> Result<(), PlironError> {
+        let Some(optional_ty @ Ty::Struct(..)) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg("untyped slice bound access".into(), dest));
+        };
+        let lowered = lower_ty(self.name, &optional_ty, &self.layout, self.reg_span(dest))?;
+        let LowerTy::Aggregate { layout, .. } = lowered else {
+            return Err(self.unsupported_reg("slice bound Optional layout".into(), dest));
+        };
+        let (offset, bit) = match field {
+            "start" => (0u64, 1i64),
+            "end" => (8, 2),
+            _ => (16, 4),
+        };
+        let descriptor = self.reg_ptr(ctx, base)?;
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let value_address = self.offset_address(ctx, descriptor, offset);
+        let value = LoadOp::new(ctx, value_address, i64_handle);
+        self.append(ctx, value.get_operation(), Some(dest));
+        let flags_address = self.offset_address(ctx, descriptor, 24);
+        let flags = LoadOp::new(ctx, flags_address, i64_handle);
+        self.append(ctx, flags.get_operation(), Some(dest));
+        let mask = self.int_constant(ctx, bit);
+        let masked = AndOp::new(ctx, flags.get_result(ctx), mask);
+        self.append(ctx, masked.get_operation(), Some(dest));
+        let zero = self.int_constant(ctx, 0);
+        let is_set = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
+        self.append(ctx, is_set.get_operation(), Some(dest));
+        let payload = self.entry_alloca(ctx, 8, 8);
+        let store = StoreOp::new(ctx, value.get_result(ctx), payload);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let temp = self.entry_alloca(ctx, layout.size, layout.align);
+        let store = StoreOp::new(ctx, payload, temp);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let one = self.int_constant(ctx, 1);
+        let size = SelectOp::new(ctx, is_set.get_result(ctx), one, zero);
+        self.append(ctx, size.get_operation(), Some(dest));
+        let size_address = self.offset_address(ctx, temp, 8);
+        let store = StoreOp::new(ctx, size.get_result(ctx), size_address);
+        self.append(ctx, store.get_operation(), Some(dest));
+        self.reg_values.insert(dest.0, temp);
+        Ok(())
+    }
+
+    /// Materialize one slice descriptor in the backend's raw layout: three
+    /// i64 bounds at offsets 0/8/16 (absent bounds store 0) and the presence
+    /// bitmask at offset 24 (start=1, end=2, step=4) — `Value::Slice`'s
+    /// `Option<i64>` fields.
+    fn build_slice_descriptor(
+        &mut self,
+        ctx: &mut Context,
+        anchor: Reg,
+        lower: Option<Reg>,
+        upper: Option<Reg>,
+        step: Option<Reg>,
+    ) -> Result<Value, PlironError> {
+        let storage = self.entry_alloca(ctx, 32, 8);
+        let mut flags = 0i64;
+        for (index, (bound, bit)) in [(lower, 1i64), (upper, 2), (step, 4)].iter().enumerate() {
+            let value = match bound {
+                Some(reg) => self.reg_value(ctx, *reg, ScalarTy::Int)?,
+                None => self.int_constant(ctx, 0),
+            };
+            let address = self.offset_address(ctx, storage, index as u64 * 8);
+            let store = StoreOp::new(ctx, value, address);
+            self.append(ctx, store.get_operation(), Some(anchor));
+            if bound.is_some() {
+                flags |= bit;
+            }
+        }
+        let flags = self.int_constant(ctx, flags);
+        let address = self.offset_address(ctx, storage, 24);
+        let store = StoreOp::new(ctx, flags, address);
+        self.append(ctx, store.get_operation(), Some(anchor));
+        Ok(storage)
     }
 
     /// `MakeTuple`: fresh storage with each element stored at its composed
@@ -3498,12 +4076,58 @@ impl<'a> FnLowering<'a> {
         args: &[Reg],
         kwargs: &[(String, Reg)],
         arg_places: &[Option<MirPlace>],
+        kwarg_places: &[Option<MirPlace>],
         recv_place: Option<&MirPlace>,
     ) -> Result<(), PlironError> {
         // Pointer receivers dispatch to runtime intrinsics, never to compiled
         // stdlib bodies.
         if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
+        }
+        // Slice descriptors are checker-virtual: `indices` is the VM's
+        // intrinsic normalization, and no other method exists on them.
+        if self
+            .func
+            .reg_types
+            .get(&recv.0)
+            .and_then(slice_struct_name)
+            .is_some()
+        {
+            if method == "indices" {
+                return self.lower_slice_indices(ctx, dest, recv, args);
+            }
+            return Err(self.unsupported_reg(format!("slice descriptor method `{method}`"), dest));
+        }
+        // The builtin-string writer receiver (`write_to`'s `Value::Str`
+        // accumulator) appends each argument's display text in place.
+        if resolved.is_none()
+            && method == "write"
+            && matches!(self.func.reg_types.get(&recv.0), Some(Ty::StringLiteral))
+        {
+            return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
+        }
+        // The struct-to-literal bridge (the VM's `string_struct_literal`):
+        // the declared stub body must never execute, and the bridged bytes
+        // would need an owner the literal value model cannot record — the
+        // VM's arena never reclaims, while a native copy stored into a
+        // drop-inert literal-typed field leaks with no releasing owner.
+        // Reject until a literal-ownership design lands.
+        if method == "_as_string_literal"
+            && matches!(self.func.reg_types.get(&recv.0), Some(Ty::Struct(name, _))
+                if crate::symbol::is_stdlib_string_struct(name))
+        {
+            return Err(self.unsupported_reg("String struct-to-literal bridge".into(), dest));
+        }
+        // The VM-synthesized `Writer.write` dispatch: format each argument
+        // and feed it through the receiver's compiled `write_string`.
+        if resolved.is_none()
+            && method == "write"
+            && let Some(Ty::Struct(writer, _)) = self.func.reg_types.get(&recv.0).cloned()
+            && self
+                .signatures
+                .contains_key(&format!("{writer}.write_string"))
+        {
+            return self.lower_writer_write(ctx, dest, &writer, args, recv_place);
         }
         // Unresolved scalar-receiver dunders are the VM's non-struct
         // intrinsic dispatch (`builtin_round_dir`/`builtin_ceildiv`); a
@@ -3555,7 +4179,7 @@ impl<'a> FnLowering<'a> {
             );
         let recv_value = if receiver_alias {
             let place = recv_place.expect("aliased receivers have a place").clone();
-            self.place_address(ctx, &place, dest)?.0
+            self.aliased_receiver_address(ctx, &place, dest)?
         } else {
             self.arg_value(ctx, recv, &params[0], recv_owned, dest)?
         };
@@ -3587,14 +4211,18 @@ impl<'a> FnLowering<'a> {
                 lowered.push(value);
             }
         } else {
-            if rest_by_reference.iter().any(|&by_ref| by_ref) {
-                return Err(self.unsupported_reg(
-                    format!("keyword-bound `mut`/`ref` argument of `{resolved}`"),
-                    dest,
-                ));
-            }
-            lowered
-                .extend(self.bind_call_slots(ctx, dest, resolved, rest, rest_owned, args, kwargs)?);
+            lowered.extend(self.bind_call_slots(
+                ctx,
+                dest,
+                resolved,
+                rest,
+                rest_owned,
+                rest_by_reference,
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+            )?);
         }
         self.emit_bound_call(ctx, dest, resolved, lowered)?;
         // `mut self` (the struct's mut_self_methods set — keyed by either the
@@ -3626,6 +4254,539 @@ impl<'a> FnLowering<'a> {
             let (address, _) = self.place_address(ctx, place, dest)?;
             self.mem_copy(ctx, address, recv_ptr, size, dest);
         }
+        Ok(())
+    }
+
+    /// `_mojito_abort(message)` — the `std.os.abort` crossing: report the
+    /// message through `mjrt_unhandled_error` and never return (the VM's
+    /// uncatchable `RuntimeError::Abort`; the native exit code is the
+    /// unhandled-error trap's — a recorded divergence from the VM's distinct
+    /// abort reporting).
+    fn lower_abort_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        message: Reg,
+    ) -> Result<(), PlironError> {
+        let (data, len) = self.writer_argument_text(ctx, message, dest)?;
+        let unhandled_ty = self.shared.ensure_rt(ctx, "mjrt_unhandled_error");
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct("mjrt_unhandled_error".try_into().expect("valid identifier")),
+            unhandled_ty,
+            vec![data, len],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        let unreachable = UnreachableOp::new(ctx);
+        self.append(ctx, unreachable.get_operation(), None);
+        // Dead continuation for the rest of the MIR block; the unreachable
+        // pruning pass removes it.
+        let region = self.region.expect("lowering is inside a function region");
+        let dead = BasicBlock::new(ctx, None, vec![]);
+        dead.insert_at_back(region, ctx);
+        self.current = Some(dead);
+        self.erased.insert(dest.0);
+        Ok(())
+    }
+
+    /// The VM-synthesized `Writer.write` dispatch: each argument's display
+    /// text feeds one `write_string` call on the aliased `mut self` receiver.
+    /// The payload `String` borrows the text bytes (`cap == len`); the callee
+    /// reads it and never takes ownership.
+    fn lower_writer_write(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        writer: &str,
+        args: &[Reg],
+        recv_place: Option<&MirPlace>,
+    ) -> Result<(), PlironError> {
+        let write_string = format!("{writer}.write_string");
+        let signature = &self.signatures[&write_string];
+        if signature.outcome.is_some() {
+            return Err(self.unsupported_reg(format!("raising `{write_string}`"), dest));
+        }
+        let nominal_payload = matches!(
+            self.declarations
+                .get(&write_string)
+                .and_then(|decl| decl.param_types.first()),
+            Some(Ty::Struct(payload, args)) if args.is_empty()
+                && crate::symbol::is_stdlib_string_struct(payload)
+        );
+        if !nominal_payload {
+            return Err(self.unsupported_reg(
+                format!("`{write_string}` without a nominal String payload"),
+                dest,
+            ));
+        }
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let Some(place) = recv_place else {
+            return Err(self.unsupported_reg("`Writer.write` needs a mutable place".into(), dest));
+        };
+        let place = place.clone();
+        let writer_address = self.place_address(ctx, &place, dest)?.0;
+        for arg in args {
+            let (data, len) = self.writer_argument_text(ctx, *arg, dest)?;
+            let payload = self.entry_alloca(ctx, 24, 8);
+            self.store_string_fields(ctx, payload, data, len, len, dest);
+            let call = CallOp::new(
+                ctx,
+                CallOpCallable::Direct(callee.clone()),
+                func_ty,
+                vec![writer_address, payload],
+            );
+            self.append(ctx, call.get_operation(), Some(dest));
+        }
+        self.erased.insert(dest.0);
+        Ok(())
+    }
+
+    /// The display bytes of one `Writer.write` argument as a `(data, len)`
+    /// pair — the VM's `format_value` over the supported argument shapes.
+    fn writer_argument_text(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        dest: Reg,
+    ) -> Result<(Value, Value), PlironError> {
+        if let Some(bytes) = self.str_consts.get(&arg.0).cloned() {
+            let global = self.shared.intern_string(ctx, &bytes);
+            let data = self.global_address(ctx, &global, dest);
+            let len = self.uint_constant(ctx, bytes.len() as u64);
+            return Ok((data, len));
+        }
+        if let Some(descriptor) = self.str_runtime.get(&arg.0).copied() {
+            return Ok((descriptor.data, descriptor.len));
+        }
+        match self.func.reg_types.get(&arg.0) {
+            Some(Ty::Error | Ty::StringLiteral) => {
+                let ptr = self.reg_ptr(ctx, arg)?;
+                return Ok(self.string_parts(ctx, ptr, dest));
+            }
+            Some(Ty::Struct(name, _)) if crate::symbol::is_stdlib_string_struct(name) => {
+                let ptr = self.reg_ptr(ctx, arg)?;
+                return Ok(self.string_parts(ctx, ptr, dest));
+            }
+            _ => {}
+        }
+        let Some(ty) = self.concrete_scalar_ty(arg)? else {
+            return Err(self.unsupported_reg("formatted write argument".into(), dest));
+        };
+        let value = self.reg_value(ctx, arg, ty)?;
+        self.format_scalar(ctx, ty, value, dest)
+    }
+
+    /// The storage a `mut`/`ref` receiver aliases: the place's address,
+    /// dereferenced once when the place designates a reference handle (a ref
+    /// field like an iterator's `src`) — the VM reads through `Value::Ref`
+    /// receivers before dispatch.
+    fn aliased_receiver_address(
+        &mut self,
+        ctx: &mut Context,
+        place: &MirPlace,
+        anchor: Reg,
+    ) -> Result<Value, PlironError> {
+        let (address, ty) = self.place_address(ctx, place, anchor)?;
+        if matches!(ty, Ty::Ref(_)) {
+            let handle = ScalarTy::Ptr.handle(ctx);
+            let load = LoadOp::new(ctx, address, handle);
+            self.append(ctx, load.get_operation(), Some(anchor));
+            Ok(load.get_result(ctx))
+        } else {
+            Ok(address)
+        }
+    }
+
+    /// One checker-selected subscript invocation (`Index`/`Slice`/
+    /// `MultiIndex`/`MultiSet` nominal dispatch): bind the receiver by its
+    /// compiled convention, match the actuals (index registers and
+    /// inline-built slice descriptors) against the callee's slots, call, and
+    /// write a `mut self` receiver back — the VM's `method_call` over the
+    /// subscript contract. `anchor` is the result register for the get forms
+    /// and a scratch register for `MultiSet` (whose result is discarded).
+    #[allow(clippy::too_many_arguments)]
+    fn lower_subscript_call(
+        &mut self,
+        ctx: &mut Context,
+        anchor: Reg,
+        method: &str,
+        call: &crate::mir::MirSubscriptCall,
+        recv: Reg,
+        recv_place: Option<&MirPlace>,
+        positional: &[SubscriptActual],
+        keywords: &[(&str, SubscriptActual)],
+    ) -> Result<(), PlironError> {
+        let resolved = call.target.clone();
+        let Some(signature) = self.signatures.get(&resolved) else {
+            return Err(
+                self.unsupported_reg(format!("subscript call to uncompiled `{resolved}`"), anchor)
+            );
+        };
+        let params = signature.params.clone();
+        let owned = signature.owned_params.clone();
+        let by_reference = signature.ref_params.clone();
+        if params.is_empty() {
+            return Err(self.unsupported_reg(
+                format!("subscript target `{resolved}` without a receiver"),
+                anchor,
+            ));
+        }
+        let Some(decl) = self.declarations.get(&resolved) else {
+            return Err(self.unsupported_reg(
+                format!("subscript call to `{resolved}` without a recorded declaration"),
+                anchor,
+            ));
+        };
+        if decl.variadic.is_some() || decl.kw_variadic.is_some() {
+            return Err(
+                self.unsupported_reg(format!("variadic subscript call to `{resolved}`"), anchor)
+            );
+        }
+        let kw_names: Vec<&str> = keywords.iter().map(|(name, _)| *name).collect();
+        let matched = match_call_slots(
+            &decl.param_names,
+            &decl.required,
+            decl.positional_only,
+            decl.keyword_only,
+            positional.len(),
+            &kw_names,
+            CallVariadics {
+                positional: false,
+                keyword: false,
+            },
+        )
+        .map_err(|error| {
+            self.unsupported_reg(
+                format!("subscript binding for `{resolved}` failed: {error:?}"),
+                anchor,
+            )
+        })?;
+        let defaults = decl.defaults.clone();
+        let receiver_convention = decl.receiver_convention;
+        let receiver_alias = recv_place.is_some()
+            && matches!(
+                receiver_convention,
+                Some(crate::ast::ArgConvention::Mut | crate::ast::ArgConvention::Ref)
+            );
+        let recv_owned = owned.first().copied().unwrap_or(false);
+        let recv_value = if receiver_alias {
+            let place = recv_place.expect("aliased receivers have a place").clone();
+            self.aliased_receiver_address(ctx, &place, anchor)?
+        } else {
+            self.arg_value(ctx, recv, &params[0], recv_owned, anchor)?
+        };
+        let rest = &params[1..];
+        let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
+        let rest_by_reference = if by_reference.len() > 1 {
+            &by_reference[1..]
+        } else {
+            &[]
+        };
+        if matched.slots.len() != rest.len() {
+            return Err(self.unsupported_reg(
+                format!("subscript binding for `{resolved}` disagrees with its compiled arity"),
+                anchor,
+            ));
+        }
+        let mut operands = vec![recv_value];
+        for (i, slot) in matched.slots.iter().enumerate() {
+            let expected = rest[i].clone();
+            let owned = rest_owned.get(i).copied().unwrap_or(false);
+            let by_ref = rest_by_reference.get(i).copied().unwrap_or(false);
+            let actual = match slot {
+                ArgSlot::Positional(p) => Some(&positional[*p]),
+                ArgSlot::Keyword(k) => Some(&keywords[*k].1),
+                ArgSlot::Default => None,
+            };
+            let value = match actual {
+                Some(SubscriptActual::Reg(reg, place)) => {
+                    if by_ref {
+                        let Some(place) = place else {
+                            return Err(self.unsupported_reg(
+                                format!(
+                                    "`mut`/`ref` subscript argument of `{resolved}` without a place"
+                                ),
+                                anchor,
+                            ));
+                        };
+                        let place = (*place).clone();
+                        self.place_address(ctx, &place, anchor)?.0
+                    } else {
+                        self.arg_value(ctx, *reg, &expected, owned, anchor)?
+                    }
+                }
+                Some(SubscriptActual::Descriptor(value)) => {
+                    if by_ref {
+                        return Err(self.unsupported_reg(
+                            format!("`mut`/`ref` slice-descriptor argument of `{resolved}`"),
+                            anchor,
+                        ));
+                    }
+                    *value
+                }
+                None => {
+                    if by_ref {
+                        return Err(self.unsupported_reg(
+                            format!("defaulted `mut`/`ref` parameter of `{resolved}`"),
+                            anchor,
+                        ));
+                    }
+                    let Some(default) = defaults.get(i).and_then(Option::as_ref) else {
+                        return Err(self.unsupported_reg(
+                            format!("non-constant default argument in call to `{resolved}`"),
+                            anchor,
+                        ));
+                    };
+                    let LowerTy::Scalar(scalar) = expected else {
+                        return Err(self.unsupported_reg(
+                            format!("non-scalar default argument in call to `{resolved}`"),
+                            anchor,
+                        ));
+                    };
+                    let default = default.clone();
+                    self.checked_const_value(ctx, &default, scalar, anchor)?
+                }
+            };
+            operands.push(value);
+        }
+        self.emit_bound_call(ctx, anchor, &resolved, operands)?;
+        // A reference result is the callee's returned place pointer — the
+        // caller-side handle convention; a handle to pointer-typed storage
+        // joins `pointer_slot_refs` like `MakeRef`.
+        if let Some(reference) = &call.reference_result
+            && matches!(*reference.referent, Ty::Pointer { .. })
+        {
+            self.pointer_slot_refs.insert(anchor.0);
+        }
+        // `mut self` receivers without an aliased place write the modified
+        // receiver back — the `lower_method_call` contract.
+        let write_back = !receiver_alias
+            && match self.func.reg_types.get(&recv.0) {
+                Some(Ty::Struct(struct_name, _)) => self
+                    .struct_decls
+                    .get(struct_name.as_str())
+                    .is_some_and(|d| {
+                        d.mut_self_methods.contains(resolved.as_str())
+                            || d.mut_self_methods.contains(method)
+                    }),
+                _ => false,
+            };
+        if write_back && let Some(place) = recv_place {
+            let LowerTy::Aggregate { layout, .. } = &params[0] else {
+                return Err(
+                    self.unsupported_reg("mutating subscript on a scalar receiver".into(), anchor)
+                );
+            };
+            let size = layout.size;
+            let recv_ptr = self.reg_ptr(ctx, recv)?;
+            let place = place.clone();
+            let (address, _) = self.place_address(ctx, &place, anchor)?;
+            self.mem_copy(ctx, address, recv_ptr, size, anchor);
+        }
+        Ok(())
+    }
+
+    /// One `MirSubscriptArg` as a lowered actual: an index register or an
+    /// inline-built slice descriptor.
+    fn subscript_actual<'p>(
+        &mut self,
+        ctx: &mut Context,
+        anchor: Reg,
+        arg: &crate::mir::MirSubscriptArg,
+        place: Option<&'p MirPlace>,
+    ) -> Result<SubscriptActual<'p>, PlironError> {
+        Ok(match arg {
+            crate::mir::MirSubscriptArg::Index(reg) => SubscriptActual::Reg(*reg, place),
+            crate::mir::MirSubscriptArg::Slice {
+                lower, upper, step, ..
+            } => SubscriptActual::Descriptor(
+                self.build_slice_descriptor(ctx, anchor, *lower, *upper, *step)?,
+            ),
+        })
+    }
+
+    fn subscript_actuals<'p>(
+        &mut self,
+        ctx: &mut Context,
+        anchor: Reg,
+        args: &[crate::mir::MirSubscriptArg],
+        places: &'p [Option<MirPlace>],
+    ) -> Result<Vec<SubscriptActual<'p>>, PlironError> {
+        args.iter()
+            .enumerate()
+            .map(|(i, arg)| {
+                self.subscript_actual(ctx, anchor, arg, places.get(i).and_then(Option::as_ref))
+            })
+            .collect()
+    }
+
+    /// An intrinsic storage subscript: a constant index into heterogeneous
+    /// (`TupleStorage`) or homogeneous (`VariadicStorage`) pack storage — the
+    /// VM's `index_value` clone at a statically composed offset. Runtime
+    /// indexes stay rejected until the packs slice.
+    fn lower_index_intrinsic(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        base: Reg,
+        index: Reg,
+        intrinsic: &crate::mir::MirIntrinsicSubscript,
+    ) -> Result<(), PlironError> {
+        use crate::mir::MirIntrinsicSubscript as Sub;
+        if !matches!(intrinsic, Sub::TupleStorage | Sub::VariadicStorage) {
+            return Err(self.unsupported_reg("intrinsic subscript".into(), dest));
+        }
+        let elements = match self.func.reg_types.get(&base.0) {
+            Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)) => elements.clone(),
+            other => {
+                return Err(self.unsupported_reg(
+                    format!(
+                        "intrinsic subscript on `{}`",
+                        other.map(|ty| ty.to_string()).unwrap_or_default()
+                    ),
+                    dest,
+                ));
+            }
+        };
+        let Some(PendingLiteral::Int(literal)) = self.pending_literals.get(&index.0).cloned()
+        else {
+            return Err(self.unsupported_reg("runtime index into pack storage".into(), dest));
+        };
+        let element = literal
+            .to_i64()
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|value| *value < elements.len())
+            .ok_or_else(|| {
+                self.unsupported_reg("pack subscript index out of range".into(), dest)
+            })?;
+        let composed = self.struct_layout_of(&elements, dest)?;
+        let base_ptr = self.reg_ptr(ctx, base)?;
+        let offset = composed.offsets[element];
+        let address = if offset == 0 {
+            base_ptr
+        } else {
+            self.gep_byte(ctx, base_ptr, offset, dest)
+        };
+        self.load_from(ctx, address, &elements[element], dest)
+    }
+
+    /// The slice-descriptor `indices(length)` normalization — the VM's
+    /// `normalize_slice_bounds` — as branch-free selects over the raw
+    /// descriptor, producing the three-element bounds tuple. A zero step
+    /// traps (the VM's runtime error; the negative-length check is
+    /// unreachable over container sizes and is not replicated).
+    fn lower_slice_indices(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        args: &[Reg],
+    ) -> Result<(), PlironError> {
+        if args.len() != 1 {
+            return Err(self.unsupported_reg("slice `indices` call contract".into(), dest));
+        }
+        let length = self.reg_value(ctx, args[0], ScalarTy::Int)?;
+        let descriptor = self.reg_ptr(ctx, recv)?;
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let bound = |lowering: &mut Self, ctx: &mut Context, offset: u64, bit: i64| {
+            let address = lowering.offset_address(ctx, descriptor, offset);
+            let value = LoadOp::new(ctx, address, i64_handle);
+            lowering.append(ctx, value.get_operation(), Some(dest));
+            let flags_address = lowering.offset_address(ctx, descriptor, 24);
+            let flags = LoadOp::new(ctx, flags_address, i64_handle);
+            lowering.append(ctx, flags.get_operation(), Some(dest));
+            let mask = lowering.int_constant(ctx, bit);
+            let masked = AndOp::new(ctx, flags.get_result(ctx), mask);
+            lowering.append(ctx, masked.get_operation(), Some(dest));
+            let zero = lowering.int_constant(ctx, 0);
+            let is_set = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
+            lowering.append(ctx, is_set.get_operation(), Some(dest));
+            (value.get_result(ctx), is_set.get_result(ctx))
+        };
+        let (raw_lower, has_lower) = bound(self, ctx, 0, 1);
+        let (raw_upper, has_upper) = bound(self, ctx, 8, 2);
+        let (raw_step, has_step) = bound(self, ctx, 16, 4);
+        let one = self.int_constant(ctx, 1);
+        let step = SelectOp::new(ctx, has_step, raw_step, one);
+        self.append(ctx, step.get_operation(), Some(dest));
+        let step = step.get_result(ctx);
+        let zero = self.int_constant(ctx, 0);
+        let step_is_zero = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, step, zero);
+        self.append(ctx, step_is_zero.get_operation(), Some(dest));
+        self.emit_trap_guard(
+            ctx,
+            step_is_zero.get_result(ctx),
+            TrapCategory::UnhandledError,
+            dest,
+        )?;
+        let step_positive = ICmpOp::new(ctx, ICmpPredicateAttr::SGT, step, zero);
+        self.append(ctx, step_positive.get_operation(), Some(dest));
+        let step_positive = step_positive.get_result(ctx);
+        let minus_one = self.int_constant(ctx, -1);
+        let len_minus_one = SubOp::new_with_overflow_flag(ctx, length, one, no_overflow_flags());
+        self.append(ctx, len_minus_one.get_operation(), Some(dest));
+        let len_minus_one = len_minus_one.get_result(ctx);
+        // Clamp an explicit bound to a valid range, wrapping a negative
+        // index once (`runtime::normalize_slice_bounds`'s `adjust`).
+        let adjust = |lowering: &mut Self, ctx: &mut Context, raw: Value| {
+            let wrapped = AddOp::new_with_overflow_flag(ctx, raw, length, no_overflow_flags());
+            lowering.append(ctx, wrapped.get_operation(), Some(dest));
+            let negative = ICmpOp::new(ctx, ICmpPredicateAttr::SLT, raw, zero);
+            lowering.append(ctx, negative.get_operation(), Some(dest));
+            let adjusted =
+                SelectOp::new(ctx, negative.get_result(ctx), wrapped.get_result(ctx), raw);
+            lowering.append(ctx, adjusted.get_operation(), Some(dest));
+            let adjusted = adjusted.get_result(ctx);
+            let clamp =
+                |lowering: &mut Self, ctx: &mut Context, value: Value, low: Value, high: Value| {
+                    let below = ICmpOp::new(ctx, ICmpPredicateAttr::SLT, value, low);
+                    lowering.append(ctx, below.get_operation(), Some(dest));
+                    let floored = SelectOp::new(ctx, below.get_result(ctx), low, value);
+                    lowering.append(ctx, floored.get_operation(), Some(dest));
+                    let above =
+                        ICmpOp::new(ctx, ICmpPredicateAttr::SGT, floored.get_result(ctx), high);
+                    lowering.append(ctx, above.get_operation(), Some(dest));
+                    let clamped =
+                        SelectOp::new(ctx, above.get_result(ctx), high, floored.get_result(ctx));
+                    lowering.append(ctx, clamped.get_operation(), Some(dest));
+                    clamped.get_result(ctx)
+                };
+            let positive = clamp(lowering, ctx, adjusted, zero, length);
+            let negative = clamp(lowering, ctx, adjusted, minus_one, len_minus_one);
+            let result = SelectOp::new(ctx, step_positive, positive, negative);
+            lowering.append(ctx, result.get_operation(), Some(dest));
+            result.get_result(ctx)
+        };
+        let adjusted_lower = adjust(self, ctx, raw_lower);
+        let adjusted_upper = adjust(self, ctx, raw_upper);
+        let default_start = SelectOp::new(ctx, step_positive, zero, len_minus_one);
+        self.append(ctx, default_start.get_operation(), Some(dest));
+        let start = SelectOp::new(
+            ctx,
+            has_lower,
+            adjusted_lower,
+            default_start.get_result(ctx),
+        );
+        self.append(ctx, start.get_operation(), Some(dest));
+        let default_stop = SelectOp::new(ctx, step_positive, length, minus_one);
+        self.append(ctx, default_stop.get_operation(), Some(dest));
+        let stop = SelectOp::new(ctx, has_upper, adjusted_upper, default_stop.get_result(ctx));
+        self.append(ctx, stop.get_operation(), Some(dest));
+        let storage = self.entry_alloca(ctx, 24, 8);
+        for (index, value) in [start.get_result(ctx), stop.get_result(ctx), step]
+            .into_iter()
+            .enumerate()
+        {
+            let address = self.offset_address(ctx, storage, index as u64 * 8);
+            let store = StoreOp::new(ctx, value, address);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        self.reg_values.insert(dest.0, storage);
         Ok(())
     }
 
@@ -3932,14 +5093,6 @@ impl<'a> FnLowering<'a> {
                 dest,
             ));
         };
-        if signature.ret == RetKind::Ptr || call.reference_result.is_some() {
-            // Unreachable in practice: a raising reference-returning callee
-            // already rejected at declaration.
-            return Err(self.unsupported_reg(
-                format!("reference-yielding raising `__next__` `{}`", call.target),
-                dest,
-            ));
-        }
         // The exhausted edge leaves zeroed element bytes in `dest`; releasing
         // zeroed heap fields is a null-free no-op, but a user destructor
         // observing zeroed fields would diverge from the VM's inert `None`.
@@ -3951,6 +5104,13 @@ impl<'a> FnLowering<'a> {
                 ),
                 dest,
             ));
+        }
+        if outcome.ok_is_reference {
+            let mangled = signature.mangled.clone();
+            let func_ty = signature.func_ty;
+            return self.lower_try_next_reference(
+                ctx, dest, yielded, iter, call, &outcome, mangled, func_ty,
+            );
         }
         let callee: Identifier = signature
             .mangled
@@ -4030,6 +5190,155 @@ impl<'a> FnLowering<'a> {
         }
     }
 
+    /// `TryNext` over a reference-yielding raising `__next__`: the ok payload
+    /// is a place pointer into the iterator's element storage. The ok edge
+    /// reads through it and copies the element out (the VM's
+    /// `CopyIteratorReference` adapter); the exhausted edge releases the
+    /// caught error and leaves zeroed element bytes, like the value form.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_try_next_reference(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        yielded: Reg,
+        iter: u32,
+        call: &crate::checked::CheckedIteratorCall,
+        outcome: &OutcomeAbi,
+        mangled: String,
+        func_ty: TypedHandle<FuncType>,
+    ) -> Result<(), PlironError> {
+        // A byte copy stands in for the VM's lifecycle clone only when no
+        // nested copy constructor could observe the difference (destructors
+        // already rejected in `lower_try_next`).
+        if self.has_nested_lifecycle(&call.result_ty, "__copyinit__") {
+            return Err(self.unsupported_reg(
+                format!(
+                    "reference-yielded iterator element `{}` with a copy constructor",
+                    call.result_ty
+                ),
+                dest,
+            ));
+        }
+        let element = lower_ty(
+            self.name,
+            &call.result_ty,
+            &self.layout,
+            self.reg_span(dest),
+        )?;
+        let mut element_layout = self.layout.layout_of(&call.result_ty).map_err(|error| {
+            self.unsupported_reg(format!("iterator element layout ({error})"), dest)
+        })?;
+        // A `for ref x` contract's temp slot holds the handle, not the
+        // element (see `yields_reference` below).
+        if call.reference_result.is_some() && call.result_adapter.is_none() {
+            element_layout = Layout::new(8, 8);
+        }
+        let callee: Identifier = mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let storage = self.entry_alloca(ctx, outcome.layout.size, outcome.layout.align);
+        let temp = self.entry_alloca(ctx, element_layout.size, element_layout.align);
+        let receiver = self.var_slots[iter as usize];
+        let call_op = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            vec![storage, receiver],
+        );
+        self.append(ctx, call_op.get_operation(), Some(dest));
+        let i32_handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        let tag = LoadOp::new(ctx, storage, i32_handle);
+        self.append(ctx, tag.get_operation(), Some(dest));
+        let ok_tag = self.tag_constant(ctx, crate::native::rt_abi::MJ_TAG_OK);
+        let is_ok = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), ok_tag);
+        self.define(ctx, yielded, is_ok.get_operation(), is_ok.get_result(ctx))?;
+        let region = self.region.expect("lowering is inside a function");
+        let ok_block = BasicBlock::new(ctx, None, vec![]);
+        ok_block.insert_at_back(region, ctx);
+        let exhausted_block = BasicBlock::new(ctx, None, vec![]);
+        exhausted_block.insert_at_back(region, ctx);
+        let join_block = BasicBlock::new(ctx, None, vec![]);
+        join_block.insert_at_back(region, ctx);
+        let branch = CondBrOp::new(
+            ctx,
+            is_ok.get_result(ctx),
+            ok_block,
+            vec![],
+            exhausted_block,
+            vec![],
+        );
+        self.append(ctx, branch.get_operation(), Some(dest));
+        // A `for ref x` contract keeps the yielded reference itself (the
+        // destination is a handle written through by the loop body); the
+        // adapter contract copies the element out.
+        let yields_reference = call.reference_result.is_some() && call.result_adapter.is_none();
+        self.current = Some(ok_block);
+        let ok_address = self.offset_address(ctx, storage, outcome.ok_offset);
+        let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
+        let place = LoadOp::new(ctx, ok_address, ptr_handle);
+        self.append(ctx, place.get_operation(), Some(dest));
+        if yields_reference {
+            let store = StoreOp::new(ctx, place.get_result(ctx), temp);
+            self.append(ctx, store.get_operation(), Some(dest));
+        } else {
+            match &element {
+                LowerTy::Scalar(scalar) => {
+                    let handle = scalar.handle(ctx);
+                    let value = LoadOp::new(ctx, place.get_result(ctx), handle);
+                    self.append(ctx, value.get_operation(), Some(dest));
+                    let store = StoreOp::new(ctx, value.get_result(ctx), temp);
+                    self.append(ctx, store.get_operation(), Some(dest));
+                }
+                LowerTy::Aggregate { layout, .. } => {
+                    self.mem_copy(ctx, temp, place.get_result(ctx), layout.size, dest);
+                }
+                LowerTy::ZeroSized => {}
+            }
+        }
+        let jump = BrOp::new(ctx, join_block, vec![]);
+        self.append(ctx, jump.get_operation(), None);
+        self.current = Some(exhausted_block);
+        let err_address = self.offset_address(ctx, storage, outcome.err_offset);
+        self.emit_release_storage(ctx, err_address, &Ty::Error)?;
+        if element_layout.size > 0 {
+            self.mem_zero(ctx, temp, element_layout.size);
+        }
+        let jump = BrOp::new(ctx, join_block, vec![]);
+        self.append(ctx, jump.get_operation(), None);
+        self.current = Some(join_block);
+        if yields_reference {
+            // The handle value (never read on the exhausted edge — the loop
+            // has ended). A handle to pointer-typed storage joins
+            // `pointer_slot_refs` like `MakeRef`.
+            let load = LoadOp::new(ctx, temp, ptr_handle);
+            if let Some(reference) = &call.reference_result
+                && matches!(*reference.referent, Ty::Pointer { .. })
+            {
+                self.pointer_slot_refs.insert(dest.0);
+            }
+            return self.define(ctx, dest, load.get_operation(), load.get_result(ctx));
+        }
+        match element {
+            LowerTy::Scalar(scalar) => {
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, temp, handle);
+                self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
+            }
+            LowerTy::Aggregate { .. } => {
+                // Deliberately not an owned temporary: the following `DefVar`
+                // copies the element out, and the zeroed exhausted bytes must
+                // never release.
+                self.reg_values.insert(dest.0, temp);
+                Ok(())
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+                Ok(())
+            }
+        }
+    }
+
     /// The compiled signature of an iterator `__next__` target, requiring the
     /// VM's `mut self` receiver contract.
     fn iterator_next_signature(
@@ -4057,6 +5366,7 @@ impl<'a> FnLowering<'a> {
     /// (`Type(copy=value)`), the compiled `__init__` overload with fresh
     /// storage as its `out self`, or fieldwise per-field stores — the VM's
     /// dispatch order.
+    #[allow(clippy::too_many_arguments)]
     fn lower_constructor(
         &mut self,
         ctx: &mut Context,
@@ -4064,6 +5374,8 @@ impl<'a> FnLowering<'a> {
         name: &str,
         args: &[Reg],
         kwargs: &[(String, Reg)],
+        arg_places: &[Option<MirPlace>],
+        kwarg_places: &[Option<MirPlace>],
     ) -> Result<(), PlironError> {
         if crate::symbol::is_stdlib_string_struct(name) {
             return self.lower_string_ctor(ctx, dest, args, kwargs);
@@ -4083,6 +5395,7 @@ impl<'a> FnLowering<'a> {
         if let Some(init) = self.constructor_init(name, args.len()) {
             let params = self.signatures[&init].params.clone();
             let owned = self.signatures[&init].owned_params.clone();
+            let by_reference = self.signatures[&init].ref_params.clone();
             if params.is_empty() {
                 return Err(
                     self.unsupported_reg(format!("`{init}` without an `out self` parameter"), dest)
@@ -4091,16 +5404,33 @@ impl<'a> FnLowering<'a> {
             let storage = self.entry_alloca(ctx, layout.size, layout.align);
             let rest = &params[1..];
             let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
+            let rest_by_reference = if by_reference.len() > 1 {
+                &by_reference[1..]
+            } else {
+                &[]
+            };
             let mut lowered = vec![storage];
-            if kwargs.is_empty() && args.len() == rest.len() {
+            if kwargs.is_empty()
+                && args.len() == rest.len()
+                && !rest_by_reference.iter().any(|&by_ref| by_ref)
+            {
                 for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
                     let owned = rest_owned.get(i).copied().unwrap_or(false);
                     lowered.push(self.arg_value(ctx, *arg, expected, owned, dest)?);
                 }
             } else {
-                lowered.extend(
-                    self.bind_call_slots(ctx, dest, &init, rest, rest_owned, args, kwargs)?,
-                );
+                lowered.extend(self.bind_call_slots(
+                    ctx,
+                    dest,
+                    &init,
+                    rest,
+                    rest_owned,
+                    rest_by_reference,
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
+                )?);
             }
             self.emit_bound_call(ctx, dest, &init, lowered)?;
             // `__init__` returns nothing; the constructed value is the
@@ -4160,6 +5490,17 @@ impl<'a> FnLowering<'a> {
         args: &[Reg],
         kwargs: &[(String, Reg)],
     ) -> Result<(), PlironError> {
+        if args.is_empty() && kwargs.len() == 1 && kwargs[0].0 == "copy" {
+            // `String(copy=value)` deep-copies through the native bridge, the
+            // VM's `construct_via_copy` over the stdlib copy constructor.
+            let ty = Ty::Struct(crate::symbol::STDLIB_STRING_STRUCT.to_string(), vec![]);
+            let lowered = lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))?;
+            let LowerTy::Aggregate { ty, layout } = lowered else {
+                return Err(self.unsupported_reg("String copy layout".into(), dest));
+            };
+            let src = self.reg_ptr(ctx, kwargs[0].1)?;
+            return self.copy_aggregate(ctx, dest, &ty, layout, src);
+        }
         if args.len() != 1 || !kwargs.is_empty() {
             return Err(self.unsupported_reg("String constructor contract".into(), dest));
         }
@@ -4320,6 +5661,25 @@ impl<'a> FnLowering<'a> {
     ) -> Result<(), PlironError> {
         let place = place.clone();
         let (address, ty) = self.place_address(ctx, &place, dest)?;
+        // A bare reference-typed variable re-borrows: its slot stores a
+        // handle (reference slots always hold real referent addresses), and
+        // the made reference is that stored handle, collapsing the chain
+        // like the VM's recursive `Value::Ref` reads. A projected place
+        // whose designated element is itself a reference (a `List[ref T]`
+        // element) instead addresses the slot — its consumers dereference
+        // explicitly.
+        if place.proj.is_empty()
+            && let Ty::Ref(reference) = &ty
+        {
+            let handle = ScalarTy::Ptr.handle(ctx);
+            let load = LoadOp::new(ctx, address, handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            if matches!(*reference.referent, Ty::Pointer { .. }) {
+                self.pointer_slot_refs.insert(dest.0);
+            }
+            self.reg_values.insert(dest.0, load.get_result(ctx));
+            return Ok(());
+        }
         if matches!(ty, Ty::Pointer { .. }) {
             self.pointer_slot_refs.insert(dest.0);
         }
@@ -5633,9 +6993,49 @@ impl<'a> FnLowering<'a> {
         }
         match expected {
             LowerTy::Scalar(scalar) => self.reg_value(ctx, reg, *scalar),
-            LowerTy::Aggregate { .. } => self.reg_ptr(ctx, reg),
+            LowerTy::Aggregate { ty, .. } => {
+                // A literal argument entering a nominal-String parameter
+                // materializes through the constructor bridge — the VM's
+                // runtime coercion for generic parameters the checker could
+                // not wrap at check time.
+                if matches!(ty.as_ref(), Ty::Struct(name, _)
+                        if crate::symbol::is_stdlib_string_struct(name))
+                    && !matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(..)))
+                    && (self.str_consts.contains_key(&reg.0)
+                        || self.str_runtime.contains_key(&reg.0)
+                        || matches!(self.func.reg_types.get(&reg.0), Some(Ty::StringLiteral)))
+                {
+                    return self.materialize_string_argument(ctx, reg, ty, owned, dest);
+                }
+                self.reg_ptr(ctx, reg)
+            }
             LowerTy::ZeroSized => Err(self.unsupported_reg("zero-sized argument".into(), dest)),
         }
+    }
+
+    /// Materialize a literal-shaped register as an owned nominal String for
+    /// a String-typed parameter slot. The register's storage becomes the
+    /// materialized struct (its first 16 bytes still read as the literal
+    /// descriptor); a borrowed materialization is released after the
+    /// register's last use, an owned one transfers to the callee.
+    fn materialize_string_argument(
+        &mut self,
+        ctx: &mut Context,
+        reg: Reg,
+        string_ty: &Ty,
+        owned: bool,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let (data, len) = self.writer_argument_text(ctx, reg, dest)?;
+        let copy = self.emit_alloc(ctx, len, 1, dest);
+        self.mem_copy_dynamic(ctx, copy, data, len, dest);
+        let storage = self.entry_alloca(ctx, 24, 8);
+        self.store_string_fields(ctx, storage, copy, len, len, dest);
+        self.reg_values.insert(reg.0, storage);
+        if !owned {
+            self.mark_owned_temp(reg, string_ty.clone())?;
+        }
+        Ok(storage)
     }
 
     /// Emit the call to compiled `name` with fully bound operands, prepending
@@ -5668,8 +7068,7 @@ impl<'a> FnLowering<'a> {
             // The callee's return transferred ownership here; a discarded or
             // borrowed-only aggregate result is an owned temporary.
             if let Some(ty) = self.func.reg_types.get(&dest.0).cloned()
-                && self.owns_heap(&ty)
-                && self.releasable(&ty)
+                && ((self.owns_heap(&ty) && self.releasable(&ty)) || self.stdlib_deinit_temp(&ty))
             {
                 self.mark_owned_temp(dest, ty)?;
             }
@@ -5700,6 +7099,9 @@ impl<'a> FnLowering<'a> {
         outcome: OutcomeAbi,
         mut operands: Vec<Value>,
     ) -> Result<(), PlironError> {
+        // A reference-yielding raising callee's ok payload is the place
+        // pointer; the `Scalar(Ptr)` extraction below defines the destination
+        // as that handle — the checked `reference_result` contract.
         let storage = self.entry_alloca(ctx, outcome.layout.size, outcome.layout.align);
         operands.insert(0, storage);
         let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, operands);
@@ -5750,7 +7152,7 @@ impl<'a> FnLowering<'a> {
                 self.reg_values.insert(dest.0, address);
                 // The ok payload transferred ownership here, like an sret
                 // result.
-                if self.owns_heap(&ty) && self.releasable(&ty) {
+                if (self.owns_heap(&ty) && self.releasable(&ty)) || self.stdlib_deinit_temp(&ty) {
                     self.mark_owned_temp(dest, *ty)?;
                 }
                 Ok(())
@@ -5764,7 +7166,9 @@ impl<'a> FnLowering<'a> {
 
     /// Load the value at `address` with checked type `ty` into `dest`:
     /// scalars load directly; aggregates copy out into fresh storage — the
-    /// VM's clone-on-read place semantics.
+    /// VM's clone-on-read place semantics. A heap-owning aggregate clones
+    /// deeply (a byte copy would alias buffers both owners release), and a
+    /// releasable clone is an owned temporary.
     fn load_from(
         &mut self,
         ctx: &mut Context,
@@ -5778,8 +7182,17 @@ impl<'a> FnLowering<'a> {
                 let load = LoadOp::new(ctx, address, handle);
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
             }
-            LowerTy::Aggregate { layout, .. } => {
+            LowerTy::Aggregate { ty, layout } => {
                 let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                if self.owns_heap(&ty) {
+                    self.fork_value_into(ctx, storage, &ty, layout, address, dest)?;
+                    self.reg_values.insert(dest.0, storage);
+                    // The fork's own allocations are exactly its duplicated
+                    // String/Error buffers, which the invisible-release rule
+                    // frees regardless of user copy constructors.
+                    self.mark_owned_temp(dest, (*ty).clone())?;
+                    return Ok(());
+                }
                 self.mem_copy(ctx, storage, address, layout.size, dest);
                 self.reg_values.insert(dest.0, storage);
                 Ok(())
@@ -5816,12 +7229,16 @@ impl<'a> FnLowering<'a> {
                 self.append(ctx, store.get_operation(), Some(src));
                 Ok(())
             }
-            LowerTy::Aggregate { layout, .. } => {
+            LowerTy::Aggregate { ty, layout } => {
                 let ptr = self.reg_ptr(ctx, src)?;
-                self.mem_copy(ctx, address, ptr, layout.size, src);
-                // The designated storage owns the value now.
-                self.owned_temps.remove(&src.0);
-                Ok(())
+                // An owned temporary transfers into the designated storage;
+                // a borrowed heap-owning source clones instead — its byte
+                // copy would alias buffers both owners release.
+                if self.owned_temps.remove(&src.0).is_some() || !self.owns_heap(&ty) {
+                    self.mem_copy(ctx, address, ptr, layout.size, src);
+                    return Ok(());
+                }
+                self.fork_value_into(ctx, address, &ty, layout, ptr, src)
             }
             LowerTy::ZeroSized => Ok(()),
         }
@@ -5949,6 +7366,113 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
+    /// Display one nominal struct by calling its unique compiled `write_to`
+    /// instance over a fresh builtin-string accumulator, then write the
+    /// accumulated bytes to stdout and free them.
+    fn print_struct_via_write_to(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        name: &str,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let prefix = format!("{name}.write_to");
+        let mut candidates = self
+            .signatures
+            .iter()
+            .filter(|(fname, _)| fname.starts_with(&prefix));
+        let Some((_, signature)) = candidates.next() else {
+            return Err(self.unsupported_reg(
+                format!("display of `{name}` without a compiled `write_to`"),
+                dest,
+            ));
+        };
+        if candidates.next().is_some() {
+            return Err(self.unsupported_reg(
+                format!("display of `{name}` with ambiguous `write_to` instances"),
+                dest,
+            ));
+        }
+        if signature.outcome.is_some() {
+            return Err(self.unsupported_reg(format!("raising `{prefix}`"), dest));
+        }
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let writer = self.entry_alloca(ctx, 16, 8);
+        self.mem_zero(ctx, writer, 16);
+        let recv_ptr = self.reg_ptr(ctx, arg)?;
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            vec![recv_ptr, writer],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        let (data, len) = self.string_parts(ctx, writer, dest);
+        self.write_stdout(ctx, data, len, dest);
+        self.emit_free(ctx, data);
+        Ok(())
+    }
+
+    /// The builtin-string writer's `write`: grow-and-append each argument's
+    /// display text into the `mut`-aliased `{data, len}` descriptor — the
+    /// VM's `Value::Str` writer.
+    fn lower_str_writer_write(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        args: &[Reg],
+        recv_place: Option<&MirPlace>,
+    ) -> Result<(), PlironError> {
+        let descriptor = match recv_place {
+            Some(place) => {
+                let place = place.clone();
+                self.place_address(ctx, &place, dest)?.0
+            }
+            None => self.reg_ptr(ctx, recv)?,
+        };
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
+        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        for arg in args {
+            let (chunk, chunk_len) = self.writer_argument_text(ctx, *arg, dest)?;
+            let data = LoadOp::new(ctx, descriptor, ptr_handle);
+            self.append(ctx, data.get_operation(), Some(dest));
+            let len_address = self.offset_address(ctx, descriptor, 8);
+            let len = LoadOp::new(ctx, len_address, i64_handle);
+            self.append(ctx, len.get_operation(), Some(dest));
+            let total = AddOp::new_with_overflow_flag(
+                ctx,
+                len.get_result(ctx),
+                chunk_len,
+                no_overflow_flags(),
+            );
+            self.append(ctx, total.get_operation(), Some(dest));
+            let merged = self.emit_alloc(ctx, total.get_result(ctx), 1, dest);
+            self.mem_copy_dynamic(ctx, merged, data.get_result(ctx), len.get_result(ctx), dest);
+            let tail = GetElementPtrOp::new(
+                ctx,
+                merged,
+                vec![GepIndex::Value(len.get_result(ctx))],
+                i8_ty,
+            );
+            self.append(ctx, tail.get_operation(), Some(dest));
+            self.mem_copy_dynamic(ctx, tail.get_result(ctx), chunk, chunk_len, dest);
+            self.emit_free(ctx, data.get_result(ctx));
+            let store = StoreOp::new(ctx, merged, descriptor);
+            self.append(ctx, store.get_operation(), Some(dest));
+            let store = StoreOp::new(ctx, total.get_result(ctx), len_address);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        self.erased.insert(dest.0);
+        Ok(())
+    }
+
     /// Write the UTF-8 bytes of a string-valued register to stdout when the
     /// register holds one of the supported string shapes — an interned
     /// constant, a runtime StringLiteral (descriptor or typed storage), or a
@@ -6002,6 +7526,13 @@ impl<'a> FnLowering<'a> {
         if matches!(self.func.reg_types.get(&arg.0), Some(Ty::None)) {
             self.write_literal_bytes(ctx, b"None", dest);
             return Ok(());
+        }
+        // A nominal struct displays through its `write_to` conformance over
+        // the builtin-string accumulator — the VM's `format_value` dispatch.
+        if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
+            && !crate::symbol::is_stdlib_string_struct(&name)
+        {
+            return self.print_struct_via_write_to(ctx, arg, &name, dest);
         }
         let ty = match self.concrete_scalar_ty(arg)? {
             Some(ty) => ty,
@@ -7991,12 +9522,40 @@ fn record_last_uses(
     }
 }
 
+/// One already-lowered subscript actual: an index register (with its checked
+/// place for `mut`/`ref` slots) or an inline-built slice-descriptor pointer.
+enum SubscriptActual<'a> {
+    Reg(Reg, Option<&'a MirPlace>),
+    Descriptor(Value),
+}
+
+/// The checker-virtual slice-descriptor struct name behind `ty`, if any.
+fn slice_struct_name(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Struct(name, _)
+            if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") =>
+        {
+            Some(name)
+        }
+        Ty::Ref(reference) => slice_struct_name(&reference.referent),
+        _ => None,
+    }
+}
+
 fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
     fn place_regs(place: &MirPlace, out: &mut Vec<Reg>) {
         for proj in &place.proj {
             if let Proj::Index(reg) = proj {
                 out.push(*reg);
             }
+        }
+    }
+    fn subscript_arg_regs(arg: &crate::mir::MirSubscriptArg, out: &mut Vec<Reg>) {
+        match arg {
+            crate::mir::MirSubscriptArg::Index(reg) => out.push(*reg),
+            crate::mir::MirSubscriptArg::Slice {
+                lower, upper, step, ..
+            } => out.extend([lower, upper, step].into_iter().flatten()),
         }
     }
     let mut out = Vec::new();
@@ -8016,6 +9575,45 @@ fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
         MirInstr::GetField { base, .. } => out.push(*base),
         MirInstr::MakeTuple { elems, .. } => out.extend(elems.iter().copied()),
         MirInstr::Index { base, index, .. } => out.extend([*base, *index]),
+        MirInstr::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => {
+            out.push(*object);
+            out.extend([lower, upper, step].into_iter().flatten());
+        }
+        MirInstr::MultiIndex {
+            object,
+            args,
+            kwargs,
+            ..
+        } => {
+            out.push(*object);
+            for arg in args.iter().chain(kwargs.iter().map(|(_, arg)| arg)) {
+                subscript_arg_regs(arg, &mut out);
+            }
+        }
+        MirInstr::MultiSet {
+            receiver,
+            args,
+            value,
+            ..
+        } => {
+            out.push(*receiver);
+            for arg in args {
+                subscript_arg_regs(arg, &mut out);
+            }
+            out.push(*value);
+        }
+        MirInstr::ReadRef { reference, .. } => out.push(*reference),
+        MirInstr::WriteRef { reference, value } => out.extend([*reference, *value]),
+        MirInstr::StoreRef { place, reference } => {
+            place_regs(place, &mut out);
+            out.push(*reference);
+        }
         MirInstr::Call { args, kwargs, .. } => {
             out.extend(args.iter().copied());
             out.extend(kwargs.iter().map(|(_, reg)| *reg));

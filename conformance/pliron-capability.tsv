@@ -23,19 +23,19 @@ instruction	place.move	partial	marks the root partially initialized; later whole
 instruction	var.store	supported	sets the initialization flag
 instruction	unary	partial	checked scalar operand types
 instruction	binary	partial	checked scalar operand types plus pointer `+` element arithmetic; nominal left operands monomorphize to operator-method calls; other forms reject
-instruction	call	partial	positional arguments and constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input` builtins and the `UnsafePointer` allocation family; keyword places, captures, and value param-args reject
+instruction	call	partial	positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; captures and value param-args reject
 instruction	call.indirect	unsupported	Stage 5: indirect calls
-instruction	call.method	partial	positional contracts on compiled targets plus the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics; reference-result adapters reject
+instruction	call.method	partial	positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; reference-result adapters and captures reject
 instruction	pointer.take	partial	element-offset raw move out of ownership-verified single-take storage; unlayoutable elements reject
 instruction	pointer.destroy	partial	in-place element destructor at the element offset; raising or droppable-field destructors reject
 instruction	uninit.make	partial	payload-only frame storage, no init flag (verified programs never take or destroy uninitialized slots)
 instruction	uninit.take	partial	raw byte move of the payload
 instruction	uninit.destroy	partial	in-place payload destructor; raising or droppable-field destructors reject
 instruction	field.get	partial	layoutable base aggregates
-instruction	index.get	partial	the `pointer` intrinsic subscript only
-instruction	slice.get	unsupported	Stage 5: collections
-instruction	index.multi	unsupported	Stage 5: collections
-instruction	index.multi_set	unsupported	Stage 5: collections
+instruction	index.get	partial	nominal `__getitem__` dispatch (value, reference, and raising-reference results) plus the `pointer` and constant-index pack-storage intrinsics; runtime pack indexes reject until the packs slice
+instruction	slice.get	supported	raw bound descriptors through the nominal `__getitem__` contract; bound accesses materialize compiled `Optional`s and `indices` normalizes natively
+instruction	index.multi	supported	variadic `__getitem__` dispatch with index and slice-descriptor actuals, positional or keyword
+instruction	index.multi_set	supported	`__setitem__` dispatch with the keyword or trailing-positional value slot and `mut self` write-back
 instruction	place.store	supported	whole-variable stores set the initialization flag
 instruction	place.store_ref	supported	stores the reference handle
 instruction	place.load	partial	layoutable, typed places
@@ -61,7 +61,7 @@ instruction	unsupported	unsupported	explicit lowering marker; rejects by definit
 instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject
 instruction	iter.has_next	partial	bounded nominal `__len__() > 0`; the compiler-private pack fallback rejects
 instruction	iter.next	partial	nominal `__next__(mut self)` aliasing the iterator slot: value results, reference results, and the `CopyIteratorReference` adapter; the pack fallback rejects
-instruction	iter.try_next	partial	tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge; elements with user destructors and reference-yielding raising iterators reject
+instruction	iter.try_next	partial	tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge, including reference-yielding raising iterators (copy and `for ref` contracts); elements with user destructors reject
 type	Int	supported	signless i64
 type	UInt	supported	signless i64; unsigned operator selection
 type	Bool	supported	i1
@@ -76,7 +76,7 @@ type	DType	unsupported	compile-time only
 type	func	unsupported	Stage 5: retained callables
 type	generic_func	unsupported	semantic-only; Stage 5 monomorphization target
 type	overload	unsupported	semantic-only
-type	param	unsupported	generic bodies; Stage 5 monomorphization target
+type	param	unsupported	monomorphization substitutes receiver-bound instances; a residual parameter is a contextual rejection
 type	assoc	unsupported	semantic-only; Stage 5 monomorphization target
 type	dependent_index	unsupported	semantic-only; Stage 5 monomorphization target
 type	Self	unsupported	semantic-only

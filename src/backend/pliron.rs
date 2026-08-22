@@ -157,6 +157,7 @@ pub fn compile(
         entries: specialized.entries,
         target: options.target,
         exe_wrapper_added: false,
+        unhandled_error_declared: shared.declared_rt("mjrt_unhandled_error"),
     })
 }
 
@@ -205,6 +206,9 @@ pub struct NativeModule {
     entries: HashMap<String, String>,
     target: NativeTarget,
     exe_wrapper_added: bool,
+    /// Whether body lowering declared `mjrt_unhandled_error` (the wrapper
+    /// must not redeclare it).
+    unhandled_error_declared: bool,
 }
 
 impl NativeModule {
@@ -359,7 +363,12 @@ impl NativeModule {
             });
         }
         callees.push((main.mangled.clone(), main.outcome));
-        lower::synthesize_exe_wrapper(&mut self.context, self.module, &callees)?;
+        lower::synthesize_exe_wrapper(
+            &mut self.context,
+            self.module,
+            &callees,
+            self.unhandled_error_declared,
+        )?;
         verify_module(&self.context, self.module)?;
         self.exe_wrapper_added = true;
         Ok(())
@@ -748,6 +757,20 @@ fn visit_call_edges<'p>(
                 // intrinsics; their element-erased stdlib bodies must not
                 // be declared.
                 MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => {}
+                // `print` of a nominal struct calls its `write_to` instance
+                // in the lowered expansion.
+                MirInstr::Call { func, args, .. } if func.0 == "print" => {
+                    for arg in args {
+                        if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
+                            let prefix = format!("{name}.write_to");
+                            for (fname, _) in functions.iter() {
+                                if fname.starts_with(prefix.as_str()) {
+                                    targets.push(*fname);
+                                }
+                            }
+                        }
+                    }
+                }
                 MirInstr::Call {
                     func, args, kwargs, ..
                 } => match functions.get_key_value(func.0.as_str()) {
@@ -771,6 +794,18 @@ fn visit_call_edges<'p>(
                         push_named(&mut targets, resolved);
                     }
                 }
+                // The VM-synthesized `Writer.write` dispatch lowers to
+                // `write_string` calls that exist only in the expansion.
+                MirInstr::MethodCall {
+                    recv,
+                    method,
+                    resolved: None,
+                    ..
+                } if method == "write" => {
+                    if let Some(Ty::Struct(name, _)) = function.reg_types.get(&recv.0) {
+                        push_named(&mut targets, &format!("{name}.write_string"));
+                    }
+                }
                 // Iterator instructions carry their targets as symbols rather
                 // than call edges; monomorphization has already retargeted
                 // them to concrete instances.
@@ -787,6 +822,30 @@ fn visit_call_edges<'p>(
                     call: Some(call), ..
                 }
                 | MirInstr::TryNext { call, .. } => push_named(&mut targets, &call.target),
+                // Subscript instructions carry their checker-selected (and
+                // mono-retargeted) targets on the instruction.
+                MirInstr::Index {
+                    call: Some(call), ..
+                }
+                | MirInstr::Slice {
+                    call: Some(call), ..
+                }
+                | MirInstr::MultiIndex {
+                    call: Some(call), ..
+                } => push_named(&mut targets, &call.target),
+                MirInstr::MultiSet { call, .. } => push_named(&mut targets, &call.target),
+                // A `^` transfer of a struct with a user `__moveinit__` runs
+                // it (the VM's `move_value`); the edge exists only in the
+                // lowered expansion.
+                MirInstr::UseVar {
+                    var,
+                    mode: crate::mir::UseMode::Move,
+                    ..
+                } => {
+                    if let Some(Ty::Struct(name, _)) = function.var_tys.get(var) {
+                        push_named(&mut targets, &format!("{name}.__moveinit__"));
+                    }
+                }
                 _ => {}
             }
             for callee in targets {
@@ -898,6 +957,7 @@ fn run_cleanup_passes(context: &mut Context, module: ModuleOp) -> Result<(), Pli
 fn verify_module(context: &Context, module: ModuleOp) -> Result<(), PlironError> {
     pliron::op::verify_op(&module, context).map_err(|error| {
         if std::env::var_os("MOJITO_PLIRON_DUMP_ON_VERIFY_ERROR").is_some() {
+            eprintln!("verify debug: {error:?}");
             eprintln!("{}", module.get_operation().disp(context));
         }
         PlironError {

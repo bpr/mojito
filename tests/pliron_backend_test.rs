@@ -207,6 +207,10 @@ fn canonical_text_round_trips() {
 /// The `(relative path, source)` of every `.mojo` fixture in `dir`, sorted.
 fn fixture_sources(dir: &str) -> Vec<(String, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
+    // Debugging filter for one fixture's differential/sanitizer lanes.
+    // Never combine with UPDATE_EXPECT: the manifest assertion still runs
+    // over the filtered rows and must fail rather than rewrite the pin.
+    let only = std::env::var("MOJITO_PARITY_ONLY").ok();
     let mut fixtures: Vec<_> = std::fs::read_dir(&root)
         .unwrap_or_else(|error| panic!("{dir} exists: {error}"))
         .filter_map(|entry| {
@@ -214,6 +218,7 @@ fn fixture_sources(dir: &str) -> Vec<(String, String)> {
             let name = path.file_name()?.to_str()?;
             name.ends_with(".mojo").then(|| name.to_string())
         })
+        .filter(|name| only.as_deref().is_none_or(|filter| name.contains(filter)))
         .collect();
     fixtures.sort();
     fixtures
@@ -914,16 +919,16 @@ fn parity_exe_manifest_and_differential() {
     let raises = count("raise-differential");
     let excluded = count("excluded");
     assert!(
-        differential >= 147,
-        "exe-differential coverage unexpectedly shrank: {differential} < 147"
+        differential >= 206,
+        "exe-differential coverage unexpectedly shrank: {differential} < 206"
     );
     assert!(
         raises >= 4,
         "raise-differential coverage unexpectedly shrank: {raises} < 4"
     );
     assert!(
-        excluded <= 136,
-        "excluded coverage unexpectedly grew: {excluded} > 136"
+        excluded <= 83,
+        "excluded coverage unexpectedly grew: {excluded} > 83"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
@@ -1080,6 +1085,10 @@ fn lifecycle_event_traces_match_the_vm() {
         "assets/ok/try_return.mojo",
         "assets/ok/pliron_struct_drop_order.mojo",
         "assets/ok/pliron_iter_drop_order.mojo",
+        // pliron_list_core stays out of this lane: native traces spell
+        // canonicalized instance names (`List$mono$TInt`) where the VM logs
+        // bare templates, and generic-collection copy/consume event parity
+        // is the Collections part-B trace-normalization item.
     ] {
         let src = std::fs::read_to_string(fixture).expect("fixture exists");
         let compiler = Compiler::default();

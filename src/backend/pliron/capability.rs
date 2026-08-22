@@ -147,7 +147,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "call",
         CapabilityStatus::Partial,
-        "positional arguments and constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input` builtins and the `UnsafePointer` allocation family; keyword places, captures, and value param-args reject",
+        "positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; captures and value param-args reject",
     ),
     (
         "call.indirect",
@@ -157,7 +157,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "call.method",
         CapabilityStatus::Partial,
-        "positional contracts on compiled targets plus the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics; reference-result adapters reject",
+        "positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; reference-result adapters and captures reject",
     ),
     (
         "pointer.take",
@@ -192,22 +192,22 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "index.get",
         CapabilityStatus::Partial,
-        "the `pointer` intrinsic subscript only",
+        "nominal `__getitem__` dispatch (value, reference, and raising-reference results) plus the `pointer` and constant-index pack-storage intrinsics; runtime pack indexes reject until the packs slice",
     ),
     (
         "slice.get",
-        CapabilityStatus::Unsupported,
-        "Stage 5: collections",
+        CapabilityStatus::Supported,
+        "raw bound descriptors through the nominal `__getitem__` contract; bound accesses materialize compiled `Optional`s and `indices` normalizes natively",
     ),
     (
         "index.multi",
-        CapabilityStatus::Unsupported,
-        "Stage 5: collections",
+        CapabilityStatus::Supported,
+        "variadic `__getitem__` dispatch with index and slice-descriptor actuals, positional or keyword",
     ),
     (
         "index.multi_set",
-        CapabilityStatus::Unsupported,
-        "Stage 5: collections",
+        CapabilityStatus::Supported,
+        "`__setitem__` dispatch with the keyword or trailing-positional value slot and `mut self` write-back",
     ),
     (
         "place.store",
@@ -337,7 +337,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "iter.try_next",
         CapabilityStatus::Partial,
-        "tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge; elements with user destructors and reference-yielding raising iterators reject",
+        "tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge, including reference-yielding raising iterators (copy and `for ref` contracts); elements with user destructors reject",
     ),
 ];
 
@@ -393,7 +393,7 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "param",
         CapabilityStatus::Unsupported,
-        "generic bodies; Stage 5 monomorphization target",
+        "monomorphization substitutes receiver-bound instances; a residual parameter is a contextual rejection",
     ),
     (
         "assoc",

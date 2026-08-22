@@ -289,3 +289,127 @@ Design decisions and recorded divergences:
   rejection and the stdin-failure trap (neither shape is constructible as
   a runnable `ok` fixture; the capability matrix and unit paths cover the
   decisions).
+
+## Collections, part A: canonicalization, call contracts, subscripts (S5.5)
+
+The Collections slice's first half: mono instance-identity canonicalization,
+the keyword/default call-contract gaps, and all four subscript instructions
+(`Index`, `Slice`, `MultiIndex`, `MultiSet`) with slice-descriptor
+construction. This unblocked the List/Dict/Span/String fixture clusters —
+the `List.grow` unresolved-`T` group alone was 43 excluded rows.
+
+- **Instance-identity canonicalization.** In-body `self` is typed as the
+  bare template (`Struct("List", [])`, `src/mir.rs`), and non-`__init__`
+  methods carry no `param_decls`, so method instances used to key on the
+  bare template name with first-enqueue-wins bindings — masking a
+  wrong-instance-sharing miscompile (`List[Int].append` and
+  `List[String].append` would share one body). Now: `substitute_ty`
+  renames every concrete application of a generic template (a member of
+  the source program's generic-template set — checker-specialized
+  `Tuple$tN` names with empty `param_decls` keep their names) to its
+  instance symbol; `Bindings.self_instance` rewrites the bare in-body
+  `self` spelling to the concrete instance; and method instances take
+  their owner's spelling (`List$mono$TInt.grow` via
+  `retarget_method_symbol`), so lowering's name-composed lifecycle and
+  overload lookups (`{name}.__init__`, `{name}.__deinit__`,
+  `constructor_init`'s unique-overload scan) work unchanged. The
+  `__init__` owner-restating `param_decls` prefix is stripped from the
+  instance arguments (the owner already carries those solutions);
+  overload-qualified `mut_self_methods` entries are respelled under the
+  instance name (a silent write-back miss otherwise, not a reject).
+- **Receiver-driven inference peels references** (the VM dereferences
+  `Value::Ref` receivers before dispatch), `bind_type` ignores `ref` and
+  pointer origins when comparing solutions (origins erase from the runtime
+  ABI; call sites solve `T = ref Int` with differing origins — first
+  spelling wins), and the reference-yielding subscript's destination is
+  never unified as a result (a handle's `ref` layers are
+  indistinguishable from a reference element type).
+- **The raising reference-returning ABI.** `_ListIter.__next__` raises for
+  exhaustion *and* returns a reference, so the Stage-4 declaration
+  rejection became the tagged outcome with a single place pointer as the
+  ok payload (`OutcomeAbi.ok_is_reference`). `TryNext` consumes it: the
+  `for x` adapter contract copies the element out on the ok edge; the
+  `for ref x` contract keeps the handle (temp slot holds the pointer, the
+  exhausted edge zeroes it, the loop never reads it). Generic call sites
+  (`Dict.__getitem__`) define the destination as the loaded handle — the
+  checked `reference_result` contract.
+- **Reference-slot conventions.** Reference-typed variable slots always
+  hold real referent addresses: `MakeRef` of a bare reference-typed
+  variable re-borrows (loads the stored handle, collapsing chains like
+  the VM's recursive `Value::Ref` reads), while a projected place whose
+  element is itself a reference (`List[ref T]` elements) addresses the
+  slot — its consumers dereference explicitly. `mut`/`ref` receiver
+  aliasing dereferences once when the receiver place designates a
+  reference handle (an iterator's `src` field).
+- **Subscripts.** Nominal dispatch is a hand-bound method call
+  (`lower_subscript_call`): receiver by compiled convention, actuals
+  matched through `call::match_call_slots` (the place for a `mut`/`ref`
+  slot comes from the matched source — `arg_places[p]`/`kwarg_places[k]`
+  — never the parameter position), `mut self` write-back, and
+  `emit_bound_call`'s raising/sret/pointer returns. Intrinsic
+  `TupleStorage`/`VariadicStorage` subscripts and pack place projections
+  resolve constant (pending-literal) indexes to static offsets; runtime
+  pack indexes stay rejected until part B. Slice descriptors are a raw
+  32-byte `{start, end, step, flags}` frame (`Value::Slice`'s
+  `Option<i64>` fields); `discover_structs` synthesizes the
+  checker-virtual `Slice`/`ContiguousSlice`/`StridedSlice` declarations;
+  bound accesses materialize `Optional` values over frame-backed payload
+  slots (`{data → payload, _size ∈ {0, 1}}` — the observable state the
+  VM's `slice_bound_optional` constructor calls produce, with no heap to
+  own), and `indices`
+  lowers as branch-free selects mirroring `normalize_slice_bounds` (zero
+  step traps as the unhandled-error category — no runtime-type-error trap
+  exists; recorded divergence).
+- **VM-synthesized dispatches, natively.** `len`/`abs`/`round` rewrites
+  gained `Int`/`Float64`/`Bool` (`builtin_convert`'s struct arm →
+  `__int__`/`__float__`/`__bool__`); `Writer.write` formats each argument
+  and feeds the receiver's compiled `write_string` (mirrored in mono and
+  reachability — the callee exists only in the expansion); `print` of a
+  nominal struct displays through its `write_to` instance over a
+  builtin-string accumulator writer (the `Some[Writer]` sugar parameter is
+  infer-only and binds to `StringLiteral` by spelling), whose `write`
+  appends by grow-and-copy; `_mojito_abort` reports through
+  `mjrt_unhandled_error` (exit-category divergence from the VM's distinct
+  abort noted); the struct-to-literal bridge (`_as_string_literal`) stays a contextual
+  rejection — its bytes would need an owner the drop-inert literal value
+  model cannot record (the VM's arena never reclaims; a native copy
+  stored into a literal-typed field leaks with no releasing owner), so
+  the codepoint-display fixtures remain excluded; `Type(copy=value)`
+  dispatches to `__copyinit__` (`construct_via_copy`), never an
+  `__init__` contract; and a `^` transfer of a struct with a compiled
+  `__moveinit__` runs it (`move_value`) when the type also owns its
+  allocations through a destructor — a destructor-less pointer owner
+  leaks under real frees (the VM's arena tolerates it) and stays
+  rejected for S5.7 — with the reachability edge keyed on actual
+  `UseVar { Move }` sites so never-moved structs with rejecting move
+  constructors stay compilable.
+- **Fork semantics for real frees.** The VM's plain clone
+  (`place.load`/`Store` of borrowed values) aliases arena storage safely
+  because the arena never reclaims; native frees make every alias a double
+  release. `load_from` and `Store` of borrowed heap-owning values now
+  *fork*: byte copy plus re-duplicated String/Error buffers, recursing
+  through fields — silent (user `__copyinit__` never runs, matching the
+  VM's plain clone), with raw-pointer owners rejecting contextually. The
+  same rule fixed `GetField` of heap-owning fields. A literal argument
+  entering a nominal-String parameter materializes through the
+  constructor bridge (the VM's runtime coercion for generic parameters the
+  checker could not wrap). Discarded stdlib-collection temporaries (a
+  printed slice result, a read-convention receiver copy) release through
+  their compiled destructor chains — pure frees the VM's arena leaves to
+  the collector; user destructors could observe the difference (the VM
+  never drops register temporaries) and stay under the invisible rule,
+  and the every-row LSan lane is what forced each of these ownership
+  decisions.
+- The executable wrapper no longer redeclares `mjrt_unhandled_error` when
+  body lowering already did (`SymbolRedefined` verify failure), and
+  `MOJITO_PLIRON_DUMP_ON_VERIFY_ERROR=1` now prints the verifier's debug
+  detail alongside the module dump.
+- Ratchets: 147 → 206 exe-differential, 136 → 83 excluded (31
+  ineligible, 4 raise rows unchanged). Register-temporary releases are
+  untraced (the VM never drops register temporaries), and the
+  lifecycle-trace lane keeps its prior fixtures: native traces spell
+  canonicalized instance names (`List$mono$TInt`) where the VM logs bare
+  templates — trace-name normalization joins part B.
+- Part B (variadic packs, per-field initialization flags, the
+  destructor-bearing iterator element residue, trace-name normalization)
+  follows as the slice's second ratchet point.
