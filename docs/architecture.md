@@ -183,6 +183,14 @@ drop and cleanup instructions remain executable behavior. Errors and
 unwinding stays out until it has its own semantic, ABI, and portability
 specification.
 
+Variant lowering uses the shared native tag/payload layout and dispatches
+owning operations and destruction from the runtime tag. Multi-lane SIMD is a
+contiguous scalar aggregate whose semantic operations are statically unrolled;
+native vector types are an optimization over that completed behavior, not a
+different semantic path. User `__moveinit__` and `__deinit__` bodies remain
+ordinary compiled MIR calls, with a `deinit self` callee owning residual-field
+teardown.
+
 Dialect policy: lower directly to Pliron's LLVM dialect, and introduce a
 narrow `mojito` Pliron dialect only for demonstrated needs such as runtime
 calls, checked traps, explicit error propagation, target-independent

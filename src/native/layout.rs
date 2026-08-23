@@ -131,7 +131,10 @@ impl LayoutCx<'_> {
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.
             Ty::Func { .. } => Ok(compose(&[self.pointer(), self.pointer()]).layout),
-            Ty::Simd { dtype, width: 1 } => Ok(lane_layout(*dtype)),
+            Ty::Simd { dtype, width } => {
+                let lane = lane_layout(*dtype);
+                Ok(Layout::new(lane.size * *width as u64, lane.align))
+            }
             // Literal-typed storage holds the value at its default
             // materialized width; a value that exceeds it rejects at lowering.
             Ty::IntLiteral | Ty::FloatLiteral => Ok(Layout::new(8, 8)),
@@ -306,6 +309,24 @@ mod tests {
     }
 
     #[test]
+    fn multi_lane_simd_is_a_contiguous_scalar_aggregate() {
+        assert_eq!(
+            layout_of(&Ty::Simd {
+                dtype: Dtype::Int32,
+                width: 4,
+            }),
+            Ok(Layout::new(16, 4))
+        );
+        assert_eq!(
+            layout_of(&Ty::Simd {
+                dtype: Dtype::Float64,
+                width: 3,
+            }),
+            Ok(Layout::new(24, 8))
+        );
+    }
+
+    #[test]
     fn literal_storage_uses_materialized_widths() {
         assert_eq!(layout_of(&Ty::IntLiteral), Ok(Layout::new(8, 8)));
         assert_eq!(layout_of(&Ty::FloatLiteral), Ok(Layout::new(8, 8)));
@@ -465,11 +486,6 @@ mod tests {
             Ty::SelfType,
             Ty::VariadicPack(Box::new(Ty::Int)),
             Ty::ComptimeList(Box::new(Ty::Int)),
-            // Multi-lane SIMD stays unrepresentable until its lowering stage.
-            Ty::Simd {
-                dtype: Dtype::Float64,
-                width: 4,
-            },
         ] {
             assert!(
                 matches!(layout_of(&ty), Err(LayoutError::Unsupported(_))),

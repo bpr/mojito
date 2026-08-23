@@ -1379,7 +1379,8 @@ impl<'a> Specializer<'a> {
             declaration.name = name;
             declaration.param_decls.clear();
             // Overload-qualified `mut self` entries name the template
-            // (`List.pop$ov$Int`); respell them under the instance so
+            // (for example, a signature-qualified `List.pop`); respell them
+            // under the instance so
             // lowering's receiver write-back check matches the retargeted
             // method symbols. Bare method-name entries stay as they are.
             declaration.mut_self_methods = declaration

@@ -35,10 +35,6 @@ Stage 5 acceptance: canonical `.mir` artifacts behave identically through VM
 and native paths, the native backend never accepts rejected source, and
 promotion requires zero exclusions across Mojito's advertised runnable subset.
 
-- [ ] **Variant, scalar-semantics SIMD, move residues** — all Variant owning
-  operations over the existing tag/payload layout, SIMD values as element-wise
-  scalar aggregates (native vector types stay in the later SIMD task), user
-  `__moveinit__` moves, and the remaining dynamic-residue drops.
 - [ ] **Zero-exclusion burn-down** — fix the long tail until `excluded == 0`
   over `assets/ok` + `assets/ownership_ok`, extend the raise gate to every
   runnable `assets/runtime_error` fixture, assert the final guard state, and

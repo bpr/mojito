@@ -919,16 +919,16 @@ fn parity_exe_manifest_and_differential() {
     let raises = count("raise-differential");
     let excluded = count("excluded");
     assert!(
-        differential >= 251,
-        "exe-differential coverage unexpectedly shrank: {differential} < 251"
+        differential >= 266,
+        "exe-differential coverage unexpectedly shrank: {differential} < 266"
     );
     assert!(
         raises >= 4,
         "raise-differential coverage unexpectedly shrank: {raises} < 4"
     );
     assert!(
-        excluded <= 44,
-        "excluded coverage unexpectedly grew: {excluded} > 44"
+        excluded <= 29,
+        "excluded coverage unexpectedly grew: {excluded} > 29"
     );
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
@@ -967,20 +967,12 @@ fn native_error(src: &str, entries: &[&str]) -> String {
     error.display_with_sources(&options.sources)
 }
 
-/// Every construct outside the scalar subset produces a contextual
+/// Every construct outside the currently advertised native subset produces a contextual
 /// diagnostic naming the function and construct — no panics, no fallbacks.
 #[test]
 fn unsupported_constructs_produce_contextual_diagnostics() {
     // (source, entries, phrases the diagnostic must contain)
     let cases: &[(&str, &[&str], &[&str])] = &[
-        // A whole-value destructor combined with independently droppable
-        // fields destroys only dynamically knowable residues — the S5.7
-        // dynamic-residue drop family.
-        (
-            "struct Res(Movable, Deinitable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n\nstruct Box[T: Movable & Deinitable](Deinitable):\n    var value: Self.T\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n    def __deinit__(deinit self):\n        print(\"box gone\")\n\ndef compute() -> Int:\n    var b = Box[Res](Res(7))\n    return 1\n",
-            &["compute"],
-            &["destructor of `Box$mono$TRes` with droppable fields"],
-        ),
         // Pointer element arithmetic lowers `+` only (the `unsafe_offset`
         // form); `-` keeps a contextual rejection.
         (
@@ -1002,13 +994,6 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             "@fieldwise_init\nstruct RIter:\n    var n: Int\n\n    def __len__(self) -> Int:\n        return self.n\n\n    def __next__(mut self) -> Int:\n        self.n = self.n - 1\n        return self.n\n\n@fieldwise_init\nstruct RSrc:\n    var n: Int\n\n    def __iter__(ref self) raises -> RIter:\n        if self.n < 0:\n            raise Error(\"bad\")\n        return RIter(self.n)\n\ndef compute() raises -> Int:\n    var s = 0\n    var src = RSrc(3)\n    for x in src:\n        s = s + x\n    return s\n",
             &["compute"],
             &["raising iterator preparation `RSrc.__iter__`"],
-        ),
-        // Multi-lane SIMD stays excluded until the SIMD slice; width-1
-        // scalar aliases lower.
-        (
-            "def compute() -> Int:\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    return 1\n",
-            &["compute"],
-            &["pliron backend:", "unsupported"],
         ),
         // An IntLiteral constant that exceeds i64 storage rejects instead of
         // wrapping — the VM keeps arbitrary precision in literal-typed slots

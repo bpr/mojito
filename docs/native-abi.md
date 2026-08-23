@@ -114,14 +114,18 @@ specialized name). Rules:
   the type — the ordering is part of the type) with every payload overlaid at
   the first offset aligned to the widest alternative; size pads to
   `max(4, payload align)`.
+- `SIMD[dtype, width]` with `width > 1` is a contiguous scalar aggregate of
+  `width` lanes, aligned like one lane. Width-one SIMD aliases retain their
+  scalar ABI. This is the semantic fallback representation; mapping completed
+  SIMD semantics to native vector types is a later backend optimization.
 - A **retained callable** (`Ty::Func`) is the two-word value
   `{ invoke: ptr, env: ptr }` (16/8). `invoke` is a backend-interned thunk
   (`mjthunk_<n>`, outside the `mj_` mangle image); `env` points at the
   frame-local environment record of the creating `MakeClosure`, or is null
   for a bare function value or empty-capture closure. Generic callable
   values (`Ty::GenericFunc`) have no representation and reject.
-- Types with no defined native representation (SIMD until its lowering stage,
-  packs, unmaterialized literal types) reject with a contextual diagnostic —
+- Types with no defined native representation (unspecialized packs and
+  unmaterialized literal types) reject with a contextual diagnostic —
   backends never guess.
 
 ### Strings and the constant pool

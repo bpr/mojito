@@ -28,6 +28,9 @@ struct Buf:
         self.n = move.n
         self.data = move.data
 
+    def __deinit__(deinit self):
+        self.data.free()
+
     def set(mut self, i: Int, v: Int):
         self.data[i] = v
 

@@ -40,21 +40,21 @@ instruction	place.store	supported	whole-variable stores set the initialization f
 instruction	place.store_ref	supported	stores the reference handle
 instruction	place.load	partial	layoutable, typed places
 instruction	tuple.make	supported	typed element lists; variadic call sites build packs by relocation
-instruction	variant.make	unsupported	Stage 5: Variant
-instruction	variant.is	unsupported	Stage 5: Variant
-instruction	variant.get	unsupported	Stage 5: Variant
-instruction	variant.set	unsupported	Stage 5: Variant
-instruction	variant.take	unsupported	Stage 5: Variant
-instruction	variant.set_init_with	unsupported	Stage 5: Variant
-instruction	variant.deinit_with	unsupported	Stage 5: Variant
-instruction	variant.replace	unsupported	Stage 5: Variant
-instruction	simd.make	partial	width-1 scalar aliases with the VM's lane conversions; multi-lane construction rejects (Stage 5 SIMD slice)
-instruction	simd.cast	partial	width-1 casts (int rewrap, f64-mediated float conversion, i128-saturating float→int); multi-lane and bool casts reject
-instruction	simd.shuffle	unsupported	Stage 5: SIMD scalar semantics
+instruction	variant.make	supported	tagged aggregate construction over the normative Variant layout
+instruction	variant.is	supported	checked tag comparison
+instruction	variant.get	supported	checked payload projection
+instruction	variant.set	supported	drop-active-payload then replace through a checked place
+instruction	variant.take	supported	checked and unchecked consuming payload extraction
+instruction	variant.set_init_with	supported	indirect factory invocation followed by owning replacement
+instruction	variant.deinit_with	supported	tag-checked consuming handler invocation
+instruction	variant.replace	supported	owning replacement returning the previous payload
+instruction	simd.make	supported	width-1 scalar aliases and multi-lane scalar aggregates with VM-exact lane conversion
+instruction	simd.cast	partial	element-wise int rewrap, f64-mediated float conversion, and i128-saturating float-to-int; bool casts reject in the checker
+instruction	simd.shuffle	supported	compile-time lane gather over scalar-aggregate storage
 instruction	raise	supported	tagged-outcome error edge
 instruction	try	supported	structural flattening with cleanup drops and finally dispatch
 instruction	drop.reg	unsupported	reserved for the future assembler VM; the VM rejects it too
-instruction	drop.var	partial	flag-guarded compiled destructors; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject
+instruction	drop.var	partial	flag-guarded compiled destructors, including destructor-bearing structs with droppable fields; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject
 instruction	consume.var	supported	clears the initialization flag; surviving droppable struct fields destroy in reverse order under the per-leaf flags
 instruction	consume.place	partial	no droppable residual fields
 instruction	unsupported	unsupported	explicit lowering marker; rejects by definition
@@ -81,13 +81,13 @@ type	assoc	unsupported	semantic-only; Stage 5 monomorphization target
 type	dependent_index	unsupported	semantic-only; Stage 5 monomorphization target
 type	Self	unsupported	semantic-only
 type	struct_type	partial	concrete field layouts only
-type	simd	partial	width-1 scalar aliases at their lane width with VM-exact arithmetic/conversion/formatting; multi-lane vectors reject (Stage 5 SIMD slice)
+type	simd	supported	width-1 scalar aliases plus multi-lane scalar aggregates with element-wise arithmetic, conversion, indexing, shuffle, reductions, selection, and formatting
 type	Error	supported	MjError storage
 type	comptime_list	unsupported	CTFE bridge; no runtime values
 type	tuple	partial	concrete element layouts only
 type	runtime_pack	partial	concrete element layouts only
 type	variadic_pack	partial	monomorphization reifies call-site arities into concrete runtime packs; unspecialized packs never reach lowering
-type	variant	unsupported	Stage 5: Variant
+type	variant	supported	normative tag/payload layout with dynamic active-payload destruction
 type	pointer	supported	one opaque pointer; element layouts checked at use sites
 type	ref	supported	one opaque place address
 runtime	mjrt_version	supported	since=v1

@@ -225,7 +225,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   divisor, the `mjrt_pow` helper, aggregates/strings/allocation, Stage 4's
   tagged-outcome raising ABI, structural `try`/`finally` flattening with
   per-variable initialization flags and pending-outcome dispatch, references
-  as place addresses, `mjrt_trace` lifecycle emission under
+  as place addresses, Variant tag/payload operations with dynamic payload
+  destruction, scalar-aggregate multi-lane SIMD lowering, compiled user
+  `__moveinit__` transfers and residual-field destructor ownership,
+  `mjrt_trace` lifecycle emission under
   `CompileOptions::trace_lifecycle`, and the exe wrapper that references
   `mjrt_version` and consumes a raising entry's outcome),
   `backend/pliron/emit.rs` (target stamping onto every LLVM module, LLVM

@@ -231,58 +231,58 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "variant.make",
-        CapabilityStatus::Unsupported,
-        "Stage 5: Variant",
+        CapabilityStatus::Supported,
+        "tagged aggregate construction over the normative Variant layout",
     ),
     (
         "variant.is",
-        CapabilityStatus::Unsupported,
-        "Stage 5: Variant",
+        CapabilityStatus::Supported,
+        "checked tag comparison",
     ),
     (
         "variant.get",
-        CapabilityStatus::Unsupported,
-        "Stage 5: Variant",
+        CapabilityStatus::Supported,
+        "checked payload projection",
     ),
     (
         "variant.set",
-        CapabilityStatus::Unsupported,
-        "Stage 5: Variant",
+        CapabilityStatus::Supported,
+        "drop-active-payload then replace through a checked place",
     ),
     (
         "variant.take",
-        CapabilityStatus::Unsupported,
-        "Stage 5: Variant",
+        CapabilityStatus::Supported,
+        "checked and unchecked consuming payload extraction",
     ),
     (
         "variant.set_init_with",
-        CapabilityStatus::Unsupported,
-        "Stage 5: Variant",
+        CapabilityStatus::Supported,
+        "indirect factory invocation followed by owning replacement",
     ),
     (
         "variant.deinit_with",
-        CapabilityStatus::Unsupported,
-        "Stage 5: Variant",
+        CapabilityStatus::Supported,
+        "tag-checked consuming handler invocation",
     ),
     (
         "variant.replace",
-        CapabilityStatus::Unsupported,
-        "Stage 5: Variant",
+        CapabilityStatus::Supported,
+        "owning replacement returning the previous payload",
     ),
     (
         "simd.make",
-        CapabilityStatus::Partial,
-        "width-1 scalar aliases with the VM's lane conversions; multi-lane construction rejects (Stage 5 SIMD slice)",
+        CapabilityStatus::Supported,
+        "width-1 scalar aliases and multi-lane scalar aggregates with VM-exact lane conversion",
     ),
     (
         "simd.cast",
         CapabilityStatus::Partial,
-        "width-1 casts (int rewrap, f64-mediated float conversion, i128-saturating float→int); multi-lane and bool casts reject",
+        "element-wise int rewrap, f64-mediated float conversion, and i128-saturating float-to-int; bool casts reject in the checker",
     ),
     (
         "simd.shuffle",
-        CapabilityStatus::Unsupported,
-        "Stage 5: SIMD scalar semantics",
+        CapabilityStatus::Supported,
+        "compile-time lane gather over scalar-aggregate storage",
     ),
     (
         "raise",
@@ -302,7 +302,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "drop.var",
         CapabilityStatus::Partial,
-        "flag-guarded compiled destructors; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject",
+        "flag-guarded compiled destructors, including destructor-bearing structs with droppable fields; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject",
     ),
     (
         "consume.var",
@@ -413,8 +413,8 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "simd",
-        CapabilityStatus::Partial,
-        "width-1 scalar aliases at their lane width with VM-exact arithmetic/conversion/formatting; multi-lane vectors reject (Stage 5 SIMD slice)",
+        CapabilityStatus::Supported,
+        "width-1 scalar aliases plus multi-lane scalar aggregates with element-wise arithmetic, conversion, indexing, shuffle, reductions, selection, and formatting",
     ),
     ("Error", CapabilityStatus::Supported, "MjError storage"),
     (
@@ -437,7 +437,11 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         CapabilityStatus::Partial,
         "monomorphization reifies call-site arities into concrete runtime packs; unspecialized packs never reach lowering",
     ),
-    ("variant", CapabilityStatus::Unsupported, "Stage 5: Variant"),
+    (
+        "variant",
+        CapabilityStatus::Supported,
+        "normative tag/payload layout with dynamic active-payload destruction",
+    ),
     (
         "pointer",
         CapabilityStatus::Supported,

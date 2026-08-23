@@ -820,9 +820,9 @@ pub(super) enum LowerTy {
 /// aliases and the i64/f64 storage of `IntLiteral`/`FloatLiteral`-typed
 /// registers) stay SSA; `None` is zero-sized; struct, tuple, and
 /// `StringLiteral`-descriptor aggregates take their shared-engine layout, as
-/// does the two-word `{ invoke, env }` retained-callable value; everything
-/// else (multi-lane SIMD, generic callable values) stays outside the
-/// supported subset with a contextual rejection.
+/// does the two-word `{ invoke, env }` retained-callable value. Multi-lane
+/// SIMD values are deliberately memory-resident scalar aggregates; native
+/// vector types belong to the later SIMD optimization stage.
 fn lower_ty(
     function: &str,
     ty: &Ty,
@@ -852,6 +852,8 @@ fn lower_ty(
         | Ty::Struct(..)
         | Ty::Tuple(_)
         | Ty::RuntimePack(_)
+        | Ty::Variant(_)
+        | Ty::Simd { .. }
         | Ty::StringLiteral
         | Ty::Func { .. } => match layout.layout_of(ty) {
             Ok(computed) => Ok(LowerTy::Aggregate {
@@ -1731,15 +1733,47 @@ impl<'a> FnLowering<'a> {
                     instantiated_contract.as_ref(),
                 )
             }
+            MirInstr::MakeVariant {
+                dest,
+                alternatives,
+                index,
+                value,
+            } => self.lower_make_variant(ctx, *dest, alternatives, *index, *value),
+            MirInstr::VariantIs {
+                dest,
+                variant,
+                index,
+            } => self.lower_variant_is(ctx, *dest, *variant, *index),
+            MirInstr::VariantGet {
+                dest,
+                variant,
+                index,
+            } => self.lower_variant_get(ctx, *dest, *variant, *index, true),
+            MirInstr::VariantTake {
+                dest,
+                variant,
+                index,
+                checked,
+            } => self.lower_variant_take(ctx, *dest, *variant, *index, *checked),
+            MirInstr::VariantReplace {
+                dest,
+                place,
+                input_index,
+                output_index,
+                value,
+                checked,
+            } => self.lower_variant_replace(
+                ctx,
+                *dest,
+                place,
+                *input_index,
+                *output_index,
+                *value,
+                *checked,
+            ),
             MirInstr::Index { dest, .. }
             | MirInstr::Slice { dest, .. }
-            | MirInstr::MultiIndex { dest, .. }
-            | MirInstr::MakeVariant { dest, .. }
-            | MirInstr::VariantIs { dest, .. }
-            | MirInstr::VariantGet { dest, .. }
-            | MirInstr::VariantTake { dest, .. }
-            | MirInstr::VariantReplace { dest, .. }
-            | MirInstr::SimdShuffle { dest, .. } => {
+            | MirInstr::MultiIndex { dest, .. } => {
                 Err(self.unsupported_reg(format!("instruction `{}`", instr_name(instr)), *dest))
             }
             MirInstr::MakeSimd {
@@ -1754,6 +1788,9 @@ impl<'a> FnLowering<'a> {
                 dtype,
                 width,
             } => self.lower_simd_cast(ctx, *dest, *value, *dtype, *width),
+            MirInstr::SimdShuffle { dest, value, mask } => {
+                self.lower_simd_shuffle(ctx, *dest, *value, mask)
+            }
             MirInstr::Raise { src } => self.lower_raise(ctx, *src),
             MirInstr::Try {
                 body,
@@ -1775,10 +1812,25 @@ impl<'a> FnLowering<'a> {
                 mode: _,
                 prepare,
             } => self.lower_get_iter(ctx, *source, *dest, prepare),
-            MirInstr::VariantSet { .. }
-            | MirInstr::VariantSetInitWith { .. }
-            | MirInstr::VariantDeinitWith { .. }
-            | MirInstr::Drop { .. } => {
+            MirInstr::VariantSet {
+                dest,
+                place,
+                index,
+                value,
+            } => self.lower_variant_set(ctx, *dest, place, *index, *value),
+            MirInstr::VariantSetInitWith {
+                dest,
+                place,
+                index,
+                factory,
+            } => self.lower_variant_set_init_with(ctx, *dest, place, *index, *factory),
+            MirInstr::VariantDeinitWith {
+                dest,
+                variant,
+                handler,
+                index,
+            } => self.lower_variant_deinit_with(ctx, *dest, *variant, *handler, *index),
+            MirInstr::Drop { .. } => {
                 Err(self.unsupported(format!("instruction `{}`", instr_name(instr)), None))
             }
             MirInstr::Unsupported(message) => {
@@ -2887,11 +2939,380 @@ impl<'a> FnLowering<'a> {
         }
     }
 
-    /// `MakeSimd` at width 1 — scalar-alias construction (`Int8(x)`,
-    /// `Float32(x)`, `SIMD[DType.<dt>, 1](x)`): convert the single element
-    /// with the VM's lane builders (`runtime::value_to_int_lane`/
-    /// `value_to_float_lane`). Multi-lane construction stays out of the
-    /// subset until the SIMD slice.
+    fn lower_make_variant(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        alternatives: &[Ty],
+        index: usize,
+        value: Reg,
+    ) -> Result<(), PlironError> {
+        let Some(selected) = alternatives.get(index) else {
+            return Err(self.unsupported_reg("Variant construction tag".into(), dest));
+        };
+        let variant = self
+            .layout
+            .variant_layout(alternatives)
+            .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), dest))?;
+        let storage = self.entry_alloca(ctx, variant.layout.size, variant.layout.align);
+        let tag = self.tag_constant(ctx, index as u32);
+        let store = StoreOp::new(ctx, tag, storage);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let payload = self.offset_address(ctx, storage, variant.payload_offset);
+        self.copy_reg_into(ctx, payload, selected, value, dest)?;
+        self.reg_values.insert(dest.0, storage);
+        if self.needs_drop(selected) {
+            self.mark_owned_temp(dest, Ty::Variant(alternatives.to_vec()))?;
+        }
+        Ok(())
+    }
+
+    fn copy_reg_into(
+        &mut self,
+        ctx: &mut Context,
+        address: Value,
+        ty: &Ty,
+        src: Reg,
+        anchor: Reg,
+    ) -> Result<(), PlironError> {
+        match lower_ty(self.name, ty, &self.layout, self.reg_span(anchor))? {
+            LowerTy::Scalar(scalar) => {
+                let value = if let Some(literal) = self.pending_literals.get(&src.0).cloned() {
+                    self.materialize_pending(ctx, &literal, scalar, anchor)?
+                } else if !self.func.reg_types.contains_key(&src.0) {
+                    self.reg_values.get(&src.0).copied().ok_or_else(|| {
+                        self.unsupported_reg(
+                            format!("undefined produced register %r{}", src.0),
+                            anchor,
+                        )
+                    })?
+                } else {
+                    let source = self.concrete_scalar_ty(src)?.unwrap_or(scalar);
+                    let value = self.reg_value(ctx, src, source)?;
+                    self.convert_lane(ctx, source, scalar, value, anchor)?
+                };
+                let store = StoreOp::new(ctx, value, address);
+                self.append(ctx, store.get_operation(), Some(anchor));
+                Ok(())
+            }
+            LowerTy::Aggregate { layout, .. } => {
+                let source = self.reg_ptr(ctx, src)?;
+                self.copy_aggregate(ctx, anchor, ty, layout, source)?;
+                let copy = self.reg_ptr(ctx, anchor)?;
+                self.mem_copy(ctx, address, copy, layout.size, anchor);
+                self.owned_temps.remove(&anchor.0);
+                Ok(())
+            }
+            LowerTy::ZeroSized => Ok(()),
+        }
+    }
+
+    fn variant_parts(
+        &mut self,
+        ctx: &mut Context,
+        variant: Reg,
+        anchor: Reg,
+    ) -> Result<(Value, Vec<Ty>, crate::native::layout::VariantLayout), PlironError> {
+        let Some(Ty::Variant(alternatives)) = self.func.reg_types.get(&variant.0).cloned() else {
+            return Err(self.unsupported_reg("Variant operand type".into(), anchor));
+        };
+        let layout = self
+            .layout
+            .variant_layout(&alternatives)
+            .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), anchor))?;
+        let ptr = self.reg_ptr(ctx, variant)?;
+        Ok((ptr, alternatives, layout))
+    }
+
+    fn lower_variant_is(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        variant: Reg,
+        index: usize,
+    ) -> Result<(), PlironError> {
+        let (ptr, alternatives, _) = self.variant_parts(ctx, variant, dest)?;
+        if index >= alternatives.len() {
+            return Err(self.unsupported_reg("Variant.isa checked tag".into(), dest));
+        }
+        let handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        let tag = LoadOp::new(ctx, ptr, handle);
+        self.append(ctx, tag.get_operation(), Some(dest));
+        let expected = self.tag_constant(ctx, index as u32);
+        let equal = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), expected);
+        self.define(ctx, dest, equal.get_operation(), equal.get_result(ctx))
+    }
+
+    fn lower_variant_get(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        variant: Reg,
+        index: usize,
+        checked: bool,
+    ) -> Result<(), PlironError> {
+        let (ptr, alternatives, layout) = self.variant_parts(ctx, variant, dest)?;
+        let Some(selected) = alternatives.get(index) else {
+            return Err(self.unsupported_reg("Variant projection checked tag".into(), dest));
+        };
+        if checked {
+            self.emit_variant_tag_guard(ctx, ptr, index, dest)?;
+        }
+        let payload = self.offset_address(ctx, ptr, layout.payload_offset);
+        self.load_from(ctx, payload, selected, dest)?;
+        if self.needs_drop(selected) {
+            self.mark_owned_temp(dest, selected.clone())?;
+        }
+        Ok(())
+    }
+
+    fn lower_variant_take(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        variant: Reg,
+        index: usize,
+        checked: bool,
+    ) -> Result<(), PlironError> {
+        let (ptr, alternatives, layout) = self.variant_parts(ctx, variant, dest)?;
+        let Some(selected) = alternatives.get(index).cloned() else {
+            return Err(self.unsupported_reg("Variant.take checked tag".into(), dest));
+        };
+        if checked {
+            self.emit_variant_tag_guard(ctx, ptr, index, dest)?;
+        }
+        let payload = self.offset_address(ctx, ptr, layout.payload_offset);
+        match lower_ty(self.name, &selected, &self.layout, self.reg_span(dest))? {
+            LowerTy::Scalar(scalar) => {
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, payload, handle);
+                self.define(ctx, dest, load.get_operation(), load.get_result(ctx))?;
+            }
+            LowerTy::Aggregate { layout, .. } => {
+                let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                self.mem_copy(ctx, storage, payload, layout.size, dest);
+                self.reg_values.insert(dest.0, storage);
+                if self.needs_drop(&selected) {
+                    self.mark_owned_temp(dest, selected)?;
+                }
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+            }
+        }
+        // MIR moved the receiver place before `VariantTake`; ownership of the
+        // payload, not a clone, is now in `dest`.
+        self.owned_temps.remove(&variant.0);
+        Ok(())
+    }
+
+    fn emit_variant_tag_guard(
+        &mut self,
+        ctx: &mut Context,
+        ptr: Value,
+        index: usize,
+        anchor: Reg,
+    ) -> Result<(), PlironError> {
+        let handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        let tag = LoadOp::new(ctx, ptr, handle);
+        self.append(ctx, tag.get_operation(), Some(anchor));
+        let expected = self.tag_constant(ctx, index as u32);
+        let mismatch = ICmpOp::new(ctx, ICmpPredicateAttr::NE, tag.get_result(ctx), expected);
+        self.append(ctx, mismatch.get_operation(), Some(anchor));
+        self.emit_trap_guard(
+            ctx,
+            mismatch.get_result(ctx),
+            TrapCategory::UnhandledError,
+            anchor,
+        )
+    }
+
+    fn lower_variant_set(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        place: &MirPlace,
+        index: usize,
+        value: Reg,
+    ) -> Result<(), PlironError> {
+        let (address, ty) = self.place_address(ctx, place, dest)?;
+        let Ty::Variant(alternatives) = ty else {
+            return Err(self.unsupported_reg("Variant.set place type".into(), dest));
+        };
+        let Some(selected) = alternatives.get(index) else {
+            return Err(self.unsupported_reg("Variant.set checked tag".into(), dest));
+        };
+        let layout = self
+            .layout
+            .variant_layout(&alternatives)
+            .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), dest))?;
+        self.emit_drop_variant_payload(ctx, address, &alternatives, layout.payload_offset)?;
+        let tag = self.tag_constant(ctx, index as u32);
+        let store = StoreOp::new(ctx, tag, address);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let payload = self.offset_address(ctx, address, layout.payload_offset);
+        self.copy_reg_into(ctx, payload, selected, value, dest)?;
+        self.erased.insert(dest.0);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_variant_replace(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        place: &MirPlace,
+        input_index: usize,
+        output_index: usize,
+        value: Reg,
+        checked: bool,
+    ) -> Result<(), PlironError> {
+        let (address, ty) = self.place_address(ctx, place, dest)?;
+        let Ty::Variant(alternatives) = ty else {
+            return Err(self.unsupported_reg("Variant.replace place type".into(), dest));
+        };
+        let Some(input) = alternatives.get(input_index).cloned() else {
+            return Err(self.unsupported_reg("Variant.replace input tag".into(), dest));
+        };
+        let Some(output) = alternatives.get(output_index).cloned() else {
+            return Err(self.unsupported_reg("Variant.replace output tag".into(), dest));
+        };
+        if checked {
+            self.emit_variant_tag_guard(ctx, address, output_index, dest)?;
+        }
+        let layout = self
+            .layout
+            .variant_layout(&alternatives)
+            .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), dest))?;
+        let payload = self.offset_address(ctx, address, layout.payload_offset);
+        match lower_ty(self.name, &output, &self.layout, self.reg_span(dest))? {
+            LowerTy::Scalar(scalar) => {
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, payload, handle);
+                self.define(ctx, dest, load.get_operation(), load.get_result(ctx))?;
+            }
+            LowerTy::Aggregate { layout, .. } => {
+                let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                self.mem_copy(ctx, storage, payload, layout.size, dest);
+                self.reg_values.insert(dest.0, storage);
+                if self.needs_drop(&output) {
+                    self.mark_owned_temp(dest, output)?;
+                }
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+            }
+        }
+        let tag = self.tag_constant(ctx, input_index as u32);
+        let store = StoreOp::new(ctx, tag, address);
+        self.append(ctx, store.get_operation(), Some(dest));
+        self.copy_reg_into(ctx, payload, &input, value, Reg(u32::MAX - 3))
+    }
+
+    fn lower_variant_set_init_with(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        place: &MirPlace,
+        index: usize,
+        factory: Reg,
+    ) -> Result<(), PlironError> {
+        let produced = Reg(u32::MAX - 1);
+        self.lower_call_indirect(ctx, produced, factory, &[], &[], &[], &[], None)?;
+        self.lower_variant_set(ctx, dest, place, index, produced)
+    }
+
+    fn lower_variant_deinit_with(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        variant: Reg,
+        handler: Reg,
+        index: usize,
+    ) -> Result<(), PlironError> {
+        let (ptr, alternatives, layout) = self.variant_parts(ctx, variant, dest)?;
+        let Some(selected) = alternatives.get(index).cloned() else {
+            return Err(self.unsupported_reg("Variant.deinit_with checked tag".into(), dest));
+        };
+        self.emit_variant_tag_guard(ctx, ptr, index, dest)?;
+        let payload_address = self.offset_address(ctx, ptr, layout.payload_offset);
+        let payload = Reg(u32::MAX - 2);
+        match lower_ty(self.name, &selected, &self.layout, self.reg_span(dest))? {
+            LowerTy::Scalar(scalar) => {
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, payload_address, handle);
+                self.append(ctx, load.get_operation(), Some(dest));
+                self.reg_values.insert(payload.0, load.get_result(ctx));
+            }
+            LowerTy::Aggregate { .. } => {
+                self.reg_values.insert(payload.0, payload_address);
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(payload.0);
+            }
+        }
+        self.lower_call_indirect(ctx, dest, handler, &[payload], &[], &[None], &[], None)?;
+        self.owned_temps.remove(&variant.0);
+        self.reg_values.remove(&payload.0);
+        self.erased.remove(&payload.0);
+        self.erased.insert(dest.0);
+        Ok(())
+    }
+
+    fn emit_drop_variant_payload(
+        &mut self,
+        ctx: &mut Context,
+        ptr: Value,
+        alternatives: &[Ty],
+        payload_offset: u64,
+    ) -> Result<(), PlironError> {
+        if !alternatives.iter().any(|ty| self.needs_drop(ty)) {
+            return Ok(());
+        }
+        let tag_handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        let tag = LoadOp::new(ctx, ptr, tag_handle);
+        self.append(ctx, tag.get_operation(), None);
+        let payload = self.offset_address(ctx, ptr, payload_offset);
+        let region = self.region.expect("Variant drop is inside a function");
+        let continuation = BasicBlock::new(ctx, None, vec![]);
+        continuation.insert_at_back(region, ctx);
+        let mut next = self.current.expect("Variant drop has a current block");
+        for (index, alternative) in alternatives.iter().enumerate() {
+            if !self.needs_drop(alternative) {
+                continue;
+            }
+            self.current = Some(next);
+            let drop_block = BasicBlock::new(ctx, None, vec![]);
+            drop_block.insert_at_back(region, ctx);
+            let rest = BasicBlock::new(ctx, None, vec![]);
+            rest.insert_at_back(region, ctx);
+            let expected = self.tag_constant(ctx, index as u32);
+            let matches = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), expected);
+            self.append(ctx, matches.get_operation(), None);
+            let branch = CondBrOp::new(
+                ctx,
+                matches.get_result(ctx),
+                drop_block,
+                vec![],
+                rest,
+                vec![],
+            );
+            self.append(ctx, branch.get_operation(), None);
+            self.current = Some(drop_block);
+            self.emit_drop_value(ctx, payload, alternative, false)?;
+            let jump = BrOp::new(ctx, continuation, vec![]);
+            self.append(ctx, jump.get_operation(), None);
+            next = rest;
+        }
+        self.current = Some(next);
+        let jump = BrOp::new(ctx, continuation, vec![]);
+        self.append(ctx, jump.get_operation(), None);
+        self.current = Some(continuation);
+        Ok(())
+    }
+
+    /// Construct a SIMD value with the VM's per-lane conversions. Width-one
+    /// aliases remain SSA scalars; wider values use contiguous scalar storage.
     fn lower_make_simd(
         &mut self,
         ctx: &mut Context,
@@ -2900,20 +3321,57 @@ impl<'a> FnLowering<'a> {
         width: usize,
         elems: &[Reg],
     ) -> Result<(), PlironError> {
-        if width != 1 || elems.len() != 1 {
+        if elems.len() != 1 && elems.len() != width {
             return Err(self.unsupported_reg(
-                format!("multi-lane SIMD construction (width {width})"),
+                format!(
+                    "SIMD construction with {} elements for width {width}",
+                    elems.len()
+                ),
                 dest,
             ));
         }
-        let elem = elems[0];
         let target = ScalarTy::of_dtype(dtype);
+        if width > 1 {
+            let ty = Ty::Simd {
+                dtype,
+                width: width as i64,
+            };
+            let layout = self
+                .layout
+                .layout_of(&ty)
+                .map_err(|error| self.unsupported_reg(format!("SIMD layout ({error})"), dest))?;
+            let lane_layout = self
+                .layout
+                .layout_of(&Ty::Simd { dtype, width: 1 })
+                .expect("SIMD lane has a native layout");
+            let storage = self.entry_alloca(ctx, layout.size, layout.align);
+            for lane in 0..width {
+                let elem = elems[if elems.len() == 1 { 0 } else { lane }];
+                let converted = self.simd_constructor_lane(ctx, elem, target, dest)?;
+                let address = self.offset_address(ctx, storage, lane_layout.size * lane as u64);
+                let store = StoreOp::new(ctx, converted, address);
+                self.append(ctx, store.get_operation(), Some(dest));
+            }
+            self.reg_values.insert(dest.0, storage);
+            return Ok(());
+        }
+        let elem = elems[0];
+        let converted = self.simd_constructor_lane(ctx, elem, target, dest)?;
+        self.reg_values.insert(dest.0, converted);
+        Ok(())
+    }
+
+    fn simd_constructor_lane(
+        &mut self,
+        ctx: &mut Context,
+        elem: Reg,
+        target: ScalarTy,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
         // A literal element folds with the exact conversions (integers wrap
         // at the lane width, `Float32` rounds from the exact rational).
         if let Some(literal) = self.pending_literals.get(&elem.0).cloned() {
-            let constant = self.materialize_pending(ctx, &literal, target, dest)?;
-            self.reg_values.insert(dest.0, constant);
-            return Ok(());
+            return self.materialize_pending(ctx, &literal, target, dest);
         }
         let source = match self.concrete_scalar_ty(elem)? {
             Some(ty) => ty,
@@ -2923,19 +3381,17 @@ impl<'a> FnLowering<'a> {
             },
         };
         let value = self.reg_value(ctx, elem, source)?;
-        let converted = self.convert_lane(ctx, source, target, value, dest)?;
-        self.reg_values.insert(dest.0, converted);
-        Ok(())
+        self.convert_lane(ctx, source, target, value, dest)
     }
 
-    /// `SimdCast` at width 1 (`x.cast[DType.<dt>]()`) — the VM's
+    /// `SimdCast` (`x.cast[DType.<dt>]()`) — the VM's
     /// `runtime::simd_cast`: int→int rewraps at the new width, int→float
     /// converts through f64 (`Float32` rounds), float→float widens or
     /// rounds, and float→int truncates toward zero saturating at the
     /// 128-bit intermediate before wrapping — saturation must happen at
     /// i128, not the target width, or large magnitudes wrap differently
     /// than the VM. Bool casts reject (VM parity); multi-lane casts stay
-    /// out of the subset.
+    /// i128, not the target width, or large magnitudes wrap differently.
     fn lower_simd_cast(
         &mut self,
         ctx: &mut Context,
@@ -2944,11 +3400,57 @@ impl<'a> FnLowering<'a> {
         dtype: Dtype,
         width: usize,
     ) -> Result<(), PlironError> {
-        if width != 1 {
-            return Err(self.unsupported_reg(format!("multi-lane SIMD cast (width {width})"), dest));
-        }
         if dtype == Dtype::Bool {
             return Err(self.unsupported_reg("bool SIMD dtype cast".into(), dest));
+        }
+        if width > 1 {
+            let Some(Ty::Simd {
+                dtype: source_dtype,
+                width: source_width,
+            }) = self.func.reg_types.get(&value.0).cloned()
+            else {
+                return Err(self.unsupported_reg("SIMD cast source type".into(), dest));
+            };
+            if source_width != width as i64 {
+                return Err(self.unsupported_reg("SIMD cast width mismatch".into(), dest));
+            }
+            let source_ty = ScalarTy::of_dtype(source_dtype);
+            if matches!(source_ty, ScalarTy::Bool | ScalarTy::Ptr) {
+                return Err(self.unsupported_reg("SIMD cast of a Bool operand".into(), dest));
+            }
+            let source_ptr = self.reg_ptr(ctx, value)?;
+            let source_lane = self
+                .layout
+                .layout_of(&Ty::Simd {
+                    dtype: source_dtype,
+                    width: 1,
+                })
+                .expect("SIMD lane layout");
+            let target_ty = Ty::Simd {
+                dtype,
+                width: width as i64,
+            };
+            let target_layout = self.layout.layout_of(&target_ty).expect("SIMD layout");
+            let target_lane = self
+                .layout
+                .layout_of(&Ty::Simd { dtype, width: 1 })
+                .expect("SIMD lane layout");
+            let storage = self.entry_alloca(ctx, target_layout.size, target_layout.align);
+            let source_handle = source_ty.handle(ctx);
+            for lane in 0..width {
+                let source_address =
+                    self.offset_address(ctx, source_ptr, source_lane.size * lane as u64);
+                let load = LoadOp::new(ctx, source_address, source_handle);
+                self.append(ctx, load.get_operation(), Some(dest));
+                let converted =
+                    self.simd_cast_lane(ctx, load.get_result(ctx), source_ty, dtype, dest)?;
+                let target_address =
+                    self.offset_address(ctx, storage, target_lane.size * lane as u64);
+                let store = StoreOp::new(ctx, converted, target_address);
+                self.append(ctx, store.get_operation(), Some(dest));
+            }
+            self.reg_values.insert(dest.0, storage);
+            return Ok(());
         }
         let source = self.concrete_scalar_ty(value)?.ok_or_else(|| {
             self.unsupported_reg("SIMD cast of an unmaterialized literal".into(), dest)
@@ -2958,9 +3460,22 @@ impl<'a> FnLowering<'a> {
                 self.unsupported_reg(format!("SIMD cast of a {} operand", source.name()), dest)
             );
         }
-        let target = ScalarTy::of_dtype(dtype);
         let lane = self.reg_value(ctx, value, source)?;
-        let converted = match target {
+        let converted = self.simd_cast_lane(ctx, lane, source, dtype, dest)?;
+        self.reg_values.insert(dest.0, converted);
+        Ok(())
+    }
+
+    fn simd_cast_lane(
+        &mut self,
+        ctx: &mut Context,
+        lane: Value,
+        source: ScalarTy,
+        dtype: Dtype,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let target = ScalarTy::of_dtype(dtype);
+        Ok(match target {
             ScalarTy::Float64 => self.lane_to_f64(ctx, source, lane, dest)?,
             ScalarTy::Sized(Dtype::Float32) => {
                 let wide = self.lane_to_f64(ctx, source, lane, dest)?;
@@ -2982,8 +3497,52 @@ impl<'a> FnLowering<'a> {
                     }
                 }
             }
+        })
+    }
+
+    fn lower_simd_shuffle(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: Reg,
+        mask: &[usize],
+    ) -> Result<(), PlironError> {
+        let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&value.0).cloned() else {
+            return Err(self.unsupported_reg("SIMD shuffle source type".into(), dest));
         };
-        self.reg_values.insert(dest.0, converted);
+        let lane_ty = ScalarTy::of_dtype(dtype);
+        let lane_handle = lane_ty.handle(ctx);
+        let source = self.reg_ptr(ctx, value)?;
+        let lane = self
+            .layout
+            .layout_of(&Ty::Simd { dtype, width: 1 })
+            .expect("SIMD lane layout");
+        if mask.len() == 1 {
+            let address = self.offset_address(ctx, source, lane.size * mask[0] as u64);
+            let load = LoadOp::new(ctx, address, lane_handle);
+            return self.define(ctx, dest, load.get_operation(), load.get_result(ctx));
+        }
+        if mask.iter().any(|index| *index >= width as usize) {
+            return Err(self.unsupported_reg("SIMD shuffle index out of range".into(), dest));
+        }
+        let result_ty = Ty::Simd {
+            dtype,
+            width: mask.len() as i64,
+        };
+        let layout = self
+            .layout
+            .layout_of(&result_ty)
+            .expect("SIMD result layout");
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        for (result_lane, source_lane) in mask.iter().enumerate() {
+            let source_address = self.offset_address(ctx, source, lane.size * *source_lane as u64);
+            let load = LoadOp::new(ctx, source_address, lane_handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            let target_address = self.offset_address(ctx, storage, lane.size * result_lane as u64);
+            let store = StoreOp::new(ctx, load.get_result(ctx), target_address);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        self.reg_values.insert(dest.0, storage);
         Ok(())
     }
 
@@ -3123,21 +3682,15 @@ impl<'a> FnLowering<'a> {
                     let stdlib_string = matches!(ty.as_ref(), Ty::Struct(name, _)
                         if crate::symbol::is_stdlib_string_struct(name));
                     if !stdlib_string && self.has_lifecycle_method(&ty, "__moveinit__") {
-                        // A `^` transfer of a struct with a compiled
-                        // `__moveinit__` runs it — the VM's `move_value` —
-                        // when the type also owns its allocations through a
-                        // destructor. A destructor-less pointer owner leaks
-                        // under real frees (the VM's arena tolerates it) and
-                        // stays rejected until the S5.7 move-residues slice.
+                        // A `^` transfer with a compiled `__moveinit__` always
+                        // runs that constructor. Ownership checking has
+                        // already established the consuming source contract;
+                        // the constructor, not a backend pointer heuristic,
+                        // defines the move semantics.
                         if let Ty::Struct(name, _) = ty.as_ref()
                             && self
                                 .signatures
                                 .contains_key(&format!("{name}.__moveinit__"))
-                            && (self.stdlib_deinit_temp(&ty)
-                                || self
-                                    .declarations
-                                    .contains_key(&format!("{name}.__deinit__"))
-                                || !self.type_owns_pointer(&ty))
                         {
                             let name = name.clone();
                             return self.move_via_moveinit(ctx, dest, var, &name, layout);
@@ -4164,6 +4717,64 @@ impl<'a> FnLowering<'a> {
             self.store_string_fields(ctx, dst, new_data, src_size, src_size, span);
             return Ok(());
         }
+        if let Ty::Variant(alternatives) = ty {
+            self.mem_copy(ctx, dst, src_ptr, layout.size, span);
+            let variant = self.layout.variant_layout(alternatives).map_err(|error| {
+                self.unsupported_reg(format!("Variant fork layout ({error})"), span)
+            })?;
+            let handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+            let tag = LoadOp::new(ctx, src_ptr, handle);
+            self.append(ctx, tag.get_operation(), Some(span));
+            let src_payload = self.offset_address(ctx, src_ptr, variant.payload_offset);
+            let dst_payload = self.offset_address(ctx, dst, variant.payload_offset);
+            let region = self.region.expect("Variant fork is inside a function");
+            let continuation = BasicBlock::new(ctx, None, vec![]);
+            continuation.insert_at_back(region, ctx);
+            let mut next = self.current.expect("Variant fork has a current block");
+            for (index, alternative) in alternatives.iter().enumerate() {
+                if !self.owns_heap(alternative) {
+                    continue;
+                }
+                self.current = Some(next);
+                let fork_block = BasicBlock::new(ctx, None, vec![]);
+                fork_block.insert_at_back(region, ctx);
+                let rest = BasicBlock::new(ctx, None, vec![]);
+                rest.insert_at_back(region, ctx);
+                let expected = self.tag_constant(ctx, index as u32);
+                let matches =
+                    ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), expected);
+                self.append(ctx, matches.get_operation(), Some(span));
+                let branch = CondBrOp::new(
+                    ctx,
+                    matches.get_result(ctx),
+                    fork_block,
+                    vec![],
+                    rest,
+                    vec![],
+                );
+                self.append(ctx, branch.get_operation(), Some(span));
+                self.current = Some(fork_block);
+                let alternative_layout = self.layout.layout_of(alternative).map_err(|error| {
+                    self.unsupported_reg(format!("Variant fork payload layout ({error})"), span)
+                })?;
+                self.fork_value_into(
+                    ctx,
+                    dst_payload,
+                    alternative,
+                    alternative_layout,
+                    src_payload,
+                    span,
+                )?;
+                let jump = BrOp::new(ctx, continuation, vec![]);
+                self.append(ctx, jump.get_operation(), Some(span));
+                next = rest;
+            }
+            self.current = Some(next);
+            let jump = BrOp::new(ctx, continuation, vec![]);
+            self.append(ctx, jump.get_operation(), Some(span));
+            self.current = Some(continuation);
+            return Ok(());
+        }
         let elements: Vec<(Ty, u64)> = match ty {
             Ty::Struct(name, _) => {
                 let Some(decl) = self.struct_decls.get(name.as_str()) else {
@@ -4217,6 +4828,9 @@ impl<'a> FnLowering<'a> {
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
                 .iter()
                 .all(|element| !self.owns_heap(element) || self.releasable(element)),
+            Ty::Variant(alternatives) => alternatives
+                .iter()
+                .all(|alternative| !self.owns_heap(alternative) || self.releasable(alternative)),
             _ => !self.owns_heap(ty),
         }
     }
@@ -4234,6 +4848,9 @@ impl<'a> FnLowering<'a> {
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
                 elements.iter().any(|element| self.owns_heap(element))
             }
+            Ty::Variant(alternatives) => alternatives
+                .iter()
+                .any(|alternative| self.owns_heap(alternative)),
             _ => false,
         }
     }
@@ -4435,6 +5052,12 @@ impl<'a> FnLowering<'a> {
                     self.emit_release_storage(ctx, address, element)?;
                 }
                 Ok(())
+            }
+            Ty::Variant(alternatives) => {
+                let layout = self.layout.variant_layout(alternatives).map_err(|error| {
+                    self.unsupported(format!("Variant drop layout ({error})"), None)
+                })?;
+                self.emit_drop_variant_payload(ctx, ptr, alternatives, layout.payload_offset)
             }
             _ => Ok(()),
         }
@@ -4673,6 +5296,18 @@ impl<'a> FnLowering<'a> {
                         ty = elements[element].clone();
                         continue;
                     }
+                    if let Ty::Simd { dtype, width } = ty {
+                        if offset != 0 {
+                            address = self.gep_byte(ctx, address, offset, dest);
+                            offset = 0;
+                        }
+                        self.emit_simd_index_guard(ctx, *index, width as usize, dest)?;
+                        let element = Ty::Simd { dtype, width: 1 };
+                        address =
+                            self.pointer_element_address(ctx, address, *index, &element, dest)?;
+                        ty = element;
+                        continue;
+                    }
                     let Ty::Pointer { element, .. } = &ty else {
                         return Err(
                             self.unsupported_reg(format!("subscript projection on `{ty}`"), dest)
@@ -4697,6 +5332,29 @@ impl<'a> FnLowering<'a> {
                     )?;
                     ty = element;
                 }
+                Proj::Variant(index) => {
+                    let Ty::Variant(alternatives) = &ty else {
+                        return Err(
+                            self.unsupported_reg(format!("Variant projection on `{ty}`"), dest)
+                        );
+                    };
+                    let alternatives = alternatives.clone();
+                    let Some(selected) = alternatives.get(*index).cloned() else {
+                        return Err(
+                            self.unsupported_reg("Variant projection checked tag".into(), dest)
+                        );
+                    };
+                    if offset != 0 {
+                        address = self.gep_byte(ctx, address, offset, dest);
+                        offset = 0;
+                    }
+                    self.emit_variant_tag_guard(ctx, address, *index, dest)?;
+                    let layout = self.layout.variant_layout(&alternatives).map_err(|error| {
+                        self.unsupported_reg(format!("Variant layout ({error})"), dest)
+                    })?;
+                    address = self.offset_address(ctx, address, layout.payload_offset);
+                    ty = selected;
+                }
                 Proj::UninitPayload => {
                     let Some(element) = crate::types::uninit_storage_element(&ty).cloned() else {
                         return Err(self.unsupported_reg(
@@ -4710,9 +5368,6 @@ impl<'a> FnLowering<'a> {
                     // old payload leaks by design, exactly the VM's
                     // `unsafe_write`.
                     ty = element;
-                }
-                other => {
-                    return Err(self.unsupported_reg(format!("place projection `{other:?}`"), dest));
                 }
             }
         }
@@ -4972,6 +5627,9 @@ impl<'a> FnLowering<'a> {
         if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
         }
+        if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&recv.0).cloned() {
+            return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
+        }
         // Slice descriptors are checker-virtual: `indices` is the VM's
         // intrinsic normalization, and no other method exists on them.
         if self
@@ -5142,6 +5800,228 @@ impl<'a> FnLowering<'a> {
             let (address, _) = self.place_address(ctx, place, dest)?;
             self.mem_copy(ctx, address, recv_ptr, size, dest);
         }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_simd_method(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        dtype: Dtype,
+        width: usize,
+        method: &str,
+        args: &[Reg],
+    ) -> Result<(), PlironError> {
+        match method {
+            "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" | "reduce_and"
+            | "reduce_or"
+                if args.is_empty() =>
+            {
+                self.lower_simd_reduce(ctx, dest, recv, dtype, width, method)
+            }
+            "select" if dtype == Dtype::Bool && args.len() == 2 => {
+                self.lower_simd_select(ctx, dest, recv, args[0], args[1], width)
+            }
+            _ => Err(self.unsupported_reg(format!("SIMD method `{method}`"), dest)),
+        }
+    }
+
+    fn lower_simd_reduce(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        dtype: Dtype,
+        width: usize,
+        method: &str,
+    ) -> Result<(), PlironError> {
+        let lane_ty = ScalarTy::of_dtype(dtype);
+        let handle = lane_ty.handle(ctx);
+        let lane_layout = self
+            .layout
+            .layout_of(&Ty::Simd { dtype, width: 1 })
+            .expect("SIMD lane layout");
+        let ptr = self.reg_ptr(ctx, recv)?;
+        let first = LoadOp::new(ctx, ptr, handle);
+        self.append(ctx, first.get_operation(), Some(dest));
+        let mut accumulator = first.get_result(ctx);
+        for lane in 1..width {
+            let address = self.offset_address(ctx, ptr, lane_layout.size * lane as u64);
+            let load = LoadOp::new(ctx, address, handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            let next = load.get_result(ctx);
+            accumulator = match method {
+                "reduce_add" => {
+                    if matches!(lane_ty, ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32)) {
+                        let add = FAddOp::new_with_fast_math_flags(
+                            ctx,
+                            accumulator,
+                            next,
+                            FastmathFlagsAttr::default(),
+                        );
+                        self.append(ctx, add.get_operation(), Some(dest));
+                        add.get_result(ctx)
+                    } else {
+                        let add = AddOp::new_with_overflow_flag(
+                            ctx,
+                            accumulator,
+                            next,
+                            no_overflow_flags(),
+                        );
+                        self.append(ctx, add.get_operation(), Some(dest));
+                        add.get_result(ctx)
+                    }
+                }
+                "reduce_mul" => {
+                    if matches!(lane_ty, ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32)) {
+                        let mul = FMulOp::new_with_fast_math_flags(
+                            ctx,
+                            accumulator,
+                            next,
+                            FastmathFlagsAttr::default(),
+                        );
+                        self.append(ctx, mul.get_operation(), Some(dest));
+                        mul.get_result(ctx)
+                    } else {
+                        let mul = MulOp::new_with_overflow_flag(
+                            ctx,
+                            accumulator,
+                            next,
+                            no_overflow_flags(),
+                        );
+                        self.append(ctx, mul.get_operation(), Some(dest));
+                        mul.get_result(ctx)
+                    }
+                }
+                "reduce_and" => {
+                    let and = AndOp::new(ctx, accumulator, next);
+                    self.append(ctx, and.get_operation(), Some(dest));
+                    and.get_result(ctx)
+                }
+                "reduce_or" => {
+                    let or = OrOp::new(ctx, accumulator, next);
+                    self.append(ctx, or.get_operation(), Some(dest));
+                    or.get_result(ctx)
+                }
+                "reduce_min" | "reduce_max" => {
+                    let is_min = method == "reduce_min";
+                    let predicate = match lane_ty {
+                        ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => None,
+                        ScalarTy::Sized(kind) => {
+                            let signed = crate::runtime::integer_dtype_bits(kind)
+                                .is_some_and(|(_, signed)| signed);
+                            Some(match (is_min, signed) {
+                                (true, true) => ICmpPredicateAttr::SLT,
+                                (false, true) => ICmpPredicateAttr::SGT,
+                                (true, false) => ICmpPredicateAttr::ULT,
+                                (false, false) => ICmpPredicateAttr::UGT,
+                            })
+                        }
+                        _ => None,
+                    };
+                    let condition = if let Some(predicate) = predicate {
+                        let cmp = ICmpOp::new(ctx, predicate, next, accumulator);
+                        self.append(ctx, cmp.get_operation(), Some(dest));
+                        cmp.get_result(ctx)
+                    } else {
+                        let predicate = if is_min {
+                            FCmpPredicateAttr::OLT
+                        } else {
+                            FCmpPredicateAttr::OGT
+                        };
+                        let cmp = self.fcmp(ctx, predicate, next, accumulator);
+                        self.append(ctx, cmp.get_operation(), Some(dest));
+                        cmp.get_result(ctx)
+                    };
+                    let select = SelectOp::new(ctx, condition, next, accumulator);
+                    self.append(ctx, select.get_operation(), Some(dest));
+                    select.get_result(ctx)
+                }
+                _ => unreachable!(),
+            };
+        }
+        self.reg_values.insert(dest.0, accumulator);
+        Ok(())
+    }
+
+    fn lower_simd_select(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        mask: Reg,
+        yes: Reg,
+        no: Reg,
+        width: usize,
+    ) -> Result<(), PlironError> {
+        let Some(Ty::Simd { dtype, .. }) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg("SIMD select result type".into(), dest));
+        };
+        let lane_ty = ScalarTy::of_dtype(dtype);
+        let lane_handle = lane_ty.handle(ctx);
+        let lane_layout = self
+            .layout
+            .layout_of(&Ty::Simd { dtype, width: 1 })
+            .expect("SIMD lane layout");
+        let mask_ptr = self.reg_ptr(ctx, mask)?;
+        let yes_ptr = self.reg_ptr(ctx, yes)?;
+        let no_ptr = if matches!(self.func.reg_types.get(&no.0), Some(Ty::Simd { width, .. }) if *width > 1)
+        {
+            Some(self.reg_ptr(ctx, no)?)
+        } else {
+            None
+        };
+        let no_splat = if no_ptr.is_none() {
+            if let Some(literal) = self.pending_literals.get(&no.0).cloned() {
+                Some(self.materialize_pending(ctx, &literal, lane_ty, dest)?)
+            } else {
+                let source = self
+                    .concrete_scalar_ty(no)?
+                    .ok_or_else(|| self.unsupported_reg("SIMD select splat".into(), dest))?;
+                let value = self.reg_value(ctx, no, source)?;
+                Some(self.convert_lane(ctx, source, lane_ty, value, dest)?)
+            }
+        } else {
+            None
+        };
+        let layout = self
+            .layout
+            .layout_of(&Ty::Simd {
+                dtype,
+                width: width as i64,
+            })
+            .expect("SIMD layout");
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        let bool_handle = ScalarTy::Bool.handle(ctx);
+        for lane in 0..width {
+            let offset = lane_layout.size * lane as u64;
+            let mask_address = self.offset_address(ctx, mask_ptr, lane as u64);
+            let condition = LoadOp::new(ctx, mask_address, bool_handle);
+            self.append(ctx, condition.get_operation(), Some(dest));
+            let yes_address = self.offset_address(ctx, yes_ptr, offset);
+            let yes_value = LoadOp::new(ctx, yes_address, lane_handle);
+            self.append(ctx, yes_value.get_operation(), Some(dest));
+            let no_value = if let Some(ptr) = no_ptr {
+                let address = self.offset_address(ctx, ptr, offset);
+                let load = LoadOp::new(ctx, address, lane_handle);
+                self.append(ctx, load.get_operation(), Some(dest));
+                load.get_result(ctx)
+            } else {
+                no_splat.expect("SIMD select splat")
+            };
+            let select = SelectOp::new(
+                ctx,
+                condition.get_result(ctx),
+                yes_value.get_result(ctx),
+                no_value,
+            );
+            self.append(ctx, select.get_operation(), Some(dest));
+            let target = self.offset_address(ctx, storage, offset);
+            let store = StoreOp::new(ctx, select.get_result(ctx), target);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        self.reg_values.insert(dest.0, storage);
         Ok(())
     }
 
@@ -5529,6 +6409,16 @@ impl<'a> FnLowering<'a> {
         intrinsic: &crate::mir::MirIntrinsicSubscript,
     ) -> Result<(), PlironError> {
         use crate::mir::MirIntrinsicSubscript as Sub;
+        if matches!(intrinsic, Sub::Simd) {
+            let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&base.0).cloned() else {
+                return Err(self.unsupported_reg("SIMD subscript base type".into(), dest));
+            };
+            let base_ptr = self.reg_ptr(ctx, base)?;
+            let element = Ty::Simd { dtype, width: 1 };
+            self.emit_simd_index_guard(ctx, index, width as usize, dest)?;
+            let address = self.pointer_element_address(ctx, base_ptr, index, &element, dest)?;
+            return self.load_from(ctx, address, &element, dest);
+        }
         if !matches!(intrinsic, Sub::TupleStorage | Sub::VariadicStorage) {
             return Err(self.unsupported_reg("intrinsic subscript".into(), dest));
         }
@@ -5564,6 +6454,25 @@ impl<'a> FnLowering<'a> {
             self.gep_byte(ctx, base_ptr, offset, dest)
         };
         self.load_from(ctx, address, &elements[element], dest)
+    }
+
+    fn emit_simd_index_guard(
+        &mut self,
+        ctx: &mut Context,
+        index: Reg,
+        width: usize,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let value = self.reg_value(ctx, index, ScalarTy::Int)?;
+        let limit = self.int_constant(ctx, width as i64);
+        let invalid = ICmpOp::new(ctx, ICmpPredicateAttr::UGE, value, limit);
+        self.append(ctx, invalid.get_operation(), Some(dest));
+        self.emit_trap_guard(
+            ctx,
+            invalid.get_result(ctx),
+            TrapCategory::UnhandledError,
+            dest,
+        )
     }
 
     /// The slice-descriptor `indices(length)` normalization — the VM's
@@ -7836,18 +8745,10 @@ impl<'a> FnLowering<'a> {
                     // (the VM's partial-aggregate rule).
                     let cont = flag.map(|flag| self.begin_flag_guard(ctx, flag));
                     if self.has_lifecycle_method(&ty, "__deinit__") {
-                        if self.fields_need_drop(&ty) {
-                            let name = match ty.as_ref() {
-                                Ty::Struct(name, _) => name.as_str(),
-                                _ => "?",
-                            };
-                            return Err(self.unsupported(
-                                format!("destructor of `{name}` with droppable fields"),
-                                None,
-                            ));
-                        }
                         // `__deinit__` runs only when every tracked leaf
-                        // survives.
+                        // survives. Its compiled `deinit self` epilogue
+                        // consumes the receiver and destroys its residual
+                        // fields, so the caller must not repeat that work.
                         let guards: Vec<Ptr<BasicBlock>> = leaves
                             .values()
                             .map(|&leaf| self.begin_flag_guard(ctx, leaf))
@@ -8113,15 +9014,6 @@ impl<'a> FnLowering<'a> {
             Ty::Struct(name, _) => {
                 let deinit = format!("{name}.__deinit__");
                 if !skip_whole_deinit && self.declarations.contains_key(&deinit) {
-                    if self.fields_need_drop(ty) {
-                        // The VM destroys only the residual fields the
-                        // destructor body left initialized — dynamic state
-                        // this backend does not track.
-                        return Err(self.unsupported(
-                            format!("destructor of `{name}` with droppable fields"),
-                            None,
-                        ));
-                    }
                     let Some(signature) = self.signatures.get(&deinit) else {
                         return Err(
                             self.unsupported(format!("drop via uncompiled `{deinit}`"), None)
@@ -8215,6 +9107,9 @@ impl<'a> FnLowering<'a> {
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
                 elements.iter().any(|element| self.needs_drop(element))
             }
+            Ty::Variant(alternatives) => alternatives
+                .iter()
+                .any(|alternative| self.needs_drop(alternative)),
             _ => false,
         }
     }
@@ -8898,6 +9793,11 @@ impl<'a> FnLowering<'a> {
         {
             return self.print_struct_via_write_to(ctx, arg, &name, dest);
         }
+        if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&arg.0).cloned()
+            && width > 1
+        {
+            return self.print_simd(ctx, arg, dtype, width as usize, dest);
+        }
         let ty = match self.concrete_scalar_ty(arg)? {
             Some(ty) => ty,
             // A bare literal argument materializes at the VM's default kind.
@@ -8918,6 +9818,35 @@ impl<'a> FnLowering<'a> {
         };
         let value = self.reg_value(ctx, arg, ty)?;
         self.print_scalar(ctx, ty, value, dest)
+    }
+
+    fn print_simd(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        dtype: Dtype,
+        width: usize,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let ptr = self.reg_ptr(ctx, arg)?;
+        let lane_ty = ScalarTy::of_dtype(dtype);
+        let lane_handle = lane_ty.handle(ctx);
+        let lane_layout = self
+            .layout
+            .layout_of(&Ty::Simd { dtype, width: 1 })
+            .expect("SIMD lane layout");
+        self.write_literal_bytes(ctx, b"[", dest);
+        for lane in 0..width {
+            if lane > 0 {
+                self.write_literal_bytes(ctx, b", ", dest);
+            }
+            let address = self.offset_address(ctx, ptr, lane_layout.size * lane as u64);
+            let load = LoadOp::new(ctx, address, lane_handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            self.print_scalar(ctx, lane_ty, load.get_result(ctx), dest)?;
+        }
+        self.write_literal_bytes(ctx, b"]", dest);
+        Ok(())
     }
 
     /// Emit the display bytes of one scalar value: `mjrt_fmt_*` into the
@@ -9374,6 +10303,11 @@ impl<'a> FnLowering<'a> {
         dest: Reg,
         a: Reg,
     ) -> Result<(), PlironError> {
+        if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&a.0).cloned()
+            && width > 1
+        {
+            return self.lower_simd_unop(ctx, op, dest, a, dtype, width as usize);
+        }
         // Negation of a pending literal stays a pending literal (the
         // materialization folds the sign into one constant).
         if let Some(literal) = self.pending_literals.get(&a.0).cloned() {
@@ -9437,6 +10371,11 @@ impl<'a> FnLowering<'a> {
     ) -> Result<(), PlironError> {
         if let Some(target) = resolved {
             return Err(self.unsupported_reg(format!("nominal operator overload `{target}`"), dest));
+        }
+        if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&a.0).cloned()
+            && width > 1
+        {
+            return self.lower_simd_binop(ctx, op, dest, a, b, dtype, width as usize);
         }
         if self.str_consts.contains_key(&a.0) && self.str_consts.contains_key(&b.0) {
             return self.lower_str_literal_binop(ctx, op, dest, a, b);
@@ -9514,6 +10453,159 @@ impl<'a> FnLowering<'a> {
                 Err(self.unsupported_reg(format!("operator `{op:?}` on Pointer operands"), dest))
             }
         }
+    }
+
+    fn lower_simd_unop(
+        &mut self,
+        ctx: &mut Context,
+        op: PrefixOp,
+        dest: Reg,
+        operand: Reg,
+        dtype: Dtype,
+        width: usize,
+    ) -> Result<(), PlironError> {
+        let lane_ty = ScalarTy::of_dtype(dtype);
+        let lane_handle = lane_ty.handle(ctx);
+        let lane_layout = self
+            .layout
+            .layout_of(&Ty::Simd { dtype, width: 1 })
+            .expect("SIMD lane layout");
+        let layout = self
+            .layout
+            .layout_of(&Ty::Simd {
+                dtype,
+                width: width as i64,
+            })
+            .expect("SIMD layout");
+        let source = self.reg_ptr(ctx, operand)?;
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        for lane in 0..width {
+            let address = self.offset_address(ctx, source, lane_layout.size * lane as u64);
+            let load = LoadOp::new(ctx, address, lane_handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            let value = load.get_result(ctx);
+            let result = match (op, lane_ty) {
+                (PrefixOp::Neg, ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32)) => {
+                    let neg =
+                        FNegOp::new_with_fast_math_flags(ctx, value, FastmathFlagsAttr::default());
+                    self.append(ctx, neg.get_operation(), Some(dest));
+                    neg.get_result(ctx)
+                }
+                (PrefixOp::Neg, ScalarTy::Sized(kind)) => {
+                    let zero = self.sized_int_constant(ctx, kind, 0);
+                    let neg = SubOp::new_with_overflow_flag(ctx, zero, value, no_overflow_flags());
+                    self.append(ctx, neg.get_operation(), Some(dest));
+                    neg.get_result(ctx)
+                }
+                _ => {
+                    return Err(self.unsupported_reg(format!("SIMD unary operator `{op:?}`"), dest));
+                }
+            };
+            let target = self.offset_address(ctx, storage, lane_layout.size * lane as u64);
+            let store = StoreOp::new(ctx, result, target);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_simd_binop(
+        &mut self,
+        ctx: &mut Context,
+        op: InfixOp,
+        dest: Reg,
+        a: Reg,
+        b: Reg,
+        dtype: Dtype,
+        width: usize,
+    ) -> Result<(), PlironError> {
+        let lane_ty = ScalarTy::of_dtype(dtype);
+        let lane_handle = lane_ty.handle(ctx);
+        let result_dtype = if is_comparison(op) {
+            Dtype::Bool
+        } else {
+            dtype
+        };
+        let source_lane = self
+            .layout
+            .layout_of(&Ty::Simd { dtype, width: 1 })
+            .expect("SIMD lane layout");
+        let result_lane = self
+            .layout
+            .layout_of(&Ty::Simd {
+                dtype: result_dtype,
+                width: 1,
+            })
+            .expect("SIMD lane layout");
+        let layout = self
+            .layout
+            .layout_of(&Ty::Simd {
+                dtype: result_dtype,
+                width: width as i64,
+            })
+            .expect("SIMD layout");
+        let lhs_ptr = self.reg_ptr(ctx, a)?;
+        let rhs_ptr = if matches!(self.func.reg_types.get(&b.0), Some(Ty::Simd { width, .. }) if *width > 1)
+        {
+            Some(self.reg_ptr(ctx, b)?)
+        } else {
+            None
+        };
+        let rhs_splat = if rhs_ptr.is_none() {
+            if let Some(literal) = self.pending_literals.get(&b.0).cloned() {
+                Some(self.materialize_pending(ctx, &literal, lane_ty, dest)?)
+            } else {
+                let source = self.concrete_scalar_ty(b)?.ok_or_else(|| {
+                    self.unsupported_reg("unmaterialized SIMD splat operand".into(), dest)
+                })?;
+                let value = self.reg_value(ctx, b, source)?;
+                Some(self.convert_lane(ctx, source, lane_ty, value, dest)?)
+            }
+        } else {
+            None
+        };
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        for lane in 0..width {
+            let offset = source_lane.size * lane as u64;
+            let lhs_address = self.offset_address(ctx, lhs_ptr, offset);
+            let lhs = LoadOp::new(ctx, lhs_address, lane_handle);
+            self.append(ctx, lhs.get_operation(), Some(dest));
+            let rhs = if let Some(rhs_ptr) = rhs_ptr {
+                let rhs_address = self.offset_address(ctx, rhs_ptr, offset);
+                let rhs = LoadOp::new(ctx, rhs_address, lane_handle);
+                self.append(ctx, rhs.get_operation(), Some(dest));
+                rhs.get_result(ctx)
+            } else {
+                rhs_splat.expect("scalar SIMD operand was materialized")
+            };
+            if is_comparison(op) {
+                self.lower_compare(ctx, op, dest, lhs.get_result(ctx), rhs, lane_ty)?;
+            } else {
+                match lane_ty {
+                    ScalarTy::Sized(Dtype::Float32) => {
+                        self.lower_f32_binop(ctx, op, dest, lhs.get_result(ctx), rhs)?
+                    }
+                    ScalarTy::Float64 => {
+                        self.lower_float_binop(ctx, op, dest, lhs.get_result(ctx), rhs)?
+                    }
+                    ScalarTy::Sized(kind) => {
+                        self.lower_sized_int_binop(ctx, op, dest, lhs.get_result(ctx), rhs, kind)?
+                    }
+                    _ => {
+                        return Err(
+                            self.unsupported_reg(format!("SIMD binary operator `{op:?}`"), dest)
+                        );
+                    }
+                }
+            }
+            let result = self.reg_values[&dest.0];
+            let target = self.offset_address(ctx, storage, result_lane.size * lane as u64);
+            let store = StoreOp::new(ctx, result, target);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
     }
 
     /// Sized integer lanes support exactly the checker's SIMD operator set:
@@ -10373,6 +11465,25 @@ impl<'a> FnLowering<'a> {
     fn lower_return(&mut self, ctx: &mut Context, value: Option<Reg>) -> Result<(), PlironError> {
         if self.name == "__toplevel__" {
             self.emit_toplevel_binding_releases(ctx)?;
+        }
+        // An actual `__deinit__` destructor consumes its receiver at function
+        // exit even when the source-level body does not mention all fields.
+        // Other `deinit`-receiver APIs (such as collection `deinit_with`)
+        // explicitly dismantle their storage and must not get a second
+        // implicit pass. MIR records the destructor convention instead of
+        // spelling a trailing `ConsumeVar`; lower that epilogue here.
+        let deinit_params: Vec<u32> = if self.name.ends_with(".__deinit__") {
+            self.func
+                .deinit_params
+                .iter()
+                .enumerate()
+                .filter_map(|(var, deinit)| deinit.then_some(var as u32))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for var in deinit_params.into_iter().rev() {
+            self.lower_consume_var(ctx, var)?;
         }
         self.emit_frame_exit_error_releases(ctx)?;
         if let Some(outcome) = self.signatures[self.name].outcome.clone() {
@@ -11321,6 +12432,16 @@ fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
             out.extend(args.iter().copied());
             out.extend(kwargs.iter().map(|(_, reg)| *reg));
         }
+        MirInstr::CallIndirect {
+            callee,
+            args,
+            kwargs,
+            ..
+        } => {
+            out.push(*callee);
+            out.extend(args.iter().copied());
+            out.extend(kwargs.iter().map(|(_, reg)| *reg));
+        }
         MirInstr::MethodCall {
             recv, args, kwargs, ..
         } => {
@@ -11329,6 +12450,25 @@ fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
             out.extend(kwargs.iter().map(|(_, reg)| *reg));
         }
         MirInstr::Raise { src } => out.push(*src),
+        MirInstr::MakeVariant { value, .. }
+        | MirInstr::VariantIs { variant: value, .. }
+        | MirInstr::VariantGet { variant: value, .. }
+        | MirInstr::VariantTake { variant: value, .. }
+        | MirInstr::SimdCast { value, .. }
+        | MirInstr::SimdShuffle { value, .. } => out.push(*value),
+        MirInstr::VariantSet { place, value, .. }
+        | MirInstr::VariantReplace { place, value, .. } => {
+            place_regs(place, &mut out);
+            out.push(*value);
+        }
+        MirInstr::VariantSetInitWith { place, factory, .. } => {
+            place_regs(place, &mut out);
+            out.push(*factory);
+        }
+        MirInstr::VariantDeinitWith {
+            variant, handler, ..
+        } => out.extend([*variant, *handler]),
+        MirInstr::MakeSimd { elems, .. } => out.extend(elems.iter().copied()),
         _ => {}
     }
     out

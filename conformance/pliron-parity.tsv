@@ -27,7 +27,7 @@ assets/ok/captured_store_local_carrier.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison.mojo	main	exe-differential	sanitized
 assets/ok/closures.mojo	main	exe-differential	sanitized
 assets/ok/comparable_ordered_algorithms.mojo	main	exe-differential	sanitized
-assets/ok/comprehension_borrowed_named_source.mojo	main	excluded	pliron backend: in `main`: unsupported destructor of `Numbers` with droppable fields
+assets/ok/comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_generic.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
@@ -39,7 +39,7 @@ assets/ok/container_owning_family_apis.mojo	main	excluded	pliron backend: in `ma
 assets/ok/copy_return.mojo	main	exe-differential	sanitized
 assets/ok/copyable.mojo	main	exe-differential	sanitized
 assets/ok/copyable_iterator_reference_aggregate.mojo	main	excluded	pliron backend: in `RefBox.__copyinit__`: unsupported type `Ref(RefTy { referent: Int, origin: Param(OriginParamId(0)), mutability: Immutable })` at assets/ok/copyable_iterator_reference_aggregate.mojo:17:23
-assets/ok/copyinit_moveinit.mojo	main	excluded	pliron backend: in `main`: unsupported move of `Buf` with a user `__moveinit__` at assets/ok/copyinit_moveinit.mojo:43:18
+assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
@@ -47,7 +47,7 @@ assets/ok/dict_insert_linear_capable.mojo	main	exe-differential	sanitized
 assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
 assets/ok/dtype_struct_param.mojo	main	exe-differential	sanitized
-assets/ok/dtype_value_param.mojo	main	excluded	pliron backend: in `splat_two$dint16;`: unsupported type `Simd { dtype: Int16, width: 2 }`
+assets/ok/dtype_value_param.mojo	main	exe-differential	sanitized
 assets/ok/dunder_contains.mojo	main	exe-differential	sanitized
 assets/ok/dunder_index.mojo	main	exe-differential	sanitized
 assets/ok/dunder_setitem.mojo	main	exe-differential	sanitized
@@ -222,10 +222,10 @@ assets/ok/reference_carrier_collection.mojo	main	exe-differential	sanitized
 assets/ok/reference_element_chained_read.mojo	main	excluded	pliron backend: in `main`: unsupported field access on `ref RefBox` at assets/ok/reference_element_chained_read.mojo:17:11
 assets/ok/reference_iteration_temporary_list.mojo	main	exe-differential	sanitized
 assets/ok/reference_list_write_through_method.mojo	main	exe-differential	sanitized
-assets/ok/reference_yielding_iteration.mojo	main	excluded	pliron backend: in `main`: unsupported destructor of `Numbers` with droppable fields
-assets/ok/reference_yielding_iteration_named_source.mojo	main	excluded	pliron backend: in `main`: unsupported destructor of `Numbers` with droppable fields
+assets/ok/reference_yielding_iteration.mojo	main	exe-differential	sanitized
+assets/ok/reference_yielding_iteration_named_source.mojo	main	exe-differential	sanitized
 assets/ok/reference_yielding_iteration_parametric_mut.mojo	main	exe-differential	sanitized
-assets/ok/scalar_dtype_construction.mojo	main	excluded	pliron backend: in `main`: unsupported type `Simd { dtype: Int, width: 4 }`
+assets/ok/scalar_dtype_construction.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_sequential.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_strided.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_zero_starting.mojo	main	exe-differential	sanitized
@@ -235,12 +235,12 @@ assets/ok/self_hosted_dict.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_vec.mojo	main	exe-differential	sanitized
 assets/ok/set_reference_iteration_write_through.mojo	main	exe-differential	sanitized
 assets/ok/shadowing_constants.mojo	main	exe-differential	sanitized
-assets/ok/simd_cast.mojo	main	excluded	pliron backend: in `main`: unsupported type `Simd { dtype: Int32, width: 4 }`
-assets/ok/simd_floats.mojo	main	excluded	pliron backend: in `main`: unsupported type `Simd { dtype: Float64, width: 4 }`
-assets/ok/simd_generic_width.mojo	main	excluded	pliron backend: in `splat$i2;`: unsupported type `Simd { dtype: Int32, width: 2 }`
-assets/ok/simd_lane_write.mojo	main	excluded	pliron backend: in `main`: unsupported type `Simd { dtype: Int32, width: 4 }`
-assets/ok/simd_methods.mojo	main	excluded	pliron backend: in `main`: unsupported type `Simd { dtype: Int32, width: 4 }`
-assets/ok/simd_shuffle.mojo	main	excluded	pliron backend: in `main`: unsupported type `Simd { dtype: Int32, width: 4 }`
+assets/ok/simd_cast.mojo	main	exe-differential	sanitized
+assets/ok/simd_floats.mojo	main	exe-differential	sanitized
+assets/ok/simd_generic_width.mojo	main	exe-differential	sanitized
+assets/ok/simd_lane_write.mojo	main	exe-differential	sanitized
+assets/ok/simd_methods.mojo	main	exe-differential	sanitized
+assets/ok/simd_shuffle.mojo	main	exe-differential	sanitized
 assets/ok/sized_generic_views.mojo	main	excluded	pliron backend: in `is_empty$y3:Bag`: unsupported copy of `Bag` with a nested user `__copyinit__` at assets/ok/sized_generic_views.mojo$is_empty$y3:Bag:282..283
 assets/ok/slice.mojo	main	exe-differential	sanitized
 assets/ok/span_implicit_from_list.mojo	main	excluded	pliron backend: in `main`: unsupported monomorphizing `total`: expected `Span[Int]`, found `Span`
@@ -281,9 +281,9 @@ assets/ok/user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/value_params.mojo	main	excluded	pliron backend: in `scaled`: unsupported monomorphization cannot resolve parameter `factor`
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized
 assets/ok/variadic_args.mojo	main	exe-differential	sanitized
-assets/ok/variant_deinit_with_linear_payload.mojo	main	excluded	pliron backend: in `main`: unsupported type `Variant([Struct("Conn", [])])`
-assets/ok/variant_nominal_string_payload.mojo	main	excluded	pliron backend: in `main`: unsupported type `Variant([Int, Struct("__module$std$string$String", [])])`
-assets/ok/variant_owning_api.mojo	main	excluded	pliron backend: in `main`: unsupported type `Variant([Int, Struct("__module$std$string$String", [])])`
+assets/ok/variant_deinit_with_linear_payload.mojo	main	exe-differential	sanitized
+assets/ok/variant_nominal_string_payload.mojo	main	exe-differential	sanitized
+assets/ok/variant_owning_api.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_ternary.mojo	main	exe-differential	sanitized
 assets/ok/waypoints.mojo	main	exe-differential	sanitized

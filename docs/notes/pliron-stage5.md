@@ -591,3 +591,29 @@ normalization); three new `pliron_*` fixtures joined the manifest.
   String and user-destructor captures through the drop thunk; lifecycle
   lane), `pliron_callable_struct` (mut-self, raising, and consuming
   `__call__`).
+
+## Variant, scalar-semantics SIMD, move residues (S5.7)
+
+- **SIMD representation.** Width-one aliases remain SSA scalars. Wider
+  `SIMD[dtype, width]` values use contiguous lane-aligned scalar storage;
+  construction/splats, wrapping arithmetic, comparisons and Bool masks,
+  casts, indexed places, compile-time shuffle, selection, reductions, and
+  formatting lower as statically unrolled scalar operations. Native LLVM
+  vector types remain deliberately deferred to the later SIMD optimization.
+- **Variant representation and ownership.** Every operation uses the shared
+  ABI's `u32` tag plus aligned overlaid payload: construction, tag tests,
+  checked projection, checked/unchecked consuming extraction, destroying
+  `set`, owning `replace`, placement `set(init_with=...)`, consuming
+  `deinit_with`, projected places, and runtime-tag-dispatched payload drops.
+  Factories and handlers reuse the retained-callable thunk ABI.
+- **Moves and drops.** A reachable user `__moveinit__` is authoritative for a
+  `^` transfer regardless of pointer-shape heuristics. A compiled
+  `__deinit__(deinit self)` owns its residual-field destruction in the callee
+  epilogue, so destructor-bearing structs with droppable fields no longer
+  reject or receive a duplicate caller-side field drop.
+- **Parity fixtures.** The six existing SIMD fixtures, all three owning
+  Variant fixtures, `copyinit_moveinit`, and the three `Numbers` borrowed
+  iteration/comprehension fixtures compile and execute with VM-identical
+  output at O0 and O1 and pass the ASan/LSan lane. Capability rows are
+  flipped; the full manifest ratchets move from 251 to 266 executable
+  differentials and from at most 44 to at most 29 exclusions.
