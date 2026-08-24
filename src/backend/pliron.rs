@@ -442,16 +442,32 @@ pub enum TrapCategory {
     UnhandledError,
     /// `mjrt_read_line` stdin read failure (EOF is not a failure).
     StdinFailure,
+    /// An uncatchable language-level `abort` with a separately reported
+    /// dynamic message.
+    Abort,
+    PointerDangling,
+    PointerUseAfterFree,
+    PointerDoubleFree,
+    UninitRead,
+    UninitTake,
+    UninitDestroy,
 }
 
 impl TrapCategory {
-    const ALL: [TrapCategory; 6] = [
+    const ALL: [TrapCategory; 13] = [
         TrapCategory::DivModZero,
         TrapCategory::PowExponent,
         TrapCategory::AllocFailure,
         TrapCategory::StdoutFailure,
         TrapCategory::UnhandledError,
         TrapCategory::StdinFailure,
+        TrapCategory::Abort,
+        TrapCategory::PointerDangling,
+        TrapCategory::PointerUseAfterFree,
+        TrapCategory::PointerDoubleFree,
+        TrapCategory::UninitRead,
+        TrapCategory::UninitTake,
+        TrapCategory::UninitDestroy,
     ];
 
     /// Stable small code of this category (used in exit codes and manifests),
@@ -465,6 +481,13 @@ impl TrapCategory {
             TrapCategory::StdoutFailure => rt_abi::TRAP_STDOUT_FAILURE,
             TrapCategory::UnhandledError => rt_abi::TRAP_UNHANDLED_ERROR,
             TrapCategory::StdinFailure => rt_abi::TRAP_STDIN_FAILURE,
+            TrapCategory::Abort => rt_abi::TRAP_ABORT,
+            TrapCategory::PointerDangling => rt_abi::TRAP_POINTER_DANGLING,
+            TrapCategory::PointerUseAfterFree => rt_abi::TRAP_POINTER_USE_AFTER_FREE,
+            TrapCategory::PointerDoubleFree => rt_abi::TRAP_POINTER_DOUBLE_FREE,
+            TrapCategory::UninitRead => rt_abi::TRAP_UNINIT_READ,
+            TrapCategory::UninitTake => rt_abi::TRAP_UNINIT_TAKE,
+            TrapCategory::UninitDestroy => rt_abi::TRAP_UNINIT_DESTROY,
         };
         code as u8
     }
@@ -494,25 +517,51 @@ impl TrapCategory {
             TrapCategory::StdoutFailure => "stdout write failed",
             TrapCategory::UnhandledError => "unhandled error",
             TrapCategory::StdinFailure => "stdin read failed",
+            TrapCategory::Abort => "abort",
+            TrapCategory::PointerDangling => "vm: dereference of dangling Pointer",
+            TrapCategory::PointerUseAfterFree => "vm: use after Pointer deallocation",
+            TrapCategory::PointerDoubleFree => "vm: double free of Pointer allocation",
+            TrapCategory::UninitRead => "vm: read of uninitialized UnsafeMaybeUninit storage",
+            TrapCategory::UninitTake => "vm: take of uninitialized UnsafeMaybeUninit storage",
+            TrapCategory::UninitDestroy => "vm: destroy of uninitialized UnsafeMaybeUninit storage",
         }
     }
 
     /// The VM `RuntimeError::TypeError` message this trap mirrors, for the
     /// categories with a VM analog.
     pub fn vm_message(self) -> Option<&'static str> {
-        matches!(self, TrapCategory::DivModZero | TrapCategory::PowExponent)
-            .then(|| self.runtime_message())
+        matches!(
+            self,
+            TrapCategory::DivModZero
+                | TrapCategory::PowExponent
+                | TrapCategory::PointerDangling
+                | TrapCategory::PointerUseAfterFree
+                | TrapCategory::PointerDoubleFree
+                | TrapCategory::UninitRead
+                | TrapCategory::UninitTake
+                | TrapCategory::UninitDestroy
+        )
+        .then(|| self.runtime_message())
     }
 
     /// The category whose VM message `message` carries, if any.
     pub fn from_vm_message(message: &str) -> Option<TrapCategory> {
-        [TrapCategory::DivModZero, TrapCategory::PowExponent]
-            .into_iter()
-            .find(|category| {
-                category
-                    .vm_message()
-                    .is_some_and(|text| message.contains(text))
-            })
+        [
+            TrapCategory::DivModZero,
+            TrapCategory::PowExponent,
+            TrapCategory::PointerDangling,
+            TrapCategory::PointerUseAfterFree,
+            TrapCategory::PointerDoubleFree,
+            TrapCategory::UninitRead,
+            TrapCategory::UninitTake,
+            TrapCategory::UninitDestroy,
+        ]
+        .into_iter()
+        .find(|category| {
+            category
+                .vm_message()
+                .is_some_and(|text| message.contains(text))
+        })
     }
 }
 
@@ -863,6 +912,16 @@ fn visit_call_edges<'p>(
                     ..
                 } => {
                     push_named(&mut targets, function);
+                }
+                // Scalar/SIMD construction over a concrete Intable struct
+                // invokes its checker-selected `__int__` in the lowered
+                // expansion, so retain that implicit edge.
+                MirInstr::MakeSimd { elems, .. } => {
+                    for elem in elems {
+                        if let Some(Ty::Struct(name, _)) = function.reg_types.get(&elem.0) {
+                            push_named(&mut targets, &format!("{name}.__int__"));
+                        }
+                    }
                 }
                 // A `^` transfer of a struct with a user `__moveinit__` runs
                 // it (the VM's `move_value`); the edge exists only in the

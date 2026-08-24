@@ -16,6 +16,7 @@
 
 use std::alloc::Layout;
 use std::io::Write;
+use std::sync::Mutex;
 
 /// The runtime ABI version. Bump on any change to an exported symbol's
 /// signature, semantics, or to a `#[repr(C)]` type's layout.
@@ -39,7 +40,14 @@ use std::io::Write;
 /// [`mjrt_free`]/[`mjrt_dealloc`] treat sentinel addresses (below the lowest
 /// mappable page) as no-ops — an abandoned zero-size allocation leaks
 /// nothing.
-pub const ABI_VERSION: u32 = 5;
+///
+/// Version 6: allocations are tracked by payload address in addition to the
+/// hidden layout header, so generated
+/// code can diagnose dangling, use-after-free, and double-free operations;
+/// [`mjrt_pointer_status`] exposes that check. [`mjrt_abort`] preserves an
+/// abort's dynamic message, and trap categories 7 through 13 cover abort,
+/// pointer-lifetime, and `UnsafeMaybeUninit` failures.
+pub const ABI_VERSION: u32 = 6;
 
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
 /// trap numbering; the process exit code is `64 + category`.
@@ -49,6 +57,13 @@ pub const TRAP_ALLOC_FAILURE: u32 = 3;
 pub const TRAP_STDOUT_FAILURE: u32 = 4;
 pub const TRAP_UNHANDLED_ERROR: u32 = 5;
 pub const TRAP_STDIN_FAILURE: u32 = 6;
+pub const TRAP_ABORT: u32 = 7;
+pub const TRAP_POINTER_DANGLING: u32 = 8;
+pub const TRAP_POINTER_USE_AFTER_FREE: u32 = 9;
+pub const TRAP_POINTER_DOUBLE_FREE: u32 = 10;
+pub const TRAP_UNINIT_READ: u32 = 11;
+pub const TRAP_UNINIT_TAKE: u32 = 12;
+pub const TRAP_UNINIT_DESTROY: u32 = 13;
 
 /// Tag values for tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
@@ -92,15 +107,31 @@ pub struct MjError {
 #[allow(non_upper_case_globals)]
 pub static mjrt_abi_version: u32 = ABI_VERSION;
 
+#[derive(Clone, Copy)]
+struct AllocationRecord {
+    size: usize,
+    align: usize,
+    live: bool,
+}
+
+const MAX_TRACKED_ALLOCATIONS: usize = 16_384;
+
+fn allocations() -> &'static Mutex<[Option<(usize, AllocationRecord)>; MAX_TRACKED_ALLOCATIONS]> {
+    // Keep bookkeeping out of the process heap that generated code uses.
+    // This also makes lifetime checks allocation-free and deterministic.
+    static ALLOCATIONS: Mutex<[Option<(usize, AllocationRecord)>; MAX_TRACKED_ALLOCATIONS]> =
+        Mutex::new([None; MAX_TRACKED_ALLOCATIONS]);
+    &ALLOCATIONS
+}
+
 /// Returns [`ABI_VERSION`].
 #[unsafe(no_mangle)]
 pub extern "C" fn mjrt_version() -> u32 {
     ABI_VERSION
 }
 
-/// Allocates `size` bytes aligned to `align`, prefixed by a hidden
-/// `{size: u64, align: u64}` header in the 16 bytes directly before the
-/// returned pointer (so [`mjrt_free`] can release without a size). Never
+/// Allocates `size` bytes aligned to `align`, prefixed by a hidden layout
+/// header, and records it in the allocation registry. Never
 /// returns null: allocation failure traps with [`TRAP_ALLOC_FAILURE`]. A
 /// zero-size request allocates nothing and returns the aligned dangling
 /// sentinel (`align` as an address — the same "aligned, never null" family
@@ -122,7 +153,7 @@ pub unsafe extern "C" fn mjrt_alloc(size: u64, align: u64) -> *mut u8 {
     if size == 0 {
         return align as *mut u8;
     }
-    let header = header_bytes(align);
+    let header = align.max(16);
     let Some(total) = header.checked_add(size) else {
         trap(TRAP_ALLOC_FAILURE)
     };
@@ -137,6 +168,28 @@ pub unsafe extern "C" fn mjrt_alloc(size: u64, align: u64) -> *mut u8 {
     unsafe {
         (ptr.sub(16) as *mut u64).write(size as u64);
         (ptr.sub(8) as *mut u64).write(align as u64);
+    }
+    let mut records = allocations().lock().expect("allocation registry lock");
+    // Reuse the existing identity before taking an empty slot. Allocators may
+    // recycle an address after a valid free; leaving the old dead record in
+    // an earlier slot would make pointer_status misclassify the new live
+    // allocation as use-after-free.
+    let index = records
+        .iter()
+        .position(|slot| slot.is_some_and(|(base, _)| base == ptr as usize))
+        .or_else(|| records.iter().position(Option::is_none))
+        .unwrap_or_else(|| trap(TRAP_ALLOC_FAILURE));
+    let slot = &mut records[index];
+    *slot = Some((
+        ptr as usize,
+        AllocationRecord {
+            size,
+            align,
+            live: true,
+        },
+    ));
+    if std::env::var_os("MOJITO_RT_DBG_POINTERS").is_some() {
+        eprintln!("mjrt alloc {ptr:p} size={size} align={align}");
     }
     ptr
 }
@@ -162,11 +215,61 @@ pub unsafe extern "C" fn mjrt_free(ptr: *mut u8) {
     if is_dangling_sentinel(ptr) {
         return;
     }
-    unsafe {
-        let size = (ptr.sub(16) as *const u64).read() as usize;
-        let align = (ptr.sub(8) as *const u64).read() as usize;
-        release(ptr, size, align);
+    let record = {
+        let mut records = allocations().lock().expect("allocation registry lock");
+        let Some((_, record)) = records
+            .iter_mut()
+            .flatten()
+            .find(|(base, _)| *base == ptr as usize)
+        else {
+            trap(TRAP_POINTER_DOUBLE_FREE)
+        };
+        if !record.live {
+            trap(TRAP_POINTER_DOUBLE_FREE)
+        }
+        record.live = false;
+        *record
+    };
+    if std::env::var_os("MOJITO_RT_DBG_POINTERS").is_some() {
+        eprintln!("mjrt free {ptr:p} size={}", record.size);
     }
+    unsafe { release(ptr, record.size, record.align) }
+}
+
+/// Classifies a pointer dereference: 0 live/ordinary, 1 dangling sentinel,
+/// 2 an address inside a freed Mojito allocation.
+#[unsafe(no_mangle)]
+pub extern "C" fn mjrt_pointer_status(ptr: *const u8) -> u32 {
+    if is_dangling_sentinel(ptr) {
+        return 1;
+    }
+    let address = ptr as usize;
+    let records = allocations().lock().expect("allocation registry lock");
+    let contains = |base: usize, record: &AllocationRecord| {
+        let extent = record.size.max(1);
+        address >= base && address < base.saturating_add(extent)
+    };
+    if records
+        .iter()
+        .flatten()
+        .any(|(base, record)| record.live && contains(*base, record))
+    {
+        return 0;
+    }
+    if let Some((base, record)) = records
+        .iter()
+        .flatten()
+        .find(|(base, record)| !record.live && contains(*base, record))
+    {
+        if std::env::var_os("MOJITO_RT_DBG_POINTERS").is_some() {
+            eprintln!(
+                "mjrt stale {ptr:p} in base={:#x} size={}",
+                *base, record.size
+            );
+        }
+        return 2;
+    }
+    0
 }
 
 /// Releases an allocation obtained from [`mjrt_alloc`], validating the
@@ -183,14 +286,25 @@ pub unsafe extern "C" fn mjrt_dealloc(ptr: *mut u8, size: u64, align: u64) {
     if is_dangling_sentinel(ptr) {
         return;
     }
-    unsafe {
-        let header_size = (ptr.sub(16) as *const u64).read();
-        let header_align = (ptr.sub(8) as *const u64).read();
-        if header_size != size || header_align != align {
+    let record = {
+        let mut records = allocations().lock().expect("allocation registry lock");
+        let Some((_, record)) = records
+            .iter_mut()
+            .flatten()
+            .find(|(base, _)| *base == ptr as usize)
+        else {
+            trap(TRAP_POINTER_DOUBLE_FREE)
+        };
+        if !record.live {
+            trap(TRAP_POINTER_DOUBLE_FREE)
+        }
+        if record.size != size as usize || record.align != align as usize {
             trap(TRAP_ALLOC_FAILURE)
         }
-        release(ptr, size as usize, align as usize);
-    }
+        record.live = false;
+        *record
+    };
+    unsafe { release(ptr, record.size, record.align) }
 }
 
 /// Writes exactly `len` bytes to stdout (retrying on interruption) and
@@ -277,6 +391,26 @@ pub unsafe extern "C" fn mjrt_unhandled_error(data: *const u8, len: u64) -> ! {
     std::process::exit(trap_exit_code(TRAP_UNHANDLED_ERROR))
 }
 
+/// Reports an uncatchable language abort with its dynamic message.
+///
+/// # Safety
+///
+/// When `len` is nonzero, `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mjrt_abort(data: *const u8, len: u64) -> ! {
+    let message = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len as usize) }
+    };
+    let _ = writeln!(
+        std::io::stderr(),
+        "abort: {}",
+        String::from_utf8_lossy(message)
+    );
+    std::process::exit(trap_exit_code(TRAP_ABORT))
+}
+
 /// Reports one ordered lifecycle event — `mjtrace <kind> <payload>` (or
 /// `mjtrace <kind>` for an empty payload) on stderr — from a
 /// trace-instrumented build. Default emission never calls this; stdout byte
@@ -358,6 +492,13 @@ pub fn trap_message(category: u32) -> &'static str {
         TRAP_STDOUT_FAILURE => "stdout write failed",
         TRAP_UNHANDLED_ERROR => "unhandled error",
         TRAP_STDIN_FAILURE => "stdin read failed",
+        TRAP_ABORT => "abort",
+        TRAP_POINTER_DANGLING => "vm: dereference of dangling Pointer",
+        TRAP_POINTER_USE_AFTER_FREE => "vm: use after Pointer deallocation",
+        TRAP_POINTER_DOUBLE_FREE => "vm: double free of Pointer allocation",
+        TRAP_UNINIT_READ => "vm: read of uninitialized UnsafeMaybeUninit storage",
+        TRAP_UNINIT_TAKE => "vm: take of uninitialized UnsafeMaybeUninit storage",
+        TRAP_UNINIT_DESTROY => "vm: destroy of uninitialized UnsafeMaybeUninit storage",
         _ => "unknown trap",
     }
 }
@@ -376,18 +517,9 @@ fn trap(category: u32) -> ! {
     std::process::exit(trap_exit_code(category))
 }
 
-/// The hidden header size ahead of an allocation: the larger of the
-/// requested alignment and 16, so the returned pointer keeps the requested
-/// alignment and the header's two `u64` fields sit naturally aligned
-/// directly before it.
-fn header_bytes(align: usize) -> usize {
-    align.max(16)
-}
-
-/// Releases a headered allocation given its (validated) payload size and
-/// alignment.
+/// Releases a headered allocation with its registry-validated layout.
 unsafe fn release(ptr: *mut u8, size: usize, align: usize) {
-    let header = header_bytes(align);
+    let header = align.max(16);
     let layout = Layout::from_size_align(header + size, header)
         .expect("a live allocation's layout was valid at mjrt_alloc time");
     unsafe { std::alloc::dealloc(ptr.sub(header), layout) };
@@ -442,13 +574,11 @@ mod tests {
     }
 
     #[test]
-    fn alloc_header_records_size_and_align_for_sizeless_free() {
+    fn allocation_registry_supports_sizeless_free() {
         let ptr = unsafe { mjrt_alloc(48, 32) };
         assert!(!ptr.is_null());
         assert_eq!(ptr as usize % 32, 0);
         unsafe {
-            assert_eq!((ptr.sub(16) as *const u64).read(), 48);
-            assert_eq!((ptr.sub(8) as *const u64).read(), 32);
             ptr.write_bytes(0xCD, 48);
             mjrt_free(ptr);
         }
@@ -521,6 +651,13 @@ mod tests {
         assert_eq!(trap_exit_code(TRAP_ALLOC_FAILURE), 67);
         assert_eq!(trap_exit_code(TRAP_STDOUT_FAILURE), 68);
         assert_eq!(trap_exit_code(TRAP_STDIN_FAILURE), 70);
+        assert_eq!(trap_exit_code(TRAP_ABORT), 71);
+        assert_eq!(trap_exit_code(TRAP_POINTER_DANGLING), 72);
+        assert_eq!(trap_exit_code(TRAP_POINTER_USE_AFTER_FREE), 73);
+        assert_eq!(trap_exit_code(TRAP_POINTER_DOUBLE_FREE), 74);
+        assert_eq!(trap_exit_code(TRAP_UNINIT_READ), 75);
+        assert_eq!(trap_exit_code(TRAP_UNINIT_TAKE), 76);
+        assert_eq!(trap_exit_code(TRAP_UNINIT_DESTROY), 77);
         assert_eq!(trap_exit_code(u32::MAX), 64 + 63);
         assert_eq!(
             trap_message(TRAP_DIV_MOD_ZERO),

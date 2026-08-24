@@ -95,14 +95,14 @@ pub struct LayoutCx<'a> {
 impl LayoutCx<'_> {
     /// The layout of one checked type.
     pub fn layout_of(&self, ty: &Ty) -> Result<Layout, LayoutError> {
-        // Compiler-private inline uninit storage is payload-only: no tag, no
-        // init flag (verified programs never take or destroy an uninitialized
-        // slot — misuse fixtures live off the exe gate). Deliberately no
-        // synthesized MIR declaration either: a nominal struct without
-        // declared fields drops as a no-op, which is exactly the VM's
-        // leak-by-design drop of `Value::UninitStorage`.
+        // Compiler-private inline uninit storage carries a native-only
+        // presence bit followed by the payload. This preserves the VM's
+        // deterministic runtime backstop for unsafe read/take/destroy while
+        // ordinary struct destruction still treats the wrapper as inert.
         if let Some(element) = crate::types::uninit_storage_element(ty) {
-            return self.layout_of(element);
+            return self
+                .struct_layout(&[Ty::Bool, element.clone()])
+                .map(|s| s.layout);
         }
         match ty {
             Ty::Int | Ty::UInt | Ty::Float64 => Ok(Layout::new(8, 8)),
@@ -333,26 +333,25 @@ mod tests {
     }
 
     #[test]
-    fn uninit_storage_is_payload_only() {
+    fn uninit_storage_carries_presence_and_payload() {
         let storage = |name: &str, element: Ty| {
             Ty::Struct(name.to_string(), vec![crate::types::TyArg::Ty(element)])
         };
         assert_eq!(
             layout_of(&storage("__UninitStorage", Ty::Int)),
-            Ok(Layout::new(8, 8))
+            Ok(Layout::new(16, 8))
         );
         assert_eq!(
             layout_of(&storage("__UninitStorage", Ty::Bool)),
-            Ok(Layout::new(1, 1))
+            Ok(Layout::new(2, 1))
         );
         // Backend-monomorphized instance names keep their argument list, so
         // the payload stays recoverable through the mangled spelling.
         assert_eq!(
             layout_of(&storage("__UninitStorage$mono$TInt", Ty::Int)),
-            Ok(Layout::new(8, 8))
+            Ok(Layout::new(16, 8))
         );
-        // Payload-only storage composes into an enclosing aggregate like a
-        // bare field of the element type.
+        // The wrapper's presence bit remains part of enclosing storage.
         let structs = StructFieldIndex::default();
         let (target, structs) = cx(&structs);
         let cx = LayoutCx {
@@ -363,7 +362,7 @@ mod tests {
             .struct_layout(&[Ty::Bool, storage("__UninitStorage", Ty::Int)])
             .unwrap();
         assert_eq!(nested.offsets, vec![0, 8]);
-        assert_eq!(nested.layout, Layout::new(16, 8));
+        assert_eq!(nested.layout, Layout::new(24, 8));
     }
 
     #[test]

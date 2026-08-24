@@ -1154,12 +1154,16 @@ fn production_tstrings_construct_the_lazy_specialization() {
         )),
         "expected a TString specialization construction in main"
     );
-    assert!(
-        !instrs.iter().any(|instruction| matches!(
-            instruction,
-            MirInstr::Call { func, .. } if func.0 == "String"
-        )),
-        "the interpolation must be captured, not eagerly stringified"
+    assert_eq!(
+        instrs
+            .iter()
+            .filter(|instruction| matches!(
+                instruction,
+                MirInstr::Call { func, .. } if func.0 == "String"
+            ))
+            .count(),
+        1,
+        "only the literal segment is materialized as an owned String; the Int interpolation stays lazy"
     );
     assert!(
         mir.invariant_errors.is_empty(),

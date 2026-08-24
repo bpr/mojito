@@ -19,7 +19,7 @@ use crate::native::target::NativeTarget;
 /// The runtime ABI version this compiler emits against. Must equal
 /// `mojito_runtime::ABI_VERSION`; the linked runtime exports it as the
 /// inspectable data symbol [`ABI_VERSION_SYMBOL`].
-pub const MJRT_ABI_VERSION: u32 = 5;
+pub const MJRT_ABI_VERSION: u32 = 6;
 
 /// The exported `u32` data symbol carrying the runtime's ABI version.
 pub const ABI_VERSION_SYMBOL: &str = "mjrt_abi_version";
@@ -33,6 +33,13 @@ pub const TRAP_ALLOC_FAILURE: u32 = 3;
 pub const TRAP_STDOUT_FAILURE: u32 = 4;
 pub const TRAP_UNHANDLED_ERROR: u32 = 5;
 pub const TRAP_STDIN_FAILURE: u32 = 6;
+pub const TRAP_ABORT: u32 = 7;
+pub const TRAP_POINTER_DANGLING: u32 = 8;
+pub const TRAP_POINTER_USE_AFTER_FREE: u32 = 9;
+pub const TRAP_POINTER_DOUBLE_FREE: u32 = 10;
+pub const TRAP_UNINIT_READ: u32 = 11;
+pub const TRAP_UNINIT_TAKE: u32 = 12;
+pub const TRAP_UNINIT_DESTROY: u32 = 13;
 
 /// Tag values of tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
@@ -104,9 +111,9 @@ pub const RT_SYMBOLS: &[RtSig] = &[
         noreturn: false,
         since: 1,
         ownership: "caller owns the result; release via mjrt_free or \
-                    mjrt_dealloc; a hidden {size, align} header occupies the \
-                    16 bytes before the returned pointer; zero size still \
-                    allocates (header-only); never null",
+                    mjrt_dealloc; nonzero allocations have a hidden layout \
+                    header plus a lifetime record; zero size returns an \
+                    aligned dangling sentinel; never null",
         failure: "traps (allocation-failure) on exhaustion or invalid align",
     },
     RtSig {
@@ -115,10 +122,18 @@ pub const RT_SYMBOLS: &[RtSig] = &[
         ret: None,
         noreturn: false,
         since: 2,
-        ownership: "consumes any mjrt_alloc allocation via its header (the \
-                    size-less free Pointer.unsafe_free lowers to); null is a \
-                    no-op",
-        failure: "never fails on a valid allocation",
+        ownership: "consumes a live nonzero mjrt_alloc allocation; null and \
+                    zero-size sentinels are no-ops",
+        failure: "traps (pointer-double-free) when the allocation is not live",
+    },
+    RtSig {
+        symbol: "mjrt_pointer_status",
+        params: &[("ptr", CAbiTy::PtrConstU8)],
+        ret: Some(CAbiTy::U32),
+        noreturn: false,
+        since: 6,
+        ownership: "borrows the pointer identity only",
+        failure: "returns 0 for live/ordinary, 1 for dangling, 2 for freed allocation",
     },
     RtSig {
         symbol: "mjrt_dealloc",
@@ -130,9 +145,11 @@ pub const RT_SYMBOLS: &[RtSig] = &[
         ret: None,
         noreturn: false,
         since: 1,
-        ownership: "consumes an mjrt_alloc allocation, validating size/align \
-                    against its header; null ptr is a no-op",
-        failure: "traps (allocation-failure) on a header mismatch",
+        ownership: "consumes a live nonzero mjrt_alloc allocation, validating \
+                    size/align against its header; null and zero-size \
+                    sentinels are no-ops",
+        failure: "traps (allocation-failure) on a header mismatch or \
+                  (pointer-double-free) when no longer live",
     },
     RtSig {
         symbol: "mjrt_write_stdout",
@@ -195,6 +212,15 @@ pub const RT_SYMBOLS: &[RtSig] = &[
                     be null only when len is 0",
         failure: "always: reports `unhandled error: <message>` on stderr and \
                   exits 64 + 5",
+    },
+    RtSig {
+        symbol: "mjrt_abort",
+        params: &[("data", CAbiTy::PtrConstU8), ("len", CAbiTy::U64)],
+        ret: None,
+        noreturn: true,
+        since: 6,
+        ownership: "borrows the UTF-8 message bytes for the call; data may be null only when len is 0",
+        failure: "always: reports `abort: <message>` on stderr and exits 64 + 7",
     },
     RtSig {
         symbol: "mjrt_trace",

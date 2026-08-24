@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pliron Stage 5 completion: every runnable `assets/ok` and
+  `assets/ownership_ok` fixture is now an O0/O1 executable differential with
+  a clean O0 ASan/LSan lane (295 total), every runnable runtime-error fixture
+  is an O0/O1/ASan category differential (29 total), and the generated parity
+  gate asserts exactly zero exclusions. The closing slice completes dependent
+  callable specialization, recursive lifecycle transfer and iterator cleanup,
+  TString ownership, String/codepoint/writer/hash fidelity, pointer and
+  uninitialized-storage traps, and structural runtime-error classification;
+  runtime ABI v6 carries the required abort and lifetime services.
+
 - Pliron Stage 5 slice 4 — pointer/uninit-storage intrinsics and builtins:
   the compiler-private `UnsafePointer` storage instructions lower natively
   (raw single-take moves, in-place element destructors at computed element

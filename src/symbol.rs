@@ -110,6 +110,10 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
     for argument in arguments {
         result.push('$');
         let raw = match argument {
+            // Overload keys intentionally collapse StringLiteral and nominal
+            // String, but generic instances cannot: their native layouts are
+            // a 16-byte borrowed descriptor versus a 24-byte owning value.
+            InstanceArg::Ty(Ty::StringLiteral) => "TStringLiteral".to_string(),
             InstanceArg::Ty(ty) => format!("T{}", ty_raw(ty)),
             InstanceArg::Value(value) => format!("V{value}"),
         };

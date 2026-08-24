@@ -108,7 +108,22 @@ impl<'a> Elab<'a> {
         // consumed by `mono_expr`'s rewrite of the `t"…"` node into that
         // specialization's construction.
         for request in tstring_requests {
-            let vals = tuple_specialization_values(request.elements());
+            // A concrete TString owns every textual snapshot it stores.
+            // StringLiteral remains a borrowed, drop-inert descriptor
+            // everywhere else; specialize textual fields to nominal String
+            // so the ordinary struct lifecycle owns their runtime buffers.
+            let storage_elements = request
+                .elements()
+                .iter()
+                .map(|element| {
+                    if matches!(element, Ty::StringLiteral) {
+                        Ty::Struct(crate::symbol::STDLIB_STRING_STRUCT.to_string(), Vec::new())
+                    } else {
+                        element.clone()
+                    }
+                })
+                .collect::<Vec<_>>();
+            let vals = tuple_specialization_values(&storage_elements);
             let output_name = tstring_specialization_symbol(request.elements());
             let target = TStringTarget {
                 symbol: output_name.clone(),
@@ -223,6 +238,15 @@ impl<'a> Elab<'a> {
                     &job.vals,
                 )?,
             };
+            // TString's public specialization identity describes its source
+            // segments, while its concrete storage pack upgrades textual
+            // elements to owning nominal String. Preserve the checker-picked
+            // public symbol instead of remangling from that private ABI pack.
+            if job.orig == "TString"
+                && let StmtKind::Struct { name, .. } = &mut spec.kind
+            {
+                *name = job.output_name.clone();
+            }
             match &mut spec.kind {
                 StmtKind::Def { params, body, .. } => {
                     self.mono_function_body(body, params, &consts, &mut mono)?

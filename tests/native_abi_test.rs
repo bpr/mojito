@@ -98,6 +98,7 @@ fn runtime_signatures_match_the_contract_table() {
     assert_sig!(mjrt_version: fn() -> u32);
     assert_sig!(mjrt_alloc: fn(u64, u64) -> *mut u8);
     assert_sig!(mjrt_free: fn(*mut u8) -> ());
+    assert_sig!(mjrt_pointer_status: fn(*const u8) -> u32);
     assert_sig!(mjrt_dealloc: fn(*mut u8, u64, u64) -> ());
     assert_sig!(mjrt_write_stdout: fn(*const u8, u64) -> ());
     assert_sig!(mjrt_fmt_i64: fn(i64, *mut u8) -> u64);
@@ -125,13 +126,16 @@ fn runtime_signatures_match_the_contract_table() {
             .collect::<Vec<_>>(),
         vec![CAbiTy::PtrConstU8, CAbiTy::U64]
     );
+    let _: unsafe extern "C" fn(*const u8, u64) -> ! = mojito_runtime::mjrt_abort;
+    let abort = row("mjrt_abort");
+    assert!(abort.noreturn && abort.ret.is_none());
 }
 
 #[test]
 fn every_table_row_has_exactly_one_check_above() {
     // Adding a runtime symbol must extend runtime_signatures_match_the
     // _contract_table; this count trips when the table grows without it.
-    assert_eq!(rt_abi::RT_SYMBOLS.len(), 12);
+    assert_eq!(rt_abi::RT_SYMBOLS.len(), 14);
     assert_eq!(rt_abi::RT_DATA_SYMBOLS.len(), 1);
     assert_eq!(rt_abi::RT_TYPES.len(), 3);
 }
@@ -164,6 +168,25 @@ fn abi_version_and_shared_constants_agree() {
     assert_eq!(
         mojito_runtime::TRAP_STDIN_FAILURE,
         rt_abi::TRAP_STDIN_FAILURE
+    );
+    assert_eq!(mojito_runtime::TRAP_ABORT, rt_abi::TRAP_ABORT);
+    assert_eq!(
+        mojito_runtime::TRAP_POINTER_DANGLING,
+        rt_abi::TRAP_POINTER_DANGLING
+    );
+    assert_eq!(
+        mojito_runtime::TRAP_POINTER_USE_AFTER_FREE,
+        rt_abi::TRAP_POINTER_USE_AFTER_FREE
+    );
+    assert_eq!(
+        mojito_runtime::TRAP_POINTER_DOUBLE_FREE,
+        rt_abi::TRAP_POINTER_DOUBLE_FREE
+    );
+    assert_eq!(mojito_runtime::TRAP_UNINIT_READ, rt_abi::TRAP_UNINIT_READ);
+    assert_eq!(mojito_runtime::TRAP_UNINIT_TAKE, rt_abi::TRAP_UNINIT_TAKE);
+    assert_eq!(
+        mojito_runtime::TRAP_UNINIT_DESTROY,
+        rt_abi::TRAP_UNINIT_DESTROY
     );
     assert_eq!(mojito_runtime::MJ_TAG_OK, rt_abi::MJ_TAG_OK);
     assert_eq!(mojito_runtime::MJ_TAG_ERR, rt_abi::MJ_TAG_ERR);

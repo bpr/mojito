@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use expect_test::expect;
-use mojito::Compiler;
 use mojito::backend::pliron as native;
+use mojito::{Compiler, CompilerError, RuntimeError};
 use native::{CompileOptions, JitValue, NativeModule, NativeTarget, OptLevel, TrapCategory};
 
 const FIXTURE_NAME: &str = "pliron_fixture.mojo";
@@ -207,10 +207,18 @@ fn canonical_text_round_trips() {
 /// The `(relative path, source)` of every `.mojo` fixture in `dir`, sorted.
 fn fixture_sources(dir: &str) -> Vec<(String, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
-    // Debugging filter for one fixture's differential/sanitizer lanes.
-    // Never combine with UPDATE_EXPECT: the manifest assertion still runs
-    // over the filtered rows and must fail rather than rewrite the pin.
+    // Debugging filter for one or more comma-separated fixture substrings and
+    // their differential/sanitizer lanes. The
+    // parity gate skips its generated-file assertion and coverage ratchets in
+    // this mode; UPDATE_EXPECT remains forbidden so a focused run can never
+    // truncate the checked-in manifest.
     let only = std::env::var("MOJITO_PARITY_ONLY").ok();
+    let filters = only.as_deref().map(|value| {
+        value
+            .split(',')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+    });
     let mut fixtures: Vec<_> = std::fs::read_dir(&root)
         .unwrap_or_else(|error| panic!("{dir} exists: {error}"))
         .filter_map(|entry| {
@@ -218,7 +226,11 @@ fn fixture_sources(dir: &str) -> Vec<(String, String)> {
             let name = path.file_name()?.to_str()?;
             name.ends_with(".mojo").then(|| name.to_string())
         })
-        .filter(|name| only.as_deref().is_none_or(|filter| name.contains(filter)))
+        .filter(|name| {
+            filters
+                .as_ref()
+                .is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
+        })
         .collect();
     fixtures.sort();
     fixtures
@@ -552,6 +564,10 @@ fn print_fixture_exes_match_vm_output() {
         "assets/ok/pliron_struct_fieldwise.mojo",
         "assets/ok/pliron_struct_init_method.mojo",
         "assets/ok/pliron_struct_drop_order.mojo",
+        // Exercises the checked consuming Array-literal -> List parameter
+        // conversion. O1 previously exposed the missing List `cap` field as
+        // allocator corruption during the second Bank getter.
+        "assets/ok/callable_element_call_dispatch.mojo",
     ] {
         let src = std::fs::read_to_string(fixture).expect("fixture exists");
         let compiler = Compiler::default();
@@ -779,24 +795,6 @@ fn parity_exe_manifest_and_differential() {
                     }
                 };
                 let dir = tempfile::tempdir().expect("tempdir");
-                for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
-                    let exe = dir.path().join(format!("parity-{level}"));
-                    module
-                        .write_executable(&exe, opt)
-                        .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
-                    let run = run_executable(&exe, stdin, &[]);
-                    assert_eq!(run.status.code(), Some(0), "{rel}: exit at {level}");
-                    assert_eq!(
-                        String::from_utf8_lossy(&run.stdout),
-                        vm_output,
-                        "{rel}: stdout bytes diverge from the VM at {level}"
-                    );
-                    assert!(
-                        run.stderr.is_empty(),
-                        "{rel}: stderr must be empty at {level}: {}",
-                        String::from_utf8_lossy(&run.stderr)
-                    );
-                }
                 let asan_exe = dir.path().join("parity-asan");
                 module
                     .write_executable_sanitized(&asan_exe, OptLevel::O0)
@@ -813,6 +811,31 @@ fn parity_exe_manifest_and_differential() {
                     "{rel}: sanitizer diagnostics:\n{}",
                     String::from_utf8_lossy(&run.stderr)
                 );
+                for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
+                    let exe = dir.path().join(format!("parity-{level}"));
+                    module
+                        .write_executable(&exe, opt)
+                        .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
+                    let run = run_executable(&exe, stdin, &[]);
+                    assert_eq!(
+                        run.status.code(),
+                        Some(0),
+                        "{rel}: exit at {level}: {:?}\nstdout:\n{}\nstderr:\n{}",
+                        run.status,
+                        String::from_utf8_lossy(&run.stdout),
+                        String::from_utf8_lossy(&run.stderr)
+                    );
+                    assert_eq!(
+                        String::from_utf8_lossy(&run.stdout),
+                        vm_output,
+                        "{rel}: stdout bytes diverge from the VM at {level}"
+                    );
+                    assert!(
+                        run.stderr.is_empty(),
+                        "{rel}: stderr must be empty at {level}: {}",
+                        String::from_utf8_lossy(&run.stderr)
+                    );
+                }
                 (
                     rel,
                     "main".into(),
@@ -823,32 +846,43 @@ fn parity_exe_manifest_and_differential() {
         }
     });
 
-    let raise_rows = parallel_map(fixture_sources("assets/runtime_error"), |(rel, src)| {
-        let is_raise_fixture = rel
-            .rsplit('/')
-            .next()
-            .is_some_and(|name| name.starts_with("pliron_raise_"));
-        if !is_raise_fixture {
-            return (
-                rel,
-                "-".into(),
-                "ineligible".to_string(),
-                "no-raise-shape".into(),
-            );
-        }
+    let error_rows = parallel_map(fixture_sources("assets/runtime_error"), |(rel, src)| {
         let compiler = Compiler::default();
-        let compiled = compiler
-            .compile_source(&src, Path::new(&rel))
-            .unwrap_or_else(|error| panic!("{rel}: raise fixture must compile: {error}"));
-        let vm_error = compiler
+        let compiled = match compiler.compile_source(&src, Path::new(&rel)) {
+            Ok(compiled) => compiled,
+            Err(_) => {
+                return (
+                    rel,
+                    "-".into(),
+                    "ineligible".into(),
+                    "non-conforming-snippet".into(),
+                );
+            }
+        };
+        let vm_error = match compiler
             .execute(&compiled)
-            .expect_err("raise fixture must fail on the VM")
-            .to_string();
-        assert!(
-            vm_error.starts_with("unhandled error: "),
-            "{rel}: VM error is not an unhandled raise: {vm_error}"
-        );
-        let mut entries = vec!["main".to_string()];
+            .expect_err("runtime-error fixture must fail on the VM")
+        {
+            CompilerError::Runtime(error) => error,
+            error => panic!("{rel}: expected a runtime error, got {error}"),
+        };
+        let category = match &vm_error {
+            RuntimeError::Raised(_) => TrapCategory::UnhandledError,
+            RuntimeError::Abort(_) => TrapCategory::Abort,
+            RuntimeError::TypeError(message) => TrapCategory::from_vm_message(message)
+                .unwrap_or_else(|| panic!("{rel}: unmapped VM runtime error: {vm_error}")),
+            _ => panic!("{rel}: unmapped VM runtime error: {vm_error}"),
+        };
+        let vm_error = vm_error.to_string();
+        let mut entries = Vec::new();
+        if compiled
+            .elaborated_mir()
+            .functions
+            .iter()
+            .any(|(name, _)| name == "main")
+        {
+            entries.push("main".to_string());
+        }
         if compiled
             .elaborated_mir()
             .functions
@@ -857,6 +891,7 @@ fn parity_exe_manifest_and_differential() {
         {
             entries.push("__toplevel__".to_string());
         }
+        let entry_detail = entries.join(",");
         let options = CompileOptions {
             entries,
             sources: vec![(rel.clone(), src.clone())],
@@ -867,40 +902,62 @@ fn parity_exe_manifest_and_differential() {
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
         for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
-            let exe = dir.path().join(format!("raise-{level}"));
+            let exe = dir.path().join(format!("error-{level}"));
             module
                 .write_executable(&exe, opt)
                 .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
-            let run = std::process::Command::new(&exe)
-                .output()
-                .expect("raise executable runs");
+            let run = run_executable(&exe, fixture_stdin(&rel), &[]);
             assert_eq!(
                 run.status.code(),
-                Some(i32::from(TrapCategory::UnhandledError.exit_code())),
-                "{rel}: unhandled-raise exit status diverges at {level}"
+                Some(i32::from(category.exit_code())),
+                "{rel}: runtime-error category diverges at {level}"
             );
+            let expected_stderr = match category {
+                TrapCategory::UnhandledError | TrapCategory::Abort => format!("{vm_error}\n"),
+                _ => format!("mojito runtime trap: {}\n", category.runtime_message()),
+            };
             assert_eq!(
                 String::from_utf8_lossy(&run.stderr),
-                format!("{vm_error}\n"),
-                "{rel}: unhandled-raise stderr diverges at {level}"
+                expected_stderr,
+                "{rel}: runtime-error stderr diverges at {level}"
             );
         }
+        let sanitizer = dir.path().join("error-asan");
+        module
+            .write_executable_sanitized(&sanitizer, OptLevel::O0)
+            .unwrap_or_else(|error| panic!("{rel}: sanitized error emission: {error}"));
+        let run = run_executable(
+            &sanitizer,
+            fixture_stdin(&rel),
+            &[("ASAN_OPTIONS", "detect_leaks=0")],
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(i32::from(category.exit_code())),
+            "{rel}: sanitized runtime-error category diverges:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&run.stderr).contains("AddressSanitizer"),
+            "{rel}: sanitizer diagnosed native memory misuse:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
         (
             rel,
-            "main".into(),
-            "raise-differential".to_string(),
-            "category=UnhandledError".into(),
+            entry_detail,
+            "error-differential".to_string(),
+            format!("category={category:?}"),
         )
     });
     let rows: Vec<(String, String, String, String)> =
-        ok_rows.into_iter().chain(raise_rows).collect();
+        ok_rows.into_iter().chain(error_rows).collect();
 
     let mut manifest = String::from(
         "# Pliron native-parity manifest (generated; schema-version 1).\n\
          # One row per assets/ok, assets/ownership_ok, and assets/runtime_error fixture:\n\
          #   fixture <TAB> entry <TAB> status <TAB> detail\n\
          # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |\n\
-         #         raise-differential (VM/native unhandled-raise oracle, O0+O1) |\n\
+         #         error-differential (VM/native runtime-error category oracle, O0+O1+ASan) |\n\
          #         excluded (native rejection diagnostic) |\n\
          #         ineligible (no runnable `main` shape for this gate)\n\
          # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \\\n\
@@ -909,27 +966,36 @@ fn parity_exe_manifest_and_differential() {
     for (fixture, entry, status, detail) in &rows {
         manifest.push_str(&format!("{fixture}\t{entry}\t{status}\t{detail}\n"));
     }
-    expect_test::expect_file!["../conformance/pliron-parity.tsv"].assert_eq(&manifest);
+    let focused = std::env::var_os("MOJITO_PARITY_ONLY").is_some();
+    assert!(
+        !(focused && std::env::var_os("UPDATE_EXPECT").is_some()),
+        "MOJITO_PARITY_ONLY cannot be combined with UPDATE_EXPECT"
+    );
+    if !focused {
+        expect_test::expect_file!["../conformance/pliron-parity.tsv"].assert_eq(&manifest);
+    }
 
     // Coverage guards: the eligible sets must never silently shrink, the
     // exclusion count only ratchets down toward the Stage 5 zero-exclusion
     // target, and a pliron-named fixture must never regress to excluded.
     let count = |status: &str| rows.iter().filter(|(_, _, s, _)| s == status).count();
     let differential = count("exe-differential");
-    let raises = count("raise-differential");
+    let errors = count("error-differential");
     let excluded = count("excluded");
-    assert!(
-        differential >= 266,
-        "exe-differential coverage unexpectedly shrank: {differential} < 266"
-    );
-    assert!(
-        raises >= 4,
-        "raise-differential coverage unexpectedly shrank: {raises} < 4"
-    );
-    assert!(
-        excluded <= 29,
-        "excluded coverage unexpectedly grew: {excluded} > 29"
-    );
+    if !focused {
+        assert!(
+            differential == 295,
+            "exe-differential coverage must cover the complete runnable inventory: {differential} != 295"
+        );
+        assert!(
+            errors == 29,
+            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 29"
+        );
+        assert!(
+            excluded == 0,
+            "native exclusions remain after the zero-exclusion burn-down: {excluded}"
+        );
+    }
     for (fixture, _, status, detail) in &rows {
         let name = fixture.rsplit('/').next().unwrap_or(fixture);
         assert!(
@@ -980,21 +1046,6 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             &["compute"],
             &["operator `Sub` on Pointer operands"],
         ),
-        // A raising iterator element with a user destructor rejects: the
-        // exhausted edge leaves zeroed element bytes, and running a user
-        // `__deinit__` over them would diverge from the VM's inert `None`.
-        (
-            "from std.iterable import StopIteration\n\n@fieldwise_init\nstruct Elem(Movable):\n    var v: Int\n\n    def __deinit__(deinit self):\n        pass\n\n@fieldwise_init\nstruct ElemIter:\n    var n: Int\n\n    def __next__(mut self) raises StopIteration -> Elem:\n        if self.n <= 0:\n            raise StopIteration()\n        self.n = self.n - 1\n        return Elem(self.n)\n\n@fieldwise_init\nstruct Elems:\n    var n: Int\n\n    def __iter__(ref self) -> ElemIter:\n        return ElemIter(self.n)\n\ndef compute() -> Int:\n    var s = 0\n    for e in Elems(3):\n        s = s + e.v\n    return s\n",
-            &["compute"],
-            &["iterator element `Elem` with a user destructor"],
-        ),
-        // A raising `__iter__` preparation step stays outside the lowered
-        // chain contract.
-        (
-            "@fieldwise_init\nstruct RIter:\n    var n: Int\n\n    def __len__(self) -> Int:\n        return self.n\n\n    def __next__(mut self) -> Int:\n        self.n = self.n - 1\n        return self.n\n\n@fieldwise_init\nstruct RSrc:\n    var n: Int\n\n    def __iter__(ref self) raises -> RIter:\n        if self.n < 0:\n            raise Error(\"bad\")\n        return RIter(self.n)\n\ndef compute() raises -> Int:\n    var s = 0\n    var src = RSrc(3)\n    for x in src:\n        s = s + x\n    return s\n",
-            &["compute"],
-            &["raising iterator preparation `RSrc.__iter__`"],
-        ),
         // An IntLiteral constant that exceeds i64 storage rejects instead of
         // wrapping — the VM keeps arbitrary precision in literal-typed slots
         // (materialization to concrete scalar widths wraps VM-exactly).
@@ -1003,13 +1054,12 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             &["main", "__toplevel__"],
             &["integer literal 1208925819614629174706176 does not fit IntLiteral storage (i64)"],
         ),
-        // An owned closure capture whose type declares a user move
-        // constructor rejects: the VM runs `__moveinit__` at capture time,
-        // and the native record's byte relocation would silently skip it.
+        // A retained generic closure with captures still rejects before the
+        // backend could silently invent an environment representation.
         (
             "struct Loud(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __moveinit__(out self, deinit other: Self):\n        self.v = other.v\n\ndef compute() -> Int:\n    var l = Loud(3)\n    var peek: def() capturing[_] -> Int = lambda {var l^} -> Int: l.v\n    return peek()\n",
             &["compute"],
-            &["owned closure capture of `Loud` with a user `__moveinit__`"],
+            &["generic retained callable `compute$$lambda$254` has captures"],
         ),
     ];
     for (src, entries, phrases) in cases {

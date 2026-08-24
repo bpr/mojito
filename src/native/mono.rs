@@ -52,6 +52,8 @@ struct InstanceKey {
 struct Bindings {
     types: HashMap<String, Ty>,
     values: HashMap<String, CtValue>,
+    callables: HashMap<String, String>,
+    associated: HashMap<String, Ty>,
     /// When materializing a generic struct's method: the owner's template name
     /// and its concrete instance type. Substitution rewrites the bare in-body
     /// `self` spelling (`Struct(template, [])`) to the concrete instance so
@@ -78,6 +80,8 @@ struct Specializer<'a> {
     output_functions: Vec<(String, MirFunction)>,
     output_function_decls: Vec<MirFunctionDeclaration>,
     output_structs: Vec<MirStructDeclaration>,
+    constant_values: HashMap<u32, CtValue>,
+    callable_targets: HashMap<u32, (String, bool)>,
 }
 
 impl<'a> Specializer<'a> {
@@ -115,6 +119,8 @@ impl<'a> Specializer<'a> {
             output_functions: Vec::new(),
             output_function_decls: Vec::new(),
             output_structs: Vec::new(),
+            constant_values: HashMap::new(),
+            callable_targets: HashMap::new(),
         }
     }
 
@@ -122,15 +128,13 @@ impl<'a> Specializer<'a> {
         let mut entry_map = HashMap::new();
         for entry in entries {
             let decl = self.declarations.get(entry.as_str()).copied();
-            let function = self.functions.get(entry.as_str()).copied().ok_or_else(|| {
+            self.functions.get(entry.as_str()).copied().ok_or_else(|| {
                 self.error(
                     None,
                     format!("entry function `{entry}` (not found in the MIR program)"),
                 )
             })?;
-            if decl.is_some_and(|decl| !decl.param_decls.is_empty())
-                || function_types(function).any(is_symbolic)
-            {
+            if decl.is_some_and(|decl| !decl.param_decls.is_empty()) {
                 return Err(self.error(
                     Some(entry),
                     format!("generic entry `{entry}` has unresolved parameters"),
@@ -282,6 +286,13 @@ impl<'a> Specializer<'a> {
             e.function.get_or_insert_with(|| key.template.clone());
             e
         })?;
+        self.constant_values = function_constant_values(&function);
+        self.callable_targets = function_callable_targets(&function);
+        self.constant_values.extend(
+            self.callable_targets
+                .iter()
+                .map(|(reg, (target, _))| (*reg, CtValue::Str(target.clone()))),
+        );
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.blocks);
@@ -292,6 +303,8 @@ impl<'a> Specializer<'a> {
         self.rewrite_iterator_inits(&key.template, &mut function, &mut blocks)?;
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
         function.blocks = blocks;
+        repair_storage_result_types(&mut function);
+        erase_specialized_generic_callable_storage(&mut function);
         ensure_concrete_function(&key.template, &function)?;
 
         if let Some(declaration) = self.declarations.get(key.template.as_str()).copied() {
@@ -450,7 +463,11 @@ impl<'a> Specializer<'a> {
                                         *dest,
                                         args,
                                         kwargs,
+                                        param_arg_regs,
                                     )?;
+                                    if let Some((_, concrete)) = &bindings.self_instance {
+                                        function.reg_types.insert(dest.0, concrete.clone());
+                                    }
                                     self.enqueue(&target, bindings, arguments)?;
                                     // The instance identity now carries every
                                     // compile-time solution; the call-site
@@ -471,6 +488,9 @@ impl<'a> Specializer<'a> {
                                 {
                                     func.0 = concrete.clone();
                                 }
+                                for param_arg in param_arg_regs.iter_mut() {
+                                    param_arg.value = None;
+                                }
                             }
                             continue;
                         }
@@ -480,11 +500,24 @@ impl<'a> Specializer<'a> {
                         let receiver = (func.0.contains(".__init__")
                             && function.reg_types.contains_key(&dest.0))
                         .then_some(*dest);
-                        let (target, bindings, arguments) = self
-                            .infer_call(owner, function, &func.0, receiver, *dest, args, kwargs)?;
+                        let (target, bindings, arguments) = self.infer_call(
+                            owner,
+                            function,
+                            &func.0,
+                            receiver,
+                            *dest,
+                            args,
+                            kwargs,
+                            param_arg_regs,
+                        )?;
                         func.0 = self.enqueue(&target, bindings, arguments)?;
                         for param_arg in param_arg_regs.iter_mut() {
                             param_arg.value = None;
+                        }
+                    }
+                    MirInstr::MakeSimd { elems, .. } => {
+                        for elem in elems.clone() {
+                            self.enqueue_intable_instance(owner, function, elem)?;
                         }
                     }
                     MirInstr::MethodCall {
@@ -500,6 +533,14 @@ impl<'a> Specializer<'a> {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
                             self.error(Some(owner), "method receiver lacks a MIR type")
                         })?;
+                        if resolved
+                            .as_deref()
+                            .is_some_and(|target| target.starts_with("__trait_dispatch."))
+                            && !matches!(peel_refs(receiver), Ty::Struct(..))
+                        {
+                            *resolved = None;
+                            continue;
+                        }
                         // `write` on the builtin-string accumulator (the
                         // `Value::Str` writer inside a `write_to` expansion)
                         // formats nominal arguments through their own
@@ -564,6 +605,7 @@ impl<'a> Specializer<'a> {
                             *dest,
                             args,
                             kwargs,
+                            param_arg_regs,
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *resolved = Some(concrete);
@@ -581,16 +623,62 @@ impl<'a> Specializer<'a> {
                     MirInstr::CallIndirect {
                         dest,
                         callee,
-                        resolved,
                         raises,
                         args,
                         kwargs,
                         callee_place,
                         arg_places,
                         kwarg_places,
+                        capture_accesses,
                         param_arg_regs,
+                        resolved,
                         ..
                     } => {
+                        let dependent_callable =
+                            function.reg_types.get(&callee.0).is_some_and(|ty| {
+                                matches!(
+                                    peel_refs(ty),
+                                    Ty::GenericFunc { .. }
+                                        | Ty::Param {
+                                            callable_bound: Some(_),
+                                            ..
+                                        }
+                                )
+                            });
+                        if let Some((target, captures_are_empty)) =
+                            self.callable_targets.get(&callee.0).cloned()
+                            && (captures_are_empty || dependent_callable)
+                        {
+                            if !captures_are_empty {
+                                return Err(self.error(
+                                    Some(owner),
+                                    format!("generic retained callable `{target}` has captures"),
+                                ));
+                            }
+                            let (target, bindings, arguments) = self.infer_call(
+                                owner,
+                                function,
+                                &target,
+                                None,
+                                *dest,
+                                args,
+                                kwargs,
+                                param_arg_regs,
+                            )?;
+                            let concrete = self.enqueue(&target, bindings, arguments)?;
+                            *instruction = MirInstr::Call {
+                                dest: *dest,
+                                func: crate::mir::FuncRef(concrete),
+                                raises: raises.clone(),
+                                args: std::mem::take(args),
+                                kwargs: std::mem::take(kwargs),
+                                arg_places: std::mem::take(arg_places),
+                                kwarg_places: std::mem::take(kwarg_places),
+                                capture_accesses: std::mem::take(capture_accesses),
+                                param_arg_regs: Vec::new(),
+                            };
+                            continue;
+                        }
                         let Some(receiver) = function.reg_types.get(&callee.0) else {
                             continue;
                         };
@@ -618,6 +706,7 @@ impl<'a> Specializer<'a> {
                             *dest,
                             args,
                             kwargs,
+                            param_arg_regs,
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *instruction = MirInstr::MethodCall {
@@ -654,14 +743,8 @@ impl<'a> Specializer<'a> {
                         let Some(body) = self.functions.get(target.as_str()).copied() else {
                             continue;
                         };
-                        if let Some(ty) = function_types(body).find(|ty| is_symbolic(ty)) {
-                            return Err(self.error(
-                                Some(owner),
-                                format!(
-                                    "retained callable `{target}` over unresolved generic \
-                                     parameters (`{ty}`)"
-                                ),
-                            ));
+                        if function_types(body).any(is_symbolic) {
+                            continue;
                         }
                         *target = self.enqueue(target, self.base_bindings(), Vec::new())?;
                     }
@@ -877,6 +960,37 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
+    /// Enqueue a nominal `__int__` reached implicitly by scalar/SIMD
+    /// construction. The checker records the concrete operand type on the
+    /// element register, while MIR deliberately keeps construction as
+    /// `MakeSimd` rather than synthesizing a method call.
+    fn enqueue_intable_instance(
+        &mut self,
+        owner: &str,
+        function: &MirFunction,
+        arg: Reg,
+    ) -> Result<(), MonoError> {
+        let Some(ty @ Ty::Struct(name, _)) = function.reg_types.get(&arg.0) else {
+            return Ok(());
+        };
+        let target = crate::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(name),
+            "__int__",
+            None,
+            0,
+        );
+        if !self.functions.contains_key(target.as_str()) {
+            return Ok(());
+        }
+        let (bindings, arguments, _) = self.infer_receiver_call(owner, &target, ty, None)?;
+        self.enqueue(&target, bindings, arguments)?;
+        Ok(())
+    }
+
     /// Retarget one checker-selected subscript invocation (the
     /// `__getitem__`/`__setitem__` family) to its concrete instance. The
     /// receiver binds the owner's parameters and the destination's checked
@@ -916,14 +1030,11 @@ impl<'a> Specializer<'a> {
         if !self.functions.contains_key(target.as_str()) {
             return Ok(());
         }
-        // A reference-yielding subscript's destination is a handle whose
-        // `ref` layers are indistinguishable from a reference element type;
-        // the receiver's arguments already carry every solution.
-        let result = if call.reference_result.is_some() {
-            None
-        } else {
-            dest.and_then(|dest| function.reg_types.get(&dest.0))
-        };
+        // The checker-selected result fact is the authoritative anchor even
+        // for a reference result. `unify_result` peels the handle layer, so a
+        // bare implicit-view receiver can recover its owner element type from
+        // `ref Int` without confusing it with a reference-valued element.
+        let result = Some(&call.result_ty);
         let (mut bindings, mut arguments, _) =
             self.infer_receiver_call(owner, &target, &receiver_ty, result)?;
         // A comptime-specialized accessor (`Tuple$tN.__getitem__[i: Int]`)
@@ -961,6 +1072,7 @@ impl<'a> Specializer<'a> {
         dest: Reg,
         args: &[Reg],
         kwargs: &[(String, Reg)],
+        param_args: &[crate::mir::MirParamArg],
     ) -> Result<(String, Bindings, Vec<InstanceArg>), MonoError> {
         let declaration = self.declarations.get(target).copied().ok_or_else(|| {
             self.error(
@@ -969,6 +1081,12 @@ impl<'a> Specializer<'a> {
             )
         })?;
         let mut bindings = self.base_bindings();
+        let receiver_pattern_for_instance = receiver.and_then(|_| {
+            self.functions
+                .get(target)
+                .and_then(|function| function.param_types.first())
+                .cloned()
+        });
         let mut owner_covered = 0;
         if let Some(receiver) = receiver {
             let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
@@ -1007,6 +1125,14 @@ impl<'a> Specializer<'a> {
             unify(receiver_pattern, actual_receiver, &mut bindings)
                 .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
         }
+        bind_explicit_value_arguments(
+            &declaration.param_decls,
+            param_args,
+            &self.constant_values,
+            &mut bindings,
+            target,
+        )?;
+        apply_defaults(&declaration.param_decls, &mut bindings)?;
         let names = &declaration.param_names;
         let required = &declaration.required;
         let slots = match_call_slots(
@@ -1030,16 +1156,54 @@ impl<'a> Specializer<'a> {
                 format!("binding call to `{target}` during monomorphization: {e:?}"),
             )
         })?;
+        let mut callable_arguments = Vec::new();
         for (index, slot) in slots.slots.iter().enumerate() {
-            let actual = match slot {
-                ArgSlot::Positional(i) => Some(reg_ty(caller, args[*i], owner)?),
-                ArgSlot::Keyword(i) => Some(reg_ty(caller, kwargs[*i].1, owner)?),
+            let actual_reg = match slot {
+                ArgSlot::Positional(i) => Some(args[*i]),
+                ArgSlot::Keyword(i) => Some(kwargs[*i].1),
                 ArgSlot::Default => None,
             };
-            if let Some(actual) = actual {
-                unify(&declaration.param_types[index], actual, &mut bindings).map_err(|e| {
-                    self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
-                })?;
+            if let Some(actual_reg) = actual_reg {
+                let actual = reg_ty(caller, actual_reg, owner)?;
+                // Explicit value parameters may resolve a dependent pattern;
+                // an ordinary unresolved type parameter must remain available
+                // for structural inference from this runtime argument.
+                let pattern = substitute_ty(&declaration.param_types[index], &bindings)
+                    .unwrap_or_else(|_| declaration.param_types[index].clone());
+                if is_symbolic(&pattern) {
+                    unify(&pattern, actual, &mut bindings).map_err(|e| {
+                        self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
+                    })?;
+                }
+                // Ordinary `Func` parameters carry their closure environment
+                // at runtime. Only retained generic-callable parameters are
+                // compile-time inputs to instance selection; treating every
+                // statically traceable closure as such would discard captures.
+                if matches!(
+                    peel_refs(&declaration.param_types[index]),
+                    Ty::GenericFunc { .. }
+                        | Ty::Param {
+                            callable_bound: Some(_),
+                            ..
+                        }
+                ) && let Some((callable, captures_are_empty)) =
+                    self.callable_targets.get(&actual_reg.0)
+                {
+                    if !captures_are_empty {
+                        return Err(self.error(
+                            Some(owner),
+                            format!("generic retained callable `{callable}` has captures"),
+                        ));
+                    }
+                    bindings.values.insert(
+                        declaration.param_names[index].clone(),
+                        CtValue::Str(callable.clone()),
+                    );
+                    bindings
+                        .callables
+                        .insert(declaration.param_names[index].clone(), callable.clone());
+                    callable_arguments.push(InstanceArg::Value(CtValue::Str(callable.clone())));
+                }
             }
         }
         // An unspecialized variadic callee instantiates at its call-site
@@ -1072,7 +1236,45 @@ impl<'a> Specializer<'a> {
                 )
             })?;
         }
-        apply_defaults(&declaration.param_decls, &mut bindings)?;
+        if bindings.self_instance.is_none()
+            && let Some(receiver_pattern) = receiver_pattern_for_instance.as_ref()
+            && let Ty::Struct(template, arguments) = peel_refs(receiver_pattern)
+            && !arguments.is_empty()
+        {
+            let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
+            bindings.self_instance = Some((nominal_template(template).to_string(), concrete));
+            if let Some(struct_decl) = self.structs.get(nominal_template(template)).copied() {
+                owner_covered =
+                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+            }
+        }
+        if bindings.self_instance.is_none()
+            && let Some(receiver) = receiver
+            && let Ty::Struct(receiver_name, _) = peel_refs(reg_ty(caller, receiver, owner)?)
+            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
+            && !struct_decl.param_decls.is_empty()
+        {
+            let owner_arguments = ordered_arguments(
+                &struct_decl.param_decls,
+                &bindings,
+                nominal_template(receiver_name),
+            )?;
+            let ty_arguments = owner_arguments
+                .iter()
+                .map(|argument| match argument {
+                    InstanceArg::Ty(ty) => TyArg::Ty(ty.clone()),
+                    InstanceArg::Value(value) => TyArg::Val(value.clone()),
+                })
+                .collect::<Vec<_>>();
+            let owner =
+                crate::symbol::instance_symbol(nominal_template(receiver_name), &owner_arguments);
+            bindings.self_instance = Some((
+                nominal_template(receiver_name).to_string(),
+                Ty::Struct(owner, ty_arguments),
+            ));
+            owner_covered =
+                owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+        }
         let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
         // The owner-restating prefix (`__init__` prepends the struct's
         // `param_decls`) is already carried by the instance's `owner`
@@ -1081,6 +1283,7 @@ impl<'a> Specializer<'a> {
         if let Some(arity) = variadic_arity {
             arguments.push(InstanceArg::Value(CtValue::Int(arity as i64)));
         }
+        arguments.extend(callable_arguments);
         Ok((target.to_string(), bindings, arguments))
     }
 
@@ -1287,6 +1490,43 @@ impl<'a> Specializer<'a> {
             })?;
         }
         apply_defaults(&declaration.param_decls, &mut bindings)?;
+        if bindings.self_instance.is_none()
+            && let Ty::Struct(template, arguments) = peel_refs(receiver_pattern)
+            && !arguments.is_empty()
+        {
+            let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
+            bindings.self_instance = Some((nominal_template(template).to_string(), concrete));
+            if let Some(struct_decl) = self.structs.get(nominal_template(template)).copied() {
+                owner_covered =
+                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+            }
+        }
+        if bindings.self_instance.is_none()
+            && let Ty::Struct(receiver_name, _) = receiver
+            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
+            && !struct_decl.param_decls.is_empty()
+        {
+            let owner_arguments = ordered_arguments(
+                &struct_decl.param_decls,
+                &bindings,
+                nominal_template(receiver_name),
+            )?;
+            let ty_arguments = owner_arguments
+                .iter()
+                .map(|argument| match argument {
+                    InstanceArg::Ty(ty) => TyArg::Ty(ty.clone()),
+                    InstanceArg::Value(value) => TyArg::Val(value.clone()),
+                })
+                .collect::<Vec<_>>();
+            let owner =
+                crate::symbol::instance_symbol(nominal_template(receiver_name), &owner_arguments);
+            bindings.self_instance = Some((
+                nominal_template(receiver_name).to_string(),
+                Ty::Struct(owner, ty_arguments),
+            ));
+            owner_covered =
+                owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+        }
         let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
         arguments.drain(..owner_covered);
         let result = substitute_ty(&declaration.ret_ty, &bindings).map_err(|e| {
@@ -1416,8 +1656,8 @@ impl<'a> Specializer<'a> {
                         Some(owner),
                         format!(
                             "struct instance `{}` has conflicting field \
-                             substitutions (instance identity collision)",
-                            declaration.name
+                             substitutions (instance identity collision): {:?} versus {:?}",
+                            declaration.name, existing.fields, declaration.fields
                         ),
                     ));
                 }
@@ -1512,20 +1752,116 @@ fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
 /// when that constant has a `CtValue` form — the resolver for value-parameter
 /// arguments spelled as materialized literal registers.
 fn const_reg_value(function: &MirFunction, reg: Reg) -> Option<CtValue> {
+    const_reg_value_inner(function, reg, &mut HashSet::new())
+}
+
+fn function_constant_values(function: &MirFunction) -> HashMap<u32, CtValue> {
+    function
+        .reg_types
+        .keys()
+        .filter_map(|reg| const_reg_value(function, Reg(*reg)).map(|value| (*reg, value)))
+        .collect()
+}
+
+/// Resolve statically named callable values through the MIR's register/variable
+/// plumbing. Generic lifted bodies are specialized at their indirect call site;
+/// the boolean records whether direct-call rewriting may erase the environment.
+fn function_callable_targets(function: &MirFunction) -> HashMap<u32, (String, bool)> {
+    fn visit(
+        blocks: &[MirBlock],
+        registers: &mut HashMap<u32, (String, bool)>,
+        variables: &mut HashMap<u32, (String, bool)>,
+    ) -> bool {
+        let mut changed = false;
+        for block in blocks {
+            for instruction in &block.instrs {
+                let resolved = match instruction {
+                    MirInstr::MakeClosure {
+                        dest,
+                        function,
+                        captures,
+                    } => Some((dest.0, (function.clone(), captures.is_empty()))),
+                    MirInstr::Const {
+                        dest,
+                        k: Const::Function(function),
+                    } => Some((dest.0, (function.clone(), true))),
+                    MirInstr::CopyValue { dest, value } => registers
+                        .get(&value.0)
+                        .cloned()
+                        .map(|value| (dest.0, value)),
+                    MirInstr::UseVar { dest, var, .. } => {
+                        variables.get(var).cloned().map(|value| (dest.0, value))
+                    }
+                    _ => None,
+                };
+                if let Some((dest, value)) = resolved
+                    && registers.get(&dest) != Some(&value)
+                {
+                    registers.insert(dest, value);
+                    changed = true;
+                }
+                if let MirInstr::DefVar { var, src, .. } = instruction
+                    && let Some(value) = registers.get(&src.0).cloned()
+                    && variables.get(var) != Some(&value)
+                {
+                    variables.insert(*var, value);
+                    changed = true;
+                }
+                if let MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } = instruction
+                {
+                    changed |= visit(body, registers, variables);
+                    if let Some((_, blocks)) = handler {
+                        changed |= visit(blocks, registers, variables);
+                    }
+                    if let Some(blocks) = orelse {
+                        changed |= visit(blocks, registers, variables);
+                    }
+                    if let Some(blocks) = finalbody {
+                        changed |= visit(blocks, registers, variables);
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    let mut registers = HashMap::new();
+    let mut variables = HashMap::new();
+    while visit(&function.blocks, &mut registers, &mut variables) {}
+    registers
+}
+
+fn const_reg_value_inner(
+    function: &MirFunction,
+    reg: Reg,
+    visiting: &mut HashSet<u32>,
+) -> Option<CtValue> {
+    if !visiting.insert(reg.0) {
+        return None;
+    }
     for block in &function.blocks {
         for instr in &block.instrs {
-            let MirInstr::Const { dest, k } = instr else {
-                continue;
-            };
-            if *dest != reg {
-                continue;
+            match instr {
+                MirInstr::Const { dest, k } if *dest == reg => {
+                    return match k {
+                        Const::Int(value) => Some(CtValue::Int(*value)),
+                        Const::IntLiteral(literal) => literal.to_i64().map(CtValue::Int),
+                        Const::Bool(value) => Some(CtValue::Bool(*value)),
+                        Const::Function(function) => Some(CtValue::Str(function.clone())),
+                        _ => None,
+                    };
+                }
+                MirInstr::MaterializeLiteral { dest, value, .. } if *dest == reg => {
+                    return const_reg_value_inner(function, *value, visiting);
+                }
+                _ => {}
             }
-            return match k {
-                Const::Int(value) => Some(CtValue::Int(*value)),
-                Const::IntLiteral(literal) => literal.to_i64().map(CtValue::Int),
-                Const::Bool(value) => Some(CtValue::Bool(*value)),
-                _ => None,
-            };
         }
     }
     None
@@ -1758,6 +2094,43 @@ fn ordered_arguments(
         .collect()
 }
 
+fn bind_explicit_value_arguments(
+    decls: &[ParamDecl],
+    arguments: &[crate::mir::MirParamArg],
+    constant_values: &HashMap<u32, CtValue>,
+    bindings: &mut Bindings,
+    target: &str,
+) -> Result<(), MonoError> {
+    let mut positional = 0;
+    for argument in arguments {
+        let Some(value_reg) = argument.value else {
+            if argument.name.is_none() {
+                positional += 1;
+            }
+            continue;
+        };
+        let declaration = if let Some(name) = &argument.name {
+            decls.iter().find(|declaration| declaration.name() == name)
+        } else {
+            let declaration = decls.get(positional);
+            positional += 1;
+            declaration
+        };
+        let Some(ParamDecl::Value { name, .. }) = declaration else {
+            continue;
+        };
+        let value = constant_values
+            .get(&value_reg.0)
+            .cloned()
+            .ok_or_else(|| MonoError {
+                function: Some(target.to_string()),
+                construct: format!("value parameter `{name}` is not compile-time constant"),
+            })?;
+        bindings.values.insert(name.clone(), value);
+    }
+    Ok(())
+}
+
 fn apply_defaults(decls: &[ParamDecl], bindings: &mut Bindings) -> Result<(), MonoError> {
     for decl in decls {
         match decl {
@@ -1811,6 +2184,19 @@ fn bind_ty_args(
 fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), String> {
     match pattern {
         Ty::Param { name, .. } => bind_type(name, actual, bindings),
+        Ty::Assoc { .. } => {
+            let key = pattern.to_string();
+            match bindings.associated.get(&key) {
+                Some(known) if known != actual => Err(format!(
+                    "conflicting solutions for associated type `{key}`: `{known}` and `{actual}`"
+                )),
+                Some(_) => Ok(()),
+                None => {
+                    bindings.associated.insert(key, actual.clone());
+                    Ok(())
+                }
+            }
+        }
         // A literal-typed register materializes into whatever concrete
         // storage the checker admitted (`MaterializeLiteral` converts the
         // value at the boundary); the pattern constrains nothing here.
@@ -1922,6 +2308,17 @@ fn unify_result(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<()
     while let Ty::Ref(reference) = actual {
         actual = &reference.referent;
     }
+    // A container element may itself be a reference. Receiver inference has
+    // then already bound `T = ref U`, while the checker-flattened reference
+    // result is spelled `ref U`; stripping its handle above leaves `U`.
+    // Preserve the established element solution instead of mistaking the
+    // flattened handle for a conflicting `T = U` solution.
+    if let Ty::Param { name, .. } = pattern
+        && let Some(Ty::Ref(reference)) = bindings.types.get(name)
+        && ty_equal_modulo_origins(&reference.referent, actual)
+    {
+        return Ok(());
+    }
     unify(pattern, actual, bindings)
 }
 
@@ -1990,6 +2387,22 @@ fn bind_value(name: &str, value: &CtValue, bindings: &mut Bindings) -> Result<()
 }
 
 fn substitute_function(function: &mut MirFunction, bindings: &Bindings) -> Result<(), MonoError> {
+    substitute_value_parameter_reads(
+        &mut function.blocks,
+        &function.var_names,
+        &function.var_tys,
+        bindings,
+    )?;
+    for (var, name) in function.var_names.iter().enumerate() {
+        if let Some(value) = bindings.values.get(name) {
+            let ty = match value {
+                CtValue::Int(_) => Ty::Int,
+                CtValue::Bool(_) => Ty::Bool,
+                _ => continue,
+            };
+            function.var_tys.insert(var as u32, ty);
+        }
+    }
     for ty in &mut function.param_types {
         *ty = substitute_ty(ty, bindings)?;
     }
@@ -2005,7 +2418,201 @@ fn substitute_function(function: &mut MirFunction, bindings: &Bindings) -> Resul
     if let Some(ty) = &mut function.error_ty {
         *ty = substitute_ty(ty, bindings)?;
     }
-    substitute_blocks_metadata(&mut function.blocks, bindings)
+    substitute_blocks_metadata(&mut function.blocks, bindings)?;
+    repair_storage_result_types(function);
+    Ok(())
+}
+
+fn repair_storage_result_types(function: &mut MirFunction) {
+    fn collect_retyped_iterator_slots(blocks: &[MirBlock], slots: &mut HashSet<u32>) {
+        for block in blocks {
+            for instruction in &block.instrs {
+                match instruction {
+                    MirInstr::GetIter { source, dest, .. } if source == dest => {
+                        slots.insert(*dest);
+                    }
+                    MirInstr::Try {
+                        body,
+                        handler,
+                        orelse,
+                        finalbody,
+                        ..
+                    } => {
+                        collect_retyped_iterator_slots(body, slots);
+                        if let Some((_, blocks)) = handler {
+                            collect_retyped_iterator_slots(blocks, slots);
+                        }
+                        if let Some(blocks) = orelse {
+                            collect_retyped_iterator_slots(blocks, slots);
+                        }
+                        if let Some(blocks) = finalbody {
+                            collect_retyped_iterator_slots(blocks, slots);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn visit(
+        blocks: &[MirBlock],
+        var_tys: &HashMap<u32, Ty>,
+        reg_tys: &HashMap<u32, Ty>,
+        retyped_iterator_slots: &HashSet<u32>,
+        reg_repairs: &mut Vec<(u32, Ty)>,
+        var_repairs: &mut Vec<(u32, Ty)>,
+    ) {
+        for block in blocks {
+            for instruction in &block.instrs {
+                match instruction {
+                    MirInstr::UseVar { dest, var, .. } if !retyped_iterator_slots.contains(var) => {
+                        if let Some(ty) = var_tys.get(var) {
+                            reg_repairs.push((dest.0, ty.clone()));
+                        }
+                    }
+                    MirInstr::LoadPlace { dest, place }
+                        if place.proj.is_empty()
+                            && !retyped_iterator_slots.contains(&place.root) =>
+                    {
+                        if let Some(ty) = var_tys.get(&place.root) {
+                            reg_repairs.push((dest.0, ty.clone()));
+                        }
+                    }
+                    MirInstr::DefVar { var, src, .. } if !retyped_iterator_slots.contains(var) => {
+                        if let Some(ty) = reg_tys.get(&src.0) {
+                            var_repairs.push((*var, ty.clone()));
+                        }
+                    }
+                    MirInstr::Try {
+                        body,
+                        handler,
+                        orelse,
+                        finalbody,
+                        ..
+                    } => {
+                        visit(
+                            body,
+                            var_tys,
+                            reg_tys,
+                            retyped_iterator_slots,
+                            reg_repairs,
+                            var_repairs,
+                        );
+                        if let Some((_, blocks)) = handler {
+                            visit(
+                                blocks,
+                                var_tys,
+                                reg_tys,
+                                retyped_iterator_slots,
+                                reg_repairs,
+                                var_repairs,
+                            );
+                        }
+                        if let Some(blocks) = orelse {
+                            visit(
+                                blocks,
+                                var_tys,
+                                reg_tys,
+                                retyped_iterator_slots,
+                                reg_repairs,
+                                var_repairs,
+                            );
+                        }
+                        if let Some(blocks) = finalbody {
+                            visit(
+                                blocks,
+                                var_tys,
+                                reg_tys,
+                                retyped_iterator_slots,
+                                reg_repairs,
+                                var_repairs,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let mut retyped_iterator_slots = HashSet::new();
+    collect_retyped_iterator_slots(&function.blocks, &mut retyped_iterator_slots);
+    for _ in 0..3 {
+        let mut reg_repairs = Vec::new();
+        let mut var_repairs = Vec::new();
+        visit(
+            &function.blocks,
+            &function.var_tys,
+            &function.reg_types,
+            &retyped_iterator_slots,
+            &mut reg_repairs,
+            &mut var_repairs,
+        );
+        function.reg_types.extend(reg_repairs);
+        function.var_tys.extend(var_repairs);
+    }
+}
+
+fn substitute_value_parameter_reads(
+    blocks: &mut [MirBlock],
+    var_names: &[String],
+    var_tys: &HashMap<u32, Ty>,
+    bindings: &Bindings,
+) -> Result<(), MonoError> {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            if let MirInstr::UseVar { dest, var, .. } = instruction
+                && let Some(name) = var_names.get(*var as usize)
+                && let Some(value) = bindings.values.get(name)
+            {
+                let constant = if let Some(callable) = bindings.callables.get(name) {
+                    Const::Function(callable.clone())
+                } else {
+                    match value {
+                        CtValue::Int(value) => Const::Int(*value),
+                        CtValue::Bool(value) => Const::Bool(*value),
+                        CtValue::Str(value)
+                            if matches!(
+                                var_tys.get(var),
+                                Some(Ty::Func { .. } | Ty::GenericFunc { .. })
+                            ) =>
+                        {
+                            Const::Function(value.clone())
+                        }
+                        _ => {
+                            return Err(MonoError {
+                                function: None,
+                                construct: format!("unsupported runtime value parameter `{value}`"),
+                            });
+                        }
+                    }
+                };
+                *instruction = MirInstr::Const {
+                    dest: *dest,
+                    k: constant,
+                };
+            } else if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = instruction
+            {
+                substitute_value_parameter_reads(body, var_names, var_tys, bindings)?;
+                if let Some((_, blocks)) = handler {
+                    substitute_value_parameter_reads(blocks, var_names, var_tys, bindings)?;
+                }
+                if let Some(blocks) = orelse {
+                    substitute_value_parameter_reads(blocks, var_names, var_tys, bindings)?;
+                }
+                if let Some(blocks) = finalbody {
+                    substitute_value_parameter_reads(blocks, var_names, var_tys, bindings)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn substitute_declaration(
@@ -2364,12 +2971,20 @@ fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
                 bindings,
             )?
         }
-        Ty::Assoc { .. } => {
-            return Err(unsupported(format!(
-                "associated type `{ty}` has no concrete MIR declaration fact"
-            )));
-        }
-        Ty::SelfType | Ty::Infer | Ty::GenericFunc { .. } => {
+        Ty::Assoc { .. } => bindings
+            .associated
+            .get(&ty.to_string())
+            .cloned()
+            .ok_or_else(|| {
+                unsupported(format!(
+                    "associated type `{ty}` has no concrete MIR declaration fact"
+                ))
+            })?,
+        // A generic callable remains as a transient storage type until its
+        // statically named producer and dependent call sites are rewritten.
+        // `ensure_concrete_function` rejects it if any executable use survives.
+        Ty::GenericFunc { .. } => ty.clone(),
+        Ty::SelfType | Ty::Infer => {
             return Err(unsupported(format!("unresolved type `{ty}`")));
         }
         Ty::Func {
@@ -2531,6 +3146,64 @@ fn function_types(function: &MirFunction) -> impl Iterator<Item = &Ty> {
         .chain(function.error_ty.iter())
         .chain(function.var_tys.values())
         .chain(function.reg_types.values())
+}
+
+/// Dependent callable values are compile-time carriers once every indirect use
+/// has become a direct specialized call. Remove their now-dead MIR plumbing so
+/// neither verification nor backend lowering sees a fictitious runtime ABI.
+fn erase_specialized_generic_callable_storage(function: &mut MirFunction) {
+    fn erase(blocks: &mut [MirBlock], generic_regs: &HashSet<u32>, generic_vars: &HashSet<u32>) {
+        for block in blocks {
+            block.instrs.retain_mut(|instruction| {
+                if let MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } = instruction
+                {
+                    erase(body, generic_regs, generic_vars);
+                    if let Some((_, blocks)) = handler {
+                        erase(blocks, generic_regs, generic_vars);
+                    }
+                    if let Some(blocks) = orelse {
+                        erase(blocks, generic_regs, generic_vars);
+                    }
+                    if let Some(blocks) = finalbody {
+                        erase(blocks, generic_regs, generic_vars);
+                    }
+                    return true;
+                }
+                match instruction {
+                    MirInstr::MakeClosure { dest, .. }
+                    | MirInstr::Const { dest, .. }
+                    | MirInstr::CopyValue { dest, .. }
+                    | MirInstr::UseVar { dest, .. } => !generic_regs.contains(&dest.0),
+                    MirInstr::DefVar { var, .. } => !generic_vars.contains(var),
+                    _ => true,
+                }
+            });
+        }
+    }
+
+    let generic_regs = function
+        .reg_types
+        .iter()
+        .filter_map(|(reg, ty)| matches!(ty, Ty::GenericFunc { .. }).then_some(*reg))
+        .collect::<HashSet<_>>();
+    let generic_vars = function
+        .var_tys
+        .iter()
+        .filter_map(|(var, ty)| matches!(ty, Ty::GenericFunc { .. }).then_some(*var))
+        .collect::<HashSet<_>>();
+    erase(&mut function.blocks, &generic_regs, &generic_vars);
+    for reg in generic_regs {
+        function.reg_types.insert(reg, Ty::Int);
+    }
+    for var in generic_vars {
+        function.var_tys.insert(var, Ty::Int);
+    }
 }
 
 /// Collect the (already-substituted) `element` type each storage take/destroy
@@ -2824,6 +3497,44 @@ mod tests {
             unify(&parameter, &Ty::Bool, &mut bindings)
                 .unwrap_err()
                 .contains("conflicting")
+        );
+    }
+
+    #[test]
+    fn dependent_lambda_calls_specialize_once_per_index_and_element_type() {
+        let source = include_str!("../../assets/ok/lambda_generic_comptime.mojo");
+        let specialized = specialized_main(source);
+        let lambda_instances = specialized
+            .program
+            .functions
+            .iter()
+            .filter(|(name, _)| name.contains("$$lambda$") && name.contains("$mono$"))
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            lambda_instances.len() >= 2,
+            "explicit and callable-bound lambdas need specialized lifted bodies: {lambda_instances:?}"
+        );
+        assert!(specialized.program.functions.iter().all(|(_, function)| {
+            !instructions(&function.blocks)
+                .iter()
+                .any(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
+        }));
+    }
+
+    #[test]
+    fn callable_value_parameter_reaches_dependent_tuple_calls() {
+        let source = include_str!("../../assets/ok/container_owning_family_apis.mojo");
+        let specialized = specialized_main(source);
+        let toss_instances = specialized
+            .program
+            .functions
+            .iter()
+            .filter(|(name, _)| name.contains("main$toss") && name.contains("$mono$"))
+            .count();
+        assert!(
+            toss_instances >= 2,
+            "the callable value parameter must specialize for each Tuple element"
         );
     }
 

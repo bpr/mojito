@@ -260,7 +260,7 @@ struct String(
             var value = self._decode_at(index, width)
             if seen == codepoint:
                 var text = self._with_bytes(index, width)
-                return Codepoint(value, text: text._as_string_literal())
+                return Codepoint(value, text: text^)
             seen += 1
             index += width
         raise Error("String codepoint index out of range")
@@ -618,8 +618,7 @@ struct String(
         writer.write("\"")
 
 # A decoded Unicode scalar together with its character text.  Produced by
-# `String.__getitem__(*, codepoint=...)`, which owns the bytes and derives
-# `text` through the struct-to-literal bridge, or by the public
+# `String.__getitem__(*, codepoint=...)`, which transfers the owned bytes, or by the public
 # `Codepoint.from_u32(scalar)` (Mojito is Int-based), which UTF-8-encodes
 # the scalar in ordinary library code through runtime `Byte(Int)`
 # conversions.
@@ -627,11 +626,11 @@ struct Codepoint(
     Comparable, Copyable, Equatable, Deinitable, Intable, Movable, Writable
 ):
     var _scalar: Int
-    var _text: StringLiteral
+    var _text: String
 
-    def __init__(out self, scalar: Int, *, text: StringLiteral):
+    def __init__(out self, scalar: Int, *, var text: String):
         self._scalar = scalar
-        self._text = text
+        self._text = text^
 
     # The public scalar constructor: absent for negatives, the surrogate
     # range, and values beyond U+10FFFF.
@@ -644,9 +643,7 @@ struct Codepoint(
         if scalar > 0x10FFFF:
             return Optional[Codepoint]()
         var text = Codepoint._encode_utf8(scalar)
-        return Optional[Codepoint](
-            Codepoint(scalar, text: text._as_string_literal())
-        )
+        return Optional[Codepoint](Codepoint(scalar, text: text^))
 
     # UTF-8-encode a valid Unicode scalar into a fresh String byte buffer:
     # the lead byte carries the sequence width, continuations carry six bits

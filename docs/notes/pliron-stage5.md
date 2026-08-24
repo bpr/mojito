@@ -617,3 +617,43 @@ normalization); three new `pliron_*` fixtures joined the manifest.
   output at O0 and O1 and pass the ASan/LSan lane. Capability rows are
   flipped; the full manifest ratchets move from 251 to 266 executable
   differentials and from at most 44 to at most 29 exclusions.
+
+## Zero-exclusion completion (S5.8)
+
+Stage 5 is complete. The generated parity manifest pins every runnable success
+fixture and every runnable runtime-error fixture with no native exclusions:
+
+- 295 `assets/ok`/`assets/ownership_ok` fixtures are executable differentials;
+  O0 and O1 stdout match the VM byte-for-byte and the O0 ASan/LSan lane is
+  clean;
+- 29 `assets/runtime_error` fixtures are error differentials at O0, O1, and
+  O0+ASan, using one structural VM-error-to-native-trap mapping;
+- four success fixtures without `main` and two deliberately non-conforming
+  runtime-error snippets remain explicitly ineligible; none is an unexplained
+  native exclusion;
+- the manifest guard asserts `excluded == 0` and exact 295/29 differential
+  counts, so coverage can neither shrink nor silently reclassify.
+
+The final burn-down established these lasting backend rules:
+
+- dependent empty-capture callables specialize at each indirect call, while
+  ordinary captured callables retain the two-word `{invoke, env}` ABI;
+- aggregate place reads borrow caller storage at immutable call boundaries;
+  explicit `CopyValue`/copy-constructor boundaries alone run user
+  `__copyinit__`;
+- consuming list-literal conversion transfers an Array buffer into a complete
+  `{data, len, cap=len}` List descriptor rather than aliasing the smaller Array
+  descriptor;
+- recursive copy/move/drop lowering carries concrete lifecycle methods,
+  per-leaf presence, raising iterator result presence, and fully drained
+  nominal Tuple state through cleanup;
+- TString runtime snapshots use owning String-shaped storage, and string,
+  codepoint, writer, `repr`, and hash paths share that ownership model;
+- runtime ABI v6 provides dynamic abort reporting plus stable pointer and
+  `UnsafeMaybeUninit` lifetime traps used by the generalized runtime-error
+  oracle.
+
+The VM remains the executable semantic oracle, verified ownership-checked MIR
+remains the backend-independent waist, and no native path falls back to VM
+execution. Stage 6 begins with optimization, measurement, and distributable
+artifact work rather than additional parity exclusions.

@@ -577,7 +577,17 @@ impl<'a> Elab<'a> {
                         TStringPart::Literal(text) => {
                             let mut literal = Expr::new(ExprKind::Str(text), span);
                             literal.source = source.clone();
-                            args.push(literal);
+                            let mut conversion = Expr::new(
+                                ExprKind::Call {
+                                    name: "String".to_string(),
+                                    param_args: Vec::new(),
+                                    args: vec![literal],
+                                    kwargs: Vec::new(),
+                                },
+                                span,
+                            );
+                            conversion.source = source.clone();
+                            args.push(conversion);
                         }
                         TStringPart::Expr(value) => {
                             if matches!(element, Ty::StringLiteral) {

@@ -16,29 +16,7 @@ unchecked box is the default next task. Sections marked *(recurring)* or
 
 ## Ordered Work
 
-### 1. Native Backend: Pliron Stage 5 — Supported-Language Native Parity
-
-Verified MIR is the stable waist, the VM remains the semantic oracle, and
-unsupported native behavior rejects with a contextual compile diagnostic —
-never a silent VM fallback. Stages 0–4 (feasibility through references,
-destruction, and exceptional control flow) are complete; designs and recorded
-divergences live in `docs/notes/pliron-stage0.md` … `pliron-stage4.md`, the
-shared target/layout/runtime contract in [`docs/native-abi.md`](native-abi.md),
-and the generated gates in `conformance/pliron-parity.tsv` (the exe/raise
-differential manifest with ratcheting exclusion guards) and
-`conformance/pliron-capability.tsv` (the per-instruction/type/runtime-symbol
-capability matrix). Stage 5 closes the remaining exclusions one vertical slice
-at a time; every slice lands with fixtures, ratcheted manifest guards, flipped
-capability rows, and a slice record in `docs/notes/pliron-stage5.md`.
-
-Stage 5 acceptance: canonical `.mir` artifacts behave identically through VM
-and native paths, the native backend never accepts rejected source, and
-promotion requires zero exclusions across Mojito's advertised runnable subset.
-
-- [ ] **Zero-exclusion burn-down** — fix the long tail until `excluded == 0`
-  over `assets/ok` + `assets/ownership_ok`, extend the raise gate to every
-  runnable `assets/runtime_error` fixture, assert the final guard state, and
-  delete this Stage 5 section in the completing change.
+### 1. Native Backend: Pliron Stage 6 — Optimization and Distribution
 
 - [ ] **Pliron Stage 6: optimization and distributable artifacts** — define
   verified `O0` and release pass pipelines, analysis invalidation, object and

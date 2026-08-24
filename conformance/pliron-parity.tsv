@@ -2,7 +2,7 @@
 # One row per assets/ok, assets/ownership_ok, and assets/runtime_error fixture:
 #   fixture <TAB> entry <TAB> status <TAB> detail
 # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |
-#         raise-differential (VM/native unhandled-raise oracle, O0+O1) |
+#         error-differential (VM/native runtime-error category oracle, O0+O1+ASan) |
 #         excluded (native rejection diagnostic) |
 #         ineligible (no runnable `main` shape for this gate)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
@@ -20,7 +20,7 @@ assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
-assets/ok/callable_element_call_dispatch.mojo	main	excluded	pliron backend: in `main`: unsupported monomorphizing `Grid.__init__`: expected `List[Doubler]`, found `Array$mono$TDoubler$V4[Doubler, 4]`
+assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
 assets/ok/captured_store_local_carrier.mojo	main	exe-differential	sanitized
@@ -35,10 +35,10 @@ assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
 assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized
-assets/ok/container_owning_family_apis.mojo	main	excluded	pliron backend: in `main`: unsupported generic entry `main` has unresolved parameters
+assets/ok/container_owning_family_apis.mojo	main	exe-differential	sanitized
 assets/ok/copy_return.mojo	main	exe-differential	sanitized
 assets/ok/copyable.mojo	main	exe-differential	sanitized
-assets/ok/copyable_iterator_reference_aggregate.mojo	main	excluded	pliron backend: in `RefBox.__copyinit__`: unsupported type `Ref(RefTy { referent: Int, origin: Param(OriginParamId(0)), mutability: Immutable })` at assets/ok/copyable_iterator_reference_aggregate.mojo:17:23
+assets/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized
 assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
@@ -56,14 +56,14 @@ assets/ok/exceptions.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_raising.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
-assets/ok/funarg_call_through_after_last_use.mojo	main	excluded	pliron backend: in `feed`: unsupported monomorphization cannot resolve parameter `callback`
+assets/ok/funarg_call_through_after_last_use.mojo	main	exe-differential	sanitized
 assets/ok/func_styles.mojo	main	exe-differential	sanitized
-assets/ok/function_typed_kwargs.mojo	main	excluded	pliron backend: in `StringDict$mono$TInt.__copyinit__`: unsupported copy of `List$mono$TList$u24$mono$u24$TInt$Int[List$mono$TInt[Int]]` with pointer-owning elements at /home/bpr/src/rust/projects/mojito/stdlib/std/collections/string_dict.mojo:1561..1594
+assets/ok/function_typed_kwargs.mojo	main	exe-differential	sanitized
 assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	exe-differential	sanitized
 assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
-assets/ok/hashable_bucketing.mojo	main	excluded	pliron backend: in `bucket_index$y13:StringLiteral`: unsupported unresolved method call `__hash__` at assets/ok/hashable_bucketing.mojo$bucket_index$y13:StringLiteral:321..335
+assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
 assets/ok/hello_world.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
@@ -82,10 +82,10 @@ assets/ok/keyword_call.mojo	main	exe-differential	sanitized
 assets/ok/keyword_only.mojo	main	exe-differential	sanitized
 assets/ok/keyword_slice_subscripts.mojo	main	exe-differential	sanitized
 assets/ok/keyword_subscript_user_struct.mojo	main	exe-differential	sanitized
-assets/ok/kwargs.mojo	main	excluded	pliron backend: in `StringDict$mono$TInt.__copyinit__`: unsupported copy of `List$mono$TList$u24$mono$u24$TInt$Int[List$mono$TInt[Int]]` with pointer-owning elements at /home/bpr/src/rust/projects/mojito/stdlib/std/collections/string_dict.mojo:1561..1594
+assets/ok/kwargs.mojo	main	exe-differential	sanitized
 assets/ok/lambda_basic.mojo	main	exe-differential	sanitized
 assets/ok/lambda_captures.mojo	main	exe-differential	sanitized
-assets/ok/lambda_generic_comptime.mojo	main	excluded	pliron backend: in `main`: unsupported generic entry `main` has unresolved parameters
+assets/ok/lambda_generic_comptime.mojo	main	exe-differential	sanitized
 assets/ok/lambda_hof.mojo	main	exe-differential	sanitized
 assets/ok/lambda_in_control_flow.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
@@ -99,7 +99,7 @@ assets/ok/list_and_struct.mojo	main	exe-differential	sanitized
 assets/ok/list_contiguous_slice_strict.mojo	main	exe-differential	sanitized
 assets/ok/list_strided_slice_normalizes.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
-assets/ok/loop_binding_consuming_copy.mojo	main	excluded	pliron backend: in `main`: unsupported copy of `List$mono$TBuf[Buf]` with pointer-owning elements at assets/ok/loop_binding_consuming_copy.mojo:32:15
+assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/math_module_rounding.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
@@ -107,27 +107,27 @@ assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	saniti
 assets/ok/mut_owned_params.mojo	-	ineligible	no-main-entry
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
 assets/ok/nested.mojo	main	exe-differential	sanitized
-assets/ok/nested_comprehensions.mojo	main	excluded	pliron backend: in `Array$mono$TArray$u24$mono$u24$TInt$u24$V3$Int$V3$V3.__init__$ov$T$AnyType$None$kw$__list_literal__$mono$V3`: unsupported pack iteration over lifecycle element `Array$mono$TInt$V3[Int, 3]`
+assets/ok/nested_comprehensions.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_captured_param_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_basics.mojo	main	exe-differential	sanitized
-assets/ok/nominal_string_codepoint_from_u32.mojo	main	excluded	pliron backend: in `__module$std$string$String.__getitem__$ov$Int$kw$codepoint`: unsupported String struct-to-literal bridge at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:9068..9093
-assets/ok/nominal_string_codepoint_type.mojo	main	excluded	pliron backend: in `__module$std$string$String.__getitem__$ov$Int$kw$codepoint`: unsupported String struct-to-literal bridge at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:9068..9093
+assets/ok/nominal_string_codepoint_from_u32.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_codepoint_type.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_default_binding.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_dict_keys.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_find.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_graphemes.mojo	main	exe-differential	sanitized
-assets/ok/nominal_string_indexing.mojo	main	excluded	pliron backend: in `__module$std$string$String.__getitem__$ov$Int$kw$codepoint`: unsupported String struct-to-literal bridge at /home/bpr/src/rust/projects/mojito/stdlib/std/string.mojo:9068..9093
+assets/ok/nominal_string_indexing.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_keyword_slices.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_operations.mojo	main	exe-differential	sanitized
-assets/ok/nominal_string_protocols.mojo	main	excluded	pliron backend: in `main`: unsupported call to unknown or builtin function `repr` at assets/ok/nominal_string_protocols.mojo:9:11
+assets/ok/nominal_string_protocols.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_split.mojo	main	exe-differential	sanitized
-assets/ok/nominal_string_writer.mojo	main	excluded	pliron backend: in `main`: unsupported `LitSink.write_string` without a nominal String payload at assets/ok/nominal_string_writer.mojo:27:1
+assets/ok/nominal_string_writer.mojo	main	exe-differential	sanitized
 assets/ok/number_and_string_literals.mojo	main	exe-differential	sanitized
 assets/ok/numeric_operation_traits.mojo	main	exe-differential	sanitized
-assets/ok/optional_owning_api.mojo	main	excluded	pliron backend: in `__module$std$optional$_OptionalIter$mono$TInt.__next__`: unsupported field access on `ref Optional$mono$TInt[Int]` at /home/bpr/src/rust/projects/mojito/stdlib/std/optional.mojo:1458..1472
+assets/ok/optional_owning_api.mojo	main	exe-differential	sanitized
 assets/ok/overloading_arity.mojo	main	exe-differential	sanitized
 assets/ok/overloading_literal_default.mojo	main	exe-differential	sanitized
 assets/ok/overloading_struct_params.mojo	main	exe-differential	sanitized
@@ -210,16 +210,16 @@ assets/ok/pliron_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_int_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_pow.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_uint_arith.mojo	main	exe-differential	sanitized
-assets/ok/pointer_empty_deref.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Int` at assets/ok/pointer_empty_deref.mojo:14:1
-assets/ok/pointer_to_place.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Int` at assets/ok/pointer_to_place.mojo:6:11
-assets/ok/pointer_to_ref_binding.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Pair` at assets/ok/pointer_to_ref_binding.mojo:17:13
-assets/ok/pointer_to_ref_write_through.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Pair` at assets/ok/pointer_to_ref_write_through.mojo:12:13
-assets/ok/pointer_unsafe_vocabulary.mojo	main	excluded	pliron backend: in `main`: unsupported place through non-reference root `Int` at assets/ok/pointer_unsafe_vocabulary.mojo:21:20
+assets/ok/pointer_empty_deref.mojo	main	exe-differential	sanitized
+assets/ok/pointer_to_place.mojo	main	exe-differential	sanitized
+assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
+assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
+assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	-	ineligible	no-main-entry
 assets/ok/reference_carrier_collection.mojo	main	exe-differential	sanitized
-assets/ok/reference_element_chained_read.mojo	main	excluded	pliron backend: in `main`: unsupported field access on `ref RefBox` at assets/ok/reference_element_chained_read.mojo:17:11
+assets/ok/reference_element_chained_read.mojo	main	exe-differential	sanitized
 assets/ok/reference_iteration_temporary_list.mojo	main	exe-differential	sanitized
 assets/ok/reference_list_write_through_method.mojo	main	exe-differential	sanitized
 assets/ok/reference_yielding_iteration.mojo	main	exe-differential	sanitized
@@ -229,8 +229,8 @@ assets/ok/scalar_dtype_construction.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_sequential.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_strided.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_zero_starting.mojo	main	exe-differential	sanitized
-assets/ok/scalar_runtime_conversions.mojo	main	excluded	pliron backend: in `to_byte$y6:Meters`: unsupported type `Struct("Meters", [])` at assets/ok/scalar_runtime_conversions.mojo$to_byte$y6:Meters:433..434
-assets/ok/self_hosted_algorithms.mojo	main	excluded	pliron backend: in `__module$std$algorithms$capacity_blocks`: unsupported monomorphization cannot resolve parameter `blocks`
+assets/ok/scalar_runtime_conversions.mojo	main	exe-differential	sanitized
+assets/ok/self_hosted_algorithms.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_dict.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_vec.mojo	main	exe-differential	sanitized
 assets/ok/set_reference_iteration_write_through.mojo	main	exe-differential	sanitized
@@ -241,9 +241,9 @@ assets/ok/simd_generic_width.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_write.mojo	main	exe-differential	sanitized
 assets/ok/simd_methods.mojo	main	exe-differential	sanitized
 assets/ok/simd_shuffle.mojo	main	exe-differential	sanitized
-assets/ok/sized_generic_views.mojo	main	excluded	pliron backend: in `is_empty$y3:Bag`: unsupported copy of `Bag` with a nested user `__copyinit__` at assets/ok/sized_generic_views.mojo$is_empty$y3:Bag:282..283
+assets/ok/sized_generic_views.mojo	main	exe-differential	sanitized
 assets/ok/slice.mojo	main	exe-differential	sanitized
-assets/ok/span_implicit_from_list.mojo	main	excluded	pliron backend: in `main`: unsupported monomorphizing `total`: expected `Span[Int]`, found `Span`
+assets/ok/span_implicit_from_list.mojo	main	exe-differential	sanitized
 assets/ok/span_iteration.mojo	main	exe-differential	sanitized
 assets/ok/span_move_use.mojo	main	exe-differential	sanitized
 assets/ok/span_view_basics.mojo	main	exe-differential	sanitized
@@ -266,7 +266,7 @@ assets/ok/try_break_continue.mojo	main	exe-differential	sanitized
 assets/ok/try_reassign_outer.mojo	main	exe-differential	sanitized
 assets/ok/try_region_drop_timing.mojo	main	exe-differential	sanitized
 assets/ok/try_return.mojo	main	exe-differential	sanitized
-assets/ok/tstring_forms.mojo	main	excluded	pliron backend: in `main`: unsupported owned string bytes entering drop-inert literal storage at assets/ok/tstring_forms.mojo:1:1
+assets/ok/tstring_forms.mojo	main	exe-differential	sanitized
 assets/ok/tstring_generic_interpolation.mojo	main	exe-differential	sanitized
 assets/ok/tstring_lazy.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
@@ -278,7 +278,7 @@ assets/ok/unsafe_maybe_uninit_predicates.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_maybe_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized
 assets/ok/user_iterator.mojo	main	exe-differential	sanitized
-assets/ok/value_params.mojo	main	excluded	pliron backend: in `scaled`: unsupported monomorphization cannot resolve parameter `factor`
+assets/ok/value_params.mojo	main	exe-differential	sanitized
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized
 assets/ok/variadic_args.mojo	main	exe-differential	sanitized
 assets/ok/variant_deinit_with_linear_payload.mojo	main	exe-differential	sanitized
@@ -288,7 +288,7 @@ assets/ok/vm_backed_ctfe_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_ternary.mojo	main	exe-differential	sanitized
 assets/ok/waypoints.mojo	main	exe-differential	sanitized
 assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized
-assets/ok/where_repeated_clauses.mojo	main	excluded	pliron backend: in `scaled`: unsupported monomorphization cannot resolve parameter `n`
+assets/ok/where_repeated_clauses.mojo	main	exe-differential	sanitized
 assets/ok/while.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	exe-differential	sanitized
@@ -306,34 +306,34 @@ assets/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
 assets/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
 assets/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized
 assets/ownership_ok/transferred_loan_after_last_use.mojo	main	exe-differential	sanitized
-assets/runtime_error/allocation_use_after_dealloc.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/div_by_zero.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/list_contiguous_slice_negative.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/list_contiguous_slice_out_of_range.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/list_contiguous_slice_reversed.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/list_out_of_range.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/nominal_string_byte_slice_boundary.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/nominal_string_byte_slice_out_of_range.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/nominal_string_codepoint_out_of_range.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/nominal_string_grapheme_out_of_range.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/nominal_string_split_empty_sep.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/optional_take_empty_aborts.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/pliron_raise_error_value.mojo	main	raise-differential	category=UnhandledError
-assets/runtime_error/pliron_raise_iter_body.mojo	main	raise-differential	category=UnhandledError
-assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	main	raise-differential	category=UnhandledError
-assets/runtime_error/pliron_raise_unhandled.mojo	main	raise-differential	category=UnhandledError
-assets/runtime_error/pliron_trap_div_zero.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/pliron_trap_mod_zero.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/pliron_trap_pow_negative.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/pliron_trap_uint_div_zero.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/pointer_dangling.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/pointer_double_free.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/pointer_use_after_free.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/span_index_out_of_range.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/span_slice_out_of_range.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/unsafe_maybe_uninit_deinit_uninitialized.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/unsafe_maybe_uninit_read_uninitialized.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/unsafe_maybe_uninit_take_uninitialized.mojo	-	ineligible	no-raise-shape
-assets/runtime_error/walrus.mojo	-	ineligible	no-raise-shape
+assets/runtime_error/allocation_use_after_dealloc.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
+assets/runtime_error/div_by_zero.mojo	-	ineligible	non-conforming-snippet
+assets/runtime_error/list_contiguous_slice_negative.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/list_contiguous_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/list_contiguous_slice_reversed.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/list_out_of_range.mojo	-	ineligible	non-conforming-snippet
+assets/runtime_error/nominal_string_byte_slice_boundary.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/nominal_string_byte_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/nominal_string_codepoint_out_of_range.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/nominal_string_grapheme_out_of_range.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/nominal_string_split_empty_sep.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/optional_take_empty_aborts.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/pliron_raise_error_value.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/pliron_raise_iter_body.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/pliron_raise_unhandled.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/pliron_trap_div_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
+assets/runtime_error/pliron_trap_mod_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
+assets/runtime_error/pliron_trap_pow_negative.mojo	main,__toplevel__	error-differential	category=PowExponent
+assets/runtime_error/pliron_trap_uint_div_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
+assets/runtime_error/pointer_dangling.mojo	main,__toplevel__	error-differential	category=PointerDangling
+assets/runtime_error/pointer_double_free.mojo	main,__toplevel__	error-differential	category=PointerDoubleFree
+assets/runtime_error/pointer_use_after_free.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
+assets/runtime_error/span_index_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/span_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
+assets/runtime_error/unsafe_maybe_uninit_deinit_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitDestroy
+assets/runtime_error/unsafe_maybe_uninit_read_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitRead
+assets/runtime_error/unsafe_maybe_uninit_take_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitTake
+assets/runtime_error/walrus.mojo	main,__toplevel__	error-differential	category=UnhandledError

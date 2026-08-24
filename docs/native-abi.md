@@ -19,7 +19,7 @@ part of any native ABI, and `mojito-runtime` must never depend on the
 
 ## ABI versioning
 
-- `ABI_VERSION` (currently **5**) is a monotonic `u32` declared identically in
+- `ABI_VERSION` (currently **6**) is a monotonic `u32` declared identically in
   `mojito_runtime::ABI_VERSION` and `native::rt_abi::MJRT_ABI_VERSION`. Bump
   it on any change to an exported symbol's signature or semantics, an
   exported `#[repr(C)]` type's layout, a trap category's meaning, or any rule
@@ -35,6 +35,10 @@ part of any native ABI, and `mojito-runtime` must never depend on the
   Version 5 made zero-size `mjrt_alloc` requests return the aligned dangling
   sentinel (no allocation) with sentinel-address frees as no-ops — the
   stdlib's `unsafe_alloc[T](0)` neutralization idiom abandons nothing.
+  Version 6 added runtime layout/lifetime tracking alongside allocation
+  headers and added `mjrt_pointer_status`,
+  dynamic-message `mjrt_abort`, and trap categories 7–13 for abort, pointer
+  lifetime, and `UnsafeMaybeUninit` failures.
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
   synthesized executable wrapper references `mjrt_version`, so every produced
@@ -263,24 +267,28 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | Symbol | Contract |
 | --- | --- |
 | `mjrt_abi_version` (`u32` data), `mjrt_version() -> u32` | The inspectable ABI version. |
-| `mjrt_alloc(size, align) -> *mut u8` | Caller owns; never null; a hidden `{size: u64, align: u64}` header occupies the 16 bytes before the returned pointer; zero size still allocates (header-only, freeable); traps (category 3) on exhaustion or invalid align. |
-| `mjrt_free(ptr)` | Consumes any `mjrt_alloc` allocation via its header — the size-less free `Pointer.unsafe_free()` lowers to; null no-op. |
-| `mjrt_dealloc(ptr, size, align)` | Consumes an `mjrt_alloc` allocation, validating `size`/`align` against its header (mismatch traps, category 3); null no-op. |
+| `mjrt_alloc(size, align) -> *mut u8` | Caller owns; never null. Nonzero allocations have a hidden layout header plus a runtime lifetime record. Zero size returns an aligned dangling sentinel. Traps (category 3) on exhaustion or invalid alignment. |
+| `mjrt_free(ptr)` | Consumes any live nonzero `mjrt_alloc` allocation; null and zero-size sentinels are no-ops; a repeated free traps (category 10). |
+| `mjrt_pointer_status(ptr) -> u32` | Borrows pointer identity; returns 0 for live/ordinary, 1 for a dangling sentinel, and 2 for an address within a freed allocation. Generated dereferences map those states to categories 8 and 9. |
+| `mjrt_dealloc(ptr, size, align)` | Consumes a live nonzero `mjrt_alloc` allocation, validating `size`/`align` against its header (mismatch traps, category 3); null and zero-size sentinels are no-ops; a repeated deallocation traps (category 10). |
 | `mjrt_write_stdout(data, len)` | Borrows; full write with interrupt retry; traps (category 4) on failure. |
 | `mjrt_fmt_i64/u64(value, out) -> u64` | Borrows `out` (≥ 20 bytes); returns bytes written; no NUL. |
 | `mjrt_fmt_f64(value, out) -> u64` | Borrows `out` (≥ 32 bytes); VM display text. |
 | `mjrt_trap(category) -> !` | Reports on stderr, exits `64 + category` (clamped to 127); runs no destructors. |
 | `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
+| `mjrt_abort(data, len) -> !` | Borrows the abort's UTF-8 message; reports `abort: <message>` on stderr and exits `64 + 7`; runs no destructors. |
 | `mjrt_trace(kind, data, len)` | Borrows the UTF-8 payload; reports one ordered lifecycle event (`mjtrace <kind> <payload>`) on stderr. Emitted only by trace-instrumented builds, never by default emission; write errors are ignored so tracing cannot perturb behavior. Kinds: 1 drop, 2 consume, 3 cleanup, 4 raise, 5 catch. |
 | `mjrt_read_line(out)` | Borrows `out` (≥ 24 bytes) and writes an `MjString` whose `data` is a fresh caller-owned `mjrt_alloc` allocation (`size == cap ==` line length, trailing `\n` then `\r` stripped). EOF yields size 0 with a valid header-only allocation (uniformly freeable, never blocks noninteractive runs); a read error traps (category 6). |
 
 Trap categories (shared with the backend's `TrapCategory` codes and exit
 codes `64 + category`): 1 div/mod by zero (exit 65), 2 `**` exponent range
 (exit 66), 3 allocation failure (exit 67), 4 stdout failure (exit 68),
-5 unhandled error (exit 69), 6 stdin failure (exit 70). Categories 1–2 reuse
-the VM's runtime-error message text so both backends diagnose identically;
-`run --backend pliron` maps trap exit codes back to the VM diagnostic (and
-re-renders category 5 from the executable's stderr).
+5 unhandled error (exit 69), 6 stdin failure (exit 70), 7 abort (exit 71),
+8 dangling-pointer dereference (exit 72), 9 use after pointer deallocation
+(exit 73), 10 double free (exit 74), 11 uninitialized storage read (exit 75),
+12 uninitialized storage take (exit 76), and 13 uninitialized storage destroy
+(exit 77). Categories 1–2 and 8–13 reuse the VM's runtime-error message text;
+dynamic categories 5 and 7 preserve their executable stderr message.
 
 ## Mechanical checks
 
