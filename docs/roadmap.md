@@ -78,13 +78,9 @@ accepts what the audited head accepts, with extensions tolerable only as
 temporary bridges tracking upstream's own deprecation state or as cited
 implementations of features on Mojo's own roadmap, re-probed at every re-pin.
 
-Current pass: the `a79fbdf59f2` audit (2026-08-26, Mojo `1.1.0.dev2026082605`;
-see `docs/mojo-nightly.md`). The re-pin, probe re-runs, and parity recording
-are done; the burn-down slices are:
-
-- [ ] **Close-out** — full differential conformance in the
-  `~/src/mojo/envs/mojo-2026082605` Pixi env; probe promotion/deletion;
-  docs/CHANGELOG sweep.
+The `a79fbdf59f2` pass (2026-08-26, Mojo `1.1.0.dev2026082605`) is complete;
+its close-out record lives in `docs/mojo-nightly.md`. The next re-pin
+recreates this section's checkbox with the fresh divergence list.
 
 ### 3. Grow The CPU Standard Library *(demand-first — any order)*
 
