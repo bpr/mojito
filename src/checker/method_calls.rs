@@ -404,7 +404,7 @@ impl Checker {
             return self
                 .infer_pointer_method(&span, method, elem, origin, param_args, args, kwargs);
         }
-        // Compiler-private inline uninit storage (`UnsafeMaybeUninit`'s field):
+        // Compiler-private inline uninit storage (`MaybeUninit`'s field):
         // the write/take/destroy crossing vocabulary.
         if let Some(element) = crate::types::uninit_storage_element(&obj_ty) {
             let element = element.clone();
@@ -890,7 +890,7 @@ impl Checker {
         let effective_receiver_convention = if resolved.self_convention == Some(ArgConvention::Ref)
             && self.reference_actual(object)?.mutability == crate::origin::Mutability::Immutable
         {
-            Some(ArgConvention::Read)
+            Some(ArgConvention::Imm)
         } else {
             resolved.self_convention
         };
@@ -1991,7 +1991,7 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         if !self.bundled_stdlib_declaration {
             return Err(TypeError::Unsupported(format!(
-                "'{}' is compiler-private storage; use UnsafeMaybeUninit from std.memory",
+                "'{}' is compiler-private storage; use MaybeUninit from std.memory",
                 crate::types::UNINIT_STORAGE_TYPE_NAME
             )));
         }

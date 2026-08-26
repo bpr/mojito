@@ -422,7 +422,7 @@ impl VmBackend {
                 (RefProjection::UninitPayload, Value::UninitStorage(payload)) => *payload
                     .ok_or_else(|| {
                         RuntimeError::TypeError(
-                            "vm: read of uninitialized UnsafeMaybeUninit storage".to_string(),
+                            "vm: read of uninitialized MaybeUninit storage".to_string(),
                         )
                     })?,
                 // Offset-0 identity deref of an origin-erased single-pointee

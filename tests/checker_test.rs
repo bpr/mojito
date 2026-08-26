@@ -2919,11 +2919,15 @@ fn int_is_scalar_dtype_int_and_simdlength_drives_width_values() {
 }
 
 #[test]
-fn deprecated_simdsize_alias_stays_accepted() {
-    // The transitional `SIMDSize` spelling classifies a width value parameter
-    // exactly like `SIMDLength`; it is accepted but never emitted.
-    ok(
-        "def width_value[width: SIMDSize]() -> Int where width > 0:\n    return width\n\ndef main():\n    var width = width_value[4]()\n",
+fn removed_simdsize_alias_rejects() {
+    // Upstream removed the transitional `SIMDSize` spelling (2026-08); it no
+    // longer classifies a width value parameter, so the explicit `[4]` is a
+    // value supplied to what is now an unknown type-parameter bound.
+    assert!(
+        check_source(
+            "def width_value[width: SIMDSize]() -> Int where width > 0:\n    return width\n\ndef main():\n    var width = width_value[4]()\n",
+        )
+        .is_err()
     );
 }
 
@@ -3370,13 +3374,13 @@ fn accepts_numeric_bases_and_string_forms_and_tstrings() {
 
 #[test]
 fn owned_self_and_owned_params_are_accepted() {
-    // `deinit self` and `var`/`read` parameter
+    // `deinit self` and `var`/`imm` parameter
     // conventions bind by value and now type-check (their ownership meaning is
     // handled by the ownership analysis / ASAP drops).
     assert!(
         check_source("@fieldwise_init\nstruct R:\n    var x: Int\n    def __deinit__(deinit self):\n        print(self.x)\n").is_ok()
     );
-    assert!(check_source("def f(var a: Int, read b: Int) -> Int:\n    return a + b\n").is_ok());
+    assert!(check_source("def f(var a: Int, imm b: Int) -> Int:\n    return a + b\n").is_ok());
 }
 
 #[test]
@@ -3559,16 +3563,42 @@ fn checks_current_pointer_origin_aggregate_fields() {
         .is_ok()
     );
     assert!(check_source(
-        "struct MutableExternal:\n    var ptr: UnsafePointer[Int, MutUntrackedOrigin]\n\nstruct ImmutableExternal:\n    var ptr: UnsafePointer[Int, ImmutUntrackedOrigin]\n\nstruct StaticView:\n    var ptr: UnsafePointer[Int, StaticConstantOrigin]\n"
+        "struct MutableExternal:\n    var ptr: UnsafePointer[Int, MutUntrackedOrigin]\n\nstruct ImmutableExternal:\n    var ptr: UnsafePointer[Int, ImmUntrackedOrigin]\n\nstruct StaticView:\n    var ptr: UnsafePointer[Int, ImmStaticOrigin]\n"
     )
     .is_ok());
-    for origin in ["MutUnsafeAnyOrigin", "ImmutUnsafeAnyOrigin"] {
+    for origin in ["MutUnsafeAnyOrigin", "ImmUnsafeAnyOrigin"] {
         let source = format!("struct Hidden:\n    var ptr: UnsafePointer[Int, {origin}]\n");
         assert!(matches!(
             check_source(&source),
             Err(TypeError::Unsupported(message))
                 if message.contains("cannot hide") && message.contains(origin)
         ));
+    }
+}
+
+#[test]
+fn removed_origin_alias_spellings_reject_with_migration_diagnostics() {
+    // Upstream removed the pre-rename origin aliases (2026-08); each rejects
+    // with a targeted message naming the surviving spelling.
+    for (removed, surviving) in [
+        ("ImmutUntrackedOrigin", "ImmUntrackedOrigin"),
+        ("ImmutExternalOrigin", "ImmUntrackedOrigin"),
+        ("ImmutUnsafeAnyOrigin", "ImmUnsafeAnyOrigin"),
+        ("StaticConstantOrigin", "ImmStaticOrigin"),
+        ("ExternalOrigin", "UntrackedOrigin"),
+        ("MutExternalOrigin", "MutUntrackedOrigin"),
+    ] {
+        let source = format!(
+            "def f(p: Pointer[Int, {removed}]) -> Int:\n    return p[0]\n\ndef main():\n    print(1)\n"
+        );
+        assert!(
+            matches!(
+                check_source(&source),
+                Err(TypeError::Unsupported(message))
+                    if message.contains("was removed") && message.contains(surviving)
+            ),
+            "expected a migration diagnostic for {removed}"
+        );
     }
 }
 
@@ -4351,12 +4381,12 @@ fn pointer_names_resolve_to_one_builtin_type() {
     ok("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[0])\n");
     // The mutability-fixing aliases accept a matching origin argument.
     assert!(check_source(
-        "struct MutView:\n    var ptr: MutPointer[Int, MutUntrackedOrigin]\n\nstruct ImmView:\n    var ptr: ImmPointer[Int, ImmutUntrackedOrigin]\n"
+        "struct MutView:\n    var ptr: MutPointer[Int, MutUntrackedOrigin]\n\nstruct ImmView:\n    var ptr: ImmPointer[Int, ImmUntrackedOrigin]\n"
     )
     .is_ok());
     // …and reject a statically known mismatched one.
     assert!(matches!(
-        check_source("struct Bad:\n    var ptr: MutPointer[Int, ImmutUntrackedOrigin]\n"),
+        check_source("struct Bad:\n    var ptr: MutPointer[Int, ImmUntrackedOrigin]\n"),
         Err(TypeError::TypeMismatch { .. })
     ));
     assert!(matches!(
@@ -4394,19 +4424,19 @@ fn empty_subscript_dereferences_a_pointer() {
 fn untracked_immutable_pointer_rejects_writes() {
     // Reads through an immutable untracked pointer stay ordinary…
     ok(
-        "def f(p: ImmPointer[Int, ImmutUntrackedOrigin]):\n    print(p[0])\n\ndef main():\n    print(1)\n",
+        "def f(p: ImmPointer[Int, ImmUntrackedOrigin]):\n    print(p[0])\n\ndef main():\n    print(1)\n",
     );
     // …but writes require mutable provenance, exactly like place origins
     // (through a `var` binding so binding mutability doesn't reject first).
     assert!(matches!(
         err(
-            "def f(p: ImmPointer[Int, ImmutUntrackedOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
+            "def f(p: ImmPointer[Int, ImmUntrackedOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
         ),
         TypeError::Unsupported(message) if message.contains("immutable origin")
     ));
     assert!(matches!(
         err(
-            "def f(p: UnsafePointer[Int, StaticConstantOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
+            "def f(p: UnsafePointer[Int, ImmStaticOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
         ),
         TypeError::Unsupported(message) if message.contains("immutable origin")
     ));
@@ -5466,10 +5496,16 @@ fn typelist_vocabulary_lowers_into_the_constraint_algebra() {
         TypeError::BadCall { .. }
     ));
 
-    // The deprecated `size` alias of `length` stays accepted (upstream still
-    // ships it deprecated), and both spell the same operand.
+    // Upstream removed the deprecated `size` alias of `length` (2026-08);
+    // only `length` is a TypeList operand now.
     ok(
-        "def sized(x: Int) -> Int where TypeList.of[Int, Bool]().size == 2:\n    return x\n\ndef main():\n    print(sized(3))\n",
+        "def sized(x: Int) -> Int where TypeList.of[Int, Bool]().length == 2:\n    return x\n\ndef main():\n    print(sized(3))\n",
+    );
+    assert!(
+        check_source(
+            "def sized(x: Int) -> Int where TypeList.of[Int, Bool]().size == 2:\n    return x\n\ndef main():\n    print(sized(3))\n",
+        )
+        .is_err()
     );
 }
 

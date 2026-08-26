@@ -77,6 +77,18 @@ struct String(
         self.cap = 1
         self.data = unsafe_alloc[Byte](self.cap)
 
+    def __init__(out self):
+        self.size = 0
+        self.cap = 1
+        self.data = unsafe_alloc[Byte](self.cap)
+
+    # 2026-08 stabilization: pre-sized construction. Capacity is a real byte
+    # buffer here (the VM's literal/copy bridges manage their own storage).
+    def __init__(out self, *, capacity_bytes: Int):
+        self.size = 0
+        self.cap = capacity_bytes if capacity_bytes > 0 else 1
+        self.data = unsafe_alloc[Byte](self.cap)
+
     def __init__(out self, *, copy: Self):
         self.size = copy.size
         self.cap = copy.cap
@@ -96,6 +108,20 @@ struct String(
 
     def __deinit__(deinit self):
         self.data.unsafe_free()
+
+    # 2026-08 stabilization: reserve at least the requested capacity; a
+    # current capacity at or above it is a no-op.
+    def reserve_bytes(mut self, new_capacity_bytes: Int, /):
+        if new_capacity_bytes <= self.cap:
+            return
+        var new_data = unsafe_alloc[Byte](new_capacity_bytes)
+        var i = 0
+        while i < self.size:
+            new_data[i] = self.data[i]
+            i += 1
+        self.data.unsafe_free()
+        self.data = new_data
+        self.cap = new_capacity_bytes
 
     def __len__(self) -> Int:
         return self.size

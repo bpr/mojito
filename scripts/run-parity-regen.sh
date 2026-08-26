@@ -16,5 +16,5 @@
 # run ./scripts/check-pliron to verify the manifest and the rest of the Pliron
 # gate without UPDATE_EXPECT.
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD cargo nextest run --features backend-pliron parity_exe_manifest

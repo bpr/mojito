@@ -2856,7 +2856,7 @@ impl Decoder {
 
     fn convention(&mut self, value: &Value) -> Option<ArgConvention> {
         match self.atom(value)? {
-            "read" => Some(ArgConvention::Read),
+            "imm" => Some(ArgConvention::Imm),
             "var" => Some(ArgConvention::Var),
             "mut" => Some(ArgConvention::Mut),
             "out" => Some(ArgConvention::Out),
@@ -3631,7 +3631,7 @@ mod tests {
                     source: CheckedCallArgumentSource::Default,
                     parameter_ty: Ty::Int,
                     requires_place: false,
-                    convention: Some(ArgConvention::Read),
+                    convention: Some(ArgConvention::Imm),
                 },
             ],
             capture_accesses: vec![MirCaptureAccess {
@@ -4255,7 +4255,7 @@ mod tests {
             variadic_convention: Some(ArgConvention::Var),
             variadic_index: Some(3),
             kw_variadic: Some(Ty::Bool),
-            kw_variadic_convention: Some(ArgConvention::Read),
+            kw_variadic_convention: Some(ArgConvention::Imm),
             kw_variadic_index: Some(4),
             positional_only: Some(1),
             keyword_only: Some(2),
@@ -4270,7 +4270,7 @@ mod tests {
             }],
             has_receiver: true,
             receiver_convention: Some(ArgConvention::Mut),
-            param_conventions: vec![None, Some(ArgConvention::Read), Some(ArgConvention::Ref)],
+            param_conventions: vec![None, Some(ArgConvention::Imm), Some(ArgConvention::Ref)],
             ret_ty: Ty::Int,
             returns_reference: true,
             raises: true,

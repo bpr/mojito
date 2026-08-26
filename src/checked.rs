@@ -624,6 +624,9 @@ pub struct CheckedExpr {
     pub binding_ty: Option<Ty>,
     pub category: ValueCategory,
     pub binding: Option<crate::origin::OwnerId>,
+    /// Checker-resolved base type name for a `$contextual` leading-dot
+    /// sentinel at this node; HIR substitutes it during syntax renaming.
+    pub contextual_base: Option<String>,
     pub effects: EffectFacts,
     pub adjustments: Vec<SemanticAdjustment>,
     pub children: Vec<CheckedNodeId>,
@@ -932,6 +935,7 @@ impl CheckedProgram {
     pub(crate) fn new(
         statements: Vec<Stmt>,
         overload_targets: HashMap<SourceSpan, String>,
+        contextual_bases: HashMap<SourceSpan, String>,
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
         call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
@@ -965,6 +969,7 @@ impl CheckedProgram {
     ) -> Self {
         let (expressions, expression_index) = build_checked_expressions(
             &statements,
+            &contextual_bases,
             &expression_types,
             &expression_bindings,
             &comprehension_bindings,
@@ -1103,6 +1108,7 @@ impl CheckedProgram {
 #[allow(clippy::too_many_arguments)]
 fn build_checked_expressions(
     statements: &[Stmt],
+    contextual_bases: &HashMap<SourceSpan, String>,
     types: &HashMap<SourceSpan, Ty>,
     bindings: &HashMap<SourceSpan, crate::origin::OwnerId>,
     comprehension_bindings: &HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
@@ -1130,6 +1136,7 @@ fn build_checked_expressions(
     struct Builder<'a> {
         nodes: Vec<CheckedExpr>,
         index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
+        contextual_bases: &'a HashMap<SourceSpan, String>,
         types: &'a HashMap<SourceSpan, Ty>,
         bindings: &'a HashMap<SourceSpan, crate::origin::OwnerId>,
         comprehension_bindings: &'a HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
@@ -1457,6 +1464,7 @@ fn build_checked_expressions(
                 binding_ty,
                 category,
                 binding,
+                contextual_base: self.contextual_bases.get(&span).cloned(),
                 effects: self.effects.get(&span).cloned().unwrap_or_default(),
                 adjustments,
                 children,
@@ -1637,6 +1645,7 @@ fn build_checked_expressions(
     let mut builder = Builder {
         nodes: Vec::new(),
         index: HashMap::new(),
+        contextual_bases,
         types,
         bindings,
         comprehension_bindings,

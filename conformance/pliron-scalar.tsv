@@ -274,8 +274,8 @@ assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_predicate_comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_comptime_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_where_clauses.mojo	-	ineligible	no-scalar-entry-shape
-assets/ok/unsafe_maybe_uninit_predicates.mojo	-	ineligible	no-scalar-entry-shape
-assets/ok/unsafe_maybe_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/maybe_uninit_predicates.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/maybe_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unsafe_pointer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/user_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_params.mojo	-	ineligible	no-scalar-entry-shape
@@ -317,7 +317,7 @@ assets/runtime_error/pointer_use_after_free.mojo	-	ineligible	no-scalar-entry-sh
 assets/runtime_error/span_index_out_of_range.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/span_slice_out_of_range.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	-	ineligible	no-scalar-entry-shape
-assets/runtime_error/unsafe_maybe_uninit_deinit_uninitialized.mojo	-	ineligible	no-scalar-entry-shape
-assets/runtime_error/unsafe_maybe_uninit_read_uninitialized.mojo	-	ineligible	no-scalar-entry-shape
-assets/runtime_error/unsafe_maybe_uninit_take_uninitialized.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/maybe_uninit_read_uninitialized.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/maybe_uninit_take_uninitialized.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/walrus.mojo	-	ineligible	no-scalar-entry-shape

@@ -8,351 +8,160 @@ differential runner must likewise report its actual `mojo --version`. Advancing
 the audit boundary records work to do—it does not claim that Mojito already
 implements every change at that boundary.
 
-## Current Audit — `ae386d1b204` (2026-08-08)
+## Current Audit — `a79fbdf59f2` (2026-08-26)
 
 | Role | Immutable revision |
 |---|---|
-| Audited Mojo dev head | [`ae386d1b20434e126aea8a32a2b625ed1343eaf5`](https://github.com/modular/modular/commit/ae386d1b20434e126aea8a32a2b625ed1343eaf5), whose lockfiles pin `Mojo 1.1.0.dev2026080805` |
-| Previous upstream audit boundary | [`609afcd0735054872ba028f27531b7abec947ddc`](https://github.com/modular/modular/commit/609afcd0735054872ba028f27531b7abec947ddc), `Mojo 1.0.0b3.dev2026072505` |
-| Stable Mojito implementation audited | `9118482492edc70b8d3b1d929900f8505ac10a80` from `/home/bpr/src/rust/projects/stable/mojito` |
-| Source delta | [Upstream comparison `609afcd073…ae386d1b204`](https://github.com/modular/modular/compare/609afcd0735054872ba028f27531b7abec947ddc...ae386d1b20434e126aea8a32a2b625ed1343eaf5) |
+| Audited Mojo dev head | [`a79fbdf59f224d7a2242f2d1c29cf55d93489a91`](https://github.com/modular/modular/commit/a79fbdf59f224d7a2242f2d1c29cf55d93489a91), whose lockfiles pin `Mojo 1.1.0.dev2026082605` |
+| Previous upstream audit boundary | [`ae386d1b20434e126aea8a32a2b625ed1343eaf5`](https://github.com/modular/modular/commit/ae386d1b20434e126aea8a32a2b625ed1343eaf5), `Mojo 1.1.0.dev2026080805` |
+| Mojito baseline audited | `c0399a6` (working tree at re-pin, 2026-08-26) |
+| Source delta | [Upstream comparison `ae386d1b204…a79fbdf59f2`](https://github.com/modular/modular/compare/ae386d1b20434e126aea8a32a2b625ed1343eaf5...a79fbdf59f224d7a2242f2d1c29cf55d93489a91) |
 
-Upstream cut the accumulated nightly record over to the staged
-[`v1.0.0` release notes](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/releases/v1.0.0.md)
-on August 6. That document is dated August 11, after this audit, so it is source
-evidence rather than a claim that the final release had already occurred. The
-short [post-cutover nightly changelog](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/nightly-changelog.md)
-must be read together with it. The rendered
-[nightly release page](https://mojolang.org/releases/nightly/) can lag `main`;
-the commit and lockfile version above are authoritative for this audit.
+The evidence for this window is the accumulated post-v1.0 nightly changelog at
+the pinned hash
+([`nightly-changelog.md`](https://github.com/modular/modular/blob/a79fbdf59f224d7a2242f2d1c29cf55d93489a91/mojo/docs/nightly-changelog.md));
+a local pinned worktree lives at `~/src/mojo/repos/modular-a79fbdf5` and the
+differential Pixi environment at `~/src/mojo/envs/mojo-2026082605`. Note the
+window's own churn: `Array` concatenation was introduced as `__add__` and
+renamed to `concat` before the pin, so only the pinned surface counts.
 
-The largest CPU-facing movement is not in MLIR or GPU support. Mojo has
-consolidated lifecycle names and defaults, added lambda expressions, changed the
-default meaning of list expressions to fixed-size `Array`, unified the pointer
-and allocation model, tightened source and import rules, and changed standard
-collection slicing and view contracts. These affect ordinary systems programs
-and current standard-library source, so they take precedence over expanding the
-existing proof-subset library breadth.
+This window completes the removal of the v1.0-cycle deprecated spellings —
+several compatibility bridges Mojito deliberately retained now expire under the
+match-or-subset rule — makes the `read` argument convention a hard error, and
+adds two genuine language features: contextually inferred leading-dot member
+references, and trailing `where` clauses on `thin` function types with a new
+directional rule for binding constrained functions. Library movement inside the
+proof subset is modest (`List` element bound loosened to `AnyType`, small
+`Array`/`String` API growth); most remaining entries are outside the declared
+subset and are recorded, not implemented.
 
-**Close-out record (2026-08-15).** The full differential conformance run
-passes 176/176 `conformance/cases.tsv` cases against the exact audited build:
-`mojo --version` reports `Mojo 1.1.0.dev2026080805 (7ade05af)` from a Pixi
-environment pinning the `mojo ==1.1.0.dev2026080805` conda nightly (the version
-`ae386d1b20434e126aea8a32a2b625ed1343eaf5`'s lockfiles pin); the Mojito side is
-commit `a6bfe27` plus the close-out change that carries this record. The
-close-out resolved all twenty open-question probes (their answers live in the
-new `cases.tsv` claims and parity-row notes), re-confirmed the five-item
-re-probe table, fixed a discovery-path regression for dependent callable bounds
-(`F: def(T) -> T` residual signatures), aligned the origin-alias vocabulary
-(`ImmStaticOrigin`, `ImmUntrackedOrigin`, `MutUnsafeAnyOrigin`), and
-reclassified the July-era case rows whose behavior the head changed (implicit
-`def`-scope declaration, the Dict projected-value refresh, raising
-explicit-destroy rollback, and untracked-ref conversions are now documented
-one-sided rows).
+**Close-out record (2026-08-26).** The full differential conformance run
+passes 199/199 `conformance/cases.tsv` cases against the exact audited build:
+`mojo --version` reports `Mojo 1.1.0.dev2026082605 (dd957314)` from the
+`~/src/mojo/envs/mojo-2026082605` Pixi environment (pinning the conda nightly
+that `a79fbdf59f224d7a2242f2d1c29cf55d93489a91`'s lockfiles pin); the Mojito
+side is commit `c0399a6` plus this uncommitted pass. The full Rust gate is
+green in the same state (`scripts/check`: 3371/3371 workspace tests, Clippy
+with warnings denied, format and diff checks). All four changeset sections
+completed in one pass; sixteen new fixtures joined `cases.tsv` (five as
+documented one-sided rows) and the `SIMDSize`/`TypeList.size` probes were
+promoted to rejection claims. One upstream regression surfaced during the
+sweep: the head rejects its own `Tuple.consume_elements` docstring example
+(`len` on the dependent element type fails overload resolution under the
+Array literal retarget, canonical `Ts` and deprecated `element_types`
+spellings alike), so `tuple-consume-elements` is a documented `mojito-only`
+row until the head recovers — re-probe at the next re-pin.
 
 ## Prioritized Changeset
 
-The order below is the recommended implementation order; dependencies and
-independent quick fixes are called out explicitly. Compatibility aliases may be
-retained deliberately, but Mojito's own diagnostics, fixtures, and bundled
-sources should use current canonical spellings.
+The order below is the recommended implementation order. Compatibility aliases
+may be retained deliberately only while upstream itself keeps the deprecated
+form; every bridge listed in section 0 expired upstream inside this window.
 
-### 0. Retarget the lifecycle foundation
+### 0. Remove expired compatibility spellings and the `read` convention
 
-Status 2026-08-09: DONE — canonical `Deinitable`/`__deinit__` vocabulary with
-parse-time normalization of the deprecated spellings, effective conditional
-`Movable`, the three lifecycle predicates (semantics pinned from the
-audited `std/traits/*.mojo` sources), and the `std.traits`/`std.origin`
-module homes (export lists mirroring the audited upstream surface).
+Status 2026-08-26: DONE — `read` rejects at every convention position with
+upstream's migration diagnostic (MIR text emits/accepts only `imm`;
+`ArgConvention::Imm` internally); `SIMDSize`/`TypeList.size` reject; the
+origin vocabulary is unified on the surviving set with targeted diagnostics
+for removed spellings; `MaybeUninit` renamed with the head's triviality-gated
+conformance header; `@__parameter` accepted (`@parameter` stays a warn-era
+bridge; the diverging capture model is probed by
+`conformance/probes/parameter_closure_capture_model.mojo`).
 
-Post-pin spot alignment 2026-08-11: one day after the audit pin, upstream
-[`22b5036987`](https://github.com/modular/modular/commit/22b5036987b33d3724dd5c3a495112f684bf8fc4)
-hard-renamed the predicates to `IsTriviallyMovable`/`IsTriviallyCopyable`/
-`IsTriviallyDeinitable` (no deprecated aliases) and made
-`conforms_to(T, TrivialRegisterPassable)` a sufficient first disjunct. Mojito
-follows both: the `Is`-prefixed spellings are the only ones that resolve
-(compiler recognition, `std.traits` exports, and diagnostics), and a declared
-`TrivialRegisterPassable` conformance or bound satisfies the predicates ahead
-of the structural check.
+Upstream made the `read` argument convention a hard error and completed the
+removal of the v1.0-cycle deprecated APIs. Mojito's corresponding bridges must
+flip to rejection in the same pass, with contextual diagnostics naming the
+surviving spelling:
 
-Canonicalize `Deinitable` and `__deinit__` through syntax, checked traits, MIR
-drop metadata, VM dispatch, the proof standard library, and documentation.
-`ImplicitlyDeletable` and `__del__` still exist upstream as deprecated
-compatibility spellings; they must not remain Mojito's internal vocabulary.
-Mojito already treats every initialized type as movable, matching the new
-default for ordinary structs, but it ignores `Movable where False` and other
-conditional opt-outs. Make those constraints effective. Add the current
-`TriviallyMovable[T]`, `TriviallyCopyable[T]`, and
-`TriviallyDeinitable[T]` comptime predicates after the canonical trait facts
-exist (upstream has since `Is`-prefixed them; see the spot alignment above).
-Move explicit bundled imports to the canonical `std.traits` home; move
-`Origin` imports to `std.origin`. Prelude re-exports may remain compatibility
-bridges. The module moves are recorded by
-[`84bc36ac`](https://github.com/modular/modular/commit/84bc36aceb0f4c93efefd9fda1a6e9cdd5d56782)
-and [`f23369d8`](https://github.com/modular/modular/commit/f23369d8a33fcbd606667dce318daa0b56f0111c).
-Relevant lifecycle changes are
-[`1beff2ac`](https://github.com/modular/modular/commit/1beff2ac41123ee873c4d95ced27636300458d0e),
-[`f8678b34`](https://github.com/modular/modular/commit/f8678b34ddfcac0b0123fb1ce32a44111c4ee1dd),
-[`1b7a909f`](https://github.com/modular/modular/commit/1b7a909f90331b961e830cc7cd19155359af4adc),
-and [`8eb24855`](https://github.com/modular/modular/commit/8eb248550e5ae2bf9c1558f46b2b7b3f6beec3e0).
+- `read` → `imm` in argument conventions and closure capture lists
+  (`src/parser.rs` convention words). MIR text is Mojito-owned: emit and accept
+  only `imm`, and rename the internal `ArgConvention::Read` variant to `Imm`.
+- `SIMDSize` (checker/comptime alias arms) and `TypeList.size` → rejection;
+  `SIMDLength`/`length` are already the canonical spellings. Upstream also
+  removed `SIMD.size` and `Array.size`, which Mojito never exposed.
+- Origin aliases: upstream removed `ImmutOrigin`, `ImmutUnsafeAnyOrigin`,
+  `StaticConstantOrigin`, `ExternalOrigin`, `MutExternalOrigin`,
+  `ImmutUntrackedOrigin`, and `ImmutExternalOrigin`. Mojito's `ref[...]`
+  resolver already speaks the surviving vocabulary, but the Pointer
+  type-argument resolver and the `std.origin` export table still accept and
+  export the removed `Immut*`/`StaticConstantOrigin` spellings while lacking
+  surviving `ImmOrigin`/`ImmUnsafeAnyOrigin`. Unify both resolvers, the type
+  display, and the export table on exactly the surviving set.
+- `UnsafeMaybeUninit` → `MaybeUninit` (struct, compiler-private references,
+  and the checker's triviality-gated conformance table). Verify at the pinned
+  head whether the old name retains a deprecated alias; mirror its state.
+- The `@parameter` decorator on parametric closures is renamed `@__parameter`.
+  Accept the new spelling where the checker consumes the decorator; probe the
+  old spelling's fate at the head and mirror it.
 
-### 1. Close small accepted-source and diagnostic gaps
+### 1. Constrain function types with trailing `where` clauses
 
-Status 2026-08-09: DONE for this seven-item slice — canonical keyword
-collectors and their callable ABI, duplicate/self-import diagnostics, the
-`imm`/`mut` overload pin, empty zero-step ranges, retained constraint messages
-across declaration families, and contextual free-function-name rejection are
-implemented and covered at their owning phases.
+Status 2026-08-26: DONE on inline `def[...]` bounds (clauses lower onto decl
+constraints, alpha-renamed identity, directional binding, call-site
+evaluation); binder-less clauses and the comptime alias spelling are
+recorded mojo-only rows.
 
-The larger adjacent surface the audit exposed — repeated trailing `where`
-clauses and generic top-level `comptime` aliases — is also DONE (2026-08-10):
-every declaration family retains its clause list with per-clause messages
-through a plural checked-constraint contract, and generic aliases lower into a
-checked alias registry expanded during type resolution (type-valued bodies
-only; value-bodied aliases, origin parameters, and constructor-through-alias
-calls remain recorded subset gaps).
+A `thin` function type can now carry trailing `where` clauses constraining the
+parameters it declares, and binding a constrained function to a function type
+that declares no matching `where` clause is an error (the unconstrained-into-
+constrained direction stays allowed and free). The clause binds to the
+innermost function type; a declaration-level `where` following a function-type
+result requires the result parenthesized upstream. Mojito already parses and
+checks parametric function types (`def[w: Int](Int) thin -> None`) end-to-end,
+and explicit specializations of callable parameters already evaluate decl
+constraints, so this lands as: `where` clauses on `Type::Func` lowered onto the
+anonymous callable's parameter declarations, plus a directional
+constraint-subset rule (with binder alpha-renaming) in the callable-bound
+acceptance check. The `comptime Kernel = def[...] ... where (...)` alias
+spelling stays blocked by the pre-existing function-type comptime-alias gap and
+is recorded as a divergence, not implemented here.
 
-The completed corrections are:
+### 2. Contextually inferred member references
 
-- Parse `var **kwargs` in declarations and reject bare `**kwargs`. Forwarding
-  with `**kwargs^` and `StringDict` storage already work. Function types also
-  require the current spelling, but that is not only a parser tweak: extend the
-  function-type parameter representation and callable ABI identity to retain a
-  keyword-variadic role.
-- Reject a second same-named function imported from another module instead of
-  silently replacing the first binding. Explicit intra-package imports are
-  already enforced.
-- Diagnose a standalone module importing its own name instead of relying on the
-  linker's cycle deduplication.
-- Keep the existing rejection of overloads that differ only by `imm` versus
-  `mut`, and pin it with the current differential case.
-- Make `range(..., step=0)` empty in both compile-time evaluators. Nominal
-  runtime `Range` already does this, but the CTFE and VM intrinsic paths still
-  report an error.
-- Interpret `where (condition, "message")` as a constraint plus a retained
-  diagnostic message in functions, structs, conditional conformances, and
-  `comptime` declarations.
-- Reject current reserved/predefined words `class`, `del`, `match`, and
-  `yield` as free or nested function names at declaration checking. Do not
-  pre-tokenize them as active syntax; preserving them as parser-level future
-  extension points will make eventual class, pattern-matching, and generator
-  work easier. They remain legal in ordinary identifier positions, and current
-  method spellings such as `def match(self)` remain legal.
+Status 2026-08-26: DONE for the first slice (static-method calls with postfix
+chains in expected-type positions, via the `$contextual` sentinel resolved by
+the checker and substituted in HIR); bare value members, parametric statics,
+non-struct and generic expected types are recorded gaps.
 
-The principal upstream changes are
-[`6e6392f1`](https://github.com/modular/modular/commit/6e6392f1e65a7c67c56c2422ddedc26b8c702284),
-[`c924834b`](https://github.com/modular/modular/commit/c924834b9e1061cc5e2b2c8a40c99ed60016fa17),
-[`c12f26a4`](https://github.com/modular/modular/commit/c12f26a49196f319f87132fc53d183fcd55e2ff1),
-[`fe9829a7`](https://github.com/modular/modular/commit/fe9829a703e140bb613f8ac66e6d117bd2cb2a51),
-[`04d7cc58`](https://github.com/modular/modular/commit/04d7cc582f11917dbe1186ca8562b33db3ea1acd),
-and [`e73bb67c`](https://github.com/modular/modular/commit/e73bb67c4604d4849dfba218cd2f95c4c7f244a2).
+A leading-dot form such as `.red` or `.hsb_to_rgb(120, 100, 50)` resolves
+against the expected type of the expression; without a contextual type it is an
+error. Upstream's surface covers bare `comptime` value members, static methods,
+parametric static methods, parentheses, attribute chains, and typed collection
+literals. Mojito's first slice: leading-dot **static method calls** (including
+postfix chains) in every position that already flows an expected type —
+annotated bindings and assignments, call arguments, return positions, and
+typed collection-literal elements. Bare `.red` value members require struct
+`comptime` associated value members, which Mojito does not have (pre-existing
+subset gap); parametric statics and generic expected types are likewise
+recorded as subset gaps rather than half-implemented.
 
-### 2. Add lambda expressions through the existing callable pipeline
+### 3. Align in-subset library surfaces
 
-Implement single-expression lambdas such as
-`lambda (x: Int) {} -> Int: x + 1`. The capture list and return type may each
-be omitted: an omitted capture list imm-captures free variables and is thin when
-there are none; an omitted return type is fixed to `None`, not inferred. A thin
-lambda behaves like a named function value and comptime parameter, while a
-capturing or still-generic lambda is a runtime closure instance. Add an explicit
-AST/HIR node, then lower it into Mojito's existing nested-definition, capture,
-callable-contract, specialization, and indirect-call machinery—do not add a
-second callable representation. Current standard-library sources already use
-lambdas, making this a source-porting prerequisite. See the
-[lambda manual](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/manual/functions/lambda.mdx)
-and commits
-[`dfede0f2`](https://github.com/modular/modular/commit/dfede0f2a99c6976ecdb3da7fddc16ac7a19a4d6),
-[`4123acca`](https://github.com/modular/modular/commit/4123accaaa5eb3e91b1d5226de74e135a99b5ab3),
-[`9a6c037e`](https://github.com/modular/modular/commit/9a6c037ea84525b750b8e322774944027a51d513),
-and [`6dfb27c9`](https://github.com/modular/modular/commit/6dfb27c95886662765f2b164561dba0349869111).
+Status 2026-08-26: DONE except recorded gaps — `List[T: AnyType]` with
+per-API `Movable` gates; Array lexicographic `Comparable` (Defaultable and
+`concat`/`repeat` are mojo-only rows: generic `Self.T()` construction and
+dependent result lengths); String `()`/`capacity_bytes`/`reserve_bytes`;
+`MaybeUninit.write()`. StringDict `Writable`/`StringSpan` lookup stay
+demand-first.
 
-### 3. Implement `Array` and retarget list-expression inference
-
-Add fixed-size nominal `Array[T, length]`, whose element parameter may be any
-type and whose `Copyable`, `Movable`, and `Deinitable` conformances are
-conditional. List-literal/move construction requires a `Movable` element;
-by-reference indexing and iteration do not, and destruction is conditional on
-`Deinitable`. Array itself is neither `ImplicitlyCopyable` nor `Defaultable`.
-An uncontextualized `[1, 2, 3]` must become `Array[Int, 3]`; an expected type
-that defines a list-literal constructor—notably `List[T]`—still controls
-contextual materialization. Stable Mojito currently hard-codes the
-uncontextualized result as `List`, so this is a language-semantic change, not an
-`InlineArray` rename. Preserve nominal constructor lowering if it is sufficient;
-only reopen the MIR/text schema if the implementation proves that Array needs a
-new MIR form. The temporary `InlineArray` alias is already removed on the
-audited dev head. See the current
-[`Array` source](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/stdlib/std/collections/array.mojo)
-and commits
-[`7657e0f0`](https://github.com/modular/modular/commit/7657e0f0dc8a8f4c81f6435962644faaa19527c3),
-[`9dfc95aa`](https://github.com/modular/modular/commit/9dfc95aa2f69688aa840e981d399de2cb3a1da52),
-and [`8d4fd368`](https://github.com/modular/modular/commit/8d4fd368cd95e57302610de09d3bbbf4d8747999).
-The upstream implementation uses `Pointer` internally. Mojito can land Array's
-semantics first over its private aggregate storage; reverse items 3 and 4 if the
-chosen slice is a direct source port instead.
-
-### 4. Move directly to the current pointer/allocation model
-
-Do not stop at the July plan's free `alloc[T](count)` API. Canonical source now
-uses `Pointer`, `MutPointer`, `ImmPointer`, `ptr[]`, and explicitly unsafe
-operations such as `unsafe_offset`, `unsafe_write`, `unsafe_take_pointee`, and
-`unsafe_deinit_pointee`. Heap allocation is layout-based:
-
-```mojo
-var allocation = alloc(Layout[Int](count=4))
-var ptr = allocation.unsafe_ptr()
-ptr.unsafe_offset(0).unsafe_write(42)
-dealloc(allocation^)
-```
-
-`Allocation[T]` is explicitly destroyed, owns its heap storage through a
-`ThinAllocation[T]`, and retains the `Layout[T]` used to allocate it. The
-deprecated layout-less `alloc[T](count)` returns a raw Pointer; its temporary
-migration spelling is `unsafe_alloc`, not another Allocation constructor.
-`UnsafePointer` remains a deprecated alias of `Pointer` at this audit hash.
-Reuse Mojito's typed pointer MIR, stable allocation identities, provenance, and
-explicit-destroy machinery rather than inventing another heap representation.
-The canonical source is in upstream
-[`pointer.mojo`](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/stdlib/std/memory/pointer.mojo)
-and [`alloc.mojo`](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/stdlib/std/memory/alloc.mojo);
-the current contract is summarized in the
-[pointer manual](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/docs/manual/pointers/using-pointers.mdx).
-The `UnsafeMaybeUninit` growth from
-[`b324feea`](https://github.com/modular/modular/commit/b324feeaa16bc13a12c0200164d1878fcfa64a87)
-is done: inline-uninit storage (a new VM capability, not a heap-slot spelling)
-carries the `unsafe_write`, overloaded `unsafe_assume_init`, `unsafe_deinit`,
-and `unsafe_forget` vocabulary with upstream's conformances and triviality
-facts; reading/taking uninitialized storage traps deterministically where
-upstream leaves it undefined. Recorded subset gaps: `zeroed()` (no byte-level
-value model) and `UnsafeMaybeUninit.unsafe_ptr()` (the §5 views work landed
-`origin_of(self)` as a Pointer origin argument — with interior-generation
-projections and multi-element origin-bearing pointers, giving
-`List.unsafe_ptr()` — but `UnsafeMaybeUninit`'s single-slot accessor still
-awaits demand; the `ref self` `unsafe_assume_init` covers borrowed access).
-
-### 5. Replace copied/clamped slices with current views and bounds
-
-Done except the follow-ups below: `Span(list)` and `StringSpan` are borrowed
-views over multi-element origin-bearing pointers; contiguous List/Span slices
-and String/StringSpan keyword slices are strict (violations abort through the
-uncatchable `os.abort` trap, byte endpoints on codepoint boundaries);
-positional String slicing rejects with a keyword-slice hint; strided List
-slicing keeps `StridedSlice.indices()` normalization; String/StringSpan/
-StringLiteral iteration yields grapheme-cluster StringSpan views; and
-`StringSlice` stays a never-emitted alias. Span borrowed iteration landed
-with the §7 pass (`_SpanIter` on the origin-parameterized protocol, element
-references with write-through). Remaining follow-ups (probed in
-`conformance/probes/`): the `Imm`/`Mut` alias spellings and the upstream
-fate of positional String and StringLiteral slicing. The original
-specification:
-
-Introduce `Span` and canonical `StringSpan` views (with `Imm`/`Mut` aliases).
-Contiguous List and Span slices, String `byte=`/`codepoint=` slices, and
-StringSpan `byte=`/`codepoint=`/`grapheme=` slices reject negative,
-out-of-range, or reversed bounds instead of normalizing or clamping them. Byte
-slice endpoints must also fall on UTF-8 codepoint boundaries. Preserve omitted
-bounds; current String has grapheme indexing but no grapheme contiguous-slice
-overload. Do not globally ban negative bounds in user-defined slice descriptors
-or `StridedSlice`: strided List slicing still normalizes through
-`StridedSlice.indices()` and returns a copied List. On the CPU-default assertion
-configuration, invalid contiguous bounds abort. String, StringSpan, and
-StringLiteral ordinary iteration should yield borrowed grapheme-cluster
-StringSpan views. `StringSlice` remains an upstream compatibility alias, but
-Mojito should emit `StringSpan`. See
-[`017f9f82`](https://github.com/modular/modular/commit/017f9f82cb334c510ba1a3e8aeadfc05488d734e),
-[`914dad70`](https://github.com/modular/modular/commit/914dad7031211669a45eb93451207fea54e53e36),
-and [`3e1a67e8`](https://github.com/modular/modular/commit/3e1a67e85ff445774155c57ab8c1f169286cf5f9).
-
-### 6. Align linear containers and owning APIs
-
-Status 2026-08-14: DONE — owned iteration tightened to the head's
-`Movable & Deinitable` bounds (the `_finish` linear-element extension is
-removed; linear variadic-pack forwarding remains); Optional rebuilt as the
-`T: AnyType` owning container with `init_with=` placement construction,
-`deinit_with`, `deinit_assert_empty`, linear-capable `map`/`and_then`, and
-Iterable (value-yielding borrowed iteration; `for ref` over Optional is a
-recorded subset gap) plus owned iteration; Variant renamed to
-`unwrap`/`unsafe_unwrap` with `set(init_with=…)`, an all-alternatives
-`Deinitable` gate on both `set` forms, and a tag-dispatched `deinit_with`;
-the family APIs (`deinit_with` on List/Array/Dict/Set/StringDict/Tuple,
-`clear_with` on Dict/Set, displacement-returning `insert` on
-Dict/Set/StringDict) landed; and a minimal `OwnedPointer` shipped with
-`into_inner` from day one. Deque and LinkedList do not exist in Mojito, and
-HashDict/HashSet stay outside the declared family. Exact upstream API
-shapes are pinned by the §6 probe set in `conformance/probes/` (handler
-conventions, drain order, `insert` semantics, `OwnedPointer`'s `p[]`
-dereference, the mut-receiver UnsafeMaybeUninit take, the owned-iteration
-declared family) — run them at the next re-pin.
-
-Lifecycle is the prerequisite here; the Optional and Variant work can land
-independently of Array and Pointer. Loosen both `Optional[T]` and
-`Variant[*Ts]` to `AnyType`, add their `init_with=` placement constructors,
-conditional lifecycle contracts, and `deinit_with` operations without a
-`Movable` requirement. `Variant.set(init_with=...)` performs in-place
-replacement. Optional is `Iterable`, not itself an `Iterator`; align its
-borrowed and owned iteration bounds, `deinit_assert_empty`, and linear-capable
-`map`/`and_then`.
-
-Migrate `Variant.take`/`unsafe_take` to `unwrap`/`unsafe_unwrap` and
-`OwnedPointer.take` to `into_inner`, retaining old names only under the
-compatibility policy; Optional's current `take` is unchanged. Grow APIs by their
-actual families: `deinit_with` on Array/List/Deque/LinkedList/Dict/Set/Tuple/
-Optional/Variant/StringDict; `clear_with` on Dict and Set;
-displacement-returning `insert` on Dict, Set, and StringDict; and consuming
-iteration on the collections that
-declare `IterableOwned` (not Tuple, which uses `consume_elements`). Quarantine
-or remove Mojito's owned-iteration extension for non-`Deinitable` elements where
-current Mojo requires `Movable & Deinitable`.
-
-### 7. Add subtree-origin safety and temporary-origin inference
-
-Status 2026-08-14: DONE. `origin._subtree` is accepted in Pointer origin
-arguments and `origin_cast` targets (terminal-only; `ref [...]` clauses
-reject — the wider upstream surface is pinned by
-`conformance/probes/subtree_origin_surface.mojo`), carried as a terminal
-`OriginSeg::Subtree`/`subtree` flag through checked HIR and verified MIR,
-with the conservative semantics live in the ownership analysis: staleness
-on mutation at, above, or below the base; first-write self-invalidation of
-a mutable subtree reference; and consume-time interior liveness (which
-Mojito's use-before-transfer architecture already enforced — pinned by
-fixtures, no compiler change). `Pointer(to=…)` through a `ref` binding
-mints subtree provenance. Temporary-origin inference landed as the
-`@implicit` `ref [origin]` constructor channel: a `List` passes directly
-where a `Span` is expected (arguments, bindings, returns), the conversion
-result borrowing its source like the explicit construction; a bare list
-literal stays a recorded subset gap (it types as `Array` — probed by
-`conformance/probes/implicit_span_conversion.mojo`). A whole-variable move
-now invalidates the interior generations rooted at the moved variable
-(the owner-side dual of consume liveness), which also makes the tracked
-`Allocation.unsafe_ptr()` reject use-after-dealloc statically. The
-original specification:
-
-Keep Mojito's existing named interior generations; they model precise
-collection-owned storage. Add the audited dev branch's experimental
-`Origin._subtree` as a separate conservative origin form. It can designate the
-root or any descendant, so mutation anywhere below the root invalidates the
-loan, a write through a mutable subtree reference invalidates that reference
-after its first write, and consuming an aggregate containing an interior origin
-requires that origin to remain live. Also allow an origin-bearing `@implicit`
-conversion result to refine its origin from a register temporary. Carry the new
-fact explicitly through checked HIR and verified MIR. The audited stdlib does
-not yet depend on this experimental surface, so it follows the public container
-work. See the current
-[origin design](https://github.com/modular/modular/blob/ae386d1b20434e126aea8a32a2b625ed1343eaf5/mojo/proposals/origin-design.md)
-and commits
-[`fae2eef7`](https://github.com/modular/modular/commit/fae2eef7cab68c8af9ca51f391184c32de4038d5),
-[`f3958309`](https://github.com/modular/modular/commit/f3958309415ab40094c2d49c620d5655c9b0bafd),
-[`12441229`](https://github.com/modular/modular/commit/12441229e2bf98bb2e37a26c85ddbc7e05ab54b3),
-and [`7852cfb1`](https://github.com/modular/modular/commit/7852cfb102d2444ef472b5d7749b530a068ccfc3).
-
-### 8. Finish scalar, SIMD, range, and generic vocabulary
-
-Continue the existing SIMD roadmap item, but use `SIMDLength` and `length`, not
-the transitional `SIMDSize`/`size`. Generalize the Int-only Range proof subset
-to the current Int/Scalar family; add integer-Scalar construction from any
-`Intable`; migrate `TypeList.size` to `length` and variadic
-`any_satisfies`/`all_satisfies` to `any`/`all`. Tuple already uses `*Ts`, so its
-new public parameter name needs only a compatibility probe. Reject invalid SIMD
-lengths during checked elaboration, not at a late VM operation.
+- `List`'s element type is now bounded by `AnyType` instead of `Movable`;
+  individual APIs state their own `Movable`/`Copyable` requirements. Mirror the
+  pinned head's `List` declaration shape onto the bundled List.
+- `Array` grows `Defaultable` (when `T` is), lexicographic `Comparable` (when
+  `T` is), consuming `concat` (`Movable`), and consuming `repeat` (`Copyable`).
+- `String` stabilizations: `__init__(out self)` (already present),
+  `__init__(out self, *, capacity_bytes: Int)`, and
+  `reserve_bytes(mut self, new_capacity_bytes: Int, /)` — capacity is
+  host-managed in the VM String bridges, so these may be semantic no-ops with
+  the correct signatures.
+- `Pointer`/`MaybeUninit` `write()` (safe, gated on trivially-deinitable
+  pointees) and the `Pointer.unsafe_write(def() -> T)` closure overload —
+  implement if the unified-closure argument shape is expressible on bundled
+  methods; otherwise record the gap.
+- `StringDict` conforms to `Writable` when its value type does, and
+  `StringDict.__getitem__` accepts a `StringSpan` — demand-first growth on the
+  existing StringDict.
 
 ## Confirmed Alignment And Audit-Only Work
 
@@ -386,6 +195,37 @@ already covers:
   and the caught-error `raise e` shape is pinned by the `raise-caught-error`
   differential case (both compilers relay and print `caught boom`; Mojito's
   `print(e)` rendering was aligned to the bare message).
+- Unhandled errors already print `unhandled error: …` to **stderr** on both
+  backends (VM CLI via `eprintln!`, native via `mjrt_unhandled_error`),
+  matching upstream's stdout→stderr change in this window.
+- Upstream's range fixes are already covered or moot: `step=0` is empty
+  everywhere; Mojito's `range()` overloads are Int-only (small-scalar strided
+  wraparound cannot arise) and `reversed()` on ranges is a recorded
+  out-of-subset limitation, so the reversed-near-limit and
+  `reversed(reversed(...))` changes have no Mojito surface.
+- `ceildiv` already derives the unsigned ceiling from floor division and
+  remainder (no near-max overflow), and scalar float hashing already
+  normalizes the sign of zero via the reduced-rational path.
+- Parametric `raises` with any primary-expression type (`raises Self.Assoc`)
+  already parses through `parse_type` in both signatures and function types.
+- The bulk of this window's Removed entries name APIs Mojito never exposed —
+  `InlineArray`, `ImplicitlyDestructible`/`ImplicitlyDeletable`, `ImmutSpan`,
+  `as_immutable()`/`get_immutable()`, `String.as_string_slice()` and
+  `String.set_byte_length()`, the pre-unification pointer aliases
+  (`MutUnsafePointer` family), the raw memory helpers (`memcpy`/`memset`/
+  `memcmp`/`uninit_*_n`/`destroy_n`), the `destroy_pointee`/`init_pointee_*`
+  family and `Pointer.type`, `steal_data`/`OwnedPointer.take`/`Variant.take`
+  (Mojito shipped `into_inner`/`unwrap` vocabulary from day one),
+  `ConditionalType` + `std.utils.type_functions`, `trait_downcast`, the
+  coroutine prelude types, and `.mojopkg` loading. Audit-only: no code change.
+- Bridges that survive this window because upstream still carries the
+  deprecated form: `UnsafePointer` (alias of `Pointer`), Tuple's
+  `element_types` alias for `Ts`, and `@parameter if`/`@parameter for`
+  (which Mojito never parsed — a subset stance, not a bridge). Newly
+  deprecated upstream without Mojito surface: `Pointer.mut_cast`,
+  `unsafe_ptr()` on always-valid holders (→ `ptr()`), and the
+  `is_trivially_*()` function spellings Mojito already rejects in favor of
+  the `IsTrivially*` predicates.
 
 ## Monitored Or Deferred Movement
 
@@ -405,7 +245,25 @@ These changes should remain visible without displacing the CPU language work:
 - `__generator_type` and coroutine internals are useful signals for possible
   future generators/coroutines, but are not yet a public parity gate. Keep HIR
   and MIR extension points general rather than implementing this internal
-  spelling.
+  spelling. (This window privatized the coroutine prelude types and the
+  `std.runtime.asyncrt` task API, reinforcing the deferral.)
+- The `Bench`/`Bencher` family finished migrating from compile-time parameter
+  closures to unified runtime-argument closures, and the parametric
+  `benchmark.run[func]()` overloads were removed. Benchmarking is outside the
+  subset; the unified-closure argument shape is the part to watch.
+- `CompilationTarget` gained `is_arm()`/RISC-V predicates and re-based
+  `is_x86()` on the triple; with the redundant `Int` overload removals in
+  `std.bit`/`std.math` (Int is `Scalar[DType.int]`, the SIMD overloads absorb
+  them), these are native-target and stdlib-breadth concerns, not language
+  parity.
+- `strip`/`lstrip`/`rstrip` now take `ImmStringSpan` chars; Mojito has no
+  strip family and no `Imm*Span` aliases (recorded divergence on the Span
+  origin-slot row), so this lands with future String result-API growth.
+- `atol()` now raises across the full out-of-`Int`-range and
+  whitespace-only surface; Mojito has no `atol`/`Int(String)` parsing yet.
+- `@align(N)` beyond natural alignment is now honored for every value
+  including array/List elements — relevant to native-backend layout work,
+  not the VM.
 
 ## Open Questions And Probes
 
@@ -436,6 +294,61 @@ Before closing a language-parity milestone:
 6. Run differential conformance with a Pixi environment containing the exact
    audited build. Retain `mojo --version`, the upstream hash, and the Mojito hash
    with the results.
+
+## Historical Audit — `ae386d1b204` (2026-08-08)
+
+| Role | Immutable revision |
+|---|---|
+| Audited Mojo dev head | [`ae386d1b20434e126aea8a32a2b625ed1343eaf5`](https://github.com/modular/modular/commit/ae386d1b20434e126aea8a32a2b625ed1343eaf5), whose lockfiles pin `Mojo 1.1.0.dev2026080805` |
+| Stable Mojito implementation audited | `9118482492edc70b8d3b1d929900f8505ac10a80` from `/home/bpr/src/rust/projects/stable/mojito` |
+| Source delta | [Upstream comparison `609afcd073…ae386d1b204`](https://github.com/modular/modular/compare/609afcd0735054872ba028f27531b7abec947ddc...ae386d1b20434e126aea8a32a2b625ed1343eaf5) |
+
+Upstream cut the accumulated nightly record over to the staged v1.0.0 release
+notes on August 6, so this audit read the release document and the short
+post-cutover changelog together. The pass ran as nine ordered changeset
+sections, all complete before the 2026-08-26 re-pin:
+
+- **§0 lifecycle foundation** — canonical `Deinitable`/`__deinit__`, effective
+  conditional `Movable`, `IsTrivially*` predicates (hard-renamed by the
+  post-pin spot alignment to upstream `22b5036987`), `std.traits`/`std.origin`
+  module homes.
+- **§1 small gaps** — unified `{...}` rejection, bare `move:`, competing
+  `__setitem__` pair, `def(...)` fields/elements gating, captured-Origin
+  specialization limits, `var **kwargs`, duplicate/self imports, `range`
+  step=0, `where (cond, "msg")`, reserved words; then repeated trailing
+  `where` clauses and generic top-level comptime aliases.
+- **§2 lambdas** — hidden-def-at-parse lambda expressions (committed
+  `dec1918`).
+- **§3 Array** — nominal `Array[T, length]` with uncontextualized list
+  displays retargeted to Array.
+- **§4 pointer/allocation model** — `Pointer` naming, `ptr[]`, `unsafe_*`
+  vocabulary, layout-based `alloc`/`Allocation`, linear `std.memory`, and
+  `UnsafeMaybeUninit` inline-uninit storage.
+- **§5 views and strict bounds** — `Span`/`StringSpan` borrowed views, strict
+  contiguous bounds through the `os.abort` trap, keyword slices, grapheme
+  iteration.
+- **§6 owning containers** — `AnyType` Optional/Variant with `init_with=`,
+  `deinit_with` family, displacement `insert`, `OwnedPointer` with
+  `into_inner`, owned-iteration bounds tightened to `Movable & Deinitable`.
+- **§7 subtree origins** — terminal `origin._subtree` with conservative
+  invalidation semantics and the `@implicit` `ref [origin]` conversion channel
+  (implicit `List`→`Span`).
+- **§8 scalar/SIMD/range/vocabulary** — `SIMDLength` spelling, scalar-range
+  checker intercept, `TypeList` marker values, predicate aliases.
+
+**Close-out record (2026-08-15).** The full differential conformance run
+passed 176/176 `conformance/cases.tsv` cases against the exact audited build:
+`mojo --version` reported `Mojo 1.1.0.dev2026080805 (7ade05af)` from a Pixi
+environment pinning the `mojo ==1.1.0.dev2026080805` conda nightly; the Mojito
+side was commit `a6bfe27` plus the close-out change. The close-out resolved
+all twenty open-question probes (answers live in `cases.tsv` claims and
+parity-row notes), re-confirmed the five-item re-probe table, fixed a
+discovery-path regression for dependent callable bounds (`F: def(T) -> T`
+residual signatures), aligned the origin-alias vocabulary (`ImmStaticOrigin`,
+`ImmUntrackedOrigin`, `MutUnsafeAnyOrigin`), and reclassified the July-era
+case rows whose behavior the head changed (implicit `def`-scope declaration,
+the Dict projected-value refresh, raising explicit-destroy rollback, and
+untracked-ref conversions became documented one-sided rows).
 
 ## Historical Stable-Baseline Audit — `609afcd0735` (2026-07-25)
 

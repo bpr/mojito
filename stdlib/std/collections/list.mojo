@@ -14,7 +14,7 @@ from std.os import abort
 
 @fieldwise_init
 struct _ListIter[
-    iterable_mut: Bool, //, T: Movable, iterable_origin: Origin[mut=iterable_mut]
+    iterable_mut: Bool, //, T: AnyType, iterable_origin: Origin[mut=iterable_mut]
 ](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
 
@@ -35,9 +35,9 @@ struct _ListIter[
         self.index += 1
         return self.src[r]
 
-struct _ListOwnedIter[T: Movable](
+struct _ListOwnedIter[T: AnyType](
     Deinitable where conforms_to(T, Deinitable),
-    Iterator,
+    Iterator where conforms_to(T, Movable),
     Movable,
 ):
     comptime Element = Self.T
@@ -68,11 +68,11 @@ struct _ListOwnedIter[T: Movable](
             i += 1
         self.data.unsafe_free()
 
-struct List[T: Movable](
+struct List[T: AnyType](
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
     Iterable where conforms_to(T, Copyable),
-    IterableOwned where conforms_to(T, Deinitable),
+    IterableOwned where conforms_to(T, Deinitable) and conforms_to(T, Movable),
     Movable,
     Writable where conforms_to(T, Writable),
 ):
@@ -91,7 +91,9 @@ struct List[T: Movable](
         self.size = 0
         self.data = unsafe_alloc[Self.T](self.cap)
 
-    def __init__(out self, var *values: Self.T, __list_literal__: NoneType):
+    def __init__(
+        out self, var *values: Self.T, __list_literal__: NoneType
+    ) where conforms_to(Self.T, Movable):
         self.cap = 4
         self.size = 0
         self.data = unsafe_alloc[Self.T](self.cap)
@@ -122,7 +124,7 @@ struct List[T: Movable](
             i += 1
         self.data.unsafe_free()
 
-    def grow(mut self):
+    def grow(mut self) where conforms_to(Self.T, Movable):
         var new_cap = self.cap * 2
         var new_data = unsafe_alloc[Self.T](new_cap)
         var i = 0
@@ -133,13 +135,15 @@ struct List[T: Movable](
         self.data = new_data
         self.cap = new_cap
 
-    def append(mut self, var value: Self.T):
+    def append(mut self, var value: Self.T) where conforms_to(Self.T, Movable):
         if self.size == self.cap:
             self.grow()
         self.data[self.size] = value^
         self.size += 1
 
-    def insert(mut self, index: Int, var value: Self.T):
+    def insert(
+        mut self, index: Int, var value: Self.T
+    ) where conforms_to(Self.T, Movable):
         if self.size == self.cap:
             self.grow()
         var i = self.size
@@ -178,7 +182,7 @@ struct List[T: Movable](
 
     def __getitem__(self, slice: Slice) -> Self where conforms_to(
         Self.T, Copyable
-    ):
+    ) and conforms_to(Self.T, Movable):
         var bounds = slice.indices(self.size)
         var start = bounds[0]
         var stop = bounds[1]
@@ -200,7 +204,7 @@ struct List[T: Movable](
     # above; omitted bounds are preserved and default to the full extent.
     def __getitem__(self, slice: ContiguousSlice) -> Self where conforms_to(
         Self.T, Copyable
-    ):
+    ) and conforms_to(Self.T, Movable):
         var start = slice.start.or_else(0)
         var end = slice.end.or_else(self.size)
         check_slice_bounds(start, end, self.size)
@@ -213,7 +217,7 @@ struct List[T: Movable](
 
     def __setitem__(mut self, index: Int, var value: Self.T) where conforms_to(
         Self.T, Deinitable
-    ):
+    ) and conforms_to(Self.T, Movable):
         self.data.unsafe_offset(index).unsafe_deinit_pointee()
         self.data[index] = value^
 
@@ -229,7 +233,7 @@ struct List[T: Movable](
 
     def remove(mut self, value: Self.T) where conforms_to(
         Self.T, Equatable
-    ) and conforms_to(Self.T, Deinitable):
+    ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
         var i = 0
         while i < self.size:
             if self.data[i] == value:
@@ -237,10 +241,10 @@ struct List[T: Movable](
                 return
             i += 1
 
-    def pop(mut self) -> Self.T:
+    def pop(mut self) -> Self.T where conforms_to(Self.T, Movable):
         return self.pop(self.size - 1)^
 
-    def pop(mut self, index: Int) -> Self.T:
+    def pop(mut self, index: Int) -> Self.T where conforms_to(Self.T, Movable):
         var result = self.data.unsafe_offset(index).unsafe_take_pointee()
         var i = index
         while i + 1 < self.size:
@@ -269,7 +273,7 @@ struct List[T: Movable](
         self.size = 0
         self.cap = 0
 
-    def reverse(mut self):
+    def reverse(mut self) where conforms_to(Self.T, Movable):
         var left = 0
         var right = self.size - 1
         while left < right:
@@ -280,7 +284,9 @@ struct List[T: Movable](
             left += 1
             right -= 1
 
-    def extend(mut self, other: Self) where conforms_to(Self.T, Copyable):
+    def extend(
+        mut self, other: Self
+    ) where conforms_to(Self.T, Copyable) and conforms_to(Self.T, Movable):
         var i = 0
         while i < len(other):
             self.append(other[i])

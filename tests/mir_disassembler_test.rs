@@ -163,7 +163,7 @@ fn metadata_program() -> MirProgram {
             param_decls: Vec::new(),
             has_receiver: false,
             receiver_convention: None,
-            param_conventions: vec![None, Some(ArgConvention::Read)],
+            param_conventions: vec![None, Some(ArgConvention::Imm)],
             ret_ty: Ty::Int,
             returns_reference: false,
             raises: false,

@@ -1073,10 +1073,10 @@ impl Checker {
     }
 
     pub(super) fn constraint_operand(&self, expr: &Expr) -> Result<ConstraintOperand, TypeError> {
-        // `TypeList[Ts.values]().length` (with `size` a deprecated accepted
-        // alias, still shipped by the audited head) is an Int operand.
+        // `TypeList[Ts.values]().length` is an Int operand (the removed
+        // `size` alias rejects like any unknown member).
         if let ExprKind::Member { object, field } = &expr.kind
-            && matches!(field.as_str(), "length" | "size")
+            && field == "length"
             && let Some(receiver) = self.typelist_receiver(object)?
         {
             return Ok(match receiver {

@@ -603,9 +603,10 @@ fn collect_named_expr(expression: &Expr, names: &mut HashSet<String>) {
     }
 }
 
-fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
+fn rename_expr(e: &mut Expr, resolve: &impl Fn(&crate::token::SourceSpan, &str) -> String) {
+    let span = e.source_span();
     match &mut e.kind {
-        ExprKind::Identifier(n) => *n = resolve(n),
+        ExprKind::Identifier(n) => *n = resolve(&span, n),
         ExprKind::Prefix(_, x) | ExprKind::Transfer(x) | ExprKind::Spread(x) => {
             rename_expr(x, resolve)
         }
@@ -726,7 +727,7 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&str) -> String) {
             }
         }
         ExprKind::Named { name, value } => {
-            *name = resolve(name);
+            *name = resolve(&span, name);
             rename_expr(value, resolve);
         }
         ExprKind::IfExpr {
@@ -1008,7 +1009,22 @@ impl Lower {
     fn expr(&self, e: &Expr) -> HirExpr {
         let original_span = e.source_span();
         let mut syntax = e.clone();
-        rename_expr(&mut syntax, &|n| self.resolved(n));
+        rename_expr(&mut syntax, &|span, n| {
+            // A `$contextual` leading-dot root substitutes its checker-
+            // resolved base type name; everything downstream sees the
+            // ordinary spelled form.
+            if n == crate::ast::CONTEXTUAL_SENTINEL
+                && let Some(base) = self
+                    .checked_by_span
+                    .get(span)
+                    .and_then(|ids| ids.first())
+                    .and_then(|id| self.checked_expressions.get(id))
+                    .and_then(|node| node.contextual_base.clone())
+            {
+                return base;
+            }
+            self.resolved(n)
+        });
         let checked = self
             .checked_by_span
             .get(&original_span)

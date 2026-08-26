@@ -189,7 +189,7 @@ pub(super) fn borrowable_read_arguments(
     for (index, slot) in slots.iter().enumerate() {
         if !matches!(
             conventions.get(index),
-            Some(None | Some(ArgConvention::Read))
+            Some(None | Some(ArgConvention::Imm))
         ) {
             continue;
         }

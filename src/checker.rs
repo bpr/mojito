@@ -84,7 +84,11 @@ pub(crate) fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
 /// Whether a concrete monomorphic callable implementation fulfills an
 /// anonymous `def(...)` trait contract. This is intentionally directional:
 /// non-raising/read-only implementations may fulfill raising/mutable contracts,
-/// but not vice versa.
+/// but not vice versa. Binder constraints are directional the other way
+/// (upstream 2026-08): every `where` constraint the implementation declares
+/// must be declared by the contract — otherwise calls through the contract
+/// could violate the implementation's precondition — while an unconstrained
+/// implementation may serve a constrained contract.
 pub(crate) fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
     if matches!(actual, Ty::GenericFunc { .. }) || matches!(contract, Ty::GenericFunc { .. }) {
         let (Some((actual_decls, actual)), Some((contract_decls, contract))) = (
@@ -93,7 +97,38 @@ pub(crate) fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
         ) else {
             return false;
         };
-        return actual_decls == contract_decls && callable_bound_accepts(&actual, &contract);
+        let strip = |decl: &ParamDecl| {
+            let mut decl = decl.clone();
+            match &mut decl {
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                    constraints.clear()
+                }
+            }
+            decl
+        };
+        let constraints_of = |decl: &ParamDecl| -> Vec<GenericConstraint> {
+            match decl {
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                    constraints.clone()
+                }
+            }
+        };
+        let structural = actual_decls.len() == contract_decls.len()
+            && actual_decls
+                .iter()
+                .zip(&contract_decls)
+                .all(|(actual, contract)| strip(actual) == strip(contract));
+        let constraints_declared =
+            actual_decls
+                .iter()
+                .zip(&contract_decls)
+                .all(|(actual, contract)| {
+                    let declared = constraints_of(contract);
+                    constraints_of(actual)
+                        .iter()
+                        .all(|constraint| declared.contains(constraint))
+                });
+        return structural && constraints_declared && callable_bound_accepts(&actual, &contract);
     }
 
     let (
@@ -287,6 +322,7 @@ pub(crate) fn check_program_with_materialized_callables(
     Ok(crate::checked::CheckedProgram::new(
         expanded,
         checker.overload_targets.into_inner(),
+        checker.contextual_bases.into_inner(),
         checker.generic_instantiations.into_inner(),
         checker.call_transfers.into_inner(),
         checker.implicit_conversions.into_inner(),
@@ -664,6 +700,9 @@ pub struct Checker {
     /// overload set. Interior mutability keeps expression inference usable from
     /// read-only helper methods while still recording resolution facts.
     overload_targets: RefCell<HashMap<SourceSpan, String>>,
+    /// Checker-resolved base type name per `$contextual` leading-dot sentinel
+    /// (keyed by the sentinel identifier's span); HIR substitutes the name.
+    contextual_bases: RefCell<HashMap<SourceSpan, String>>,
     /// The resolved generic application per bound-generic call site (callee +
     /// exact compile-time arguments), retained for instantiation discovery.
     generic_instantiations: RefCell<HashMap<SourceSpan, crate::checked::GenericInstantiation>>,
@@ -849,6 +888,7 @@ impl Checker {
             self_initializing: false,
             bundled_stdlib_declaration: false,
             overload_targets: RefCell::new(HashMap::new()),
+            contextual_bases: RefCell::new(HashMap::new()),
             generic_instantiations: RefCell::new(HashMap::new()),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects),
@@ -2069,7 +2109,120 @@ fn canonical_generic_signature(decls: &[ParamDecl], params: &[Ty]) -> (Vec<Param
         .iter()
         .map(|ty| rename_dependent_parameters(&substitute(ty, &subst), &value_names))
         .collect();
+    // Second pass: alpha-rename binder references INSIDE the retained
+    // constraints, so `def[w: Int](…) where w > 0` and `def[n: Int](…) where
+    // n > 0` share one canonical identity. The maps are complete only after
+    // the fold above (a clause on the last binder may reference any of them);
+    // names the contract does not bind (an enclosing declaration's
+    // parameters) stay as-is and correctly distinguish contracts.
+    let mut binder_names: HashMap<String, String> = value_names.clone();
+    for (name, ty) in &subst {
+        if let Ty::Param {
+            name: canonical, ..
+        } = ty
+        {
+            binder_names.insert(name.clone(), canonical.clone());
+        }
+    }
+    let mut canonical_decls: Vec<ParamDecl> = canonical_decls;
+    for decl in &mut canonical_decls {
+        match decl {
+            ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                *constraints = constraints
+                    .iter()
+                    .map(|constraint| {
+                        rename_constraint_parameters(
+                            constraint,
+                            &binder_names,
+                            &subst,
+                            &value_names,
+                        )
+                    })
+                    .collect();
+            }
+        }
+    }
     (canonical_decls, canonical_params)
+}
+
+/// Alpha-rename the binder references inside one canonicalized constraint:
+/// `param`-shaped fields rename through `binder_names` (falling back to the
+/// pack-trimmed spelling), and embedded types canonicalize exactly like
+/// signature types.
+fn rename_constraint_parameters(
+    constraint: &GenericConstraint,
+    binder_names: &HashMap<String, String>,
+    subst: &HashMap<String, Ty>,
+    value_names: &HashMap<String, String>,
+) -> GenericConstraint {
+    let rename = |name: &str| -> String {
+        if let Some(canonical) = binder_names.get(name) {
+            return canonical.clone();
+        }
+        let trimmed = name.trim_start_matches('*');
+        if let Some(canonical) = binder_names.get(trimmed) {
+            return canonical.clone();
+        }
+        name.to_string()
+    };
+    let operand = |operand: &crate::types::ConstraintOperand| -> crate::types::ConstraintOperand {
+        use crate::types::ConstraintOperand;
+        match operand {
+            ConstraintOperand::Param(name) => ConstraintOperand::Param(rename(name)),
+            ConstraintOperand::PackLength(name) => ConstraintOperand::PackLength(rename(name)),
+            ConstraintOperand::Value(value) => ConstraintOperand::Value(value.clone()),
+            ConstraintOperand::Type(ty) => ConstraintOperand::Type(rename_dependent_parameters(
+                &substitute(ty, subst),
+                value_names,
+            )),
+        }
+    };
+    let recurse = |inner: &GenericConstraint| {
+        rename_constraint_parameters(inner, binder_names, subst, value_names)
+    };
+    match constraint {
+        GenericConstraint::WithMessage(inner, message) => {
+            GenericConstraint::WithMessage(Box::new(recurse(inner)), message.clone())
+        }
+        GenericConstraint::Conforms { param, trait_name } => GenericConstraint::Conforms {
+            param: rename(param),
+            trait_name: trait_name.clone(),
+        },
+        GenericConstraint::ConformsPack { param, trait_name } => GenericConstraint::ConformsPack {
+            param: rename(param),
+            trait_name: trait_name.clone(),
+        },
+        GenericConstraint::PackPredicate {
+            param,
+            predicate,
+            all,
+        } => GenericConstraint::PackPredicate {
+            param: rename(param),
+            predicate: predicate.clone(),
+            all: *all,
+        },
+        GenericConstraint::PackContains { param, element } => GenericConstraint::PackContains {
+            param: rename(param),
+            element: operand(element),
+        },
+        GenericConstraint::Trivial(kind, inner) => {
+            GenericConstraint::Trivial(*kind, operand(inner))
+        }
+        GenericConstraint::Eq(a, b) => GenericConstraint::Eq(operand(a), operand(b)),
+        GenericConstraint::Ne(a, b) => GenericConstraint::Ne(operand(a), operand(b)),
+        GenericConstraint::Lt(a, b) => GenericConstraint::Lt(operand(a), operand(b)),
+        GenericConstraint::Le(a, b) => GenericConstraint::Le(operand(a), operand(b)),
+        GenericConstraint::Gt(a, b) => GenericConstraint::Gt(operand(a), operand(b)),
+        GenericConstraint::Ge(a, b) => GenericConstraint::Ge(operand(a), operand(b)),
+        GenericConstraint::And(a, b) => {
+            GenericConstraint::And(Box::new(recurse(a)), Box::new(recurse(b)))
+        }
+        GenericConstraint::Or(a, b) => {
+            GenericConstraint::Or(Box::new(recurse(a)), Box::new(recurse(b)))
+        }
+        GenericConstraint::Not(inner) => GenericConstraint::Not(Box::new(recurse(inner))),
+        GenericConstraint::Bool(value) => GenericConstraint::Bool(*value),
+    }
 }
 
 fn canonical_generic_parameter_shape(
@@ -2443,12 +2596,12 @@ fn callable_convention_accepts(
     actual: Option<ArgConvention>,
     contract: Option<ArgConvention>,
 ) -> bool {
-    let actual = actual.unwrap_or(ArgConvention::Read);
-    let contract = contract.unwrap_or(ArgConvention::Read);
+    let actual = actual.unwrap_or(ArgConvention::Imm);
+    let contract = contract.unwrap_or(ArgConvention::Imm);
     match (actual, contract) {
         // A read-only callee demands less access than a mutable callable
         // contract promises to supply, so it is a valid implementation.
-        (ArgConvention::Read, ArgConvention::Read | ArgConvention::Mut) => true,
+        (ArgConvention::Imm, ArgConvention::Imm | ArgConvention::Mut) => true,
         (ArgConvention::Mut, ArgConvention::Mut) => true,
         // Ownership-changing and parametric-reference conventions retain their
         // exact ABI until their full subtyping rules are modeled.

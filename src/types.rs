@@ -232,7 +232,7 @@ pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, crate::ast::Dtype)> 
 pub const OPTIONAL_TYPE_NAME: &str = "Optional";
 
 /// Compiler-private inline possibly-uninitialized storage, the field type of
-/// `UnsafeMaybeUninit`. An unregistered nominal: resolvable only from bundled
+/// `MaybeUninit`. An unregistered nominal: resolvable only from bundled
 /// standard-library sources, with every capability special-cased explicitly.
 pub const UNINIT_STORAGE_TYPE_NAME: &str = "__UninitStorage";
 
@@ -602,6 +602,65 @@ pub enum GenericConstraint {
     Bool(bool),
 }
 
+impl fmt::Display for GenericConstraint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GenericConstraint::WithMessage(inner, message) => {
+                write!(f, "({inner}, {message:?})")
+            }
+            GenericConstraint::Conforms { param, trait_name } => {
+                write!(f, "conforms_to({param}, {trait_name})")
+            }
+            GenericConstraint::ConformsPack { param, trait_name } => {
+                write!(f, "conforms_to({param}.values, {trait_name})")
+            }
+            GenericConstraint::PackPredicate {
+                param,
+                predicate,
+                all,
+            } => {
+                let reduction = if *all { "all" } else { "any" };
+                let predicate = match predicate {
+                    PackPredicateRef::Trivial(kind) => trivial_predicate_spelling(*kind),
+                    PackPredicateRef::Alias(name) => name,
+                };
+                write!(f, "TypeList[{param}.values]().{reduction}[{predicate}]()")
+            }
+            GenericConstraint::PackContains { param, element } => {
+                write!(f, "TypeList[{param}.values]().contains[{element}]()")
+            }
+            GenericConstraint::Trivial(kind, operand) => {
+                write!(f, "{}[{operand}]", trivial_predicate_spelling(*kind))
+            }
+            GenericConstraint::Eq(a, b) => write!(f, "{a} == {b}"),
+            GenericConstraint::Ne(a, b) => write!(f, "{a} != {b}"),
+            GenericConstraint::Lt(a, b) => write!(f, "{a} < {b}"),
+            GenericConstraint::Le(a, b) => write!(f, "{a} <= {b}"),
+            GenericConstraint::Gt(a, b) => write!(f, "{a} > {b}"),
+            GenericConstraint::Ge(a, b) => write!(f, "{a} >= {b}"),
+            GenericConstraint::And(a, b) => write!(f, "{a} and {b}"),
+            GenericConstraint::Or(a, b) => write!(f, "{a} or {b}"),
+            GenericConstraint::Not(inner) => write!(f, "not {inner}"),
+            GenericConstraint::Bool(value) => {
+                write!(f, "{}", if *value { "True" } else { "False" })
+            }
+        }
+    }
+}
+
+impl fmt::Display for ConstraintOperand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConstraintOperand::Param(name) => write!(f, "{name}"),
+            ConstraintOperand::Value(value) => write!(f, "{value}"),
+            ConstraintOperand::Type(ty) => write!(f, "{ty}"),
+            ConstraintOperand::PackLength(name) => {
+                write!(f, "TypeList[{name}.values]().length")
+            }
+        }
+    }
+}
+
 impl ParamDecl {
     pub fn name(&self) -> &str {
         match self {
@@ -670,7 +729,29 @@ impl fmt::Display for Ty {
                 raises,
                 ..
             } => {
-                write!(f, "def(")?;
+                // A generic contract renders its binders and trailing `where`
+                // constraints so a constrained-vs-unconstrained mismatch is
+                // visible in diagnostics.
+                if let Ty::GenericFunc { decls, .. } = self {
+                    write!(f, "def[")?;
+                    for (index, decl) in decls.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ", ")?;
+                        }
+                        match decl {
+                            ParamDecl::Type { name, bounds, .. } => {
+                                write!(f, "{name}")?;
+                                if !bounds.is_empty() {
+                                    write!(f, ": {}", bounds.join(" & "))?;
+                                }
+                            }
+                            ParamDecl::Value { name, ty, .. } => write!(f, "{name}: {ty}")?,
+                        }
+                    }
+                    write!(f, "](")?;
+                } else {
+                    write!(f, "def(")?;
+                }
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -726,7 +807,17 @@ impl fmt::Display for Ty {
                 if *raises {
                     write!(f, " raises")?;
                 }
-                write!(f, " -> {}", ret)
+                write!(f, " -> {}", ret)?;
+                if let Ty::GenericFunc { decls, .. } = self {
+                    for decl in decls {
+                        let (ParamDecl::Type { constraints, .. }
+                        | ParamDecl::Value { constraints, .. }) = decl;
+                        for constraint in constraints {
+                            write!(f, " where {constraint}")?;
+                        }
+                    }
+                }
+                Ok(())
             }
             Ty::Overload(candidates) => {
                 write!(f, "overload(")?;
@@ -782,18 +873,18 @@ impl fmt::Display for Ty {
                     crate::origin::PointerOrigin::SelfPlace { .. } => {
                         write!(f, ", origin_of(self)")?
                     }
-                    crate::origin::PointerOrigin::Static => write!(f, ", StaticConstantOrigin")?,
+                    crate::origin::PointerOrigin::Static => write!(f, ", ImmStaticOrigin")?,
                     crate::origin::PointerOrigin::Untracked { mutable: true } => {
                         write!(f, ", MutUntrackedOrigin")?
                     }
                     crate::origin::PointerOrigin::Untracked { mutable: false } => {
-                        write!(f, ", ImmutUntrackedOrigin")?
+                        write!(f, ", ImmUntrackedOrigin")?
                     }
                     crate::origin::PointerOrigin::UnsafeAny { mutable: true } => {
                         write!(f, ", MutUnsafeAnyOrigin")?
                     }
                     crate::origin::PointerOrigin::UnsafeAny { mutable: false } => {
-                        write!(f, ", ImmutUnsafeAnyOrigin")?
+                        write!(f, ", ImmUnsafeAnyOrigin")?
                     }
                 }
                 write!(f, "]")

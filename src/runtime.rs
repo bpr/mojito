@@ -89,7 +89,7 @@ pub enum Value {
     /// use-after-move surfaces as a loud runtime error (a defensive check — the
     /// ownership analysis already rejects it statically), and a no-op to drop.
     Moved,
-    /// Inline possibly-uninitialized storage (`UnsafeMaybeUninit`'s field):
+    /// Inline possibly-uninitialized storage (`MaybeUninit`'s field):
     /// `None` is uninitialized, `Some` holds the raw payload. Dropping one is
     /// a no-op regardless of contents — the payload leaks by design, matching
     /// upstream's no-op destructor — and reading/taking the `None` state traps.

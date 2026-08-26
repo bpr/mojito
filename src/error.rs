@@ -206,6 +206,13 @@ pub enum TypeError {
     /// A type-parameter bound named a trait that is not a recognized built-in
     /// (user-defined traits are not supported yet).
     UnknownTrait(String),
+    /// A leading-dot contextual member reference (`.red`) could not resolve
+    /// its base type: no contextual type was available, or the expected type
+    /// cannot supply members (non-struct or generic).
+    ContextualMember {
+        member: String,
+        reason: String,
+    },
     /// A parameterized type was applied to the wrong number of type arguments
     /// (e.g. `Pair[Int, Int]` for a one-parameter `Pair`, or type arguments on a
     /// non-generic type).
@@ -549,6 +556,9 @@ impl fmt::Display for TypeError {
             }
             TypeError::UnknownTrait(name) => {
                 write!(f, "unknown trait '{}' in a type-parameter bound", name)
+            }
+            TypeError::ContextualMember { member, reason } => {
+                write!(f, "cannot resolve leading '.{member}': {reason}")
             }
             TypeError::WrongTypeArgCount {
                 name,

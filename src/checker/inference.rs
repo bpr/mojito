@@ -378,6 +378,17 @@ impl Checker {
     }
 
     pub(super) fn infer(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        // A leading-dot member chain is only meaningful where an expected
+        // type flows; plain inference has no context to resolve it.
+        if contextual_root_span(expr).is_some() {
+            let member = contextual_member_name(expr);
+            return Err(TypeError::ContextualMember {
+                reason: format!(
+                    "no contextual type is available here; write 'SomeType.{member}' or add a type annotation"
+                ),
+                member,
+            });
+        }
         let result = self.infer_impl(expr);
         if let Ok(ty) = &result {
             if matches!(
@@ -1682,6 +1693,38 @@ impl Checker {
         {
             return Ok(ty);
         }
+        // A leading-dot contextual member chain resolves its `$contextual`
+        // root against the expected type, then re-checks as the ordinary
+        // spelled form. The rewrite clone preserves spans and syntax ids, so
+        // every recorded fact lands on the original nodes; HIR substitutes
+        // the base name physically during syntax renaming.
+        if let Some(root_span) = contextual_root_span(expression) {
+            let base = match expected {
+                Ty::Struct(name, _) => name.clone(),
+                Ty::Param { .. } => {
+                    return Err(TypeError::ContextualMember {
+                        member: contextual_member_name(expression),
+                        reason: format!(
+                            "the expected type '{expected}' is generic; spell the base type explicitly"
+                        ),
+                    });
+                }
+                other => {
+                    return Err(TypeError::ContextualMember {
+                        member: contextual_member_name(expression),
+                        reason: format!(
+                            "the expected type '{other}' does not supply struct members; write the base type explicitly"
+                        ),
+                    });
+                }
+            };
+            let rewritten = with_contextual_root(expression, &base);
+            let ty = self.infer_with_expected(&rewritten, expected, record)?;
+            if record {
+                self.contextual_bases.borrow_mut().insert(root_span, base);
+            }
+            return Ok(ty);
+        }
         if let ExprKind::TypeApply { name, args } = &expression.kind
             && matches!(expected, Ty::Func { .. })
             && let Some(specialized) = self.infer_specialized_callable_value(
@@ -2083,7 +2126,7 @@ impl Checker {
     /// Type compiler-private inline uninit-storage construction:
     /// `__UninitStorage[T]()` produces uninitialized storage,
     /// `__UninitStorage[T](value^)` moves an initial payload in. Reachable
-    /// only from the bundled crossing module (`UnsafeMaybeUninit`'s bodies).
+    /// only from the bundled crossing module (`MaybeUninit`'s bodies).
     pub(super) fn infer_uninit_storage_construction(
         &self,
         span: SourceSpan,
@@ -2093,7 +2136,7 @@ impl Checker {
         let name = crate::types::UNINIT_STORAGE_TYPE_NAME;
         if !self.bundled_stdlib_declaration {
             return Err(TypeError::Unsupported(format!(
-                "'{name}' is compiler-private storage; use UnsafeMaybeUninit from std.memory"
+                "'{name}' is compiler-private storage; use MaybeUninit from std.memory"
             )));
         }
         if param_args.len() != 1 {
@@ -2389,4 +2432,65 @@ impl Checker {
         );
         Ok(Ty::Variant(alternatives))
     }
+}
+
+/// The `$contextual` sentinel root's span, when `expression` is a leading-dot
+/// member chain (`.red`, `.make(1).brighten()`, `.a.b[i]`).
+fn contextual_root_span(expression: &Expr) -> Option<crate::token::SourceSpan> {
+    let mut current = expression;
+    loop {
+        match &current.kind {
+            ExprKind::Identifier(name) if name == crate::ast::CONTEXTUAL_SENTINEL => {
+                return Some(current.source_span());
+            }
+            ExprKind::Member { object, .. }
+            | ExprKind::MethodCall { object, .. }
+            | ExprKind::Index { object, .. } => current = object,
+            ExprKind::Invoke { callee, .. } => current = callee,
+            _ => return None,
+        }
+    }
+}
+
+/// The first member name after the leading dot, for diagnostics.
+fn contextual_member_name(expression: &Expr) -> String {
+    let mut current = expression;
+    let mut member = String::from("member");
+    loop {
+        match &current.kind {
+            ExprKind::Identifier(_) => return member,
+            ExprKind::Member { object, field } => {
+                member = field.clone();
+                current = object;
+            }
+            ExprKind::MethodCall { object, method, .. } => {
+                member = method.clone();
+                current = object;
+            }
+            ExprKind::Index { object, .. } => current = object,
+            ExprKind::Invoke { callee, .. } => current = callee,
+            _ => return member,
+        }
+    }
+}
+
+/// A clone of `expression` whose `$contextual` chain root is replaced by the
+/// resolved base type name. Spans and syntax ids are untouched, so recorded
+/// facts key identically to the original nodes.
+fn with_contextual_root(expression: &Expr, base: &str) -> Expr {
+    fn replace(expression: &mut Expr, base: &str) {
+        match &mut expression.kind {
+            ExprKind::Identifier(name) if name == crate::ast::CONTEXTUAL_SENTINEL => {
+                *name = base.to_string();
+            }
+            ExprKind::Member { object, .. }
+            | ExprKind::MethodCall { object, .. }
+            | ExprKind::Index { object, .. } => replace(object, base),
+            ExprKind::Invoke { callee, .. } => replace(callee, base),
+            _ => {}
+        }
+    }
+    let mut rewritten = expression.clone();
+    replace(&mut rewritten, base);
+    rewritten
 }

@@ -598,9 +598,9 @@ impl TrapCategory {
             TrapCategory::PointerDangling => "vm: dereference of dangling Pointer",
             TrapCategory::PointerUseAfterFree => "vm: use after Pointer deallocation",
             TrapCategory::PointerDoubleFree => "vm: double free of Pointer allocation",
-            TrapCategory::UninitRead => "vm: read of uninitialized UnsafeMaybeUninit storage",
-            TrapCategory::UninitTake => "vm: take of uninitialized UnsafeMaybeUninit storage",
-            TrapCategory::UninitDestroy => "vm: destroy of uninitialized UnsafeMaybeUninit storage",
+            TrapCategory::UninitRead => "vm: read of uninitialized MaybeUninit storage",
+            TrapCategory::UninitTake => "vm: take of uninitialized MaybeUninit storage",
+            TrapCategory::UninitDestroy => "vm: destroy of uninitialized MaybeUninit storage",
         }
     }
 

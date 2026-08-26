@@ -221,13 +221,16 @@ param_item:
     | [convention] '*' NAME ':' type       # *args; `var *args: *Ts` may be transferred
     | 'var' '**' NAME ':' type             # keyword variadic collector
     | [convention] NAME ':' type ['=' expression]   # regular, optional default
-convention: 'imm' | 'read' | 'mut' | 'var' | 'out' | 'ref' [origin_spec] | 'deinit'
+convention: 'imm' | 'mut' | 'var' | 'out' | 'ref' [origin_spec] | 'deinit'
 function_effect: 'raises' [type] | 'capturing' ['[' ... ']'] | 'thin' | 'abi' '(' ... ')'
+function_type_where: where_clause*   # after the optional '->' result; binds to the
+                                     # INNERMOST function type (a nested function-type
+                                     # result consumes a following 'where' itself)
 capture_list: '{' [capture_entry (',' capture_entry)* [',']] '}'
 where_clause: 'where' expression
 capture_entry:
-    | [('imm' | 'read' | 'mut' | 'ref' | 'var')] NAME ['^']
-    | ('imm' | 'read' | 'mut' | 'ref' | 'var') ['^']
+    | [('imm' | 'mut' | 'ref' | 'var')] NAME ['^']
+    | ('imm' | 'mut' | 'ref' | 'var') ['^']
 origin_spec: '[' ','.expression+ ']'   # an expression, a named origin, origin_of(...), or '_'
 reference_binding: 'ref' NAME '=' expression
 ```
@@ -250,9 +253,12 @@ callee must also declare a compatible collector. The declaration-side `var` is
 required; bare `**kwargs: T` is rejected, while call-site forwarding keeps the
 `**kwargs^` spelling. A single `out result: T` is a caller-transparent named
 result; multiple named results are unsupported.
-A `convention` word is only a convention when a parameter name follows it, so `imm`, `read`,
-`mut`, `ref`, etc. remain usable as parameter names (`def f(read: Int)`, `def f(ref:
-Int)`). Ordering is parsed leniently. The **`ref` convention** (parametric-mutability
+A `convention` word is only a convention when a parameter name follows it, so `imm`,
+`mut`, `ref`, etc. remain usable as parameter names (`def f(imm: Int)`, `def f(ref:
+Int)`). The legacy `read` convention is a hard error with a migration
+diagnostic (`'read' was removed; use 'imm'`), matching upstream's removal;
+`read` survives only as an ordinary parameter name (`def f(read: Int)`).
+Ordering is parsed leniently. The **`ref` convention** (parametric-mutability
 reference) may carry an **origin specifier** — `ref[origin] x` — whose contents (an
 arbitrary expression treated as `origin_of(...)`, a named origin, or `_` for an unbound
 origin) are retained in the AST for checked resolution. A member may be wrapped in
@@ -331,7 +337,19 @@ conventions, effects, reference origins, and the result type survive substitutio
 nominal conformance, bounded indirect dispatch, HIR, and verified MIR. The
 function type may declare its own parameter list, as in
 `F: def[T: ImplicitlyCopyable](T) -> T`; binder names are alpha-equivalent, while
-arity and bounds remain part of the checked contract. An explicit `thin` or
+arity and bounds remain part of the checked contract. A function type with its
+own `def[...]` parameters may carry trailing `where` clauses constraining them
+(`F: def[w: Int](Int) thin -> None where (w > 0, "msg")`): the clauses lower
+onto the contract's parameter declarations (binder references alpha-renamed),
+explicit specializations through the parameter evaluate them (`F[0]` fails the
+example), and binding a CONSTRAINED function to a contract that does not
+declare the matching clause is an error while the unconstrained-into-
+constrained direction stays allowed. The clause binds to the innermost
+function type. Subset limits: the clause requires the contract's own
+`def[...]` parameter list (upstream also accepts binder-less clauses), plain
+function-type annotations reject clauses, and the `comptime Kernel = def[...]
+... where (...)` alias spelling stays behind the function-type comptime-alias
+gap. An explicit `thin` or
 `capturing[...]` qualifier instead declares a compile-time callable-value
 parameter; an `OriginSet` binder before `//` is inferred from that value and erased
 from the runtime ABI. Such a parameter may default to a selected function, an
@@ -617,6 +635,9 @@ primary:
     | atom
 atom:
     | NAME
+    | '.' NAME ['(' [args] ')']   # leading-dot contextual member (`.red()`); the base
+                                  # type is inferred from the expected type; postfix
+                                  # chains attach normally
     | INT
     | FLOAT
     | (STRING | TSTRING)+         # adjacent family concatenates; any TSTRING retains interpolation
@@ -663,6 +684,18 @@ their declared intrinsic contract does.
 
 Notes:
 
+- **Leading-dot contextual member references** (`var c: Color = .red()`,
+  `takes_color(.of(7))`, `[.red(), .of(3)]` under a `List[Color]` annotation,
+  `return .red()` — upstream 2026-08): the parser builds the chain over a
+  compiler-internal `$contextual` base; the checker resolves it against the
+  expected type (concrete structs only) and re-checks the spelled form with
+  spans preserved, and HIR substitutes the base name physically. Without a
+  contextual type the form rejects with a targeted diagnostic. Implemented
+  first slice: static-method calls with postfix chains in expected-type
+  positions. Recorded subset gaps: bare `.member` comptime value members
+  (Mojito lacks struct `comptime` associated values), parametric statics
+  (`.make[4]()`), non-struct expected types (upstream resolves members on any
+  expected type), generic expected types, and leading-dot in type positions.
 - **A single comparison is an `Infix`; a chain of ≥ 2 (`a < b < c`, `0 <= i < n`) is a
   `Compare` node** — implemented as `(a < b) and (b < c)` with each operand evaluated
   **once**, left to right, short-circuiting (a false link stops the rest). Result `Bool`.
@@ -946,10 +979,9 @@ an explicit `MaterializeLiteral` instruction.
 `SIMD[DType.<dt>, <width>]` is a fixed-width vector of `<width>` lanes of element type
 `<dt>` — a built-in **parameterized** type. `<width>` is a comptime `SIMDLength`
 (represented by a compile-time `Int`) and must be a power of two; `_` in a
-construction infers the width from its explicit lanes. `SIMDSize` is the
-deprecated transitional spelling: it stays accepted as a compatibility alias
-but is never emitted in diagnostics or documentation, and its removal is a
-future roadmap decision. `<dt>` is written `DType.<dt>` where
+construction infers the width from its explicit lanes. The transitional
+`SIMDSize` spelling was removed upstream (2026-08) and rejects like any
+unknown name. `<dt>` is written `DType.<dt>` where
 `DType` is a built-in namespace (`DType.<dt>` is valid only inside a `SIMD[...]`
 argument, never as a value).
 

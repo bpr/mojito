@@ -2002,7 +2002,7 @@ fn capture_access_kind(value: CaptureAccess) -> &'static str {
 
 fn convention(value: ArgConvention) -> String {
     match value {
-        ArgConvention::Read => "read",
+        ArgConvention::Imm => "imm",
         ArgConvention::Var => "var",
         ArgConvention::Mut => "mut",
         ArgConvention::Out => "out",

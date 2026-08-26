@@ -92,16 +92,30 @@ def unsafe_alloc[T: AnyType](count: Int, *, alignment: Int = 0) -> Pointer[T, Mu
 
 
 # Inline possibly-uninitialized storage for one T. Every method is unsafe:
-# the caller tracks whether the memory is initialized. The destructor is a
-# no-op — discarding an initialized value leaks it (call unsafe_deinit()
-# first); moving/copying transfers the raw bits, so both are available only
-# for trivially movable/copyable payloads. The compiler traps deterministically
+# the caller tracks whether the memory is initialized. Lifecycle conformances
+# mirror the pinned upstream header: moving/copying/destroying a MaybeUninit
+# only touches its raw bits, never the payload's lifecycle methods, so each is
+# available only for a trivially movable/copyable/deinitable payload (a
+# non-trivially-deinitable payload makes the wrapper linear — unsafe_deinit()
+# or unsafe_forget() it explicitly). The compiler traps deterministically
 # where upstream leaves undefined behavior (reading uninitialized storage).
-struct UnsafeMaybeUninit[T: AnyType](
+struct MaybeUninit[T: AnyType](
     Defaultable,
-    Movable where IsTriviallyMovable[T],
-    ImplicitlyCopyable where IsTriviallyCopyable[T],
-    RegisterPassable where conforms_to(T, RegisterPassable),
+    Deinitable where (
+        IsTriviallyDeinitable[T],
+        "T must be trivially deinitable, since MaybeUninit never runs T's __deinit__",
+    ),
+    ImplicitlyCopyable where (
+        IsTriviallyCopyable[T] and IsTriviallyMovable[T],
+        "T must be trivially copyable and movable, since copying MaybeUninit only copies the underlying bits",
+    ),
+    Movable where (
+        IsTriviallyMovable[T],
+        "T must be trivially movable, since moving MaybeUninit only moves the underlying bits",
+    ),
+    RegisterPassable where (
+        conforms_to(T, RegisterPassable) and IsTriviallyMovable[T]
+    ),
 ):
     var _storage: __UninitStorage[Self.T]
 
@@ -112,6 +126,14 @@ struct UnsafeMaybeUninit[T: AnyType](
         self._storage = __UninitStorage[Self.T](value^)
 
     def unsafe_write(mut self, var value: Self.T, /) where conforms_to(Self.T, Movable):
+        self._storage.unsafe_write(value^)
+
+    # Safe counterpart of unsafe_write for trivially-deinitable payloads
+    # (2026-08): a trivial deinitializer is a no-op, so overwriting a live
+    # value cannot leak a resource.
+    def write(
+        mut self, var value: Self.T, /
+    ) where IsTriviallyDeinitable[T] and conforms_to(Self.T, Movable):
         self._storage.unsafe_write(value^)
 
     def unsafe_assume_init(deinit self) -> Self.T where conforms_to(Self.T, Movable):

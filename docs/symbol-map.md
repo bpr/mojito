@@ -99,7 +99,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   transfer), and static/pointer/uninit-storage/List/Tuple method inference
   (`infer_uninit_storage_method` types the compiler-private
   `__UninitStorage[T]` write/take/destroy crossings behind
-  `UnsafeMaybeUninit`).
+  `MaybeUninit`).
 - `checker/call_inference.rs` owns free-function and callable-value call
   inference (`infer_call`, generic-call instantiation).
 - `checker/type_resolution.rs` resolves source annotations into checked `Ty`

@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Evaluate the frozen Stage 6 acceptance budgets over a bench summary TSV.
+
+Usage: scripts/stage6-budget-report BASELINE_SUMMARY_TSV
+
+The budget table lives in docs/notes/pliron-stage6-plan.md; this prints a
+pass/fail line per budget and exits 1 on any hard failure. It is decision
+support for the morning review, not the authoritative call: metrics whose
+MAD/median exceeds the noise policy's conclusiveness bound (0.05 wall, 0.02
+memory/size) are flagged INCONCLUSIVE and must be re-measured, not cited.
+
+Schema (tools/bench summarize): fixture <TAB> profile <TAB> metric <TAB> n
+<TAB> median <TAB> mad, with '#' comments; profile "0" is O0, "release" the
+optimized profile, "-" the VM lane (metric vm_wall_us). exe_bytes measures
+the artifact as emitted (unstripped); the size budget is stated over stripped
+executables, so treat size verdicts as an upper bound.
+"""
+
+import math
+import sys
+
+WALL_BOUND = 0.05
+MEMSIZE_BOUND = 0.02
+
+
+def load(path):
+    rows = {}
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            fixture, profile, metric, _n, median, mad = line.split("\t")
+            rows[(fixture, profile, metric)] = (float(median), float(mad))
+    return rows
+
+
+def geomean(ratios):
+    return math.exp(sum(math.log(r) for r in ratios) / len(ratios))
+
+
+def conclusive(rows, key, bound):
+    median, mad = rows[key]
+    return median > 0 and mad / median <= bound
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(__doc__)
+        return 2
+    rows = load(sys.argv[1])
+    fixtures = sorted({f for (f, _p, _m) in rows})
+    failures = []
+    inconclusive = []
+    lines = []
+
+    def check(name, ok, detail):
+        verdict = "PASS" if ok else "FAIL"
+        if not ok:
+            failures.append(name)
+        lines.append(f"{verdict:12} {name}: {detail}")
+
+    def ratio(fixture, metric, num_profile, den_profile, bound):
+        num_key = (fixture, num_profile, metric)
+        den_key = (fixture, den_profile, metric)
+        if num_key not in rows or den_key not in rows:
+            return None
+        for key in (num_key, den_key):
+            if not conclusive(rows, key, bound):
+                inconclusive.append(f"{key[0]}/{key[1]}/{key[2]}")
+        return rows[num_key][0] / rows[den_key][0]
+
+    # Runtime benefit: release >=15% faster than O0 and >=25% faster than the
+    # VM, both by geomean over the runtime corpus.
+    speedups_o0 = []
+    speedups_vm = []
+    per_fixture_regressions = []
+    for fixture in fixtures:
+        r = ratio(fixture, "exec_wall_us", "0", "release", WALL_BOUND)
+        if r is not None:
+            speedups_o0.append(r)
+            if 1 / r > 1.10:
+                per_fixture_regressions.append(f"{fixture} ({1 / r:.2f}x slower)")
+        vm_key = (fixture, "-", "vm_wall_us")
+        rel_key = (fixture, "release", "exec_wall_us")
+        if vm_key in rows and rel_key in rows:
+            if not conclusive(rows, vm_key, WALL_BOUND):
+                inconclusive.append(f"{fixture}/-/vm_wall_us")
+            speedups_vm.append(rows[vm_key][0] / rows[rel_key][0])
+    if speedups_o0:
+        g = geomean(speedups_o0)
+        check("release vs O0 exec geomean >= 1.15", g >= 1.15, f"{g:.3f}x over {len(speedups_o0)} fixtures")
+    if speedups_vm:
+        g = geomean(speedups_vm)
+        check("release vs VM exec geomean >= 1.25", g >= 1.25, f"{g:.3f}x over {len(speedups_vm)} fixtures")
+    check(
+        "no fixture >10% slower at release than O0",
+        not per_fixture_regressions,
+        ", ".join(per_fixture_regressions) or "none (noise-floor waivers may apply)",
+    )
+
+    # Compile time, memory, size: per-fixture release-vs-O0 ratios.
+    for metric, budget, bound, name in [
+        ("compile_wall_us", 2.0, WALL_BOUND, "compile median release <= 2.0x O0"),
+        ("exec_maxrss_kb", 1.5, MEMSIZE_BOUND, "release peak RSS <= 1.5x O0"),
+    ]:
+        ratios = []
+        worst = None
+        for fixture in fixtures:
+            r = ratio(fixture, metric, "release", "0", bound)
+            if r is not None:
+                ratios.append(r)
+                if worst is None or r > worst[1]:
+                    worst = (fixture, r)
+        if ratios:
+            check(name, all(r <= budget for r in ratios), f"worst {worst[0]} {worst[1]:.2f}x, geomean {geomean(ratios):.2f}x")
+
+    size_ratios = []
+    size_offenders = []
+    for fixture in fixtures:
+        r = ratio(fixture, "exe_bytes", "release", "0", MEMSIZE_BOUND)
+        if r is not None:
+            size_ratios.append(r)
+            if r > 1.25:
+                size_offenders.append(f"{fixture} ({r:.2f}x)")
+    if size_ratios:
+        g = geomean(size_ratios)
+        check(
+            "exe size geomean <= 1.10x O0, none > 1.25x (unstripped upper bound)",
+            g <= 1.10 and not size_offenders,
+            f"geomean {g:.3f}x; >1.25x: {', '.join(size_offenders) or 'none'}",
+        )
+
+    # Startup: release <= 5% or 1 ms slower than O0 on the startup fixture.
+    for fixture in fixtures:
+        if not fixture.startswith("startup"):
+            continue
+        o0_key = (fixture, "0", "exec_wall_us")
+        rel_key = (fixture, "release", "exec_wall_us")
+        if o0_key in rows and rel_key in rows:
+            o0, rel = rows[o0_key][0], rows[rel_key][0]
+            allowance = max(o0 * 1.05, o0 + 1000.0)
+            check(
+                "startup release <= O0 + max(5%, 1ms)",
+                rel <= allowance,
+                f"O0 {o0:.0f}us, release {rel:.0f}us, allowance {allowance:.0f}us",
+            )
+
+    lines.append(
+        "N/A          O0 compile <= 1.15x pre-Stage-6 baseline: no pre-Stage-6 "
+        "compile baseline was ever committed (benchmarks/native/baseline/ was "
+        "empty before this capture) — needs an explicit waiver in the stage note"
+    )
+
+    print(f"Stage 6 budget report over {sys.argv[1]}")
+    print()
+    for line in lines:
+        print(line)
+    if inconclusive:
+        seen = sorted(set(inconclusive))
+        print()
+        print(
+            f"INCONCLUSIVE ({len(seen)} metrics exceed the MAD/median bound; "
+            "per the noise policy these must be re-measured, not cited):"
+        )
+        for item in seen:
+            print(f"  {item}")
+    print()
+    if failures:
+        print(f"HARD FAILURES: {len(failures)} — a failed budget is a Stage 6 failure even when correctness passes.")
+        return 1
+    print("All evaluable budgets pass" + (" (with inconclusive metrics flagged above)." if inconclusive else "."))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

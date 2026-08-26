@@ -259,7 +259,7 @@ impl VmBackend {
     }
 
     /// Move the payload out of a consumed inline uninit-storage value
-    /// (`UnsafeMaybeUninit`'s field). Upstream leaves this undefined behavior;
+    /// (`MaybeUninit`'s field). Upstream leaves this undefined behavior;
     /// the VM traps deterministically, mirroring the heap arena's tombstones.
     pub(super) fn uninit_storage_payload(
         storage: Value,
@@ -268,7 +268,7 @@ impl VmBackend {
         match storage {
             Value::UninitStorage(Some(payload)) => Ok(*payload),
             Value::UninitStorage(None) => Err(RuntimeError::TypeError(format!(
-                "vm: {operation} of uninitialized UnsafeMaybeUninit storage"
+                "vm: {operation} of uninitialized MaybeUninit storage"
             ))),
             other => Err(RuntimeError::TypeError(format!(
                 "vm: {operation} requires inline uninit storage, found {}",
@@ -3246,7 +3246,7 @@ fn navigate_reference_mut<'a>(
                 Value::UninitStorage(Some(payload)) => payload.as_mut(),
                 Value::UninitStorage(None) => {
                     return Err(RuntimeError::TypeError(
-                        "vm: read of uninitialized UnsafeMaybeUninit storage".to_string(),
+                        "vm: read of uninitialized MaybeUninit storage".to_string(),
                     ));
                 }
                 _ => {
@@ -3455,9 +3455,9 @@ mod pointer_storage_tests {
         );
         let uninitialized = VmBackend::uninit_storage_payload(Value::UninitStorage(None), "take");
         assert!(
-            uninitialized.as_ref().is_err_and(|error| error
-                .to_string()
-                .contains("uninitialized UnsafeMaybeUninit")),
+            uninitialized
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("uninitialized MaybeUninit")),
             "expected uninitialized trap, got {uninitialized:?}"
         );
         assert!(VmBackend::uninit_storage_payload(Value::Int(1), "take").is_err());
@@ -3494,7 +3494,7 @@ mod pointer_storage_tests {
     #[test]
     fn uninit_storage_drops_as_a_leaky_no_op() {
         // Discarding storage that still holds a payload must not run any
-        // destructor: upstream UnsafeMaybeUninit leaks by design.
+        // destructor: upstream MaybeUninit leaks by design.
         let mut vm = VmBackend::default();
         vm.drop_value(
             &empty_program(),

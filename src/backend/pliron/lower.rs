@@ -5298,11 +5298,11 @@ impl<'a> FnLowering<'a> {
         };
         // Collection temporaries own their backing allocation through their
         // stdlib destructor; their raw pointer field is not itself a
-        // separately owned Pointer value. UnsafeMaybeUninit is deliberately
+        // separately owned Pointer value. MaybeUninit is deliberately
         // excluded: its trivial wrapper destructor must never reach a live
         // user payload held in its compiler-private storage.
         let uninit_wrapper = matches!(ty, Ty::Struct(name, _)
-            if name.contains("UnsafeMaybeUninit")
+            if name.contains("MaybeUninit")
                 || crate::types::uninit_storage_element(ty).is_some());
         if self.stdlib_deinit_temp(ty) && !self.owns_heap(ty) && !uninit_wrapper {
             let traced = self.trace_lifecycle;

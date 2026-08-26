@@ -356,6 +356,15 @@ impl Checker {
                 });
                 continue;
             }
+            // The removed `SIMDSize` width spelling (upstream hard removal,
+            // 2026-08) gets a targeted migration diagnostic.
+            if let [only] = tp.bounds.as_slice()
+                && only == "SIMDSize"
+            {
+                return Err(TypeError::Unsupported(
+                    "'SIMDSize' was removed; use 'SIMDLength'".to_string(),
+                ));
+            }
             // A lone bound that names a scalar type marks a value parameter.
             if let [only] = tp.bounds.as_slice()
                 && let Some(vty) = scalar_type_name(only)
@@ -530,29 +539,62 @@ impl Checker {
         callable: &SourceType,
         outer_type_params: &[crate::ast::TypeParam],
     ) -> Result<Ty, TypeError> {
-        let SourceType::Func { type_params, .. } = callable else {
+        let SourceType::Func {
+            type_params,
+            where_clauses,
+            ..
+        } = callable
+        else {
             return Err(TypeError::InvariantViolation(
                 "anonymous callable lowering received a non-function type".to_string(),
             ));
         };
-        let decls = self.classify_params(type_params)?;
+        let mut decls = self.classify_params(type_params)?;
+        // A trailing `where` clause constrains the contract's own `def[...]`
+        // parameters; with none declared there is nothing to constrain.
+        if !where_clauses.is_empty() && decls.is_empty() {
+            return Err(TypeError::Unsupported(
+                "a function-type 'where' clause requires a def[...] parameter list".to_string(),
+            ));
+        }
         self.tparams.push(type_scope(&decls));
 
         let mut contextual_callable = callable.clone();
         let SourceType::Func {
             type_params: callable_context,
+            where_clauses: contextual_clauses,
             ..
         } = &mut contextual_callable
         else {
             unreachable!("callable source was matched above")
         };
+        // The clauses are compiled onto the parameter declarations below;
+        // strip them so `ty_from_anno`'s plain-annotation rejection does not
+        // fire on the contract path.
+        let clauses = std::mem::take(contextual_clauses);
         // Own declarations remain first so any own Origin/OriginSet indexes
         // have the same source-relative positions they do on a named generic
         // def. The appended outer declarations are only a lookup context.
         callable_context.extend_from_slice(outer_type_params);
         let checked = self.ty_from_anno(&contextual_callable);
+        // Compile the clauses inside the pushed scope so the contract's own
+        // binders resolve, exactly like a named def's trailing clauses.
+        let compiled: Result<Vec<_>, TypeError> = clauses
+            .iter()
+            .map(|condition| self.compile_where_clause(condition))
+            .collect();
         self.tparams.pop();
         let checked = checked?;
+        for constraint in compiled? {
+            match decls
+                .last_mut()
+                .expect("non-empty: clauses with empty decls rejected above")
+            {
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                    constraints.push(constraint)
+                }
+            }
+        }
 
         if decls.is_empty() {
             return Ok(checked);
@@ -847,7 +889,7 @@ impl Checker {
         // lifecycle method (a hand-written constructor), where `self`'s fields are
         // assigned in the body. `ref self` (parametric-mutability references), and
         // `out self` on any other method, still need semantics we don't model, so
-        // they stay flagged. A plain `self`, `read self`, `mut self`, or `var
+        // they stay flagged. A plain `self`, `imm self`, `mut self`, or `var
         // self` consuming method is fine.
         // `out self` initializes the receiver — allowed on the lifecycle methods
         // `__init__` (constructor), `__copyinit__` (copy), and `__moveinit__` (move),

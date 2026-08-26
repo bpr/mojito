@@ -1553,7 +1553,7 @@ fn effective_call_convention_matches(
             (declared, effective),
             (
                 Some(crate::ast::ArgConvention::Ref),
-                Some(crate::ast::ArgConvention::Read)
+                Some(crate::ast::ArgConvention::Imm)
             )
         )
 }
@@ -2192,7 +2192,7 @@ fn verify_instruction(
             let convention_matches = |convention| match mode {
                 crate::checked::IterationMode::Borrowed => matches!(
                     convention,
-                    None | Some(crate::ast::ArgConvention::Read)
+                    None | Some(crate::ast::ArgConvention::Imm)
                         | Some(crate::ast::ArgConvention::Ref)
                 ),
                 crate::checked::IterationMode::Owned => {
@@ -2218,7 +2218,7 @@ fn verify_instruction(
                         crate::checked::IterationMode::Borrowed => {
                             first
                                 == &crate::symbol::iterator_dispatch_symbol(
-                                    crate::ast::ArgConvention::Read,
+                                    crate::ast::ArgConvention::Imm,
                                 )
                                 || first
                                     == &crate::symbol::iterator_dispatch_symbol(

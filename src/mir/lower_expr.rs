@@ -1784,7 +1784,7 @@ impl Flatten<'_> {
                     });
                     return dest;
                 }
-                // Compiler-private inline uninit storage (`UnsafeMaybeUninit`'s
+                // Compiler-private inline uninit storage (`MaybeUninit`'s
                 // field). `unsafe_write` stores through the payload projection
                 // — the place is opaque to drop elaboration, so a previously
                 // written payload is overwritten raw (it leaks by design).
@@ -3071,7 +3071,7 @@ impl Flatten<'_> {
             for nested in &callable.captures {
                 if matches!(
                     nested.kind,
-                    crate::ast::CaptureKind::Read
+                    crate::ast::CaptureKind::Imm
                         | crate::ast::CaptureKind::Mut
                         | crate::ast::CaptureKind::Ref
                 ) {
@@ -3116,13 +3116,13 @@ impl Flatten<'_> {
                     bounds: Vec::new(),
                     callable_bound: None,
                 }),
-                kind: crate::ast::CaptureKind::Read,
+                kind: crate::ast::CaptureKind::Imm,
             };
             self.collect_capture_keepalives(&callable_capture, &mut owners, &mut seen);
             for capture in info.captures {
                 if matches!(
                     capture.kind,
-                    crate::ast::CaptureKind::Read
+                    crate::ast::CaptureKind::Imm
                         | crate::ast::CaptureKind::Mut
                         | crate::ast::CaptureKind::Ref
                 ) {
@@ -3156,7 +3156,7 @@ impl Flatten<'_> {
                     match capture.kind {
                         crate::ast::CaptureKind::Copy => MirCaptureMode::Copy,
                         crate::ast::CaptureKind::Move => MirCaptureMode::Move,
-                        crate::ast::CaptureKind::Read
+                        crate::ast::CaptureKind::Imm
                         | crate::ast::CaptureKind::Mut
                         | crate::ast::CaptureKind::Ref => MirCaptureMode::Reference,
                     }

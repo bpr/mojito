@@ -532,7 +532,7 @@ impl Checker {
             })?;
             if Self::type_contains_unsafe_any_pointer(&ty) {
                 return Err(TypeError::Unsupported(format!(
-                    "field '{}' cannot hide a MutUnsafeAnyOrigin or ImmutUnsafeAnyOrigin pointer",
+                    "field '{}' cannot hide a MutUnsafeAnyOrigin or ImmUnsafeAnyOrigin pointer",
                     f.name
                 )));
             }
@@ -1879,7 +1879,7 @@ impl Checker {
             return false;
         }
         // Compiler-private inline uninit storage copies its raw bits; the
-        // `UnsafeMaybeUninit` header conditions gate the public copy on the
+        // `MaybeUninit` header conditions gate the public copy on the
         // payload's triviality.
         if crate::types::uninit_storage_element(ty).is_some() {
             return true;
@@ -2012,7 +2012,7 @@ impl Checker {
         }
         // Compiler-private inline uninit storage: its destructor is always a
         // no-op (the payload deliberately leaks), while move/copy triviality
-        // is the payload's — matching upstream `UnsafeMaybeUninit`'s comptime
+        // is the payload's — matching upstream `MaybeUninit`'s comptime
         // lifecycle facts.
         if let Some(element) = crate::types::uninit_storage_element(ty) {
             return match kind {

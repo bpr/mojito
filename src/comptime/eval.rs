@@ -77,16 +77,11 @@ impl<'a> Elab<'a> {
                 match self.eval(object, scope)? {
                     CtValue::Type(ty) => self.associated_value(&ty, field),
                     CtValue::Reflected(ty) if field == "T" => Ok(CtValue::Type(ty)),
-                    // `tl.length` (with deprecated alias `size`, still shipped
-                    // by the audited head) on a compile-time TypeList value.
-                    value
-                        if value.typelist_elements().is_some()
-                            && matches!(field.as_str(), "length" | "size") =>
-                    {
-                        Ok(CtValue::Int(
-                            value.typelist_elements().expect("guarded").len() as i64,
-                        ))
-                    }
+                    // `tl.length` on a compile-time TypeList value (the
+                    // removed `size` alias rejects like any unknown member).
+                    value if value.typelist_elements().is_some() && field == "length" => Ok(
+                        CtValue::Int(value.typelist_elements().expect("guarded").len() as i64),
+                    ),
                     // A field read on a frozen struct instance folds to the
                     // frozen field value.
                     CtValue::Struct { name, fields } => fields
@@ -822,6 +817,7 @@ impl<'a> Elab<'a> {
                 capturing,
                 raises,
                 raises_type,
+                where_clauses,
             } => Type::Func {
                 type_params: type_params
                     .iter()
@@ -852,6 +848,7 @@ impl<'a> Elab<'a> {
                     .as_deref()
                     .map(|ty| self.resolve_reflected_type(ty, scope).map(Box::new))
                     .transpose()?,
+                where_clauses: where_clauses.clone(),
             },
             Type::Ref { referent, origin } => Type::Ref {
                 referent: Box::new(self.resolve_reflected_type(referent, scope)?),

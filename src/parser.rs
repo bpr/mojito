@@ -664,9 +664,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.next_token()?;
                     Some(CaptureKind::Copy)
                 }
-                Some(Token::Identifier(word)) if matches!(word.as_str(), "imm" | "read") => {
+                Some(Token::Identifier(word)) if word == "imm" => {
                     self.next_token()?;
-                    Some(CaptureKind::Read)
+                    Some(CaptureKind::Imm)
+                }
+                Some(Token::Identifier(word)) if word == "read" => {
+                    let word = word.clone();
+                    return Err(removed_convention_error(&word).expect("read is removed"));
                 }
                 Some(Token::Identifier(word)) if word == "mut" => {
                     self.next_token()?;
@@ -702,7 +706,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let kind = if moved {
                 CaptureKind::Move
             } else {
-                convention.unwrap_or(CaptureKind::Read)
+                convention.unwrap_or(CaptureKind::Imm)
             };
             if let Some(name) = name {
                 if entries.iter().any(|capture: &Capture| capture.name == name) {
@@ -1087,6 +1091,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             convention_word(&word)
         }) else {
+            if let Some(error) = removed_convention_error(&word) {
+                return Err(error);
+            }
             return Err(ParseError::UnexpectedToken(
                 Token::Identifier(word),
                 "expected a parameter name (or a convention: imm/mut/var/out/ref)".into(),
@@ -1454,6 +1461,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             convention_word(&first)
         };
+        if explicit.is_none()
+            && let Some(error) = removed_convention_error(&first)
+        {
+            return Err(error);
+        }
         let (self_name, self_convention, self_origin) = if let Some(conv) = explicit {
             let origin = if conv == ArgConvention::Ref {
                 self.parse_optional_origin_specifier()?
@@ -1994,6 +2006,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         self.next_token()?;
                         convention_word(&word)
                     }
+                    Some(Token::Identifier(word)) if word == "read" => {
+                        let word = word.clone();
+                        return Err(removed_convention_error(&word).expect("read is removed"));
+                    }
                     _ => None,
                 };
                 let origin = if convention == Some(ArgConvention::Ref) {
@@ -2108,6 +2124,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             Type::None
         };
+        // Trailing `where` clauses bind to the innermost function type: a
+        // function-type RETURN type consumes them here through its own
+        // `parse_type` above, matching upstream's rule that a declaration-
+        // level `where` after a function-type result needs the result
+        // parenthesized (Mojito has no parenthesized types, so that spelling
+        // is simply unavailable).
+        let where_clauses = self.parse_where_clauses()?;
         Ok(Type::Func {
             type_params,
             params,
@@ -2116,6 +2139,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             capturing,
             raises,
             raises_type,
+            where_clauses,
         })
     }
 
@@ -2702,6 +2726,41 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 self.expect(Token::RBrace, "Expected '}' after brace literal")?;
                 Ok(self.node(ExprKind::BraceLit(entries), start))
+            }
+            // A leading-dot contextual member reference (`.red`,
+            // `.hsb_to_rgb(120, 100, 50)`): the base type comes from the
+            // expression's expected type during checking. The object is the
+            // compiler-internal `$contextual` sentinel (unspellable in
+            // source), spanned at the dot so diagnostics point here; postfix
+            // chains and calls attach through ordinary infix parsing.
+            Token::Dot => {
+                let sentinel = self.node(
+                    ExprKind::Identifier(crate::ast::CONTEXTUAL_SENTINEL.into()),
+                    start,
+                );
+                let field = self.expect_identifier("Expected a member name after a leading '.'")?;
+                if matches!(self.peek_token()?, Some(Token::LParen)) {
+                    self.next_token()?; // consume '('
+                    let (args, kwargs) = self.parse_call_args()?;
+                    self.expect(Token::RParen, "Expected ')' after arguments")?;
+                    Ok(self.node(
+                        ExprKind::MethodCall {
+                            object: Box::new(sentinel),
+                            method: field,
+                            args,
+                            kwargs,
+                        },
+                        start,
+                    ))
+                } else {
+                    Ok(self.node(
+                        ExprKind::Member {
+                            object: Box::new(sentinel),
+                            field,
+                        },
+                        start,
+                    ))
+                }
             }
             token => Err(ParseError::UnexpectedToken(
                 token,
@@ -3476,17 +3535,31 @@ struct ParamList {
     keyword_only: Option<usize>,
 }
 
-/// Maps a contextual convention word (`read`/`mut`/`out`/`ref`) to its
-/// `ArgConvention`, or `None` for any other identifier.
+/// Maps a contextual convention word (`imm`/`mut`/`out`/`ref`/`deinit`) to
+/// its `ArgConvention`, or `None` for any other identifier. The removed
+/// `read` spelling is not a convention; convention positions reject it with
+/// [`removed_convention_error`].
 fn convention_word(word: &str) -> Option<ArgConvention> {
     match word {
-        "imm" | "read" => Some(ArgConvention::Read),
+        "imm" => Some(ArgConvention::Imm),
         "mut" => Some(ArgConvention::Mut),
         "out" => Some(ArgConvention::Out),
         "ref" => Some(ArgConvention::Ref),
         "deinit" => Some(ArgConvention::Deinit),
         _ => None,
     }
+}
+
+/// The targeted migration diagnostic for the removed `read` convention
+/// (upstream hard error since 2026-08: `'read' was removed; use 'imm'`), or
+/// `None` when the word is not the removed spelling.
+fn removed_convention_error(word: &str) -> Option<ParseError> {
+    (word == "read").then(|| {
+        ParseError::UnexpectedToken(
+            Token::Identifier(word.to_string()),
+            "'read' was removed; use 'imm'".to_string(),
+        )
+    })
 }
 
 /// The callee name of a call: the callee must be a bare identifier (closures

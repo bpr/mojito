@@ -341,6 +341,7 @@ fn rewrite_type(
             ret,
             capturing,
             raises_type,
+            where_clauses,
             ..
         } => {
             for parameter in type_params {
@@ -362,6 +363,9 @@ fn rewrite_type(
             }
             if let Some(error) = raises_type {
                 rewrite_type(error, names, namespaces);
+            }
+            for clause in where_clauses {
+                rewrite_expr(clause, names, namespaces);
             }
         }
         Type::Ref { referent, origin } => {
@@ -514,9 +518,9 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
         "OriginSet",
         "UntrackedOrigin",
         "MutUntrackedOrigin",
-        "ImmutUntrackedOrigin",
+        "ImmUntrackedOrigin",
         "MutUnsafeAnyOrigin",
-        "ImmutUnsafeAnyOrigin",
+        "ImmUnsafeAnyOrigin",
     ];
     let normalized = canon.to_string_lossy().replace('\\', "/");
     if normalized.ends_with("std/traits.mojo") {

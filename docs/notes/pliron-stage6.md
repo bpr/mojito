@@ -2,8 +2,9 @@
 
 Implementation record for Stage 6 (plan: `pliron-stage6-plan.md`). The
 sections below are the binding policy decisions as landed; changing any of
-them is a reviewed policy change. Status: implementation complete;
-outstanding acceptance evidence is listed at the end.
+them is a reviewed policy change. Status: implementation complete; the
+acceptance-evidence record is at the end, with only the upstream-blocked
+dependency-upgrade rehearsal still open.
 
 ## Optimization profiles and pipelines
 
@@ -130,19 +131,32 @@ the branch. It must run — and pass — on the first upstream release
 before that release is adopted, and its record feeds the promotion
 decision.
 
-## Outstanding acceptance evidence
+## Acceptance evidence
 
-Implementation and focused tests are complete; the following remain to
-close the roadmap's Stage 6 acceptance clause (all deliberately deferred
-to user-scheduled runs):
+Recorded 2026-08-26 on the pinned runner (`pop-os`); the
+dependency-upgrade rehearsal is the only item still open:
 
-1. Pinned-runner benchmark baseline (`run-bench-baseline.sh`) committed
-   under `benchmarks/native/baseline/<runner-id>/`, then the budget
-   evaluation from `pliron-stage6-plan.md`'s table over it (runtime
-   benefit, compile-time, memory, size, startup).
-2. Full `scripts/check-pliron` and `scripts/check` gates, plus the
-   complete parity + sanitizer lanes at both profiles (the manifest gate
-   runs O0 and release; the sanitizer lane runs at O0).
-3. Container-based compiler-free execution (the automated approximation —
-   `env -i` + DT_NEEDED inspection — is in `pliron_dist_test`).
-4. The dependency-upgrade rehearsal, blocked on an upstream release.
+1. Pinned-runner baseline committed under
+   `benchmarks/native/baseline/pop-os/` (two agreeing governor-pinned
+   runs per the noise policy). Budget evaluation
+   (`scripts/stage6-budget-report` over `summary.tsv`): release 1.40x
+   over `O0` by exec geomean (budget 1.15x) and far past the VM budget;
+   no fixture regresses >10% at release; compile median release 1.04x
+   worst-case (budget 2.0x); peak RSS 1.02x worst-case (budget 1.5x);
+   exe-size geomean 1.00x (budget 1.10x, unstripped upper bound);
+   startup within allowance. Waivers: the "O0 within 1.15x of the
+   pre-Stage-6 compile baseline" line is N/A — no pre-Stage-6 baseline
+   was ever captured, so this baseline is the first reference point; and
+   a handful of micro-metrics (sub-ms startup walls, few-KB RSS medians)
+   jitter above the MAD conclusiveness bound, but every affected verdict
+   passes with margin several times the jitter.
+2. Full gates: `scripts/check` (3322/3322 workspace tests, fmt, clippy)
+   and `scripts/check-pliron` (344/344 pliron-lane tests, spike gate
+   11/11, bench smoke) — the complete parity + sanitizer lanes at both
+   profiles run inside the pliron gate's manifest test.
+3. Container-based compiler-free execution: the packaged bundle compiled
+   the smoke fixture and the executable ran in a bare `ubuntu:24.04`
+   container printing `mojito bundle ok` (the automated approximation —
+   `env -i` + DT_NEEDED inspection — remains in `pliron_dist_test`).
+4. The dependency-upgrade rehearsal, blocked on an upstream release
+   (procedure above).

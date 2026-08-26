@@ -464,6 +464,7 @@ impl PackRewriter {
                 ret,
                 capturing,
                 raises_type,
+                where_clauses,
                 ..
             } => {
                 self.push_type_scope();
@@ -487,6 +488,9 @@ impl PackRewriter {
                 }
                 if let Some(error) = raises_type {
                     self.expand_type(error);
+                }
+                for clause in where_clauses.iter_mut() {
+                    self.expand_expression(clause);
                 }
                 self.pop_type_scope();
             }

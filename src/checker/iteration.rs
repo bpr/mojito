@@ -332,7 +332,7 @@ impl Checker {
                         borrowed_origin: None,
                         yield_interior: Vec::new(),
                         prepare: vec![crate::symbol::iterator_dispatch_symbol(match mode {
-                            IterationMode::Borrowed => crate::ast::ArgConvention::Read,
+                            IterationMode::Borrowed => crate::ast::ArgConvention::Imm,
                             IterationMode::Owned => crate::ast::ArgConvention::Var,
                         })],
                         has_next: Some("__iterator_dispatch.__len__".to_string()),
@@ -394,7 +394,7 @@ impl Checker {
                 IterationMode::Owned => sig.self_convention == Some(crate::ast::ArgConvention::Var),
                 IterationMode::Borrowed => matches!(
                     sig.self_convention,
-                    None | Some(crate::ast::ArgConvention::Read | crate::ast::ArgConvention::Ref)
+                    None | Some(crate::ast::ArgConvention::Imm | crate::ast::ArgConvention::Ref)
                 ),
             })
             .collect::<Vec<_>>();

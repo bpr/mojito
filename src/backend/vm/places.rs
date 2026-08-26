@@ -161,7 +161,7 @@ fn nav_step<'a>(
         Proj::UninitPayload => match slot {
             Value::UninitStorage(Some(payload)) => Ok(payload.as_mut()),
             Value::UninitStorage(None) => Err(RuntimeError::TypeError(
-                "vm: read of uninitialized UnsafeMaybeUninit storage".to_string(),
+                "vm: read of uninitialized MaybeUninit storage".to_string(),
             )),
             other => Err(RuntimeError::TypeError(format!(
                 "payload projection on non-uninit-storage {}",

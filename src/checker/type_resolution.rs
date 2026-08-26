@@ -42,7 +42,20 @@ impl Checker {
                 capturing,
                 raises,
                 raises_type,
+                where_clauses,
             } => {
+                // Clauses are compiled onto the anonymous contract's decls by
+                // `lower_anonymous_callable_type`, which strips them before
+                // resolving here. Any clause still present is on a plain
+                // function-type annotation, where it has no binder to
+                // constrain.
+                if !where_clauses.is_empty() {
+                    return Err(TypeError::Unsupported(
+                        "a 'where' clause on a function type is only supported on a \
+                         compile-time callable parameter bound with def[...] parameters"
+                            .to_string(),
+                    ));
+                }
                 let environment =
                     self.lower_callable_environment(type_params, *thin, capturing.as_ref())?;
                 let function_params: Vec<FnParam> = params
@@ -296,12 +309,12 @@ impl Checker {
                 if name == "__RuntimeTuple" {
                     return self.tuple_element_types(args).map(Ty::Tuple);
                 }
-                // Compiler-private inline uninit storage (`UnsafeMaybeUninit`'s
+                // Compiler-private inline uninit storage (`MaybeUninit`'s
                 // field), reachable only from the bundled crossing module.
                 if name == crate::types::UNINIT_STORAGE_TYPE_NAME {
                     if !self.bundled_stdlib_declaration {
                         return Err(TypeError::Unsupported(format!(
-                            "'{name}' is compiler-private storage; use UnsafeMaybeUninit from std.memory"
+                            "'{name}' is compiler-private storage; use MaybeUninit from std.memory"
                         )));
                     }
                     if args.len() != 1 {
@@ -1563,10 +1576,27 @@ impl Checker {
         };
         match constant {
             "MutUntrackedOrigin" => Ok(PointerOrigin::Untracked { mutable: true }),
-            "ImmutUntrackedOrigin" => Ok(PointerOrigin::Untracked { mutable: false }),
+            "ImmUntrackedOrigin" => Ok(PointerOrigin::Untracked { mutable: false }),
             "MutUnsafeAnyOrigin" => Ok(PointerOrigin::UnsafeAny { mutable: true }),
-            "ImmutUnsafeAnyOrigin" => Ok(PointerOrigin::UnsafeAny { mutable: false }),
-            "StaticConstantOrigin" => Ok(PointerOrigin::Static),
+            "ImmUnsafeAnyOrigin" => Ok(PointerOrigin::UnsafeAny { mutable: false }),
+            "ImmStaticOrigin" => Ok(PointerOrigin::Static),
+            // The pre-rename alias spellings were removed upstream (2026-08);
+            // give them targeted migration diagnostics.
+            "ImmutUntrackedOrigin" | "ImmutExternalOrigin" => Err(TypeError::Unsupported(format!(
+                "'{constant}' was removed; use 'ImmUntrackedOrigin'"
+            ))),
+            "ImmutUnsafeAnyOrigin" => Err(TypeError::Unsupported(
+                "'ImmutUnsafeAnyOrigin' was removed; use 'ImmUnsafeAnyOrigin'".to_string(),
+            )),
+            "StaticConstantOrigin" => Err(TypeError::Unsupported(
+                "'StaticConstantOrigin' was removed; use 'ImmStaticOrigin'".to_string(),
+            )),
+            "ExternalOrigin" => Err(TypeError::Unsupported(
+                "'ExternalOrigin' was removed; use 'UntrackedOrigin'".to_string(),
+            )),
+            "MutExternalOrigin" => Err(TypeError::Unsupported(
+                "'MutExternalOrigin' was removed; use 'MutUntrackedOrigin'".to_string(),
+            )),
             name => self
                 .enclosing_origin_param(name)
                 .map_err(|_| TypeError::UndefinedVariable(name.to_string())),

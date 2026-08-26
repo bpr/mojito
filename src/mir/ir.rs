@@ -500,7 +500,7 @@ pub enum MirInstr {
         element: Ty,
     },
     /// Construct compiler-private inline possibly-uninitialized storage
-    /// (`UnsafeMaybeUninit`'s field): uninitialized when `init` is absent,
+    /// (`MaybeUninit`'s field): uninitialized when `init` is absent,
     /// holding the moved payload otherwise.
     UninitStorage {
         dest: Reg,

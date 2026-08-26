@@ -38,7 +38,7 @@ part of any native ABI, and `mojito-runtime` must never depend on the
   Version 6 added runtime layout/lifetime tracking alongside allocation
   headers and added `mjrt_pointer_status`,
   dynamic-message `mjrt_abort`, and trap categories 7–13 for abort, pointer
-  lifetime, and `UnsafeMaybeUninit` failures.
+  lifetime, and `MaybeUninit` failures.
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
   synthesized executable wrapper references `mjrt_version`, so every produced

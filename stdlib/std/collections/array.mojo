@@ -69,6 +69,7 @@ struct _ArrayOwnedIter[T: AnyType](
         self.data.unsafe_free()
 
 struct Array[T: AnyType, length: Int](
+    Comparable where conforms_to(T, Comparable),
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
     Equatable where conforms_to(T, Equatable),
@@ -96,6 +97,11 @@ struct Array[T: AnyType, length: Int](
             self.data[i] = value^
             i += 1
 
+    # Upstream's `Defaultable where conforms_to(T, Defaultable)` conformance
+    # (default-constructing every element) needs `Self.T()` — constructing a
+    # type parameter's default value in a generic body — which Mojito does
+    # not support yet. Recorded as a subset gap on the types.collections
+    # parity row.
     def __init__(out self, *, fill: Self.T) where conforms_to(Self.T, Copyable):
         self._size = Self.length
         self.data = unsafe_alloc[Self.T](Self.length)
@@ -157,6 +163,27 @@ struct Array[T: AnyType, length: Int](
         Self.T, Equatable
     ):
         return not self == other
+
+    # Lexicographic ordering (upstream 2026-08): elements compare pairwise
+    # and the first differing pair decides the result.
+    def __lt__(self, other: Self) -> Bool where conforms_to(Self.T, Comparable):
+        var i = 0
+        while i < Self.length:
+            if self.data[i] < other.data[i]:
+                return True
+            if other.data[i] < self.data[i]:
+                return False
+            i += 1
+        return False
+
+    def __le__(self, other: Self) -> Bool where conforms_to(Self.T, Comparable):
+        return not (other < self)
+
+    def __gt__(self, other: Self) -> Bool where conforms_to(Self.T, Comparable):
+        return other < self
+
+    def __ge__(self, other: Self) -> Bool where conforms_to(Self.T, Comparable):
+        return not (self < other)
 
     def __contains__(self, value: Self.T) -> Bool where conforms_to(
         Self.T, Equatable

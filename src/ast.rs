@@ -16,6 +16,11 @@ use crate::token::Span;
 /// checker wraps the positions where a trait name is extracted from an
 /// ordinary expression (`conforms_to(T, ...)`), so every later phase sees one
 /// canonical spelling (the `read` → `imm` precedent).
+/// The compiler-internal base of a leading-dot contextual member reference
+/// (`.red`); unspellable in source, resolved against the expected type during
+/// checking and substituted during HIR syntax renaming.
+pub(crate) const CONTEXTUAL_SENTINEL: &str = "$contextual";
+
 pub fn canonical_trait_name(name: &str) -> &str {
     match name {
         "ImplicitlyDeletable" => "Deinitable",
@@ -102,6 +107,12 @@ pub enum Type {
         capturing: Option<OriginSpec>,
         raises: bool,
         raises_type: Option<Box<Type>>,
+        /// Trailing `where` clauses constraining the contract's own `def[...]`
+        /// parameters. The clause binds to the innermost function type
+        /// (upstream requires parenthesizing a function-type result to attach
+        /// a declaration-level `where` after it). Compiled onto the anonymous
+        /// contract's parameter declarations; rejected on plain annotations.
+        where_clauses: Vec<Expr>,
     },
     /// An opaque checked callable id carried through compiler-generated AST.
     ///
@@ -365,7 +376,9 @@ pub enum ParamKind {
 /// and a single free-function named `out` result are modeled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgConvention {
-    Read,
+    /// `imm` — the immutable convention. The legacy `read` spelling is a hard
+    /// error (removed upstream 2026-08) with a targeted migration diagnostic.
+    Imm,
     Mut,
     Var,
     Out,
@@ -844,8 +857,8 @@ pub struct Capture {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureKind {
-    /// Immutable reference (`imm`; legacy `read` is normalized to this).
-    Read,
+    /// Immutable reference (`imm`; the legacy `read` spelling rejects).
+    Imm,
     /// Mutable reference.
     Mut,
     /// Reference whose mutability is inherited from the captured origin.
@@ -1669,6 +1682,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     ret,
                     capturing,
                     raises_type,
+                    where_clauses,
                     ..
                 } => {
                     self.type_params(type_params);
@@ -1688,6 +1702,9 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
                     }
                     if let Some(error) = raises_type {
                         self.ty(error);
+                    }
+                    for clause in where_clauses {
+                        self.expr(clause);
                     }
                 }
                 Type::Int
@@ -2177,6 +2194,7 @@ fn stamp_type(ty: &mut Type, source: &str) {
             ret,
             capturing,
             raises_type,
+            where_clauses,
             ..
         } => {
             stamp_type_params(type_params, source);
@@ -2189,6 +2207,9 @@ fn stamp_type(ty: &mut Type, source: &str) {
                 }
             }
             stamp_type(ret, source);
+            for clause in where_clauses {
+                stamp_expr(clause, source);
+            }
             if let Some(origins) = capturing {
                 for expression in origins {
                     stamp_expr(expression, source);

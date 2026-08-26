@@ -1786,12 +1786,12 @@ fn bound_generic_function_value_rejects_contextual_specialization() {
 }
 
 #[test]
-fn unsafe_maybe_uninit_writes_and_assumes_init() {
+fn maybe_uninit_writes_and_assumes_init() {
     // The audited surface: the value constructor and `unsafe_write` fill the
     // storage, and the consuming `unsafe_assume_init` moves the payload out.
     // (The former `unsafe_init_with`/`unsafe_take` wrappers were Mojito-only
     // extensions and were removed to match the head.)
-    let src = "from std.memory import UnsafeMaybeUninit\n\ndef main():\n    var u = UnsafeMaybeUninit[Int]()\n    u.unsafe_write(7)\n    print(\"first\", u^.unsafe_assume_init())\n    var v = UnsafeMaybeUninit[Int](9)\n    print(\"second\", v^.unsafe_assume_init())\n";
+    let src = "from std.memory import MaybeUninit\n\ndef main():\n    var u = MaybeUninit[Int]()\n    u.unsafe_write(7)\n    print(\"first\", u^.unsafe_assume_init())\n    var v = MaybeUninit[Int](9)\n    print(\"second\", v^.unsafe_assume_init())\n";
     assert_eq!(
         run_compiled(src).expect("uninit storage runs"),
         "first 7\nsecond 9\n"

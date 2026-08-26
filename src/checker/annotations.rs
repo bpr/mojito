@@ -103,10 +103,8 @@ pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
         "Int" => Some(Ty::Int),
         // A `[dtype: DType]` value parameter; compile-time-only.
         "DType" => Some(Ty::Dtype),
+        // The removed `SIMDSize` spelling rejects (upstream removed it 2026-08).
         "SIMDLength" => Some(Ty::Int),
-        // Deprecated transitional spelling of `SIMDLength`; accepted, never
-        // emitted.
-        "SIMDSize" => Some(Ty::Int),
         "UInt" => Some(Ty::UInt),
         "Bool" => Some(Ty::Bool),
         "String" => Some(Ty::StringLiteral),

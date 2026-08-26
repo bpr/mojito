@@ -1,8 +1,8 @@
 # Borrowing unsafe_assume_init on uninitialized storage is upstream UB; the
 # VM traps deterministically.
-# expect: read of uninitialized UnsafeMaybeUninit storage
-from std.memory import UnsafeMaybeUninit
+# expect: read of uninitialized MaybeUninit storage
+from std.memory import MaybeUninit
 
 def main():
-    var a = UnsafeMaybeUninit[Int]()
+    var a = MaybeUninit[Int]()
     print(a.unsafe_assume_init())

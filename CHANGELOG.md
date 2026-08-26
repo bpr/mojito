@@ -8,6 +8,56 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Contextually inferred member references (upstream 2026-08): a leading-dot
+  chain (`var c: Color = .red()`, `takes_color(.of(7))`, `[.red(), .of(3)]`
+  under a `List[Color]` annotation, `return .red()`) resolves its base against
+  the expected type. The parser builds the chain over a compiler-internal
+  `$contextual` sentinel, the checker re-checks the spelled form with spans
+  preserved and records the base, and HIR substitutes the name physically.
+  Without a contextual type the form rejects with a targeted diagnostic.
+  First slice: static-method calls with postfix chains in expected-type
+  positions; bare `.member` comptime value members, parametric statics,
+  non-struct expected types, and generic expected types are recorded gaps.
+
+- Function-type `where` clauses (upstream 2026-08): a `thin` function type
+  with its own `def[...]` parameters may carry trailing clauses
+  (`F: def[w: Int](Int) thin -> None where (w > 0, "msg")`), lowered onto the
+  anonymous contract's parameter declarations with binder references
+  alpha-renamed into canonical identity. Explicit specializations through the
+  parameter evaluate the clauses (`F[0]` fails the example), and the binding
+  rule is directional: a constrained function requires the contract to
+  declare the matching clause, while unconstrained-into-constrained stays
+  allowed and free. `Ty::GenericFunc` now renders its binders and clauses in
+  diagnostics. Binder-less clauses and `comptime` function-type aliases are
+  recorded mojo-only gaps.
+
+- In-subset library alignment with the `a79fbdf59f2` head: `List`'s element
+  bound is `AnyType` with per-API `Movable` requirements on the moving
+  surface (an empty `List` of a pinned element type is legal on both
+  compilers); `Array` gains lexicographic `Comparable`; `String` gains the
+  bare empty constructor, `String(capacity_bytes=…)`, and `reserve_bytes`;
+  and `MaybeUninit.write()` lands as the safe, `IsTriviallyDeinitable`-gated
+  counterpart of `unsafe_write`. Array `concat`/`repeat` (dependent result
+  lengths) and `Defaultable` (generic `Self.T()` construction) are recorded
+  mojo-only gaps.
+
+- Nightly re-pin to upstream `a79fbdf59f2` (2026-08-26, Mojo
+  `1.1.0.dev2026082605`) with the expired-bridge sweep the new head requires:
+  the legacy `read` argument convention is now a hard error with upstream's
+  migration diagnostic (`'read' was removed; use 'imm'`; MIR text emits and
+  accepts only `imm`, and the internal convention variant is renamed
+  `ArgConvention::Imm`); the removed `SIMDSize` and `TypeList.size` alias
+  spellings reject; the origin-alias vocabulary is unified on the surviving
+  `Imm*`/`Untracked*` set across `ref[...]` clauses, Pointer type arguments,
+  type display, and the `std.origin` exports (`ImmUnsafeAnyOrigin` added,
+  removed spellings reject with targeted diagnostics); `UnsafeMaybeUninit` is
+  renamed `MaybeUninit` with upstream's triviality-gated
+  Movable/ImplicitlyCopyable/Deinitable/RegisterPassable conformance header
+  (a non-trivially-deinitable payload makes the wrapper linear); and the
+  parametric-closure decorator accepts the canonical `@__parameter` spelling
+  (`@parameter` stays a warning-era bridge, with the diverging capture model
+  recorded as a probe).
+
 - Pliron Stage 5 completion: every runnable `assets/ok` and
   `assets/ownership_ok` fixture is now an O0/O1 executable differential with
   a clean O0 ASan/LSan lane (295 total), every runnable runtime-error fixture

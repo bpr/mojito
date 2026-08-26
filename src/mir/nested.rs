@@ -484,7 +484,7 @@ fn lower_nested_node(
         });
         let immutable_captures: HashSet<String> = captures
             .iter()
-            .filter(|capture| capture.kind == crate::ast::CaptureKind::Read)
+            .filter(|capture| capture.kind == crate::ast::CaptureKind::Imm)
             .map(|capture| capture.name.clone())
             .collect();
         let mut ncfg =

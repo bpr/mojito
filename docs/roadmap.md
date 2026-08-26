@@ -18,19 +18,13 @@ unchecked box is the default next task. Sections marked *(recurring)* or
 
 ### 1. Native Backend: Pliron Stage 6 — Optimization and Distribution
 
-- [ ] **Pliron Stage 6: close the acceptance evidence** — the Stage 6
-  implementation (verified `O0`/`release` pipelines, analysis-invalidation
-  tests, manifest-driven object linking, source-level debug locations,
-  runtime packaging with relocated-bundle discovery, byte-reproducible
-  clean builds, and the benchmark corpus/driver/noise policy) is landed
-  and focused-test-covered; `docs/notes/pliron-stage6.md` records the
-  policy. Remaining to close the acceptance clause: capture and commit
-  the pinned-runner benchmark baseline (`run-bench-baseline.sh`) and
-  evaluate the pre-declared budgets over it; run the full default and
-  pliron gates plus the complete parity/sanitizer lanes at both profiles;
-  one container-based compiler-free execution check; and the
-  dependency-upgrade rehearsal, blocked on the first upstream
-  pliron/llvm-sys release newer than the current pins.
+- [ ] **Pliron Stage 6: dependency-upgrade rehearsal** — the one open
+  acceptance item, blocked on the first upstream pliron/llvm-sys release
+  newer than the current pins (0.17.0 / llvm-sys 221.0.1). The procedure
+  and the rest of the completed acceptance evidence (full gates,
+  parity/sanitizer lanes at both profiles, pinned-runner baseline with
+  passed budgets, container-based compiler-free execution) are recorded
+  in `docs/notes/pliron-stage6.md`.
 
 - [ ] **Pliron promotion decision** — promote Pliron from experimental to the
   preferred native backend only with semantic parity for all runnable corpus
@@ -45,6 +39,19 @@ unchecked box is the default next task. Sections marked *(recurring)* or
   that mechanically duplicates MIR, runtime/codegen layout disagreement,
   optimization-only miscompilation, undocumented runtime ABI lock-in, or
   stale upstream adoption evidence.
+
+  Close this checkbox with a written promotion decision record (a
+  `docs/notes/` design note, like the stage notes): walk each criterion
+  above and cite its evidence — the parity manifest's VM/native oracles at
+  both profiles with sanitizers, Stage 5's zero native exclusions, the
+  reproducibility and container evidence plus the committed baseline and
+  passed budget table (`docs/notes/pliron-stage6.md`, "Acceptance
+  evidence"), and the pinned no-patch upstream consumption — then sweep
+  the standing blockers confirming none applies, and state the
+  recommendation. Two inputs must accrue before the record can be
+  written: the dependency-upgrade rehearsal above, and the sustained
+  regression-free period, which accumulates from continued green gate
+  runs while other roadmap work proceeds.
 
 - [ ] **Cranelift fallback** *(conditional — only on material Pliron
   failure)* — record the evidence, then implement the same acceptance slices
@@ -70,8 +77,14 @@ compiler, and burn down the recorded divergences (tracked in the
 accepts what the audited head accepts, with extensions tolerable only as
 temporary bridges tracking upstream's own deprecation state or as cited
 implementations of features on Mojo's own roadmap, re-probed at every re-pin.
-The `ae386d1b204` pass is complete; the next re-pin recreates this section's
-checkbox with the fresh divergence list.
+
+Current pass: the `a79fbdf59f2` audit (2026-08-26, Mojo `1.1.0.dev2026082605`;
+see `docs/mojo-nightly.md`). The re-pin, probe re-runs, and parity recording
+are done; the burn-down slices are:
+
+- [ ] **Close-out** — full differential conformance in the
+  `~/src/mojo/envs/mojo-2026082605` Pixi env; probe promotion/deletion;
+  docs/CHANGELOG sweep.
 
 ### 3. Grow The CPU Standard Library *(demand-first — any order)*
 

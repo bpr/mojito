@@ -152,6 +152,7 @@ impl Checker {
                     // keyword construction such as `String(copy: s)`) is the
                     // ordinary constructor path.
                     if crate::symbol::is_stdlib_string_struct(name)
+                        && !args.is_empty()
                         && kwargs.is_empty()
                         && param_args.is_empty()
                         && !(args.len() == 1 && matches!(self.infer(&args[0])?, Ty::StringLiteral))
@@ -238,7 +239,10 @@ impl Checker {
                         }
                     }
                 }
-                "String" => return self.infer_stringify(args),
+                // Positional `String(x)` is the stringify intrinsic; the
+                // zero-argument form is the nominal empty constructor
+                // (2026-08 stabilization) and falls through to it.
+                "String" if !args.is_empty() => return self.infer_stringify(args),
                 "repr" => {
                     let tys = self.builtin_args("repr", 1, args)?;
                     if self.conforms_to(&tys[0], "Writable") {

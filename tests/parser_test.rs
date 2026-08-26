@@ -1429,7 +1429,7 @@ fn parses_current_and_legacy_closure_capture_lists() {
     else {
         panic!("expected nested closure");
     };
-    assert_eq!(captures.default, Some(CaptureKind::Read));
+    assert_eq!(captures.default, Some(CaptureKind::Imm));
     assert_eq!(
         captures.entries,
         vec![
@@ -1439,7 +1439,7 @@ fn parses_current_and_legacy_closure_capture_lists() {
             },
             Capture {
                 name: "b".into(),
-                kind: CaptureKind::Read,
+                kind: CaptureKind::Imm,
             },
             Capture {
                 name: "c".into(),
@@ -1467,7 +1467,7 @@ fn parses_current_and_legacy_closure_capture_lists() {
     else {
         panic!("expected nested closure");
     };
-    assert_eq!(captures.entries[0].kind, CaptureKind::Read);
+    assert_eq!(captures.entries[0].kind, CaptureKind::Imm);
 }
 
 #[test]
@@ -2070,7 +2070,7 @@ fn parses_argument_conventions() {
     assert_eq!(p[0].convention, Some(ArgConvention::Mut));
     assert_eq!(p[1].convention, Some(ArgConvention::Var));
     assert_eq!(p[2].convention, Some(ArgConvention::Out));
-    assert_eq!(p[3].convention, Some(ArgConvention::Read));
+    assert_eq!(p[3].convention, Some(ArgConvention::Imm));
 }
 
 #[test]
@@ -2085,6 +2085,25 @@ fn convention_word_stays_usable_as_a_param_name() {
     let (p, _, _) = def_params("def g(ref: Int):\n    pass\n");
     assert_eq!(p[0].name, "ref");
     assert_eq!(p[0].convention, None);
+}
+
+#[test]
+fn rejects_removed_read_convention_with_migration_diagnostic() {
+    // Upstream made `read` a hard error (2026-08): `'read' was removed; use
+    // 'imm'`. Every convention position rejects with the targeted message;
+    // `read` as a parameter NAME (`read: Int`) stays usable above.
+    for source in [
+        "def f(read b: Int) -> Int:\n    return b\n",
+        "struct S:\n    def m(read self):\n        pass\n",
+        "def outer():\n    var a = 1\n    def inner() {read a}:\n        pass\n",
+        "def f(cb: def(read Int) -> Int):\n    pass\n",
+    ] {
+        let error = mojito::parse(source).unwrap_err().to_string();
+        assert!(
+            error.contains("'read' was removed; use 'imm'"),
+            "missing migration diagnostic for {source:?}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -2525,6 +2544,67 @@ fn function_type_param(ty: Type) -> FunctionTypeParam {
 }
 
 #[test]
+fn parses_leading_dot_contextual_members() {
+    // `.red()` is a MethodCall over the compiler-internal `$contextual`
+    // sentinel; `.red` a Member; postfix chains attach normally.
+    let exprs = parse("var c = .red()\nvar m = .red\nvar b = .red().brighten(2)\n");
+    let object_name = |expr: &Expr| -> String {
+        match &expr.kind {
+            ExprKind::MethodCall { object, .. } | ExprKind::Member { object, .. } => {
+                match &object.kind {
+                    ExprKind::Identifier(name) => name.clone(),
+                    other => panic!("unexpected object {other:?}"),
+                }
+            }
+            other => panic!("unexpected expression {other:?}"),
+        }
+    };
+    let value = |stmt: &Stmt| -> Expr {
+        match &stmt.kind {
+            StmtKind::VarDecl { value, .. } => value.clone(),
+            other => panic!("unexpected statement {other:?}"),
+        }
+    };
+    assert_eq!(object_name(&value(&exprs[0])), "$contextual");
+    assert_eq!(object_name(&value(&exprs[1])), "$contextual");
+    // The chained call's outer object is the inner `.red()` MethodCall.
+    let outer = value(&exprs[2]);
+    let ExprKind::MethodCall { object, method, .. } = &outer.kind else {
+        panic!("expected a chained method call");
+    };
+    assert_eq!(method, "brighten");
+    assert_eq!(object_name(object), "$contextual");
+}
+
+#[test]
+fn parses_function_type_where_clauses_bind_innermost() {
+    // Trailing `where` clauses attach to the function type itself.
+    let ty = var_anno_type("var f: def[w: Int](Int) thin -> None where (w > 0, \"m\") = g\n");
+    let Type::Func { where_clauses, .. } = ty else {
+        panic!("expected a function type");
+    };
+    assert_eq!(where_clauses.len(), 1);
+    // A function-type RETURN type greedily consumes a following `where`
+    // (upstream's innermost-binding rule).
+    let ty = var_anno_type("var f: def() thin -> def(Int) thin -> None where (True, \"m\") = g\n");
+    let Type::Func {
+        where_clauses, ret, ..
+    } = ty
+    else {
+        panic!("expected a function type");
+    };
+    assert!(where_clauses.is_empty());
+    let Type::Func {
+        where_clauses: inner,
+        ..
+    } = *ret
+    else {
+        panic!("expected a function-type result");
+    };
+    assert_eq!(inner.len(), 1);
+}
+
+#[test]
 fn parses_function_type_annotations() {
     assert_eq!(
         var_anno_type("var f: def(Int) -> Int = g\n"),
@@ -2535,7 +2615,8 @@ fn parses_function_type_annotations() {
             thin: false,
             capturing: None,
             raises: false,
-            raises_type: None
+            raises_type: None,
+            where_clauses: vec![],
         }
     );
     // `thin` (non-capturing) after the parameter list, multiple params.
@@ -2552,6 +2633,7 @@ fn parses_function_type_annotations() {
             capturing: None,
             raises: false,
             raises_type: None,
+            where_clauses: vec![],
         }
     );
     // No params + `raises` effect.
@@ -2564,7 +2646,8 @@ fn parses_function_type_annotations() {
             thin: false,
             capturing: None,
             raises: true,
-            raises_type: None
+            raises_type: None,
+            where_clauses: vec![],
         }
     );
     // Current Mojo permits `-> None` to be omitted from callable types.
@@ -2578,6 +2661,7 @@ fn parses_function_type_annotations() {
             capturing: None,
             raises: false,
             raises_type: None,
+            where_clauses: vec![],
         }
     );
 }
@@ -2741,11 +2825,13 @@ fn function_type_return_nests() {
                 capturing: None,
                 raises: false,
                 raises_type: None,
+                where_clauses: vec![],
             }),
             thin: false,
             capturing: None,
             raises: false,
             raises_type: None,
+            where_clauses: vec![],
         }
     );
 }
@@ -2766,7 +2852,8 @@ fn parses_function_typed_parameter() {
             thin: true,
             capturing: None,
             raises: false,
-            raises_type: None
+            raises_type: None,
+            where_clauses: vec![],
         }
     );
 }
@@ -2985,7 +3072,7 @@ fn parses_fully_explicit_lambda() {
             Some(mojito::ast::CaptureList {
                 entries: vec![Capture {
                     name: "y".into(),
-                    kind: CaptureKind::Read,
+                    kind: CaptureKind::Imm,
                 }],
                 default: None,
             }),

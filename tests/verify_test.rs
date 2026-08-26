@@ -603,10 +603,10 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
 
     let mut wrong_argument_convention = lower_source(SOURCE);
     first_index_call(&mut wrong_argument_convention).arguments[0].convention =
-        Some(mojito::ast::ArgConvention::Read);
+        Some(mojito::ast::ArgConvention::Imm);
     expect_finding(
         &wrong_argument_convention,
-        "subscript parameter 0 convention Some(Read)",
+        "subscript parameter 0 convention Some(Imm)",
     );
 
     let mut receiverless_declaration = lower_source(SOURCE);

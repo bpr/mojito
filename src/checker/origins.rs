@@ -1130,7 +1130,7 @@ impl Checker {
                 SigMutability::BoolParam(_) | SigMutability::Infer => is_mutable,
             };
             if !mutable[index] {
-                effective[index] = Some(ArgConvention::Read);
+                effective[index] = Some(ArgConvention::Imm);
             }
         }
         // A mutable or parametrically-mutable argument may redefine every
@@ -2657,7 +2657,7 @@ impl Checker {
         use crate::origin::{CaptureAccess, CaptureOrigin, Origin, OriginPlace};
         let mut origins = self.capture_origins_in_type(&ty);
         match kind {
-            crate::ast::CaptureKind::Read => origins.push(CaptureOrigin {
+            crate::ast::CaptureKind::Imm => origins.push(CaptureOrigin {
                 origin: Origin::Place(OriginPlace {
                     root: binding,
                     path: Vec::new(),

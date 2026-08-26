@@ -218,7 +218,7 @@ impl SignatureKey {
 
     fn with_receiver(&self, convention: Option<ArgConvention>) -> SignatureKey {
         let receiver = match convention {
-            None | Some(ArgConvention::Read) => "SelfRead",
+            None | Some(ArgConvention::Imm) => "SelfRead",
             Some(ArgConvention::Mut) => "SelfMut",
             Some(ArgConvention::Var) => "SelfVar",
             Some(ArgConvention::Out) => "SelfOut",
@@ -310,7 +310,7 @@ pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
 /// retargeting probes the sibling before giving up. Owned (`var self`) dispatch
 /// has no sibling.
 pub fn borrowed_iterator_dispatch_alternate(symbol: &str) -> Option<String> {
-    let read = iterator_dispatch_symbol(ArgConvention::Read);
+    let read = iterator_dispatch_symbol(ArgConvention::Imm);
     let reference = iterator_dispatch_symbol(ArgConvention::Ref);
     if symbol == read {
         Some(reference)

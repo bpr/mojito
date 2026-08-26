@@ -627,6 +627,7 @@ fn collect_vm_ctfe_type_calls(ty: &Type, calls: &mut HashSet<String>) {
             ret,
             capturing,
             raises_type,
+            where_clauses,
             ..
         } => {
             for parameter in type_params {
@@ -644,6 +645,9 @@ fn collect_vm_ctfe_type_calls(ty: &Type, calls: &mut HashSet<String>) {
             }
             if let Some(error) = raises_type {
                 collect_vm_ctfe_type_calls(error, calls);
+            }
+            for clause in where_clauses {
+                collect_vm_ctfe_expr_calls(clause, calls);
             }
         }
         Type::Ref { referent, origin } => {
@@ -2571,10 +2575,9 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         "Int" => Some(Ty::Int),
         // A `[dtype: DType]` value parameter; compile-time-only.
         "DType" => Some(Ty::Dtype),
-        // A SIMD width parameter is a compile-time Int value parameter;
-        // `SIMDSize` is the deprecated transitional spelling.
+        // A SIMD width parameter is a compile-time Int value parameter (the
+        // removed `SIMDSize` spelling rejects).
         "SIMDLength" => Some(Ty::Int),
-        "SIMDSize" => Some(Ty::Int),
         "UInt" => Some(Ty::UInt),
         "Bool" => Some(Ty::Bool),
         "StringLiteral" => Some(Ty::StringLiteral),
@@ -3162,10 +3165,9 @@ fn ct_value_param_type(name: &str) -> Option<Ty> {
         "Int" => Ty::Int,
         // A `[dtype: DType]` value parameter; compile-time-only.
         "DType" => Ty::Dtype,
-        // A SIMD width parameter is a compile-time Int value parameter;
-        // `SIMDSize` is the deprecated transitional spelling.
+        // A SIMD width parameter is a compile-time Int value parameter (the
+        // removed `SIMDSize` spelling rejects).
         "SIMDLength" => Ty::Int,
-        "SIMDSize" => Ty::Int,
         "Bool" => Ty::Bool,
         "String" => Ty::StringLiteral,
         "StringLiteral" => Ty::StringLiteral,

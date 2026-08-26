@@ -1844,9 +1844,13 @@ impl Checker {
         // becomes a `GenericFunc` (its call sites infer/supply parameters).
         let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
         let effect_raises = declared_error.as_ref().is_some_and(|ty| *ty != Ty::Never);
-        let parameter_closure = decorators
-            .iter()
-            .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "parameter");
+        // `@__parameter` is the canonical parametric-closure decorator; the
+        // pre-rename `@parameter` still warns-and-runs upstream (2026-08), so
+        // it stays accepted as a deprecation bridge.
+        let parameter_closure = decorators.iter().any(|decorator| {
+            decorator.path.len() == 1
+                && matches!(decorator.path[0].as_str(), "__parameter" | "parameter")
+        });
         let initial_environment = if parameter_closure {
             crate::origin::CallableEnvironment::Capturing(crate::origin::CaptureOriginSet::Infer)
         } else if self.function_bases.is_empty() {
@@ -2011,7 +2015,7 @@ impl Checker {
                 // explicit `{}` keeps the no-default policy and rejects them.
                 default: captures.as_ref().and_then(|list| list.default).or_else(|| {
                     (parameter_closure || (lambda && captures.is_none()))
-                        .then_some(crate::ast::CaptureKind::Read)
+                        .then_some(crate::ast::CaptureKind::Imm)
                 }),
                 lambda,
             })

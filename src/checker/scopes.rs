@@ -217,7 +217,7 @@ impl Checker {
                 // mutable state across calls. A copied capture is an immutable
                 // snapshot in current Mojo.
                 (Some(crate::ast::CaptureKind::Move), _) => {}
-                (Some(crate::ast::CaptureKind::Copy | crate::ast::CaptureKind::Read), false) => {}
+                (Some(crate::ast::CaptureKind::Copy | crate::ast::CaptureKind::Imm), false) => {}
                 (Some(_), true) | (Some(crate::ast::CaptureKind::Mut), false) => {
                     return Err(TypeError::ImmutableBinding(name.to_string()));
                 }

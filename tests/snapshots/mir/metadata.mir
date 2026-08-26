@@ -8,7 +8,7 @@ artifact {
     struct { name: Box, fields: [field { name: value, type: Int }], mut_self_methods: [set], fieldwise_init: true, param_decls: [type_param { name: T, bounds: [Copyable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: present("call destroy() first"), explicit_destructors: [destructor { name: _finish, raises: true }] }
   ],
   decls: [
-    decl { lowered_name: scale, param_names: [value, by], param_types: [Int, Float64], defaults: [absent, present(checked_float(157/50))], required: [true, false], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: present(1), param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, present(read)], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false] }
+    decl { lowered_name: scale, param_names: [value, by], param_types: [Int, Float64], defaults: [absent, present(checked_float(157/50))], required: [true, false], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: present(1), param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, present(imm)], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false] }
   ],
   functions: [
       fn {

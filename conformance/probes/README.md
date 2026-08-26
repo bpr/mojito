@@ -27,19 +27,29 @@ seventeen probes; their answers live in `cases.tsv` claims
 
 ## Deprecation / vocabulary tracking (re-run at every re-pin)
 
+Re-run 2026-08-26 against the `a79fbdf59f2` build (`Mojo 1.1.0.dev2026082605
+(dd957314)`): `SIMDSize` and `TypeList.size` now REJECT upstream (`use of
+unknown declaration 'SIMDSize'`; `'TypeList[...]' value has no attribute
+'size'`) — both bridges expire and those probes are being promoted to
+`type_error` fixtures by the current pass. The remaining rows still hold.
+Additional hand checks the same day: the `read` convention is a hard error
+(`'read' was removed; use 'imm'`), `@parameter` on parametric closures warns
+(`deprecated; use '@__parameter'`) but still runs, `UnsafeMaybeUninit` is
+removed outright (`MaybeUninit` carries the same `unsafe_*` vocabulary), and
+`UnsafePointer` still warns-and-runs as a deprecated alias of `Pointer`.
+
 | Probe | Question | Expected on both |
 |---|---|---|
-| `simd_size_deprecated_alias.mojo` | Does the head still accept deprecated `SIMDSize`? (`@deprecated` in source at `ae386d1b204`.) | runs, prints `4` (Mojo warns) |
-| `typelist_size_deprecated_alias.mojo` | Does the head still accept deprecated `TypeList.size`? (`size = Self.length` alias in source at `ae386d1b204`.) | runs, prints `2` (Mojo warns) |
-| `tuple_element_types_public_spelling.mojo` | Does the head keep Tuple's `*Ts` parameter and `element_types` member spellings? (Verified in source at `ae386d1b204`.) | runs, prints `2` / `7` |
-| `element_call_member_base.mojo` | Does the head dispatch the bare member-base element call `h.items[0](5)` like the confirmed identifier base? | runs, prints `15` |
-| `element_call_multi_index.mojo` | Does the head dispatch the bare multi-index element call `g[1, 1](10)` through the variadic subscript? | runs, prints `40` |
+| `parameter_closure_capture_model.mojo` | `@__parameter` capture model: upstream captures implicitly-mutable and rejects an explicit capture list on the decorated def; Mojito is the mirror image (see the probe header). | diverges — see header |
+| `tuple_element_types_public_spelling.mojo` | Does the head keep Tuple's `*Ts` parameter and `element_types` member spellings? (Verified in source at `ae386d1b204`; accepted without warning at `a79fbdf59f2`.) | runs, prints `2` / `7` |
+| `element_call_member_base.mojo` | Does the head dispatch the bare member-base element call `h.items[0](5)` like the confirmed identifier base? (Re-confirmed at `a79fbdf59f2`.) | runs, prints `15` |
+| `element_call_multi_index.mojo` | Does the head dispatch the bare multi-index element call `g[1, 1](10)` through the variadic subscript? (Re-confirmed at `a79fbdf59f2`.) | runs, prints `40` |
 
 ## Re-probes of enforced claims
 
 These rejections were enforced by the slice-A alignment sweep and confirmed
-against the `ae386d1b204` build (2026-08-15); confirm they still hold at each
-re-pin.
+against the `ae386d1b204` build (2026-08-15); re-confirmed against
+`a79fbdf59f2` (2026-08-26). Confirm they still hold at each re-pin.
 
 | Program | Expected on both | Enforced by |
 |---|---|---|

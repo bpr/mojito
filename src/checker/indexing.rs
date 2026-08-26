@@ -1121,7 +1121,7 @@ impl Checker {
         if let Some(element) = crate::types::uninit_storage_element(&obj_ty) {
             if !self.bundled_stdlib_declaration {
                 return Err(TypeError::Unsupported(format!(
-                    "'{}' is compiler-private storage; use UnsafeMaybeUninit from std.memory",
+                    "'{}' is compiler-private storage; use MaybeUninit from std.memory",
                     crate::types::UNINIT_STORAGE_TYPE_NAME
                 )));
             }

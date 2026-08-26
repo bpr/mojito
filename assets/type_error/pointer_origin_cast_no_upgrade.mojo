@@ -1,7 +1,7 @@
 # expect: cannot upgrade capability
 # `origin_cast` rebinds provenance but never upgrades a statically immutable
 # capability to a mutable one.
-def f(p: Pointer[Int, ImmutUntrackedOrigin]) -> Int:
+def f(p: Pointer[Int, ImmUntrackedOrigin]) -> Int:
     var q = p.unsafe_origin_cast[MutUntrackedOrigin]()
     return q[]
 
