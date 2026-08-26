@@ -59,11 +59,15 @@ text kinds print to stdout unless `-o PATH` is given, binary kinds require
 leaves the scalar subset — including `print`, until the native runtime stage.
 `--target TRIPLE` selects the checked native target (default: the build
 host; `x86_64-unknown-linux-gnu` is currently the only supported triple) and
-`--native-opt 0|1` the optimization level; both also apply to
-`run --backend pliron`. Executables link the `mojito-runtime` static archive
-(built by `cargo build -p mojito-runtime`; override discovery with
-`MOJITO_RUNTIME_LIB=/path/to/libmojito_runtime.a`) — the full contract is
-[`docs/native-abi.md`](native-abi.md):
+`--native-opt 0|release` (with `1` as a permanent alias of `release`) the
+optimization profile; both also apply to
+`run --backend pliron`, as does `--timings` (per-phase compile timings on
+stderr, the benchmark driver's channel; `scripts/bench-pliron` runs the
+corpus under `benchmarks/native/`). Executables link the `mojito-runtime`
+static archive, discovered in a fixed order: `--runtime-lib PATH`, then
+`MOJITO_RUNTIME_LIB`, then an installation bundle's `lib/`, then the
+development target tree (built by `cargo build -p mojito-runtime`) — the
+full contract is [`docs/native-abi.md`](native-abi.md):
 
 ```sh
 cargo build --features backend-pliron   # needs llvm-22-dev (see docs/notes/pliron-stage1.md)

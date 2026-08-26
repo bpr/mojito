@@ -1,0 +1,15 @@
+# Standalone native-benchmark driver (docs/notes/pliron-stage6-plan.md,
+# S6.1). Deliberately outside the root workspace (empty [workspace] table,
+# like spikes/) so the default lane's dependency graph never includes it; it
+# drives the feature-built `mojito` binary as a subprocess and measures with
+# wait4/rusage, so it needs neither the mojito library nor LLVM.
+[package]
+name = "mojito-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+libc = "0.2"

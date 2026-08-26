@@ -93,6 +93,7 @@ type	ref	supported	one opaque place address
 runtime	mjrt_version	supported	since=v1
 runtime	mjrt_alloc	supported	since=v1
 runtime	mjrt_free	supported	since=v2
+runtime	mjrt_pointer_status	supported	since=v6
 runtime	mjrt_dealloc	supported	since=v1
 runtime	mjrt_write_stdout	supported	since=v1
 runtime	mjrt_fmt_i64	supported	since=v1
@@ -100,6 +101,7 @@ runtime	mjrt_fmt_u64	supported	since=v1
 runtime	mjrt_fmt_f64	supported	since=v1
 runtime	mjrt_trap	supported	since=v1
 runtime	mjrt_unhandled_error	supported	since=v2
+runtime	mjrt_abort	supported	since=v6
 runtime	mjrt_trace	supported	since=v3
 runtime	mjrt_read_line	supported	since=v4
-runtime	mjrt_abi_version	supported	data symbol; current version 5
+runtime	mjrt_abi_version	supported	data symbol; current version 6

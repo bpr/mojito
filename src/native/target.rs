@@ -136,24 +136,56 @@ impl BuildConfig {
     }
 }
 
-/// The native optimization level. `O0` runs only the backend's baseline
-/// cleanup (for Pliron: mem2reg/DCE); `O1` additionally runs LLVM's
-/// `default<O1>` pipeline over the emitted bitcode before JIT, object, or
-/// executable production.
+/// The native optimization profile. `O0` runs only the backend's baseline
+/// cleanup (for Pliron: mem2reg/DCE); `Release` additionally runs LLVM's
+/// pinned release pipeline over the emitted bitcode before JIT, object, or
+/// executable production. `--native-opt` spells them `0` and `release`,
+/// with `1` as a permanent alias of `release`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptLevel {
     #[default]
     O0,
-    O1,
+    Release,
 }
 
 impl OptLevel {
+    /// The profile's public CLI spelling.
+    pub fn name(self) -> &'static str {
+        match self {
+            OptLevel::O0 => "0",
+            OptLevel::Release => "release",
+        }
+    }
+
     pub fn parse(s: &str) -> Result<OptLevel, String> {
         match s {
             "0" => Ok(OptLevel::O0),
-            "1" => Ok(OptLevel::O1),
+            "release" | "1" => Ok(OptLevel::Release),
             other => Err(format!(
-                "unknown native opt level '{other}' (expected: 0, 1)"
+                "unknown native opt level '{other}' (expected: 0, release (alias: 1))"
+            )),
+        }
+    }
+}
+
+/// How much debug information native binary artifacts carry. `Lines` —
+/// the default — attaches DWARF subprograms and call-site file/line
+/// locations to objects and executables; textual IR and JIT paths never
+/// carry debug information. `--native-debug` spells them `lines`/`none`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DebugInfo {
+    None,
+    #[default]
+    Lines,
+}
+
+impl DebugInfo {
+    pub fn parse(s: &str) -> Result<DebugInfo, String> {
+        match s {
+            "none" => Ok(DebugInfo::None),
+            "lines" => Ok(DebugInfo::Lines),
+            other => Err(format!(
+                "unknown native debug level '{other}' (expected: none, lines)"
             )),
         }
     }
@@ -237,7 +269,8 @@ mod tests {
     #[test]
     fn opt_and_emit_parse_round_trip() {
         assert_eq!(OptLevel::parse("0"), Ok(OptLevel::O0));
-        assert_eq!(OptLevel::parse("1"), Ok(OptLevel::O1));
+        assert_eq!(OptLevel::parse("release"), Ok(OptLevel::Release));
+        assert_eq!(OptLevel::parse("1"), Ok(OptLevel::Release));
         assert!(OptLevel::parse("2").is_err());
         assert_eq!(EmitKind::parse("plir"), Ok(EmitKind::Plir));
         assert_eq!(EmitKind::parse("ll"), Ok(EmitKind::LlvmIr));

@@ -41,19 +41,33 @@ members = ["crates/mojito-runtime"]
 # LLVM 22 dev libraries (llvm-sys 221; discovery via LLVM_SYS_221_PREFIX).
 # The default build must stay free of LLVM: tests/backend_isolation_test.rs
 # guards the default dependency graph. See docs/notes/pliron-stage0.md.
-backend-pliron = ["dep:pliron", "dep:pliron-llvm", "dep:llvm-sys"]
+backend-pliron = [
+    "dep:pliron",
+    "dep:pliron-llvm",
+    "dep:llvm-sys",
+    "dep:object",
+    "dep:sha2",
+]
 
 [dependencies]
 # Direct llvm-sys (same 221/LLVM-22 pin pliron-llvm resolves) powers the
 # target-data layout cross checks in tests/pliron_backend_test.rs.
 llvm-sys = { version = "221", optional = true }
 num-bigint = "0.4.6"
+# Pure-Rust ELF/archive inspection and digests for the resolved-toolchain
+# report, runtime ABI validation, and reproducibility diagnostics. Read-only,
+# no compression backends.
+object = { version = "0.40.0", optional = true, default-features = false, features = [
+    "read",
+    "std",
+] }
 num-integer = "0.1.46"
 num-rational = "0.4.2"
 num-traits = "0.2.19"
 petgraph = "0.8.3"
 pliron = { version = "=0.17.0", optional = true }
 pliron-llvm = { version = "=0.17.0", optional = true }
+sha2 = { version = "0.11.0", optional = true }
 
 [dev-dependencies]
 expect-test = "1.5.1"
@@ -71,4 +85,24 @@ harness = false
 
 [[test]]
 name = "pliron_backend_test"
+required-features = ["backend-pliron"]
+
+[[test]]
+name = "pliron_toolchain_test"
+required-features = ["backend-pliron"]
+
+[[test]]
+name = "pliron_opt_regression_test"
+required-features = ["backend-pliron"]
+
+[[test]]
+name = "pliron_debug_test"
+required-features = ["backend-pliron"]
+
+[[test]]
+name = "pliron_repro_test"
+required-features = ["backend-pliron"]
+
+[[test]]
+name = "pliron_dist_test"
 required-features = ["backend-pliron"]

@@ -18,17 +18,19 @@ unchecked box is the default next task. Sections marked *(recurring)* or
 
 ### 1. Native Backend: Pliron Stage 6 — Optimization and Distribution
 
-- [ ] **Pliron Stage 6: optimization and distributable artifacts** — define
-  verified `O0` and release pass pipelines, analysis invalidation, object and
-  executable linking, source-level debug locations, runtime packaging,
-  reproducibility, and pre-declared compile-time, memory, code-size, startup,
-  and runtime benchmark thresholds.
-
-  Acceptance: optimized and unoptimized outputs pass the complete differential
-  suite; native execution provides a material measured benefit without an
-  unacceptable compile-time or size regression; clean builds are reproducible
-  or have narrowly documented nondeterministic sections; and executables run
-  without the compiler installed while diagnosing ABI mismatch clearly.
+- [ ] **Pliron Stage 6: close the acceptance evidence** — the Stage 6
+  implementation (verified `O0`/`release` pipelines, analysis-invalidation
+  tests, manifest-driven object linking, source-level debug locations,
+  runtime packaging with relocated-bundle discovery, byte-reproducible
+  clean builds, and the benchmark corpus/driver/noise policy) is landed
+  and focused-test-covered; `docs/notes/pliron-stage6.md` records the
+  policy. Remaining to close the acceptance clause: capture and commit
+  the pinned-runner benchmark baseline (`run-bench-baseline.sh`) and
+  evaluate the pre-declared budgets over it; run the full default and
+  pliron gates plus the complete parity/sanitizer lanes at both profiles;
+  one container-based compiler-free execution check; and the
+  dependency-upgrade rehearsal, blocked on the first upstream
+  pliron/llvm-sys release newer than the current pins.
 
 - [ ] **Pliron promotion decision** — promote Pliron from experimental to the
   preferred native backend only with semantic parity for all runnable corpus

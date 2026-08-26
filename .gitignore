@@ -2,3 +2,6 @@
 Cargo.lock
 spikes/*/target/
 !spikes/*/Cargo.lock
+tools/*/target/
+!tools/*/Cargo.lock
+dist/

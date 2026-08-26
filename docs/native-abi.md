@@ -70,12 +70,34 @@ its own explicit support decision and testing infrastructure.
   LLVM module, and every `clang` invocation passes `--target=<triple>`.
   The string is pinned against the installed LLVM 22 toolchain by test.
 - **CPU features** — `CpuFeatures`; only the target baseline is accepted.
-- **Optimization level** — `OptLevel`: `O0` (backend baseline cleanup only)
-  or `O1` (LLVM `default<O1>` over the emitted bitcode).
+- **Optimization profile** — `OptLevel`: `O0` (backend baseline cleanup
+  only) or `Release` (LLVM `default<O1>` over the emitted bitcode).
 - **Output kind** — `EmitKind`: `plir | ll | bc | obj | exe`; binary kinds
   require an output path (`BuildConfig::validate`).
 - **CLI** — `--target TRIPLE` (default: the build host; error when the host
-  is unsupported), `--native-opt 0|1`, `--emit KIND`, `-o PATH`.
+  is unsupported), `--native-opt 0|release` (alias: `1`), `--emit KIND`,
+  `-o PATH`, `--native-debug none|lines` (default `lines`: DWARF
+  subprograms plus call-site file/line locations on objects and
+  executables; source labels are embedded exactly as given, never
+  absolute build paths), and `--print-toolchain` (report the resolved
+  clang/`opt` paths and versions, target data layout, and runtime archive
+  with its provenance, sha256, and embedded ABI version, as stable
+  `key\tvalue` lines). Runtime-archive discovery follows a fixed ordered
+  contract: `--runtime-lib PATH`, then `MOJITO_RUNTIME_LIB`, then the
+  installation-relative bundle path (`<exe>/../lib/libmojito_runtime.a`),
+  then the development target-tree walk; explicit steps that name a
+  missing file are hard errors, never fallthroughs, and the selected
+  archive's provenance, sha256, and embedded ABI version are validated
+  before linking. `scripts/package-pliron` assembles the versioned
+  release bundle (`bin/mojito`, `lib/libmojito_runtime.a` +
+  `lib/runtime-link.tsv`, docs, smoke fixture, `manifest.tsv`,
+  `checksums.sha256`, deterministic tar). `--emit obj` writes a sidecar `<obj>.link.tsv`
+  manifest (schema, target, ABI version, object and runtime sha256,
+  ordered libraries, clang major); `mojito link OBJ -o EXE
+  --backend pliron` validates every manifest field against the resolved
+  toolchain before issuing the same deterministic link line, so nobody
+  reconstructs the clang command by hand. Objects contain the synthesized
+  C `main` wrapper.
 
 JIT execution additionally requires `target == host`.
 

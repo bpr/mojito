@@ -1,0 +1,12 @@
+# mojito native benchmark manifest; schema-version 1
+# fixture <TAB> category — one row per corpus program under src/.
+# Categories mirror docs/notes/pliron-stage6-plan.md's required coverage.
+arith_branch.mojo	arith-branch
+calls_recursion.mojo	calls-recursion
+strings_format.mojo	strings-format
+aggregates.mojo	aggregates
+alloc_pointer.mojo	alloc-pointer
+iter_simd.mojo	iter-simd
+except_dtor.mojo	exceptions-destructors
+startup.mojo	startup
+whole_program.mojo	whole-program

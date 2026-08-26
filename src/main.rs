@@ -55,14 +55,46 @@ fn main() -> ExitCode {
         cli.args.first().map(String::as_str),
         cli.args.get(1).map(String::as_str),
     );
-    if command != Some("compile") && (cli.emit.is_some() || cli.output.is_some()) {
-        eprintln!("--emit and --output are only valid with the compile command");
+    if command != Some("compile") && cli.emit.is_some() {
+        eprintln!("--emit is only valid with the compile command");
+        return ExitCode::FAILURE;
+    }
+    if !matches!(command, Some("compile" | "link")) && cli.output.is_some() {
+        eprintln!("--output is only valid with the compile and link commands");
+        return ExitCode::FAILURE;
+    }
+    if command != Some("compile") && cli.print_toolchain {
+        eprintln!("--print-toolchain is only valid with the compile command");
         return ExitCode::FAILURE;
     }
     if !matches!(command, Some("compile" | "run"))
-        && (cli.native_opt.is_some() || cli.target.is_some())
+        && (cli.native_opt.is_some()
+            || cli.target.is_some()
+            || cli.timings
+            || cli.native_debug.is_some())
     {
-        eprintln!("--native-opt and --target are only valid with the compile and run commands");
+        eprintln!(
+            "--native-opt, --target, --timings, and --native-debug are only valid with the \
+             compile and run commands"
+        );
+        return ExitCode::FAILURE;
+    }
+    if !matches!(command, Some("compile" | "run" | "link")) && cli.runtime_lib.is_some() {
+        eprintln!("--runtime-lib is only valid with the compile, run, and link commands");
+        return ExitCode::FAILURE;
+    }
+    if cli.timings {
+        // Single-threaded here; the env var is the backend's (and any child
+        // phase's) timing gate.
+        unsafe { std::env::set_var("MOJITO_TIMINGS", "1") };
+    }
+    #[cfg(feature = "backend-pliron")]
+    if let Some(path) = &cli.runtime_lib {
+        mojito::backend::pliron::set_runtime_override(PathBuf::from(path));
+    }
+    #[cfg(not(feature = "backend-pliron"))]
+    if cli.runtime_lib.is_some() {
+        eprintln!("--runtime-lib requires a build with the backend-pliron feature");
         return ExitCode::FAILURE;
     }
     match command {
@@ -74,6 +106,7 @@ fn main() -> ExitCode {
         Some("run") => stage_run(file, &cli),
         Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
         Some("compile") => stage_compile(file, &cli),
+        Some("link") => stage_link(file, &cli),
         Some("exec") => stage_exec(file, cli.backend),
         Some("-h" | "--help" | "help") => {
             print_usage();
@@ -102,6 +135,20 @@ struct CliArgs {
     /// `--target TRIPLE` for `compile`/`run --backend pliron` (parsed into
     /// the checked native target; raw here for the same reason).
     target: Option<String>,
+    /// `--print-toolchain` for `compile`: report the resolved external
+    /// toolchain (tools, versions, runtime archive) instead of compiling.
+    print_toolchain: bool,
+    /// `--timings` for `compile`/`run --backend pliron`: print
+    /// `timing\t<phase>\t<micros>` lines to stderr for each compile phase —
+    /// the bench driver's channel.
+    timings: bool,
+    /// `--native-debug LEVEL` for `compile`/`run --backend pliron` (parsed
+    /// by the backend; raw here so the default build carries no backend
+    /// types).
+    native_debug: Option<String>,
+    /// `--runtime-lib PATH` for `compile`/`run`/`link`: explicit runtime
+    /// archive, first in the backend's ordered discovery contract.
+    runtime_lib: Option<String>,
 }
 
 /// Extract global options from anywhere on the command line. Local imports win,
@@ -114,6 +161,10 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut output = None;
     let mut native_opt = None;
     let mut target = None;
+    let mut print_toolchain = false;
+    let mut timings = false;
+    let mut native_debug = None;
+    let mut runtime_lib = None;
     let mut iter = raw.into_iter();
     while let Some(arg) = iter.next() {
         if let Some(name) = arg.strip_prefix("--backend=") {
@@ -152,6 +203,18 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             target = Some(triple.to_string());
         } else if arg == "--target" {
             target = Some(iter.next().ok_or("--target requires a triple")?);
+        } else if arg == "--print-toolchain" {
+            print_toolchain = true;
+        } else if arg == "--timings" {
+            timings = true;
+        } else if let Some(level) = arg.strip_prefix("--native-debug=") {
+            native_debug = Some(level.to_string());
+        } else if arg == "--native-debug" {
+            native_debug = Some(iter.next().ok_or("--native-debug requires a level")?);
+        } else if let Some(path) = arg.strip_prefix("--runtime-lib=") {
+            runtime_lib = Some(path.to_string());
+        } else if arg == "--runtime-lib" {
+            runtime_lib = Some(iter.next().ok_or("--runtime-lib requires a path")?);
         } else if arg.starts_with('-') && arg != "-" && !matches!(arg.as_str(), "-h" | "--help") {
             return Err(format!("unknown option '{arg}'"));
         } else {
@@ -169,6 +232,10 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         output,
         native_opt,
         target,
+        print_toolchain,
+        timings,
+        native_debug,
+        runtime_lib,
     })
 }
 
@@ -247,10 +314,14 @@ fn run_program_native(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
     use mojito::backend::pliron;
 
     let opt = native_opt_level(cli)?;
+    let debug = native_debug_level(cli)?;
+    // Missing or incompatible external tools fail here, before any frontend
+    // or lowering work — the same front door as `compile`.
+    pliron::check_toolchain(&native_target(cli)?, opt, pliron::EmitKind::Exe)?;
     let mut module = compile_native_module(file, cli)?;
     let exe = std::env::temp_dir().join(format!(".mojito-run.{}", std::process::id()));
     let ran = module
-        .write_executable(&exe, opt)
+        .write_executable(&exe, opt, debug)
         .map_err(|e| e.to_string())
         .and_then(|()| {
             // `output()` would silently null the child's stdin; `input()`
@@ -373,6 +444,13 @@ fn run_compile(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
             "compile requires --backend pliron (the only native compile backend)".to_string(),
         );
     }
+    if cli.print_toolchain {
+        print!(
+            "{}",
+            pliron::toolchain_report(&native_target(cli)?, native_opt_level(cli)?)
+        );
+        return Ok(());
+    }
     let emit = match cli.emit.as_deref() {
         Some(kind) => pliron::EmitKind::parse(kind)?,
         None => pliron::EmitKind::LlvmIr,
@@ -381,6 +459,10 @@ fn run_compile(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
         return Err("--emit bc|obj|exe requires --output PATH".to_string());
     }
     let opt = native_opt_level(cli)?;
+    let debug = native_debug_level(cli)?;
+    // Missing or incompatible external tools fail here, before any frontend
+    // or lowering work.
+    pliron::check_toolchain(&native_target(cli)?, opt, emit)?;
     let mut module = compile_native_module(file, cli)?;
 
     let write_text = |text: &str| -> Result<(), String> {
@@ -402,13 +484,13 @@ fn run_compile(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
             write_text(&text)
         }
         pliron::EmitKind::Bitcode => module
-            .write_bitcode(output_path(), opt)
+            .write_bitcode(output_path(), opt, debug)
             .map_err(|e| e.to_string()),
         pliron::EmitKind::Object => module
-            .write_object(output_path(), opt)
+            .write_object(output_path(), opt, debug)
             .map_err(|e| e.to_string()),
         pliron::EmitKind::Exe => module
-            .write_executable(output_path(), opt)
+            .write_executable(output_path(), opt, debug)
             .map_err(|e| e.to_string()),
     }
 }
@@ -429,14 +511,21 @@ fn compile_native_module(
     let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
     let label = file.unwrap_or("-").to_string();
     let compiler = Compiler::new(cli.link_options.clone(), BackendKind::Vm);
-    let compiled = match file {
-        Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),
-        _ => compiler.compile_unlinked(&source),
-    }
-    .map_err(|error| match &error {
-        CompilerError::Module(module) => format_module_error(module, &label, &source),
-        _ => error.to_string(),
+    let compiled = cli_timing("frontend", || {
+        match file {
+            Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),
+            _ => compiler.compile_unlinked(&source),
+        }
+        .map_err(|error| match &error {
+            CompilerError::Module(module) => format_module_error(module, &label, &source),
+            _ => error.to_string(),
+        })
     })?;
+    // `elaborated_mir` computes once and caches; time that first call as its
+    // own phase, then borrow the cached result.
+    cli_timing("mir-elaborate", || {
+        compiled.elaborated_mir();
+    });
     let mir = compiled.elaborated_mir();
 
     let mut entries = vec!["main".to_string()];
@@ -449,7 +538,31 @@ fn compile_native_module(
         target: native_target(cli)?,
         trace_lifecycle: false,
     };
-    pliron::compile(mir, &options).map_err(|error| error.display_with_sources(&options.sources))
+    cli_timing("pliron-compile", || pliron::compile(mir, &options))
+        .map_err(|error| error.display_with_sources(&options.sources))
+}
+
+/// Run `work`, printing a `timing\t<phase>\t<micros>` line to stderr when
+/// `--timings` set `MOJITO_TIMINGS` — the CLI half of the backend's
+/// phase-timing channel (the backend prints its own internal phases).
+#[cfg(feature = "backend-pliron")]
+fn cli_timing<T>(phase: &str, work: impl FnOnce() -> T) -> T {
+    if std::env::var_os("MOJITO_TIMINGS").is_none() {
+        return work();
+    }
+    let start = std::time::Instant::now();
+    let value = work();
+    eprintln!("timing\t{phase}\t{}", start.elapsed().as_micros());
+    value
+}
+
+/// The `--native-debug` level (default `lines`).
+#[cfg(feature = "backend-pliron")]
+fn native_debug_level(cli: &CliArgs) -> Result<mojito::backend::pliron::DebugInfo, String> {
+    match cli.native_debug.as_deref() {
+        Some(level) => mojito::backend::pliron::DebugInfo::parse(level),
+        None => Ok(mojito::backend::pliron::DebugInfo::Lines),
+    }
 }
 
 /// The `--native-opt` level (default `O0`).
@@ -472,6 +585,38 @@ fn native_target(cli: &CliArgs) -> Result<mojito::native::target::NativeTarget, 
                 .to_string()
         }),
     }
+}
+
+/// `link`: turn a saved `--emit obj` object into an executable through its
+/// sidecar `<obj>.link.tsv` manifest, which is validated (target, ABI
+/// version, digests, toolchain major) before the deterministic clang link.
+#[cfg(feature = "backend-pliron")]
+fn stage_link(file: Option<&str>, cli: &CliArgs) -> ExitCode {
+    let result = (|| -> Result<(), String> {
+        if cli.backend != BackendKind::Pliron {
+            return Err("link requires --backend pliron".to_string());
+        }
+        let object = file.ok_or("link requires an object file path")?;
+        let output = cli.output.as_deref().ok_or("link requires --output PATH")?;
+        mojito::backend::pliron::link_object(Path::new(object), Path::new(output))
+            .map_err(|error| error.to_string())
+    })();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("link error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(not(feature = "backend-pliron"))]
+fn stage_link(_file: Option<&str>, _cli: &CliArgs) -> ExitCode {
+    eprintln!(
+        "this mojito build lacks the `backend-pliron` feature; rebuild with \
+         `cargo build --features backend-pliron` (requires LLVM 22)"
+    );
+    ExitCode::FAILURE
 }
 
 /// `compile` in a build without the Pliron backend: explain how to get one.
@@ -577,8 +722,12 @@ fn print_usage() {
          \x20 --backend NAME         select the run backend\n\
          \x20 --emit KIND            compile output: plir|ll|bc|obj|exe (default ll)\n\
          \x20 -o, --output PATH      compile output path (required for bc|obj|exe)\n\
-         \x20 --native-opt LEVEL     native optimization level: 0|1 (default 0)\n\
-         \x20 --target TRIPLE        native target triple (default: the host)\n\n\
+         \x20 --native-opt LEVEL     native optimization profile: 0|release (alias: 1; default 0)\n\
+         \x20 --target TRIPLE        native target triple (default: the host)\n\
+         \x20 --native-debug LEVEL   native debug info: none|lines (default lines)\n\
+         \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\
+         \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\
+         \x20 --timings              print compile-phase timings to stderr (compile|run)\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\
@@ -586,6 +735,7 @@ fn print_usage() {
          \x20 run   [FILE]   evaluate and print output + final bindings\n\
          \x20 emit-mir [FILE] compile and print executable textual MIR\n\
          \x20 compile [FILE] native-compile via --backend pliron (experimental)\n\
+         \x20 link  OBJ      link a saved object via its .link.tsv manifest (--backend pliron)\n\
          \x20 exec  [FILE]   execute a verified textual MIR artifact\n\
          \x20 demo           run the built-in showcase (default)\n\n\
          FILE defaults to '-' (standard input).\n"

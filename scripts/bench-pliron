@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Native benchmark lane (docs/notes/pliron-stage6-plan.md, S6.1): build the
+# release compiler + release runtime, then drive tools/bench over
+# benchmarks/native/. Performance enforcement (--check) is only meaningful
+# on the pinned runner — see benchmarks/native/noise-policy.md, including
+# the CPU-governor pinning procedure. Extra arguments pass through to
+# mojito-bench (e.g. --summary PATH, --check BASELINE, --smoke).
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+export LLVM_SYS_221_PREFIX="${LLVM_SYS_221_PREFIX:-/usr/lib/llvm-22}"
+
+echo "==> cargo build --release -p mojito-runtime (release runtime archive)"
+cargo build --release -p mojito-runtime
+export MOJITO_RUNTIME_LIB="${MOJITO_RUNTIME_LIB:-$PWD/target/release/libmojito_runtime.a}"
+
+echo "==> cargo build --release --features backend-pliron (release compiler)"
+cargo build --release --features backend-pliron
+
+echo "==> cargo build --release (tools/bench)"
+(cd tools/bench && cargo build --release)
+
+echo "==> mojito-bench"
+exec tools/bench/target/release/mojito-bench \
+    --mojito target/release/mojito \
+    --root benchmarks/native \
+    "$@"

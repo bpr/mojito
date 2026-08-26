@@ -233,7 +233,27 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mjrt_version` and consumes a raising entry's outcome),
   `backend/pliron/emit.rs` (target stamping onto every LLVM module, LLVM
   IR/bitcode/object/exe via clang `--target`, runtime-archive discovery and
-  linking, plus the `opt`-subprocess `O1` pipeline), and
+  linking, plus the `opt`-subprocess release pipeline),
+  `backend/pliron/pipeline.rs` (the profile-to-pipeline table owning
+  optimization policy: the shared pliron cleanup stage and each profile's
+  LLVM pipeline selection, snapshot-pinned),
+  `backend/pliron/toolchain.rs` (`ResolvedToolchain`: PATH-resolved
+  absolute clang/`opt` paths version-checked against the LLVM 22 pin,
+  ordered runtime-archive discovery — `--runtime-lib` via
+  `set_runtime_override`, `MOJITO_RUNTIME_LIB`, installation bundle,
+  development tree — with provenance/sha256/embedded-ABI-version
+  validation, the `toolchain_report` behind `--print-toolchain`, and the
+  fail-fast `check_toolchain` CLI front door),
+  `backend/pliron/artifact.rs` (`write_atomic`: failure-atomic
+  temp-and-rename artifact writes that preserve existing outputs),
+  `backend/pliron/debug.rs` (`DebugTable` harvested from the cleaned
+  module + the llvm-sys DIBuilder attach over the reparsed LLVM module:
+  DWARF subprograms and call-granular line locations with a per-function
+  count assertion that degrades to subprogram-only rather than mislabel;
+  corpus test pins zero degradations),
+  `backend/pliron/inspect.rs` (pure-Rust `object`-crate ELF inspection:
+  per-section digests and diffs for reproducibility failures, symbol
+  surfaces, machine/PIE/exec-stack/DT_NEEDED facts, byte scans),
   `backend/pliron/jit.rs` (host-only ORC LLJIT execution typed by
   `RetKind`), and `backend/pliron/capability.rs` (the generated capability
   matrix behind `conformance/pliron-capability.tsv`, pinned against the

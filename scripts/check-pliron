@@ -20,8 +20,19 @@ echo "==> cargo clippy --features backend-pliron --all-targets -- -D warnings"
 cargo clippy --features backend-pliron --all-targets -- -D warnings
 
 echo "==> cargo nextest run --features backend-pliron (pliron tests)"
-# --no-fail-fast: report every failure in one gate run.
-cargo nextest run --no-fail-fast --features backend-pliron -E 'binary(pliron_backend_test) + test(pliron)'
+# --no-fail-fast: report every failure in one gate run. binary(pliron_*)
+# catches every pliron integration target as slices add them.
+cargo nextest run --no-fail-fast --features backend-pliron -E 'binary(pliron_*) + test(pliron)'
+
+echo "==> bench smoke (machinery validation only; no performance claims)"
+# Debug builds are fine here: the smoke lane validates the driver, the
+# --timings channel, and the corpus, never performance. The pinned
+# performance lane is scripts/bench-pliron.
+(cd tools/bench && cargo build --quiet)
+cargo build --quiet --features backend-pliron
+tools/bench/target/debug/mojito-bench \
+    --mojito target/debug/mojito --root benchmarks/native --smoke \
+    --summary /dev/null
 
 echo "==> pliron stage-0 spike gate"
 scripts/check-pliron-spike

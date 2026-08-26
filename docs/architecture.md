@@ -191,6 +191,18 @@ different semantic path. User `__moveinit__` and `__deinit__` bodies remain
 ordinary compiled MIR calls, with a `deinit self` callee owning residual-field
 teardown.
 
+Optimization policy lives in one profile-to-pipeline table
+(`backend/pliron/pipeline.rs`, snapshot-pinned): every profile runs the same
+pliron cleanup stage between whole-module verifications, and only `release`
+adds the pinned external LLVM pipeline. External tools are resolved and
+version-checked up front as a reportable toolchain object; the runtime
+archive validates by provenance, digest, and its embedded ABI version before
+linking. Emission is deterministic and failure-atomic: clean builds are
+byte-reproducible at both profiles, emitted objects carry a validating link
+manifest consumed by the CLI `link` verb, and executables default to DWARF
+line-level debug information attached below the conversion boundary. The
+policy record is `docs/notes/pliron-stage6.md`.
+
 Dialect policy: lower directly to Pliron's LLVM dialect, and introduce a
 narrow `mojito` Pliron dialect only for demonstrated needs such as runtime
 calls, checked traps, explicit error propagation, target-independent

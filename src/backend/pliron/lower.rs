@@ -718,6 +718,18 @@ impl Locator {
         Locator { sources }
     }
 
+    /// The registered source labels, in registration order — the debug
+    /// table's file-id space.
+    pub(super) fn source_labels(&self) -> impl Iterator<Item = &str> {
+        self.sources.iter().map(|(name, _, _)| name.as_str())
+    }
+
+    /// The registered pliron [`pliron::location::Source`] handles, in the
+    /// same order as [`Locator::source_labels`].
+    pub(super) fn sources(&self) -> impl Iterator<Item = pliron::location::Source> + '_ {
+        self.sources.iter().map(|(_, source, _)| *source)
+    }
+
     fn locate(&self, span: &SourceSpan) -> Option<Location> {
         let name = span.source.as_deref()?;
         let (_, source, line_starts) = self.sources.iter().find(|(n, _, _)| n == name)?;
@@ -1522,7 +1534,7 @@ impl<'a> FnLowering<'a> {
                 self.lower_call(ctx, *dest, &func.0, args, kwargs, arg_places, kwarg_places)
             }
             MirInstr::DropVar { var } => self.lower_drop_var(ctx, *var),
-            MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var),
+            MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var, false),
             MirInstr::ConsumePlace { place, marker } => {
                 // Consumption skips the whole-value destructor and destroys
                 // only residual fields — a no-op unless fields carry their
@@ -9326,8 +9338,16 @@ impl<'a> FnLowering<'a> {
 
     /// `ConsumeVar`: skip the whole-value destructor but destroy residual
     /// fields — a no-op unless fields carry their own destructor work. The
-    /// consumed slot is empty afterwards either way.
-    fn lower_consume_var(&mut self, ctx: &mut Context, var: u32) -> Result<(), PlironError> {
+    /// consumed slot is empty afterwards either way. `synthesized` marks the
+    /// frame-exit residual release of a `deinit` parameter, which has no MIR
+    /// instruction and therefore no VM lifecycle event — only a real
+    /// `MirInstr::ConsumeVar` reports a consume trace.
+    fn lower_consume_var(
+        &mut self,
+        ctx: &mut Context,
+        var: u32,
+        synthesized: bool,
+    ) -> Result<(), PlironError> {
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
             LowerTy::Aggregate { ty, .. } => {
@@ -9336,7 +9356,8 @@ impl<'a> FnLowering<'a> {
                     .get(&var)
                     .copied()
                     .map(|flag| self.begin_flag_guard(ctx, flag));
-                if self.trace_lifecycle
+                if !synthesized
+                    && self.trace_lifecycle
                     && let Ty::Struct(name, _) = ty.as_ref()
                 {
                     let name = name.clone();
@@ -12369,7 +12390,7 @@ impl<'a> FnLowering<'a> {
             .filter_map(|(var, deinit)| deinit.then_some(var as u32))
             .collect();
         for var in deinit_params.into_iter().rev() {
-            self.lower_consume_var(ctx, var)?;
+            self.lower_consume_var(ctx, var, true)?;
         }
         self.emit_frame_exit_error_releases(ctx)?;
         if let Some(outcome) = self.signatures[self.name].outcome.clone() {

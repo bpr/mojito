@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Build the versioned release bundle for the supported Linux target
+# (docs/notes/pliron-stage6-plan.md, S6.5): bin/mojito (backend-pliron,
+# path-remapped), lib/libmojito_runtime.a + its public link manifest,
+# license/compat notes, a smoke fixture, per-file checksums, a bundle
+# manifest, and a deterministic tar. Output: dist/<bundle>/ and
+# dist/<bundle>.tar.gz.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+export LLVM_SYS_221_PREFIX="${LLVM_SYS_221_PREFIX:-/usr/lib/llvm-22}"
+
+VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+TRIPLE=x86_64-unknown-linux-gnu
+BUNDLE="mojito-${VERSION}-${TRIPLE}"
+OUT="dist/${BUNDLE}"
+GIT_REV=$(git rev-parse HEAD)
+
+# Reproducible-path release builds: workspace and cargo roots remapped so
+# no build-tree path survives into DWARF or panic metadata.
+REMAP="--remap-path-prefix=${PWD}=/mojito --remap-path-prefix=${HOME}/.cargo=/cargo"
+
+echo "==> release runtime archive (remapped)"
+RUSTFLAGS="${RUSTFLAGS:-} ${REMAP}" cargo build --release -p mojito-runtime
+
+echo "==> release compiler (backend-pliron, remapped)"
+RUSTFLAGS="${RUSTFLAGS:-} ${REMAP}" cargo build --release --features backend-pliron
+
+echo "==> assembling ${OUT}"
+rm -rf "${OUT}"
+mkdir -p "${OUT}/bin" "${OUT}/lib" "${OUT}/share/mojito/smoke" "${OUT}/share/doc"
+cp target/release/mojito "${OUT}/bin/mojito"
+cp target/release/libmojito_runtime.a "${OUT}/lib/libmojito_runtime.a"
+# The compiler's bundled-support fallback resolves `<exe>/../share/mojito/
+# stdlib` when no development tree exists, making the bundle self-contained.
+cp -r stdlib "${OUT}/share/mojito/stdlib"
+cp LICENSE "${OUT}/share/doc/LICENSE"
+cat > "${OUT}/share/doc/COMPAT.md" <<EOF
+# Toolchain compatibility
+
+Target: ${TRIPLE}. Object and executable emission require clang 22 on
+PATH (\`clang-22\` preferred); the release profile additionally requires
+\`opt\` 22. Emitted executables are self-contained (this bundle's runtime
+is linked in statically) and need none of those tools to run.
+EOF
+cat > "${OUT}/share/mojito/smoke/hello.mojo" <<EOF
+def main():
+    print("mojito bundle ok")
+EOF
+
+RUNTIME_SHA=$(sha256sum "${OUT}/lib/libmojito_runtime.a" | cut -d' ' -f1)
+# The bundle binary itself reports the ABI version it expects — and this
+# invocation is the packaging-time smoke check that the binary runs.
+ABI=$(MOJITO_RUNTIME_LIB="${OUT}/lib/libmojito_runtime.a" \
+    "${OUT}/bin/mojito" compile --backend pliron --print-toolchain \
+    | sed -n 's/^runtime-abi-version\t//p')
+test -n "${ABI}" || { echo "bundle binary failed to report the runtime ABI"; exit 1; }
+
+printf 'schema\t1\ntarget\t%s\nabi-version\t%s\nsha256\t%s\nlibs\tm\n' \
+    "${TRIPLE}" "${ABI}" "${RUNTIME_SHA}" > "${OUT}/lib/runtime-link.tsv"
+
+RUSTC_VERSION=$(rustc --version)
+CLANG_VERSION=$(clang-22 --version 2>/dev/null | head -1 || clang --version | head -1)
+printf 'schema\t1\nversion\t%s\ngit-rev\t%s\ntarget\t%s\nabi-version\t%s\nrustc\t%s\nclang\t%s\nlock-sha256\t%s\n' \
+    "${VERSION}" "${GIT_REV}" "${TRIPLE}" "${ABI}" "${RUSTC_VERSION}" "${CLANG_VERSION}" \
+    "$(sha256sum Cargo.lock | cut -d' ' -f1)" > "${OUT}/manifest.tsv"
+
+(cd "${OUT}" && find . -type f ! -name checksums.sha256 -print0 \
+    | sort -z | xargs -0 sha256sum > checksums.sha256)
+
+echo "==> compile-and-run smoke from the assembled bundle"
+SMOKE_DIR=$(mktemp -d)
+trap 'rm -rf "${SMOKE_DIR}"' EXIT
+env -u MOJITO_RUNTIME_LIB "${OUT}/bin/mojito" compile --backend pliron \
+    --emit exe -o "${SMOKE_DIR}/hello" "${OUT}/share/mojito/smoke/hello.mojo"
+OUTPUT=$(env -i "${SMOKE_DIR}/hello")
+test "${OUTPUT}" = "mojito bundle ok" || { echo "smoke output mismatch: ${OUTPUT}"; exit 1; }
+
+echo "==> deterministic tar"
+tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+    -C dist -cf - "${BUNDLE}" | gzip -n > "dist/${BUNDLE}.tar.gz"
+sha256sum "dist/${BUNDLE}.tar.gz"
+echo "==> bundle at ${OUT}"

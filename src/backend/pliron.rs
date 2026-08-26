@@ -10,7 +10,7 @@
 //! `finally`, flag-guarded destruction consuming drop-elaborated MIR exactly
 //! as emitted, references as verified place addresses, and test-lane
 //! lifecycle-event tracing — to pliron's LLVM dialect and on to LLVM IR,
-//! bitcode, objects, and host executables at `O0` or `O1`. The CLI's
+//! bitcode, objects, and host executables at `O0` or `release`. The CLI's
 //! `run --backend pliron` executes the advertised subset through a temporary
 //! executable; every unsupported construct fails with a contextual diagnostic
 //! rather than falling back to the VM. The backend consumes `MirProgram`
@@ -24,7 +24,6 @@ use std::fmt;
 use pliron::builtin::ops::ModuleOp;
 use pliron::context::Context;
 use pliron::op::Op;
-use pliron::pass::{AnalysisManager, NestedOpsPass, OpPass, Pass, Passes};
 use pliron::printable::Printable;
 
 use std::path::Path;
@@ -33,13 +32,20 @@ use crate::mir::{MirFunction, MirInstr, MirProgram, MirStructDeclaration, Reg};
 use crate::token::SourceSpan;
 use crate::types::{Ty, TyArg};
 
-pub use crate::native::target::{EmitKind, NativeTarget, OptLevel};
+pub use crate::native::target::{DebugInfo, EmitKind, NativeTarget, OptLevel};
+pub use emit::link_object;
+pub use toolchain::{check_toolchain, set_runtime_override, toolchain_report};
 
 pub mod capability;
+pub mod inspect;
 
+mod artifact;
+mod debug;
 mod emit;
 mod jit;
 mod lower;
+mod pipeline;
+mod toolchain;
 
 /// Compile the call-graph closure of `options.entries` to an LLVM-dialect
 /// module: verify the constructed IR, run the mem2reg/DCE cleanup pipeline,
@@ -143,11 +149,16 @@ pub fn compile(
     );
 
     verify_module(&context, module)?;
-    run_cleanup_passes(&mut context, module)?;
+    pipeline::timing("pliron-passes", || {
+        pipeline::Pipeline::run_pliron_passes(&mut context, module)
+    })?;
     verify_module(&context, module)?;
 
     pliron::debug_info::erase_given_names(&mut context, module.get_operation());
     let canonical_text = module.get_operation().disp(&context).to_string();
+    // Collected after the cleanup pipeline: passes may delete calls and
+    // unreachable blocks, and correlation must see the final IR.
+    let debug_table = debug::DebugTable::collect(&context, module, &locator);
 
     Ok(NativeModule {
         context,
@@ -158,6 +169,7 @@ pub fn compile(
         target: options.target,
         exe_wrapper_added: false,
         unhandled_error_declared: shared.declared_rt("mjrt_unhandled_error"),
+        debug_table,
     })
 }
 
@@ -209,6 +221,8 @@ pub struct NativeModule {
     /// Whether body lowering declared `mjrt_unhandled_error` (the wrapper
     /// must not redeclare it).
     unhandled_error_declared: bool,
+    /// Per-function debug facts for the emission-time DWARF attach.
+    debug_table: debug::DebugTable,
 }
 
 impl NativeModule {
@@ -224,22 +238,62 @@ impl NativeModule {
     }
 
     /// Write LLVM bitcode to `path`.
-    pub fn write_bitcode(&self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
-        emit::write_bitcode(&self.context, self.module, &self.target, path, opt)
+    pub fn write_bitcode(
+        &self,
+        path: &Path,
+        opt: OptLevel,
+        debug: DebugInfo,
+    ) -> Result<(), PlironError> {
+        emit::write_bitcode(
+            &self.context,
+            self.module,
+            &self.target,
+            path,
+            opt,
+            self.debug_policy(debug),
+        )
     }
 
-    /// Write a relocatable object file to `path`.
-    pub fn write_object(&self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
-        emit::write_object(&self.context, self.module, &self.target, path, opt)
+    /// Write a relocatable object file to `path`, with its sidecar
+    /// `<path>.link.tsv` manifest. The object contains the synthesized C
+    /// `main` wrapper, so `link_object` (the CLI `link` verb) can turn it
+    /// into an executable with nothing but the manifest and the runtime.
+    pub fn write_object(
+        &mut self,
+        path: &Path,
+        opt: OptLevel,
+        debug: DebugInfo,
+    ) -> Result<(), PlironError> {
+        self.ensure_exe_wrapper()?;
+        emit::write_object(
+            &self.context,
+            self.module,
+            &self.target,
+            path,
+            opt,
+            self.debug_policy(debug),
+        )
     }
 
     /// Link an executable at `path`. Requires a compiled zero-argument
     /// non-returning `main`; the synthesized C `main` wrapper checks in the
     /// linked `mojito-runtime` (referencing its version symbol), calls
     /// `__toplevel__` (when compiled), then `main`, then returns 0.
-    pub fn write_executable(&mut self, path: &Path, opt: OptLevel) -> Result<(), PlironError> {
+    pub fn write_executable(
+        &mut self,
+        path: &Path,
+        opt: OptLevel,
+        debug: DebugInfo,
+    ) -> Result<(), PlironError> {
         self.ensure_exe_wrapper()?;
-        emit::write_executable(&self.context, self.module, &self.target, path, opt)
+        emit::write_executable(
+            &self.context,
+            self.module,
+            &self.target,
+            path,
+            opt,
+            self.debug_policy(debug),
+        )
     }
 
     /// [`NativeModule::write_executable`] instrumented with AddressSanitizer
@@ -248,9 +302,32 @@ impl NativeModule {
         &mut self,
         path: &Path,
         opt: OptLevel,
+        debug: DebugInfo,
     ) -> Result<(), PlironError> {
         self.ensure_exe_wrapper()?;
-        emit::write_executable_sanitized(&self.context, self.module, &self.target, path, opt)
+        emit::write_executable_sanitized(
+            &self.context,
+            self.module,
+            &self.target,
+            path,
+            opt,
+            self.debug_policy(debug),
+        )
+    }
+
+    fn debug_policy(&self, level: DebugInfo) -> debug::DebugPolicy<'_> {
+        debug::DebugPolicy {
+            level,
+            table: &self.debug_table,
+        }
+    }
+
+    /// Attach debug information to the converted module in a scratch file
+    /// and report the functions that degraded to subprogram-only
+    /// correlation. The corpus test pins this to empty; production emission
+    /// degrades identically but silently.
+    pub fn debug_degradations(&self) -> Result<Vec<String>, PlironError> {
+        emit::debug_degradations(&self.context, self.module, &self.target, &self.debug_table)
     }
 
     /// JIT-execute a compiled zero-argument value-returning MIR function and
@@ -1013,33 +1090,6 @@ fn collect_struct_types<'p>(
         Ty::Ref(ref_ty) => collect_struct_types(&ref_ty.referent, structs, seen, discovered),
         _ => {}
     }
-}
-
-/// Rebuild SSA out of the variable-slot allocas and drop the dead scaffolding.
-fn run_cleanup_passes(context: &mut Context, module: ModuleOp) -> Result<(), PlironError> {
-    let mut module_passes = OpPass::<ModuleOp, Passes>::default();
-    let mut per_func = Passes::default();
-    per_func.add_pass(OpPass::<
-        pliron_llvm::ops::FuncOp,
-        pliron::opts::mem2reg::Mem2RegPass,
-    >::default());
-    per_func.add_pass(OpPass::<pliron_llvm::ops::FuncOp, pliron::opts::dce::DCEPass>::default());
-    module_passes.add_pass(NestedOpsPass::new(per_func));
-    module_passes
-        .run(
-            module.get_operation(),
-            context,
-            &mut AnalysisManager::default(),
-        )
-        .map_err(|error| PlironError {
-            function: None,
-            kind: PlironErrorKind::Emit(format!(
-                "cleanup pass pipeline failed: {}",
-                error.disp(context)
-            )),
-            location: None,
-        })?;
-    Ok(())
 }
 
 /// Run the pliron verifier over the whole module.

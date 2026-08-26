@@ -38,8 +38,8 @@ pub struct LinkOptions {
 impl Default for LinkOptions {
     fn default() -> Self {
         let mut search_roots = Vec::new();
-        if let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
-            search_roots.push(Path::new(root).join("stdlib"));
+        if let Some(root) = bundled_path("stdlib") {
+            search_roots.push(root);
         }
         LinkOptions { search_roots }
     }
@@ -661,18 +661,19 @@ impl Linker {
     ) -> Result<Vec<Stmt>, ModuleError> {
         self.ensure_prelude()?;
         let uses_kwargs = program_uses_kwargs(&program);
-        if uses_kwargs && let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
-            let runtime = Path::new(root).join("stdlib/std/collections/string_dict.mojo");
+        if uses_kwargs
+            && let Some(runtime) = bundled_path("stdlib/std/collections/string_dict.mojo")
+        {
             self.load_module(&runtime, "std.collections.string_dict")?;
         }
         let mut bindings = self.prelude_bindings.clone().unwrap_or_default();
         let mut namespaces = HashMap::new();
         let mut explicit_imports = HashSet::new();
-        if uses_kwargs && let Some(root) = option_env!("CARGO_MANIFEST_DIR") {
-            let runtime = Path::new(root).join("stdlib/std/collections/string_dict.mojo");
-            if let Some(target) = self.exports[&canonical(&runtime)].get("StringDict") {
-                bindings.insert("StringDict".to_string(), target.clone());
-            }
+        if uses_kwargs
+            && let Some(runtime) = bundled_path("stdlib/std/collections/string_dict.mojo")
+            && let Some(target) = self.exports[&canonical(&runtime)].get("StringDict")
+        {
+            bindings.insert("StringDict".to_string(), target.clone());
         }
         let mut body = Vec::new();
         for stmt in program {
@@ -737,9 +738,8 @@ impl Linker {
         let mut explicit_imports = HashSet::new();
         if module_name != "std.collections.string_dict"
             && program_uses_kwargs(&program)
-            && let Some(root) = option_env!("CARGO_MANIFEST_DIR")
+            && let Some(runtime) = bundled_path("stdlib/std/collections/string_dict.mojo")
         {
-            let runtime = Path::new(root).join("stdlib/std/collections/string_dict.mojo");
             self.load_module(&runtime, "std.collections.string_dict")?;
             if let Some(target) = self.exports[&canonical(&runtime)].get("StringDict") {
                 bindings.insert("StringDict".to_string(), target.clone());
@@ -1269,7 +1269,29 @@ const PRELUDE_EXPORTS: &[&str] = &[
 ];
 
 fn bundled_path(relative: &str) -> Option<PathBuf> {
-    option_env!("CARGO_MANIFEST_DIR").map(|root| Path::new(root).join(relative))
+    bundled_root().map(|root| root.join(relative))
+}
+
+/// The root holding the compiler's bundled support files (the directory
+/// containing `stdlib/`): the development source tree when it exists, else
+/// the installation bundle's `share/mojito/` next to the running
+/// executable. Resolved once per process.
+pub(crate) fn bundled_root() -> Option<PathBuf> {
+    static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    // The prelude is the existence probe: a root without it cannot serve
+    // the bundled stdlib, whatever directories it has.
+    ROOT.get_or_init(|| {
+        if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
+            let root = PathBuf::from(manifest);
+            if root.join(PRELUDE_PATH).is_file() {
+                return Some(root);
+            }
+        }
+        let exe = std::env::current_exe().ok()?;
+        let share = exe.parent()?.parent()?.join("share").join("mojito");
+        share.join(PRELUDE_PATH).is_file().then_some(share)
+    })
+    .clone()
 }
 
 /// The declared name of a top-level declaration statement (`def`/`struct`/`trait`/

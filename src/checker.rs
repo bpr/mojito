@@ -2675,10 +2675,10 @@ struct CallableOriginSignature {
 /// only files physically shipped in the compiler's collection library receive
 /// the checked adjustment that can lower these operations.
 fn is_bundled_collection_source(source: Option<&str>) -> bool {
-    let (Some(manifest), Some(source)) = (option_env!("CARGO_MANIFEST_DIR"), source) else {
+    let (Some(root), Some(source)) = (crate::module::bundled_root(), source) else {
         return false;
     };
-    let stdlib = Path::new(manifest).join("stdlib");
+    let stdlib = root.join("stdlib");
     let source = Path::new(source);
     source == stdlib.join("std/collections/list.mojo")
         || source == stdlib.join("list.mojo")
@@ -2695,10 +2695,10 @@ fn is_bundled_collection_source(source: Option<&str>) -> bool {
 /// audited head rejects it). `std/memory.mojo` is the single bundled crossing;
 /// every other module — stdlib included — allocates through `std.memory`.
 fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
-    let (Some(manifest), Some(source)) = (option_env!("CARGO_MANIFEST_DIR"), source) else {
+    let (Some(root), Some(source)) = (crate::module::bundled_root(), source) else {
         return false;
     };
-    Path::new(source) == Path::new(manifest).join("stdlib").join("std/memory.mojo")
+    Path::new(source) == root.join("stdlib").join("std/memory.mojo")
 }
 
 /// Select the current Mojo parameter-index hook first, while retaining the

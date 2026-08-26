@@ -8,7 +8,9 @@ use std::path::Path;
 use expect_test::expect;
 use mojito::backend::pliron as native;
 use mojito::{Compiler, CompilerError, RuntimeError};
-use native::{CompileOptions, JitValue, NativeModule, NativeTarget, OptLevel, TrapCategory};
+use native::{
+    CompileOptions, DebugInfo, JitValue, NativeModule, NativeTarget, OptLevel, TrapCategory,
+};
 
 const FIXTURE_NAME: &str = "pliron_fixture.mojo";
 
@@ -391,7 +393,7 @@ fn scalar_capability_manifest_and_differential() {
                     .jit_value_with_symbols("compute", OptLevel::O0, &symbols)
                     .unwrap_or_else(|error| panic!("{rel}: JIT at O0 failed: {error}"));
                 let at_o1 = module
-                    .jit_value_with_symbols("compute", OptLevel::O1, &symbols)
+                    .jit_value_with_symbols("compute", OptLevel::Release, &symbols)
                     .unwrap_or_else(|error| panic!("{rel}: JIT at O1 failed: {error}"));
                 assert_jit_matches(&rel, "O0", at_o0, &printed);
                 assert_jit_matches(&rel, "O1", at_o1, &printed);
@@ -434,10 +436,10 @@ fn scalar_capability_manifest_and_differential() {
         let mut module = native::compile(compiled.elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
-        for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
+        for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
             let exe = dir.path().join(format!("trap-{level}"));
             module
-                .write_executable(&exe, opt)
+                .write_executable(&exe, opt, DebugInfo::Lines)
                 .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
             let run = std::process::Command::new(&exe)
                 .output()
@@ -534,14 +536,14 @@ fn executable_and_object_emission() {
     let dir = tempfile::tempdir().expect("tempdir");
     let object_path = dir.path().join("main.o");
     module
-        .write_object(&object_path, OptLevel::O0)
+        .write_object(&object_path, OptLevel::O0, DebugInfo::Lines)
         .expect("object emission");
     let object_bytes = std::fs::read(&object_path).expect("object file exists");
     assert_eq!(&object_bytes[..4], b"\x7fELF", "object must be an ELF file");
 
     let exe_path = dir.path().join("main");
     module
-        .write_executable(&exe_path, OptLevel::O0)
+        .write_executable(&exe_path, OptLevel::O0, DebugInfo::Lines)
         .expect("executable emission");
     let run = std::process::Command::new(&exe_path)
         .output()
@@ -586,10 +588,10 @@ fn print_fixture_exes_match_vm_output() {
         let mut module = native::compile(compiled.elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
-        for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
+        for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
             let exe = dir.path().join(format!("print-{level}"));
             module
-                .write_executable(&exe, opt)
+                .write_executable(&exe, opt, DebugInfo::Lines)
                 .unwrap_or_else(|error| panic!("{fixture}: exe emission at {level}: {error}"));
             let run = std::process::Command::new(&exe)
                 .output()
@@ -797,7 +799,7 @@ fn parity_exe_manifest_and_differential() {
                 let dir = tempfile::tempdir().expect("tempdir");
                 let asan_exe = dir.path().join("parity-asan");
                 module
-                    .write_executable_sanitized(&asan_exe, OptLevel::O0)
+                    .write_executable_sanitized(&asan_exe, OptLevel::O0, DebugInfo::Lines)
                     .unwrap_or_else(|error| panic!("{rel}: sanitized emission: {error}"));
                 let run = run_executable(&asan_exe, stdin, &[("ASAN_OPTIONS", "detect_leaks=1")]);
                 assert_eq!(
@@ -811,10 +813,10 @@ fn parity_exe_manifest_and_differential() {
                     "{rel}: sanitizer diagnostics:\n{}",
                     String::from_utf8_lossy(&run.stderr)
                 );
-                for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
+                for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
                     let exe = dir.path().join(format!("parity-{level}"));
                     module
-                        .write_executable(&exe, opt)
+                        .write_executable(&exe, opt, DebugInfo::Lines)
                         .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
                     let run = run_executable(&exe, stdin, &[]);
                     assert_eq!(
@@ -901,10 +903,10 @@ fn parity_exe_manifest_and_differential() {
         let mut module = native::compile(compiled.elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
-        for (level, opt) in [("O0", OptLevel::O0), ("O1", OptLevel::O1)] {
+        for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
             let exe = dir.path().join(format!("error-{level}"));
             module
-                .write_executable(&exe, opt)
+                .write_executable(&exe, opt, DebugInfo::Lines)
                 .unwrap_or_else(|error| panic!("{rel}: exe emission at {level}: {error}"));
             let run = run_executable(&exe, fixture_stdin(&rel), &[]);
             assert_eq!(
@@ -924,7 +926,7 @@ fn parity_exe_manifest_and_differential() {
         }
         let sanitizer = dir.path().join("error-asan");
         module
-            .write_executable_sanitized(&sanitizer, OptLevel::O0)
+            .write_executable_sanitized(&sanitizer, OptLevel::O0, DebugInfo::Lines)
             .unwrap_or_else(|error| panic!("{rel}: sanitized error emission: {error}"));
         let run = run_executable(
             &sanitizer,
@@ -1054,12 +1056,13 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             &["main", "__toplevel__"],
             &["integer literal 1208925819614629174706176 does not fit IntLiteral storage (i64)"],
         ),
-        // A retained generic closure with captures still rejects before the
-        // backend could silently invent an environment representation.
+        // A move capture whose type runs a user `__moveinit__` still rejects
+        // before the backend could silently substitute a byte relocation for
+        // the user-observable constructor.
         (
             "struct Loud(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __moveinit__(out self, deinit other: Self):\n        self.v = other.v\n\ndef compute() -> Int:\n    var l = Loud(3)\n    var peek: def() capturing[_] -> Int = lambda {var l^} -> Int: l.v\n    return peek()\n",
             &["compute"],
-            &["generic retained callable `compute$$lambda$254` has captures"],
+            &["owned closure capture of `Loud` with a user `__moveinit__`"],
         ),
     ];
     for (src, entries, phrases) in cases {
@@ -1146,7 +1149,7 @@ fn lifecycle_event_traces_match_the_vm() {
         let dir = tempfile::tempdir().expect("tempdir");
         let exe = dir.path().join("traced");
         module
-            .write_executable(&exe, OptLevel::O0)
+            .write_executable(&exe, OptLevel::O0, DebugInfo::Lines)
             .unwrap_or_else(|error| panic!("{fixture}: exe emission: {error}"));
         let run = std::process::Command::new(&exe)
             .output()
@@ -1475,6 +1478,7 @@ mod native_abi_cross_checks {
             declare i32 @mjrt_version()
             declare ptr @mjrt_alloc(i64, i64)
             declare void @mjrt_free(ptr)
+            declare i32 @mjrt_pointer_status(ptr)
             declare void @mjrt_dealloc(ptr, i64, i64)
             declare void @mjrt_write_stdout(ptr, i64)
             declare i64 @mjrt_fmt_i64(i64, ptr)
@@ -1482,6 +1486,7 @@ mod native_abi_cross_checks {
             declare i64 @mjrt_fmt_f64(double, ptr)
             declare void @mjrt_trap(i32) noreturn
             declare void @mjrt_unhandled_error(ptr, i64) noreturn
+            declare void @mjrt_abort(ptr, i64) noreturn
             declare void @mjrt_trace(i32, ptr, i64)
             declare void @mjrt_read_line(ptr)
         "#]]
@@ -1556,7 +1561,7 @@ def main():
             let dir = tempfile::tempdir().expect("tempdir");
             let exe = dir.path().join("abi_inspect");
             module
-                .write_executable(&exe, super::OptLevel::O0)
+                .write_executable(&exe, super::OptLevel::O0, super::DebugInfo::Lines)
                 .expect("exe emission");
 
             let nm = ["llvm-nm-22", "llvm-nm", "nm"]
