@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# The unattended full-gate run: the default (VM-lane) gate, the pliron
+# (LLVM-lane) gate, and the full differential conformance sweep against the
+# pinned Mojo, in that order, with per-step logs and a RESULTS.md summary
+# under target/overnight-gates/<timestamp>/.
+#
+# Fully unattended (no sudo, no network). Steps are independent: a failure is
+# recorded and the run continues. Exit status is nonzero if any step failed.
+# GATES_DRY_RUN=1 replaces the heavy steps with no-ops to test the plumbing;
+# MOJO_PIXI_MANIFEST overrides the pinned conformance environment.
+set -uo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+DRY_RUN="${GATES_DRY_RUN:-}"
+LOG_ROOT="target/overnight-gates/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "${LOG_ROOT}"
+RESULTS="${LOG_ROOT}/RESULTS.md"
+MOJO_PIXI_MANIFEST="${MOJO_PIXI_MANIFEST:-${HOME}/src/mojo/envs/mojo-2026082605/pixi.toml}"
+
+declare -a STEP_NAMES STEP_STATUSES STEP_SECONDS STEP_LOGS
+
+# run_step <name> <command...>: tee output to a per-step log, record status
+# and wall time, never abort the run.
+run_step() {
+    local name="$1"
+    shift
+    local log="${LOG_ROOT}/${name}.log"
+    local start end status
+    echo "==> ${name} ($(date -u +%H:%M:%SZ)) [log: ${log}]"
+    start=$(date +%s)
+    if [[ -n "${DRY_RUN}" ]]; then
+        { echo "[dry-run] $*"; true; } >"${log}" 2>&1
+        status=$?
+    else
+        "$@" >"${log}" 2>&1
+        status=$?
+    fi
+    end=$(date +%s)
+    STEP_NAMES+=("${name}")
+    STEP_STATUSES+=("${status}")
+    STEP_SECONDS+=("$((end - start))")
+    STEP_LOGS+=("${log}")
+    if [[ "${status}" -eq 0 ]]; then
+        echo "    PASS (${name}, $((end - start))s)"
+    else
+        echo "    FAIL (${name}, exit ${status}; see ${log})"
+    fi
+    return 0
+}
+
+# Default-features gate before the pliron gate: check-pliron rebuilds with the
+# feature before any step that needs the pliron binary, so this order never
+# leaves a featureless target/debug/mojito where a pliron step expects one.
+run_step check-default env RUSTC_WRAPPER= scripts/check
+run_step check-pliron env RUSTC_WRAPPER= scripts/check-pliron
+
+# Conformance last: it rebuilds the default-features debug binary itself, so
+# it also restores a featureless target/debug/mojito after the pliron gate.
+run_step conformance scripts/conformance --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}"
+
+# RESULTS.md: the morning entry point.
+{
+    echo "# Overnight gate run — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo
+    echo "| step | status | duration | log |"
+    echo "|---|---|---|---|"
+    overall=0
+    for i in "${!STEP_NAMES[@]}"; do
+        if [[ "${STEP_STATUSES[$i]}" -eq 0 ]]; then
+            verdict=PASS
+        else
+            verdict="FAIL(${STEP_STATUSES[$i]})"
+            overall=1
+        fi
+        echo "| ${STEP_NAMES[$i]} | ${verdict} | ${STEP_SECONDS[$i]}s | ${STEP_LOGS[$i]} |"
+    done
+    echo
+    echo "## Morning follow-up"
+    echo
+    echo "- Triage any FAIL above from its log."
+    echo "- A check-pliron manifest-assertion failure after hand-edited"
+    echo "  pliron TSV rows: regenerate with scripts/run-parity-regen.sh,"
+    echo "  review the diff, then rerun scripts/check-pliron."
+    echo "- Never edit conformance/cases.tsv while the conformance step runs."
+    exit "${overall}"
+} | tee "${RESULTS}"
+overall=${PIPESTATUS[0]}
+
+echo
+echo "==> done; summary at ${RESULTS}"
+exit "${overall}"

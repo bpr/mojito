@@ -27,7 +27,6 @@ materialization	first-pass	https://mojolang.org/docs/manual/metaprogramming/mate
 reflection	first-pass	https://mojolang.org/docs/manual/metaprogramming/reflection/
 pointers	first-pass	https://mojolang.org/docs/manual/pointers/
 unsafe-pointers	first-pass	https://mojolang.org/docs/manual/pointers/unsafe-pointers/
-layouts	first-pass	https://mojolang.org/docs/manual/layout/layouts/
 gpu	excluded	https://mojolang.org/docs/manual/gpu/
 tiletensor	excluded	https://mojolang.org/docs/manual/tile-tensor/
 python-interop	excluded	https://mojolang.org/docs/manual/python/

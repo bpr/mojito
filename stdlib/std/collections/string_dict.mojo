@@ -1,7 +1,7 @@
 # The owning, insertion-ordered keyword dictionary used for `**kwargs`.
 #
 # Current Mojo exposes a String-keyed container instead of materializing keyword
-# collectors as a general-purpose HashDict. Keeping the key type out of the
+# collectors as a general-purpose hash dictionary. Keeping the key type out of the
 # parameter list also makes the call ABI explicit: `StringDict[V]` owns the
 # homogeneous values collected at a call boundary. Mojito spells the key type
 # `StringLiteral`: keyword names are compile-time strings, and the VM's kwargs

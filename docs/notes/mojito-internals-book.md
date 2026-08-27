@@ -178,7 +178,7 @@ Describe the arena-style heap used for `UnsafePointer`, allocation, offsets, loa
 
 ### 39. The Standard Library as a Compiler Test
 
-Explain the self-hosting strategy: implement `Optional`, `List`, `Set`, `Dict`, `HashSet`, iterators, hashing, and math helpers in Mojito-flavored Mojo, then let honest library code expose missing compiler capabilities. Show how list-backed reference implementations serve as behavioral oracles for more advanced structures.
+Explain the self-hosting strategy: implement `Optional`, `List`, `Set`, `Dict`, iterators, hashing, and math helpers in Mojito-flavored Mojo, then let honest library code expose missing compiler capabilities. Show how list-backed reference implementations serve as behavioral oracles for more advanced structures.
 
 ### 40. Case Study: Growing Traits from Library Pressure
 

@@ -44,7 +44,7 @@ pub enum CtValue {
     /// resolution already accepts inside `SIMD[...]`/`Scalar[...]` brackets.
     Dtype(crate::ast::Dtype),
     /// A frozen struct instance (declaration-ordered fields) — the binding of
-    /// a struct-typed value parameter such as `[layout: Layout]`. Freezing is
+    /// a struct-typed value parameter such as `[e: Extent]`. Freezing is
     /// restricted to structs constructible fieldwise from recursively
     /// freezable fields, so materialization is always the fieldwise
     /// construction call.

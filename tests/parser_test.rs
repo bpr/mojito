@@ -1359,6 +1359,25 @@ fn rejects_with_missing_name_after_as() {
 }
 
 #[test]
+fn bare_raises_before_where_clauses_takes_no_error_type() {
+    // A contextual `where` after a bare `raises` starts the constraint
+    // clauses; it must not be consumed as the raises error type.
+    match &parse("def f(x: Int) raises where conforms_to(Int, Copyable):\n    return x\n")[0].kind {
+        StmtKind::Def {
+            raises,
+            raises_type,
+            where_clauses,
+            ..
+        } => {
+            assert!(*raises);
+            assert_eq!(raises_type, &None);
+            assert_eq!(where_clauses.len(), 1);
+        }
+        other => panic!("expected a def, got {:?}", other),
+    }
+}
+
+#[test]
 fn parses_raises_effect_on_def() {
     // Both the effect and its optional typed error are retained.
     match &parse("def f(x: Int) raises ValidationError -> Int:\n    return x\n")[0].kind {

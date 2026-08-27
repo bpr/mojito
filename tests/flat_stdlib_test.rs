@@ -20,7 +20,7 @@ fn flat_list_and_iterable_facades_construct_iterate_and_pop() {
 #[test]
 fn remaining_flat_facades_reexport_their_public_surfaces() {
     mojito::link_source(
-        "from dict import Dict, DictEntry\nfrom hashdict import HashDict\nfrom hashing import IncrementalHasher, bucket_index\nfrom hashset import HashSet\nfrom math import ceil, ceildiv, floor, trunc\nfrom optional import Optional\nfrom set import Set\n\ndef main():\n    pass\n",
+        "from dict import Dict, DictEntry\nfrom hashing import IncrementalHasher, bucket_index\nfrom math import ceil, ceildiv, floor, trunc\nfrom optional import Optional\nfrom set import Set\n\ndef main():\n    pass\n",
         Path::new("/tmp/mojito_flat_stdlib_compat.mojo"),
     )
     .expect("every flat facade exports its authoritative public names");

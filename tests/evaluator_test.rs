@@ -1245,7 +1245,7 @@ fn insert_and_remove_and_pop_index() {
 #[test]
 fn reverse_clear_extend() {
     let e = run(
-        "var a: List[Int] = [1, 2, 3]\na.reverse()\nvar b: List[Int] = [4, 5]\na.extend(b)\nvar n: Int = len(a)\nvar last: Int = a.pop()\na.clear()\nvar empty: Int = len(a)\n",
+        "var a: List[Int] = [1, 2, 3]\na.reverse()\nvar b: List[Int] = [4, 5]\na.extend(b^)\nvar n: Int = len(a)\nvar last: Int = a.pop()\na.clear()\nvar empty: Int = len(a)\n",
     );
     assert_eq!(binding(&e, "n"), Value::Int(5)); // [3,2,1,4,5]
     assert_eq!(binding(&e, "last"), Value::Int(5));
@@ -1255,7 +1255,7 @@ fn reverse_clear_extend() {
 #[test]
 fn count_and_index() {
     let e = run(
-        "var xs: List[Int] = [5, 7, 5, 9, 5]\nvar c: Int = xs.count(5)\nvar i: Int = xs.index(9)\n",
+        "var xs: List[Int] = [5, 7, 5, 9, 5]\nvar c: Int = xs.count(5)\nvar i: Int = xs.try_index(9).or_else(-1)\n",
     );
     assert_eq!(binding(&e, "c"), Value::Int(3));
     assert_eq!(binding(&e, "i"), Value::Int(3));

@@ -920,13 +920,4 @@ fn std_memory_exports_the_allocation_vocabulary() {
         "from std.memory import Layout, dealloc\n\ndef main():\n    var a = alloc(Layout[Int](count=1))\n    a.unsafe_ptr().unsafe_write(1)\n    print(a.unsafe_ptr()[])\n    dealloc(a^)\n",
     );
     assert_eq!(run(&prelude).expect("run"), "1\n");
-
-    // std.memory's Layout[T] and the layout package's Layout are distinct
-    // declarations; importing only unsafe_alloc keeps the layout package's
-    // Layout unshadowed.
-    let with_layout_package = d.write(
-        "with_layout.mojo",
-        "from std.memory import unsafe_alloc\nfrom layout import Layout, LayoutTensor\n\ndef main():\n    var data = unsafe_alloc[Scalar[DType.int32]](4)\n    var i = 0\n    while i < 4:\n        data[i] = Scalar[DType.int32](0)\n        i += 1\n    var tensor = LayoutTensor[DType.int32, Layout.row_major(4)](data)\n    tensor[0] = Scalar[DType.int32](9)\n    print(tensor[0])\n    data.unsafe_free()\n",
-    );
-    assert_eq!(run(&with_layout_package).expect("run"), "9\n");
 }

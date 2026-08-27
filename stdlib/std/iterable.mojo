@@ -10,7 +10,8 @@
 # and yields element references declared at `_get_owned_interior["element"]`
 # granularity, resolved to the source's mutability at each loop site; mapping
 # mutation during iteration lazily invalidates the iteration generation, and
-# `keys`/`values`/`items` views remain eager snapshots by design.
+# `keys`/`values`/`items` return self-iterable, non-indexable snapshot
+# iterators.
 
 @fieldwise_init
 struct StopIteration:

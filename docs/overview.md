@@ -248,8 +248,6 @@ Current self-hosted proof types include:
 - `List[T]`
 - `Set[T]`
 - `Dict[K, V]`
-- `HashDict[K, V]`
-- `HashSet[T]`
 - `Range`
 - `Tuple[*Ts]`
 - `StringDict[V]`

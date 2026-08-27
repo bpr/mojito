@@ -8,6 +8,34 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Collection API parity growth (2026-08): `Dict` is now hash-bucketed over
+  its dense insertion-ordered entries (doubling at load factor one) and
+  carries upstream's `Hashable` key bound, adding `pop` (raising and
+  defaulted), LIFO `popitem`, ref-returning `setdefault`, `update`,
+  `clear`, merging `__or__`, `__bool__`, order-insensitive equality, and
+  `(*, capacity)` construction; `keys`/`values`/`items` now return
+  self-iterable, non-indexable snapshot iterators (indexing and `len` on a
+  view reject, matching upstream). `Set` gains the `Hashable` element
+  bound, `remove`/`discard`, LIFO `pop`, `clear`, `update`, the
+  union/intersection/difference/symmetric_difference families with
+  `&`/`|`/`-`/`^` operators, subset/superset comparisons, and `__bool__`;
+  its borrowed iteration yields read-only element references (upstream's
+  accepted write-through corrupts its hash index — recorded subset gap).
+  `List` gains `(*, capacity)` and `(*, length, fill)` construction,
+  `reserve`/`resize`/`shrink`/`swap_elements`/`capacity`,
+  `unsafe_get`/`unsafe_set`, equality, `__bool__`, `+`/`+=` concatenation,
+  `*`/`*=` repetition, Optional-returning `try_index`, a raising `index`
+  with upstream's ValueError message, upstream's consuming
+  `extend(var other)`, and the borrowing `extend(Span)` overload. `Dict`
+  also gains `take_items`, draining every entry into an owned iterator
+  (Mojito drains eagerly where upstream's borrowed iterator drains lazily —
+  mid-drain observation is a documented output divergence). The parser now
+  accepts `where` clauses after a bare `raises` effect (previously `where`
+  mis-parsed as the raises error type). Every accept/reject/output claim carries differential fixtures
+  against the pinned Mojo (`dict-methods-growth`, `set-methods-growth`,
+  `list-methods-growth`, view/bound rejection cases, and the
+  `set-ref-write-gap`/`list-extend-consumes` transfer pins).
+
 - Contextually inferred member references (upstream 2026-08): a leading-dot
   chain (`var c: Color = .red()`, `takes_color(.of(7))`, `[.red(), .of(3)]`
   under a `List[Color]` annotation, `return .red()`) resolves its base against
@@ -180,6 +208,55 @@ to evolve under the `0.x` compatibility rules.
   checks in the default lane (`tests/native_abi_test.rs`) and target-only
   LLVM cross checks in the pliron lane (target-data agreement, declaration
   snapshots, a clang data-layout pin, and `llvm-nm` symbol inspection).
+
+### Removed
+
+- The Mojito-only `HashDict[K, V]` and `HashSet[T]` collections are retired:
+  upstream ships only `Dict`/`Set`, so the fork is burned down. `Dict`
+  absorbs HashDict's hash-bucketed layout (dense insertion-ordered entries,
+  nested-list bucket index, doubling at load factor one) behind its
+  unchanged API, and `Dict`/`Set` now carry upstream's `Hashable`
+  key/element bound (KeyElement); differential reject fixtures pin the
+  bound on both compilers. `std.hashing.bucket_index` stays as Dict's
+  engine.
+
+- The bundled `layout` package (`Layout`, `IntTuple`,
+  `LayoutTensor[dtype: DType, layout: Layout]`) is deleted. Upstream moved
+  the layout library out of the Mojo standard library to the MAX kernels
+  tree (`max/kernels/src/layout/` at the audited head), so under the
+  match-or-subset rule it is no longer Mojito surface. The DType and
+  frozen-struct value-parameter machinery it exercised is shared language
+  infrastructure (SIMD, generics) and stays, with its fixtures rewritten
+  onto neutral structs (`comptime_frozen_struct.mojo`,
+  `struct_value_param_frozen.mojo`). `std.memory.Layout[T]` — the
+  allocation descriptor — is unrelated and unchanged.
+
+### Fixed
+
+- Native (Pliron) String construction from literals works again. The
+  2026-08 parity pass changed literal→String conversion to emit the
+  nominal constructor overload symbol (`String.__init__$ov$String`)
+  instead of the type-name call shape, so the native backend's
+  constructor bridge no longer intercepted it and the declared
+  never-execute stub body ran instead — every natively built String was
+  empty (the full pliron gate had not run since before that pass). The
+  native call lowering now routes that overload symbol to the same
+  constructor bridge. The pass's seven new `assets/ok` fixtures also
+  gained their missing pliron parity/scalar manifest rows, and the
+  native runtime's uninitialized-storage trap messages now say
+  `MaybeUninit` to match the renamed type (message text only; no ABI
+  change).
+
+- Module-level `comptime` constant materialization is now shadow-aware:
+  a local `var`/`ref` declaration, implicit function-scope assignment,
+  unpack target, loop variable, except binding, or `with … as` binding
+  that rebinds the constant's name stays local for the remainder of its
+  block instead of being replaced by the materialized literal.
+  Previously `comptime i = 2 + 3` broke any program whose linked code
+  (including the bundled stdlib's `var i` loops) rebound the name —
+  `i += 1` materialized into the invalid `5 += 1`. The declaring
+  statement's own initializer still reads the constant
+  (`var n = n + 1` sees the outer value).
 
 ### Changed
 

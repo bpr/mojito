@@ -1307,7 +1307,7 @@ fn is_specializable_declaration(statement: &Stmt) -> bool {
 }
 
 /// The registry-aware form: `is_value_struct` recognizes a single bound that
-/// names a struct (a struct-typed value parameter such as `[layout: Layout]`),
+/// names a struct (a struct-typed value parameter such as `[e: Extent]`),
 /// which — like a `DType` parameter — forces per-application monomorphization.
 fn is_specializable_declaration_in(
     statement: &Stmt,

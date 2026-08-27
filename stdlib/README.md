@@ -78,19 +78,21 @@ only from their authoritative `std` modules.
   its origin as an erased struct parameter, borrows its source, and yields
   element references declared at `_get_owned_interior["element"]` granularity,
   resolved to the source's mutability at each loop site. Mapping mutation
-  during iteration is lazily rejected; views remain eager snapshots.
-- `std/collections/set.mojo` — a generic, list-backed `Set[T]` for `Equatable & Copyable & Movable`
-  elements. It supports `add`, membership through `in`/`__contains__`, `len`, and
+  during iteration is lazily rejected; view iterators snapshot at the call.
+- `std/collections/set.mojo` — a generic, list-backed `Set[T]` for `Hashable & Equatable &
+  Copyable & Movable` elements (upstream's KeyElement bound; the dense list
+  preserves insertion order). It supports `add`, membership through `in`/`__contains__`, `len`, and
   borrowed reference-yielding iteration through the backing list's borrowed
   `_ListIter`. It conforms to
   `Iterable`.
-- `std/collections/dict.mojo` — a generic, insertion-ordered, list-backed
-  `Dict[K, V]`. It supports subscripts, overloaded `get`, membership, key
-  iteration, eager `keys`/`values`/`items` snapshots, public `DictEntry`, and
-  value-semantic copying. A missing subscript raises `Error("missing key")`.
-- `std/collections/hashdict.mojo` — a hash-backed, insertion-ordered
-  `HashDict[K, V]`: dense entries preserve order while `List[List[Int]]` buckets
-  index them. It grows and rehashes explicitly and mirrors the `Dict` API.
+- `std/collections/dict.mojo` — a generic, hash-backed, insertion-ordered
+  `Dict[K: Hashable & Equatable & Copyable & Movable, V]`: dense entries
+  preserve order while `List[List[Int]]` buckets index them, doubling when
+  the load factor reaches one. It supports subscripts, overloaded `get`,
+  membership, key iteration, self-iterable non-indexable `keys`/`values`/`items`
+  snapshot iterators, public
+  `DictEntry`, and value-semantic copying. A missing subscript raises
+  `Error("missing key")`.
 - `std/collections/string_dict.mojo` — the insertion-ordered owning
   `StringDict[V]` used for homogeneous `**kwargs`; the VM constructs it in the
   callee frame and consumes it for `**kwargs^` forwarding.
@@ -106,16 +108,6 @@ only from their authoritative `std` modules.
   Unlike `abs`/`round`/`divmod` (Mojo prelude builtins, available bare), these mirror
   Mojo's `math` module and must be imported: `from std.math import floor`. Built-in `Int`/`Float64`
   supply the underlying dunders intrinsically.
-- `std/collections/hashset.mojo` — an experimental hash-backed `HashSet[T: Hashable & Equatable &
-  Copyable & Movable]`. It keeps a fixed array of buckets and only scans the bucket
-  a key hashes into, so it is genuinely hash-backed (unlike the linear-scan `Set`).
-  `Hashable` does not imply `Equatable`, so both bounds are named — the hash picks a
-  bucket, equality resolves collisions within it. Its nested buckets use the
-  self-hosted `List`; `add` stages and writes back one copied bucket, and is
-  available only when `T: Deinitable` because replacement must satisfy
-  the nested List setter's lifecycle contract. The bucket count remains fixed
-  pending a rehashing follow-up.
-
 - `std/span.mojo` — the prelude-exported borrowed view `Span[mut: Bool, //,
   T: Movable, origin: Origin[mut=mut]]`: a multi-element origin-bearing
   pointer (`Pointer[T, origin._get_owned_interior["element"]]`) plus a
@@ -134,8 +126,9 @@ only from their authoritative `std` modules.
 
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is
-public, matching Mojo's item-view element. Mapping views are eager snapshots
-rather than reference views until live view APIs are implemented.
+public, matching Mojo's item-view element. Mapping views are self-iterable,
+non-indexable snapshot iterators rather than borrowing views until a
+ref-field struct can cross an ordinary method return on the VM.
 
 The register VM executes the ordinary MIR produced for these declarations;
 `tests/self_host_test.rs` links and runs them. Public List/Tuple runtime variants

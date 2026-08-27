@@ -743,11 +743,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         if !matches!(self.peek_token()?, Some(Token::Raises)) {
             return Ok((false, None));
         }
-        // An optional error type follows, unless the next token ends the header.
+        // An optional error type follows, unless the next token ends the header
+        // (a contextual `where` starts the declaration's constraint clauses,
+        // never an error type).
         self.next_token()?; // consume 'raises'
         let next_is_effect = matches!(
             self.peek_token()?,
-            Some(Token::Identifier(word)) if matches!(word.as_str(), "capturing" | "thin" | "abi")
+            Some(Token::Identifier(word))
+                if matches!(word.as_str(), "capturing" | "thin" | "abi" | "where")
         );
         let error = if !next_is_effect
             && !matches!(

@@ -10,6 +10,8 @@ from std.memory import unsafe_alloc
 
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
+from std.optional import Optional
+
 from std.os import abort
 
 @fieldwise_init
@@ -54,6 +56,11 @@ struct _ListOwnedIter[T: AnyType](
     def __len__(self) -> Int:
         return self.size - self.index
 
+    # The owned iterator iterates itself, so a stored drained-iterator value
+    # can sit directly in a `for var … in it^` loop.
+    def __iter__(var self) -> Self:
+        return self^
+
     def __next__(mut self) raises StopIteration -> Self.T:
         if self.index >= self.size:
             raise StopIteration()
@@ -91,6 +98,23 @@ struct List[T: AnyType](
         self.size = 0
         self.data = unsafe_alloc[Self.T](self.cap)
 
+    # Capacity hint: the first `capacity` appends never reallocate.
+    def __init__(out self, *, capacity: Int):
+        self.cap = capacity
+        self.size = 0
+        self.data = unsafe_alloc[Self.T](self.cap)
+
+    def __init__(out self, *, length: Int, fill: Self.T) where conforms_to(
+        Self.T, Copyable
+    ):
+        self.cap = length
+        self.size = length
+        self.data = unsafe_alloc[Self.T](self.cap)
+        var i = 0
+        while i < length:
+            self.data[i] = fill
+            i += 1
+
     def __init__(
         out self, var *values: Self.T, __list_literal__: NoneType
     ) where conforms_to(Self.T, Movable):
@@ -126,14 +150,15 @@ struct List[T: AnyType](
 
     def grow(mut self) where conforms_to(Self.T, Movable):
         var new_cap = self.cap * 2
-        var new_data = unsafe_alloc[Self.T](new_cap)
-        var i = 0
-        while i < self.size:
-            new_data[i] = self.data.unsafe_offset(i).unsafe_take_pointee()
-            i += 1
-        self.data.unsafe_free()
-        self.data = new_data
-        self.cap = new_cap
+        if new_cap == 0:
+            new_cap = 4
+        self._realloc(new_cap)
+
+    # Ensure capacity for at least `capacity` elements; never shrinks.
+    def reserve(mut self, capacity: Int) where conforms_to(Self.T, Movable):
+        if self.cap >= capacity:
+            return
+        self._realloc(capacity)
 
     def append(mut self, var value: Self.T) where conforms_to(Self.T, Movable):
         if self.size == self.cap:
@@ -155,6 +180,45 @@ struct List[T: AnyType](
 
     def __len__(self) -> Int:
         return self.size
+
+    def __bool__(self) -> Bool:
+        return self.size > 0
+
+    def capacity(self) -> Int:
+        return self.cap
+
+    # Grow to `length` by appending copies of `fill`, or discard the tail
+    # when `length` is smaller.
+    def resize(mut self, length: Int, fill: Self.T) where conforms_to(
+        Self.T, Copyable
+    ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
+        if length < self.size:
+            self.shrink(length)
+            return
+        self.reserve(length)
+        while self.size < length:
+            self.append(fill)
+
+    # Discard elements at the end; aborts when `new_length` exceeds the
+    # current length.
+    def shrink(mut self, new_length: Int) where conforms_to(Self.T, Deinitable):
+        if self.size < new_length:
+            abort("shrink: new size is bigger than current")
+        var i = new_length
+        while i < self.size:
+            self.data.unsafe_offset(i).unsafe_deinit_pointee()
+            i += 1
+        self.size = new_length
+
+    def swap_elements(mut self, elt_idx_1: Int, elt_idx_2: Int) where conforms_to(
+        Self.T, Movable
+    ):
+        if elt_idx_1 == elt_idx_2:
+            return
+        var first = self.data.unsafe_offset(elt_idx_1).unsafe_take_pointee()
+        var second = self.data.unsafe_offset(elt_idx_2).unsafe_take_pointee()
+        self.data[elt_idx_1] = second^
+        self.data[elt_idx_2] = first^
 
     # A borrowed multi-element pointer over the element storage (current
     # Mojo's `unsafe_ptr` accessor). The interior-generation origin keeps the
@@ -221,6 +285,19 @@ struct List[T: AnyType](
         self.data.unsafe_offset(index).unsafe_deinit_pointee()
         self.data[index] = value^
 
+    # Unchecked element access: out-of-range indices are undefined behavior
+    # (the VM still diagnoses them deterministically).
+    def unsafe_get(
+        ref self, idx: Int
+    ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
+        return self.data[idx]
+
+    def unsafe_set(mut self, idx: Int, var value: Self.T) where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Movable):
+        self.data.unsafe_offset(idx).unsafe_deinit_pointee()
+        self.data[idx] = value^
+
     def __contains__(self, value: Self.T) -> Bool where conforms_to(
         Self.T, Equatable
     ):
@@ -284,12 +361,25 @@ struct List[T: AnyType](
             left += 1
             right -= 1
 
-    def extend(
-        mut self, other: Self
-    ) where conforms_to(Self.T, Copyable) and conforms_to(Self.T, Movable):
+    # Consuming extend (upstream's convention): `other`'s elements move in
+    # and its storage is released. The `Deinitable` requirement (for the
+    # drained husk) is a recorded subset of upstream's Movable-only bound.
+    # The parameter spells `List[Self.T]` rather than `Self` so the
+    # declaration's overload key matches the call site's substituted one.
+    def extend(mut self, var other: List[Self.T]) where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Movable):
+        self._extend_moving(other^)
+
+    # Borrowing extend: copy every element of the view (the source list
+    # stays intact).
+    def extend(mut self, elements: Span[Self.T]) where conforms_to(
+        Self.T, Copyable
+    ) and conforms_to(Self.T, Movable):
+        self.reserve(self.size + len(elements))
         var i = 0
-        while i < len(other):
-            self.append(other[i])
+        while i < len(elements):
+            self.append(elements[i])
             i += 1
 
     def count(self, value: Self.T) -> Int where conforms_to(Self.T, Equatable):
@@ -301,13 +391,82 @@ struct List[T: AnyType](
             i += 1
         return result
 
-    def index(self, value: Self.T) -> Int where conforms_to(Self.T, Equatable):
+    # First index of `value`, or an empty Optional when absent.
+    def try_index(self, value: Self.T) -> Optional[Int] where conforms_to(
+        Self.T, Equatable
+    ):
         var i = 0
         while i < self.size:
             if self.data[i] == value:
-                return i
+                return Optional[Int](i)
             i += 1
-        return -1
+        return Optional[Int]()
+
+    # First index of `value`; raises upstream's ValueError message when the
+    # value is absent.
+    def index(self, value: Self.T) raises -> Int where conforms_to(
+        Self.T, Equatable
+    ):
+        var result = self.try_index(value)
+        if not Bool(result):
+            raise Error("ValueError: Given element is not in list")
+        return result.value()
+
+    def __eq__(self, other: Self, /) -> Bool where conforms_to(
+        Self.T, Equatable
+    ):
+        if self.size != other.size:
+            return False
+        var i = 0
+        while i < self.size:
+            if not (self.data[i] == other.data[i]):
+                return False
+            i += 1
+        return True
+
+    def __ne__(self, other: Self, /) -> Bool where conforms_to(
+        Self.T, Equatable
+    ):
+        return not (self == other)
+
+    # Concatenation copies self and consumes `other`.
+    def __add__(self, var other: Self) -> Self where conforms_to(
+        Self.T, Copyable
+    ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
+        var result = self.copy()
+        result._extend_moving(other^)
+        return result^
+
+    def __iadd__(mut self, var other: Self, /) where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Movable):
+        self._extend_moving(other^)
+
+    # Repetition: `x` copies of the elements (empty for `x <= 0`).
+    def __mul__(self, x: Int) -> Self where conforms_to(
+        Self.T, Copyable
+    ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
+        if x <= 0:
+            return List[Self.T]()
+        var result = self.copy()
+        var n = 1
+        while n < x:
+            result._extend_moving(self.copy())
+            n += 1
+        return result^
+
+    def __imul__(mut self, x: Int) where conforms_to(
+        Self.T, Copyable
+    ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
+        if x <= 0 or self.size == 0:
+            self.clear()
+            return
+        var orig = self.copy()
+        self.reserve(self.size * x)
+        var n = 1
+        while n < x:
+            self._extend_moving(orig.copy())
+            n += 1
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.T, Copyable
@@ -323,6 +482,34 @@ struct List[T: AnyType](
         self.size = 0
         self.cap = 0
         return result^
+
+    # Single-candidate consuming drain behind the overloaded `extend`
+    # surface: a `^`-moved argument at an overloaded call site trips the
+    # checker's candidate-replay ownership bookkeeping, so internal callers
+    # (and the public consuming overload) route here.
+    def _extend_moving(mut self, var other: Self) where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Movable):
+        self.reserve(self.size + other.size)
+        var i = 0
+        while i < other.size:
+            self.append(other.data.unsafe_offset(i).unsafe_take_pointee())
+            i += 1
+        other.data.unsafe_free()
+        other.data = unsafe_alloc[Self.T](0)
+        other.size = 0
+        other.cap = 0
+
+    # Move the elements into a fresh allocation of `new_cap` slots.
+    def _realloc(mut self, new_cap: Int) where conforms_to(Self.T, Movable):
+        var new_data = unsafe_alloc[Self.T](new_cap)
+        var i = 0
+        while i < self.size:
+            new_data[i] = self.data.unsafe_offset(i).unsafe_take_pointee()
+            i += 1
+        self.data.unsafe_free()
+        self.data = new_data
+        self.cap = new_cap
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.T, Writable

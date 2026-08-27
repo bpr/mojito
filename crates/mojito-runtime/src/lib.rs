@@ -46,7 +46,7 @@ use std::sync::Mutex;
 /// code can diagnose dangling, use-after-free, and double-free operations;
 /// [`mjrt_pointer_status`] exposes that check. [`mjrt_abort`] preserves an
 /// abort's dynamic message, and trap categories 7 through 13 cover abort,
-/// pointer-lifetime, and `UnsafeMaybeUninit` failures.
+/// pointer-lifetime, and `MaybeUninit` failures.
 pub const ABI_VERSION: u32 = 6;
 
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
@@ -496,9 +496,9 @@ pub fn trap_message(category: u32) -> &'static str {
         TRAP_POINTER_DANGLING => "vm: dereference of dangling Pointer",
         TRAP_POINTER_USE_AFTER_FREE => "vm: use after Pointer deallocation",
         TRAP_POINTER_DOUBLE_FREE => "vm: double free of Pointer allocation",
-        TRAP_UNINIT_READ => "vm: read of uninitialized UnsafeMaybeUninit storage",
-        TRAP_UNINIT_TAKE => "vm: take of uninitialized UnsafeMaybeUninit storage",
-        TRAP_UNINIT_DESTROY => "vm: destroy of uninitialized UnsafeMaybeUninit storage",
+        TRAP_UNINIT_READ => "vm: read of uninitialized MaybeUninit storage",
+        TRAP_UNINIT_TAKE => "vm: take of uninitialized MaybeUninit storage",
+        TRAP_UNINIT_DESTROY => "vm: destroy of uninitialized MaybeUninit storage",
         _ => "unknown trap",
     }
 }

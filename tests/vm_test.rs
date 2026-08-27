@@ -1079,15 +1079,15 @@ fn reference_iteration_over_a_temporary_list_writes_through() {
 }
 
 #[test]
-fn set_reference_iteration_writes_through_the_generic_protocol() {
-    // Set was never bridged: its `for ref` runs the generic reference-yielding
-    // protocol through the delegated borrowed `_ListIter`, writing into the
-    // set's backing storage two borrow frames deep.
-    let source = include_str!("../assets/ok/set_reference_iteration_write_through.mojo");
-    assert_eq!(
-        run_compiled(source).expect("set reference iteration writes through"),
-        "2\nTrue True\n23\n"
-    );
+fn set_reference_iteration_write_through_is_rejected() {
+    // Set element yields are declaration-level immutable (`_SetIter` casts
+    // its yielded origin read-only): a `for ref` write-through rejects.
+    // Upstream accepts the write and then reports stale membership through
+    // its corrupted hash index — a recorded strict-subset gap
+    // (conformance set-ref-write-gap).
+    let source = "from std.collections.set import Set\n\ndef main():\n    var s: Set[Int] = {1, 2}\n    for ref x in s:\n        x += 10\n";
+    let error = run_compiled(source).expect_err("set element write-through must be rejected");
+    assert!(error.contains("must be mutable"), "got {error}");
 }
 
 #[test]

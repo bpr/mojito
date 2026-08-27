@@ -358,7 +358,7 @@ impl<'a> Elab<'a> {
                 let argv = self.eval_all(args, scope)?;
                 self.ctfe_call(name, param_args, argv, scope)
             }
-            // A static method on a struct (`Layout.row_major(2, 3)`) → the
+            // A static method on a struct (`Extent.square(4)`) → the
             // same synthesized-entry CTFE.
             ExprKind::MethodCall {
                 object,

@@ -398,7 +398,7 @@ impl Checker {
                 continue;
             }
             // A lone bound naming a registered struct is a struct-typed
-            // value parameter (`[layout: Layout]`); such declarations are
+            // value parameter (`[e: Extent]`); such declarations are
             // monomorphized before checking, so the checker only ever sees
             // this classification, never a symbolic body.
             if let [only] = tp.bounds.as_slice()

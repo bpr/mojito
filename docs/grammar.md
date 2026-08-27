@@ -288,7 +288,10 @@ reports the failing clause's own message.
 
 The optional **`raises`** effect (before a capture list and `->`) marks a function that may raise an
 error (Mojo's `def` is non-raising by default). An error type may follow (`raises
-ValidationError`). Calls must be protected by `try` or propagated by an enclosing
+ValidationError`); a contextual `where` after a bare `raises` starts the
+declaration's constraint clauses rather than naming an error type (`def f(...)
+raises where conforms_to(T, Deinitable):`), so an error type literally named
+`where` is not expressible. Calls must be protected by `try` or propagated by an enclosing
 function with the same concrete error contract. Effects survive free/method
 overload selection, callable values, trait requirements, and bounded dispatch;
 `raises Never` is nonraising. Methods and trait requirements take the same
@@ -385,9 +388,9 @@ arithmetic operators `+ - * // % **` (and unary `-`) — evaluated at compile ti
 each application monomorphizes, so `Scalar[dtype]`/`SIMD[dtype, w]` positions
 in fields, signatures, and bodies resolve at the concrete dtype (`DType.<dt>`
 remains invalid as a runtime value). A **struct** may further declare a
-**struct-typed value parameter** (`struct LayoutTensor[..., layout: Layout]`):
+**struct-typed value parameter** (`struct Tagged[..., e: Extent]`):
 the argument expression — a constructor or static-method call such as
-`Layout.row_major(2, 3)` — evaluates through VM-backed compile-time execution
+`Extent.square(4)` — evaluates through VM-backed compile-time execution
 and **freezes** as a compile-time struct instance that keys the
 specialization (the same frozen value at two sites is one type). Freezing
 requires fieldwise construction (`@fieldwise_init` or a hand-written

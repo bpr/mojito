@@ -240,8 +240,56 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
 }
 
 fn rewrite_block(body: &mut [Stmt], subs: Subs, into_defs: bool) {
+    if !into_defs {
+        // Loop-variable substitution keeps the flat walk: the unrolled
+        // binding is an outer compile-time symbol, and the walk already
+        // stops at nested `def`/`struct` scopes.
+        for s in body {
+            rewrite_stmt(s, subs, into_defs);
+        }
+        return;
+    }
+    // Module-constant materialization is shadow-aware within a block: a
+    // local declaration rebinds its name for the remainder of the block
+    // (and the nested blocks below it), so the constant must stop
+    // materializing there — `var n = 1; n += 1` mutates the local, never
+    // `5 += 1`. The declaring statement's own initializer still reads the
+    // constant (`var n = n + 1` sees the outer value), so the name is
+    // shadowed only after its statement is rewritten.
+    let mut shadowed: HashSet<String> = HashSet::new();
     for s in body {
-        rewrite_stmt(s, subs, into_defs);
+        {
+            let inner: Subs = &|name| {
+                if shadowed.contains(name) {
+                    None
+                } else {
+                    subs(name)
+                }
+            };
+            rewrite_stmt(s, inner, into_defs);
+        }
+        declared_local_names(s, &mut shadowed);
+    }
+}
+
+/// The names a statement binds for the remainder of its block: explicit
+/// `var`/`ref` declarations, implicit function-scope assignments, and
+/// declaring unpack targets.
+fn declared_local_names(s: &Stmt, names: &mut HashSet<String>) {
+    match &s.kind {
+        StmtKind::VarDecl { name, .. }
+        | StmtKind::RefDecl { name, .. }
+        | StmtKind::Assign { name, .. } => {
+            names.insert(name.clone());
+        }
+        StmtKind::Unpack { targets, .. } => {
+            for target in targets {
+                if let ExprKind::Identifier(name) = &target.kind {
+                    names.insert(name.clone());
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1304,12 +1352,29 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             }
         }
         StmtKind::For {
-            iter, body, orelse, ..
+            var,
+            iter,
+            body,
+            orelse,
+            ..
         } => {
             rewrite_expr(iter, subs);
-            rewrite_block(body, subs, into_defs);
-            if let Some(body) = orelse {
+            if into_defs {
+                // The loop variable rebinds its name inside the loop (and
+                // the for-else, which still reads the loop binding).
+                let loop_var = var.clone();
+                let inner: Subs = &|name| {
+                    if name == loop_var { None } else { subs(name) }
+                };
+                rewrite_block(body, inner, into_defs);
+                if let Some(body) = orelse {
+                    rewrite_block(body, inner, into_defs);
+                }
+            } else {
                 rewrite_block(body, subs, into_defs);
+                if let Some(body) = orelse {
+                    rewrite_block(body, subs, into_defs);
+                }
             }
         }
         StmtKind::ComptimeFor { iter, body, .. } => {
@@ -1323,8 +1388,17 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             finalbody,
         } => {
             rewrite_block(body, subs, into_defs);
-            if let Some((_, b)) = except {
-                rewrite_block(b, subs, into_defs);
+            if let Some((binding, b)) = except {
+                if into_defs && let Some(bound) = binding {
+                    // The except binding rebinds its name in the handler.
+                    let bound = bound.clone();
+                    let inner: Subs = &|name| {
+                        if name == bound { None } else { subs(name) }
+                    };
+                    rewrite_block(b, inner, into_defs);
+                } else {
+                    rewrite_block(b, subs, into_defs);
+                }
             }
             if let Some(b) = orelse {
                 rewrite_block(b, subs, into_defs);
@@ -1334,10 +1408,26 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             }
         }
         StmtKind::With { items, body } => {
-            for WithItem { context, .. } in items {
+            let mut bound_names: HashSet<String> = HashSet::new();
+            for WithItem { context, var } in items {
                 rewrite_expr(context, subs);
+                if into_defs && let Some(name) = var {
+                    bound_names.insert(name.clone());
+                }
             }
-            rewrite_block(body, subs, into_defs);
+            if bound_names.is_empty() {
+                rewrite_block(body, subs, into_defs);
+            } else {
+                // An `as NAME` binding rebinds its name in the with-body.
+                let inner: Subs = &|name| {
+                    if bound_names.contains(name) {
+                        None
+                    } else {
+                        subs(name)
+                    }
+                };
+                rewrite_block(body, inner, into_defs);
+            }
         }
         // A nested `def`/`struct` is a separate scope. For materialization
         // (`into_defs`), descend but shadow the function's parameters (a parameter

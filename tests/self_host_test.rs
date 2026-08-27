@@ -113,16 +113,15 @@ fn self_hosted_generic_dict_sets_gets_updates_iterates() {
 }
 
 #[test]
-fn hashdict_mutation_during_iteration_is_rejected() {
-    // HashDict iteration now retains the derived interior "element" loan, so
-    // a during-loop setitem lazily invalidates the borrowed key iterator.
+fn dict_mutation_during_iteration_is_rejected() {
+    // Dict iteration retains the derived interior "element" loan, so a
+    // during-loop setitem lazily invalidates the borrowed key iterator.
     let directory = TempDir::new();
     let main = directory.write(
         "main.mojo",
-        "from std.collections.hashdict import HashDict\n\ndef main():\n    var mapping = HashDict[Int, String]()\n    mapping[1] = \"one\"\n    mapping[2] = \"two\"\n    for key in mapping:\n        mapping[3] = \"three\"\n        print(key)\n",
+        "from std.collections.dict import Dict\n\ndef main():\n    var mapping = Dict[Int, String]()\n    mapping[1] = \"one\"\n    mapping[2] = \"two\"\n    for key in mapping:\n        mapping[3] = \"three\"\n        print(key)\n",
     );
-    let error =
-        run_compiled(&main).expect_err("hashdict mutation during iteration must be rejected");
+    let error = run_compiled(&main).expect_err("dict mutation during iteration must be rejected");
     assert!(
         error.contains("invalidated interior reference") && error.contains("[\"element\"]"),
         "got {error}"
@@ -154,7 +153,7 @@ fn dict_iteration_reads_live_values_and_comprehensions_share_the_loan() {
     let directory = TempDir::new();
     let main = directory.write(
         "main.mojo",
-        "from std.collections.dict import Dict\nfrom std.collections.hashdict import HashDict\n\ndef main() raises:\n    var mapping = Dict[String, Int]()\n    mapping[\"a\"] = 1\n    mapping[\"b\"] = 2\n    mapping[\"a\"] = 10\n    var total = 0\n    for key in mapping:\n        total += mapping[key]\n    print(total)\n    var keys = [key for key in mapping]\n    print(len(keys))\n    var hashed = HashDict[Int, Int]()\n    hashed[1] = 5\n    hashed[2] = 6\n    var values = [hashed[key] for key in hashed]\n    print(values[0] + values[1])\n",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var mapping = Dict[String, Int]()\n    mapping[\"a\"] = 1\n    mapping[\"b\"] = 2\n    mapping[\"a\"] = 10\n    var total = 0\n    for key in mapping:\n        total += mapping[key]\n    print(total)\n    var keys = [key for key in mapping]\n    print(len(keys))\n    var second = Dict[Int, Int]()\n    second[1] = 5\n    second[2] = 6\n    var values = [second[key] for key in second]\n    print(values[0] + values[1])\n",
     );
     assert_eq!(run(&main).unwrap(), "12\n2\n11\n");
 }
@@ -174,13 +173,13 @@ fn borrowed_set_and_dict_iterators_retain_their_collection_owners() {
 }
 
 #[test]
-fn self_hosted_hash_backed_set() {
-    // Phase 6: a hash-backed `HashSet[T]` (buckets chosen via `key.__hash__()`)
-    // works for two key types — `Int` (intrinsic scalar hash) and `String`.
+fn self_hosted_hash_bounded_set() {
+    // The Hashable-bounded `Set[T]` works for two element types — `Int`
+    // (intrinsic scalar hash) and `String`.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.hashset import HashSet\n\ndef main():\n    var s: HashSet[Int] = HashSet[Int]()\n    s.add(3)\n    s.add(3)\n    s.add(11)\n    s.add(19)\n    print(len(s))\n    print(s.contains(11), s.contains(4))\n    var w: HashSet[String] = HashSet[String]()\n    w.add(\"mojo\")\n    w.add(\"lite\")\n    w.add(\"mojo\")\n    print(len(w))\n    print(w.contains(\"lite\"), w.contains(\"rust\"))\n",
+        "from std.collections.set import Set\n\ndef main():\n    var s: Set[Int] = Set[Int]()\n    s.add(3)\n    s.add(3)\n    s.add(11)\n    s.add(19)\n    print(len(s))\n    print(s.contains(11), s.contains(4))\n    var w: Set[String] = Set[String]()\n    w.add(\"mojo\")\n    w.add(\"lite\")\n    w.add(\"mojo\")\n    print(len(w))\n    print(w.contains(\"lite\"), w.contains(\"rust\"))\n",
     );
     assert_eq!(run(&main).unwrap(), "3\nTrue False\n2\nTrue False\n");
 }
@@ -281,60 +280,68 @@ fn nested_list_as_struct_field_bucket_shape() {
 }
 
 #[test]
-fn self_hosted_hashset_copy_and_list_shadowing() {
+fn self_hosted_set_copy_and_list_shadowing() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.hashset import HashSet\nfrom std.collections.list import List\n\ndef main():\n    var s: HashSet[Int] = HashSet[Int]()\n    s.add(1)\n    var t: HashSet[Int] = s.copy()\n    t.add(9)\n    print(len(s), len(t), s.contains(9), t.contains(9))\n    var xs: List[Int] = List[Int]()\n    xs.append(7)\n    print(xs[0])\n",
+        "from std.collections.set import Set\nfrom std.collections.list import List\n\ndef main():\n    var s: Set[Int] = Set[Int]()\n    s.add(1)\n    var t: Set[Int] = s.copy()\n    t.add(9)\n    print(len(s), len(t), s.contains(9), t.contains(9))\n    var xs: List[Int] = List[Int]()\n    xs.append(7)\n    print(xs[0])\n",
     );
     assert_eq!(run(&main).unwrap(), "1 2 False True\n7\n");
 }
 
 #[test]
-fn self_hosted_dict_views_get_and_snapshots() {
+fn self_hosted_dict_views_iterate_and_get() {
+    // `keys`/`values`/`items` return self-iterable snapshot iterators: a
+    // stored view iterates from its captured elements (mutation after the
+    // call is invisible to it), and the views expose no indexing or `len`.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 1\n    d[\"b\"] = 2\n    var keys = d.keys()\n    var values = d.values()\n    var items = d.items()\n    d[\"c\"] = 3\n    print(len(keys), len(values), len(items), len(d))\n    print(keys[0], keys[1], values[0], values[1])\n    print(items[0].key, items[0].value)\n    print(Bool(d.get(\"a\")), Bool(d.get(\"z\")))\n    print(d.get(\"z\", 99))\n    for key in d:\n        print(key, d[key])\n",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 1\n    d[\"b\"] = 2\n    var keys = d.keys()\n    d[\"c\"] = 3\n    for key in keys:\n        print(key)\n    for value in d.values():\n        print(value)\n    for item in d.items():\n        print(item.key, item.value)\n    print(Bool(d.get(\"a\")), Bool(d.get(\"z\")))\n    print(d.get(\"z\", 99))\n    for key in d:\n        print(key, d[key])\n",
     );
     assert_eq!(
         run(&main).unwrap(),
-        "2 2 2 3\na b 1 2\na 1\nTrue False\n99\na 1\nb 2\nc 3\n"
+        "a\nb\n1\n2\n3\na 1\nb 2\nc 3\nTrue False\n99\na 1\nb 2\nc 3\n"
     );
 }
 
 #[test]
-fn hash_dict_matches_list_dict_and_preserves_order() {
+fn dict_growth_preserves_insertion_order_and_overwrites() {
     let d = TempDir::new();
+    // 20 keys cross the initial eight-bucket index twice (8 -> 16 -> 32);
+    // iteration must stay in insertion order and an overwrite must neither
+    // reorder nor double an entry.
     let main = d.write(
         "main.mojo",
-        "from std.collections.dict import Dict\nfrom std.collections.hashdict import HashDict\n\ndef main() raises:\n    var a: Dict[Int, Int] = Dict[Int, Int]()\n    var b: HashDict[Int, Int] = HashDict[Int, Int]()\n    var i: Int = 0\n    while i < 20:\n        a[i] = i * 10\n        b[i] = i * 10\n        i = i + 1\n    a[3] = 333\n    b[3] = 333\n    print(len(a), len(b), b.bucket_count())\n    for key in a:\n        print(key, a[key])\n    print(\"---\")\n    for key in b:\n        print(key, b[key])\n    print(Bool(b.get(100)), b.get(100, -1))\n",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var a: Dict[Int, Int] = Dict[Int, Int]()\n    var i: Int = 0\n    while i < 20:\n        a[i] = i * 10\n        i = i + 1\n    a[3] = 333\n    print(len(a))\n    for key in a:\n        print(key, a[key])\n    print(Bool(a.get(100)), a.get(100, -1))\n",
     );
     let output = run(&main).unwrap();
     let mut lines = output.lines();
-    assert_eq!(lines.next(), Some("20 20 32"));
-    let rest: Vec<&str> = lines.collect();
-    let divider = rest.iter().position(|line| *line == "---").unwrap();
-    assert_eq!(&rest[..divider], &rest[divider + 1..divider * 2 + 1]);
-    assert_eq!(rest.last(), Some(&"False -1"));
+    assert_eq!(lines.next(), Some("20"));
+    let body: Vec<String> = lines.map(str::to_string).collect();
+    let mut expected: Vec<String> = (0..20)
+        .map(|k| format!("{k} {}", if k == 3 { 333 } else { k * 10 }))
+        .collect();
+    expected.push("False -1".to_string());
+    assert_eq!(body, expected);
 }
 
 #[test]
-fn hash_dict_copy_has_value_semantics() {
+fn dict_copy_has_value_semantics() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.hashdict import HashDict\n\ndef main() raises:\n    var a: HashDict[String, Int] = HashDict[String, Int]()\n    a[\"x\"] = 1\n    var b = a.copy()\n    b[\"x\"] = 9\n    b[\"y\"] = 2\n    print(len(a), a[\"x\"], \"y\" in a)\n    print(len(b), b[\"x\"], \"y\" in b)\n",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var a: Dict[String, Int] = Dict[String, Int]()\n    a[\"x\"] = 1\n    var b = a.copy()\n    b[\"x\"] = 9\n    b[\"y\"] = 2\n    print(len(a), a[\"x\"], \"y\" in a)\n    print(len(b), b[\"x\"], \"y\" in b)\n",
     );
     assert_eq!(run(&main).unwrap(), "1 1 False\n2 9 True\n");
 }
 
 #[test]
-fn hash_dict_missing_subscript_raises() {
+fn dict_missing_subscript_raises() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.hashdict import HashDict\n\ndef main():\n    var d: HashDict[String, Int] = HashDict[String, Int]()\n    try:\n        print(d[\"missing\"])\n    except e:\n        print(e)\n",
+        "from std.collections.dict import Dict\n\ndef main():\n    var d: Dict[String, Int] = Dict[String, Int]()\n    try:\n        print(d[\"missing\"])\n    except e:\n        print(e)\n",
     );
     assert_eq!(run(&main).unwrap(), "missing key\n");
 }
@@ -457,7 +464,7 @@ fn self_hosted_algorithms_use_comptime_facts() {
         .join("self_hosted_algorithms.mojo");
     assert_eq!(
         run(&main).unwrap(),
-        "1 2 0\n8 24\n4 17\n42\nfallback\n7\nalpha\n11\nbeta\n3\n"
+        "1 2 0\n8 24\n4 17\n42\nfallback\n7\nalpha\nbeta\n3\n"
     );
 }
 

@@ -2,7 +2,6 @@ from std.algorithms import StaticSized, type_tag, default_capacity, capacity_blo
 from std.collections.list import List
 from std.collections.set import Set
 from std.collections.dict import Dict
-from std.collections.hashdict import HashDict
 from std.collections.string_dict import StringDict
 
 struct Tiny(StaticSized):
@@ -29,9 +28,6 @@ def main():
     var d: Dict[String, Int] = Dict[String, Int]()
     d["alpha"] = 1
     print(first_or[Dict[String, Int]](d, "none"))
-    var h: HashDict[Int, String] = HashDict[Int, String]()
-    h[11] = "eleven"
-    print(first_or[HashDict[Int, String]](h, -1))
     var names: StringDict[Int] = StringDict[Int]()
     names["beta"] = 2
     print(first_or[StringDict[Int]](names, "none"))

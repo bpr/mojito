@@ -84,30 +84,99 @@ recreates this section's checkbox with the fresh divergence list.
 
 ### 3. Grow The CPU Standard Library *(demand-first — any order)*
 
-- [ ] **Collection API parity** — grow List, Dict, HashDict, Set, HashSet, tuple,
-  slice, optional/variant, and String result APIs
-  (`replace`/`join`/`strip`/...) demand-first from conformance cases. For
-  `Variant`, finish:
+- [ ] **Collection API parity** — grow tuple, slice, optional/variant, and
+  String result APIs (`replace`/`join`/`strip`/...) demand-first from
+  conformance cases (the 2026-08 pass landed the hashed insertion-ordered
+  Dict, retired HashDict/HashSet, and grew the List/Dict/Set method
+  surfaces — see `docs/features.md`). For `Variant`, finish:
   - representation writing
   - fully generic TypeList-driven conditional protocol synthesis rather than
     adding compiler special cases for every standard-library method
-- [ ] **Layout and LayoutTensor growth** — the CPU core is landed (bundled
-  `layout` package; DType and frozen-struct value parameters; see
-  `docs/features.md`). Grow demand-first:
-  - origin-parameterized borrowed tensor views (the multi-element
-    origin-bearing pointer substrate landed with the nightly-§5 views work;
-    grow the tensor-view surface on it)
-  - tile/slice/transpose views
-  - SIMD `load/store[width]` on the landed SIMD machinery
-  - the layout algebra
-    (`composition`/`coalesce`/`blocked_product`/`logical_divide`)
-  - `idx2crd`
-  - rank gating via layout `where` predicates (comptime method evaluation on
-    frozen struct values)
-  - a public recursive `IntTuple`
-  - mixing type parameters with DType/struct value parameters on one struct
-- [ ] **HashSet growth and rehashing** — add load-factor growth while preserving
-  deterministic behavior and value semantics.
+
+  Deferred from the 2026-08 Dict/Set/List pass with no shared blocker
+  (each recorded in `conformance/parity.tsv` notes):
+  - relaxing K/V/element bounds toward upstream's Movable-only KeyElement
+    (a List-`AnyType`-style per-API `where` pass; sequence it after — or
+    with — the transfer-convention item below, which rewrites the same
+    signatures and call sites)
+  - bare `if collection:` truthiness (relax the checker's `expect_bool`
+    condition positions to dispatch `__bool__`; the `Bool(x)` lowering
+    already exists)
+  - `__reversed__`/`reversed()` (needs a short investigation: possibly
+    self-hostable as a `Reversible` trait plus a prelude free function —
+    no compiler protocol exists today)
+  - `write_repr_to` (blocked on deciding a `repr` surface at all)
+  - `(*, unsafe_uninit_length)` construction/resize (blocked on an
+    uninit-element storage story for List, MaybeUninit-adjacent)
+
+- [ ] **Parity-unblocking infrastructure** — compiler-side features that
+  each unblock several recorded parity gaps at once, ordered by fan-out.
+  These are where "Mojito rejects/diverges from valid Mojo" clusters
+  today; every item lists what it unlocks so slices can be chosen by
+  leverage.
+  - **Ref-field struct returns from ordinary method calls** (VM + native
+    reference machinery). Today only protocol-selected `__iter__` can
+    hand a `ref`-field struct across a call boundary; a plain method
+    returning one dies at MIR verify/VM re-rooting. Unlocks: borrowing,
+    invalidation-tracked `keys`/`values`/`items` views (replacing the
+    snapshot iterators and their recorded stale-iteration acceptance);
+    upstream-shape lazily-draining `take_items` (retiring the
+    `dict-take-items-eager-drain` output divergence); and, generally,
+    upstream's pervasive pattern of APIs returning borrowing
+    iterators/views — the single biggest structural unlock for stdlib
+    parity.
+  - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
+    signature `__hash__(self, mut hasher: Some[Hasher])` with a
+    reflection default; AHasher; `std.hashlib` module identity). Mojito's
+    `__hash__() -> UInt` + `std.hashing` is fork surface: upstream user
+    structs declaring the hasher-based method are rejected today — a
+    direct acceptance gap for real upstream code. Unlocks: accepting
+    those programs; upstream-parity `Dict.__hash__`/`List.__hash__`/
+    `Set.__hash__` (do not implement these on the fork protocol first);
+    hash-value parity; and, with the arity item below, the full
+    `Dict[K, V, H]`/`Set[T, H]` signature.
+  - **Overload-machinery hardening** — three known defects that together
+    gate wide API parity, since upstream's stdlib is dense with
+    same-arity overloads:
+    1. constructor disambiguation: two positional-capable ctors read as
+       ambiguous even when a required marker kwarg separates them
+       (blocks the plain variadic `Set(a, b, c)` ctor, and will block
+       any upstream type whose ctor overloads overlap positionally);
+    2. same-arity method-overload keys: a declaration mangles
+       `var other: Self` as `$ov$Self` while call sites mangle the
+       substituted type — mismatched symbols reach the VM (currently
+       worked around by spelling parameters `List[Self.T]`);
+    3. candidate-replay ownership leaks: a `^`-moved argument at an
+       overloaded call site inside another method body corrupts the
+       replay bookkeeping (currently worked around via single-candidate
+       private helpers like `List._extend_moving`).
+  - **`None` → `Optional` coercion in parameter defaults**
+    (`arg: Optional[Int] = None` rejects at the default-value check
+    today). Small fix, wide reach: unlocks `index`/`try_index`
+    `start`/`stop` keywords now, and the upstream signature pattern the
+    String result-API family (`split`/`find` variants) uses throughout —
+    do this before starting the String slice.
+  - **Owned-`var` transfer convention** — upstream requires `^` or
+    `.copy()` to pass a non-ImplicitlyCopyable value to an owned
+    parameter; Mojito implicitly copies, so `p + q` on Lists accepts
+    here and rejects upstream. Closes a whole convention-level
+    acceptance-divergence class rather than one API; large fixture blast
+    radius, so schedule it as its own pass and pair it with the bound
+    relaxation above.
+  - **`|= &= ^=` augmented-assignment tokens** (grammar change:
+    `docs/grammar.md` first, then lexer/parser/AST/checker/MIR).
+    Unlocks the Dict/Set `__ior__`/`__iand__`/`__ixor__` family, and —
+    broader — augmented bitwise assignment on Int/UInt, which is
+    upstream-valid integer code Mojito rejects today.
+  - **A `size_of` builtin** (the shared native ABI layout tables in
+    `src/native/` can answer it). Unlocks `List.byte_length` and
+    upstream memory-oriented code that spells `size_of[T]()`.
+  - **Parametric statics** — static-method dispatch on parameterized
+    nominal types (`Dict[Int, Int].fromkeys(...)`); the checker's
+    TypeApply statics stop at the pointer family, and a bare `Dict`
+    identifier is not an expression binding. Unlocks `Dict.fromkeys`
+    (already stdlib-expressible) and the parametric-statics gap recorded
+    by the contextual-member work.
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
   the Writer and explicit-destroy foundations.
 - [ ] **Time, random, and testing slices** — add deterministic testable cores and
