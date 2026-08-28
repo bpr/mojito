@@ -160,3 +160,16 @@ dependency-upgrade rehearsal is the only item still open:
    `env -i` + DT_NEEDED inspection — remains in `pliron_dist_test`).
 4. The dependency-upgrade rehearsal, blocked on an upstream release
    (procedure above).
+
+## Regression-free period accrual
+
+Green full-gate runs recorded toward the promotion decision's sustained
+regression-free period (`scripts/run-overnight-gates`: default gate,
+pliron gate, differential conformance):
+
+- 2026-08-28 — all three PASS (default 3451/3451 workspace tests plus
+  fmt/clippy; pliron lane 344/344 with spike gate 11/11; conformance
+  215/215 vs the pinned `1.1.0.dev2026082605`), covering the 2026-08
+  collection-parity, ref-field struct-return/borrowing-view, and
+  ref-field-place + explicit-origin-argument work. Log:
+  `target/overnight-gates/20260828T122111Z/`.

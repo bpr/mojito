@@ -8205,7 +8205,18 @@ impl<'a> FnLowering<'a> {
         // whose designated element is itself a reference (a `List[ref T]`
         // element) instead addresses the slot — its consumers dereference
         // explicitly.
-        if place.proj.is_empty()
+        // A projected place ENDING at a stored reference also forwards when
+        // the destination is typed as the stored handle itself (`ref s =
+        // self.src` reborrows): the ref-field slot holds a real referent
+        // address, so the handle is the loaded slot value, not the slot
+        // address. A storage-borrow destination (`ref (ref T)`) keeps the
+        // slot address; its consumers dereference explicitly.
+        let forwards_stored_handle = !place.proj.is_empty()
+            && match (&ty, self.func.reg_types.get(&dest.0)) {
+                (Ty::Ref(stored), Some(Ty::Ref(dest_ref))) => dest_ref.referent == stored.referent,
+                _ => false,
+            };
+        if (place.proj.is_empty() || forwards_stored_handle)
             && let Ty::Ref(reference) = &ty
         {
             let handle = ScalarTy::Ptr.handle(ctx);

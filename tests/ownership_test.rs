@@ -102,6 +102,30 @@ fn nested_reference_aggregate_preserves_every_element_loan() {
 }
 
 #[test]
+fn ref_field_reborrow_read_is_not_a_self_conflict() {
+    // A parametric-origin receiver is not provably mutable, so reads through a
+    // `ref s = self.src` reborrow classify as immutable accesses and do not
+    // conflict with the reborrow's own loan.
+    let src = "@fieldwise_init\nstruct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n\n    def first(self) -> Int:\n        ref s = self.src\n        return s[0]\n\ndef main():\n    var data: List[Int] = [9]\n    ref r = data\n    var v = View(r)\n    print(v.first())\n";
+    assert!(own(src).is_ok(), "{:?}", own(src));
+}
+
+#[test]
+fn ref_field_ctor_argument_from_ref_field_tracks_in_the_receiver_domain() {
+    // Constructing one ref-field struct from another struct's ref FIELD loans
+    // through the receiver; the analysis accepts the construction while still
+    // rejecting mutation of the ultimate owner during the view's lifetime.
+    let ok = "@fieldwise_init\nstruct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def first(self) -> Int:\n        return self.src[0]\n\n@fieldwise_init\nstruct Outer[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n\n    def peek(self) -> Int:\n        var v = View(self.src, 0)\n        return v.first()\n\ndef main():\n    var data: List[Int] = [7]\n    ref r = data\n    var outer = Outer(r)\n    print(outer.peek())\n";
+    assert!(own(ok).is_ok(), "{:?}", own(ok));
+
+    let conflict = "@fieldwise_init\nstruct Outer[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n\n    def first(self) -> Int:\n        return self.src[0]\n\ndef main():\n    var data: List[Int] = [7]\n    ref r = data\n    var outer = Outer(r)\n    data.append(9)\n    print(outer.first())\n";
+    assert!(matches!(
+        own(conflict),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
+}
+
+#[test]
 fn variant_payload_reference_is_invalidated_when_the_tag_changes() {
     // The ownership unit runs the unlinked checker, so a local declaration makes
     // the compiler-provided Variant name visible without involving module I/O.

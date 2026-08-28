@@ -51,7 +51,8 @@ unchecked box is the default next task. Sections marked *(recurring)* or
   recommendation. Two inputs must accrue before the record can be
   written: the dependency-upgrade rehearsal above, and the sustained
   regression-free period, which accumulates from continued green gate
-  runs while other roadmap work proceeds.
+  runs while other roadmap work proceeds (logged in the stage 6 note's
+  "Regression-free period accrual" section).
 
 - [ ] **Cranelift fallback** *(conditional — only on material Pliron
   failure)* — record the evidence, then implement the same acceptance slices
@@ -114,16 +115,25 @@ recreates this section's checkbox with the fresh divergence list.
   These are where "Mojito rejects/diverges from valid Mojo" clusters
   today; every item lists what it unlocks so slices can be chosen by
   leverage.
-  - **Ref-field struct construction from ref-field places** (residue of
-    the landed ref-field-struct-return machinery). Constructing a
-    ref-field struct from an existing ref *field* (`View(self.src, i)`)
-    still dies at MIR verify ("place rooted at slot N lacks complete
-    checked type metadata"), and `ref s = self.src` reborrowing rejects
-    with a MakeRef destination/storage mismatch. Both shapes are
-    avoidable today (construct from a fresh `ref x = <owned place>`
-    binding, or copy the whole struct), but upstream iterator adapters
-    that wrap another borrowing iterator (`_DictKeyIter` holding a
-    `_DictEntryIter`) need them.
+  - **Ref-field adapter residues** (what remains after the landed
+    ref-field-place construction + explicit-origin-application work):
+    a `ref`-returning method cannot yield a projection of a delegated
+    call result (`return self.iter.__next__().key` — upstream's
+    expression-origin `ref [self.iter.__next__().key]` spelling; the
+    stdlib inlines stepping against the wrapped iterator instead); a
+    chained method call on a temporary view (`b.pane().first()`) drops
+    the view before the call (bind it first); passing a bare owned place
+    to a `ref` ctor parameter does not auto-borrow (`ref source = ...`
+    first); and subscript WRITES through a parametric-mut ref field
+    (`self.src[0] += 1`) still reject ("immutable reference returned by
+    '__getitem__'"). Two recorded acceptance-leniency tightenings
+    (2026-08-27 probes, see conformance/cases.tsv): a bare
+    unparameterized generic FIELD type (`var inner: Holder`) runs here
+    but upstream rejects ("not concrete, use '[]'"), and the
+    origin-argument compat rule accepts origin-slot omission in
+    positions upstream cannot infer (remaining stdlib spelling:
+    `_TakeDictEntryIter[Self.K, Self.V]`-style alias bodies) — migrate
+    spellings to fully-bound, then tighten both.
   - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
     signature `__hash__(self, mut hasher: Some[Hasher])` with a
     reflection default; AHasher; `std.hashlib` module identity). Mojito's

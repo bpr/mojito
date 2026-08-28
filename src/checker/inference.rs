@@ -566,16 +566,22 @@ impl Checker {
     /// expression semantics for tuples/lists which merely contain references.
     pub(super) fn infer_storage_value(&self, expr: &Expr, expected: &Ty) -> Result<Ty, TypeError> {
         match expected {
-            Ty::Ref(_) => self
-                .infer_reference_value(expr)
-                .map(Ty::Ref)
-                .ok_or_else(|| TypeError::TypeMismatch {
-                    expected: expected.to_string(),
-                    found: self
-                        .infer(expr)
-                        .map_or_else(|_| "<error>".to_string(), |ty| ty.to_string()),
-                    context: "reference-valued aggregate element".to_string(),
-                }),
+            Ty::Ref(_) => {
+                // Record ordinary read-through facts (expression/place types)
+                // for the argument span before resolving the handle: MIR place
+                // builders need them to type a ref-field projection such as
+                // `View(self.src, 0)`.
+                let _ = self.infer(expr);
+                self.infer_reference_value(expr)
+                    .map(Ty::Ref)
+                    .ok_or_else(|| TypeError::TypeMismatch {
+                        expected: expected.to_string(),
+                        found: self
+                            .infer(expr)
+                            .map_or_else(|_| "<error>".to_string(), |ty| ty.to_string()),
+                        context: "reference-valued aggregate element".to_string(),
+                    })
+            }
             expected if tuple_elements(expected).is_some() => {
                 let expected_elements = tuple_elements(expected).expect("tuple elements");
                 let values = match &expr.kind {

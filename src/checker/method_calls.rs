@@ -887,8 +887,13 @@ impl Checker {
                 self.record_interior_invalidation(span.clone(), object);
             }
         }
+        // A `ref self` receiver whose capability is not provably mutable —
+        // immutable or parametric (`Origin[mut=m]` ref fields and their
+        // reborrows) — classifies as an immutable access for ownership: only a
+        // proven-mutable receiver may map to a write. Receiver-aliasing
+        // exclusivity below still uses the raw declared convention.
         let effective_receiver_convention = if resolved.self_convention == Some(ArgConvention::Ref)
-            && self.reference_actual(object)?.mutability == crate::origin::Mutability::Immutable
+            && self.reference_actual(object)?.mutability != crate::origin::Mutability::Mutable
         {
             Some(ArgConvention::Imm)
         } else {

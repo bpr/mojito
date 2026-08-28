@@ -2079,18 +2079,41 @@ fn verify_instruction(
                     return;
                 };
                 if let Some((target, source_permission)) = make_ref_target(place) {
-                    if !types_compatible(capability.target, target) {
-                        errors.push(format!(
-                            "{prefix}: MakeRef destination targets {}, incompatible with place storage {target}",
-                            capability.target
-                        ));
-                    }
-                    if source_permission
-                        .is_some_and(|permission| !permission.satisfies(capability.permission))
-                    {
-                        errors.push(format!(
-                            "{prefix}: MakeRef destination recovers permission unavailable through its source capability"
-                        ));
+                    // A place ending at a stored reference admits a second
+                    // interpretation beside the storage borrow: forwarding the
+                    // stored handle itself (`ref s = self.src` reborrows).
+                    // The runtime chases such handles symmetrically, so a
+                    // destination typed as the stored handle is accepted when
+                    // the stored capability grants its permission.
+                    let forwarded = match place.ty.as_ref() {
+                        Some(Ty::Ref(stored))
+                            if !types_compatible(capability.target, target)
+                                && types_compatible(capability.target, &stored.referent) =>
+                        {
+                            Some(ReferencePermission::from_mutability(stored.mutability))
+                        }
+                        _ => None,
+                    };
+                    if let Some(stored_permission) = forwarded {
+                        if !stored_permission.satisfies(capability.permission) {
+                            errors.push(format!(
+                                "{prefix}: MakeRef destination recovers permission unavailable through its source capability"
+                            ));
+                        }
+                    } else {
+                        if !types_compatible(capability.target, target) {
+                            errors.push(format!(
+                                "{prefix}: MakeRef destination targets {}, incompatible with place storage {target}",
+                                capability.target
+                            ));
+                        }
+                        if source_permission
+                            .is_some_and(|permission| !permission.satisfies(capability.permission))
+                        {
+                            errors.push(format!(
+                                "{prefix}: MakeRef destination recovers permission unavailable through its source capability"
+                            ));
+                        }
                     }
                 }
             }

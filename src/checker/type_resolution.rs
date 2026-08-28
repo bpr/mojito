@@ -375,7 +375,9 @@ impl Checker {
                 }
                 if let Some(info) = self.structs.get(name) {
                     let decls = info.decls.clone();
-                    let (_, tyargs) = self.resolve_use_params(name, &decls, args, &[], &[])?;
+                    let source_params = info.source_params.clone();
+                    let (_, tyargs) =
+                        self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
                     return Ok(self.struct_instance_type(name, tyargs));
                 }
                 if self.allow_generated_tuple_forward_types && self.declared_structs.contains(name)
@@ -590,6 +592,134 @@ impl Checker {
             },
         };
         Ok(TyArg::Ty(ty))
+    }
+
+    /// Resolve a struct application's explicit compile-time arguments,
+    /// accepting origin arguments in the slots the declaration's raw
+    /// parameter list spells (`decls` erases Origin parameters, so
+    /// `resolve_use_params` alone cannot see them). Origin arguments are
+    /// validated and erased — struct identity stays origin-free — and the
+    /// remaining arguments forward unchanged. For compatibility, an
+    /// application supplying exactly the non-origin explicit count omits the
+    /// origin slots entirely.
+    pub(super) fn resolve_struct_use_args(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        source_params: &[crate::ast::TypeParam],
+        args: &[crate::ast::ParamArg],
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> Result<(HashMap<String, Ty>, Vec<TyArg>), TypeError> {
+        use crate::ast::ParamArg;
+        let is_origin = |p: &crate::ast::TypeParam| matches!(p.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
+        let explicit: Vec<&crate::ast::TypeParam> =
+            source_params.iter().filter(|p| !p.infer_only).collect();
+        let origin_slots = explicit.iter().filter(|p| is_origin(p)).count();
+        // No origin slots — or a variadic explicit list, whose positional
+        // alignment the erased-decl binder owns — resolves as before.
+        if origin_slots == 0 || args.is_empty() || explicit.iter().any(|p| p.name.starts_with('*'))
+        {
+            return self.resolve_use_params(name, decls, args, patterns, actuals);
+        }
+        let any_named = args.iter().any(|a| matches!(a, ParamArg::Named { .. }));
+        if !any_named {
+            let non_origin = explicit.len() - origin_slots;
+            if args.len() == non_origin {
+                return self.resolve_use_params(name, decls, args, patterns, actuals);
+            }
+            if args.len() != explicit.len() {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: name.to_string(),
+                    expected: explicit.len(),
+                    got: args.len(),
+                });
+            }
+            // Full positional supply. Every origin slot's argument must
+            // RESOLVE as an origin for this interpretation to hold; a
+            // non-origin argument in an origin slot means the application is
+            // an ordinary over-application (e.g. an infer-only binder spelled
+            // explicitly), which the erased-decl binder diagnoses.
+            let mut resolved = Vec::with_capacity(origin_slots);
+            for (param, argument) in explicit.iter().zip(args) {
+                if !is_origin(param) {
+                    continue;
+                }
+                match self.resolve_origin_param_arg(argument) {
+                    Ok(origin) => resolved.push((*param, argument, origin)),
+                    Err(_) => {
+                        return self.resolve_use_params(name, decls, args, patterns, actuals);
+                    }
+                }
+            }
+            for (param, argument, (_, mutability)) in resolved {
+                self.accept_origin_argument(name, param, argument, mutability)?;
+            }
+            let forwarded: Vec<crate::ast::ParamArg> = explicit
+                .iter()
+                .zip(args)
+                .filter(|(param, _)| !is_origin(param))
+                .map(|(_, argument)| argument.clone())
+                .collect();
+            return self.resolve_use_params(name, decls, &forwarded, patterns, actuals);
+        }
+        // Keyword spellings: extract named origin arguments wherever they
+        // appear; everything else forwards to the erased-decl binder.
+        let mut forwarded = Vec::with_capacity(args.len());
+        for argument in args {
+            if let ParamArg::Named { name: keyword, .. } = argument
+                && let Some(param) = explicit.iter().find(|p| p.name == *keyword && is_origin(p))
+            {
+                match self.resolve_origin_param_arg(argument) {
+                    Ok((_, mutability)) => {
+                        self.accept_origin_argument(name, param, argument, mutability)?;
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            forwarded.push(argument.clone());
+        }
+        self.resolve_use_params(name, decls, &forwarded, patterns, actuals)
+    }
+
+    /// Accept one resolved origin argument against its declared slot: a slot
+    /// declared `Origin[mut=True]` rejects a provably immutable argument, and
+    /// the accepted argument is marked erased — it is a compile-time fact, so
+    /// at a constructor expression MIR must not emit it as a runtime value
+    /// register.
+    fn accept_origin_argument(
+        &self,
+        struct_name: &str,
+        param: &crate::ast::TypeParam,
+        argument: &crate::ast::ParamArg,
+        mutability: Option<crate::origin::Mutability>,
+    ) -> Result<(), TypeError> {
+        let requires_mut = matches!(
+            param.origin_mutability.as_ref().map(|e| &e.kind),
+            Some(ExprKind::Bool(true))
+        );
+        if requires_mut && matches!(mutability, Some(crate::origin::Mutability::Immutable)) {
+            return Err(TypeError::TypeMismatch {
+                expected: format!(
+                    "a mutable origin for parameter '{}' of '{struct_name}'",
+                    param.name
+                ),
+                found: "an immutable origin".to_string(),
+                context: "explicit origin argument".to_string(),
+            });
+        }
+        let mut value = argument;
+        while let crate::ast::ParamArg::Named { value: inner, .. } = value {
+            value = inner;
+        }
+        if let crate::ast::ParamArg::Value(expression) = value {
+            self.operation_adjustments.borrow_mut().insert(
+                expression.source_span(),
+                crate::checked::SemanticAdjustment::EraseCompileTimeArgument,
+            );
+        }
+        Ok(())
     }
 
     /// Resolve only the nominal identity embedded in a compiler-generated

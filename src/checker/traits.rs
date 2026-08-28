@@ -350,6 +350,7 @@ impl Checker {
             name.to_string(),
             StructInfo {
                 decls,
+                source_params: type_params.to_vec(),
                 fixed_arguments,
                 conforms: declaration.conforms.to_vec(),
                 callable_conformance: None,
@@ -507,6 +508,18 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<StructMemberTypes, TypeError> {
         let name = declaration.name;
+        // Associated members resolve BEFORE fields and are installed into the
+        // registered shell right away: a field's type may apply the struct's
+        // own comptime alias (`var iter: Self.dict_entry_iter`). Member bodies
+        // reference only `Self` parameters and registered struct shells, never
+        // fields, so this ordering is well-founded.
+        let (associated_values, associated_constraints, parameterized_associated) =
+            self.check_struct_associated(declaration.associated)?;
+        if let Some(info) = self.structs.get_mut(name) {
+            info.associated = associated_values.clone();
+            info.associated_constraints = associated_constraints.clone();
+            info.parameterized_associated = parameterized_associated.clone();
+        }
         // Field types resolve with every module struct shell registered, so a
         // field may reference a struct declared later in the module (by-value
         // self-containment is rejected separately at completion); duplicate
@@ -517,10 +530,9 @@ impl Checker {
             if field_tys.iter().any(|(n, _)| n == &f.name) {
                 return Err(TypeError::Redeclaration(f.name.clone()));
             }
-            // A field's `Self.name` may name only a declared parameter — the
-            // struct's associated members resolve after its fields, matching
-            // the pre-shell contract — so a miss on `Self` itself reports an
-            // unknown parameter, not a missing associated member.
+            // A field's `Self.name` resolves declared parameters and (now
+            // pre-installed) associated members; a residual miss on `Self`
+            // itself still reports an unknown parameter.
             let ty = self.ty_from_anno(&f.ty).map_err(|error| match error {
                 TypeError::NoSuchAssociatedType {
                     object_type,
@@ -550,8 +562,6 @@ impl Checker {
             );
             field_tys.push((f.name.clone(), ty));
         }
-        let (associated_values, associated_constraints, parameterized_associated) =
-            self.check_struct_associated(declaration.associated)?;
         let callable_conformance = declaration
             .callable_conformance
             .as_ref()

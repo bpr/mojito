@@ -138,6 +138,8 @@ assets/ok/nominal_string_writer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/number_and_string_literals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/numeric_operation_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_owning_api.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_argument_alias_bodies.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_literal_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_struct_params.mojo	-	ineligible	no-scalar-entry-shape
@@ -227,10 +229,15 @@ assets/ok/pointer_to_ref_write_through.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_adapter_return_from_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_ctor_from_ref_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_wrapper_iterator_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape

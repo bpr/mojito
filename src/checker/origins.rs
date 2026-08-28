@@ -310,12 +310,150 @@ impl Checker {
             ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
                 Ok(Origin::Untracked { mutable: true })
             }
+            // A bare name (or `Self.name`) may spell an in-scope Origin
+            // parameter directly, mirroring the `ref[o]` annotation channel:
+            // `EntryIter[Self.K, Self.V, iterable_origin]`.
+            ExprKind::Identifier(name) => self
+                .enclosing_origin_type_param(name)
+                .map(|(index, _)| Origin::Param(crate::origin::OriginParamId(index)))
+                .ok_or_else(|| TypeError::TypeMismatch {
+                    expected: "origin_of(place) or a builtin Origin value".to_string(),
+                    found: format!("'{name}', which names no in-scope Origin parameter"),
+                    context: "explicit origin argument".to_string(),
+                }),
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(n) if n == "Self") => {
+                self.enclosing_origin_type_param(field)
+                    .map(|(index, _)| Origin::Param(crate::origin::OriginParamId(index)))
+                    .ok_or_else(|| TypeError::TypeMismatch {
+                        expected: "origin_of(place) or a builtin Origin value".to_string(),
+                        found: format!("'Self.{field}', which names no in-scope Origin parameter"),
+                        context: "explicit origin argument".to_string(),
+                    })
+            }
             _ => Err(TypeError::TypeMismatch {
                 expected: "origin_of(place) or a builtin Origin value".to_string(),
                 found: "a runtime value".to_string(),
                 context: "explicit callable origin specialization".to_string(),
             }),
         }
+    }
+
+    /// Resolve an explicit origin argument together with its known mutability
+    /// (`None` when the argument's mutability is symbolic). Struct
+    /// applications use the mutability to validate a concrete
+    /// `Origin[mut=True]` slot before erasing the argument.
+    pub(super) fn resolve_origin_param_arg(
+        &self,
+        argument: &crate::ast::ParamArg,
+    ) -> Result<(crate::origin::Origin, Option<crate::origin::Mutability>), TypeError> {
+        use crate::ast::ParamArg;
+        use crate::origin::{Mutability, Origin};
+
+        // The parser may classify a bare identifier (or `Self.name`) argument
+        // as a type argument; treat it as an origin name in an origin slot.
+        let type_arg_name = match argument {
+            ParamArg::Type(crate::ast::Type::Named(name, targs)) if targs.is_empty() => Some(name),
+            ParamArg::Type(crate::ast::Type::SelfParam(name)) => Some(name),
+            _ => None,
+        };
+        if let Some(name) = type_arg_name {
+            if let Some((index, parameter)) = self.enclosing_origin_type_param(name) {
+                let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
+                    Some(ExprKind::Bool(true)) => Mutability::Mutable,
+                    Some(ExprKind::Bool(false)) => Mutability::Immutable,
+                    _ => Mutability::Param(crate::origin::OriginParamId(index)),
+                };
+                return Ok((
+                    Origin::Param(crate::origin::OriginParamId(index)),
+                    Some(mutability),
+                ));
+            }
+            return match name.as_str() {
+                "ImmStaticOrigin" => Ok((Origin::Static, Some(Mutability::Immutable))),
+                "ImmUntrackedOrigin" => Ok((
+                    Origin::Untracked { mutable: false },
+                    Some(Mutability::Immutable),
+                )),
+                "MutUnsafeAnyOrigin" => Ok((
+                    Origin::Untracked { mutable: true },
+                    Some(Mutability::Mutable),
+                )),
+                _ => Err(TypeError::TypeMismatch {
+                    expected: "origin_of(place) or a builtin Origin value".to_string(),
+                    found: format!("'{name}', which names no in-scope Origin parameter"),
+                    context: "explicit origin argument".to_string(),
+                }),
+            };
+        }
+        let expression = match argument {
+            ParamArg::Value(expression) => expression,
+            ParamArg::Named { value, .. } => return self.resolve_origin_param_arg(value),
+            ParamArg::Type(_) => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "an Origin value".to_string(),
+                    found: "a type".to_string(),
+                    context: "explicit origin argument".to_string(),
+                });
+            }
+        };
+        let named_param_mutability = |name: &str| match self.enclosing_origin_type_param(name) {
+            Some((index, parameter)) => Some(
+                match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
+                    Some(ExprKind::Bool(true)) => Mutability::Mutable,
+                    Some(ExprKind::Bool(false)) => Mutability::Immutable,
+                    _ => Mutability::Param(crate::origin::OriginParamId(index)),
+                },
+            ),
+            None => match name {
+                "ImmStaticOrigin" | "ImmUntrackedOrigin" => Some(Mutability::Immutable),
+                "MutUnsafeAnyOrigin" => Some(Mutability::Mutable),
+                _ => None,
+            },
+        };
+        let mutability = match &expression.kind {
+            ExprKind::Identifier(name) => named_param_mutability(name),
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(n) if n == "Self") => {
+                named_param_mutability(field)
+            }
+            ExprKind::Call { name, args, .. } if name == "origin_of" => {
+                // The union of places is immutable as soon as any constituent
+                // is; a symbolic constituent leaves the union unknown.
+                let mut union: Option<Mutability> = None;
+                for place in args {
+                    let Ok(reference) = self.reference_actual(place) else {
+                        union = None;
+                        break;
+                    };
+                    union = Some(match (union, reference.mutability) {
+                        (_, Mutability::Immutable) | (Some(Mutability::Immutable), _) => {
+                            Mutability::Immutable
+                        }
+                        (None | Some(Mutability::Mutable), other) => other,
+                        (Some(symbolic @ Mutability::Param(_)), _) => symbolic,
+                    });
+                }
+                union
+            }
+            _ => None,
+        };
+        let origin = self.explicit_origin_argument(argument)?;
+        Ok((origin, mutability))
+    }
+
+    /// An in-scope `Origin`-bounded type parameter by name, with its index in
+    /// the enclosing parameter list (the `OriginParamId` domain shared with
+    /// `ref[o]` annotations).
+    pub(super) fn enclosing_origin_type_param(
+        &self,
+        name: &str,
+    ) -> Option<(u32, &crate::ast::TypeParam)> {
+        self.enclosing_type_params
+            .iter()
+            .enumerate()
+            .find(|(_, parameter)| {
+                parameter.name == name && parameter.bounds.as_slice() == ["Origin"]
+            })
+            .map(|(index, parameter)| (index as u32, parameter))
     }
 
     /// Replay a callee's transfer effects against a call's actuals: enforce

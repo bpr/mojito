@@ -1610,8 +1610,15 @@ impl Checker {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let (subst, tyargs) =
-            self.resolve_use_params(name, &decls, param_args, &field_tys, &arg_tys)?;
+        let source_params = info.source_params.clone();
+        let (subst, tyargs) = self.resolve_struct_use_args(
+            name,
+            &decls,
+            &source_params,
+            param_args,
+            &field_tys,
+            &arg_tys,
+        )?;
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
             let expected = substitute(fty, &subst);
             if !Self::storage_value_coerces(aty, &expected)

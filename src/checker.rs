@@ -429,6 +429,7 @@ impl ConformanceOracle {
                 name.clone(),
                 StructInfo {
                     decls,
+                    source_params: type_params.clone(),
                     fixed_arguments: None,
                     conforms: conforms.clone(),
                     callable_conformance: None,
@@ -507,6 +508,7 @@ impl ConformanceOracle {
                 name,
                 type_params,
                 fields,
+                associated,
                 ..
             } = &statement.kind
             else {
@@ -541,6 +543,19 @@ impl ConformanceOracle {
                 &mut checker.bundled_stdlib_declaration,
                 is_bundled_stdlib_source(statement.module.as_deref()),
             );
+            // Best-effort associated-member lowering BEFORE field resolution,
+            // so a field type may apply the struct's own comptime alias
+            // (`var iter: Self.dict_entry_iter`). A body this signature-only
+            // oracle cannot lower is skipped and fails closed at its use
+            // site, exactly like the generic-alias registration above.
+            if let Ok((associated_values, associated_constraints, parameterized)) =
+                checker.check_struct_associated(associated)
+                && let Some(info) = checker.structs.get_mut(name)
+            {
+                info.associated = associated_values;
+                info.associated_constraints = associated_constraints;
+                info.parameterized_associated = parameterized;
+            }
             let field_types = fields
                 .iter()
                 .map(|field| {
@@ -1924,6 +1939,11 @@ fn fold_constraint_conjunction(constraints: &[GenericConstraint]) -> GenericCons
 struct StructInfo {
     /// Compile-time parameters (type and value); empty for a non-generic struct.
     decls: Vec<ParamDecl>,
+    /// Raw source parameter list as declared, including Origin/OriginSet
+    /// parameters and their `mut=` Bool binders, which `decls` erases.
+    /// Direct applications consult it to accept, validate, and erase explicit
+    /// origin arguments (`EntryIter[K, V, some_origin]`).
+    source_params: Vec<crate::ast::TypeParam>,
     /// Concrete semantic arguments retained by an erased compiler-generated
     /// specialization. Public `Tuple[*Ts]` is emitted as a parameter-free
     /// implementation struct, but its checked identity must still carry the

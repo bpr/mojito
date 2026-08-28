@@ -1018,6 +1018,24 @@ impl<'a> Elab<'a> {
             .filter(|parameter| !retained_specialization_param(parameter, type_params))
             .cloned()
             .collect();
+        // The checker accepts (and erases) explicit origin arguments on
+        // type-generic structs; a value-parameterized specialization has no
+        // origin slot in its baked argument list, so a surplus argument next
+        // to a declared origin parameter gets a targeted diagnostic instead
+        // of a misaligned positional binding.
+        let explicit = |parameter: &TypeParam| !parameter.infer_only;
+        if param_args.len() > evaluated.iter().filter(|p| explicit(p)).count()
+            && type_params.iter().any(|parameter| {
+                explicit(parameter)
+                    && matches!(parameter.bounds.as_slice(),
+                        [only] if only == "Origin" || only == "OriginSet")
+            })
+        {
+            return Err(ComptimeError::NotComptime(format!(
+                "generic '{name}': explicit origin arguments are not supported on a \
+                 value-parameterized struct specialization; omit the origin slots"
+            )));
+        }
         let bound = bind_spec_param_args(&evaluated, param_args, name)?;
         let mut vals = Vec::new();
         let mut environment = consts.clone();

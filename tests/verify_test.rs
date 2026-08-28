@@ -278,6 +278,69 @@ fn verifier_checks_make_ref_capability_types() {
 }
 
 #[test]
+fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
+    // A projected place ENDING at a stored reference admits the forwarding
+    // interpretation: the destination is typed as the stored handle itself
+    // (`ref s = self.src` reborrows), not as a borrow of the field slot.
+    let stored_ref_place = |mutability: mojito::Mutability| {
+        let mut place = MirPlace::root(0, Some(Ty::Struct("Holder".to_string(), Vec::new())));
+        place.project(
+            Proj::Field("src".to_string()),
+            reference_ty(Ty::Int, mutability),
+        );
+        place
+    };
+
+    let forwarded = function(
+        vec![block(
+            vec![MirInstr::MakeRef {
+                dest: Reg(0),
+                place: stored_ref_place(mojito::Mutability::Mutable),
+            }],
+            MirTerm::Return(None),
+        )],
+        1,
+        &[(0, reference_ty(Ty::Int, mojito::Mutability::Immutable))],
+    );
+    assert_eq!(verify(&program(forwarded)), Vec::<String>::new());
+
+    let unrelated_referent = function(
+        vec![block(
+            vec![MirInstr::MakeRef {
+                dest: Reg(0),
+                place: stored_ref_place(mojito::Mutability::Mutable),
+            }],
+            MirTerm::Return(None),
+        )],
+        1,
+        &[(
+            0,
+            reference_ty(Ty::StringLiteral, mojito::Mutability::Immutable),
+        )],
+    );
+    expect_finding(
+        &program(unrelated_referent),
+        "MakeRef destination targets StringLiteral",
+    );
+
+    let stolen_mutability = function(
+        vec![block(
+            vec![MirInstr::MakeRef {
+                dest: Reg(0),
+                place: stored_ref_place(mojito::Mutability::Immutable),
+            }],
+            MirTerm::Return(None),
+        )],
+        1,
+        &[(0, reference_ty(Ty::Int, mojito::Mutability::Mutable))],
+    );
+    expect_finding(
+        &program(stolen_mutability),
+        "MakeRef destination recovers permission unavailable through its source capability",
+    );
+}
+
+#[test]
 fn verifier_checks_read_and_write_reference_capabilities() {
     let read_non_capability = function(
         vec![block(

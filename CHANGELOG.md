@@ -8,6 +8,32 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Ref-field struct construction from ref-field places + explicit origin
+  arguments (2026-08): a ref-field struct can now be constructed from
+  another struct's ref *field* (`View(self.src, i)`; the ctor argument's
+  read-through facts type the projection for MIR) and a ref field can be
+  reborrowed into a local binding (`ref s = self.src`; a
+  parametric-origin receiver classifies as an immutable ownership access,
+  and MIR verify plus the pliron backend accept the forwarding
+  interpretation of a `MakeRef` whose place ends at a stored reference).
+  Struct applications accept explicit origin arguments in every
+  annotation position and at constructor expressions —
+  `EntryIter[K, V, some_origin]`, `View[origin_of(self)]`, bare in-scope
+  origin parameter names, and `Self.origin` spellings — validated
+  (a concrete `Origin[mut=True]` slot rejects a provably immutable
+  argument) and then erased from the origin-free struct identity;
+  applications omitting the origin slots keep checking unchanged.
+  Comptime alias bodies can bind origin arguments, and a struct's own
+  comptime aliases are now visible to its field types (associated
+  members resolve before fields, in the checker and the specialization
+  conformance oracle), enabling upstream's monomorphic-alias-in-field
+  iterator shape. On all of that, the stdlib `Dict`/`StringDict` key and
+  value iterators became upstream-shape adapters: `_DictKeyIter` and
+  `_DictValueIter` wrap a `_DictEntryIter` field (`var iter:
+  Self.dict_entry_iter` / a direct origin application) instead of
+  borrowing the entries list directly, with `IteratorType` alias bodies
+  binding their view origins.
+
 - Ref-field struct returns from ordinary method calls (2026-08): a method
   whose non-consuming receiver returns a struct containing a `ref` field
   (a borrowing view/iterator) now lends the receiver to the result, so

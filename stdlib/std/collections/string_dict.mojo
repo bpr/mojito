@@ -7,7 +7,7 @@
 # `StringLiteral`: keyword names are compile-time strings, and the VM's kwargs
 # ABI stores literal values, independent of the nominal `String` struct.
 
-from std.collections.dict import DictEntry, _DictKeyIter
+from std.collections.dict import DictEntry, _DictEntryIter, _DictKeyIter
 from std.collections.list import List
 from std.hashing import bucket_index
 from std.iterable import Iterable
@@ -17,7 +17,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     comptime Element = StringLiteral
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _DictKeyIter[StringLiteral, Self.V]
+    ] = _DictKeyIter[StringLiteral, Self.V, iterable_origin]
 
     var entries: List[DictEntry[StringLiteral, Self.V]]
     var index: List[List[Int]]
@@ -172,4 +172,4 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         ref source = self.entries
-        return _DictKeyIter[StringLiteral, Self.V](source, 0)
+        return _DictKeyIter(_DictEntryIter(source, 0))
