@@ -7,8 +7,8 @@ trait Sink:
     def put(mut self, var box: RefBox): ...
 
 @fieldwise_init
-struct Bag(Sink):
-    var slot: RefBox
+struct Bag[origin: Origin[mut=True]](Sink):
+    var slot: RefBox[Self.origin]
 
     def put(mut self, var box: RefBox):
         self.slot = box^

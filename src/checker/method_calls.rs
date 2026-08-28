@@ -112,6 +112,7 @@ impl Checker {
                         ref_return: sig.ref_return.clone(),
                         param_types: params,
                         param_decls: sig.decls.clone(),
+                        parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     });
                 }
             }
@@ -536,6 +537,7 @@ impl Checker {
                                     },
                                     ref_params: sig.ref_params.clone(),
                                     ref_return: sig.ref_return.clone(),
+                                    parametric_origin_writes: sig.parametric_origin_writes.clone(),
                                     param_types: params,
                                     param_decls: sig.decls.clone(),
                                 });
@@ -655,6 +657,7 @@ impl Checker {
                         ref_return: sig.ref_return.clone(),
                         param_types: params,
                         param_decls: sig.decls.clone(),
+                        parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     });
                 }
                 select_method_overload(
@@ -692,6 +695,7 @@ impl Checker {
                     ref_return: None,
                     param_types: vec![],
                     param_decls: vec![],
+                    parametric_origin_writes: vec![],
                 }))
             }
             // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
@@ -740,6 +744,7 @@ impl Checker {
                     ref_params: vec![],
                     ref_return: None,
                     param_decls: vec![],
+                    parametric_origin_writes: vec![],
                 }))
             }
             _ => Ok(None),
@@ -885,6 +890,49 @@ impl Checker {
             }
             if !preserves_receiver_interiors {
                 self.record_interior_invalidation(span.clone(), object);
+            }
+        }
+        // A method body writing through a parametric-mut ref field is legal
+        // only for instantiations binding that origin parameter to a mutable
+        // source; judge each recorded write against the receiver's concrete
+        // origin arguments here, at the instantiation site.
+        for id in &resolved.parametric_origin_writes {
+            let origin =
+                self.resolve_receiver_origin_arguments(crate::origin::Origin::Param(*id), object);
+            // A resolution that only reaches the receiver's own storage found
+            // no construction-time binding for the parameter — that is a
+            // symbolic origin for write legality, not a mutable source.
+            let verdict = if self
+                .origin_place(object)
+                .is_ok_and(|place| super::origins::origin_rooted_at(&origin, place.root))
+            {
+                None
+            } else {
+                self.origin_writably_rooted(&origin)
+            };
+            match verdict {
+                Some(true) => {
+                    // The call writes the borrowed storage: invalidate interior
+                    // references into it, as a direct mutation would.
+                    self.record_aggregate_origin_invalidation_except(span.clone(), origin, None);
+                }
+                Some(false) => {
+                    return Err(TypeError::BadCall {
+                        func: method.to_string(),
+                        reason: "writes through an origin parameter bound to an immutable \
+                                 source (an Origin[mut=False] instantiation)"
+                            .to_string(),
+                    });
+                }
+                None => {
+                    return Err(TypeError::BadCall {
+                        func: method.to_string(),
+                        reason: "writes through a parametric origin the receiver leaves \
+                                 symbolic; propagating the write requirement through another \
+                                 generic body is not supported"
+                            .to_string(),
+                    });
+                }
             }
         }
         // A `ref self` receiver whose capability is not provably mutable —
@@ -1079,6 +1127,16 @@ impl Checker {
                     }) =>
                 {
                     crate::origin::Mutability::Mutable
+                }
+                // A parametric-mut receiver stays symbolic: the write legality
+                // is judged per instantiation at the enclosing call site, not
+                // collapsed to immutable inside the generic body.
+                _ if matches!(
+                    self_reference.mutability,
+                    crate::origin::Mutability::Param(_)
+                ) =>
+                {
+                    self_reference.mutability
                 }
                 _ => crate::origin::Mutability::Immutable,
             };

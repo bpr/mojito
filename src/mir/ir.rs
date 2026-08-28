@@ -446,9 +446,11 @@ pub enum MirInstr {
     },
     /// A method call `recv.method(args)`. `recv_place` is `Some` when the receiver
     /// is a writable place (a variable / field-index chain), so a `mut self` method
-    /// can write the updated receiver back; `None`
-    /// for a temporary receiver (a call result), on which only read-only methods
-    /// are valid (the checker guarantees this).
+    /// can write the updated receiver back. A temporary receiver (a call result)
+    /// admits only read-only methods (the checker guarantees this); it is `None`
+    /// unless the call result is a borrowing view, which is retained in a hidden
+    /// `$view_recv_r` slot whose loans keep the borrowed source alive across the
+    /// chained call.
     MethodCall {
         dest: Reg,
         recv: Reg,

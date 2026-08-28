@@ -1823,9 +1823,11 @@ fn container_family_owning_apis_execute() {
 fn span_implicit_conversion_binding_stales_on_source_mutation() {
     // An annotated binding that implicitly converts a List to a Span carries
     // the same source loan as the explicit `Span(xs)` construction, so
-    // structural mutation while the converted view lives rejects. (Linked
-    // stdlib only — Span has no link-free raw-seam twin.)
-    let src = "def main():\n    var xs = List[Int]()\n    xs.append(10)\n    var s: Span[Int] = xs\n    xs.append(20)\n    print(s[0])\n";
+    // structural mutation while the converted view lives rejects. The origin
+    // slot is spelled: the pinned upstream also rejects the partial
+    // `Span[Int]` annotation ("failed to infer parameter 'origin'").
+    // (Linked stdlib only — Span has no link-free raw-seam twin.)
+    let src = "def main():\n    var xs = List[Int]()\n    xs.append(10)\n    var s: Span[Int, origin_of(xs)] = xs\n    xs.append(20)\n    print(s[0])\n";
     let err = run_compiled(src).expect_err("mutating the converted view's source rejects");
     assert!(
         err.contains("conflicts with live reference"),

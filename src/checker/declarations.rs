@@ -265,7 +265,7 @@ impl Checker {
             self_convention: method.self_convention,
             ref_params: lower_ref_param_sigs(&self.enclosing_type_params, &regular_params)?,
             ref_return: match &method.ret {
-                Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
+                Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                     origin.as_ref().ok_or_else(|| {
                         TypeError::Unsupported("reference return requires an origin".to_string())
                     })?,
@@ -278,6 +278,9 @@ impl Checker {
                 .decorators
                 .iter()
                 .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "implicit"),
+            // Populated by struct signature registration, which has the
+            // enclosing struct's resolved field types in hand.
+            parametric_origin_writes: Vec::new(),
         })
     }
 
@@ -917,7 +920,7 @@ impl Checker {
             .filter(|param| param.kind == crate::ast::ParamKind::Regular)
             .collect();
         let ref_return = match &m.ret {
-            Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
+            Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                 origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported("reference return requires an origin".to_string())
                 })?,
@@ -1299,6 +1302,7 @@ impl Checker {
                             ref_return: None,
                             param_types: sig.params.clone(),
                             param_decls: sig.decls.clone(),
+                            parametric_origin_writes: sig.parametric_origin_writes.clone(),
                         });
                     }
                 }

@@ -766,6 +766,12 @@ pub struct Checker {
     /// expression.  These cross the typed boundary so MIR never reinterprets
     /// syntax.
     operation_adjustments: RefCell<HashMap<SourceSpan, crate::checked::SemanticAdjustment>>,
+    /// Whether type resolution is inside a storage annotation (a struct field
+    /// or local `var` type) — the positions where explicit origin slots must
+    /// be bound. An initialized local may still leave a BARE generic to infer
+    /// wholly from its initializer (upstream-attested via `StringSlice`);
+    /// fields and uninitialized locals may not.
+    strict_storage_annotation: std::cell::Cell<StorageStrictness>,
     /// Synthetic tuple element reads introduced by unpacking have no source
     /// expression nodes. Retain their checked types and exact generated
     /// accessors on the RHS expression for HIR/MIR lowering.
@@ -917,6 +923,7 @@ impl Checker {
             conversion_source_borrows: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
+            strict_storage_annotation: std::cell::Cell::new(StorageStrictness::Off),
             tuple_unpack_plans: RefCell::new(HashMap::new()),
             interior_references: RefCell::new(HashMap::new()),
             interior_invalidations: RefCell::new(HashMap::new()),
@@ -1785,6 +1792,11 @@ struct MethodSig {
     ref_params: Vec<Option<crate::origin::RefSig>>,
     ref_return: Option<crate::origin::RefSig>,
     implicit: bool,
+    /// Origin parameters the body writes through via a parametric-mut ref
+    /// field subscript (`self.field[i] = v`). The write is legal only for
+    /// instantiations binding the origin to a mutable source, judged at each
+    /// call site against the receiver's concrete origin arguments.
+    parametric_origin_writes: Vec<crate::origin::OriginParamId>,
 }
 
 impl MethodSig {
@@ -1811,6 +1823,7 @@ impl MethodSig {
             ref_params: vec![None; len],
             ref_return: None,
             implicit: false,
+            parametric_origin_writes: Vec::new(),
         }
     }
 }
@@ -2524,9 +2537,24 @@ struct MethodCallResolution {
     ref_return: Option<crate::origin::RefSig>,
     param_types: Vec<Ty>,
     param_decls: Vec<ParamDecl>,
+    /// See [`MethodSig::parametric_origin_writes`].
+    parametric_origin_writes: Vec<crate::origin::OriginParamId>,
 }
 
 type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);
+
+/// How strictly a storage annotation must bind explicit origin slots.
+/// `Full`: bare origin-slotted generics and partial applications both reject
+/// (struct fields, uninitialized locals). `AllowBare`: a bare generic may
+/// infer wholly from the binding's initializer, but a partial application
+/// still cannot omit an origin slot (initialized locals — both halves
+/// probe-attested against the pinned upstream). `Off`: ordinary resolution.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StorageStrictness {
+    Off,
+    AllowBare,
+    Full,
+}
 
 fn ct_values_equal(left: &CtValue, right: &CtValue) -> bool {
     match (ct_integer(left), ct_integer(right)) {

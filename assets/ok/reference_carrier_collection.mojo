@@ -10,7 +10,7 @@ def stash(mut sink: List[RefBox], var box: RefBox):
     sink.append(box^)
 
 def main():
-    var sink: List[RefBox] = List[RefBox]()
+    var sink = List[RefBox]()
     var local: List[Int] = [9]
     ref alias = local
     stash(sink, RefBox(alias))

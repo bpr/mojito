@@ -121,7 +121,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   expressions.
 - `checker/origins.rs` owns origin/reference-handle derivation, interior and
   aggregate-origin tracking, capture-origin collection, origin-signature
-  lowering, and cross-call transfer effects (`abstract_body_origin`,
+  lowering (including the shared `SigOrigin` instantiation helpers
+  `instantiate_sig_origin`/`instantiate_bound_origin` used by the iteration
+  protocol and delegated-call expression-origin resolution,
+  `lower_ref_sig_resolved`), and cross-call transfer effects (`abstract_body_origin`,
   `record_transfer_effect`, the `apply_transfer_effects` name-keyed wrapper
   over the `replay_transfer_effects` core, value-position effect baking
   (`bake_value_transfer_effects`), the higher-order call-through channel

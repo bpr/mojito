@@ -216,5 +216,6 @@ list-extend-consumes	reject	assets/ownership_error/list_extend_consumes.mojo
 dict-take-items	run	assets/ok/dict_take_items.mojo
 comptime-shadowed-locals	run	assets/ok/comptime_shadowed_locals.mojo
 origin-argument-direct-application	run	conformance/fixtures/origin_argument_direct_application.mojo
-bare-generic-field-omitted-params	mojito-only	conformance/fixtures/bare_generic_field_omitted_params.mojo
+bare-generic-field-omitted-params	reject	conformance/fixtures/bare_generic_field_omitted_params.mojo
 origin-slot-omitted-application	reject	conformance/fixtures/origin_slot_omitted_application.mojo
+delegated-reference-projection	run	conformance/fixtures/delegated_reference_projection.mojo

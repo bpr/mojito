@@ -4974,7 +4974,7 @@ fn stores_into_outliving_storage_reject_frame_local_loans() {
     // The store-outward twin of the return escape: a reference-bearing value
     // rooted at a method-local cannot be stored into `self`, and a `ref`
     // field cannot be rebound to a frame-local place.
-    let carrier = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def swap(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.swap()\n";
+    let carrier = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def swap(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    holder.swap()\n";
     assert!(matches!(
         err(carrier),
         TypeError::StoredReferenceEscapesOrigin
@@ -4991,8 +4991,65 @@ fn stores_into_outliving_storage_reject_frame_local_loans() {
 fn stores_of_parameter_rooted_loans_into_self_stay_accepted() {
     // An origin that outlives the frame (a caller-owned parameter place) may
     // be stored outward; only frame-local roots escape.
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n";
     assert!(check(&parse(src).expect("parse")).is_ok());
+}
+
+#[test]
+fn storage_annotations_require_bound_origin_slots() {
+    // A struct field naming an origin-slotted generic bare is not concrete;
+    // a local annotation omitting the origin slot fails to infer it. Both
+    // mirror the pinned upstream's rejections.
+    let holder = "@fieldwise_init\nstruct Holder[m: Bool, //, o: Origin[mut=m]]:\n    var value: ref[o] List[Int]\n\n";
+    let bare_field = format!(
+        "{holder}@fieldwise_init\nstruct Wrap:\n    var inner: Holder\n\ndef main():\n    pass\n"
+    );
+    assert!(matches!(err(&bare_field), TypeError::NotConcrete(name) if name == "Holder"));
+
+    // A bare generic on an UNINITIALIZED local has nothing to infer from and
+    // is not concrete; with an initializer the whole parameter list may infer
+    // (the pinned upstream accepts `var v: StringSlice = ...` the same way).
+    let uninitialized_local = format!(
+        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v: Holder\n    v = Holder(r)\n    print(v.value[0])\n"
+    );
+    assert!(
+        matches!(err(&uninitialized_local), TypeError::NotConcrete(name) if name == "Holder"),
+        "{:?}",
+        err(&uninitialized_local)
+    );
+
+    let initialized_bare = format!(
+        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v: Holder = Holder(r)\n    print(v.value[0])\n"
+    );
+    assert!(check(&parse(&initialized_bare).expect("parse")).is_ok());
+
+    // The inference positions stay lenient: a constructor expression with a
+    // value argument, and a bare origin-slotted generic function parameter.
+    let ctor = format!(
+        "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v = Holder(r)\n    print(v.value[0])\n"
+    );
+    assert!(check(&parse(&ctor).expect("parse")).is_ok());
+
+    let bare_param = format!(
+        "{holder}def read(h: Holder) -> Int:\n    return h.value[0]\n\ndef main():\n    var data: List[Int] = [7]\n    ref r = data\n    print(read(Holder(r)))\n"
+    );
+    assert!(check(&parse(&bare_param).expect("parse")).is_ok());
+}
+
+#[test]
+fn omitted_origin_slot_in_a_local_annotation_fails_to_infer() {
+    // A partial application that supplies the non-origin arguments but omits
+    // an explicit origin slot in a storage annotation names the slot (the
+    // pinned upstream rejects the same shape even with an initializer).
+    let src = "@fieldwise_init\nstruct Tagged[n: Int, o: Origin[mut=True]]:\n    var value: ref[o] List[Int]\n\n@fieldwise_init\nstruct Wrap:\n    var inner: Tagged[1]\n\ndef main():\n    pass\n";
+    assert!(
+        matches!(
+            err(src),
+            TypeError::CannotInferParam { name, param } if name == "Tagged" && param == "o"
+        ),
+        "{:?}",
+        err(src)
+    );
 }
 
 #[test]
@@ -5019,7 +5076,7 @@ fn origin_cast_cannot_upgrade_capability() {
 
 #[test]
 fn parameter_rooted_transfers_stay_accepted() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox]:\n    var sink: List[RefBox] = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [4]\n    var got = fill(keep)\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox]:\n    var sink = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [4]\n    var got = fill(keep)\n";
     assert!(check(&parse(src).expect("parse")).is_ok());
 }
 

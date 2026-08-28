@@ -561,7 +561,55 @@ impl Flatten<'_> {
             return (value, Some(place));
         }
         if self.checked_call_contract(expression).is_some() {
-            return (self.expr(expression), None);
+            let value = self.expr(expression);
+            // A borrowing view produced by the receiver call (BorrowViewResult
+            // carries loans on the ultimate owner) must outlive the chained
+            // call: bind it into a hidden retained slot whose loans keep the
+            // source alive and conflict-checked, exactly as the implicit
+            // view-conversion binding does. Loan-free call results stay plain
+            // temporaries.
+            let loans = self.aggregate_borrows(expression);
+            if loans.is_empty() {
+                return (value, None);
+            }
+            let view_ty = self
+                .f
+                .reg_types
+                .get(&value.0)
+                .cloned()
+                .or_else(|| self.checked_ty(expression));
+            let variable = self.var(&format!("$view_recv_r{}", value.0));
+            if let Some(ty) = view_ty.clone() {
+                self.var_types.insert(variable, ty);
+            }
+            self.emit(MirInstr::DefVar {
+                var: variable,
+                src: value,
+                binding_ty: view_ty.clone(),
+            });
+            let marker = self.fresh_typed(
+                expression.source_span(),
+                Some(loans[0].place.root),
+                Ty::None,
+            );
+            self.emit(MirInstr::EstablishLoans {
+                reference: variable,
+                loans: loans.clone(),
+                marker,
+                dest_interior: None,
+            });
+            self.aggregate_loans.insert(variable, loans);
+            let place = MirPlace::root(variable, view_ty);
+            let read = self.fresh_typed(
+                expression.source_span(),
+                Some(variable),
+                place.ty.clone().unwrap_or(Ty::Error),
+            );
+            self.emit(MirInstr::LoadPlace {
+                dest: read,
+                place: place.clone(),
+            });
+            return (read, Some(place));
         }
         match self.try_place(expression) {
             Some(place) => {

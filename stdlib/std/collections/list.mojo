@@ -86,7 +86,7 @@ struct List[T: AnyType](
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _ListIter[Self.T]
+    ] = _ListIter[Self.T, iterable_origin]
     comptime IteratorOwnedType = _ListOwnedIter[Self.T]
 
     var data: UnsafePointer[Self.T]

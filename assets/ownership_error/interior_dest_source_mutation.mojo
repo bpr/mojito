@@ -4,12 +4,12 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
 @fieldwise_init
-struct Carrier:
-    var slot: RefBox
+struct Carrier[origin: Origin[mut=True]]:
+    var slot: RefBox[Self.origin]
 
 @fieldwise_init
-struct Two:
-    var a: Carrier
+struct Two[origin: Origin[mut=True]]:
+    var a: Carrier[Self.origin]
     var b: List[Int]
 
 def stash_into_a(mut t: Two, box: RefBox):

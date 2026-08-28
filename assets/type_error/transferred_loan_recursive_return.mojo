@@ -4,8 +4,8 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
 @fieldwise_init
-struct Sink:
-    var slot: RefBox
+struct Sink[origin: Origin[mut=True]]:
+    var slot: RefBox[Self.origin]
 
     def ping(mut self, var box: RefBox, n: Int):
         if n > 0:

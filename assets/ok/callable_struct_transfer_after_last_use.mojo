@@ -11,7 +11,7 @@ struct Stasher(def(mut List[RefBox], RefBox)):
 
 def main():
     var s = Stasher(0)
-    var sink: List[RefBox] = List[RefBox]()
+    var sink = List[RefBox]()
     var local: List[Int] = [9]
     ref alias = local
     s(sink, RefBox(alias))

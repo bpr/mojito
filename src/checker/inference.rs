@@ -572,8 +572,12 @@ impl Checker {
                 // builders need them to type a ref-field projection such as
                 // `View(self.src, 0)`.
                 let _ = self.infer(expr);
+                // An owned place auto-borrows into a reference slot exactly as
+                // the equivalent `ref` binding would; only non-place arguments
+                // (temporaries, literals) keep requiring an explicit handle.
                 self.infer_reference_value(expr)
                     .map(Ty::Ref)
+                    .or_else(|| self.reference_actual(expr).ok().map(Ty::Ref))
                     .ok_or_else(|| TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: self

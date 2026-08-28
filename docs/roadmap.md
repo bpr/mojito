@@ -115,25 +115,35 @@ recreates this section's checkbox with the fresh divergence list.
   These are where "Mojito rejects/diverges from valid Mojo" clusters
   today; every item lists what it unlocks so slices can be chosen by
   leverage.
-  - **Ref-field adapter residues** (what remains after the landed
-    ref-field-place construction + explicit-origin-application work):
-    a `ref`-returning method cannot yield a projection of a delegated
-    call result (`return self.iter.__next__().key` — upstream's
-    expression-origin `ref [self.iter.__next__().key]` spelling; the
-    stdlib inlines stepping against the wrapped iterator instead); a
-    chained method call on a temporary view (`b.pane().first()`) drops
-    the view before the call (bind it first); passing a bare owned place
-    to a `ref` ctor parameter does not auto-borrow (`ref source = ...`
-    first); and subscript WRITES through a parametric-mut ref field
-    (`self.src[0] += 1`) still reject ("immutable reference returned by
-    '__getitem__'"). Two recorded acceptance-leniency tightenings
-    (2026-08-27 probes, see conformance/cases.tsv): a bare
-    unparameterized generic FIELD type (`var inner: Holder`) runs here
-    but upstream rejects ("not concrete, use '[]'"), and the
-    origin-argument compat rule accepts origin-slot omission in
-    positions upstream cannot infer (remaining stdlib spelling:
-    `_TakeDictEntryIter[Self.K, Self.V]`-style alias bodies) — migrate
-    spellings to fully-bound, then tighten both.
+  - **Ref-field adapter follow-ups** (what remains after the landed
+    delegated expression-origin returns, temp-view chaining, ctor
+    auto-borrow, parametric-mut writes, and storage-annotation
+    concreteness tightenings): write-requirement propagation through
+    another generic body (a wrapper generic over the same origin cannot
+    discharge a wrapped view's parametric-mut write; both directions
+    reject today); auto-borrow of *temporaries* into `ref` ctor
+    parameters (places only today; upstream accepts temporaries);
+    delegated-call origin expressions with argument-taking callees or
+    multi-origin-binder correspondences (needs an origin channel richer
+    than the erased struct identity); `_`/`...` origin placeholders in
+    applications (upstream suggests them; Mojito rejects). Recorded
+    probe follow-ups: the pin requires the qualified `Self.o` binder in
+    origin clauses where Mojito also accepts the bare binder (probe the
+    exact position set, then tighten); concreteness in return-type and
+    alias-through-return positions (untightened, no probe evidence;
+    2026-08-28 probes: the pin accepts a BARE generic on an initialized
+    local — inference from the initializer, `var v: StringSlice = ...` —
+    but rejects partial applications like `var s: Span[Int] = xs`, which
+    is exactly the tightened rule);
+    origin-slotted generics as bare function parameters (accepted —
+    protect or tighten by probe). Known pre-existing gaps found while
+    probing (VM-level, unchanged by the pass): a ref-field struct
+    returned through a *bare* unbound return annotation loses its
+    borrow contract and dies with a stale-frame error even when bound
+    to a `var` first; reading a pointer field through a bare
+    origin-generic parameter yields `None`; `var k =
+    it.__next__().key` with a heap-backed (String) field dies in value
+    position (shallow LoadPlace copy).
   - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
     signature `__hash__(self, mut hasher: Some[Hasher])` with a
     reflection default; AHasher; `std.hashlib` module identity). Mojito's

@@ -7,8 +7,8 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
 @fieldwise_init
-struct Holder:
-    var slot: RefBox
+struct Holder[origin: Origin[mut=True]]:
+    var slot: RefBox[Self.origin]
     def swap(mut self):
         var local: List[Int] = [9]
         ref alias = local

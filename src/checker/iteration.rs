@@ -736,7 +736,7 @@ fn instantiate_iterator_reference(
 ) -> crate::origin::RefTy {
     use crate::origin::{Mutability, RefTy, SigMutability};
 
-    let origin = instantiate_iterator_sig_origin(&signature.origin, arguments);
+    let origin = crate::checker::origins::instantiate_sig_origin(&signature.origin, arguments);
     let mutability = match signature.mutability {
         SigMutability::Immutable => Mutability::Immutable,
         SigMutability::Mutable => Mutability::Mutable,
@@ -759,60 +759,6 @@ fn instantiate_iterator_reference(
         origin,
         mutability,
     }
-}
-
-fn instantiate_iterator_sig_origin(
-    signature: &crate::origin::SigOrigin,
-    arguments: &[TyArg],
-) -> crate::origin::Origin {
-    use crate::origin::{Origin, OriginParamId, SigOrigin};
-
-    match signature {
-        SigOrigin::Self_ | SigOrigin::Infer => Origin::SelfParam,
-        SigOrigin::Param(index) => Origin::Param(OriginParamId(*index as u32)),
-        SigOrigin::Bound(origin) => instantiate_iterator_bound_origin(origin, arguments),
-        SigOrigin::Static => Origin::Static,
-        SigOrigin::Untracked { mutable } => Origin::Untracked { mutable: *mutable },
-        SigOrigin::Projected(base, path) => crate::checker::origins::project_origin(
-            instantiate_iterator_sig_origin(base, arguments),
-            path,
-        ),
-        SigOrigin::Union(members) => Origin::union(
-            members
-                .iter()
-                .map(|member| instantiate_iterator_sig_origin(member, arguments)),
-        ),
-    }
-}
-
-fn instantiate_iterator_bound_origin(
-    origin: &crate::origin::Origin,
-    arguments: &[TyArg],
-) -> crate::origin::Origin {
-    use crate::origin::Origin;
-
-    match origin {
-        Origin::Param(parameter) => iterator_origin_argument(arguments, parameter.0 as usize)
-            .unwrap_or(Origin::Param(*parameter)),
-        Origin::Union(members) => Origin::union(
-            members
-                .iter()
-                .map(|member| instantiate_iterator_bound_origin(member, arguments)),
-        ),
-        _ => origin.clone(),
-    }
-}
-
-fn iterator_origin_argument(arguments: &[TyArg], index: usize) -> Option<crate::origin::Origin> {
-    if let Some(TyArg::Origin(origin)) = arguments.get(index) {
-        return Some(origin.clone());
-    }
-    let mut origins = arguments.iter().filter_map(|argument| match argument {
-        TyArg::Origin(origin) => Some(origin),
-        TyArg::Ty(_) | TyArg::Val(_) => None,
-    });
-    let only = origins.next()?.clone();
-    origins.next().is_none().then_some(only)
 }
 
 fn iterator_bool_argument(arguments: &[TyArg], index: usize) -> Option<bool> {

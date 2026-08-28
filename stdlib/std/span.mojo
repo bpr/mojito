@@ -21,7 +21,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _SpanIter[Self.T]
+    ] = _SpanIter[Self.T, iterable_origin]
 
     var _data: Pointer[Self.T, Self.origin._get_owned_interior["element"]]
     var _size: Int
@@ -74,7 +74,7 @@ struct _SpanIter[
 ](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
 
-    var src: ref[iterable_origin] Span[Self.T]
+    var src: ref[iterable_origin] Span[Self.T, Self.iterable_origin]
     var index: Int
 
     def __len__(self) -> Int:

@@ -328,6 +328,12 @@ impl Checker {
                 }
                 Ok(alternative)
             }
+            ExprKind::MethodCall { method, .. } => Err(TypeError::InvalidAssignTarget(format!(
+                "the temporary result of method call '{method}()'"
+            ))),
+            ExprKind::Call { name, .. } => Err(TypeError::InvalidAssignTarget(format!(
+                "the temporary result of call '{name}()'"
+            ))),
             other => Err(TypeError::InvalidAssignTarget(format!("{:?}", other))),
         }
     }
@@ -594,7 +600,10 @@ impl Checker {
             // setter the receiver is simply not index-assignable.
             return Err(TypeError::NotIndexable(object_ty.to_string()));
         };
-        if reference.mutability != crate::origin::Mutability::Mutable {
+        // A provably immutable reference rejects here; a parametric-mut
+        // reference (`Origin[mut=m]`) is judged per instantiation at the
+        // enclosing method's call sites instead.
+        if reference.mutability == crate::origin::Mutability::Immutable {
             return Err(TypeError::ImmutableBinding(
                 "immutable reference returned by '__getitem__'".to_string(),
             ));

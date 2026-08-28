@@ -80,7 +80,7 @@ struct Optional[T: AnyType](
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _OptionalIter[Self.T]
+    ] = _OptionalIter[Self.T, iterable_origin]
     comptime IteratorOwnedType = _OptionalOwnedIter[Self.T]
 
     var data: UnsafePointer[Self.T]

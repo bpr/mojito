@@ -47,9 +47,11 @@ assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
+assets/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
 assets/ok/dict_insert_linear_capable.mojo	main	exe-differential	sanitized
 assets/ok/dict_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/dict_take_items.mojo	main	exe-differential	sanitized
+assets/ok/dict_upstream_key_value_iteration.mojo	main	exe-differential	sanitized
 assets/ok/dict_views_iteration.mojo	main	exe-differential	sanitized
 assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
@@ -231,8 +233,11 @@ assets/ok/positional_only.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_adapter_from_reborrow.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_adapter_return_from_field.mojo	main	exe-differential	sanitized
+assets/ok/ref_field_chained_view_call.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_ctor_from_ref_field.mojo	main	exe-differential	sanitized
+assets/ok/ref_field_ctor_owned_source.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_drain_mut_method.mojo	main	exe-differential	sanitized
+assets/ok/ref_field_parametric_mut_subscript_write.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_reborrow_read.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_view_for_temporary.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_view_method_return.mojo	main	exe-differential	sanitized

@@ -22,7 +22,7 @@ struct KeyIter[m: Bool, //, o: Origin[mut=m]]:
 
 @fieldwise_init
 struct ValueIter[m: Bool, //, o: Origin[mut=m]]:
-    comptime InnerType[vm: Bool, //, vo: Origin[mut=vm]] = EntryIter
+    comptime InnerType[vm: Bool, //, vo: Origin[mut=vm]] = EntryIter[vo]
 
     var iter: Self.InnerType[o]
 

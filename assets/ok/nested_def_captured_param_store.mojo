@@ -3,8 +3,8 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
 @fieldwise_init
-struct Holder:
-    var slot: RefBox
+struct Holder[origin: Origin[mut=True]]:
+    var slot: RefBox[Self.origin]
 
     def stash_param(mut self, mut source: List[Int]):
         def install() {mut self, ref source}:

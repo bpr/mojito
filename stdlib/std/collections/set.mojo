@@ -42,7 +42,7 @@ struct Set[T: Hashable & Equatable & Copyable & Movable](
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _SetIter[Self.T]
+    ] = _SetIter[Self.T, iterable_origin]
     comptime IteratorOwnedType = _ListOwnedIter[Self.T]
 
     # A dense list deliberately preserves display and iteration insertion order.

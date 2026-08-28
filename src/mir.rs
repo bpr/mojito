@@ -1122,6 +1122,27 @@ impl Flatten<'_> {
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
             }
+            // An owned variable auto-borrows where storage expects a handle
+            // (a `ref` ctor field fed a bare place); a variable that itself
+            // stores a handle instead falls through to the plain load below.
+            let var_ty = self.var_types.get(&var).cloned();
+            if !matches!(var_ty, Some(Ty::Ref(_))) {
+                let place = MirPlace::root(var, var_ty);
+                let handle_ty = mir_place_handle_ty(
+                    &place,
+                    self.checked_borrow_mutability(expression).map(|mutable| {
+                        if mutable {
+                            crate::origin::Mutability::Mutable
+                        } else {
+                            crate::origin::Mutability::Immutable
+                        }
+                    }),
+                )
+                .unwrap_or(Ty::Error);
+                let dest = self.fresh_typed(expression.source_span(), Some(var), handle_ty);
+                self.emit(MirInstr::MakeRef { dest, place });
+                return dest;
+            }
         }
         if matches!(expression.kind, ExprKind::TypeApply { .. })
             && self
@@ -1181,6 +1202,12 @@ impl Flatten<'_> {
                 dest: storage,
                 place,
             });
+            // A slot that stores a handle forwards it (read the stored
+            // reference); an owned member/element auto-borrows, so the storage
+            // borrow itself is the requested handle.
+            if !matches!(stored_ty, Ty::Ref(_)) {
+                return storage;
+            }
             let dest = self.fresh_typed(expression.source_span(), None, stored_ty);
             self.emit(MirInstr::ReadRef {
                 dest,

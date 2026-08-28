@@ -58,10 +58,13 @@ def check_slice_bounds(start: Int, end: Int, length: Int):
 struct String(
     Comparable, Copyable, Equatable, Hashable, Iterable, Movable, Writable
 ):
+    # `Element` stays an unbound alias: `String` has no origin parameter to
+    # forward, and an alias declaration is a legal unbound position upstream
+    # (only storage annotations demand bound origin slots).
     comptime Element = StringSpan
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _GraphemeIter
+    ] = _GraphemeIter[iterable_origin]
 
     var data: UnsafePointer[Byte]
     var size: Int
@@ -553,7 +556,7 @@ struct String(
     # explicitly and violations abort. Byte endpoints must fall on UTF-8
     # codepoint boundaries; the result is a borrowed `StringSpan` view of
     # this String's buffer.
-    def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan:
+    def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan[origin_of(self)]:
         var start = byte.start.or_else(0)
         var end = byte.end.or_else(self.size)
         check_slice_bounds(start, end, self.size)
@@ -566,7 +569,7 @@ struct String(
         view._size = end - start
         return view^
 
-    def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan:
+    def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan[origin_of(self)]:
         var start_byte = 0
         var end_byte = 0
         try:
@@ -755,10 +758,10 @@ struct Codepoint(
 struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     ImplicitlyCopyable, Iterable, Movable, Writable
 ):
-    comptime Element = StringSpan
+    comptime Element = StringSpan[Self.origin]
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _GraphemeIter
+    ] = _GraphemeIter[iterable_origin]
 
     var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
     var _size: Int
@@ -884,12 +887,12 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
 struct _GraphemeIter[
     iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
 ](Iterator):
-    comptime Element = StringSpan
+    comptime Element = StringSpan[Self.iterable_origin]
 
-    var src: StringSpan
+    var src: StringSpan[Self.iterable_origin]
     var index: Int
 
-    def __next__(mut self) raises StopIteration -> StringSpan:
+    def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
         if self.index >= len(self.src):
             raise StopIteration()
         var start = self.index

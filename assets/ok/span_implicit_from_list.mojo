@@ -26,5 +26,5 @@ def main():
     print(total(xs))
     var r = Reader(1)
     print(r.read(xs))
-    var s: Span[Int] = xs
+    var s: Span[Int, origin_of(xs)] = xs
     print(s[0])

@@ -24,7 +24,7 @@ struct RefIter[origin: Origin[mut=False]](
 ):
     comptime Element = RefBox
 
-    var box: RefBox
+    var box: RefBox[Self.origin]
 
     def __next__(mut self) -> ref[origin_of(self.box)] RefBox:
         return self.box

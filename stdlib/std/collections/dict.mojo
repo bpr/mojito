@@ -77,18 +77,12 @@ struct _DictKeyIter[
         return self.copy()
 
     # Key yields are read-only regardless of the mapping's mutability:
-    # writing through a key reference would corrupt the hash invariant.
-    # Upstream projects the delegated call result (`self.iter.__next__().key`);
-    # a Mojito reference return needs a place expression, so stepping is
-    # inlined against the wrapped iterator's cursor and storage.
+    # writing through a key reference would corrupt the hash invariant
+    # (the wrapped entry iterator's yields are already immutable).
     def __next__(mut self) raises StopIteration -> ref[
-        Origin[mut=False].cast_from[iterable_origin._get_owned_interior["element"]]
+        self.iter.__next__().key
     ] Self.K:
-        if self.iter.index >= len(self.iter.src):
-            raise StopIteration()
-        var r = self.iter.index
-        self.iter.index += 1
-        return self.iter.src[r].key
+        return self.iter.__next__().key
 
 # The `values` borrowing view wraps the entry iterator, as upstream. Yields
 # are read-only (a conservative subset of upstream's mut-following value
@@ -110,16 +104,12 @@ struct _DictValueIter[
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
-    # As with keys, upstream projects the delegated call result; the yield
-    # place is re-derived through the wrapped iterator instead.
+    # Value yields follow the entry iterator's capability (read-only here, a
+    # conservative subset of upstream's mut-following value references).
     def __next__(mut self) raises StopIteration -> ref[
-        Origin[mut=False].cast_from[iterable_origin._get_owned_interior["element"]]
+        self.iter.__next__().value
     ] Self.V:
-        if self.iter.index >= len(self.iter.src):
-            raise StopIteration()
-        var r = self.iter.index
-        self.iter.index += 1
-        return self.iter.src[r].value
+        return self.iter.__next__().value
 
 # The `take_items` draining iterator: borrows the dictionary mutably and
 # moves entries out one at a time, so `len` observably decreases as the
@@ -134,7 +124,7 @@ struct _TakeDictEntryIter[
     comptime Element = DictEntry[Self.K, Self.V]
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _TakeDictEntryIter[Self.K, Self.V]
+    ] = _TakeDictEntryIter[Self.K, Self.V, view_origin]
 
     var src: ref[origin] Dict[Self.K, Self.V]
 
@@ -171,7 +161,7 @@ struct Dict[
     ] = _DictEntryIter[Self.K, Self.V, iterable_origin]
     comptime TakeIterType[
         take_origin: Origin[mut=True]
-    ] = _TakeDictEntryIter[Self.K, Self.V]
+    ] = _TakeDictEntryIter[Self.K, Self.V, take_origin]
     var entries: List[DictEntry[Self.K, Self.V]]
     var index: List[List[Int]]
     var nbuckets: Int

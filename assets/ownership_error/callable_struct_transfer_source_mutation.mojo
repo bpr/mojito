@@ -4,8 +4,8 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
 @fieldwise_init
-struct Keeper(def(RefBox)):
-    var slot: RefBox
+struct Keeper[origin: Origin[mut=True]](def(RefBox)):
+    var slot: RefBox[Self.origin]
     def __call__(mut self, box: RefBox):
         self.slot = box^
 

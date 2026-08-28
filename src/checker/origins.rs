@@ -199,6 +199,60 @@ impl Checker {
                 .infer_reference_value(expr)
                 .map(|reference| reference.origin)
                 .filter(is_abstract),
+            // A delegated ref-returning call: the returned handle stays within
+            // the callee's declared return region. The call-site record may
+            // already carry the abstract origin; otherwise re-instantiate the
+            // callee's contract against the receiver's checked struct type
+            // arguments (the loan-oriented record concretizes to the receiver
+            // place, which is the wrong identity for the return contract).
+            ExprKind::MethodCall { object, method, .. } => {
+                let recorded = self
+                    .operation_adjustments
+                    .borrow()
+                    .get(&expr.source_span())
+                    .and_then(|adjustment| match adjustment {
+                        crate::checked::SemanticAdjustment::ReferenceResult { reference } => {
+                            Some(reference.origin.clone())
+                        }
+                        _ => None,
+                    });
+                if let Some(origin) = recorded.filter(is_abstract) {
+                    return Some(origin);
+                }
+                let Ok(Ty::Struct(name, arguments)) = self.infer(object) else {
+                    return None;
+                };
+                let info = self.structs.get(&name)?;
+                let signature = info
+                    .methods
+                    .get(method)?
+                    .iter()
+                    .find(|signature| signature.ref_return.is_some())?;
+                let declared = signature.ref_return.as_ref()?;
+                let mut origin = instantiate_sig_origin(&declared.origin, &arguments);
+                // Origin arguments erase from struct type identity, so the
+                // callee's origin binder usually stays symbolic in its own
+                // namespace; remap it through the same unambiguous
+                // single-binder correspondence the signature resolver uses.
+                let callee_binders = info
+                    .source_params
+                    .iter()
+                    .filter(|param| param.bounds.as_slice() == ["Origin"])
+                    .count();
+                let mut enclosing = self
+                    .enclosing_type_params
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, param)| param.bounds.as_slice() == ["Origin"]);
+                if let (Some((index, _)), None, 1) =
+                    (enclosing.next(), enclosing.next(), callee_binders)
+                {
+                    let binder = Origin::Param(crate::origin::OriginParamId(index as u32));
+                    origin =
+                        super::origins::substitute_origin_params(origin, &|_| Some(binder.clone()));
+                }
+                Some(origin).filter(is_abstract)
+            }
             _ => None,
         }
     }
@@ -248,6 +302,219 @@ impl Checker {
             (!retained.is_empty()).then(|| crate::origin::Origin::union(retained))
         };
         substitute_origin_params(origin, &concrete)
+    }
+
+    /// Lower a reference-signature origin clause, first resolving upstream's
+    /// expression-origin spelling `ref [recv.method().field...]` — a delegated
+    /// ref-returning call projection — into the existing `SigOrigin` forms.
+    /// Non-delegated clauses fall through to the pure `lower_ref_sig`.
+    ///
+    /// Supported delegated subset (each violation is a contextual error): a
+    /// single origin member; a zero-argument callee method; a receiver path
+    /// rooted at `self` or a parameter through struct fields; a callee whose
+    /// explicit (non-`Infer`) ref-return contract is already registered.
+    /// Trailing field projections (`.key`) stay within the delegated call's
+    /// returned region and are dropped from the origin identity, exactly as
+    /// `returned_reference_parameter_origin` documents for projections
+    /// through a reference value.
+    pub(super) fn lower_ref_sig_resolved(
+        &self,
+        spec: &crate::ast::OriginSpec,
+        type_params: &[crate::ast::TypeParam],
+        params: &[&FnParam],
+    ) -> Result<crate::origin::RefSig, TypeError> {
+        if let [member] = spec.as_slice()
+            && let Some(resolved) = self.delegated_call_ref_sig(member, type_params, params)?
+        {
+            return Ok(resolved);
+        }
+        lower_ref_sig(spec, type_params, params)
+    }
+
+    /// See [`Checker::lower_ref_sig_resolved`]. `Ok(None)` when `member` is
+    /// not a delegated-call projection at all.
+    fn delegated_call_ref_sig(
+        &self,
+        member: &Expr,
+        type_params: &[crate::ast::TypeParam],
+        params: &[&FnParam],
+    ) -> Result<Option<crate::origin::RefSig>, TypeError> {
+        use crate::origin::{OriginSeg, RefSig, SigMutability, SigOrigin};
+
+        // Strip trailing field projections down to the delegated call.
+        let mut expr = member;
+        while let ExprKind::Member { object, .. } = &expr.kind {
+            expr = object;
+        }
+        let ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return Ok(None);
+        };
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(TypeError::Unsupported(
+                "a delegated-call origin expression must call a zero-argument method".to_string(),
+            ));
+        }
+        // The receiver path: `self` or a parameter, projected through fields.
+        let mut segs: Vec<OriginSeg> = Vec::new();
+        let mut root = object.as_ref();
+        while let ExprKind::Member { object, field } = &root.kind {
+            segs.push(OriginSeg::Field(field.clone()));
+            root = object;
+        }
+        segs.reverse();
+        let (base, mut receiver_ty) = match &root.kind {
+            ExprKind::Identifier(name) if name == "self" => {
+                let Some(self_ty) = self.self_ty.clone() else {
+                    return Err(TypeError::Unsupported(
+                        "a delegated-call origin expression requires a 'self' receiver in scope"
+                            .to_string(),
+                    ));
+                };
+                (SigOrigin::Self_, self_ty)
+            }
+            ExprKind::Identifier(name) => {
+                let Some(index) = params.iter().position(|param| &param.name == name) else {
+                    return Ok(None);
+                };
+                (
+                    SigOrigin::Param(index),
+                    self.ty_from_anno(&params[index].ty)?,
+                )
+            }
+            _ => {
+                return Err(TypeError::Unsupported(
+                    "a delegated-call origin expression must root at 'self' or a parameter"
+                        .to_string(),
+                ));
+            }
+        };
+        // Walk the receiver's fields to the delegating struct type.
+        for seg in &segs {
+            let OriginSeg::Field(field) = seg else {
+                unreachable!("receiver path collects field segments only");
+            };
+            let Ty::Struct(name, arguments) = &receiver_ty else {
+                return Err(TypeError::Unsupported(format!(
+                    "delegated-call origin receiver field '{field}' projects a non-struct type"
+                )));
+            };
+            let Some(info) = self.structs.get(name) else {
+                return Err(TypeError::UndefinedVariable(name.clone()));
+            };
+            let Some((_, field_ty)) = info.fields.iter().find(|(candidate, _)| candidate == field)
+            else {
+                return Err(TypeError::NoSuchField {
+                    object_type: name.clone(),
+                    field: field.clone(),
+                });
+            };
+            receiver_ty = substitute(field_ty, &struct_subst(&info.decls, arguments));
+        }
+        let Ty::Struct(callee_struct, receiver_args) = &receiver_ty else {
+            return Err(TypeError::Unsupported(
+                "a delegated-call origin expression requires a struct-typed receiver".to_string(),
+            ));
+        };
+        let Some(info) = self.structs.get(callee_struct) else {
+            return Err(TypeError::UndefinedVariable(callee_struct.clone()));
+        };
+        let candidates: Vec<_> = info
+            .methods
+            .get(method)
+            .map(|sigs| {
+                sigs.iter()
+                    .filter(|sig| {
+                        sig.ref_return.is_some() && sig.required.iter().all(|required| !required)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let [callee] = candidates.as_slice() else {
+            return Err(TypeError::Unsupported(format!(
+                "a delegated-call origin expression requires exactly one zero-argument \
+                 ref-returning overload of '{callee_struct}.{method}' (its contract must \
+                 already be declared)"
+            )));
+        };
+        let callee_ref = callee.ref_return.as_ref().expect("filtered above");
+        let receiver = if segs.is_empty() {
+            base
+        } else {
+            SigOrigin::Projected(Box::new(base), segs)
+        };
+        // Origin arguments are validated then erased from struct type
+        // identity, so the receiver's type args usually cannot name the
+        // binding. The adapter pattern's unambiguous case remains resolvable:
+        // when both the callee and the delegating signature declare exactly
+        // one origin binder, the field application can only have bound the
+        // caller's binder to the callee's.
+        let callee_origin_binders = info
+            .source_params
+            .iter()
+            .filter(|param| param.bounds.as_slice() == ["Origin"])
+            .count();
+        let mut caller_binders = type_params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| param.bounds.as_slice() == ["Origin"]);
+        let caller_binder = match (caller_binders.next(), caller_binders.next()) {
+            (Some((index, _)), None) if callee_origin_binders == 1 => Some(
+                crate::origin::Origin::Param(crate::origin::OriginParamId(index as u32)),
+            ),
+            _ => None,
+        };
+        let origin = map_delegated_sig_origin(
+            &callee_ref.origin,
+            receiver_args,
+            &receiver,
+            caller_binder.as_ref(),
+        )?;
+        let mutability = match callee_ref.mutability {
+            SigMutability::Immutable => SigMutability::Immutable,
+            SigMutability::Mutable => SigMutability::Mutable,
+            SigMutability::BoolParam(index) => match receiver_args.get(index) {
+                Some(TyArg::Val(crate::ct::CtValue::Bool(value))) => {
+                    if *value {
+                        SigMutability::Mutable
+                    } else {
+                        SigMutability::Immutable
+                    }
+                }
+                _ => SigMutability::Infer,
+            },
+            SigMutability::Infer => SigMutability::Infer,
+        };
+        Ok(Some(RefSig { origin, mutability }))
+    }
+
+    /// Whether `origin` is rooted only in storage that is writable at this
+    /// site: `Some(true)`/`Some(false)` for a concrete verdict, `None` when
+    /// the origin stays symbolic (a still-unresolved origin parameter).
+    pub(super) fn origin_writably_rooted(&self, origin: &crate::origin::Origin) -> Option<bool> {
+        use crate::origin::Origin;
+        match origin {
+            Origin::Place(place) => Some(self.owner_is_mutable(place.root)),
+            Origin::Union(members) => {
+                let mut verdict = Some(true);
+                for member in members {
+                    match self.origin_writably_rooted(member) {
+                        Some(true) => {}
+                        Some(false) => return Some(false),
+                        None => verdict = None,
+                    }
+                }
+                verdict
+            }
+            Origin::Untracked { mutable } => Some(*mutable),
+            Origin::Static => Some(false),
+            Origin::Param(_) | Origin::SelfParam => None,
+        }
     }
 
     /// Resolve the compile-time value accepted by an `Origin` parameter at a
@@ -1710,6 +1977,36 @@ pub(super) fn lower_ref_sig(
                     members.push(project_sig_origin(base, &path));
                 }
             }
+            // Upstream's qualified struct-binder spelling: `ref [Self.o]` names
+            // the enclosing origin parameter exactly like the bare binder.
+            ExprKind::Member { object, field }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                    && type_params.iter().any(|param| {
+                        param.name == *field && param.bounds.as_slice() == ["Origin"]
+                    }) =>
+            {
+                let (origin_param_index, origin_param) = type_params
+                    .iter()
+                    .enumerate()
+                    .find(|(_, param)| {
+                        param.name == *field && param.bounds.as_slice() == ["Origin"]
+                    })
+                    .expect("guarded above");
+                mutability = origin_param_mutability(origin_param, type_params);
+                let first_member = members.len();
+                for (index, param) in params.iter().enumerate() {
+                    if param.origin.as_ref().is_some_and(|origin| {
+                        matches!(origin.as_slice(), [Expr { kind: ExprKind::Identifier(bound), .. }] if bound == field)
+                    }) {
+                        members.push(SigOrigin::Param(index));
+                    }
+                }
+                if members.len() == first_member {
+                    members.push(SigOrigin::Bound(crate::origin::Origin::Param(
+                        crate::origin::OriginParamId(origin_param_index as u32),
+                    )));
+                }
+            }
             ExprKind::Member { .. } | ExprKind::Index { .. } => {
                 let (root, path) = place_path(expression)
                     .ok_or_else(|| TypeError::Unsupported("invalid origin place".to_string()))?;
@@ -1904,6 +2201,146 @@ pub(super) fn project_origin(
     }
 }
 
+/// Instantiate a callee's declared signature origin against a receiver's
+/// concrete struct type arguments (`TyArg::Origin` entries are retained in
+/// struct args): `Self_` maps to the receiver itself, `Bound(Param(i))` to
+/// the receiver's i-th origin argument (with a single-origin fallback), and
+/// projections/unions recurse. Shared by the iteration protocol and the
+/// delegated-call expression-origin resolution.
+pub(super) fn instantiate_sig_origin(
+    signature: &crate::origin::SigOrigin,
+    arguments: &[TyArg],
+) -> crate::origin::Origin {
+    use crate::origin::{Origin, OriginParamId, SigOrigin};
+
+    match signature {
+        SigOrigin::Self_ | SigOrigin::Infer => Origin::SelfParam,
+        SigOrigin::Param(index) => Origin::Param(OriginParamId(*index as u32)),
+        SigOrigin::Bound(origin) => instantiate_bound_origin(origin, arguments),
+        SigOrigin::Static => Origin::Static,
+        SigOrigin::Untracked { mutable } => Origin::Untracked { mutable: *mutable },
+        SigOrigin::Projected(base, path) => {
+            project_origin(instantiate_sig_origin(base, arguments), path)
+        }
+        SigOrigin::Union(members) => Origin::union(
+            members
+                .iter()
+                .map(|member| instantiate_sig_origin(member, arguments)),
+        ),
+    }
+}
+
+/// See [`instantiate_sig_origin`]: resolve a bound origin's parameters against
+/// the receiver's origin arguments, leaving unresolvable parameters symbolic.
+pub(super) fn instantiate_bound_origin(
+    origin: &crate::origin::Origin,
+    arguments: &[TyArg],
+) -> crate::origin::Origin {
+    use crate::origin::Origin;
+
+    match origin {
+        Origin::Param(parameter) => struct_origin_argument(arguments, parameter.0 as usize)
+            .unwrap_or(Origin::Param(*parameter)),
+        Origin::Union(members) => Origin::union(
+            members
+                .iter()
+                .map(|member| instantiate_bound_origin(member, arguments)),
+        ),
+        _ => origin.clone(),
+    }
+}
+
+/// The origin argument at `index` in a struct's type arguments, falling back
+/// to the unique origin argument when the index does not line up (origin
+/// params are erased from the explicit decl list, so indices can shift).
+pub(super) fn struct_origin_argument(
+    arguments: &[TyArg],
+    index: usize,
+) -> Option<crate::origin::Origin> {
+    if let Some(TyArg::Origin(origin)) = arguments.get(index) {
+        return Some(origin.clone());
+    }
+    let mut origins = arguments.iter().filter_map(|argument| match argument {
+        TyArg::Origin(origin) => Some(origin),
+        TyArg::Ty(_) | TyArg::Val(_) => None,
+    });
+    let only = origins.next()?.clone();
+    origins.next().is_none().then_some(only)
+}
+
+/// Map a delegated callee's declared ref-return origin into the delegating
+/// caller's signature terms: the callee's `Self` becomes the caller's
+/// receiver path, and each callee struct origin parameter must resolve to the
+/// receiver type's corresponding origin argument (already spelled in caller
+/// terms). Unresolvable forms are contextual errors, not silent fallbacks —
+/// a wrong origin identity would let a returned reference escape checking.
+fn map_delegated_sig_origin(
+    callee: &crate::origin::SigOrigin,
+    receiver_args: &[TyArg],
+    receiver: &crate::origin::SigOrigin,
+    caller_binder: Option<&crate::origin::Origin>,
+) -> Result<crate::origin::SigOrigin, TypeError> {
+    use crate::origin::{Origin, SigOrigin};
+
+    fn map_bound(
+        origin: &Origin,
+        receiver_args: &[TyArg],
+        caller_binder: Option<&Origin>,
+    ) -> Result<Origin, TypeError> {
+        match origin {
+            Origin::Param(parameter) => struct_origin_argument(receiver_args, parameter.0 as usize)
+                .or_else(|| caller_binder.cloned())
+                .ok_or_else(|| {
+                    TypeError::Unsupported(
+                        "the delegated callee's origin parameter is not bound by the \
+                             receiver's type arguments"
+                            .to_string(),
+                    )
+                }),
+            Origin::Union(members) => Ok(Origin::union(
+                members
+                    .iter()
+                    .map(|member| map_bound(member, receiver_args, caller_binder))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            other => Ok(other.clone()),
+        }
+    }
+
+    match callee {
+        SigOrigin::Self_ => Ok(receiver.clone()),
+        SigOrigin::Bound(origin) => Ok(SigOrigin::Bound(map_bound(
+            origin,
+            receiver_args,
+            caller_binder,
+        )?)),
+        SigOrigin::Static => Ok(SigOrigin::Static),
+        SigOrigin::Untracked { mutable } => Ok(SigOrigin::Untracked { mutable: *mutable }),
+        SigOrigin::Projected(base, path) => Ok(SigOrigin::Projected(
+            Box::new(map_delegated_sig_origin(
+                base,
+                receiver_args,
+                receiver,
+                caller_binder,
+            )?),
+            path.clone(),
+        )),
+        SigOrigin::Union(members) => Ok(SigOrigin::Union(
+            members
+                .iter()
+                .map(|member| {
+                    map_delegated_sig_origin(member, receiver_args, receiver, caller_binder)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        SigOrigin::Param(_) | SigOrigin::Infer => Err(TypeError::Unsupported(
+            "the delegated callee's ref-return origin must be declared in terms of its \
+             receiver or struct origin parameters"
+                .to_string(),
+        )),
+    }
+}
+
 /// Replace the slot-relative parts belonging to source `Origin` parameters
 /// with the concrete caller origins captured by a specialized function value.
 pub(super) fn bind_sig_origin(
@@ -1941,6 +2378,22 @@ pub(super) fn sig_origin_has_bound(signature: &crate::origin::SigOrigin) -> bool
 
 /// Whether a struct field's declared type borrows origin parameter `id` — a
 /// `ref[o]` field or an origin-bearing `UnsafePointer[..., o]` field.
+/// Whether any place constituent of `origin` roots at `owner`. Used to detect
+/// an origin-parameter resolution that fell back to the receiver's own storage
+/// (no construction-time binding was recorded) rather than naming the borrowed
+/// source — such a resolution is still symbolic for write-legality judgments.
+pub(super) fn origin_rooted_at(
+    origin: &crate::origin::Origin,
+    owner: crate::origin::OwnerId,
+) -> bool {
+    use crate::origin::Origin;
+    match origin {
+        Origin::Place(place) => place.root == owner,
+        Origin::Union(members) => members.iter().any(|member| origin_rooted_at(member, owner)),
+        _ => false,
+    }
+}
+
 fn field_carries_origin_param(ty: &Ty, id: crate::origin::OriginParamId) -> bool {
     use crate::origin::{Origin, PointerOrigin};
     match ty {
@@ -2564,7 +3017,11 @@ impl Checker {
                 if info.fieldwise_init {
                     for ((field_name, field_ty), argument) in fields.into_iter().zip(args) {
                         let origins = if matches!(field_ty, Ty::Ref(_)) {
+                            // An owned place auto-borrows into a ref field;
+                            // synthesize its place origin like the equivalent
+                            // `ref` binding would.
                             self.infer_reference_value(argument)
+                                .or_else(|| self.reference_actual(argument).ok())
                                 .map(|reference| vec![reference.origin])
                                 .unwrap_or_default()
                         } else if self.type_may_carry_loans(&field_ty) {

@@ -4,8 +4,8 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
 @fieldwise_init
-struct Pair:
-    var a: RefBox
+struct Pair[origin: Origin[mut=True]]:
+    var a: RefBox[Self.origin]
     var b: Int
 
     def fill(mut self):

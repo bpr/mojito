@@ -5,7 +5,7 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
 def fill(mut source: List[Int]) -> List[RefBox]:
-    var sink: List[RefBox] = List[RefBox]()
+    var sink = List[RefBox]()
     ref alias = source
     sink.append(RefBox(alias))
     return sink^

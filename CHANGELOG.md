@@ -8,6 +8,38 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Ref-field adapter residues closed (2026-08): four acceptance gaps and two
+  recorded over-acceptances around borrowing iterator adapters. A bare owned
+  place now auto-borrows into a `ref` constructor parameter
+  (`View(source, i)` without a prior `ref` binding), installing the same
+  source loan, escape rejection, and origin-mutability check as the explicit
+  reborrow. A method or subscript chained directly onto a temporary
+  borrowing view (`b.pane().first()`, `b.pane()[i]`, nested chains) retains
+  the view in a hidden slot whose loans keep the source alive and
+  conflict-checked across the chained call; `mut self` methods on
+  temporaries stay rejected (now with a readable diagnostic). Subscript
+  writes through a parametric-mut ref field (`self.src[0] += 1` under
+  `Origin[mut=m]`) are accepted inside the generic body and judged per
+  instantiation at each call site of the writing method — an immutable
+  source rejects, and a receiver that leaves the parameter symbolic rejects
+  (write-requirement propagation through another generic body is a recorded
+  subset limit). Upstream's expression-origin ref return is accepted for
+  delegated call projections (`-> ref [self.iter.__next__().key]` — the
+  origin resolves structurally from the delegated callee's declared
+  contract), the qualified `Self.o` binder spelling is accepted in origin
+  clauses, and the stdlib `Dict` key/value iterators now delegate stepping
+  to the wrapped entry iterator in upstream shape. Two acceptance
+  leniencies are removed: storage annotations (struct fields and local
+  `var` types) must bind explicit origin slots, mirroring the pinned
+  upstream — a partial application that omits an origin slot fails to
+  infer it in every storage position, and a bare origin-slotted generic
+  (`var inner: Holder`) rejects as not concrete on fields and
+  uninitialized locals, while an initialized local may leave the name
+  bare and infer from its initializer (`var v: StringSlice = ...`) —
+  with the stdlib iterator aliases (`IteratorType`/`TakeIterType`
+  bodies, `_GraphemeIter`/`StringSpan` spellings) migrated to
+  fully-bound origins.
+
 - Ref-field struct construction from ref-field places + explicit origin
   arguments (2026-08): a ref-field struct can now be constructed from
   another struct's ref *field* (`View(self.src, i)`; the ctor argument's

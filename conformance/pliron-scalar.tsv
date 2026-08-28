@@ -47,9 +47,11 @@ assets/ok/copyinit_moveinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/defines_main.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_insert_linear_capable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_take_items.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dict_upstream_key_value_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_views_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/docstrings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_default_param.mojo	-	ineligible	no-scalar-entry-shape
@@ -231,8 +233,11 @@ assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_adapter_return_from_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_chained_view_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_ctor_from_ref_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_ctor_owned_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_parametric_mut_subscript_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape

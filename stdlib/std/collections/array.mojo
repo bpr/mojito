@@ -81,7 +81,7 @@ struct Array[T: AnyType, length: Int](
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _ArrayIter[Self.T, length]
+    ] = _ArrayIter[Self.T, length, iterable_origin]
     comptime IteratorOwnedType = _ArrayOwnedIter[Self.T]
 
     var data: UnsafePointer[Self.T]

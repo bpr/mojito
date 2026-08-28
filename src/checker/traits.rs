@@ -218,6 +218,7 @@ impl Checker {
                     ref_params: lower_ref_param_sigs(&m.type_params, &regular_params)?,
                     ref_return,
                     implicit: false,
+                    parametric_origin_writes: Vec::new(),
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
@@ -532,8 +533,17 @@ impl Checker {
             }
             // A field's `Self.name` resolves declared parameters and (now
             // pre-installed) associated members; a residual miss on `Self`
-            // itself still reports an unknown parameter.
-            let ty = self.ty_from_anno(&f.ty).map_err(|error| match error {
+            // itself still reports an unknown parameter. Field annotations are
+            // storage positions: explicit origin slots must be bound — except
+            // in compiler-generated specializations (`$`-mangled names),
+            // whose annotations reconstruct already-checked types with the
+            // origin identity legitimately erased.
+            let ty = if declaration.name.contains('$') {
+                self.ty_from_anno(&f.ty)
+            } else {
+                self.resolve_storage_annotation(&f.ty, super::StorageStrictness::Full)
+            }
+            .map_err(|error| match error {
                 TypeError::NoSuchAssociatedType {
                     object_type,
                     member,
@@ -626,7 +636,11 @@ impl Checker {
             })();
             self.enclosing_type_params = saved_method_type_params;
             self.tparams.pop();
-            let (all_types, sig) = signature?;
+            let (all_types, mut sig) = signature?;
+            if let Some(info) = self.structs.get(name) {
+                sig.parametric_origin_writes =
+                    parametric_origin_writes_in_body(&m.body, &info.fields);
+            }
             for (param, ty) in all_types.iter().enumerate() {
                 self.declaration_types.borrow_mut().insert(
                     crate::checked::AnnotationSite::MethodParam {
@@ -902,6 +916,7 @@ impl Checker {
                         ref_params: req_sig.ref_params.clone(),
                         ref_return: req_sig.ref_return.clone(),
                         implicit: req_sig.implicit,
+                        parametric_origin_writes: req_sig.parametric_origin_writes.clone(),
                     };
                 if !got_sigs.iter().any(|got| {
                     self.method_satisfies_requirement_under(
@@ -2320,6 +2335,87 @@ impl Checker {
                 _ => None,
             })
     }
+}
+
+/// Origin parameters a method body writes through via a parametric-mut ref
+/// field subscript (`self.<field>[...] = v` / `+=`). The scan is syntactic
+/// and complete for the accepted subset: only the direct self-rooted field
+/// subscript form is a legal write target through such a field (alias forms
+/// stay rejected by the reborrow rules), so no checked facts are needed.
+fn parametric_origin_writes_in_body(
+    body: &[crate::ast::Stmt],
+    fields: &[(String, Ty)],
+) -> Vec<crate::origin::OriginParamId> {
+    use crate::ast::{ExprKind, Stmt, StmtKind};
+    use crate::origin::{Mutability, Origin};
+
+    fn written_self_field(place: &crate::ast::Expr) -> Option<&str> {
+        let ExprKind::Index { object, .. } = &place.kind else {
+            return None;
+        };
+        let ExprKind::Member { object, field } = &object.kind else {
+            return None;
+        };
+        matches!(&object.kind, ExprKind::Identifier(name) if name == "self")
+            .then_some(field.as_str())
+    }
+
+    fn walk(stmts: &[Stmt], fields: &[(String, Ty)], out: &mut Vec<crate::origin::OriginParamId>) {
+        for stmt in stmts {
+            match &stmt.kind {
+                StmtKind::AugAssign { place, .. } | StmtKind::SetPlace { place, value: _ } => {
+                    if let Some(field) = written_self_field(place)
+                        && let Some((_, Ty::Ref(reference))) =
+                            fields.iter().find(|(name, _)| name == field)
+                        && matches!(reference.mutability, Mutability::Param(_))
+                        && let Origin::Param(id) = reference.origin
+                        && !out.contains(&id)
+                    {
+                        out.push(id);
+                    }
+                }
+                StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                    for (_, branch) in branches {
+                        walk(branch, fields, out);
+                    }
+                    if let Some(branch) = orelse {
+                        walk(branch, fields, out);
+                    }
+                }
+                StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
+                    walk(body, fields, out);
+                    if let Some(branch) = orelse {
+                        walk(branch, fields, out);
+                    }
+                }
+                StmtKind::ComptimeFor { body, .. } | StmtKind::With { body, .. } => {
+                    walk(body, fields, out);
+                }
+                StmtKind::Try {
+                    body,
+                    except,
+                    orelse,
+                    finalbody,
+                } => {
+                    walk(body, fields, out);
+                    if let Some((_, handler)) = except {
+                        walk(handler, fields, out);
+                    }
+                    if let Some(branch) = orelse {
+                        walk(branch, fields, out);
+                    }
+                    if let Some(branch) = finalbody {
+                        walk(branch, fields, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    walk(body, fields, &mut out);
+    out
 }
 
 /// The outer checker scope saved while a struct's members resolve at the

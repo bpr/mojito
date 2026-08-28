@@ -75,6 +75,15 @@ impl ParseError {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeError {
     UndefinedVariable(String),
+    /// A storage annotation (a struct field or local `var` type) applied a
+    /// generic whose explicit origin parameters were left entirely unbound.
+    NotConcrete(String),
+    /// A storage annotation omitted an explicit parameter the position cannot
+    /// infer (origin slots infer only from constructor value arguments).
+    CannotInferParam {
+        name: String,
+        param: String,
+    },
     /// An executable statement appeared at module scope. Mojo modules contain
     /// declarations and compile-time constants; runtime work belongs in a
     /// function such as `main`.
@@ -398,6 +407,14 @@ impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TypeError::UndefinedVariable(name) => write!(f, "Undefined variable '{}'", name),
+            TypeError::NotConcrete(name) => write!(
+                f,
+                "'{name}[_]' is not concrete; use '[]' to bind missing parameters"
+            ),
+            TypeError::CannotInferParam { name, param } => write!(
+                f,
+                "'{name}' failed to infer parameter '{param}'; specify the parameter explicitly"
+            ),
             TypeError::InvalidModuleScope(statement) => write!(
                 f,
                 "{statement} is not allowed at file scope; move executable code into a function body"

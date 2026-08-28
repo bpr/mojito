@@ -126,6 +126,20 @@ fn ref_field_ctor_argument_from_ref_field_tracks_in_the_receiver_domain() {
 }
 
 #[test]
+fn ref_field_ctor_argument_from_owned_place_loans_the_source() {
+    // A bare owned place auto-borrows into a ref ctor parameter, installing
+    // the same source loan an explicit `ref` binding would.
+    let ok = "@fieldwise_init\nstruct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def first(self) -> Int:\n        return self.src[0]\n\ndef main():\n    var data: List[Int] = [7]\n    var v = View(data, 0)\n    print(v.first())\n";
+    assert!(own(ok).is_ok(), "{:?}", own(ok));
+
+    let conflict = "@fieldwise_init\nstruct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def first(self) -> Int:\n        return self.src[0]\n\ndef main():\n    var data: List[Int] = [7]\n    var v = View(data, 0)\n    data.append(9)\n    print(v.first())\n";
+    assert!(matches!(
+        own(conflict),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
+}
+
+#[test]
 fn variant_payload_reference_is_invalidated_when_the_tag_changes() {
     // The ownership unit runs the unlinked checker, so a local declaration makes
     // the compiler-provided Variant name visible without involving module I/O.
@@ -780,13 +794,13 @@ fn callee_installed_loans_conflict_with_source_mutation() {
     // `self`; the call replays that effect, so mutating the source while the
     // carrier lives conflicts, and the same program with the carrier's last
     // use before the mutation stays accepted.
-    let conflicting = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n    other.append(6)\n    print(holder.slot.value[0])\n";
+    let conflicting = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n    other.append(6)\n    print(holder.slot.value[0])\n";
     assert!(matches!(
         own(conflicting),
         Err(OwnershipError::LoanConflict { .. })
     ));
 
-    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder:\n    var slot: RefBox\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n    print(holder.slot.value[0])\n    other.append(6)\n    print(other[1])\n";
+    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n    print(holder.slot.value[0])\n    other.append(6)\n    print(other[1])\n";
     assert!(own(after_last_use).is_ok());
 }
 
@@ -797,7 +811,7 @@ fn nested_call_transferred_loans_conflict_with_source_mutation() {
     // so mutating the loan source afterward conflicts exactly like the
     // free-call path. (The unlinked seam records through the user-struct
     // store; the seeded `List.append` chain is covered by the linked tests.)
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier:\n    var slot: RefBox\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var carrier = Carrier(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut c: Carrier, box: RefBox):\n        c.slot = box^\n    stash(carrier, RefBox(alias))\n    local.append(1)\n    print(carrier.slot.value[0])\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var carrier = Carrier(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut c: Carrier, box: RefBox):\n        c.slot = box^\n    stash(carrier, RefBox(alias))\n    local.append(1)\n    print(carrier.slot.value[0])\n";
     assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
 }
 
@@ -806,6 +820,6 @@ fn transferred_carrier_loans_keep_the_source_alive() {
     // The appended carrier's loan lands on the collection, so the drops pass
     // keeps the borrowed source alive while the collection lives — the
     // chained read executes without explicit source liveness.
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink: List[RefBox] = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    print(sink[0].value[0])\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    print(sink[0].value[0])\n";
     assert!(own(src).is_ok());
 }

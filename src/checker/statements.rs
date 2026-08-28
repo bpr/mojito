@@ -374,7 +374,8 @@ impl Checker {
                             "an uninitialized variable requires a type annotation".to_string(),
                         ));
                     };
-                    let declared = self.ty_from_anno(annotation)?;
+                    let declared = self
+                        .resolve_storage_annotation(annotation, super::StorageStrictness::Full)?;
                     self.declare(name, declared)?;
                     self.record_statement_binding(stmt, name);
                     if let Some(owner) = self.lookup_owner(name) {
@@ -385,7 +386,12 @@ impl Checker {
                 self.register_named_bindings(value)?;
                 let contextual = ty
                     .as_ref()
-                    .map(|annotation| self.ty_from_anno(annotation))
+                    .map(|annotation| {
+                        self.resolve_storage_annotation(
+                            annotation,
+                            super::StorageStrictness::AllowBare,
+                        )
+                    })
                     .transpose()?;
                 let found = match contextual.as_ref() {
                     Some(expected) => self.infer_with_expected(value, expected, true)?,
@@ -395,7 +401,13 @@ impl Checker {
                 let declared = match ty {
                     // Annotated: the value must coerce to the annotation.
                     Some(anno) => {
-                        let expected = contextual.clone().unwrap_or(self.ty_from_anno(anno)?);
+                        let expected =
+                            contextual
+                                .clone()
+                                .unwrap_or(self.resolve_storage_annotation(
+                                    anno,
+                                    super::StorageStrictness::AllowBare,
+                                )?);
                         // Current Mojo does not infer a generic function's
                         // specialization from local-storage context; only an
                         // explicit specialization (`f[...]`) materializes a
@@ -667,8 +679,10 @@ impl Checker {
                                 "augmented nominal subscript lost its getter contract".to_string(),
                             )
                         })?;
+                    // Provably immutable rejects; parametric-mut is judged per
+                    // instantiation at the enclosing method's call sites.
                     if let Some(reference) = &contract.reference_result
-                        && reference.mutability != crate::origin::Mutability::Mutable
+                        && reference.mutability == crate::origin::Mutability::Immutable
                     {
                         return Err(TypeError::ImmutableBinding(
                             "immutable reference returned by '__getitem__'".to_string(),
@@ -1790,7 +1804,7 @@ impl Checker {
         };
         let ref_params = lower_ref_param_sigs(type_params, &caller_regular)?;
         let ref_return = match ret_anno {
-            Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
+            Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                 origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported("reference return requires an origin".to_string())
                 })?,

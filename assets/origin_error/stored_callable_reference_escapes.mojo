@@ -9,8 +9,8 @@ struct Peek[origin: Origin[mut=True]](def() -> Int):
         return self.target
 
 @fieldwise_init
-struct Holder:
-    var slot: Peek
+struct Holder[origin: Origin[mut=True]]:
+    var slot: Peek[Self.origin]
     def swap(mut self):
         var local = 9
         ref alias = local

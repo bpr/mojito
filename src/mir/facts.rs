@@ -123,15 +123,19 @@ impl Flatten<'_> {
                     })
                     .collect();
             }
-            return self
-                .aliases
-                .get(&var)
-                .cloned()
-                .map(|mut loan| {
-                    loan.mutable = mutable;
-                    vec![loan]
-                })
-                .unwrap_or_default();
+            if let Some(mut loan) = self.aliases.get(&var).cloned() {
+                loan.mutable = mutable;
+                return vec![loan];
+            }
+            // An owned variable auto-borrowed into reference storage loans
+            // its own root place — the same loan an explicit `ref` binding
+            // of the place would install.
+            let ty = self.var_types.get(&var).cloned();
+            return vec![MirLoan {
+                place: MirPlace::root(var, ty),
+                mutable,
+                interior: None,
+            }];
         }
         if let Some(mutable) = borrow
             && matches!(

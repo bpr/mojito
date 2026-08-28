@@ -1,10 +1,9 @@
-# Recorded acceptance divergence (mojito-only, 2026-08-27): a struct FIELD
-# naming a generic struct with all explicit parameters omitted
-# (`var inner: Holder`). Mojito accepts — parameters infer from the
-# fieldwise constructor argument, loan-sound — and prints 7; the
-# a79bdf59f2 pin rejects ("'Holder[_]' is not concrete, use '[]' to bind
-# missing parameters"). Tightening follow-up recorded in docs/roadmap.md;
-# stdlib spellings stay fully applied.
+# Both compilers reject a struct FIELD naming a generic struct with all
+# explicit parameters omitted (`var inner: Holder`): the a79bdf59f2 pin
+# reports "'Holder[_]' is not concrete, use '[]' to bind missing
+# parameters", and Mojito's storage-annotation concreteness rule
+# (tightened 2026-08-28) mirrors it — "'Holder[_]' is not concrete; use
+# '[]' to bind missing parameters".
 @fieldwise_init
 struct Holder[m: Bool, //, o: Origin[mut=m]]:
     var src: Pointer[Int, Self.o]

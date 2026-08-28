@@ -616,6 +616,14 @@ impl Checker {
         let explicit: Vec<&crate::ast::TypeParam> =
             source_params.iter().filter(|p| !p.infer_only).collect();
         let origin_slots = explicit.iter().filter(|p| is_origin(p)).count();
+        let strict = self.strict_storage_annotation.get();
+        // A storage annotation must bind explicit origin slots. A bare name
+        // is not concrete unless an initializer can infer the whole
+        // parameter list (`AllowBare`); a partial application names the
+        // first omitted slot in either strict mode.
+        if strict == super::StorageStrictness::Full && origin_slots > 0 && args.is_empty() {
+            return Err(TypeError::NotConcrete(name.to_string()));
+        }
         // No origin slots — or a variadic explicit list, whose positional
         // alignment the erased-decl binder owns — resolves as before.
         if origin_slots == 0 || args.is_empty() || explicit.iter().any(|p| p.name.starts_with('*'))
@@ -626,6 +634,16 @@ impl Checker {
         if !any_named {
             let non_origin = explicit.len() - origin_slots;
             if args.len() == non_origin {
+                if strict != super::StorageStrictness::Off {
+                    let omitted = explicit
+                        .iter()
+                        .find(|param| is_origin(param))
+                        .expect("origin_slots > 0");
+                    return Err(TypeError::CannotInferParam {
+                        name: name.to_string(),
+                        param: omitted.name.clone(),
+                    });
+                }
                 return self.resolve_use_params(name, decls, args, patterns, actuals);
             }
             if args.len() != explicit.len() {
@@ -666,6 +684,7 @@ impl Checker {
         // Keyword spellings: extract named origin arguments wherever they
         // appear; everything else forwards to the erased-decl binder.
         let mut forwarded = Vec::with_capacity(args.len());
+        let mut supplied_origins: Vec<&str> = Vec::new();
         for argument in args {
             if let ParamArg::Named { name: keyword, .. } = argument
                 && let Some(param) = explicit.iter().find(|p| p.name == *keyword && is_origin(p))
@@ -673,6 +692,7 @@ impl Checker {
                 match self.resolve_origin_param_arg(argument) {
                     Ok((_, mutability)) => {
                         self.accept_origin_argument(name, param, argument, mutability)?;
+                        supplied_origins.push(&param.name);
                         continue;
                     }
                     Err(error) => return Err(error),
@@ -680,7 +700,31 @@ impl Checker {
             }
             forwarded.push(argument.clone());
         }
+        if strict != super::StorageStrictness::Off
+            && let Some(omitted) = explicit
+                .iter()
+                .find(|param| is_origin(param) && !supplied_origins.contains(&param.name.as_str()))
+        {
+            return Err(TypeError::CannotInferParam {
+                name: name.to_string(),
+                param: omitted.name.clone(),
+            });
+        }
         self.resolve_use_params(name, decls, &forwarded, patterns, actuals)
+    }
+
+    /// Resolve a type annotation in a storage position (a struct field or a
+    /// local `var` type): explicit origin slots must be bound there, because
+    /// storage has no constructor value argument to infer them from.
+    pub(super) fn resolve_storage_annotation(
+        &self,
+        annotation: &crate::ast::SourceType,
+        strictness: super::StorageStrictness,
+    ) -> Result<Ty, TypeError> {
+        let saved = self.strict_storage_annotation.replace(strictness);
+        let result = self.ty_from_anno(annotation);
+        self.strict_storage_annotation.set(saved);
+        result
     }
 
     /// Accept one resolved origin argument against its declared slot: a slot
