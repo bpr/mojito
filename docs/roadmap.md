@@ -114,17 +114,16 @@ recreates this section's checkbox with the fresh divergence list.
   These are where "Mojito rejects/diverges from valid Mojo" clusters
   today; every item lists what it unlocks so slices can be chosen by
   leverage.
-  - **Ref-field struct returns from ordinary method calls** (VM + native
-    reference machinery). Today only protocol-selected `__iter__` can
-    hand a `ref`-field struct across a call boundary; a plain method
-    returning one dies at MIR verify/VM re-rooting. Unlocks: borrowing,
-    invalidation-tracked `keys`/`values`/`items` views (replacing the
-    snapshot iterators and their recorded stale-iteration acceptance);
-    upstream-shape lazily-draining `take_items` (retiring the
-    `dict-take-items-eager-drain` output divergence); and, generally,
-    upstream's pervasive pattern of APIs returning borrowing
-    iterators/views — the single biggest structural unlock for stdlib
-    parity.
+  - **Ref-field struct construction from ref-field places** (residue of
+    the landed ref-field-struct-return machinery). Constructing a
+    ref-field struct from an existing ref *field* (`View(self.src, i)`)
+    still dies at MIR verify ("place rooted at slot N lacks complete
+    checked type metadata"), and `ref s = self.src` reborrowing rejects
+    with a MakeRef destination/storage mismatch. Both shapes are
+    avoidable today (construct from a fresh `ref x = <owned place>`
+    binding, or copy the whole struct), but upstream iterator adapters
+    that wrap another borrowing iterator (`_DictKeyIter` holding a
+    `_DictEntryIter`) need them.
   - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
     signature `__hash__(self, mut hasher: Some[Hasher])` with a
     reflection default; AHasher; `std.hashlib` module identity). Mojito's

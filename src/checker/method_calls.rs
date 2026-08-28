@@ -1200,6 +1200,23 @@ impl Checker {
                 );
             }
             let return_type = self.rebase_self_place_pointer(resolved.return_type.clone(), object);
+            // A method whose non-consuming receiver hands back a ref-field
+            // struct (a borrowing view/iterator) lends the receiver to the
+            // result, exactly as a view-typed subscript does: the loan keeps
+            // the source alive while the view does and rejects source
+            // mutation. Capture-carrying calls keep their capture adjustment;
+            // reference results already carry their own loan channel.
+            if reference_result.is_none()
+                && captures.is_empty()
+                && !resolved.consumes_receiver
+                && matches!(return_type, Ty::Struct(..))
+                && self.type_contains_reference(&return_type)
+            {
+                self.operation_adjustments
+                    .borrow_mut()
+                    .entry(span.clone())
+                    .or_insert(crate::checked::SemanticAdjustment::BorrowViewResult);
+            }
             self.selected_calls.borrow_mut().insert(
                 span,
                 crate::checked::CheckedCallContract {

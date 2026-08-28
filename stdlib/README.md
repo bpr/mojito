@@ -90,7 +90,7 @@ only from their authoritative `std` modules.
   preserve order while `List[List[Int]]` buckets index them, doubling when
   the load factor reaches one. It supports subscripts, overloaded `get`,
   membership, key iteration, self-iterable non-indexable `keys`/`values`/`items`
-  snapshot iterators, public
+  borrowing views, lazily draining `take_items`, public
   `DictEntry`, and value-semantic copying. A missing subscript raises
   `Error("missing key")`.
 - `std/collections/string_dict.mojo` — the insertion-ordered owning
@@ -127,8 +127,10 @@ only from their authoritative `std` modules.
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is
 public, matching Mojo's item-view element. Mapping views are self-iterable,
-non-indexable snapshot iterators rather than borrowing views until a
-ref-field struct can cross an ordinary method return on the VM.
+non-indexable borrowing views that hold a loan on their source while they
+live: mutating the mapping while a view is live is rejected, and value/entry
+yields are read-only (a conservative subset of upstream's mut-following
+value references).
 
 The register VM executes the ordinary MIR produced for these declarations;
 `tests/self_host_test.rs` links and runs them. Public List/Tuple runtime variants

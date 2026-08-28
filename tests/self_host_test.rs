@@ -291,17 +291,33 @@ fn self_hosted_set_copy_and_list_shadowing() {
 
 #[test]
 fn self_hosted_dict_views_iterate_and_get() {
-    // `keys`/`values`/`items` return self-iterable snapshot iterators: a
-    // stored view iterates from its captured elements (mutation after the
-    // call is invisible to it), and the views expose no indexing or `len`.
+    // `keys`/`values`/`items` return self-iterable borrowing views: a stored
+    // view iterates the live entries, and the views expose no indexing or
+    // `len`.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 1\n    d[\"b\"] = 2\n    var keys = d.keys()\n    d[\"c\"] = 3\n    for key in keys:\n        print(key)\n    for value in d.values():\n        print(value)\n    for item in d.items():\n        print(item.key, item.value)\n    print(Bool(d.get(\"a\")), Bool(d.get(\"z\")))\n    print(d.get(\"z\", 99))\n    for key in d:\n        print(key, d[key])\n",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[String, Int] = Dict[String, Int]()\n    d[\"a\"] = 1\n    d[\"b\"] = 2\n    d[\"c\"] = 3\n    var keys = d.keys()\n    for key in keys:\n        print(key)\n    for value in d.values():\n        print(value)\n    for item in d.items():\n        print(item.key, item.value)\n    print(Bool(d.get(\"a\")), Bool(d.get(\"z\")))\n    print(d.get(\"z\", 99))\n    for key in d:\n        print(key, d[key])\n",
     );
     assert_eq!(
         run(&main).unwrap(),
-        "a\nb\n1\n2\n3\na 1\nb 2\nc 3\nTrue False\n99\na 1\nb 2\nc 3\n"
+        "a\nb\nc\n1\n2\n3\na 1\nb 2\nc 3\nTrue False\n99\na 1\nb 2\nc 3\n"
+    );
+}
+
+#[test]
+fn self_hosted_dict_view_rejects_source_mutation() {
+    // A view borrows the dict's entries: mutating the dict while a stored
+    // view is still live is rejected, matching upstream's borrowing views.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[Int, Int] = Dict[Int, Int]()\n    d[1] = 10\n    var keys = d.keys()\n    d[2] = 20\n    for key in keys:\n        print(key)\n",
+    );
+    let error = run(&main).expect_err("dict mutation with a live view must be rejected");
+    assert!(
+        error.contains("conflicts with live reference"),
+        "got {error}"
     );
 }
 

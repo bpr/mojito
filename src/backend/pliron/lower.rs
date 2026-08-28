@@ -1926,15 +1926,11 @@ impl<'a> FnLowering<'a> {
             return self.lower_unsafe_alloc(ctx, dest, args, kwargs);
         }
         // Literal→String conversion arrives as the nominal literal/copy
-        // constructor overload symbol (`String.__init__$ov$String` — the
-        // overload key collapses StringLiteral and nominal String). Its
-        // declared body is a never-execute field-contract stub, so route it
-        // to the native constructor bridge exactly like the type-name call
-        // shape, ahead of the compiled-signature dispatch that would run
-        // the stub.
-        if let Some(struct_name) = name.strip_suffix(".__init__$ov$String")
-            && crate::symbol::is_stdlib_string_struct(struct_name)
-        {
+        // constructor overload symbol, whose declared body is a
+        // never-execute field-contract stub: route it to the native
+        // constructor bridge exactly like the type-name call shape, ahead
+        // of the compiled-signature dispatch that would run the stub.
+        if crate::symbol::string_ctor_overload_struct(name).is_some() {
             return self.lower_string_ctor(ctx, dest, args, kwargs);
         }
         if !self.signatures.contains_key(name) {

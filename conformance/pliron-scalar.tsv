@@ -227,6 +227,10 @@ assets/ok/pointer_to_ref_write_through.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape

@@ -6,7 +6,7 @@ The book should explain Mojito as a sequence of representations and invariants, 
 
 The syntax frontend should be intentionally short. Lexing and parsing are necessary context, but most of Mojito's interesting engineering begins after parsing: module linking, compile-time elaboration, the Mojo-shaped type system, traits and overload resolution, control-flow lowering, ownership, destruction, and execution in the register VM. The chapter balance below reflects that emphasis.
 
-The current documentation provides a strong starting point. `docs/frontend.md` and `grammar.md` supply the compact frontend material; `docs/architecture.md` supplies the pipeline spine; `docs/notes/comptime.md` covers compile-time execution; `docs/notes/consolidate_overloading.md` provides a useful case study in cross-stage identity; `roadmap.md` explains why the type and trait system developed in its present order; and `CLAUDE.md` is a dense implementation index that can be mined for details and examples. Planning documents should inform historical or forward-looking sidebars, but the main text must clearly distinguish implemented behavior from proposed work.
+The current documentation provides a strong starting point. `docs/frontend.md` and `grammar.md` supply the compact frontend material; `docs/architecture.md` supplies the pipeline spine; `docs/notes/comptime.md` covers compile-time execution; `docs/notes/consolidate_overloading.md` provides a useful case study in cross-stage identity; `docs/notes/view-loan-divergence.md` provides a worked case study in choosing a subset position (rejecting a program upstream accepts, and why); `roadmap.md` explains why the type and trait system developed in its present order; and `CLAUDE.md` is a dense implementation index that can be mined for details and examples. Planning documents should inform historical or forward-looking sidebars, but the main text must clearly distinguish implemented behavior from proposed work.
 
 ## Part I — Orientation
 
@@ -86,7 +86,7 @@ Explain how repeated declarations form overload sets, how candidates are filtere
 
 ### 18. Places, Mutation, and Borrow Rules
 
-Define a place as a rooted storage location plus field/index projections. Show how the checker validates writes, mutating list operations, `mut self`, and `mut`/`ref` arguments. Explain the call-scoped, place-sensitive aliasing rule: disjoint fields may be borrowed independently, while a whole object overlaps every subplace and dynamic indices are conservatively assumed to alias.
+Define a place as a rooted storage location plus field/index projections. Show how the checker validates writes, mutating list operations, `mut self`, and `mut`/`ref` arguments. Explain the call-scoped, place-sensitive aliasing rule: disjoint fields may be borrowed independently, while a whole object overlaps every subplace and dynamic indices are conservatively assumed to alias. Close with the borrowing-view loan channel — a method returning a ref-field struct lends its receiver to the result — and the deliberate divergence it creates from upstream's unenforced pointer-backed views (`docs/notes/view-loan-divergence.md`).
 
 ### 19. Errors and Unsupported Semantics
 
@@ -164,7 +164,7 @@ Describe the boundary between VM instructions and helpers in `runtime/mod.rs`. C
 
 ### 36. Iteration and Collections at Runtime
 
-Trace built-in and user-defined iteration through `GetIter`, `HasNext`, and `Next`, including the `Iterable`/`Iterator` type contracts. Cover list value semantics, in-place mutation through places, tuples, membership, indexing, and the interaction between runtime collection behavior and self-hosted collection implementations.
+Trace built-in and user-defined iteration through `GetIter`, `HasNext`, and `Next`, including the `Iterable`/`Iterator` type contracts. Cover list value semantics, in-place mutation through places, tuples, membership, indexing, and the interaction between runtime collection behavior and self-hosted collection implementations. Use the mapping views as the running example of a borrowing iterator crossing an ordinary method return, including why mutation during a live view rejects where upstream accepts (`docs/notes/view-loan-divergence.md`).
 
 ### 37. Exceptions, Returns, and Non-Normal Control Flow
 

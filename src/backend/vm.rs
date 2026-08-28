@@ -534,10 +534,13 @@ impl VmBackend {
         }
     }
 
-    /// Store through a caller place that may itself be rooted in a reference
-    /// parameter. Intrinsic mutators receive a materialized receiver value, so
-    /// they update that value and commit it through this handle instead of
-    /// asking ordinary frame-place navigation to interpret `Value::Ref`.
+    /// Store through a caller place that may itself be rooted in — or cross —
+    /// a reference handle. Intrinsic mutators and `mut self` write-backs
+    /// receive a materialized receiver value, so they update that value and
+    /// commit it through the handle instead of asking ordinary frame-place
+    /// navigation to interpret `Value::Ref`: a handle at the root, stored in a
+    /// `ref`-typed field along the place, or filling the final slot all
+    /// re-root the write at the storage the handle designates.
     fn store_at_call_place(
         &mut self,
         prog: &Prog,
@@ -547,10 +550,28 @@ impl VmBackend {
         regs: &[Value],
         vars: &mut [Value],
     ) -> Result<(), RuntimeError> {
-        if !matches!(vars[place.root as usize], Value::Ref { .. }) {
+        let handle = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
+        let Value::Ref { projection, .. } = &handle else {
+            unreachable!("reference_to_place_parts always returns a handle");
+        };
+        let crosses_reference = matches!(vars[place.root as usize], Value::Ref { .. }) || {
+            let mut current = &vars[place.root as usize];
+            let mut found = false;
+            for segment in projection {
+                match references::navigate_reference_step(current, segment) {
+                    Some(Value::Ref { .. }) => {
+                        found = true;
+                        break;
+                    }
+                    Some(next) => current = next,
+                    None => break,
+                }
+            }
+            found
+        };
+        if !crosses_reference {
             return self.store_at_place(prog, place, value, regs, vars);
         }
-        let handle = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
         self.write_reference(&handle, frame_id, vars, value)
     }
 
@@ -1556,6 +1577,15 @@ impl VmBackend {
             registers: regs,
             variables: vars,
         } = frame;
+        // A receiver read out of a `ref`-typed field arrives as a reference
+        // handle: dispatch on its referent. A `mut self` write-back re-enters
+        // the storage through the receiver place, which chases the same
+        // handle.
+        let recv = if matches!(recv, Value::Ref { .. }) {
+            self.read_reference(&recv, frame_id, vars)?
+        } else {
+            recv
+        };
         // Struct-to-literal bridge: the nominal String's `_as_string_literal`
         // reads the byte buffer back into a compile-time string value; the
         // declared body never executes.

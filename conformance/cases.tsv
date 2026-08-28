@@ -210,8 +210,8 @@ dict-view-index-rejected	reject	assets/type_error/dict_view_index_rejected.mojo
 dict-methods-growth	run	assets/ok/dict_methods_growth.mojo
 set-methods-growth	run	assets/ok/set_methods_growth.mojo
 set-ref-write-gap	mojo-only	conformance/fixtures/set_ref_write_gap.mojo
+dict-view-source-mutation-gap	mojo-only	conformance/fixtures/dict_view_source_mutation_gap.mojo
 list-methods-growth	run	assets/ok/list_methods_growth.mojo
 list-extend-consumes	reject	assets/ownership_error/list_extend_consumes.mojo
 dict-take-items	run	assets/ok/dict_take_items.mojo
-dict-take-items-eager-drain	output-diff	conformance/fixtures/dict_take_items_eager_drain.mojo
 comptime-shadowed-locals	run	assets/ok/comptime_shadowed_locals.mojo

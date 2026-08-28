@@ -1080,9 +1080,9 @@ List is not an implicit copy.
 syntax or VM values. Set/dictionary displays and comprehensions infer homogeneous
 types and construct them through ordinary calls. Set provides checked add,
 membership, sizing, value iteration, and writing; Dict provides checked key
-lookup/update, membership, sizing, key iteration, eager key/value/item views,
-and writing. Their current generic bounds and APIs are narrower than Mojo's full
-standard library.
+lookup/update, membership, sizing, key iteration, borrowing key/value/item
+views, and writing. Their current generic bounds and APIs are narrower than
+Mojo's full standard library.
 
 `Tuple[T1, …, Tn]` is a nominal **fixed-size, heterogeneous** value type whose
 protocol conformances are synthesized conditionally from its elements.

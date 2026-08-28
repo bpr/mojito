@@ -377,7 +377,8 @@ borrows its source through a parametric-mut struct origin and yields element
 references — `for ref` write-through runs the ordinary protocol with no
 List-only desugaring. Remaining subset boundaries: a `ref` loop target over an abstract generic
 `Iterable` bound is rejected (the abstract `__next__` contract yields values),
-and `keys`/`values`/`items` remain eager snapshots rather than live views.
+and `keys`/`values`/`items` borrowing views yield read-only references where
+upstream's `values()` follows the mapping's mutability.
 Mapping iterators now borrow their entries and yield key references; mapping
 mutation during iteration is a lazily rejected error, matching Mojo's
 documented programmer-error contract with a static/runtime diagnostic.

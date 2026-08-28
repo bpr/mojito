@@ -251,6 +251,19 @@ pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
     format!("{base}{}", sig.suffix())
 }
 
+/// The struct a literal→String conversion constructor symbol targets:
+/// `<name>.__init__$ov$String` collapses StringLiteral and nominal String
+/// under one overload key, and its declared body is a never-execute
+/// field-contract stub, so native lowering routes the call to the string
+/// constructor bridge instead of the compiled signature. Returns the
+/// receiver struct name when `symbol` has that exact shape.
+#[cfg(feature = "backend-pliron")]
+pub(crate) fn string_ctor_overload_struct(symbol: &str) -> Option<&str> {
+    symbol
+        .strip_suffix(".__init__$ov$String")
+        .filter(|name| is_stdlib_string_struct(name))
+}
+
 /// The lowered symbol of an overloaded struct method (including `__init__` and
 /// the other lifecycle methods): `Box.value$ov$Int`.
 pub fn method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -> String {

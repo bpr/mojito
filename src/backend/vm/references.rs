@@ -267,19 +267,6 @@ impl VmBackend {
         current_variables: &mut [Value],
         value: Value,
     ) -> Result<(), RuntimeError> {
-        if let Value::Ref {
-            frame,
-            slot,
-            projection,
-        } = reference
-            && *frame == current.0
-        {
-            return self.write_reference_projection(
-                &mut current_variables[*slot],
-                projection,
-                value,
-            );
-        }
         let Value::Ref {
             frame,
             slot,
@@ -290,6 +277,24 @@ impl VmBackend {
                 "vm: expected reference handle".to_string(),
             ));
         };
+        // A projection crossing a `ref`-typed field addresses the inner
+        // handle's referent: chase stored handles to the ultimate storage
+        // before navigating, symmetrically with `read_reference_projection`.
+        let (frame, slot, projection) = self.canonical_reference_parts(
+            current,
+            current_variables,
+            *frame,
+            *slot,
+            projection.clone(),
+        );
+        let (frame, slot, projection) = (&frame, &slot, &projection);
+        if *frame == current.0 {
+            return self.write_reference_projection(
+                &mut current_variables[*slot],
+                projection,
+                value,
+            );
+        }
         let owner_index = self
             .frames
             .iter()
@@ -672,7 +677,10 @@ impl VmBackend {
 /// is navigated — struct fields and tuple/variant/closure payloads; crossing into
 /// pointer or list-storage heap, or a SIMD lane, returns `None`, leaving the rest
 /// of the projection to resolve lazily at read time against the surviving root.
-fn navigate_reference_step<'a>(value: &'a Value, segment: &RefProjection) -> Option<&'a Value> {
+pub(super) fn navigate_reference_step<'a>(
+    value: &'a Value,
+    segment: &RefProjection,
+) -> Option<&'a Value> {
     match (segment, value) {
         (RefProjection::Field(name), Value::Struct { fields, .. }) => fields
             .iter()

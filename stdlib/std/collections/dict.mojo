@@ -2,17 +2,16 @@
 #
 # Dense entries preserve insertion order; a nested-list index maps each hash
 # bucket to entry positions, doubling when the load factor reaches one. The
-# key iterator borrows the entries list and yields key references at
-# `element` interior granularity, so mutation during iteration is lazily
-# rejected; `keys`/`values`/`items` return self-iterable snapshot iterators
-# that expose no indexing or `len`, matching upstream's non-indexable view
-# surface (the snapshot itself is a recorded divergence from upstream's
-# borrowing views).
+# iterators borrow the entries list and yield references at `element`
+# interior granularity, so mutation during iteration is rejected;
+# `keys`/`values`/`items` return self-iterable, non-indexable borrowing
+# views without `len`, matching upstream's view surface (value/entry yields
+# are read-only — a conservative subset of upstream's mut-following value
+# references).
 
-from std.collections.list import List, _ListOwnedIter
+from std.collections.list import List
 from std.hashing import bucket_index
 from std.iterable import Iterable, Iterator, StopIteration
-from std.memory import unsafe_alloc
 from std.optional import Optional
 
 struct DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](
@@ -33,15 +32,18 @@ struct _DictKeyIter[
     K: Equatable & Copyable & Movable,
     V: Copyable & Movable,
     iterable_origin: Origin[mut=iterable_mut],
-](Iterator):
+](Copyable, Iterator):
     comptime Element = Self.K
+    comptime IteratorType[
+        view_mut: Bool, //, view_origin: Origin[mut=view_mut]
+    ] = _DictKeyIter[Self.K, Self.V]
 
     var src: ref[iterable_origin] List[DictEntry[Self.K, Self.V]]
     var index: Int
 
-    # Optimization hint / compatibility API; exhaustion is StopIteration.
-    def __len__(self) -> Int:
-        return len(self.src) - self.index
+    # The view iterates itself; a stored view restarts from its own cursor.
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        return self.copy()
 
     # Key yields are read-only regardless of the mapping's mutability:
     # writing through a key reference would corrupt the hash invariant.
@@ -54,47 +56,91 @@ struct _DictKeyIter[
         self.index += 1
         return self.src[r].key
 
-# The `keys`/`values`/`items` view iterator: owns a dense element snapshot
-# taken at call time and yields elements by value. It exposes no indexing
-# and no `len`, matching upstream's non-indexable view surface; unlike
-# upstream's borrowing views, source mutation after the call is not tracked
-# against it (recorded divergence — the snapshot iterates unperturbed).
-struct _DictSnapshotIter[T: Copyable & Movable](
-    Copyable,
-    Deinitable where conforms_to(T, Deinitable),
-    Iterator,
-    Movable,
-):
-    comptime Element = Self.T
+# The `values` borrowing view: yields value references at `element` interior
+# granularity. Yields are read-only (a conservative subset of upstream's
+# mut-following value references).
+@fieldwise_init
+struct _DictValueIter[
+    iterable_mut: Bool, //,
+    K: Equatable & Copyable & Movable,
+    V: Copyable & Movable,
+    iterable_origin: Origin[mut=iterable_mut],
+](Copyable, Iterator):
+    comptime Element = Self.V
+    comptime IteratorType[
+        view_mut: Bool, //, view_origin: Origin[mut=view_mut]
+    ] = _DictValueIter[Self.K, Self.V]
 
-    var items: List[Self.T]
+    var src: ref[iterable_origin] List[DictEntry[Self.K, Self.V]]
     var index: Int
 
-    def __init__(out self, var items: List[Self.T]):
-        self.items = items^
-        self.index = 0
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        return self.copy()
 
-    def __init__(out self, *, copy: Self):
-        self.items = List[Self.T](copy: copy.items)
-        self.index = copy.index
-
-    def copy(self) -> Self:
-        return _DictSnapshotIter[Self.T](copy: self)
-
-    def __init__(out self, *, deinit move: Self):
-        self.items = move.items^
-        self.index = move.index
-
-    # The view iterates itself; a stored view restarts from its own cursor.
-    def __iter__(ref self) -> Self:
-        return _DictSnapshotIter[Self.T](copy: self)
-
-    def __next__(mut self) raises StopIteration -> Self.T:
-        if self.index >= len(self.items):
+    def __next__(mut self) raises StopIteration -> ref[
+        Origin[mut=False].cast_from[iterable_origin._get_owned_interior["element"]]
+    ] Self.V:
+        if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.items._get_copy(r)
+        return self.src[r].value
+
+# The `items` borrowing view: yields whole-entry references at `element`
+# interior granularity, read-only.
+@fieldwise_init
+struct _DictEntryIter[
+    iterable_mut: Bool, //,
+    K: Equatable & Copyable & Movable,
+    V: Copyable & Movable,
+    iterable_origin: Origin[mut=iterable_mut],
+](Copyable, Iterator):
+    comptime Element = DictEntry[Self.K, Self.V]
+    comptime IteratorType[
+        view_mut: Bool, //, view_origin: Origin[mut=view_mut]
+    ] = _DictEntryIter[Self.K, Self.V]
+
+    var src: ref[iterable_origin] List[DictEntry[Self.K, Self.V]]
+    var index: Int
+
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        return self.copy()
+
+    def __next__(mut self) raises StopIteration -> ref[
+        Origin[mut=False].cast_from[iterable_origin._get_owned_interior["element"]]
+    ] DictEntry[Self.K, Self.V]:
+        if self.index >= len(self.src):
+            raise StopIteration()
+        var r = self.index
+        self.index += 1
+        return self.src[r]
+
+# The `take_items` draining iterator: borrows the dictionary mutably and
+# moves entries out one at a time, so `len` observably decreases as the
+# drain progresses and the dictionary is empty and reusable once it is
+# exhausted.
+@fieldwise_init
+struct _TakeDictEntryIter[
+    K: Hashable & Equatable & Copyable & Movable,
+    V: Copyable & Movable,
+    origin: Origin[mut=True],
+](Copyable, Iterator):
+    comptime Element = DictEntry[Self.K, Self.V]
+    comptime IteratorType[
+        view_mut: Bool, //, view_origin: Origin[mut=view_mut]
+    ] = _TakeDictEntryIter[Self.K, Self.V]
+
+    var src: ref[origin] Dict[Self.K, Self.V]
+
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        return self.copy()
+
+    def __next__(mut self) raises StopIteration -> DictEntry[Self.K, Self.V]:
+        if len(self.src.entries) == 0:
+            raise StopIteration()
+        var entry = self.src.entries.pop(0)
+        self.src._reindex()
+        return entry^
 
 struct Dict[
     K: Hashable & Equatable & Copyable & Movable,
@@ -111,6 +157,15 @@ struct Dict[
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = _DictKeyIter[Self.K, Self.V]
+    comptime ValuesIterType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _DictValueIter[Self.K, Self.V]
+    comptime ItemsIterType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _DictEntryIter[Self.K, Self.V]
+    comptime TakeIterType[
+        take_origin: Origin[mut=True]
+    ] = _TakeDictEntryIter[Self.K, Self.V]
     var entries: List[DictEntry[Self.K, Self.V]]
     var index: List[List[Int]]
     var nbuckets: Int
@@ -214,23 +269,14 @@ struct Dict[
         self._append_new(DictEntry[Self.K, Self.V](key^, value^))
         return Optional[DictEntry[Self.K, Self.V]]()
 
-    # Drain every entry into an owned iterator. Upstream returns a lazily
-    # draining borrowed iterator; Mojito moves the entries out eagerly (the
-    # dictionary is observably empty as soon as this returns — recorded
-    # divergence) and the returned iterator owns them.
-    def take_items(mut self) -> _ListOwnedIter[
-        DictEntry[Self.K, Self.V]
-    ] where conforms_to(Self.K, Deinitable) and conforms_to(
-        Self.V, Deinitable
-    ):
-        var result = _ListOwnedIter[DictEntry[Self.K, Self.V]](
-            self.entries.data, self.entries.size
-        )
-        self.entries.data = unsafe_alloc[DictEntry[Self.K, Self.V]](0)
-        self.entries.size = 0
-        self.entries.cap = 0
-        self._reset_index()
-        return result^
+    # Drain every entry through a lazily draining borrowed iterator: each
+    # step moves the next entry out (`len` shrinks as the drain progresses)
+    # and the dictionary is empty and reusable once it is exhausted.
+    def take_items(mut self) -> Self.TakeIterType[origin_of(self)] where conforms_to(
+        Self.K, Deinitable
+    ) and conforms_to(Self.V, Deinitable):
+        ref source = self
+        return _TakeDictEntryIter[Self.K, Self.V](source)
 
     # Remove the entry for `key` and return its value; the discarded key
     # needs `Deinitable`. Missing keys raise (`pop(key, default)` instead
@@ -331,34 +377,20 @@ struct Dict[
     def __len__(self) -> Int:
         return len(self.entries)
 
-    # Snapshot views: each returns a self-iterable, non-indexable iterator
-    # over elements copied at call time (see `_DictSnapshotIter`).
-    def keys(self) -> _DictSnapshotIter[Self.K] where conforms_to(
-        Self.K, Deinitable
-    ) and conforms_to(Self.V, Deinitable):
-        var result = List[Self.K]()
-        var i = 0
-        while i < len(self.entries):
-            result.append(self.entries._get_copy(i).key)
-            i += 1
-        return _DictSnapshotIter[Self.K](result^)
+    # Borrowing views: each returns a self-iterable, non-indexable iterator
+    # that borrows the entries list, so source mutation while a view lives
+    # is rejected and no elements are copied at call time.
+    def keys(ref self) -> Self.IteratorType[origin_of(self)]:
+        ref source = self.entries
+        return _DictKeyIter[Self.K, Self.V](source, 0)
 
-    def values(self) -> _DictSnapshotIter[Self.V] where conforms_to(
-        Self.K, Deinitable
-    ) and conforms_to(Self.V, Deinitable):
-        var result = List[Self.V]()
-        var i = 0
-        while i < len(self.entries):
-            result.append(self.entries._get_copy(i).value)
-            i += 1
-        return _DictSnapshotIter[Self.V](result^)
+    def values(ref self) -> Self.ValuesIterType[origin_of(self)]:
+        ref source = self.entries
+        return _DictValueIter[Self.K, Self.V](source, 0)
 
-    def items(self) -> _DictSnapshotIter[DictEntry[Self.K, Self.V]] where conforms_to(
-        Self.K, Deinitable
-    ) and conforms_to(Self.V, Deinitable):
-        return _DictSnapshotIter[DictEntry[Self.K, Self.V]](
-            List[DictEntry[Self.K, Self.V]](copy: self.entries)
-        )
+    def items(ref self) -> Self.ItemsIterType[origin_of(self)]:
+        ref source = self.entries
+        return _DictEntryIter[Self.K, Self.V](source, 0)
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         ref source = self.entries

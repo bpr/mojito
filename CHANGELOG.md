@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Ref-field struct returns from ordinary method calls (2026-08): a method
+  whose non-consuming receiver returns a struct containing a `ref` field
+  (a borrowing view/iterator) now lends the receiver to the result, so
+  the source outlives the view and mutating it while the view lives is
+  rejected; the VM dispatches methods on receivers read out of `ref`
+  fields and writes mutations back through stored reference handles. On
+  that machinery, `Dict.keys`/`values`/`items` became upstream-shape
+  borrowing views (still self-iterable, non-indexable, and without
+  `len`; value/entry yields are read-only) and `take_items` drains
+  lazily through a mutably borrowing iterator whose mid-drain
+  observations match upstream exactly, retiring the conformance suite's
+  only output-divergence case.
 - Collection API parity growth (2026-08): `Dict` is now hash-bucketed over
   its dense insertion-ordered entries (doubling at load factor one) and
   carries upstream's `Hashable` key bound, adding `pop` (raising and

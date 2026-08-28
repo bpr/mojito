@@ -319,6 +319,33 @@ impl Flatten<'_> {
                 ) {
                     return self.aggregate_borrows(object);
                 }
+                // A method returning a ref-field struct (a borrowing
+                // view/iterator) lends its receiver to the result, exactly as
+                // a view-typed slice result does: recurse for chained
+                // temporaries, else loan the owning receiver place.
+                if let (true, ExprKind::MethodCall { object, .. }) = (
+                    self.checked_adjustments(expression)
+                        .iter()
+                        .any(|adjustment| {
+                            matches!(adjustment, crate::SemanticAdjustment::BorrowViewResult)
+                        }),
+                    &expression.kind,
+                ) {
+                    let loans = self.aggregate_borrows(object);
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                    if matches!(
+                        object.kind,
+                        ExprKind::Identifier(_) | ExprKind::Member { .. }
+                    ) {
+                        return vec![MirLoan {
+                            place: self.place(object),
+                            mutable: false,
+                            interior: None,
+                        }];
+                    }
+                }
                 Vec::new()
             }
             _ => Vec::new(),

@@ -2990,6 +2990,31 @@ impl Checker {
                 ) {
                     return self.aggregate_origins(object);
                 }
+                // A method returning a ref-field struct (a borrowing
+                // view/iterator) carries its receiver's origins, exactly as a
+                // view-typed slice result does.
+                if let (
+                    Some(crate::checked::SemanticAdjustment::BorrowViewResult),
+                    ExprKind::MethodCall { object, .. },
+                ) = (
+                    self.operation_adjustments
+                        .borrow()
+                        .get(&expression.source_span()),
+                    &expression.kind,
+                ) {
+                    let carried = self.aggregate_origins(object);
+                    if !carried.is_empty() {
+                        return carried;
+                    }
+                    if matches!(
+                        object.kind,
+                        ExprKind::Identifier(_) | ExprKind::Member { .. }
+                    ) && let Ok(place) = self.origin_place(object)
+                    {
+                        return vec![Origin::Place(place)];
+                    }
+                    return Vec::new();
+                }
                 let mut result = Vec::new();
                 for argument in args {
                     append_unique(&mut result, self.aggregate_origins(argument));
