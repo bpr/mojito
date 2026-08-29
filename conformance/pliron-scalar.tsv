@@ -145,6 +145,7 @@ assets/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-
 assets/ok/overloading_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_literal_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_struct_params.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overloading_variadic_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/owned_iteration_iterator_owned_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/owned_pointer_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ownership_marker_traits.mojo	-	ineligible	no-scalar-entry-shape
@@ -260,6 +261,7 @@ assets/ok/self_hosted_algorithms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_dict.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_vec.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/set_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/set_variadic_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/shadowing_constants.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_cast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floats.mojo	-	ineligible	no-scalar-entry-shape

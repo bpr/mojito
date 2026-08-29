@@ -145,6 +145,7 @@ assets/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitiz
 assets/ok/overloading_arity.mojo	main	exe-differential	sanitized
 assets/ok/overloading_literal_default.mojo	main	exe-differential	sanitized
 assets/ok/overloading_struct_params.mojo	main	exe-differential	sanitized
+assets/ok/overloading_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/owned_iteration_iterator_owned_type.mojo	main	exe-differential	sanitized
 assets/ok/owned_pointer_api.mojo	main	exe-differential	sanitized
 assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
@@ -260,6 +261,7 @@ assets/ok/self_hosted_algorithms.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_dict.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_vec.mojo	main	exe-differential	sanitized
 assets/ok/set_methods_growth.mojo	main	exe-differential	sanitized
+assets/ok/set_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/shadowing_constants.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast.mojo	main	exe-differential	sanitized
 assets/ok/simd_floats.mojo	main	exe-differential	sanitized

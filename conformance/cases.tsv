@@ -86,6 +86,8 @@ reserved-method-name	run	conformance/fixtures/reserved_method_name.mojo
 reserved-word-function-name	reject	assets/type_error/reserved_word_function_name.mojo
 overload-by-type	run	conformance/fixtures/overload_by_type.mojo
 overload-ordering	run	conformance/fixtures/overload_ordering.mojo
+variadic-constructor-dispatch	run	assets/ok/overloading_variadic_constructor.mojo
+set-variadic-constructor	run	assets/ok/set_variadic_constructor.mojo
 compile-time-if	run	conformance/fixtures/comptime_if.mojo
 compile-time-parameters	run	conformance/fixtures/comptime_parameters.mojo
 owned-return-and-bindings	run	conformance/fixtures/owned_return_and_bindings.mojo

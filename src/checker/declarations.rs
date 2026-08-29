@@ -1296,8 +1296,14 @@ impl Checker {
                             error: sig.error.clone(),
                             mutates_receiver: false,
                             consumes_receiver: false,
-                            lowered_name: (sigs.len() > 1)
-                                .then(|| method_lowered_name(name, "__init__", sig)),
+                            lowered_name: (sigs.len() > 1).then(|| {
+                                method_lowered_name(
+                                    name,
+                                    "__init__",
+                                    sig,
+                                    self.self_instance_ty(name).as_ref(),
+                                )
+                            }),
                             ref_params: sig.ref_params.clone(),
                             ref_return: None,
                             param_types: sig.params.clone(),
@@ -1371,7 +1377,7 @@ impl Checker {
                 }
                 return Ok(self.struct_instance_type(name, Vec::new()));
             }
-            if sigs.len() == 1 && kwargs.is_empty() {
+            if sigs.len() == 1 && kwargs.is_empty() && sigs[0].variadic.is_none() {
                 let sig = &sigs[0];
                 let params = sig.params.clone();
                 let decls = info.decls.clone();
@@ -1442,9 +1448,11 @@ impl Checker {
                 ) else {
                     continue;
                 };
-                // Variadic constructors (the compiler-driven display literal
-                // path) and keyword collectors are not explicit-call surface.
-                if !matched.positional_overflow.is_empty() || !matched.keyword_overflow.is_empty() {
+                // Keyword collectors (`**kwargs`) are not an explicit-call
+                // surface yet. A positional `*values` collector IS: overflow
+                // arguments bind to the variadic element so they type-check and
+                // feed generic inference (a bare `Bag(1, 2)` solves `T`).
+                if !matched.keyword_overflow.is_empty() {
                     continue;
                 }
                 let mut bound: Vec<(&Expr, Ty, Option<ArgConvention>)> = Vec::new();
@@ -1459,6 +1467,14 @@ impl Checker {
                         sig.params[index].clone(),
                         sig.conventions.get(index).cloned().flatten(),
                     ));
+                }
+                if let Some(element) = sig.variadic.as_deref() {
+                    // Each overflow argument scores against the variadic element
+                    // (its convention is applied at the `^` transfer site, not
+                    // here — mirroring the `decls.is_empty()` variadic path).
+                    for position in &matched.positional_overflow {
+                        bound.push((&args[*position], element.clone(), None));
+                    }
                 }
                 let arg_tys = bound
                     .iter()
@@ -1496,15 +1512,26 @@ impl Checker {
                         }
                     }
                     if ok {
-                        matches.push((score, sig.clone(), tyargs, conversions, matched.slots));
+                        // Rank matches the non-generic path: a variadic candidate
+                        // loses to a fixed-arity one at equal conversion cost, so a
+                        // zero-argument call prefers the empty ctor over `*values`.
+                        let rank = overload_rank(score, sig.variadic.is_some(), 0, false);
+                        matches.push((
+                            rank,
+                            sig.clone(),
+                            tyargs,
+                            conversions,
+                            matched.slots,
+                            matched.positional_overflow,
+                        ));
                     }
                 }
             }
-            let best = matches.iter().map(|(score, ..)| *score).min();
+            let best = matches.iter().map(|(rank, ..)| *rank).min();
             if let Some(best) = best {
                 let mut best_matches = matches
                     .into_iter()
-                    .filter(|(score, ..)| *score == best)
+                    .filter(|(rank, ..)| *rank == best)
                     .collect::<Vec<_>>();
                 if best_matches.len() != 1 {
                     return Err(TypeError::BadCall {
@@ -1512,8 +1539,12 @@ impl Checker {
                         reason: "ambiguous overloaded constructor call".to_string(),
                     });
                 }
-                let (_, sig, tyargs, conversions, slots) = best_matches.remove(0);
-                let bound: Vec<(&Expr, Option<ArgConvention>)> = slots
+                let (_, sig, tyargs, conversions, slots, overflow) = best_matches.remove(0);
+                // Rebuild the packed bound used during scoring: regular slots in
+                // slot order (skipping defaults), then variadic overflow. The
+                // `conversions` indices address into this same layout. Overflow
+                // carries no consuming convention here (see the scoring note).
+                let mut bound: Vec<(&Expr, Option<ArgConvention>)> = slots
                     .iter()
                     .enumerate()
                     .filter_map(|(index, slot)| {
@@ -1525,6 +1556,9 @@ impl Checker {
                         Some((expression, sig.conventions.get(index).cloned().flatten()))
                     })
                     .collect();
+                for position in &overflow {
+                    bound.push((&args[*position], None));
+                }
                 for (index, expected) in &conversions {
                     let (expression, _) = bound[*index];
                     let actual = self.infer(expression)?;
@@ -1549,9 +1583,15 @@ impl Checker {
                     }
                 }
                 if overloaded {
+                    let target = method_lowered_name(
+                        name,
+                        "__init__",
+                        &sig,
+                        self.self_instance_ty(name).as_ref(),
+                    );
                     self.overload_targets
                         .borrow_mut()
-                        .insert(span.clone(), method_lowered_name(name, "__init__", &sig));
+                        .insert(span.clone(), target);
                 }
                 self.solve_call_origins(
                     &slots,

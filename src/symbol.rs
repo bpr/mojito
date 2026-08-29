@@ -114,7 +114,7 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
             // String, but generic instances cannot: their native layouts are
             // a 16-byte borrowed descriptor versus a 24-byte owning value.
             InstanceArg::Ty(Ty::StringLiteral) => "TStringLiteral".to_string(),
-            InstanceArg::Ty(ty) => format!("T{}", ty_raw(ty)),
+            InstanceArg::Ty(ty) => format!("T{}", ty_raw(ty, None)),
             InstanceArg::Value(value) => format!("V{value}"),
         };
         result.push_str(&sanitize(&raw));
@@ -130,14 +130,27 @@ pub struct TypeKey(String);
 impl TypeKey {
     /// Mangle a declared parameter annotation (the MIR/VM definition side).
     pub fn from_ast(ty: &Type) -> TypeKey {
-        TypeKey(sanitize(&ast_raw(ty, &HashMap::new(), &HashMap::new())))
+        TypeKey(sanitize(&ast_raw(
+            ty,
+            &HashMap::new(),
+            &HashMap::new(),
+            None,
+        )))
     }
 
     /// Mangle a checker-resolved type (the call-resolution side). Aligned with
     /// [`TypeKey::from_ast`]: a struct/parameter/`Self.T` type spells exactly as
     /// its annotation does, so checker-recorded callees name real MIR functions.
     pub fn from_ty(ty: &Ty) -> TypeKey {
-        TypeKey(sanitize(&ty_raw(ty)))
+        TypeKey(sanitize(&ty_raw(ty, None)))
+    }
+
+    /// Like [`TypeKey::from_ty`], but canonicalizes the enclosing struct type
+    /// (however spelled) to `Self`. Use this for a method's own parameter types
+    /// so a same-arity `self`-typed overload keys as `$ov$Self` — matching the
+    /// declaration side, which mangles the bare `Self` annotation identically.
+    pub fn from_ty_with_self(ty: &Ty, self_ty: &Ty) -> TypeKey {
+        TypeKey(sanitize(&ty_raw(ty, Some(self_ty))))
     }
 }
 
@@ -180,6 +193,28 @@ impl SignatureKey {
     pub fn from_tys<'a>(tys: impl IntoIterator<Item = &'a Ty>) -> SignatureKey {
         SignatureKey {
             types: tys.into_iter().map(TypeKey::from_ty).collect(),
+            kw_variadic: None,
+            keywords: Vec::new(),
+        }
+    }
+
+    /// Like [`SignatureKey::from_tys`], but canonicalizes the enclosing struct
+    /// type to `Self` in every parameter (see [`TypeKey::from_ty_with_self`]).
+    /// `self_ty` is `None` for callables without an enclosing struct (free
+    /// functions and abstract trait dispatch, whose parameters already carry
+    /// `Ty::SelfType` and so spell `Self` regardless).
+    pub fn from_tys_with_self<'a>(
+        tys: impl IntoIterator<Item = &'a Ty>,
+        self_ty: Option<&Ty>,
+    ) -> SignatureKey {
+        SignatureKey {
+            types: tys
+                .into_iter()
+                .map(|ty| match self_ty {
+                    Some(self_ty) => TypeKey::from_ty_with_self(ty, self_ty),
+                    None => TypeKey::from_ty(ty),
+                })
+                .collect(),
             kw_variadic: None,
             keywords: Vec::new(),
         }
@@ -440,7 +475,8 @@ pub fn lowered_def_name(
     if sets.function_is_overloaded(name, params.len()) {
         function_symbol(
             name,
-            &signature_from_ast(params, type_params, &sets.comptimes),
+            // A free function has no enclosing struct, so no `Self` to canonicalize.
+            &signature_from_ast(params, type_params, &sets.comptimes, None),
         )
     } else {
         name.to_string()
@@ -458,8 +494,19 @@ pub fn lowered_method_name(
     sets: &OverloadSets,
 ) -> String {
     if sets.method_is_overloaded(source_name, params.len()) {
-        let signature = signature_from_ast(params, type_params, &sets.comptimes)
-            .with_keyword_names(keyword_only_names(params, keyword_only));
+        // The enclosing struct's own instance type canonicalizes to `Self` in
+        // the parameter keys, so a same-arity `self`-typed overload keys as
+        // `$ov$Self` and matches the call side's canonicalized key.
+        let self_spelling = source_name
+            .rsplit_once('.')
+            .and_then(|(type_name, _)| self_struct_spelling(type_name, type_params));
+        let signature = signature_from_ast(
+            params,
+            type_params,
+            &sets.comptimes,
+            self_spelling.as_deref(),
+        )
+        .with_keyword_names(keyword_only_names(params, keyword_only));
         match source_name
             .rsplit_once('.')
             .filter(|(_, method)| receiver_overloaded_method(method))
@@ -525,7 +572,15 @@ pub fn init_overload_struct(symbol: &str) -> Option<&str> {
     rest.starts_with(OV_SEP).then_some(struct_name)
 }
 
-fn ty_raw(ty: &Ty) -> String {
+fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
+    // Canonicalize the enclosing struct type to `Self` however it is spelled
+    // (`Self`, `Pair`, or `List[Self.T]` inside `List`). The declaration side
+    // does the same (see `ast_raw`), so both agree on one key for a same-arity
+    // overload's self-typed parameter and the checker-recorded callee names the
+    // real MIR function.
+    if self_ty == Some(ty) {
+        return "Self".to_string();
+    }
     match ty {
         Ty::Int | Ty::IntLiteral => "Int".to_string(),
         Ty::UInt => "UInt".to_string(),
@@ -533,21 +588,29 @@ fn ty_raw(ty: &Ty) -> String {
         Ty::Bool => "Bool".to_string(),
         Ty::StringLiteral => "String".to_string(),
         Ty::None => "None".to_string(),
-        Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw(elem)),
+        Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw(elem, self_ty)),
         Ty::Tuple(elems) => format!(
             "Tuple${}",
-            elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
+            elems
+                .iter()
+                .map(|elem| ty_raw(elem, self_ty))
+                .collect::<Vec<_>>()
+                .join("$")
         ),
         Ty::RuntimePack(elems) => format!(
             "$pack${}",
-            elems.iter().map(ty_raw).collect::<Vec<_>>().join("$")
+            elems
+                .iter()
+                .map(|elem| ty_raw(elem, self_ty))
+                .collect::<Vec<_>>()
+                .join("$")
         ),
-        Ty::VariadicPack(element) => format!("$variadic${}", ty_raw(element)),
+        Ty::VariadicPack(element) => format!("$variadic${}", ty_raw(element, self_ty)),
         Ty::Variant(alternatives) => format!(
             "Variant${}",
             alternatives
                 .iter()
-                .map(ty_raw)
+                .map(|alt| ty_raw(alt, self_ty))
                 .collect::<Vec<_>>()
                 .join("$")
         ),
@@ -565,7 +628,7 @@ fn ty_raw(ty: &Ty) -> String {
             for arg in args {
                 s.push('$');
                 match arg {
-                    TyArg::Ty(t) => s.push_str(&ty_raw(t)),
+                    TyArg::Ty(t) => s.push_str(&ty_raw(t, self_ty)),
                     TyArg::Val(v) => s.push_str(&format!("V{v}")),
                     // Origins erase from the runtime ABI: every origin argument
                     // mangles to one marker so origin-differing types share a
@@ -588,7 +651,7 @@ fn ty_raw(ty: &Ty) -> String {
             }
             if let Some(callable) = callable_bound {
                 result.push_str("$Callable$");
-                result.push_str(&ty_raw(callable));
+                result.push_str(&ty_raw(callable, self_ty));
             }
             result
         }
@@ -598,16 +661,20 @@ fn ty_raw(ty: &Ty) -> String {
         // user-facing name is `Pointer`: this string is internal callable
         // identity, and renaming it would churn every symbol golden for no
         // user-visible gain.
-        Ty::Pointer { element, .. } => format!("UnsafePointer${}", ty_raw(element)),
+        Ty::Pointer { element, .. } => format!("UnsafePointer${}", ty_raw(element, self_ty)),
         // Application arguments participate in the mangled identity (so
         // `IteratorType[a]` and `IteratorType[b]` are distinct), except origins,
         // which erase from the runtime ABI like `Ty::Pointer` origins above.
         Ty::Assoc { base, name, args } => {
-            let mut s = format!("Assoc${}${}", ty_raw(base), encode_identifier(name));
+            let mut s = format!(
+                "Assoc${}${}",
+                ty_raw(base, self_ty),
+                encode_identifier(name)
+            );
             for arg in args {
                 s.push('$');
                 match arg {
-                    TyArg::Ty(t) => s.push_str(&ty_raw(t)),
+                    TyArg::Ty(t) => s.push_str(&ty_raw(t, self_ty)),
                     TyArg::Val(v) => s.push_str(&format!("V{v}")),
                     // Origins erase from the runtime ABI: every origin argument
                     // mangles to one marker so origin-differing types share a
@@ -641,8 +708,9 @@ fn ast_raw(
     ty: &Type,
     comptimes: &HashMap<String, i64>,
     type_bounds: &HashMap<String, Vec<String>>,
+    self_spelling: Option<&str>,
 ) -> String {
-    match ty {
+    let raw = match ty {
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
@@ -681,7 +749,9 @@ fn ast_raw(
             for arg in args {
                 s.push('$');
                 match arg {
-                    ParamArg::Type(t) => s.push_str(&ast_raw(t, comptimes, type_bounds)),
+                    ParamArg::Type(t) => {
+                        s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling))
+                    }
                     ParamArg::Value(v) => {
                         s.push('V');
                         s.push_str(&value_expr_raw(v, comptimes));
@@ -690,7 +760,9 @@ fn ast_raw(
                         s.push_str(name);
                         s.push('=');
                         match &**value {
-                            ParamArg::Type(t) => s.push_str(&ast_raw(t, comptimes, type_bounds)),
+                            ParamArg::Type(t) => {
+                                s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling))
+                            }
                             ParamArg::Value(v) => s.push_str(&value_expr_raw(v, comptimes)),
                             ParamArg::Named { .. } => unreachable!(),
                         }
@@ -705,13 +777,23 @@ fn ast_raw(
         Type::SelfParam(name) => parameter_raw(name, type_bounds),
         Type::Assoc { base, name, .. } => format!(
             "Assoc${}${}",
-            ast_raw(base, comptimes, type_bounds),
+            ast_raw(base, comptimes, type_bounds, self_spelling),
             encode_identifier(name)
         ),
         Type::SelfType => "Self".to_string(),
         Type::MaterializedCallable(key) => key.clone(),
         Type::Func { .. } => func_annotation_raw(ty),
         other => format!("{other:?}"),
+    };
+    // Canonicalize the enclosing struct type to `Self`, however it is spelled.
+    // `self_spelling` is that struct's `ty_raw` mangling (e.g. `Pair`,
+    // `List$T$AnyType`); a parameter that mangles the same denotes `Self`, and
+    // the call side (`ty_raw` with `self_ty`) canonicalizes the equal resolved
+    // type identically. A bare `Self` already produced `"Self"` above and never
+    // equals a concrete `self_spelling`, so it passes through unchanged.
+    match self_spelling {
+        Some(spelling) if raw == spelling => "Self".to_string(),
+        _ => raw,
     }
 }
 
@@ -933,6 +1015,7 @@ fn signature_from_ast(
     params: &[FnParam],
     type_params: &[TypeParam],
     comptimes: &HashMap<String, i64>,
+    self_spelling: Option<&str>,
 ) -> SignatureKey {
     let type_bounds = type_params
         .iter()
@@ -942,14 +1025,64 @@ fn signature_from_ast(
         types: params
             .iter()
             .filter(|param| param.kind != crate::ast::ParamKind::KwVariadic)
-            .map(|param| TypeKey(sanitize(&ast_raw(&param.ty, comptimes, &type_bounds))))
+            .map(|param| {
+                TypeKey(sanitize(&ast_raw(
+                    &param.ty,
+                    comptimes,
+                    &type_bounds,
+                    self_spelling,
+                )))
+            })
             .collect(),
         kw_variadic: params
             .iter()
             .find(|param| param.kind == crate::ast::ParamKind::KwVariadic)
-            .map(|param| TypeKey(sanitize(&ast_raw(&param.ty, comptimes, &type_bounds)))),
+            .map(|param| {
+                TypeKey(sanitize(&ast_raw(
+                    &param.ty,
+                    comptimes,
+                    &type_bounds,
+                    self_spelling,
+                )))
+            }),
         keywords: Vec::new(),
     }
+}
+
+/// The `ty_raw` mangling of a struct's own instance type, reconstructed from its
+/// name and type parameters — the declaration-side spelling of `Self`. Mirrors
+/// `ty_raw(Ty::Struct(name, decls.map(param_as_arg)))`: the struct name followed
+/// by each type parameter (`Pair`, `List$T$AnyType`). Returns `None` when the
+/// struct carries value or origin parameters (whose argument mangling this cheap
+/// reconstruction does not reproduce), leaving those rare `Self`-typed overloads
+/// at their prior behavior rather than risking a mismatched key.
+fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<String> {
+    // The nominal String struct already mangles its own type as the stable
+    // `String` spelling on both sides (see `ty_raw`/`ast_raw`), so its overload
+    // keys are not asymmetric and must not be rewritten to `Self` — the
+    // literal→String constructor bridge keys on `.__init__$ov$String`.
+    if is_stdlib_string_struct(type_name) {
+        return None;
+    }
+    let all_type_params = type_params.iter().all(|param| {
+        param.value_type.is_none()
+            && param.callable_bound.is_none()
+            && param.origin_mutability.is_none()
+            && !param.name.starts_with('*')
+    });
+    if !all_type_params {
+        return None;
+    }
+    let type_bounds: HashMap<String, Vec<String>> = type_params
+        .iter()
+        .map(|param| (param.name.clone(), param.bounds.clone()))
+        .collect();
+    let mut spelling = encode_identifier(type_name);
+    for param in type_params {
+        spelling.push('$');
+        spelling.push_str(&parameter_raw(&param.name, &type_bounds));
+    }
+    Some(spelling)
 }
 
 /// The names of the keyword-only parameters, part of overload identity.

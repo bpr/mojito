@@ -761,7 +761,12 @@ impl Checker {
             let target = if call_methods.len() == 1 {
                 format!("{name}.__call__")
             } else {
-                method_lowered_name(name, "__call__", selected)
+                method_lowered_name(
+                    name,
+                    "__call__",
+                    selected,
+                    self.self_instance_ty(name).as_ref(),
+                )
             };
             self.structs
                 .get_mut(name)

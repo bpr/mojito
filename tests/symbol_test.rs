@@ -218,6 +218,49 @@ fn checker_recorded_callees_name_real_mir_functions() {
     }
 }
 
+#[test]
+fn self_typed_overload_keys_agree_between_declaration_and_call() {
+    // A same-arity overload whose parameter is the enclosing struct type keys as
+    // `$ov$Self` on both sides, not `$ov$Pair`: the declaration mangles the bare
+    // `Self` annotation, and the call side canonicalizes the resolved receiver
+    // type back to `Self`. Before the fix these diverged (`$ov$Self` defined,
+    // `$ov$Pair` recorded) and the VM raised "unknown method". (The generic
+    // spelling — `List[Self.T]` respelled to `Self` — is covered end-to-end by
+    // the standard library's consuming `List.extend` in the evaluator suite; a
+    // `T`-typed user struct cannot be checked in this raw parse+check seam.)
+    let src = "struct Pair:\n    var a: Int\n\
+         \n    def __init__(out self, a: Int):\n        self.a = a\n\
+         \n    def merge(self, other: Self) -> Int:\n        return self.a + other.a\n\
+         \n    def merge(self, n: Int) -> Int:\n        return self.a + n\n\
+         def main():\n\
+         \x20   var p: Pair = Pair(1)\n\
+         \x20   var q: Pair = Pair(2)\n\
+         \x20   print(p.merge(q), p.merge(5))\n";
+    let program = parse(src).expect("parse error");
+    let targets = resolve_overload_targets(&program).expect("check error");
+    let names: HashSet<String> = lower_program(&program)
+        .expect("type error")
+        .functions
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    // Declaration side names the self-typed overload `$ov$Self`.
+    assert!(names.contains("Pair.merge$ov$Self"), "{names:?}");
+    assert!(names.contains("Pair.merge$ov$Int"), "{names:?}");
+    // Call side records the same `$ov$Self` callee, and every recorded callee
+    // names a real MIR function (no declaration/call-site drift).
+    assert!(
+        targets.values().any(|t| t == "Pair.merge$ov$Self"),
+        "expected a recorded `$ov$Self` call target; got: {targets:?}"
+    );
+    for target in targets.values() {
+        assert!(
+            names.contains(target),
+            "checker target '{target}' names no MIR function; emitted: {names:?}"
+        );
+    }
+}
+
 /// Repository hygiene: the `$ov$` spelling may exist only in the canonical
 /// symbol module. A new hand-built overload symbol anywhere else in `src/`
 /// reintroduces the checker/MIR/VM drift this module exists to prevent.

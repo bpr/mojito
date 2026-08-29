@@ -1487,7 +1487,7 @@ impl Checker {
                 let target = if constructors.len() == 1 {
                     name.clone()
                 } else {
-                    method_lowered_name(name, "__init__", sig)
+                    method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
                 };
                 let source_borrow = sig
                     .ref_params
@@ -2612,9 +2612,18 @@ fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
 }
 
 /// The lowered symbol of an overloaded method/constructor resolution, likewise
-/// canonical (`sig.params` are the declared parameter types, unsubstituted —
-/// matching the MIR definition side, which mangles the declared annotations).
-fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String {
+/// canonical. `sig.params` are the declared parameter types with `Self`
+/// substituted to the enclosing struct at declaration time; `self_ty` (the
+/// receiver struct's instance type) canonicalizes those occurrences back to
+/// `Self`, so the key matches the MIR definition side, which mangles the bare
+/// `Self` annotation. Pass `None` for abstract trait dispatch, whose `sig`
+/// parameters retain `Ty::SelfType` and already spell `Self`.
+fn method_lowered_name(
+    type_name: &str,
+    method: &str,
+    sig: &MethodSig,
+    self_ty: Option<&Ty>,
+) -> String {
     // The variadic element participates in overload identity at its declared
     // position (the MIR symbol walks parameters in source order).
     let mut signature_types: Vec<&Ty> = sig.params.iter().collect();
@@ -2630,7 +2639,7 @@ fn method_lowered_name(type_name: &str, method: &str, sig: &MethodSig) -> String
         Some(index) => sig.names[index..].to_vec(),
         None => Vec::new(),
     };
-    let signature = crate::symbol::SignatureKey::from_tys(signature_types)
+    let signature = crate::symbol::SignatureKey::from_tys_with_self(signature_types, self_ty)
         .with_kw_variadic(sig.kw_variadic.as_deref())
         .with_keyword_names(keyword_names);
     if crate::symbol::receiver_overloaded_method(method) {

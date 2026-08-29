@@ -2116,7 +2116,9 @@ impl Checker {
                         && sig.names.iter().any(|name| name == "__list_literal__")
                 })
             })
-            .map(|sig| method_lowered_name(name, "__init__", sig))
+            .map(|sig| {
+                method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
+            })
             // An unlinked seam (no bundled stdlib) has no registered `Array`;
             // its checked programs are never executed, so the plain constructor
             // spelling suffices as the recorded symbol.

@@ -439,7 +439,12 @@ impl Checker {
             )?;
         }
         let prepare_symbol = if candidates.len() > 1 {
-            method_lowered_name(cname, "__iter__", iter_sig)
+            method_lowered_name(
+                cname,
+                "__iter__",
+                iter_sig,
+                self.self_instance_ty(cname).as_ref(),
+            )
         } else {
             format!("{cname}.__iter__")
         };
@@ -491,7 +496,12 @@ impl Checker {
             .get("__next__")
             .is_some_and(|methods| methods.len() > 1)
         {
-            method_lowered_name(iname, "__next__", next_sig)
+            method_lowered_name(
+                iname,
+                "__next__",
+                next_sig,
+                self.self_instance_ty(iname).as_ref(),
+            )
         } else {
             format!("{iname}.__next__")
         };
@@ -590,7 +600,12 @@ impl Checker {
                         .get("__len__")
                         .is_some_and(|methods| methods.len() > 1)
                     {
-                        method_lowered_name(iname, "__len__", len_sig)
+                        method_lowered_name(
+                            iname,
+                            "__len__",
+                            len_sig,
+                            self.self_instance_ty(iname).as_ref(),
+                        )
                     } else {
                         format!("{iname}.__len__")
                     },

@@ -118,32 +118,36 @@ recreates this section's checkbox with the fresh divergence list.
   - **Ref-field adapter follow-ups** (what remains after the landed
     delegated expression-origin returns, temp-view chaining, ctor
     auto-borrow, parametric-mut writes, and storage-annotation
-    concreteness tightenings): write-requirement propagation through
-    another generic body (a wrapper generic over the same origin cannot
-    discharge a wrapped view's parametric-mut write; both directions
-    reject today); auto-borrow of *temporaries* into `ref` ctor
-    parameters (places only today; upstream accepts temporaries);
-    delegated-call origin expressions with argument-taking callees or
-    multi-origin-binder correspondences (needs an origin channel richer
-    than the erased struct identity); `_`/`...` origin placeholders in
-    applications (upstream suggests them; Mojito rejects). Recorded
-    probe follow-ups: the pin requires the qualified `Self.o` binder in
-    origin clauses where Mojito also accepts the bare binder (probe the
-    exact position set, then tighten); concreteness in return-type and
-    alias-through-return positions (untightened, no probe evidence;
-    2026-08-28 probes: the pin accepts a BARE generic on an initialized
-    local — inference from the initializer, `var v: StringSlice = ...` —
-    but rejects partial applications like `var s: Span[Int] = xs`, which
-    is exactly the tightened rule);
-    origin-slotted generics as bare function parameters (accepted —
-    protect or tighten by probe). Known pre-existing gaps found while
-    probing (VM-level, unchanged by the pass): a ref-field struct
-    returned through a *bare* unbound return annotation loses its
-    borrow contract and dies with a stale-frame error even when bound
-    to a `var` first; reading a pointer field through a bare
-    origin-generic parameter yields `None`; `var k =
-    it.__next__().key` with a heap-backed (String) field dies in value
-    position (shallow LoadPlace copy).
+    concreteness tightenings):
+    1. Propagate write requirements through generic wrappers. A wrapper
+       generic over the same origin cannot discharge a wrapped view's
+       parametric-mut write; both directions reject today.
+    2. Auto-borrow temporaries into `ref` constructor parameters. Only
+       places auto-borrow today, while upstream also accepts temporaries.
+    3. Generalize delegated-call origin expressions to argument-taking
+       callees and multiple origin-binder correspondences. This needs an
+       origin channel richer than the erased struct identity.
+    4. Support `_`/`...` origin placeholders in applications, as suggested
+       by upstream; Mojito currently rejects them.
+    5. Complete the conformance probes and resulting tightenings:
+       - Determine where the pin requires a qualified `Self.o` binder in
+         origin clauses, then reject the bare binder in those positions.
+       - Probe concreteness in return types and alias-through-return
+         positions. The 2026-08-28 probes establish that an initialized
+         local may use a bare generic inferred from its initializer
+         (`var v: StringSlice = ...`), while a partial application such as
+         `var s: Span[Int] = xs` rejects; the current storage rule matches
+         that result.
+       - Protect or tighten bare origin-slotted generic function parameters
+         according to upstream probe results.
+    6. Fix the pre-existing VM gaps exposed by this work:
+       - A ref-field struct returned through a bare unbound return annotation
+         loses its borrow contract and later fails with a stale-frame error,
+         even if first bound to a `var`.
+       - Reading a pointer field through a bare origin-generic parameter
+         yields `None`.
+       - Reading `var k = it.__next__().key` in value position fails for a
+         heap-backed (`String`) field because `LoadPlace` copies shallowly.
   - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
     signature `__hash__(self, mut hasher: Some[Hasher])` with a
     reflection default; AHasher; `std.hashlib` module identity). Mojito's
@@ -154,21 +158,24 @@ recreates this section's checkbox with the fresh divergence list.
     `Set.__hash__` (do not implement these on the fork protocol first);
     hash-value parity; and, with the arity item below, the full
     `Dict[K, V, H]`/`Set[T, H]` signature.
-  - **Overload-machinery hardening** — three known defects that together
-    gate wide API parity, since upstream's stdlib is dense with
-    same-arity overloads:
-    1. constructor disambiguation: two positional-capable ctors read as
-       ambiguous even when a required marker kwarg separates them
-       (blocks the plain variadic `Set(a, b, c)` ctor, and will block
-       any upstream type whose ctor overloads overlap positionally);
-    2. same-arity method-overload keys: a declaration mangles
-       `var other: Self` as `$ov$Self` while call sites mangle the
-       substituted type — mismatched symbols reach the VM (currently
-       worked around by spelling parameters `List[Self.T]`);
-    3. candidate-replay ownership leaks: a `^`-moved argument at an
-       overloaded call site inside another method body corrupts the
-       replay bookkeeping (currently worked around via single-candidate
-       private helpers like `List._extend_moving`).
+  - **Overload-machinery hardening** — the remaining candidate-replay
+    ownership-leak defect that gates wide API parity (the constructor
+    disambiguation and same-arity method-key defects are closed). A
+    `^`-moved argument at an overloaded call site corrupts the replay
+    bookkeeping when the argument is feasible for both a consuming
+    candidate and a candidate that borrows it through a ref-conversion
+    (`List` matching consuming `extend(var other: Self)` while also
+    converting to the borrowing `extend(elements: Span[Self.T])`): the
+    losing borrow candidate's source-borrow survives into the winning
+    consuming transfer, so ownership analysis reports "use of 'other'
+    after transferred". The free-function candidate loop
+    (`call_inference.rs`) already snapshots and restores its effect maps
+    across candidates; the method-call loops (`method_calls.rs`) snapshot
+    nothing. Fix by making candidate scoring effect-free (a checker-wide
+    speculation guard, so only the post-selection replay records) or by
+    extending the snapshot to the method loops. Worked around via the
+    single-candidate `List._extend_moving` drain behind the overloaded
+    `extend` surface.
   - **`None` → `Optional` coercion in parameter defaults**
     (`arg: Optional[Int] = None` rejects at the default-value check
     today). Small fix, wide reach: unlocks `index`/`try_index`

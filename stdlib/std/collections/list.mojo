@@ -364,9 +364,11 @@ struct List[T: AnyType](
     # Consuming extend (upstream's convention): `other`'s elements move in
     # and its storage is released. The `Deinitable` requirement (for the
     # drained husk) is a recorded subset of upstream's Movable-only bound.
-    # The parameter spells `List[Self.T]` rather than `Self` so the
-    # declaration's overload key matches the call site's substituted one.
-    def extend(mut self, var other: List[Self.T]) where conforms_to(
+    # The drain is delegated to the single-candidate `_extend_moving`: inlining
+    # it here trips the checker's candidate-replay ownership bookkeeping at this
+    # overloaded call surface ("use of 'other' after transferred" — roadmap:
+    # overload-machinery hardening, defect 3, still open).
+    def extend(mut self, var other: Self) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
         self._extend_moving(other^)

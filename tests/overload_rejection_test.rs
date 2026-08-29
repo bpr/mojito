@@ -620,3 +620,92 @@ fn importing_a_name_extends_the_local_overload_set() {
     let execution = compiler.execute(&program).expect("runtime error");
     assert_eq!(execution.output, "10 20\n");
 }
+
+// =========================================================================
+// F. Variadic constructor disambiguation
+// =========================================================================
+
+#[test]
+fn variadic_constructor_selects_on_arguments_and_prefers_empty_when_absent() {
+    // A generic struct with an empty constructor beside a variadic one: an
+    // argument-bearing call runs the variadic overload, while a zero-argument
+    // call prefers the fixed-arity empty constructor (the variadic penalty in
+    // `overload_rank` breaks the otherwise-tied score-0 pair).
+    let out = vm(concat!(
+        "struct Bag[T: Copyable & Movable]:\n",
+        "    var count: Int\n",
+        "    def __init__(out self):\n",
+        "        self.count = -1\n",
+        "    def __init__(out self, var *values: Self.T):\n",
+        "        self.count = len(values)\n",
+        "\n",
+        "def main():\n",
+        "    print(Bag[Int](7, 8, 9).count)\n",
+        "    print(Bag[Int]().count)\n",
+    ));
+    assert_eq!(out, "3\n-1\n");
+}
+
+#[test]
+fn variadic_constructor_infers_element_from_arguments() {
+    // A bare `Bag(1, 2, 3)` (no explicit `[Int]`) solves the element parameter
+    // from the overflow arguments bound to the variadic element.
+    let out = vm(concat!(
+        "struct Bag[T: Copyable & Movable]:\n",
+        "    var count: Int\n",
+        "    def __init__(out self, var *values: Self.T):\n",
+        "        self.count = len(values)\n",
+        "\n",
+        "def main():\n",
+        "    print(Bag(1, 2, 3).count)\n",
+    ));
+    assert_eq!(out, "3\n");
+}
+
+#[test]
+fn variadic_constructor_rejects_argument_type_mismatch() {
+    // The overflow arguments are type-checked against the element parameter:
+    // a `String` cannot bind where `Bag[Int]` expects `Int`.
+    let error = err(concat!(
+        "struct Bag[T: Copyable & Movable]:\n",
+        "    var count: Int\n",
+        "    def __init__(out self, var *values: Self.T):\n",
+        "        self.count = len(values)\n",
+        "\n",
+        "def main():\n",
+        "    var bad = Bag[Int](\"oops\")\n",
+        "    print(bad.count)\n",
+    ));
+    match error {
+        TypeError::BadCall { func, reason } => {
+            assert_eq!(func, "Bag");
+            assert!(
+                reason.contains("no constructor overload matches"),
+                "expected a no-match reason, got: {reason}"
+            );
+        }
+        other => panic!("expected a BadCall to Bag, got: {other:?}"),
+    }
+}
+
+#[test]
+fn two_overlapping_variadic_constructors_are_ambiguous() {
+    // Two variadic constructors that both accept the same positional arguments
+    // tie at equal conversion cost and equal variadic rank, so the call is
+    // ambiguous rather than silently resolved.
+    assert_ambiguous(
+        concat!(
+            "struct Bag[T: Copyable & Movable]:\n",
+            "    var count: Int\n",
+            "    def __init__(out self, var *values: Self.T):\n",
+            "        self.count = 0\n",
+            "    def __init__(out self, var *first: Self.T, __alt__: NoneType = None):\n",
+            "        self.count = 1\n",
+            "\n",
+            "def main():\n",
+            "    var b = Bag[Int](1, 2, 3)\n",
+            "    print(b.count)\n",
+        ),
+        "Bag",
+    );
+}

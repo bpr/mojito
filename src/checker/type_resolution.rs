@@ -1963,6 +1963,26 @@ impl Checker {
         Ty::Struct(name.to_string(), arguments)
     }
 
+    /// The struct's own instance type as `Self` resolves to inside its methods:
+    /// `Ty::Struct(name, decls.map(param_as_arg))` — the same value the checker
+    /// installs as `self_ty` during registration, so a `self`-typed parameter's
+    /// resolved type is equal to it. Used to canonicalize overload keys back to
+    /// `Self` (see [`method_lowered_name`]). `None` when `name` is not a
+    /// registered struct (e.g. abstract trait dispatch).
+    pub(super) fn self_instance_ty(&self, name: &str) -> Option<Ty> {
+        // The nominal String struct keeps its stable `String` overload spelling
+        // on both sides; canonicalizing it to `Self` would break the
+        // literal→String constructor bridge (see `self_struct_spelling`).
+        if crate::symbol::is_stdlib_string_struct(name) {
+            return None;
+        }
+        let info = self.structs.get(name)?;
+        Some(Ty::Struct(
+            name.to_string(),
+            info.decls.iter().map(param_as_arg).collect(),
+        ))
+    }
+
     /// Resolve the alternatives of `Variant[T1, ..., Tn]`.  Alternative order
     /// is significant because it becomes the runtime tag; duplicate types would
     /// make `isa[T]` and `value[T]` ambiguous and are rejected here.

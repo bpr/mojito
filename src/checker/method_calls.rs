@@ -102,7 +102,12 @@ impl Checker {
                         mutates_receiver: false,
                         consumes_receiver: false,
                         lowered_name: if signatures.len() > 1 {
-                            Some(method_lowered_name(sname, method, sig))
+                            Some(method_lowered_name(
+                                sname,
+                                method,
+                                sig,
+                                self.self_instance_ty(sname).as_ref(),
+                            ))
                         } else if parameterized_syntax {
                             Some(format!("{sname}.{method}"))
                         } else {
@@ -529,7 +534,12 @@ impl Checker {
                                         )
                                     ),
                                     lowered_name: if overloaded {
-                                        Some(method_lowered_name(sname, method, sig))
+                                        Some(method_lowered_name(
+                                            sname,
+                                            method,
+                                            sig,
+                                            self.self_instance_ty(sname).as_ref(),
+                                        ))
                                     } else if parameterized_syntax {
                                         Some(format!("{sname}.{method}"))
                                     } else {
@@ -652,7 +662,15 @@ impl Checker {
                                 crate::ast::ArgConvention::Var | crate::ast::ArgConvention::Deinit
                             )
                         ),
-                        lowered_name: Some(method_lowered_name("__trait_dispatch", method, &sig)),
+                        // Abstract dispatch keeps `Ty::SelfType` in `sig`, which
+                        // already spells `Self`; the runtime retargets the receiver
+                        // prefix once the concrete type is known.
+                        lowered_name: Some(method_lowered_name(
+                            "__trait_dispatch",
+                            method,
+                            &sig,
+                            None,
+                        )),
                         ref_params: sig.ref_params.clone(),
                         ref_return: sig.ref_return.clone(),
                         param_types: params,

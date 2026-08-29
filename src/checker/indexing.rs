@@ -1088,8 +1088,14 @@ impl Checker {
         }
         Ok(SubscriptResolution {
             return_type: value_type.clone(),
-            lowered_name: (signatures.len() > 1)
-                .then(|| method_lowered_name(name, "__setitem__", signature)),
+            lowered_name: (signatures.len() > 1).then(|| {
+                method_lowered_name(
+                    name,
+                    "__setitem__",
+                    signature,
+                    self.self_instance_ty(name).as_ref(),
+                )
+            }),
             value_keyword: *value_keyword,
         })
     }
@@ -1579,7 +1585,12 @@ impl Checker {
                 Some(if methods.len() == 1 {
                     format!("{name}.__mlir_index__")
                 } else {
-                    method_lowered_name(name, "__mlir_index__", selected)
+                    method_lowered_name(
+                        name,
+                        "__mlir_index__",
+                        selected,
+                        self.self_instance_ty(name).as_ref(),
+                    )
                 })
             }
             Ty::Param { bounds, .. } => {
@@ -1591,6 +1602,7 @@ impl Checker {
                     "__trait_dispatch",
                     "__mlir_index__",
                     selected,
+                    None,
                 ))
             }
             _ => None,

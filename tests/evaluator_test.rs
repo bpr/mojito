@@ -1586,6 +1586,28 @@ fn tuple_construction_indexing_and_value_semantics() {
 }
 
 #[test]
+fn consuming_list_extend_self_overload_runs() {
+    // `List.extend`'s consuming overload takes `var other: Self` beside a
+    // borrowing `extend(elements: Span[Self.T])`. The `$ov$Self` key must agree
+    // between the declaration and the call site for the specialized `List[Int]`,
+    // or the VM raises "unknown method". A generic struct exercising a self-typed
+    // same-arity overload end-to-end (raw user generics with a `T`-typed field
+    // cannot run in the lower test seams).
+    let e = run_compiled(
+        "from std.collections.list import List\n\
+         var a: List[Int] = [1, 2, 3]\n\
+         var b: List[Int] = [4, 5]\n\
+         a.extend(b^)\n\
+         var count: Int = len(a)\n\
+         var total = 0\n\
+         for x in a:\n\
+         \x20   total += x\n",
+    );
+    assert_eq!(binding(&e, "count"), Value::Int(5));
+    assert_eq!(binding(&e, "total"), Value::Int(15));
+}
+
+#[test]
 fn tuple_element_coercion_at_runtime() {
     // `(1, 2)` into `Tuple[Float64, Float64]` materializes each element to Float64.
     let e = run_compiled("var t: Tuple[Float64, Float64] = (1, 2)\n");

@@ -51,7 +51,7 @@ struct Set[T: Hashable & Equatable & Copyable & Movable](
     def __init__(out self):
         self.items = List[Self.T]()
 
-    def __init__(out self, var *values: Self.T, __set_literal__: NoneType) where conforms_to(
+    def __init__(out self, var *values: Self.T, __set_literal__: NoneType = None) where conforms_to(
         Self.T, Deinitable
     ):
         self.items = List[Self.T]()
