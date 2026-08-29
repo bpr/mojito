@@ -421,9 +421,11 @@ fn lower_nested_node(
             param_names: declaration_names,
             param_types: declaration_types,
             defaults: std::iter::repeat_n(None, capture_count)
-                .chain(regular.iter().map(|(_, parameter)| {
-                    parameter.default.as_ref().and_then(CheckedConst::from_expr)
-                }))
+                .chain(
+                    regular
+                        .iter()
+                        .map(|(_, parameter)| mir_default(checked, parameter.default.as_ref())),
+                )
                 .collect(),
             required: std::iter::repeat_n(true, capture_count)
                 .chain(

@@ -30,6 +30,7 @@ arbitrary-precision-literals	run	conformance/fixtures/arbitrary_precision_litera
 boolean-formatting	run	conformance/fixtures/boolean_formatting.mojo
 line-continuation	run	assets/ok/line_continuation.mojo
 default-arguments	run	assets/ok/default_args.mojo
+optional-none-default	run	conformance/fixtures/optional_none_default.mojo
 named-result	run	conformance/fixtures/named_result.mojo
 keyword-arguments	run	assets/ok/keyword_call.mojo
 positional-and-keyword-only	run	assets/ok/positional_only.mojo

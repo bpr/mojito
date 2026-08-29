@@ -3013,6 +3013,13 @@ impl<'a> FnLowering<'a> {
             (CheckedConst::String(_) | CheckedConst::None, _) => {
                 Err(self.unsupported_reg("non-scalar default argument".into(), dest))
             }
+            // A converting-constructor default (e.g. `Optional[T] = None`) runs
+            // the constructor to build a heap-backed aggregate — the VM oracle
+            // supports it, native default-fill does not yet.
+            (CheckedConst::Construct { .. }, _) => Err(self.unsupported_reg(
+                "converting-constructor default argument is not yet lowered natively".into(),
+                dest,
+            )),
         }
     }
 

@@ -2940,6 +2940,29 @@ fn accepts_default_argument_values() {
 }
 
 #[test]
+fn accepts_implicit_conversion_in_parameter_defaults() {
+    // A default value that is not the parameter's type but converts to it
+    // through an `@implicit` constructor is accepted (the same coercion the
+    // binding and argument positions allow) — the upstream `arg: Optional[T] =
+    // None` pattern, exercised here stdlib-free with a user `@implicit` ctor at
+    // both the free-function and method default sites.
+    ok(concat!(
+        "struct Wrap(Copyable, Movable):\n",
+        "    var v: Int\n",
+        "    @implicit\n",
+        "    def __init__(out self, marker: NoneType):\n",
+        "        self.v = 0\n",
+        "    def __init__(out self, n: Int):\n",
+        "        self.v = n\n",
+        "    def scaled(self, factor: Wrap = None) -> Int:\n",
+        "        return self.v + factor.v\n",
+        "\n",
+        "def wrapped(arg: Wrap = None) -> Int:\n",
+        "    return arg.v\n",
+    ));
+}
+
+#[test]
 fn rejects_bad_default_values_and_arity() {
     // Default value must fit the parameter type.
     assert!(matches!(

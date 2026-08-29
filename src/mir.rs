@@ -279,7 +279,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         .collect(),
                     defaults: regular
                         .iter()
-                        .map(|p| p.default.as_ref().and_then(CheckedConst::from_expr))
+                        .map(|p| mir_default(checked, p.default.as_ref()))
                         .collect(),
                     required: regular.iter().map(|p| p.default.is_none()).collect(),
                     variadic: variadic_idx.map(|i| {
@@ -523,7 +523,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             .collect(),
                         defaults: regular
                             .iter()
-                            .map(|param| param.default.as_ref().and_then(CheckedConst::from_expr))
+                            .map(|param| mir_default(checked, param.default.as_ref()))
                             .collect(),
                         required: regular
                             .iter()
@@ -678,6 +678,23 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
 /// into the [`SpanTable`] so each temporary can be traced back to its origin.
 fn span(e: &Expr) -> SourceSpan {
     e.source_span()
+}
+
+/// A parameter's default metadata: a folded literal, or a `Construct` when the
+/// checker recorded an `@implicit` conversion at the default expression's span
+/// (so the omitted-arg slot materializes by running the converting constructor,
+/// e.g. a `None` default for `Optional[T]`). A non-const default folds to
+/// `None` (the backends' "non-constant default" case), unchanged.
+fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<CheckedConst> {
+    let expr = default?;
+    let base = CheckedConst::from_expr(expr)?;
+    match checked.implicit_conversions().get(&expr.source_span()) {
+        Some(target) => Some(CheckedConst::Construct {
+            target: target.clone(),
+            arg: Box::new(base),
+        }),
+        None => Some(base),
+    }
 }
 
 fn checked_type_or_record(

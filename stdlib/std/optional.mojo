@@ -90,6 +90,15 @@ struct Optional[T: AnyType](
         self._size = 0
         self.data = unsafe_alloc[Self.T](1)
 
+    # `None` implicitly converts to the empty Optional (upstream's convention):
+    # this constructor is what makes `var x: Optional[T] = None`, `f(arg=None)`,
+    # and `arg: Optional[T] = None` defaults coerce. Body mirrors the nullary
+    # constructor (Mojito builds `self` by field assignment, not `self = Self()`).
+    @implicit
+    def __init__(out self, value: NoneType):
+        self._size = 0
+        self.data = unsafe_alloc[Self.T](1)
+
     def __init__(out self, var value: Self.T, /) where conforms_to(Self.T, Movable):
         self._size = 1
         self.data = unsafe_alloc[Self.T](1)

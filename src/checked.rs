@@ -907,6 +907,15 @@ pub enum CheckedConst {
     Bool(bool),
     String(String),
     None,
+    /// A default that is an `@implicit` conversion of `arg`: the omitted-arg
+    /// slot materializes by running the converting constructor `target` on the
+    /// folded literal (e.g. a `None` default for an `Optional[T]` parameter runs
+    /// the empty-Optional constructor). Produced only when the checker recorded
+    /// an implicit conversion at the default expression's span.
+    Construct {
+        target: String,
+        arg: Box<CheckedConst>,
+    },
 }
 
 impl CheckedConst {

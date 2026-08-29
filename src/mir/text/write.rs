@@ -1784,6 +1784,10 @@ fn checked_const(value: &CheckedConst) -> String {
         CheckedConst::Bool(v) => positional("checked_bool", v.to_string()),
         CheckedConst::String(v) => positional("checked_string", quote(v)),
         CheckedConst::None => "checked_none".into(),
+        CheckedConst::Construct { target, arg } => record(
+            "checked_construct",
+            &[("target", quote(target)), ("arg", checked_const(arg))],
+        ),
     }
 }
 fn ct_expr(value: &CtExpr) -> String {

@@ -703,6 +703,14 @@ impl Decoder {
                     None
                 }
             },
+            ValueKind::Record(tag, fields) if tag == "checked_construct" => {
+                let target = self.string(self.field(fields, "target").ok()?)?;
+                let arg = self.checked_const(self.field(fields, "arg").ok()?)?;
+                Some(CheckedConst::Construct {
+                    target,
+                    arg: Box::new(arg),
+                })
+            }
             _ => {
                 self.error(value.span, "expected checked constant");
                 None

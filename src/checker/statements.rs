@@ -1843,12 +1843,25 @@ impl Checker {
                     }
                 };
                 if !coerces(&dty, pty) {
-                    self.tparams.pop();
-                    return Err(TypeError::TypeMismatch {
-                        expected: pty.to_string(),
-                        found: dty.to_string(),
-                        context: format!("default value of '{}'", p.name),
-                    });
+                    // Fall back to an `@implicit` converting constructor, like
+                    // the binding and argument positions do (records the ctor
+                    // target so the omitted-arg default materializes it). A
+                    // `None` default for `Optional[T]` resolves here.
+                    match self.record_constructor_conversion(d, &dty, pty) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            self.tparams.pop();
+                            return Err(TypeError::TypeMismatch {
+                                expected: pty.to_string(),
+                                found: dty.to_string(),
+                                context: format!("default value of '{}'", p.name),
+                            });
+                        }
+                        Err(e) => {
+                            self.tparams.pop();
+                            return Err(e);
+                        }
+                    }
                 }
             }
         }

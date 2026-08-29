@@ -111,14 +111,102 @@ recreates this section's checkbox with the fresh divergence list.
     uninit-element storage story for List, MaybeUninit-adjacent)
 
 - [ ] **Parity-unblocking infrastructure** — compiler-side features that
-  each unblock several recorded parity gaps at once, ordered by fan-out.
-  These are where "Mojito rejects/diverges from valid Mojo" clusters
-  today; every item lists what it unlocks so slices can be chosen by
-  leverage.
-  - **Ref-field adapter follow-ups** (what remains after the landed
-    delegated expression-origin returns, temp-view chaining, ctor
-    auto-borrow, parametric-mut writes, and storage-annotation
-    concreteness tightenings):
+  each unblock several recorded parity gaps at once. These are where
+  "Mojito rejects/diverges from valid Mojo" clusters today; every item
+  lists what it unlocks so slices can be chosen by leverage. The items
+  below are in **recommended execution order**, not fan-out order. The
+  load-bearing dependencies: the candidate-replay overload fix must land
+  **before** the owned-`var` transfer convention (that convention injects
+  mandatory `^`-moves at owned-parameter call sites in user code, which is
+  exactly what trips the candidate-replay leak, and the private-helper
+  workaround is not available to user code); the `None`→`Optional`
+  coercion is a prerequisite for the String slice; the bound relaxation is
+  paired with the transfer convention; and the hasher work is sequenced
+  next to the transfer convention so the shared Dict/Set/List signatures
+  are rewritten once. The three small self-contained items lead because
+  they are cheap and stop rejecting valid programs immediately. The
+  ref-field adapter follow-ups are a **parallel track** (origin/ref-system
+  refinements plus bug fixes, not coupled to the API-parity sequence) and
+  are listed last with their own internal order.
+  - **`None` → `Optional` coercion in parameter defaults** — checker +
+    VM (oracle) DONE: `Optional`'s `@implicit NoneType` constructor makes
+    `None` coerce in binding/argument/default positions, the default-value
+    check falls back to `@implicit` conversions, and an omitted-arg default
+    materializes by running the converting constructor
+    (`CheckedConst::Construct`). This unlocks the upstream signature pattern
+    the String result-API family (`split`/`find` variants) and
+    `index`/`try_index` `start`/`stop` keywords use, and is a prerequisite
+    for the String slice. Remaining: native (pliron) lowering of a
+    converting-constructor default — the default-fill sites reject aggregate
+    defaults today (`checked_const_value` errors on `Construct`), needing a
+    ctor-call emission at default-fill (reuse `lower_call`; the `NoneType`
+    arg is `LowerTy::ZeroSized`). A native-backend concern, not an
+    acceptance gap.
+  - **A `size_of` builtin** (the shared native ABI layout tables in
+    `src/native/` can answer it). Tiny and self-contained. Unlocks
+    `List.byte_length` and upstream memory-oriented code that spells
+    `size_of[T]()`.
+  - **`|= &= ^=` augmented-assignment tokens** (grammar change:
+    `docs/grammar.md` first, then lexer/parser/AST/checker/MIR).
+    Self-contained. Unlocks the Dict/Set `__ior__`/`__iand__`/`__ixor__`
+    family, and — broader — augmented bitwise assignment on Int/UInt,
+    which is upstream-valid integer code Mojito rejects today.
+  - **Overload-machinery hardening** — the remaining candidate-replay
+    ownership-leak defect that gates wide API parity (the constructor
+    disambiguation and same-arity method-key defects are closed). Do this
+    before the owned-`var` transfer convention below. A `^`-moved argument
+    at an overloaded call site corrupts the replay bookkeeping when the
+    argument is feasible for both a consuming candidate and a candidate
+    that borrows it through a ref-conversion (`List` matching consuming
+    `extend(var other: Self)` while also converting to the borrowing
+    `extend(elements: Span[Self.T])`): the losing borrow candidate's
+    source-borrow survives into the winning consuming transfer, so
+    ownership analysis reports "use of 'other' after transferred". First
+    step is to pin the exact leaking map and write site — the mechanism is
+    not yet confirmed. The free-function candidate loop
+    (`call_inference.rs`) snapshots and restores five effect maps across
+    candidates ("speculative candidates leak marks") while the method-call
+    loops (`method_calls.rs`) snapshot nothing, so the snapshot gap is the
+    leading suspect; but candidate scoring infers with `record=false` and
+    the symptom re-surfaces from the origin/place-resolution path, so
+    confirm the site before choosing among a scoring-time speculation
+    guard, extending the method-loop snapshot, or a winner-replay/origin-
+    solving fix. Worked around via the single-candidate
+    `List._extend_moving` drain behind the overloaded `extend` surface.
+  - **Owned-`var` transfer convention** — upstream requires `^` or
+    `.copy()` to pass a non-ImplicitlyCopyable value to an owned
+    parameter; Mojito implicitly copies, so `p + q` on Lists accepts
+    here and rejects upstream. Closes a whole convention-level
+    acceptance-divergence class rather than one API; large fixture blast
+    radius, so schedule it as its own pass, land the candidate-replay
+    overload fix first, and pair it with the bound relaxation above.
+  - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
+    signature `__hash__(self, mut hasher: Some[Hasher])` with a
+    reflection default; AHasher; `std.hashlib` module identity). Sequenced
+    next to the transfer convention because it rewrites the same
+    Dict/Set/List signatures. Mojito's `__hash__() -> UInt` +
+    `std.hashing` is fork surface: upstream user structs declaring the
+    hasher-based method are rejected today — a direct acceptance gap for
+    real upstream code. Unlocks: accepting those programs; upstream-parity
+    `Dict.__hash__`/`List.__hash__`/`Set.__hash__` (do not implement these
+    on the fork protocol first); hash-value parity; and, together with the
+    `H` hasher type-parameter arity, the full `Dict[K, V, H]`/`Set[T, H]`
+    signature.
+  - **Parametric statics** — static-method dispatch on parameterized
+    nominal types (`Dict[Int, Int].fromkeys(...)`); the checker's
+    TypeApply statics stop at the pointer family, and a bare `Dict`
+    identifier is not an expression binding. Fully independent, low
+    fan-out — do it last or opportunistically. Unlocks `Dict.fromkeys`
+    (already stdlib-expressible) and the parametric-statics gap recorded
+    by the contextual-member work.
+  - **Ref-field adapter follow-ups** — *parallel track* (origin/ref-system
+    refinements plus bug fixes; not coupled to the API-parity sequence
+    above). Internal order: fix the VM gaps (item 6, these are bugs)
+    first, then the small acceptance gaps (2, 4), then the probes and
+    tightenings (5), then the deep origin-channel work (1, 3). What
+    remains after the landed delegated expression-origin returns,
+    temp-view chaining, ctor auto-borrow, parametric-mut writes, and
+    storage-annotation concreteness tightenings:
     1. Propagate write requirements through generic wrappers. A wrapper
        generic over the same origin cannot discharge a wrapped view's
        parametric-mut write; both directions reject today.
@@ -148,61 +236,6 @@ recreates this section's checkbox with the fresh divergence list.
          yields `None`.
        - Reading `var k = it.__next__().key` in value position fails for a
          heap-backed (`String`) field because `LoadPlace` copies shallowly.
-  - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
-    signature `__hash__(self, mut hasher: Some[Hasher])` with a
-    reflection default; AHasher; `std.hashlib` module identity). Mojito's
-    `__hash__() -> UInt` + `std.hashing` is fork surface: upstream user
-    structs declaring the hasher-based method are rejected today — a
-    direct acceptance gap for real upstream code. Unlocks: accepting
-    those programs; upstream-parity `Dict.__hash__`/`List.__hash__`/
-    `Set.__hash__` (do not implement these on the fork protocol first);
-    hash-value parity; and, with the arity item below, the full
-    `Dict[K, V, H]`/`Set[T, H]` signature.
-  - **Overload-machinery hardening** — the remaining candidate-replay
-    ownership-leak defect that gates wide API parity (the constructor
-    disambiguation and same-arity method-key defects are closed). A
-    `^`-moved argument at an overloaded call site corrupts the replay
-    bookkeeping when the argument is feasible for both a consuming
-    candidate and a candidate that borrows it through a ref-conversion
-    (`List` matching consuming `extend(var other: Self)` while also
-    converting to the borrowing `extend(elements: Span[Self.T])`): the
-    losing borrow candidate's source-borrow survives into the winning
-    consuming transfer, so ownership analysis reports "use of 'other'
-    after transferred". The free-function candidate loop
-    (`call_inference.rs`) already snapshots and restores its effect maps
-    across candidates; the method-call loops (`method_calls.rs`) snapshot
-    nothing. Fix by making candidate scoring effect-free (a checker-wide
-    speculation guard, so only the post-selection replay records) or by
-    extending the snapshot to the method loops. Worked around via the
-    single-candidate `List._extend_moving` drain behind the overloaded
-    `extend` surface.
-  - **`None` → `Optional` coercion in parameter defaults**
-    (`arg: Optional[Int] = None` rejects at the default-value check
-    today). Small fix, wide reach: unlocks `index`/`try_index`
-    `start`/`stop` keywords now, and the upstream signature pattern the
-    String result-API family (`split`/`find` variants) uses throughout —
-    do this before starting the String slice.
-  - **Owned-`var` transfer convention** — upstream requires `^` or
-    `.copy()` to pass a non-ImplicitlyCopyable value to an owned
-    parameter; Mojito implicitly copies, so `p + q` on Lists accepts
-    here and rejects upstream. Closes a whole convention-level
-    acceptance-divergence class rather than one API; large fixture blast
-    radius, so schedule it as its own pass and pair it with the bound
-    relaxation above.
-  - **`|= &= ^=` augmented-assignment tokens** (grammar change:
-    `docs/grammar.md` first, then lexer/parser/AST/checker/MIR).
-    Unlocks the Dict/Set `__ior__`/`__iand__`/`__ixor__` family, and —
-    broader — augmented bitwise assignment on Int/UInt, which is
-    upstream-valid integer code Mojito rejects today.
-  - **A `size_of` builtin** (the shared native ABI layout tables in
-    `src/native/` can answer it). Unlocks `List.byte_length` and
-    upstream memory-oriented code that spells `size_of[T]()`.
-  - **Parametric statics** — static-method dispatch on parameterized
-    nominal types (`Dict[Int, Int].fromkeys(...)`); the checker's
-    TypeApply statics stop at the pointer family, and a bare `Dict`
-    identifier is not an expression binding. Unlocks `Dict.fromkeys`
-    (already stdlib-expressible) and the parametric-statics gap recorded
-    by the contextual-member work.
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
   the Writer and explicit-destroy foundations.
 - [ ] **Time, random, and testing slices** — add deterministic testable cores and

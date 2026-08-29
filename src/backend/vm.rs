@@ -1448,7 +1448,24 @@ impl VmBackend {
         } else {
             Vec::new()
         };
-        let (mut bound, slots) = bind_args(name, sig, argv, kwargs)?;
+        // Materialize omitted defaults. A `Construct` default runs its
+        // converting constructor (e.g. the empty `Optional[T]` for a `None`
+        // default) through the same path an explicit `f(arg=None)` takes;
+        // scalars fold directly; a non-constant default without a construction
+        // errors only when its slot is actually taken.
+        let make_default = |i: usize| -> Result<Value, RuntimeError> {
+            match &sig.defaults[i] {
+                Some(CheckedConst::Construct { target, arg }) => {
+                    self.call_named(prog, target, vec![checked_const_value(arg)], vec![], &[])
+                }
+                Some(other) => Ok(checked_const_value(other)),
+                None => Err(RuntimeError::Unsupported(format!(
+                    "vm: non-constant default for parameter '{}' of '{name}'",
+                    sig.param_names[i]
+                ))),
+            }
+        };
+        let (mut bound, slots) = bind_args(name, sig, argv, kwargs, make_default)?;
         if let Some(index) = sig.kw_variadic_index {
             bound[index] = self.make_kwargs_dict(prog, collected)?;
         }
@@ -2711,9 +2728,11 @@ fn arg1(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
 struct FnSig {
     param_names: Vec<String>,
     param_types: Vec<Ty>,
-    /// Const-evaluated default per regular parameter (`None` = no default, or a
-    /// non-constant default the VM can't fold — using such a slot errors).
-    defaults: Vec<Option<Value>>,
+    /// Declared default per regular parameter (`None` = no default, or a
+    /// non-constant default the VM can't fold — using such a slot errors). A
+    /// `CheckedConst::Construct` default is materialized at bind time by running
+    /// its converting constructor (see `bind_for_call`); scalars fold directly.
+    defaults: Vec<Option<CheckedConst>>,
     required: Vec<bool>,
     variadic: Option<Ty>,
     /// Where the collected `*args` list belongs among source parameters. For a
@@ -3132,11 +3151,7 @@ fn build_sigs(declarations: &crate::mir::MirDeclarations) -> HashMap<String, FnS
                 FnSig {
                     param_names: declaration.param_names.clone(),
                     param_types: declaration.param_types.clone(),
-                    defaults: declaration
-                        .defaults
-                        .iter()
-                        .map(|default| default.as_ref().map(checked_const_value))
-                        .collect(),
+                    defaults: declaration.defaults.clone(),
                     required: declaration.required.clone(),
                     variadic: declaration.variadic.clone(),
                     variadic_index: declaration.variadic_index,

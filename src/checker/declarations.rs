@@ -933,7 +933,12 @@ impl Checker {
             if let Some(default) = &param.default {
                 let expected = self.ty_from_anno(&param.ty)?;
                 let found = self.infer(default)?;
-                if !coerces(&found, &expected) {
+                // Fall back to an `@implicit` converting constructor (records the
+                // ctor target for omitted-arg materialization), matching the
+                // free-function default path and the binding/argument positions.
+                if !coerces(&found, &expected)
+                    && !self.record_constructor_conversion(default, &found, &expected)?
+                {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: found.to_string(),

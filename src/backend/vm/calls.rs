@@ -12,6 +12,9 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
         CheckedConst::Bool(value) => Value::Bool(*value),
         CheckedConst::String(value) => Value::Str(value.clone()),
         CheckedConst::None => Value::None,
+        // A `Construct` default runs its constructor in interpreter context
+        // (`bind_for_call`), so it never reaches this pure value-folder.
+        CheckedConst::Construct { .. } => Value::None,
     }
 }
 
@@ -23,6 +26,7 @@ pub(super) fn bind_args(
     sig: &FnSig,
     argv: Vec<Value>,
     kwargs: Vec<(String, Value)>,
+    mut make_default: impl FnMut(usize) -> Result<Value, RuntimeError>,
 ) -> Result<(Vec<Value>, Vec<ArgSlot>), RuntimeError> {
     let kw_names: Vec<&str> = kwargs.iter().map(|(n, _)| n.as_str()).collect();
     let matched = match_call_slots(
@@ -45,12 +49,7 @@ pub(super) fn bind_args(
         let value = match slot {
             ArgSlot::Positional(p) => argv[*p].clone(),
             ArgSlot::Keyword(k) => kwargs[*k].1.clone(),
-            ArgSlot::Default => sig.defaults[i].clone().ok_or_else(|| {
-                RuntimeError::Unsupported(format!(
-                    "vm: non-constant default for parameter '{}' of '{name}'",
-                    sig.param_names[i]
-                ))
-            })?,
+            ArgSlot::Default => make_default(i)?,
         };
         regular_values.push(crate::runtime::coerce_checked(value, &sig.param_types[i]));
     }

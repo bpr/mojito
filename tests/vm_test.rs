@@ -65,6 +65,25 @@ fn parity(src: &str) -> String {
 }
 
 #[test]
+fn optional_none_default_materializes_the_empty_optional() {
+    // `arg: Optional[Int] = None`: an omitted-arg call runs the (heap-backed)
+    // empty-Optional constructor, not a bare `None`, so a method call on the
+    // parameter works. `or_else` on the empty default returns the fallback; an
+    // explicitly supplied Optional returns its value.
+    assert_eq!(
+        vm(concat!(
+            "from std.optional import Optional\n",
+            "def choose(arg: Optional[Int] = None) -> Int:\n",
+            "    return arg.or_else(-1)\n",
+            "def main():\n",
+            "    print(choose())\n",
+            "    print(choose(Optional[Int](5)))\n",
+        )),
+        "-1\n5\n"
+    );
+}
+
+#[test]
 fn arithmetic_and_precedence() {
     assert_eq!(
         parity("print(1 + 2 * 3)\nprint((1 + 2) * 3)\nprint(2 ** 10)\nprint(-7 // 2)\n"),
