@@ -1988,15 +1988,18 @@ impl VmBackend {
             .map(|value| vec![Value::Int(value)])
             .unwrap_or_default();
         // Optional's overloaded constructors include keyword-only forms
-        // (`init_with=`, `copy:`) at the same arity as the positional value
-        // constructor, so arity-based overload selection is ambiguous here.
-        // Select the unique positional (non-`$kw$`) overload explicitly.
+        // (`init_with=`, `copy:`) and the `NoneType` conversion constructor at
+        // the same arity as the positional value constructor, so arity-based
+        // overload selection is ambiguous here. Select the unique positional
+        // (non-`$kw$`) overload explicitly; a bound is an `Int`, never `None`,
+        // so the `NoneType` overload is excluded too.
         let init = format!("{name}.__init__");
         let expected_params = arguments.len() + 1;
         let mut constructors = prog.mir.functions.iter().filter(|(fname, function)| {
             crate::symbol::is_overload_of(fname, &init)
                 && function.n_params == expected_params
                 && !fname.contains("$kw$")
+                && !fname.ends_with("$ov$None")
         });
         let target = constructors.next().map(|(fname, _)| fname.clone());
         if let Some(target) = target

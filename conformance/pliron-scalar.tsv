@@ -239,6 +239,7 @@ assets/ok/ref_field_ctor_from_ref_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_ctor_owned_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_parametric_mut_subscript_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_parametric_mut_write_generic_wrapper.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape
