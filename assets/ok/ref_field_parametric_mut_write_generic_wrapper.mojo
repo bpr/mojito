@@ -1,7 +1,5 @@
-# expect: propagating the write requirement
-# A receiver that leaves the written origin parameter symbolic (a wrapper
-# generic over the same origin) cannot discharge the write requirement; the
-# transitive propagation is a recorded subset limitation.
+# A write requirement inherited from a wrapped parametric-origin view propagates
+# through the wrapper method and is discharged at its concrete call site.
 @fieldwise_init
 struct View[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]
@@ -21,3 +19,5 @@ def main():
     data.append(7)
     var w = Wrap(View(data))
     w.poke()
+    print(data[0])
+# stdout: 8

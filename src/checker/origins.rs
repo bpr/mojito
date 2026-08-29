@@ -5,6 +5,25 @@
 
 use super::*;
 
+pub(super) fn collect_origin_params(
+    origin: &crate::origin::Origin,
+    out: &mut Vec<crate::origin::OriginParamId>,
+) {
+    match origin {
+        crate::origin::Origin::Param(id) => {
+            if !out.contains(id) {
+                out.push(*id);
+            }
+        }
+        crate::origin::Origin::Union(origins) => {
+            for origin in origins {
+                collect_origin_params(origin, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 type SolvedCallOrigins = (
     Vec<Option<ArgConvention>>,
     Option<crate::origin::RefTy>,
@@ -297,6 +316,18 @@ impl Checker {
                     if !retained.contains(&origin) {
                         retained.push(origin);
                     }
+                }
+            }
+            if retained.is_empty() {
+                let origin_params = info
+                    .source_params
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, parameter)| parameter.bounds.as_slice() == ["Origin"])
+                    .map(|(index, _)| crate::origin::OriginParamId(index as u32))
+                    .collect::<Vec<_>>();
+                if origin_params.as_slice() == [id] {
+                    retained.extend(flat.clone());
                 }
             }
             (!retained.is_empty()).then(|| crate::origin::Origin::union(retained))

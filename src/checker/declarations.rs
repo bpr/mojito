@@ -770,7 +770,9 @@ impl Checker {
         module: Option<String>,
         declaration: &str,
         method_index: usize,
+        overload_index: usize,
     ) -> Result<(), TypeError> {
+        self.parametric_write_frames.borrow_mut().push(Vec::new());
         let decls = self.classify_params(&m.type_params)?;
         self.tparams.push(type_scope(&decls));
         let saved = self.enclosing_type_params.clone();
@@ -826,6 +828,25 @@ impl Checker {
         };
         self.enclosing_type_params = saved;
         self.tparams.pop();
+        let propagated = self
+            .parametric_write_frames
+            .borrow_mut()
+            .pop()
+            .expect("method write-requirement frame");
+        if result.is_ok() && !propagated.is_empty() {
+            let method_name = lifecycle_method_name(m);
+            let signature = self
+                .structs
+                .get_mut(declaration)
+                .and_then(|info| info.methods.get_mut(method_name))
+                .and_then(|methods| methods.get_mut(overload_index))
+                .expect("checked method signature remains registered");
+            for id in propagated {
+                if !signature.parametric_origin_writes.contains(&id) {
+                    signature.parametric_origin_writes.push(id);
+                }
+            }
+        }
         result
     }
 

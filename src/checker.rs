@@ -706,6 +706,10 @@ pub struct Checker {
     /// a reference-valued field, assigning a reference here stores its handle;
     /// later assignments write through the established handle instead.
     self_initializing: bool,
+    /// Per-method accumulation of symbolic origin write requirements inherited
+    /// from calls through generic receiver fields. The completed frame is
+    /// merged into that method's registered signature.
+    parametric_write_frames: RefCell<Vec<Vec<crate::origin::OriginParamId>>>,
     /// The declaration currently being checked comes from the bundled
     /// standard-library crossing module (`stdlib/std/memory.mojo`). Only such
     /// declarations may name compiler-private storage types (`__UninitStorage`)
@@ -907,6 +911,7 @@ impl Checker {
             comptime_aliases: HashMap::new(),
             self_mutable: false,
             self_initializing: false,
+            parametric_write_frames: RefCell::new(Vec::new()),
             bundled_stdlib_declaration: false,
             overload_targets: RefCell::new(HashMap::new()),
             contextual_bases: RefCell::new(HashMap::new()),

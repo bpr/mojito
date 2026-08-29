@@ -775,8 +775,21 @@ impl Checker {
         }
         // Method bodies, each with `self` bound to this struct at its own type
         // parameters (so `self.field : Ty::Param` inside a generic struct).
+        let mut overload_indices = HashMap::<String, usize>::new();
         for (method_index, m) in methods.iter().enumerate() {
-            self.check_method(self_ty, m, declaration.module.clone(), name, method_index)?;
+            let method_name = lifecycle_method_name(m).to_string();
+            let overload_index = *overload_indices.entry(method_name.clone()).or_default();
+            *overload_indices
+                .get_mut(&method_name)
+                .expect("inserted above") += 1;
+            self.check_method(
+                self_ty,
+                m,
+                declaration.module.clone(),
+                name,
+                method_index,
+                overload_index,
+            )?;
         }
         Ok(())
     }

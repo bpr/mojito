@@ -943,13 +943,42 @@ impl Checker {
                     });
                 }
                 None => {
-                    return Err(TypeError::BadCall {
-                        func: method.to_string(),
-                        reason: "writes through a parametric origin the receiver leaves \
-                                 symbolic; propagating the write requirement through another \
-                                 generic body is not supported"
-                            .to_string(),
-                    });
+                    let mut propagated = Vec::new();
+                    super::origins::collect_origin_params(&origin, &mut propagated);
+                    if propagated.is_empty() {
+                        let enclosing = self
+                            .enclosing_type_params
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, parameter)| parameter.bounds.as_slice() == ["Origin"])
+                            .map(|(index, _)| crate::origin::OriginParamId(index as u32))
+                            .collect::<Vec<_>>();
+                        if let [id] = enclosing.as_slice() {
+                            propagated.push(*id);
+                        }
+                    }
+                    let mut frames = self.parametric_write_frames.borrow_mut();
+                    let Some(frame) = frames.last_mut() else {
+                        return Err(TypeError::BadCall {
+                            func: method.to_string(),
+                            reason: "writes through a parametric origin that is not concrete at \
+                                     this call site"
+                                .to_string(),
+                        });
+                    };
+                    if propagated.is_empty() {
+                        return Err(TypeError::BadCall {
+                            func: method.to_string(),
+                            reason: "writes through a parametric origin whose receiver binding \
+                                     cannot be propagated"
+                                .to_string(),
+                        });
+                    }
+                    for id in propagated {
+                        if !frame.contains(&id) {
+                            frame.push(id);
+                        }
+                    }
                 }
             }
         }

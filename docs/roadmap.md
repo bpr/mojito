@@ -67,6 +67,14 @@ unchecked box is the default next task. Sections marked *(recurring)* or
   language parity, map completed SIMD semantics to native vectors where the
   target supports them and preserve defined scalar fallback behavior.
 
+- [ ] **Native converting-constructor defaults** — lower a
+  `CheckedConst::Construct` default (e.g. `arg: Optional[T] = None`, which the
+  VM materializes by running the empty-Optional constructor). The pliron
+  default-fill sites are scalar-oriented and reject the aggregate today
+  (`checked_const_value` errors on `Construct`); emit the constructor call at
+  default-fill instead (reuse `lower_call` — the `NoneType` argument is
+  `LowerTy::ZeroSized`, so no physical operand).
+
 ### 2. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
 
 Mojo is a moving target. Whenever the pinned nightly moves: re-pin
@@ -119,29 +127,14 @@ recreates this section's checkbox with the fresh divergence list.
   **before** the owned-`var` transfer convention (that convention injects
   mandatory `^`-moves at owned-parameter call sites in user code, which is
   exactly what trips the candidate-replay leak, and the private-helper
-  workaround is not available to user code); the `None`→`Optional`
-  coercion is a prerequisite for the String slice; the bound relaxation is
+  workaround is not available to user code); the bound relaxation is
   paired with the transfer convention; and the hasher work is sequenced
   next to the transfer convention so the shared Dict/Set/List signatures
-  are rewritten once. The three small self-contained items lead because
+  are rewritten once. The small self-contained items lead because
   they are cheap and stop rejecting valid programs immediately. The
   ref-field adapter follow-ups are a **parallel track** (origin/ref-system
   refinements plus bug fixes, not coupled to the API-parity sequence) and
   are listed last with their own internal order.
-  - **`None` → `Optional` coercion in parameter defaults** — checker +
-    VM (oracle) DONE: `Optional`'s `@implicit NoneType` constructor makes
-    `None` coerce in binding/argument/default positions, the default-value
-    check falls back to `@implicit` conversions, and an omitted-arg default
-    materializes by running the converting constructor
-    (`CheckedConst::Construct`). This unlocks the upstream signature pattern
-    the String result-API family (`split`/`find` variants) and
-    `index`/`try_index` `start`/`stop` keywords use, and is a prerequisite
-    for the String slice. Remaining: native (pliron) lowering of a
-    converting-constructor default — the default-fill sites reject aggregate
-    defaults today (`checked_const_value` errors on `Construct`), needing a
-    ctor-call emission at default-fill (reuse `lower_call`; the `NoneType`
-    arg is `LowerTy::ZeroSized`). A native-backend concern, not an
-    acceptance gap.
   - **A `size_of` builtin** (the shared native ABI layout tables in
     `src/native/` can answer it). Tiny and self-contained. Unlocks
     `List.byte_length` and upstream memory-oriented code that spells
@@ -151,10 +144,9 @@ recreates this section's checkbox with the fresh divergence list.
     Self-contained. Unlocks the Dict/Set `__ior__`/`__iand__`/`__ixor__`
     family, and — broader — augmented bitwise assignment on Int/UInt,
     which is upstream-valid integer code Mojito rejects today.
-  - **Overload-machinery hardening** — the remaining candidate-replay
-    ownership-leak defect that gates wide API parity (the constructor
-    disambiguation and same-arity method-key defects are closed). Do this
-    before the owned-`var` transfer convention below. A `^`-moved argument
+  - **Overload-machinery hardening: candidate-replay ownership leak** — a
+    checker defect that gates wide API parity. Do this before the owned-`var`
+    transfer convention below. A `^`-moved argument
     at an overloaded call site corrupts the replay bookkeeping when the
     argument is feasible for both a consuming candidate and a candidate
     that borrows it through a ref-conversion (`List` matching consuming
@@ -207,17 +199,17 @@ recreates this section's checkbox with the fresh divergence list.
     remains after the landed delegated expression-origin returns,
     temp-view chaining, ctor auto-borrow, parametric-mut writes, and
     storage-annotation concreteness tightenings:
-    1. Propagate write requirements through generic wrappers. A wrapper
+    1. [x] Propagate write requirements through generic wrappers. A wrapper
        generic over the same origin cannot discharge a wrapped view's
        parametric-mut write; both directions reject today.
-    2. Auto-borrow temporaries into `ref` constructor parameters. Only
+    2. [ ] Auto-borrow temporaries into `ref` constructor parameters. Only
        places auto-borrow today, while upstream also accepts temporaries.
-    3. Generalize delegated-call origin expressions to argument-taking
+    3. [ ] Generalize delegated-call origin expressions to argument-taking
        callees and multiple origin-binder correspondences. This needs an
        origin channel richer than the erased struct identity.
-    4. Support `_`/`...` origin placeholders in applications, as suggested
+    4. [ ] Support `_`/`...` origin placeholders in applications, as suggested
        by upstream; Mojito currently rejects them.
-    5. Complete the conformance probes and resulting tightenings:
+    5. [ ] Complete the conformance probes and resulting tightenings:
        - Determine where the pin requires a qualified `Self.o` binder in
          origin clauses, then reject the bare binder in those positions.
        - Probe concreteness in return types and alias-through-return
@@ -228,7 +220,7 @@ recreates this section's checkbox with the fresh divergence list.
          that result.
        - Protect or tighten bare origin-slotted generic function parameters
          according to upstream probe results.
-    6. Fix the pre-existing VM gaps exposed by this work:
+    6. [ ] Fix the pre-existing VM gaps exposed by this work:
        - A ref-field struct returned through a bare unbound return annotation
          loses its borrow contract and later fails with a stale-frame error,
          even if first bound to a `var`.
