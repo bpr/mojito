@@ -646,12 +646,9 @@ impl Checker {
                 source: span.source.clone(),
                 syntax_id: crate::token::SyntaxId::fresh(),
             };
-            self.apply_transfer_effects(
-                &format!("{struct_name}.__call__"),
-                Some(&callee_value),
-                args,
-                &span,
-            )?;
+            let method_key = format!("{struct_name}.__call__");
+            let effect_key = indirect_target.as_deref().unwrap_or(&method_key);
+            self.apply_transfer_effects(effect_key, Some(&callee_value), args, &span)?;
         }
         self.record_call_environment_effects(
             span.clone(),
@@ -754,12 +751,9 @@ impl Checker {
             self.replay_transfer_effects(carried, None, args, &span)?;
         }
         if let Ty::Struct(struct_name, _) = &element_ty {
-            self.apply_transfer_effects(
-                &format!("{struct_name}.__call__"),
-                Some(receiver),
-                args,
-                &span,
-            )?;
+            let method_key = format!("{struct_name}.__call__");
+            let effect_key = target.as_deref().unwrap_or(&method_key);
+            self.apply_transfer_effects(effect_key, Some(receiver), args, &span)?;
         }
         self.record_call_environment_effects(span.clone(), &callable, &[], args, kwargs)?;
         self.operation_adjustments.borrow_mut().insert(

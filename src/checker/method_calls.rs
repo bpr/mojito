@@ -839,9 +839,10 @@ impl Checker {
         // concrete callables this call supplies.
         if let Ty::Struct(struct_name, _) = &obj_ty {
             let method_key = format!("{struct_name}.{method}");
-            self.apply_transfer_effects(&method_key, Some(object), args, &span)?;
+            let effect_key = selected_target.as_deref().unwrap_or(&method_key);
+            self.apply_transfer_effects(effect_key, Some(object), args, &span)?;
             self.apply_call_through_effects(
-                &method_key,
+                effect_key,
                 &resolved.param_decls,
                 Some(object),
                 param_args,
@@ -868,7 +869,20 @@ impl Checker {
                         .iter()
                         .all(|bound| self.conforms_to(&implementation, bound))
                 })
-                .map(|(name, _)| format!("{name}.{method}"))
+                .flat_map(|(name, info)| {
+                    let signatures = &info.methods[method];
+                    if signatures.len() == 1 {
+                        return vec![format!("{name}.{method}")];
+                    }
+                    let self_ty =
+                        Ty::Struct(name.clone(), info.decls.iter().map(param_as_arg).collect());
+                    signatures
+                        .iter()
+                        .map(|signature| {
+                            method_lowered_name(name, method, signature, Some(&self_ty))
+                        })
+                        .collect()
+                })
                 .collect();
             conformers.sort();
             for key in conformers {

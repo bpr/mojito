@@ -148,6 +148,7 @@ assets/ok/origin_delegated_call_with_arguments.mojo	main	exe-differential	saniti
 assets/ok/origin_delegated_multi_binder.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_parameter.mojo	main	exe-differential	sanitized
+assets/ok/overload_transfer_effect_isolation.mojo	main	exe-differential	sanitized
 assets/ok/overloading_arity.mojo	main	exe-differential	sanitized
 assets/ok/overloading_literal_default.mojo	main	exe-differential	sanitized
 assets/ok/overloading_struct_params.mojo	main	exe-differential	sanitized

@@ -1608,6 +1608,31 @@ fn consuming_list_extend_self_overload_runs() {
 }
 
 #[test]
+fn list_operators_route_consuming_calls_through_the_extend_overload() {
+    let e = run_compiled(
+        "from std.collections.list import List\n\
+         var left: List[Int] = [1, 2]\n\
+         var right: List[Int] = [3, 4]\n\
+         var combined = left + right^\n\
+         var extra: List[Int] = [5, 6]\n\
+         left += extra^\n\
+         var repeated = left * 2\n\
+         var combined_len = len(combined)\n\
+         var combined_last = combined[3]\n\
+         var left_len = len(left)\n\
+         var left_last = left[3]\n\
+         var repeated_len = len(repeated)\n\
+         var repeated_last = repeated[7]\n",
+    );
+    assert_eq!(binding(&e, "combined_len"), Value::Int(4));
+    assert_eq!(binding(&e, "combined_last"), Value::Int(4));
+    assert_eq!(binding(&e, "left_len"), Value::Int(4));
+    assert_eq!(binding(&e, "left_last"), Value::Int(6));
+    assert_eq!(binding(&e, "repeated_len"), Value::Int(8));
+    assert_eq!(binding(&e, "repeated_last"), Value::Int(6));
+}
+
+#[test]
 fn tuple_element_coercion_at_runtime() {
     // `(1, 2)` into `Tuple[Float64, Float64]` materializes each element to Float64.
     let e = run_compiled("var t: Tuple[Float64, Float64] = (1, 2)\n");

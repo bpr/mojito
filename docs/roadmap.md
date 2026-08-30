@@ -123,45 +123,19 @@ recreates this section's checkbox with the fresh divergence list.
   "Mojito rejects/diverges from valid Mojo" clusters today; every item
   lists what it unlocks so slices can be chosen by leverage. The remaining
   items below are in **recommended execution order**, not fan-out order. The
-  load-bearing dependencies: the candidate-replay overload fix must land
-  **before** the owned-`var` transfer convention (that convention injects
-  mandatory `^`-moves at owned-parameter call sites in user code, which is
-  exactly what trips the candidate-replay leak, and the private-helper
-  workaround is not available to user code); the bound relaxation is
-  paired with the transfer convention; and the hasher work is sequenced
-  next to the transfer convention so the shared Dict/Set/List signatures
-  are rewritten once. The ref-field adapter follow-ups are a **parallel
-  track** (origin/ref-system
+  bound relaxation is paired with the owned-`var` transfer convention, and
+  the hasher work is sequenced next to that convention so the shared
+  Dict/Set/List signatures are rewritten once. The ref-field adapter
+  follow-ups are a **parallel track** (origin/ref-system
   refinements plus bug fixes, not coupled to the API-parity sequence) and
   are listed last with their own internal order.
-  - **Overload-machinery hardening: candidate-replay ownership leak** — a
-    checker defect that gates wide API parity. Do this before the owned-`var`
-    transfer convention below. A `^`-moved argument
-    at an overloaded call site corrupts the replay bookkeeping when the
-    argument is feasible for both a consuming candidate and a candidate
-    that borrows it through a ref-conversion (`List` matching consuming
-    `extend(var other: Self)` while also converting to the borrowing
-    `extend(elements: Span[Self.T])`): the losing borrow candidate's
-    source-borrow survives into the winning consuming transfer, so
-    ownership analysis reports "use of 'other' after transferred". First
-    step is to pin the exact leaking map and write site — the mechanism is
-    not yet confirmed. The free-function candidate loop
-    (`call_inference.rs`) snapshots and restores five effect maps across
-    candidates ("speculative candidates leak marks") while the method-call
-    loops (`method_calls.rs`) snapshot nothing, so the snapshot gap is the
-    leading suspect; but candidate scoring infers with `record=false` and
-    the symptom re-surfaces from the origin/place-resolution path, so
-    confirm the site before choosing among a scoring-time speculation
-    guard, extending the method-loop snapshot, or a winner-replay/origin-
-    solving fix. Worked around via the single-candidate
-    `List._extend_moving` drain behind the overloaded `extend` surface.
   - **Owned-`var` transfer convention** — upstream requires `^` or
     `.copy()` to pass a non-ImplicitlyCopyable value to an owned
     parameter; Mojito implicitly copies, so `p + q` on Lists accepts
     here and rejects upstream. Closes a whole convention-level
     acceptance-divergence class rather than one API; large fixture blast
-    radius, so schedule it as its own pass, land the candidate-replay
-    overload fix first, and pair it with the bound relaxation above.
+    radius, so schedule it as its own pass and pair it with the bound
+    relaxation above.
   - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
     signature `__hash__(self, mut hasher: Some[Hasher])` with a
     reflection default; AHasher; `std.hashlib` module identity). Sequenced

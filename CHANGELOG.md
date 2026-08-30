@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Overloaded method transfer effects are keyed and replayed by the selected
+  signature-qualified callable identity. A consuming overload no longer
+  inherits a borrowing sibling's loan effects; abstract trait dispatch still
+  unions every conforming implementation and overload. This removes List's
+  private `_extend_moving` workaround, so `extend`, `+`, `+=`, `*`, and `*=`
+  use the public overloaded surface directly.
 - `size_of[T]()` target-layout queries, backed by the shared native ABI layout
   engine in both the VM and Pliron paths. Checked MIR retains the concrete type
   in a typed `SizeOf` instruction, including aggregate padding, and generic

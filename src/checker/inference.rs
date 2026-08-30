@@ -896,8 +896,10 @@ impl Checker {
                     self.replay_transfer_effects(carried, None, args, &expr.source_span())?;
                 }
                 if let Ty::Struct(struct_name, _) = &callable {
+                    let method_key = format!("{struct_name}.__call__");
+                    let effect_key = target.as_deref().unwrap_or(&method_key);
                     self.apply_transfer_effects(
-                        &format!("{struct_name}.__call__"),
+                        effect_key,
                         Some(callee),
                         args,
                         &expr.source_span(),

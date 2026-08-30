@@ -2144,8 +2144,11 @@ replays it at every call. When the store-outward escape rule accepts such a
 store, the body records a `TransferEffect { dest, src, src_is_place, mutable }`
 in signature-origin terms (`Self_`/`Param(k)`) on the current callable's frame;
 the bundled `List.append`/`insert`/`__setitem__` are seeded directly because
-their pointer-mediated stores never reach that acceptance point. Effects live in
-a name-keyed side map (`"name"` / `"Struct.method"`), and visibility is
+their pointer-mediated stores never reach that acceptance point. Effects live
+in a callable-identity-keyed side map: bare names for unique callables and
+signature-qualified symbols for overloaded methods. This keeps a consuming
+candidate from inheriting a borrowing sibling's loan effects (and vice versa).
+Visibility is
 declaration-order independent: `check_program` reruns the whole check — a
 fresh checker seeded with the prior round's committed map merged over the
 bundled seeds — until no call site has observed a stale callee entry.
@@ -2182,10 +2185,12 @@ acceptance — a `def(...)` contract cannot spell effects, so soundness comes
 from call-site replay, not acceptance filtering), with a fixpoint
 observation so a later-grown entry re-bakes. Indirect calls replay from the
 value's type; a callable-struct call replays its `Struct.__call__` entry
-with the callee binding as the receiver; overloaded call sites replay the
-shared bare-name entry; and a trait-method call on a bounded receiver —
+with the callee binding as the receiver; overloaded method calls replay the
+selected signature-qualified entry (free-function overloads retain their
+shared bare-name entry); and a trait-method call on a bounded receiver —
 which has no concrete body — replays the union of effects over every
-conforming implementation of the method, one observation per conformer key.
+conforming implementation and overload of the method, one observation per
+conformer key.
 The one genuinely higher-order shape is a body calling through its own
 callable parameter (a runtime `def(...)` param or a compile-time callable
 value param, which specialization retains symbolically): the body records a

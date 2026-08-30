@@ -828,7 +828,37 @@ impl Checker {
                                 .insert(site);
                         }
                     }
-                    self.check_method_inner(self_ty, m)
+                    // Transfer summaries belong to the same callable identity
+                    // as dispatch. Same-name overloads may have different loan
+                    // behavior, so a bare method key would merge unrelated
+                    // effects according to declaration order.
+                    let method_name = lifecycle_method_name(m);
+                    let (overloaded, signature) = self
+                        .structs
+                        .get(declaration)
+                        .and_then(|info| info.methods.get(method_name))
+                        .and_then(|methods| {
+                            methods
+                                .get(overload_index)
+                                .cloned()
+                                .map(|signature| (methods.len() > 1, signature))
+                        })
+                        .ok_or_else(|| {
+                            TypeError::InvariantViolation(format!(
+                                "method signature for '{declaration}.{method_name}' is not registered"
+                            ))
+                        })?;
+                    let effect_key = if overloaded {
+                        method_lowered_name(
+                            declaration,
+                            method_name,
+                            &signature,
+                            self.self_instance_ty(declaration).as_ref(),
+                        )
+                    } else {
+                        format!("{declaration}.{method_name}")
+                    };
+                    self.check_method_inner(self_ty, m, effect_key)
                 })();
                 self.assumed_conformances.pop();
                 result
@@ -860,7 +890,12 @@ impl Checker {
         result
     }
 
-    pub(super) fn check_method_inner(&mut self, self_ty: &Ty, m: &Method) -> Result<(), TypeError> {
+    pub(super) fn check_method_inner(
+        &mut self,
+        self_ty: &Ty,
+        m: &Method,
+        effect_key: String,
+    ) -> Result<(), TypeError> {
         let is_implicit = m
             .decorators
             .iter()
@@ -985,7 +1020,7 @@ impl Checker {
         self.push_scope();
         self.raising_context
             .push(self.declared_error(m.raises, m.raises_type.as_ref())?);
-        let mut result = self.bind_and_check_method(self_ty, m, &ret_ty, ref_return);
+        let mut result = self.bind_and_check_method(self_ty, m, &ret_ty, ref_return, effect_key);
         // Definite initialization (conservative, flow-insensitive first pass): an
         // `__init__` must assign every declared field somewhere in its body, so a
         // constructed value has no unset fields. Path-sensitive DI (assign exactly
@@ -1031,6 +1066,7 @@ impl Checker {
         m: &Method,
         ret_ty: &Ty,
         ref_return: Option<crate::origin::RefSig>,
+        effect_key: String,
     ) -> Result<(), TypeError> {
         // Compile-time callable/scalar value parameters occupy named runtime
         // slots in a method body, just as they do in a generic free function.
@@ -1151,12 +1187,8 @@ impl Checker {
         );
         self.aggregate_escape_contexts
             .push((self.scopes.len().saturating_sub(1), allowed));
-        let method_key = match self_ty {
-            Ty::Struct(struct_name, _) => format!("{struct_name}.{}", m.name),
-            _ => m.name.clone(),
-        };
         self.transfer_frames.borrow_mut().push(TransferFrame {
-            callable: method_key,
+            callable: effect_key,
             param_owners: owners.clone(),
             param_borrowed: m
                 .params

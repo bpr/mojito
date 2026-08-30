@@ -125,7 +125,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `instantiate_sig_origin`/`instantiate_bound_origin` used by the iteration
   protocol and delegated-call expression-origin resolution,
   `lower_ref_sig_resolved`), and cross-call transfer effects (`abstract_body_origin`,
-  `record_transfer_effect`, the `apply_transfer_effects` name-keyed wrapper
+  `record_transfer_effect`, the `apply_transfer_effects` callable-keyed wrapper
   over the `replay_transfer_effects` core, value-position effect baking
   (`bake_value_transfer_effects`), the higher-order call-through channel
   (`record_call_through`, `apply_call_through_effects`,

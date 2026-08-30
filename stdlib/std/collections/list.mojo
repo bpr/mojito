@@ -364,14 +364,18 @@ struct List[T: AnyType](
     # Consuming extend (upstream's convention): `other`'s elements move in
     # and its storage is released. The `Deinitable` requirement (for the
     # drained husk) is a recorded subset of upstream's Movable-only bound.
-    # The drain is delegated to the single-candidate `_extend_moving`: inlining
-    # it here trips the checker's candidate-replay ownership bookkeeping at this
-    # overloaded call surface ("use of 'other' after transferred" — roadmap:
-    # overload-machinery hardening, defect 3, still open).
     def extend(mut self, var other: Self) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
-        self._extend_moving(other^)
+        self.reserve(self.size + other.size)
+        var i = 0
+        while i < other.size:
+            self.append(other.data.unsafe_offset(i).unsafe_take_pointee())
+            i += 1
+        other.data.unsafe_free()
+        other.data = unsafe_alloc[Self.T](0)
+        other.size = 0
+        other.cap = 0
 
     # Borrowing extend: copy every element of the view (the source list
     # stays intact).
@@ -436,13 +440,13 @@ struct List[T: AnyType](
         Self.T, Copyable
     ) and conforms_to(Self.T, Deinitable) and conforms_to(Self.T, Movable):
         var result = self.copy()
-        result._extend_moving(other^)
+        result.extend(other^)
         return result^
 
     def __iadd__(mut self, var other: Self, /) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
-        self._extend_moving(other^)
+        self.extend(other^)
 
     # Repetition: `x` copies of the elements (empty for `x <= 0`).
     def __mul__(self, x: Int) -> Self where conforms_to(
@@ -453,7 +457,7 @@ struct List[T: AnyType](
         var result = self.copy()
         var n = 1
         while n < x:
-            result._extend_moving(self.copy())
+            result.extend(self.copy())
             n += 1
         return result^
 
@@ -467,7 +471,7 @@ struct List[T: AnyType](
         self.reserve(self.size * x)
         var n = 1
         while n < x:
-            self._extend_moving(orig.copy())
+            self.extend(orig.copy())
             n += 1
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
@@ -484,23 +488,6 @@ struct List[T: AnyType](
         self.size = 0
         self.cap = 0
         return result^
-
-    # Single-candidate consuming drain behind the overloaded `extend`
-    # surface: a `^`-moved argument at an overloaded call site trips the
-    # checker's candidate-replay ownership bookkeeping, so internal callers
-    # (and the public consuming overload) route here.
-    def _extend_moving(mut self, var other: Self) where conforms_to(
-        Self.T, Deinitable
-    ) and conforms_to(Self.T, Movable):
-        self.reserve(self.size + other.size)
-        var i = 0
-        while i < other.size:
-            self.append(other.data.unsafe_offset(i).unsafe_take_pointee())
-            i += 1
-        other.data.unsafe_free()
-        other.data = unsafe_alloc[Self.T](0)
-        other.size = 0
-        other.cap = 0
 
     # Move the elements into a fresh allocation of `new_cap` slots.
     def _realloc(mut self, new_cap: Int) where conforms_to(Self.T, Movable):
