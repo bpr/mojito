@@ -494,6 +494,7 @@ impl Checker {
                         self.record_call_effect(span.clone(), error.clone());
                         self.require_error(format!("call to raising function '{name}'"), error)?;
                     }
+                    self.record_view_result_borrow(&span, &ret);
                     Ok(ret)
                 }
                 Err(OverloadSelect::NoMatch) => {
@@ -643,11 +644,27 @@ impl Checker {
                 .borrow_mut()
                 .insert(span.clone(), target);
         }
+        self.record_view_result_borrow(&span, &ret);
         if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
             self.record_call_effect(span, error.clone());
             self.require_error(format!("call to raising function '{name}'"), error)?;
         }
         Ok(ret)
+    }
+
+    /// A non-method call whose result is a ref-field struct (a borrowing
+    /// view/iterator) lends its borrowed sources to the result, exactly as the
+    /// method-receiver rule in `infer_method_call` does: record the
+    /// view-result adjustment so lowering anchors the result and establishes
+    /// caller-side loans. Reference results carry their own loan channel, and
+    /// an already-recorded adjustment (captures, instantiated contracts) wins.
+    fn record_view_result_borrow(&self, span: &SourceSpan, ret: &Ty) {
+        if matches!(ret, Ty::Struct(..)) && self.type_contains_reference(ret) {
+            self.operation_adjustments
+                .borrow_mut()
+                .entry(span.clone())
+                .or_insert(crate::checked::SemanticAdjustment::BorrowViewResult);
+        }
     }
 
     /// Type the bare element-call spelling — `objs[0](3)`, `a.b[i](x)`,

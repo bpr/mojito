@@ -565,6 +565,14 @@ pub fn is_overload_of(symbol: &str, base: &str) -> bool {
         .is_some_and(|rest| rest.starts_with(OV_SEP))
 }
 
+/// Whether an overload symbol's signature qualifier is exactly the `NoneType`
+/// parameter spelling (`…$ov$None`) — the `@implicit` None-conversion
+/// constructor, which arity-based selection must exclude when a bound can
+/// never be `None`.
+pub fn is_none_overload(symbol: &str) -> bool {
+    symbol.ends_with("$ov$None")
+}
+
 /// If `symbol` is a signature-qualified `__init__` overload (`Type.__init__$ov$…`),
 /// the struct it constructs.
 pub fn init_overload_struct(symbol: &str) -> Option<&str> {
@@ -747,6 +755,17 @@ fn ast_raw(
         Type::Named(name, args) => {
             let mut s = parameter_raw(name, type_bounds);
             for arg in args {
+                // An origin placeholder (`_`/`...`) marks a slot explicitly
+                // inferred and is erased from checked identity; erase it from
+                // the overload spelling too, so `Span[T, _]` and `Span[T]`
+                // declare the same symbol.
+                if matches!(
+                    arg,
+                    ParamArg::Value(value)
+                        if matches!(&value.kind, crate::ast::ExprKind::Identifier(name) if name == "_" || name == "...")
+                ) {
+                    continue;
+                }
                 s.push('$');
                 match arg {
                     ParamArg::Type(t) => {

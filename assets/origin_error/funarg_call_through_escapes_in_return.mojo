@@ -13,7 +13,7 @@ def stash(mut sink: Carrier, box: RefBox):
 def feed(f: def(mut Carrier, RefBox), mut sink: Carrier, box: RefBox):
     f(sink, box^)
 
-def make(mut source: List[Int]) -> Carrier:
+def make(mut source: List[Int]) -> Carrier[origin_of(source)]:
     ref src_alias = source
     var sink = Carrier(RefBox(src_alias))
     var local: List[Int] = [9]

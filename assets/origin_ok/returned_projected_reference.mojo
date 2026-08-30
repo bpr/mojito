@@ -8,7 +8,7 @@
 struct View[o: Origin[mut=True]]:
     var src: ref[o] List[Int]
 
-    def at(self, i: Int) -> ref[o] Int:
+    def at(self, i: Int) -> ref[Self.o] Int:
         return self.src[i]
 
 

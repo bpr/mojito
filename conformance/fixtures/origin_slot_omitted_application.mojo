@@ -2,11 +2,9 @@
 # origin slot where nothing infers it (`var p: Pair[Int] = ...`): the
 # a79bdf59f2 pin reports "'Pair' failed to infer parameter 'o', specify
 # the parameter or use '_' or '...'", and Mojito's storage-annotation
-# concreteness rule (tightened 2026-08-28) reports "'Pair' failed to
-# infer parameter 'o'; specify the parameter explicitly" (Mojito has no
-# `_`/`...` origin placeholders — a recorded subset gap). Constructor
-# expressions with value arguments remain the origin-inference context
-# on both compilers.
+# concreteness rule reports the same placeholder hint (the `_`/`...`
+# origin placeholders landed 2026-08-29). Constructor expressions with
+# value arguments remain the origin-inference context on both compilers.
 @fieldwise_init
 struct Pair[T: Copyable, o: Origin[mut=True]]:
     var src: Pointer[Self.T, Self.o]

@@ -77,6 +77,56 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Build a spanned expression: `kind` spanning from `start` (its first token's
     /// start offset) to the end of the most recently consumed token.
+    /// Rebuild a `Self.o`-rooted binder/projection chain the type parser
+    /// consumed (`Self.o`, `Self.o._get_owned_interior["element"]`) as the
+    /// origin expression it spells in an origin slot.
+    fn rematerialize_self_param_chain(&self, ty: &Type, start: usize) -> Option<Expr> {
+        match ty {
+            Type::SelfParam(param) => {
+                let object = self.node(ExprKind::Identifier("Self".to_string()), start);
+                Some(self.node(
+                    ExprKind::Member {
+                        object: Box::new(object),
+                        field: param.clone(),
+                    },
+                    start,
+                ))
+            }
+            Type::Assoc { base, name, args } => {
+                let base = self.rematerialize_self_param_chain(base, start)?;
+                let member = self.node(
+                    ExprKind::Member {
+                        object: Box::new(base),
+                        field: name.clone(),
+                    },
+                    start,
+                );
+                match args.as_slice() {
+                    [] => Some(member),
+                    [crate::ast::ParamArg::Value(index)] => Some(self.node(
+                        ExprKind::Index {
+                            object: Box::new(member),
+                            index: Box::new(index.clone()),
+                        },
+                        start,
+                    )),
+                    _ => None,
+                }
+            }
+            Type::IndexedProjection { base, index } => {
+                let base = self.rematerialize_self_param_chain(base, start)?;
+                Some(self.node(
+                    ExprKind::Index {
+                        object: Box::new(base),
+                        index: index.clone(),
+                    },
+                    start,
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn node(&self, kind: ExprKind, start: usize) -> Expr {
         Expr {
             kind,
@@ -2218,6 +2268,27 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     ));
                 }
             }
+            // A projection chained off the qualified struct binder
+            // (`Self.o._get_owned_interior[...]` in an origin slot) is a value
+            // expression: the type parse stops at `Self.o`, so a following
+            // `.` re-parses the binder as an expression atom and continues.
+            if let Type::SelfParam(param) = &ty
+                && matches!(self.peek_token()?, Some(Token::Dot))
+            {
+                let atom = Expr::new(
+                    ExprKind::Member {
+                        object: Box::new(Expr::new(
+                            ExprKind::Identifier("Self".to_string()),
+                            (start, self.last_span.1),
+                        )),
+                        field: param.clone(),
+                    },
+                    (start, self.last_span.1),
+                );
+                return Ok(ParamArg::Value(
+                    self.parse_expression_from(atom, Precedence::Lowest)?,
+                ));
+            }
             return Ok(ParamArg::Type(ty));
         }
         if let Some(Token::Identifier(_)) = self.peek_token()? {
@@ -3226,7 +3297,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // immediately calling it (`var f = borrow[origin_of(value)]`).
             // Keep ordinary `values[index]` syntax on the Index path while
             // preserving this compiler-known origin argument as TypeApply.
-            Ok([crate::ast::ParamArg::Value(origin)]) if is_explicit_origin_argument(&origin) => {
+            Ok([crate::ast::ParamArg::Value(origin)])
+                if is_explicit_origin_argument(&origin)
+                    && matches!(object.kind, ExprKind::Identifier(_)) =>
+            {
                 Ok(self.node(
                     ExprKind::TypeApply {
                         name: call_name(object)?,
@@ -3242,6 +3316,28 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 },
                 start,
             )),
+            // A `Self.o`-rooted binder (possibly projected —
+            // `Self.o._get_owned_interior["element"]`) as the sole bracket
+            // argument of a member subscript
+            // (`Origin[mut=False].cast_from[...]`): the qualified struct
+            // binder parses as a type/assoc chain, but a member object has no
+            // parameterized-application form — re-materialize the chain as
+            // the index expression.
+            Ok([crate::ast::ParamArg::Type(binder_ty)])
+                if !matches!(object.kind, ExprKind::Identifier(_))
+                    && self_param_rooted_expression(&binder_ty).is_some() =>
+            {
+                let binder = self
+                    .rematerialize_self_param_chain(&binder_ty, start)
+                    .expect("guarded by self_param_rooted_expression");
+                Ok(self.node(
+                    ExprKind::Index {
+                        object: Box::new(object),
+                        index: Box::new(binder),
+                    },
+                    start,
+                ))
+            }
             Ok([other]) => Ok(self.node(
                 ExprKind::TypeApply {
                     name: call_name(object)?,
@@ -3708,4 +3804,23 @@ pub struct Parser<I: Iterator<Item = Result<(Token, Span), LexError>>> {
     /// Whether the most recent statement terminator was `;` rather than a newline
     /// or EOF. Used for one-line suites like `def f(): a(); b()`.
     last_stmt_ended_with_semicolon: bool,
+}
+
+/// Whether a type is the qualified struct binder (`Self.o`) or a projection
+/// chain rooted at it whose applications are single value arguments —
+/// re-materializable as an origin expression by
+/// `Parser::rematerialize_self_param_chain`.
+fn self_param_rooted_expression(ty: &Type) -> Option<()> {
+    match ty {
+        Type::SelfParam(_) => Some(()),
+        Type::Assoc { base, args, .. } => {
+            self_param_rooted_expression(base)?;
+            match args.as_slice() {
+                [] | [crate::ast::ParamArg::Value(_)] => Some(()),
+                _ => None,
+            }
+        }
+        Type::IndexedProjection { base, .. } => self_param_rooted_expression(base),
+        _ => None,
+    }
 }

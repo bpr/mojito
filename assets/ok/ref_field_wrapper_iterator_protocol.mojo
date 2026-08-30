@@ -21,7 +21,7 @@ struct EntryIter[m: Bool, //, o: Origin[mut=m]](Copyable, Iterator):
         return self.copy()
 
     def __next__(mut self) raises StopIteration -> ref[
-        Origin[mut=False].cast_from[o._get_owned_interior["element"]]
+        Origin[mut=False].cast_from[Self.o._get_owned_interior["element"]]
     ] Pair:
         if self.index >= len(self.src):
             raise StopIteration()

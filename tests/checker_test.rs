@@ -953,7 +953,7 @@ fn projected_origin_iterator_contract_carries_parametric_mutability() {
     // struct origin (`ref[o._get_owned_interior["element"]] T`) lowers with
     // the origin parameter's declared mutability: a mutable source permits
     // `for ref` write-through, while a read-parameter source rejects it.
-    let header = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct ProjIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[o._get_owned_interior[\"element\"]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [4, 5, 6]\n\n    def __iter__(ref self) -> ProjIter:\n        ref items = self.items\n        return ProjIter(items, 0)\n\n";
+    let header = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct ProjIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[Self.o._get_owned_interior[\"element\"]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [4, 5, 6]\n\n    def __iter__(ref self) -> ProjIter[origin_of(self.items)]:\n        ref items = self.items\n        return ProjIter(items, 0)\n\n";
     let mutable = format!(
         "{header}def main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n"
     );
@@ -974,7 +974,7 @@ fn fixed_immutable_origin_iterator_still_binds_immutably() {
     // `Origin[mut=False]` iterator yields immutable references even over a
     // mutable source, so a `for ref` write is rejected.
     let error = err(
-        "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct FrozenIter[o: Origin[mut=False]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[o] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [1, 2]\n\n    def __iter__(ref self) -> FrozenIter:\n        ref items = self.items\n        return FrozenIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n",
+        "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct FrozenIter[o: Origin[mut=False]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [1, 2]\n\n    def __iter__(ref self) -> FrozenIter[origin_of(self.items)]:\n        ref items = self.items\n        return FrozenIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n",
     );
     assert!(
         matches!(&error, TypeError::ImmutableBinding(name) if name == "x")
@@ -3536,12 +3536,12 @@ fn checks_reference_aggregate_permissions_initialization_and_escape() {
     ));
     assert!(matches!(
         check_source(&format!(
-            "{mutable_box}def make() -> RefBox:\n    var value = 1\n    ref alias = value\n    return RefBox(alias)\n"
+            "{mutable_box}def make() -> RefBox[MutUnsafeAnyOrigin]:\n    var value = 1\n    ref alias = value\n    return RefBox(alias)\n"
         )),
         Err(TypeError::ReturnsReferenceToLocal)
     ));
     assert!(check_source(
-        "struct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n    def __init__(out self, ref[origin] value: Int):\n        self.value = value\n"
+        "struct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n    def __init__(out self, ref[Self.origin] value: Int):\n        self.value = value\n"
     )
     .is_ok());
     assert!(check_source("struct Seen:\n    var value: ref[ImmUntrackedOrigin] Int\n").is_ok());
@@ -3562,7 +3562,7 @@ fn checks_reference_aggregate_permissions_initialization_and_escape() {
 #[test]
 fn handwritten_reference_constructor_borrows_a_noncopyable_actual() {
     assert!(check_source(
-        "struct Item:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Item\n    def __init__(out self, ref[origin] value: Item):\n        self.value = value\n\ndef main():\n    var item = Item(1)\n    var box = RefBox(item)\n    print(box.value.value)\n"
+        "struct Item:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Item\n    def __init__(out self, ref[Self.origin] value: Item):\n        self.value = value\n\ndef main():\n    var item = Item(1)\n    var box = RefBox(item)\n    print(box.value.value)\n"
     )
     .is_ok());
 }
@@ -4300,7 +4300,7 @@ fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
 
 #[test]
 fn raising_reference_iterator_preserves_the_reference_loop_binding_type() {
-    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
+    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
     let program = parse(source).expect("parse reference-yielding iterator");
     let checked = check_program(&program).expect("check reference-yielding iterator");
     let item = checked
@@ -5077,11 +5077,11 @@ fn omitted_origin_slot_in_a_local_annotation_fails_to_infer() {
 
 #[test]
 fn immutable_origin_cast_pins_reference_results_read_only() {
-    // `Origin[mut=False].cast_from[o]` in a reference result signature pins
+    // `Origin[mut=False].cast_from[Self.o]` in a reference result signature pins
     // the yielded capability to read-only regardless of the origin
     // parameter's own parametric `mut=` — the loop site never upgrades a
     // declared-immutable yield from the source's mutability.
-    let template = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[o]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n";
+    let template = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[Self.o]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n";
     let write = format!("{template}    for ref x in nums:\n        x += 10\n");
     assert!(matches!(
         err(&write),
@@ -5093,13 +5093,13 @@ fn immutable_origin_cast_pins_reference_results_read_only() {
 
 #[test]
 fn origin_cast_cannot_upgrade_capability() {
-    let src = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[Origin[mut=True].cast_from[o]] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
+    let src = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[Origin[mut=True].cast_from[Self.o]] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
     assert!(matches!(err(src), TypeError::Unsupported(_)));
 }
 
 #[test]
 fn parameter_rooted_transfers_stay_accepted() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox]:\n    var sink = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [4]\n    var got = fill(keep)\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef fill(mut source: List[Int]) -> List[RefBox[origin_of(source)]]:\n    var sink = List[RefBox]()\n    ref alias = source\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [4]\n    var got = fill(keep)\n";
     assert!(check(&parse(src).expect("parse")).is_ok());
 }
 

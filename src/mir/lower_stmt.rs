@@ -13,6 +13,23 @@ impl Flatten<'_> {
         i: &HirInstr,
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) {
+        // Bracket each HIR instruction for temporary-argument anchors (see
+        // `lower_stmt`, whose statements arrive through this dispatcher too):
+        // hidden `$arg_loan_r` slots stay live until the instruction's
+        // statement completes via a trailing `KeepAlive` use.
+        let saved = std::mem::take(&mut self.pending_argument_anchors);
+        self.lower_instr_dispatch(i, outer_map);
+        for var in std::mem::take(&mut self.pending_argument_anchors) {
+            self.emit(MirInstr::KeepAlive { var });
+        }
+        self.pending_argument_anchors = saved;
+    }
+
+    fn lower_instr_dispatch(
+        &mut self,
+        i: &HirInstr,
+        outer_map: &HashMap<hir::BlockId, MirBlockId>,
+    ) {
         match i {
             HirInstr::Bind {
                 dest,
@@ -434,6 +451,19 @@ impl Flatten<'_> {
     /// subscript index into a register **once**. The checker guarantees the root
     /// is a variable (or `self`), so a non-variable root is unreachable.
     pub(super) fn place(&mut self, e: &Expr) -> MirPlace {
+        // A materialized borrow-source temporary's place is its hidden slot,
+        // registered under the checker-minted owner when the argument lowered.
+        if let Some(crate::SemanticAdjustment::MaterializeBorrowSource { owner }) =
+            self.checked_adjustments(e).into_iter().find(|adjustment| {
+                matches!(
+                    adjustment,
+                    crate::SemanticAdjustment::MaterializeBorrowSource { .. }
+                )
+            })
+            && let Some(var) = self.owner_vars.get(&owner).copied()
+        {
+            return MirPlace::root(var, self.var_types.get(&var).cloned());
+        }
         match &e.kind {
             ExprKind::Identifier(name) => self.expression_place_root(name, e),
             ExprKind::Member { object, field } => {
@@ -1551,6 +1581,8 @@ impl Flatten<'_> {
                 aliases: self.aliases.clone(),
                 runtime_aliases: self.runtime_aliases.clone(),
                 aggregate_loans: self.aggregate_loans.clone(),
+                pending_argument_anchors: Vec::new(),
+                allow_argument_anchors: false,
                 transfer_domain_loans: self.transfer_domain_loans.clone(),
                 reassigned_names: self.reassigned_names.clone(),
                 returns_reference: self.returns_reference,
@@ -1759,6 +1791,26 @@ impl Flatten<'_> {
         statement_binding: Option<crate::origin::OwnerId>,
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) {
+        // Bracket the statement for temporary-argument anchors: hidden
+        // `$arg_loan_r` slots created while lowering this statement's calls
+        // stay live (as do their loans) until the statement completes — the
+        // temporary's upstream lifetime — via a trailing `KeepAlive` use.
+        // Nested statement lowering saves and restores the enclosing list, so
+        // each statement flushes exactly its own anchors.
+        let saved = std::mem::take(&mut self.pending_argument_anchors);
+        self.lower_stmt_dispatch(s, statement_binding, outer_map);
+        for var in std::mem::take(&mut self.pending_argument_anchors) {
+            self.emit(MirInstr::KeepAlive { var });
+        }
+        self.pending_argument_anchors = saved;
+    }
+
+    fn lower_stmt_dispatch(
+        &mut self,
+        s: &Stmt,
+        statement_binding: Option<crate::origin::OwnerId>,
+        outer_map: &HashMap<hir::BlockId, MirBlockId>,
+    ) {
         match &s.kind {
             StmtKind::RefDecl { name, value } => {
                 let reference = self.var(name);
@@ -1766,14 +1818,53 @@ impl Flatten<'_> {
                     self.owner_vars.insert(binding, reference);
                 }
                 let mutable = self.checked_borrow_mutability(value).unwrap_or(true);
-                if self.reference_result(value).is_some()
-                    || !matches!(
-                        value.kind,
-                        ExprKind::Identifier(_)
-                            | ExprKind::Member { .. }
-                            | ExprKind::Index { .. }
-                            | ExprKind::TypeApply { .. }
-                    )
+                // A borrowed temporary (`ref x = make_list()`) materializes
+                // into a hidden owned slot registered under the checker-minted
+                // owner; the binding then aliases that slot exactly like an
+                // owned place (the place branch below resolves the expression
+                // to the slot's root).
+                let materialized =
+                    self.checked_adjustments(value)
+                        .into_iter()
+                        .find_map(|adjustment| match adjustment {
+                            crate::SemanticAdjustment::MaterializeBorrowSource { owner } => {
+                                Some(owner)
+                            }
+                            _ => None,
+                        });
+                if let Some(owner) = materialized {
+                    let source = self.expr(value);
+                    // Reference-context expression lowering may already have
+                    // materialized the slot through `reference_handle`; only
+                    // store the value if this is its first materialization.
+                    if !self.owner_vars.contains_key(&owner) {
+                        let ty = self
+                            .f
+                            .reg_types
+                            .get(&source.0)
+                            .cloned()
+                            .or_else(|| self.checked_ty(value));
+                        let hidden = self.var(&format!("$mat_r{}", source.0));
+                        if let Some(ty) = ty.clone() {
+                            self.var_types.insert(hidden, ty);
+                        }
+                        self.emit(MirInstr::DefVar {
+                            var: hidden,
+                            src: source,
+                            binding_ty: ty,
+                        });
+                        self.owner_vars.insert(owner, hidden);
+                    }
+                }
+                if materialized.is_none()
+                    && (self.reference_result(value).is_some()
+                        || !matches!(
+                            value.kind,
+                            ExprKind::Identifier(_)
+                                | ExprKind::Member { .. }
+                                | ExprKind::Index { .. }
+                                | ExprKind::TypeApply { .. }
+                        ))
                 {
                     let source = self.expr(value);
                     self.runtime_aliases.insert(reference);

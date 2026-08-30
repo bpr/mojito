@@ -6,7 +6,7 @@ struct View[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]
     var index: Int
 
-def make() -> View:
+def make() -> View[MutUnsafeAnyOrigin]:
     var local = List[Int]()
     local.append(7)
     return View(local, 0)

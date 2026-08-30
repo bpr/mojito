@@ -413,7 +413,7 @@ impl fmt::Display for TypeError {
             ),
             TypeError::CannotInferParam { name, param } => write!(
                 f,
-                "'{name}' failed to infer parameter '{param}'; specify the parameter explicitly"
+                "'{name}' failed to infer parameter '{param}'; specify the parameter or use '_' or '...' to unbind the parameter explicitly"
             ),
             TypeError::InvalidModuleScope(statement) => write!(
                 f,

@@ -167,11 +167,12 @@ impl Checker {
                             .to_string(),
                     ));
                 };
-                let ExprKind::Identifier(origin_name) = &origin_expr.kind else {
+                let Some(origin_name) = super::origins::origin_binder_name(origin_expr) else {
                     return Err(TypeError::Unsupported(
                         "reference-valued fields require a named origin parameter".to_string(),
                     ));
                 };
+                let origin_name = origin_name.to_string();
                 if origin_name.ends_with("UnsafeAnyOrigin") {
                     return Err(TypeError::Unsupported(
                         "an UnsafeAnyOrigin reference cannot be hidden in a stored reference                          field"
@@ -663,9 +664,30 @@ impl Checker {
                 if !is_origin(param) {
                     continue;
                 }
+                // Upstream's placeholder spellings (`_`, `...`) mark the slot
+                // explicitly inferred: the application is complete (no
+                // partial-application rejection), the slot resolves from the
+                // initializer or call context, and concrete-storage positions
+                // reject exactly like an omitted slot.
+                if origin_placeholder(argument) {
+                    if strict == super::StorageStrictness::Full {
+                        return Err(TypeError::NotConcrete(name.to_string()));
+                    }
+                    self.accept_origin_argument(name, param, argument, None)?;
+                    continue;
+                }
                 match self.resolve_origin_param_arg(argument) {
                     Ok(origin) => resolved.push((*param, argument, origin)),
                     Err(_) => {
+                        // A signature annotation may name places only the body
+                        // can resolve (`origin_of(self.entries)`): accept an
+                        // origin-shaped argument syntactically and erase it.
+                        if self.signature_origin_leniency.get()
+                            && syntactic_origin_argument(argument)
+                        {
+                            self.accept_origin_argument(name, param, argument, None)?;
+                            continue;
+                        }
                         return self.resolve_use_params(name, decls, args, patterns, actuals);
                     }
                 }
@@ -689,6 +711,14 @@ impl Checker {
             if let ParamArg::Named { name: keyword, .. } = argument
                 && let Some(param) = explicit.iter().find(|p| p.name == *keyword && is_origin(p))
             {
+                if origin_placeholder(argument) {
+                    if strict == super::StorageStrictness::Full {
+                        return Err(TypeError::NotConcrete(name.to_string()));
+                    }
+                    self.accept_origin_argument(name, param, argument, None)?;
+                    supplied_origins.push(&param.name);
+                    continue;
+                }
                 match self.resolve_origin_param_arg(argument) {
                     Ok((_, mutability)) => {
                         self.accept_origin_argument(name, param, argument, mutability)?;
@@ -711,6 +741,21 @@ impl Checker {
             });
         }
         self.resolve_use_params(name, decls, &forwarded, patterns, actuals)
+    }
+
+    /// Resolve a return annotation: explicit origin slots must be applied
+    /// there (a bare origin-slotted generic or a placeholder is not concrete,
+    /// pin-attested), while an applied origin expression naming places only
+    /// the body can resolve (`origin_of(self.entries)`) is accepted
+    /// syntactically and erased.
+    pub(super) fn resolve_return_annotation(
+        &self,
+        annotation: &crate::ast::SourceType,
+    ) -> Result<Ty, TypeError> {
+        let saved = self.signature_origin_leniency.replace(true);
+        let result = self.resolve_storage_annotation(annotation, super::StorageStrictness::Full);
+        self.signature_origin_leniency.set(saved);
+        result
     }
 
     /// Resolve a type annotation in a storage position (a struct field or a
@@ -2228,4 +2273,45 @@ fn subtree_is_terminal_error() -> TypeError {
     TypeError::Unsupported(
         "'_subtree' is a terminal origin projection: nothing can be projected below it".to_string(),
     )
+}
+
+/// Whether an application argument is upstream's origin placeholder spelling
+/// (`_` or `...`), possibly behind a keyword (`origin=_`): the slot is
+/// explicitly marked inferred rather than omitted.
+fn origin_placeholder(argument: &crate::ast::ParamArg) -> bool {
+    let mut value = argument;
+    while let crate::ast::ParamArg::Named { value: inner, .. } = value {
+        value = inner;
+    }
+    matches!(
+        value,
+        crate::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) if name == "_" || name == "..."
+    )
+}
+
+/// Whether an application argument is syntactically origin-shaped — an
+/// `origin_of(...)` call, a binder name (`o`, `Self.o`), or a projected origin
+/// expression — regardless of whether its places resolve in this context.
+fn syntactic_origin_argument(argument: &crate::ast::ParamArg) -> bool {
+    let mut value = argument;
+    while let crate::ast::ParamArg::Named { value: inner, .. } = value {
+        value = inner;
+    }
+    match value {
+        crate::ast::ParamArg::Type(crate::ast::Type::Named(_, targs)) => targs.is_empty(),
+        crate::ast::ParamArg::Type(crate::ast::Type::SelfParam(_)) => true,
+        crate::ast::ParamArg::Value(expression) => {
+            matches!(
+                &expression.kind,
+                ExprKind::Call { name, .. } if name == "origin_of"
+            ) || matches!(
+                &expression.kind,
+                ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. }
+            )
+        }
+        _ => false,
+    }
 }

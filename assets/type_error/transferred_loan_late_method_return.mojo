@@ -13,7 +13,7 @@ struct Sink[origin: Origin[mut=True]]:
     def stash(mut self, var box: RefBox):
         self.slot = box^
 
-def make(mut keep: List[Int]) -> Sink:
+def make(mut keep: List[Int]) -> Sink[origin_of(keep)]:
     ref whole = keep
     var sink = Sink(RefBox(whole))
     var local: List[Int] = [9]

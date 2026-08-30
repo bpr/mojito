@@ -180,7 +180,7 @@ insert-displacement	run	conformance/fixtures/insert_displacement.mojo
 string-positional-slice	reject	conformance/fixtures/string_positional_slice.mojo
 string-literal-slice	reject	conformance/fixtures/string_literal_slice.mojo
 owned-pointer-deref	mojo-only	conformance/fixtures/owned_pointer_deref.mojo
-span-parameter-bare-element	mojito-only	conformance/fixtures/span_parameter_bare_element.mojo
+span-parameter-bare-element	reject	conformance/fixtures/span_parameter_bare_element.mojo
 len-string-units	mojito-only	conformance/fixtures/len_string_units.mojo
 subtree-origin-cast	mojito-only	conformance/fixtures/subtree_origin_cast.mojo
 simd-size-removed	reject	assets/type_error/simd_size_removed_alias.mojo
@@ -222,3 +222,9 @@ origin-argument-direct-application	run	conformance/fixtures/origin_argument_dire
 bare-generic-field-omitted-params	reject	conformance/fixtures/bare_generic_field_omitted_params.mojo
 origin-slot-omitted-application	reject	conformance/fixtures/origin_slot_omitted_application.mojo
 delegated-reference-projection	run	conformance/fixtures/delegated_reference_projection.mojo
+ref-binding-temporary-source	run	conformance/fixtures/ref_binding_temporary_source.mojo
+origin-placeholder-initialized-local	run	conformance/fixtures/origin_placeholder_initialized_local.mojo
+origin-placeholder-field	reject	conformance/fixtures/origin_placeholder_field.mojo
+unqualified-struct-origin-clause	reject	conformance/fixtures/unqualified_struct_origin_clause.mojo
+origin-delegated-call-arguments	run	conformance/fixtures/origin_delegated_call_arguments.mojo
+origin-delegated-multi-binder	run	conformance/fixtures/origin_delegated_multi_binder.mojo

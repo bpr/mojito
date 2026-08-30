@@ -573,11 +573,12 @@ impl Checker {
                 // `View(self.src, 0)`.
                 let _ = self.infer(expr);
                 // An owned place auto-borrows into a reference slot exactly as
-                // the equivalent `ref` binding would; only non-place arguments
-                // (temporaries, literals) keep requiring an explicit handle.
+                // the equivalent `ref` binding would; a non-place argument (a
+                // temporary) materializes as an anonymous owned binding whose
+                // lifetime extends to the borrower's, upstream's rule.
                 self.infer_reference_value(expr)
                     .map(Ty::Ref)
-                    .or_else(|| self.reference_actual(expr).ok().map(Ty::Ref))
+                    .or_else(|| self.materialized_reference_actual(expr).ok().map(Ty::Ref))
                     .ok_or_else(|| TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: self

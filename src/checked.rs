@@ -374,6 +374,15 @@ pub enum SemanticAdjustment {
     BorrowRefArguments {
         arguments: Vec<(usize, bool)>,
     },
+    /// A temporary (non-place) expression bound to a `ref [origin]` parameter
+    /// or `ref` binding: the checker materializes it as an anonymous owned
+    /// binding with this identity, and lowering stores the value in a hidden
+    /// frame slot registered under the same owner so the borrow has a real
+    /// place (upstream's temporary lifetime extension — the temporary lives as
+    /// long as its borrower).
+    MaterializeBorrowSource {
+        owner: crate::origin::OwnerId,
+    },
     /// An `@implicit` conversion whose selected constructor borrows its single
     /// argument through a `ref [origin]` parameter (a view construction): the
     /// conversion result borrows the source expression's place, refining the

@@ -6,7 +6,7 @@
 struct Borrow[o: Origin[mut=False]]:
     var p: UnsafePointer[Int, Self.o]
 
-    def get(self) -> ref[o] Int:
+    def get(self) -> ref[Self.o] Int:
         return self.p[0]
 
 

@@ -47,7 +47,7 @@ struct _DictEntryIter[
         return self.copy()
 
     def __next__(mut self) raises StopIteration -> ref[
-        Origin[mut=False].cast_from[iterable_origin._get_owned_interior["element"]]
+        Origin[mut=False].cast_from[Self.iterable_origin._get_owned_interior["element"]]
     ] DictEntry[Self.K, Self.V]:
         if self.index >= len(self.src):
             raise StopIteration()

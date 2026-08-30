@@ -174,6 +174,19 @@ impl VmBackend {
                     }
                     Flow::Return { value, cleanup } => {
                         self.run_cleanup(prog, &cleanup, &mut frame.variables)?;
+                        // Re-root returned reference handles exactly as the
+                        // terminator return path below does: a `return` leaving
+                        // a `try` region otherwise carries refs rooted at this
+                        // dying frame.
+                        let value = {
+                            let mut value = value;
+                            self.canonicalize_value_references(
+                                frame.id,
+                                &frame.variables,
+                                &mut value,
+                            );
+                            value
+                        };
                         if let Some(done) = self.finish_frame(prog, target, frame, value)? {
                             return Ok(done);
                         }
@@ -386,12 +399,21 @@ impl VmBackend {
                     })?;
                     bound[parameter - 1] = self.reference_to_place(caller, place)?;
                 }
+                // As in the synchronous method path: a borrowed receiver whose
+                // result carries reference fields also enters as a caller-place
+                // handle, or the result's `ref` fields root in the callee frame.
                 let receiver = if definition.ref_params.first().copied().unwrap_or(false) {
                     let place = callee_place.as_ref().ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
                             "vm: reference receiver for callable '{function_name}' must be a place"
                         ))
                     })?;
+                    self.reference_to_place(caller, place)?
+                } else if let Some(place) = callee_place.as_ref()
+                    && !definition.owned_params.first().copied().unwrap_or(false)
+                    && !definition.deinit_params.first().copied().unwrap_or(false)
+                    && Self::function_result_carries_reference(prog, index)
+                {
                     self.reference_to_place(caller, place)?
                 } else {
                     receiver

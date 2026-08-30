@@ -27,7 +27,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
     var _size: Int
 
     @implicit
-    def __init__(out self, ref [origin] list: List[Self.T]):
+    def __init__(out self, ref [Self.origin] list: List[Self.T]):
         self._data = list.data.unsafe_origin_cast[
             origin._get_owned_interior["element"]
         ]()
@@ -44,7 +44,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
         return _SpanIter[Self.T](source, 0)
 
     def __getitem__(ref self, index: Int) -> ref[
-        origin._get_owned_interior["element"]
+        Self.origin._get_owned_interior["element"]
     ] Self.T:
         if index < 0 or index >= self._size:
             abort("Span index out of range")
@@ -81,7 +81,7 @@ struct _SpanIter[
         return len(self.src) - self.index
 
     def __next__(mut self) raises StopIteration -> ref[
-        iterable_origin._get_owned_interior["element"]
+        Self.iterable_origin._get_owned_interior["element"]
     ] Self.T where conforms_to(Self.T, Copyable):
         if self.index >= len(self.src):
             raise StopIteration()

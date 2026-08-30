@@ -15,6 +15,54 @@ impl Flatten<'_> {
     /// a chained method receiver.
     pub(super) fn lower_call_argument(&mut self, expression: &Expr) -> (Reg, Option<MirPlace>) {
         let adjustments = self.checked_adjustments(expression);
+        // A temporary bound to a `ref [origin]` parameter: store the value in
+        // a hidden slot registered under the checker-minted owner identity and
+        // hand the call that slot's place — the VM/native ref binding then
+        // borrows real frame storage, and the slot's loans give the temporary
+        // its borrower's lifetime.
+        if let Some(crate::SemanticAdjustment::MaterializeBorrowSource { owner }) =
+            adjustments.iter().find(|adjustment| {
+                matches!(
+                    adjustment,
+                    crate::SemanticAdjustment::MaterializeBorrowSource { .. }
+                )
+            })
+        {
+            let owner = *owner;
+            let value = self.expr(expression);
+            // The expression lowering may already have materialized the slot
+            // (reference-context paths route through `reference_handle`);
+            // reuse it rather than storing a second copy.
+            let variable = match self.owner_vars.get(&owner).copied() {
+                Some(variable) => variable,
+                None => {
+                    let ty = self
+                        .f
+                        .reg_types
+                        .get(&value.0)
+                        .cloned()
+                        .or_else(|| self.checked_ty(expression));
+                    let variable = self.var(&format!("$mat_r{}", value.0));
+                    if let Some(ty) = ty.clone() {
+                        self.var_types.insert(variable, ty);
+                    }
+                    self.emit(MirInstr::DefVar {
+                        var: variable,
+                        src: value,
+                        binding_ty: ty,
+                    });
+                    self.owner_vars.insert(owner, variable);
+                    variable
+                }
+            };
+            return (
+                value,
+                Some(MirPlace::root(
+                    variable,
+                    self.var_types.get(&variable).cloned(),
+                )),
+            );
+        }
         let retains_place = adjustments
             .iter()
             .any(|adjustment| matches!(adjustment, crate::SemanticAdjustment::RetainCallPlace));
@@ -34,7 +82,27 @@ impl Flatten<'_> {
                 // through the call comes from the register's place provenance.
                 return (register, None);
             }
-            return (self.expr(expression), None);
+            let value = self.expr(expression);
+            // A temporary aggregate argument that borrows caller storage (a
+            // constructor or call result holding references/pointers into live
+            // places) needs the same hidden anchor as a chained view receiver,
+            // or its sources are dropped before the consuming call runs. Bare
+            // reference/pointer handles stay unanchored: a `LoadPlace` read
+            // out of the hidden slot would dereference the handle.
+            // Scope: only a plain `Call` temporary in a plain function call's
+            // argument list anchors (see `allow_argument_anchors`) — every
+            // other consumer carries the temporary's loans through its own
+            // channel, and an extra anchor is a conflicting duplicate borrow.
+            if self.allow_argument_anchors
+                && matches!(expression.kind, ExprKind::Call { .. })
+                && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
+            {
+                let loans = self.aggregate_borrows(expression);
+                if !loans.is_empty() {
+                    self.anchor_borrowing_argument(expression, value, loans);
+                }
+            }
+            return (value, None);
         }
 
         // A pure root/field place needs no emitted projection state, so keep
@@ -572,44 +640,7 @@ impl Flatten<'_> {
             if loans.is_empty() {
                 return (value, None);
             }
-            let view_ty = self
-                .f
-                .reg_types
-                .get(&value.0)
-                .cloned()
-                .or_else(|| self.checked_ty(expression));
-            let variable = self.var(&format!("$view_recv_r{}", value.0));
-            if let Some(ty) = view_ty.clone() {
-                self.var_types.insert(variable, ty);
-            }
-            self.emit(MirInstr::DefVar {
-                var: variable,
-                src: value,
-                binding_ty: view_ty.clone(),
-            });
-            let marker = self.fresh_typed(
-                expression.source_span(),
-                Some(loans[0].place.root),
-                Ty::None,
-            );
-            self.emit(MirInstr::EstablishLoans {
-                reference: variable,
-                loans: loans.clone(),
-                marker,
-                dest_interior: None,
-            });
-            self.aggregate_loans.insert(variable, loans);
-            let place = MirPlace::root(variable, view_ty);
-            let read = self.fresh_typed(
-                expression.source_span(),
-                Some(variable),
-                place.ty.clone().unwrap_or(Ty::Error),
-            );
-            self.emit(MirInstr::LoadPlace {
-                dest: read,
-                place: place.clone(),
-            });
-            return (read, Some(place));
+            return self.anchor_borrowing_temporary(expression, value, loans, "$view_recv_r");
         }
         match self.try_place(expression) {
             Some(place) => {
@@ -622,6 +653,99 @@ impl Flatten<'_> {
             }
             None => (self.expr(expression), None),
         }
+    }
+
+    /// Anchor a loan-carrying temporary *argument* in a hidden retained slot
+    /// (`$arg_loan_r`) whose loans keep its borrowed sources alive through the
+    /// consuming call. Unlike the receiver anchor below, the value is NOT read
+    /// back out of the slot — a native re-read would run the aggregate's
+    /// lifecycle copy where the VM's shallow read does not. Instead the
+    /// original register keeps carrying the value (`DefVar` clones on both
+    /// backends), and the statement-end `KeepAlive` flush (the temporary's
+    /// upstream lifetime is the full statement) extends the slot's — and so
+    /// the loans' — liveness across the call.
+    fn anchor_borrowing_argument(&mut self, expression: &Expr, value: Reg, loans: Vec<MirLoan>) {
+        let view_ty = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| self.checked_ty(expression));
+        let variable = self.var(&format!("$arg_loan_r{}", value.0));
+        if let Some(ty) = view_ty.clone() {
+            self.var_types.insert(variable, ty);
+        }
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: view_ty,
+        });
+        let marker = self.fresh_typed(
+            expression.source_span(),
+            Some(loans[0].place.root),
+            Ty::None,
+        );
+        self.emit(MirInstr::EstablishLoans {
+            reference: variable,
+            loans: loans.clone(),
+            marker,
+            dest_interior: None,
+        });
+        self.aggregate_loans.insert(variable, loans);
+        self.pending_argument_anchors.push(variable);
+    }
+
+    /// Bind a loan-carrying temporary into a hidden retained slot whose loans
+    /// keep its borrowed sources alive and conflict-checked for the slot's
+    /// lifetime, and read the value back out of that slot: the chained view
+    /// receiver anchor (`$view_recv_r`). Without the anchor, ownership sees
+    /// the borrowed source dead immediately after the producing expression and
+    /// drop elaboration frees it before the consuming call runs.
+    fn anchor_borrowing_temporary(
+        &mut self,
+        expression: &Expr,
+        value: Reg,
+        loans: Vec<MirLoan>,
+        prefix: &str,
+    ) -> (Reg, Option<MirPlace>) {
+        let view_ty = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| self.checked_ty(expression));
+        let variable = self.var(&format!("{prefix}{}", value.0));
+        if let Some(ty) = view_ty.clone() {
+            self.var_types.insert(variable, ty);
+        }
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: view_ty.clone(),
+        });
+        let marker = self.fresh_typed(
+            expression.source_span(),
+            Some(loans[0].place.root),
+            Ty::None,
+        );
+        self.emit(MirInstr::EstablishLoans {
+            reference: variable,
+            loans: loans.clone(),
+            marker,
+            dest_interior: None,
+        });
+        self.aggregate_loans.insert(variable, loans);
+        let place = MirPlace::root(variable, view_ty);
+        let read = self.fresh_typed(
+            expression.source_span(),
+            Some(variable),
+            place.ty.clone().unwrap_or(Ty::Error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: read,
+            place: place.clone(),
+        });
+        (read, Some(place))
     }
 
     /// Retain storage for any callable place. Nominal callable receivers use it

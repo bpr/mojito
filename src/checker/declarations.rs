@@ -257,13 +257,20 @@ impl Checker {
             conventions: regular.iter().map(|(_, p)| p.convention).collect(),
             ret: match &method.ret {
                 Some(SourceType::Ref { referent, .. }) => self.ty_from_anno(referent)?,
-                Some(ret) => self.ty_from_anno(ret)?,
+                // `$`-mangled generated methods rebind already-checked
+                // annotations with origins legitimately erased.
+                Some(ret) if method.name.contains('$') => self.ty_from_anno(ret)?,
+                Some(ret) => self.resolve_return_annotation(ret)?,
                 None => Ty::None,
             },
             raises: error.as_ref().is_some_and(|ty| *ty != Ty::Never),
             error: error.map(Box::new),
             self_convention: method.self_convention,
-            ref_params: lower_ref_param_sigs(&self.enclosing_type_params, &regular_params)?,
+            ref_params: lower_ref_param_sigs(
+                &self.enclosing_type_params,
+                &regular_params,
+                self.enclosing_struct_type_params.get(),
+            )?,
             ref_return: match &method.ret {
                 Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                     origin.as_ref().ok_or_else(|| {
@@ -271,6 +278,7 @@ impl Checker {
                     })?,
                     &self.enclosing_type_params,
                     &regular_params,
+                    self.enclosing_struct_type_params.get(),
                 )?),
                 _ => None,
             },
@@ -776,6 +784,7 @@ impl Checker {
         let decls = self.classify_params(&m.type_params)?;
         self.tparams.push(type_scope(&decls));
         let saved = self.enclosing_type_params.clone();
+        let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
         let assumptions = (|| {
             let mut facts = Vec::new();
@@ -827,6 +836,7 @@ impl Checker {
             Err(error) => Err(error),
         };
         self.enclosing_type_params = saved;
+        self.enclosing_struct_type_params.set(saved_struct_count);
         self.tparams.pop();
         let propagated = self
             .parametric_write_frames
@@ -932,7 +942,10 @@ impl Checker {
         }
         let ret_ty = match &m.ret {
             Some(SourceType::Ref { referent, .. }) => self.ty_from_anno(referent)?,
-            Some(t) => self.ty_from_anno(t)?,
+            // `$`-mangled generated methods rebind already-checked
+            // annotations with origins legitimately erased.
+            Some(t) if m.name.contains('$') => self.ty_from_anno(t)?,
+            Some(t) => self.resolve_return_annotation(t)?,
             None => Ty::None,
         };
         let regular: Vec<&FnParam> = m
@@ -947,6 +960,7 @@ impl Checker {
                 })?,
                 &self.enclosing_type_params,
                 &regular,
+                self.enclosing_struct_type_params.get(),
             )?),
             _ => None,
         };
@@ -1059,7 +1073,12 @@ impl Checker {
             }
         }
         for p in &m.params {
-            let mut pty = self.ty_from_anno(&p.ty)?;
+            // Parameter annotations follow the initialized-local rule
+            // (pin-attested): a bare origin-slotted generic infers per call,
+            // a partial application that omits an origin slot rejects, and a
+            // placeholder marks the slot explicitly inferred.
+            let mut pty =
+                self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare)?;
             pty = match p.kind {
                 // A specialized heterogeneous pack (`$pack` → RuntimePack)
                 // binds as the tuple itself; an ordinary variadic collects into

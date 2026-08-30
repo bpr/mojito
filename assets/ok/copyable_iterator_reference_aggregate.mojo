@@ -10,7 +10,7 @@ struct RefBox[origin: Origin[mut=False]](
 ):
     var value: ref[origin] Int
 
-    def __init__(out self, ref[origin] value: Int):
+    def __init__(out self, ref[Self.origin] value: Int):
         self.value = value
 
     def __init__(out self, *, copy: Self):

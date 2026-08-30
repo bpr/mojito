@@ -436,6 +436,7 @@ impl ConformanceOracle {
                     callable_target: None,
                     conformance_conditions: conformance_conditions.iter().cloned().collect(),
                     fields: Vec::new(),
+                    field_origin_arguments: HashMap::new(),
                     associated: HashMap::new(),
                     associated_constraints: HashMap::new(),
                     parameterized_associated: HashMap::new(),
@@ -633,7 +634,20 @@ pub struct Checker {
     /// parameter order so erased Origin arguments can participate in overload
     /// and generic candidate selection.
     callable_origin_scopes: Vec<HashMap<String, Vec<CallableOriginSignature>>>,
-    next_owner: u32,
+    /// Monotonic binding-identity source. A `Cell` because materialized
+    /// borrow-source temporaries mint anonymous owners from shared-borrow
+    /// inference contexts.
+    next_owner: std::cell::Cell<u32>,
+    /// How many leading entries of `enclosing_type_params` are the enclosing
+    /// STRUCT's own parameters (method-own parameters are appended after
+    /// them while a method checks). Member origin clauses reject bare
+    /// references into this prefix; later (method-own) binders stay bare.
+    enclosing_struct_type_params: std::cell::Cell<usize>,
+    /// True while resolving a signature (return) annotation: an origin
+    /// argument that is syntactically origin-shaped but names places only the
+    /// body can resolve (`origin_of(self.entries)`) is accepted and erased
+    /// instead of failing place resolution.
+    signature_origin_leniency: std::cell::Cell<bool>,
     /// Index of the local scope for each function currently being checked.
     function_bases: Vec<usize>,
     /// Function/method scope base and caller-owned inputs which may legally
@@ -889,7 +903,9 @@ impl Checker {
             aggregate_field_origin_scopes: vec![HashMap::new()],
             reference_parameter_scopes: vec![HashMap::new()],
             callable_origin_scopes: vec![HashMap::new()],
-            next_owner: 0,
+            next_owner: std::cell::Cell::new(0),
+            signature_origin_leniency: std::cell::Cell::new(false),
+            enclosing_struct_type_params: std::cell::Cell::new(0),
             function_bases: Vec::new(),
             aggregate_escape_contexts: Vec::new(),
             capture_contexts: RefCell::new(Vec::new()),
@@ -1196,7 +1212,7 @@ impl Checker {
     ) -> Result<crate::origin::RefSig, TypeError> {
         use crate::origin::{Mutability, RefSig, SigMutability, SigOrigin};
 
-        if let Ok(signature) = lower_ref_sig(spec, type_params, params) {
+        if let Ok(signature) = lower_ref_sig(spec, type_params, params, 0) {
             return Ok(signature);
         }
         let mut members = Vec::new();
@@ -1235,6 +1251,7 @@ impl Checker {
                     expression,
                     type_params,
                     params,
+                    0,
                 )?),
             }
         }
@@ -1978,6 +1995,14 @@ struct StructInfo {
     conformance_conditions: HashMap<String, Expr>,
     /// Declared fields, in order (drives the fieldwise constructor).
     fields: Vec<(String, Ty)>,
+    /// For each field whose SOURCE annotation applied origin-binder
+    /// arguments (`var iter: EntryIter[Self.o2]`), the (callee origin-param
+    /// index, enclosing origin-param index) pairs the application bound —
+    /// both in their declaration lists' full-index (OriginParamId) domain.
+    /// Origin arguments are erased from checked identity, so this is the
+    /// surviving record delegated-call origin clauses resolve binder
+    /// correspondences through.
+    field_origin_arguments: HashMap<String, Vec<(u32, u32)>>,
     /// Associated compile-time facts declared by `comptime NAME = ...` in the
     /// struct body. These live on the type, not on runtime instances.
     associated: HashMap<String, CtValue>,

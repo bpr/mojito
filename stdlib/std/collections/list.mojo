@@ -29,7 +29,7 @@ struct _ListIter[
         return len(self.src) - self.index
 
     def __next__(mut self) raises StopIteration -> ref[
-        iterable_origin._get_owned_interior["element"]
+        Self.iterable_origin._get_owned_interior["element"]
     ] Self.T where conforms_to(Self.T, Copyable):
         if self.index >= len(self.src):
             raise StopIteration()
@@ -375,7 +375,7 @@ struct List[T: AnyType](
 
     # Borrowing extend: copy every element of the view (the source list
     # stays intact).
-    def extend(mut self, elements: Span[Self.T]) where conforms_to(
+    def extend(mut self, elements: Span[Self.T, _]) where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Movable):
         self.reserve(self.size + len(elements))

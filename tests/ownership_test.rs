@@ -278,7 +278,7 @@ fn reference_field_write_is_field_sensitive() {
 
 #[test]
 fn handwritten_reference_fields_keep_their_referent_identity() {
-    let src = "struct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n    def __init__(out self, ref[left_origin] left: List[Int], ref[right_origin] right: List[Int]):\n        self.left = left\n        self.right = right\n\ndef main():\n    var left: List[Int] = [1, 2]\n    var right: List[Int] = [3, 4]\n    var pair = RefPair(left, right)\n    ref right_element = pair.right[0]\n    pair.right = [5, 6]\n    print(right_element)\n";
+    let src = "struct RefPair[left_origin: Origin[mut=True], right_origin: Origin[mut=True]]:\n    var left: ref[left_origin] List[Int]\n    var right: ref[right_origin] List[Int]\n    def __init__(out self, ref[Self.left_origin] left: List[Int], ref[Self.right_origin] right: List[Int]):\n        self.left = left\n        self.right = right\n\ndef main():\n    var left: List[Int] = [1, 2]\n    var right: List[Int] = [3, 4]\n    var pair = RefPair(left, right)\n    ref right_element = pair.right[0]\n    pair.right = [5, 6]\n    print(right_element)\n";
     let result = own(src);
     assert!(
         matches!(
@@ -784,7 +784,7 @@ fn immutable_yield_iteration_still_conflicts_with_source_mutation() {
     // iterator's source loan is unchanged, so structural mutation during
     // iteration still conflicts (generation protection is loan-based, not
     // mutability-based).
-    let src = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[o]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        nums.items.append(7)\n        print(x)\n";
+    let src = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[Self.o]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        nums.items.append(7)\n        print(x)\n";
     assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
 }
 

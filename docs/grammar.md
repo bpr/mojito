@@ -400,6 +400,10 @@ the compile-time purity walk. Bare parameter reads in method bodies fold to
 the frozen value's construction; field reads on a frozen value fold to
 constants. Explicit `param_args` may bind positionally or by
 name (`Pair[Int]`, `FixedBuffer[8]`, `Foo[Int, 5]`, `borrow[origin=origin_of(x)]`).
+An **origin** slot additionally accepts the placeholder spellings `_` and `...`
+(`Span[Int, _]`, `Span[Int, ...]`): the slot is explicitly marked inferred, the
+application counts as complete, and concrete-storage positions (struct fields,
+uninitialized locals) reject the placeholder exactly like an omitted slot.
 A variadic compile-time pack consumes its available positional segment while a
 required suffix can be named, so packs and semantic-only `Origin` parameters may
 be interleaved without changing source argument identity. If the bracket list is

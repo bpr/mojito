@@ -766,7 +766,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
     var _size: Int
 
-    def __init__(out self, ref [origin] src: String):
+    def __init__(out self, ref [Self.origin] src: String):
         self._data = src.data.unsafe_origin_cast[
             origin._get_owned_interior["bytes"]
         ]()

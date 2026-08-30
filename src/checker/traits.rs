@@ -188,6 +188,7 @@ impl Checker {
                         })?,
                         &m.type_params,
                         &regular_params,
+                        0,
                     )?),
                     _ => None,
                 };
@@ -215,7 +216,7 @@ impl Checker {
                     raises: error.as_ref().is_some_and(|ty| *ty != Ty::Never),
                     error: error.map(Box::new),
                     self_convention: m.self_convention,
-                    ref_params: lower_ref_param_sigs(&m.type_params, &regular_params)?,
+                    ref_params: lower_ref_param_sigs(&m.type_params, &regular_params, 0)?,
                     ref_return,
                     implicit: false,
                     parametric_origin_writes: Vec::new(),
@@ -362,6 +363,7 @@ impl Checker {
                     .cloned()
                     .collect(),
                 fields: Vec::new(),
+                field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
                 associated_constraints: HashMap::new(),
                 parameterized_associated: HashMap::new(),
@@ -479,6 +481,7 @@ impl Checker {
         self.exit_struct_scope(saved);
         let (
             fields,
+            field_origin_arguments,
             associated,
             associated_constraints,
             parameterized_associated,
@@ -497,6 +500,7 @@ impl Checker {
             .get_mut(name)
             .expect("struct shell is registered before member-type resolution");
         info.fields = fields;
+        info.field_origin_arguments = field_origin_arguments;
         info.associated = associated;
         info.associated_constraints = associated_constraints;
         info.parameterized_associated = parameterized_associated;
@@ -526,6 +530,7 @@ impl Checker {
         // self-containment is rejected separately at completion); duplicate
         // field names are a redeclaration.
         let mut field_tys: Vec<(String, Ty)> = Vec::new();
+        let mut field_origin_arguments = HashMap::new();
         let self_display = self.self_ty.as_ref().map(|ty| ty.to_string());
         for (field_index, f) in declaration.fields.iter().enumerate() {
             if field_tys.iter().any(|(n, _)| n == &f.name) {
@@ -570,6 +575,9 @@ impl Checker {
                 },
                 ty.clone(),
             );
+            if let Some(bindings) = self.field_origin_binder_arguments(&f.ty) {
+                field_origin_arguments.insert(f.name.clone(), bindings);
+            }
             field_tys.push((f.name.clone(), ty));
         }
         let callable_conformance = declaration
@@ -579,6 +587,7 @@ impl Checker {
             .transpose()?;
         Ok((
             field_tys,
+            field_origin_arguments,
             associated_values,
             associated_constraints,
             parameterized_associated,
@@ -628,6 +637,9 @@ impl Checker {
             );
             self.tparams.push(type_scope(&method_decls));
             let saved_method_type_params = self.enclosing_type_params.clone();
+            let saved_struct_count = self
+                .enclosing_struct_type_params
+                .replace(saved_method_type_params.len());
             self.enclosing_type_params.extend(m.type_params.clone());
             let signature = (|| {
                 let all_types = self.param_tys(&m.params)?;
@@ -635,6 +647,7 @@ impl Checker {
                 Ok::<_, TypeError>((all_types, sig))
             })();
             self.enclosing_type_params = saved_method_type_params;
+            self.enclosing_struct_type_params.set(saved_struct_count);
             self.tparams.pop();
             let (all_types, mut sig) = signature?;
             if let Some(info) = self.structs.get(name) {
@@ -2450,6 +2463,7 @@ struct SavedStructScope {
 /// values, parameterized associated members, and the callable conformance.
 type StructMemberTypes = (
     Vec<(String, Ty)>,
+    HashMap<String, Vec<(u32, u32)>>,
     HashMap<String, CtValue>,
     HashMap<String, Vec<GenericConstraint>>,
     HashMap<String, ParameterizedMember>,

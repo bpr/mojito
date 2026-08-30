@@ -8,10 +8,10 @@
 struct Reader:
     var offset: Int
 
-    def read(self, s: Span[Int]) -> Int:
+    def read(self, s: Span[Int, _]) -> Int:
         return s[self.offset]
 
-def total(s: Span[Int]) -> Int:
+def total(s: Span[Int, _]) -> Int:
     var acc = 0
     var i = 0
     while i < len(s):

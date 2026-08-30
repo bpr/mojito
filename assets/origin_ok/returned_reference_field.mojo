@@ -8,10 +8,10 @@ struct Pair[a: Origin[mut=False], b: Origin[mut=False]]:
     var first: ref[a] Int
     var second: ref[b] Int
 
-    def get_first(self) -> ref[a] Int:
+    def get_first(self) -> ref[Self.a] Int:
         return self.first
 
-    def get_second(self) -> ref[b] Int:
+    def get_second(self) -> ref[Self.b] Int:
         return self.second
 
 
@@ -19,7 +19,7 @@ struct Pair[a: Origin[mut=False], b: Origin[mut=False]]:
 struct Cell[o: Origin[mut=True]]:
     var slot: ref[o] Int
 
-    def get(self) -> ref[o] Int:
+    def get(self) -> ref[Self.o] Int:
         return self.slot
 
 

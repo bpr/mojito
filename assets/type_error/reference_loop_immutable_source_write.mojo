@@ -10,7 +10,7 @@ struct NumbersIter[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]
     var index: Int
 
-    def __next__(mut self) raises StopIteration -> ref[o] Int:
+    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index
@@ -24,7 +24,7 @@ struct Numbers:
     def __init__(out self):
         self.items = [4, 5, 6]
 
-    def __iter__(ref self) -> NumbersIter:
+    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:
         ref items = self.items
         return NumbersIter(items, 0)
 

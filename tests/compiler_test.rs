@@ -376,11 +376,11 @@ fn callee_stores_transfer_loans_to_caller_bookkeeping() {
     let compiler = Compiler::default();
     for source in [
         // via the seeded stdlib effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef make() -> List[RefBox]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var got = make()\n",
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef make() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var got = make()\n",
         // via a transitively derived free-function effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef collect() -> List[RefBox]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n",
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef collect() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n",
         // via a body-inferred user-method effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef steal() -> Holder:\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var local: List[Int] = [5]\n    holder.rebind_to(local)\n    return holder^\n\ndef main():\n    var got = steal()\n",
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef steal() -> Holder[MutUnsafeAnyOrigin]:\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var local: List[Int] = [5]\n    holder.rebind_to(local)\n    return holder^\n\ndef main():\n    var got = steal()\n",
     ] {
         let error = compiler
             .compile_unlinked(source)
@@ -433,7 +433,7 @@ fn call_through_visibility_is_declaration_order_independent() {
     // calling a LATER same-struct method that forwards through a callable
     // value parameter still resolves the residue, in both orders.
     let compiler = Compiler::default();
-    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: Sink, box: RefBox):\n    sink.slot = box^\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)\n\n    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
+    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: Sink, box: RefBox):\n    sink.slot = box^\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)\n\n    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)\n\ndef make(mut keep: List[Int]) -> Sink[origin_of(keep)]:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
     let early = late.replace(
         "    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)\n\n    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)",
         "    def feed[callback: def(mut Sink, RefBox) thin](mut self, var box: RefBox):\n        callback(self, box^)\n\n    def via(mut self, var box: RefBox):\n        self.feed[stash](box^)",
@@ -517,7 +517,7 @@ fn overloaded_call_sites_replay_the_shared_effect_entry() {
     // replay entirely). The seeded `List.append` chain requires the linked
     // compiler.
     let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef stash(x: Int):\n    print(x)\n\ndef collect() -> List[RefBox]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef stash(x: Int):\n    print(x)\n\ndef collect() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n";
     let error = compiler
         .compile_unlinked(source)
         .expect_err("transferred local-rooted loan must not escape");
@@ -669,7 +669,7 @@ fn transfer_effect_visibility_is_declaration_order_independent() {
     // whenever a call site observed a stale callee entry — so both
     // declaration orders reject identically.
     let compiler = Compiler::default();
-    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def via(mut self, var box: RefBox):\n        self.stash(box^)\n\n    def stash(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
+    let late = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def via(mut self, var box: RefBox):\n        self.stash(box^)\n\n    def stash(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink[origin_of(keep)]:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.via(RefBox(alias))\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
     let error = compiler.compile_unlinked(late).expect_err("late order");
     assert!(matches!(
         error,
@@ -693,7 +693,7 @@ fn recursion_only_transfer_effects_reach_the_fixpoint() {
     // (its callee's body is uncommitted at the call site), the rerun closes
     // the cycle, and the caller's return-escape rejects.
     let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def ping(mut self, var box: RefBox, n: Int):\n        if n > 0:\n            self.pong(box^, n - 1)\n        else:\n            self.slot = box^\n\n    def pong(mut self, var box: RefBox, n: Int):\n        self.ping(box^, n)\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.pong(RefBox(alias), 1)\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def ping(mut self, var box: RefBox, n: Int):\n        if n > 0:\n            self.pong(box^, n - 1)\n        else:\n            self.slot = box^\n\n    def pong(mut self, var box: RefBox, n: Int):\n        self.ping(box^, n)\n\ndef make(mut keep: List[Int]) -> Sink[origin_of(keep)]:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.pong(RefBox(alias), 1)\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
     let error = compiler
         .compile_unlinked(source)
         .expect_err("mutual recursion");
@@ -710,7 +710,7 @@ fn augmented_assignment_replays_the_dunders_transfer_effects() {
     // installs the transfer at the `sink += carrier` site: returning the
     // receiver with a local-rooted transferred loan rejects.
     let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def __iadd__(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink += RefBox(alias)\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def __iadd__(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink[origin_of(keep)]:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink += RefBox(alias)\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
     let error = compiler.compile_unlinked(source).expect_err("augassign");
     assert!(matches!(
         error,

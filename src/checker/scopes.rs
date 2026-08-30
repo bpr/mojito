@@ -5,12 +5,14 @@
 use super::*;
 
 impl Checker {
-    /// Allocate a stable identity for a source binding's storage.
-    pub(super) fn fresh_owner(&mut self) -> Result<crate::origin::OwnerId, TypeError> {
-        let owner = crate::origin::OwnerId(self.next_owner);
-        self.next_owner = self.next_owner.checked_add(1).ok_or_else(|| {
-            TypeError::InvariantViolation("checker exhausted binding identities".to_string())
-        })?;
+    /// Allocate a stable identity for a source binding's storage (or for a
+    /// materialized borrow-source temporary, which has no source name).
+    pub(super) fn fresh_owner(&self) -> Result<crate::origin::OwnerId, TypeError> {
+        let owner = crate::origin::OwnerId(self.next_owner.get());
+        self.next_owner
+            .set(self.next_owner.get().checked_add(1).ok_or_else(|| {
+                TypeError::InvariantViolation("checker exhausted binding identities".to_string())
+            })?);
         Ok(owner)
     }
 

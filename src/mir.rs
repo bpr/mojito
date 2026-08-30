@@ -809,6 +809,19 @@ struct Flatten<'a> {
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
     aggregate_loans: HashMap<VarId, Vec<MirLoan>>,
+    /// Hidden `$arg_loan_r` slots created for loan-carrying temporary call
+    /// arguments while lowering the current statement. Flushed as `KeepAlive`
+    /// uses at the statement's end so the anchored loans live through the
+    /// consuming call — the temporary's upstream lifetime is the full
+    /// statement.
+    pending_argument_anchors: Vec<VarId>,
+    /// True only while lowering the arguments of a plain (non-construction)
+    /// function call — the one consumer that carries no other channel for a
+    /// temporary argument's loans. Constructions aggregate their arguments'
+    /// loans into the result, and method calls carry them through
+    /// receiver/transfer machinery; anchoring there adds a conflicting
+    /// duplicate borrow.
+    allow_argument_anchors: bool,
     /// Accumulated transferred loans per interior destination domain
     /// (`(root, path)`), so repeated transfers into one domain merge while
     /// sibling domains keep independent generations.
@@ -1080,6 +1093,54 @@ impl Flatten<'_> {
     }
 
     fn reference_handle(&mut self, expression: &Expr) -> Reg {
+        // A materialized borrow-source temporary: store it in its hidden owned
+        // slot (registered under the checker-minted owner) and hand back a
+        // fresh handle to that slot — the auto-borrow a `ref` binding of the
+        // temporary would produce.
+        if let Some(crate::SemanticAdjustment::MaterializeBorrowSource { owner }) = self
+            .checked_adjustments(expression)
+            .into_iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    crate::SemanticAdjustment::MaterializeBorrowSource { .. }
+                )
+            })
+        {
+            let variable = match self.owner_vars.get(&owner).copied() {
+                Some(variable) => variable,
+                None => {
+                    let value = self.expr_unconverted(expression);
+                    let ty = self
+                        .f
+                        .reg_types
+                        .get(&value.0)
+                        .cloned()
+                        .or_else(|| self.checked_ty(expression));
+                    let variable = self.var(&format!("$mat_r{}", value.0));
+                    if let Some(ty) = ty.clone() {
+                        self.var_types.insert(variable, ty);
+                    }
+                    self.emit(MirInstr::DefVar {
+                        var: variable,
+                        src: value,
+                        binding_ty: ty,
+                    });
+                    self.owner_vars.insert(owner, variable);
+                    variable
+                }
+            };
+            let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
+            let dest = self.fresh(expression.source_span(), Some(variable));
+            self.emit(MirInstr::MakeRef {
+                dest,
+                place: place.clone(),
+            });
+            if let Some(ty) = mir_place_handle_ty(&place, None) {
+                self.f.reg_types.insert(dest.0, ty);
+            }
+            return dest;
+        }
         if let Some(reference) = self.reference_result(expression) {
             if let Some(place) = self.lower_projected_reference_place(expression) {
                 let dest = self.fresh_typed(
@@ -1567,6 +1628,8 @@ fn lower_cfg_nested(
                 .filter_map(|(slot, reference)| reference.then_some(slot as VarId))
                 .collect(),
             aggregate_loans: HashMap::new(),
+            pending_argument_anchors: Vec::new(),
+            allow_argument_anchors: false,
             transfer_domain_loans: HashMap::new(),
             reassigned_names: reassigned_names(cfg, nested),
             returns_reference,

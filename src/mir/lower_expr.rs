@@ -1243,7 +1243,27 @@ impl Flatten<'_> {
                 // Retain only checker-selected `mut`/`ref` caller places. A
                 // syntactically simple copied argument remains eligible for
                 // ASAP destruction after its value has been evaluated.
+                // A plain function call is the one consumer with no other
+                // channel for a temporary argument's loans, so only here do
+                // nested loan-carrying temporaries anchor. A construction's
+                // aggregate result carries its arguments' loans forward
+                // instead (its binding — or its own anchor one call level up —
+                // installs them).
+                // Calls with recorded transfer effects install their
+                // temporary's loans at the transfer destination themselves.
+                let saved_anchor_permission = self.allow_argument_anchors;
+                self.allow_argument_anchors =
+                    !(matches!(
+                        self.checked_ty(e),
+                        Some(Ty::Struct(constructed, _)) if constructed == *name
+                    ) || self.checked_adjustments(e).iter().any(|adjustment| {
+                        matches!(
+                            adjustment,
+                            crate::SemanticAdjustment::BorrowRefArguments { .. }
+                        )
+                    }) || self.call_transfers.contains_key(&e.source_span()));
                 let (regs, arg_places) = self.lower_call_arguments(args);
+                self.allow_argument_anchors = saved_anchor_permission;
                 // A copy construction (`Name(copy=place)`) binds its single
                 // keyword to the copy constructor's borrowed `copy: Self`
                 // parameter. Read a place source shallowly and retain it:
@@ -2128,7 +2148,38 @@ impl Flatten<'_> {
                         base,
                         field: field.clone(),
                     });
-                    d
+                    // The same checked value-copy boundary as the place-read
+                    // branch above: a field selected for a consuming value
+                    // context must run its `__copyinit__` even when the base is
+                    // a temporary or reference-projected call result, or the
+                    // register copy aliases the base's heap storage past its
+                    // lifetime.
+                    if !matches!(self.checked_ty(e), Some(Ty::Ref(_)))
+                        && self.checked_adjustments(e).iter().any(|adjustment| {
+                            matches!(adjustment, crate::SemanticAdjustment::CopyPlaceValue)
+                        })
+                    {
+                        // Type the loaded register from the checked expression
+                        // rather than leaving it to `GetField` instruction
+                        // typing: in a generic body the declaration's raw field
+                        // parameter would disagree with the copy's checked
+                        // type.
+                        if let Some(ty) = self.checked_ty(e) {
+                            self.f.reg_types.insert(d.0, ty);
+                        }
+                        let copied = self.fresh_typed(
+                            span(e),
+                            None,
+                            self.checked_ty(e).unwrap_or(Ty::Error),
+                        );
+                        self.emit(MirInstr::CopyValue {
+                            dest: copied,
+                            value: d,
+                        });
+                        copied
+                    } else {
+                        d
+                    }
                 }
             }
             // A variant projection spelled with a struct-name index

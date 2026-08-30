@@ -25,7 +25,7 @@ struct _ArrayIter[
         return len(self.src) - self.index
 
     def __next__(mut self) raises StopIteration -> ref[
-        iterable_origin._get_owned_interior["element"]
+        Self.iterable_origin._get_owned_interior["element"]
     ] Self.T where conforms_to(Self.T, Copyable):
         if self.index >= len(self.src):
             raise StopIteration()

@@ -28,7 +28,7 @@ struct Box:
     def get(self, i: Int) -> Int:
         return self.items[i]
 
-    def __iter__(ref self) -> BoxIter:
+    def __iter__(ref self) -> BoxIter[origin_of(self)]:
         ref source = self
         return BoxIter(source, 0)
 

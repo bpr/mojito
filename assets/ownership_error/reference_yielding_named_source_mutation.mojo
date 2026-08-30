@@ -14,7 +14,7 @@ struct NumbersIter[o: Origin[mut=False]]:
     def __len__(self) -> Int:
         return len(self.src) - self.index
 
-    def __next__(mut self) -> ref[o] Int:
+    def __next__(mut self) -> ref[Self.o] Int:
         var r = self.index
         self.index += 1
         return self.src[r]
@@ -33,7 +33,7 @@ struct Numbers:
     def clear(mut self):
         self.items = List[Int]()
 
-    def __iter__(ref self) -> NumbersIter:
+    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:
         ref items = self.items
         return NumbersIter(items, 0)
 

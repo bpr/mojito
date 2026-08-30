@@ -1,6 +1,6 @@
 # A reference returned from a struct method, whose declared origin is a struct
 # origin parameter, keeps its ultimate source alive when bound to a `ref` local.
-# The struct origin parameter resolves to the origin the receiver's `ref[o]` field
+# The struct origin parameter resolves to the origin the receiver's `ref[Self.o]` field
 # borrows, so the loan roots at the owner (`xs`/`ys`) and it is not dropped while
 # the reference is still live. Previously the returned reference recorded no loan
 # on its source, which was dropped early and left the handle dangling.
@@ -8,7 +8,7 @@
 struct View[o: Origin[mut=False]]:
     var src: ref[o] List[Int]
 
-    def at(self, i: Int) -> ref[o] Int:
+    def at(self, i: Int) -> ref[Self.o] Int:
         return self.src[i]
 
 
@@ -18,7 +18,7 @@ struct Cursor[o: Origin[mut=False]]:
     var index: Int
 
     # A reference-yielding accessor that advances (a `mut self` `__next__` shape).
-    def take(mut self) -> ref[o] Int:
+    def take(mut self) -> ref[Self.o] Int:
         var i = self.index
         self.index += 1
         return self.src[i]
@@ -28,7 +28,7 @@ struct Cursor[o: Origin[mut=False]]:
 struct MutView[o: Origin[mut=True]]:
     var src: ref[o] List[Int]
 
-    def at(self, i: Int) -> ref[o] Int:
+    def at(self, i: Int) -> ref[Self.o] Int:
         return self.src[i]
 
 

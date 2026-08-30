@@ -26,7 +26,7 @@ struct Table:
         self.entries = List[Int]()
         self.entries.append(3)
 
-    def keys(ref self) -> KeyIter:
+    def keys(ref self) -> KeyIter[origin_of(self.entries)]:
         ref source = self.entries
         return KeyIter(EntryIter(source, 0))
 

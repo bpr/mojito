@@ -6,7 +6,7 @@
 struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
-def make() -> List[RefBox]:
+def make() -> List[RefBox[MutUnsafeAnyOrigin]]:
     var sink = List[RefBox]()
     var local: List[Int] = [9]
     ref alias = local

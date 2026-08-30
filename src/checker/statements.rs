@@ -313,10 +313,13 @@ impl Checker {
                         // method call nevertheless left an exact checked
                         // `ReferenceResult` adjustment, which a `ref` binding
                         // must retain instead of trying to reinterpret the call
-                        // expression as a syntactic place. `reference_actual`
-                        // consumes that checked result and remains the shared
-                        // fallback for an ordinary place binding.
-                        self.reference_actual(value)?
+                        // expression as a syntactic place. The materializing
+                        // variant consumes that checked result, remains the
+                        // shared fallback for an ordinary place binding, and
+                        // accepts an owned temporary (`ref x = make_list()`)
+                        // by minting it a hidden owned slot, upstream's
+                        // temporary-lifetime rule.
+                        self.materialized_reference_actual(value)?
                     }
                 };
                 let mutable = reference.mutability == crate::origin::Mutability::Mutable;
@@ -1789,7 +1792,12 @@ impl Checker {
             let param_tys = self.param_tys(params)?;
             let ret_ty = match (ret_anno, named_result) {
                 (Some(SourceType::Ref { referent, .. }), _) => self.ty_from_anno(referent)?,
-                (Some(t), _) => self.ty_from_anno(t)?,
+                // A compiler-generated specialization (`$`-mangled) rebinds
+                // already-checked annotations whose origin identity is
+                // legitimately erased; signature concreteness applies to
+                // user-spelled declarations only.
+                (Some(t), _) if name.contains('$') => self.ty_from_anno(t)?,
+                (Some(t), _) => self.resolve_return_annotation(t)?,
                 (None, Some(result)) => self.ty_from_anno(&result.ty)?,
                 (None, None) => Ty::None,
             };
@@ -1802,7 +1810,7 @@ impl Checker {
                 return Err(e);
             }
         };
-        let ref_params = lower_ref_param_sigs(type_params, &caller_regular)?;
+        let ref_params = lower_ref_param_sigs(type_params, &caller_regular, 0)?;
         let ref_return = match ret_anno {
             Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                 origin.as_ref().ok_or_else(|| {
@@ -1810,6 +1818,7 @@ impl Checker {
                 })?,
                 type_params,
                 &regular,
+                0,
             )?),
             _ => None,
         };
@@ -2327,7 +2336,13 @@ impl Checker {
                             .to_string(),
                     ));
                 }
-                self.ty_from_anno(&parameter.ty)
+                // The initialized-local rule for parameter annotations
+                // (pin-attested): bare infers per call, a partial application
+                // omitting an origin slot rejects, a placeholder is inferred.
+                self.resolve_storage_annotation(
+                    &parameter.ty,
+                    super::StorageStrictness::AllowBare,
+                )
             })
             .collect()
     }

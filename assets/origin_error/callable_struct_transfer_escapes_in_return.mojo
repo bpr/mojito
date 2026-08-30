@@ -14,7 +14,7 @@ struct Stasher(def(mut Carrier, RefBox)):
         self.count += 1
         sink.slot = box^
 
-def make(mut source: List[Int]) -> Carrier:
+def make(mut source: List[Int]) -> Carrier[origin_of(source)]:
     ref src_alias = source
     var sink = Carrier(RefBox(src_alias))
     var s = Stasher(0)

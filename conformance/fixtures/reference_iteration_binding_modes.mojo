@@ -13,7 +13,7 @@ struct ItemIter[o: Origin[mut=False]]:
     var src: ref[o] Item
     var done: Bool
 
-    def __next__(mut self) raises StopIteration -> ref[o] Item:
+    def __next__(mut self) raises StopIteration -> ref[Self.o] Item:
         if self.done:
             raise StopIteration()
         self.done = True
@@ -26,7 +26,7 @@ struct Items:
     def __init__(out self, value: Item):
         self.value = value
 
-    def __iter__(ref self) -> ItemIter:
+    def __iter__(ref self) -> ItemIter[origin_of(self.value)]:
         ref v = self.value
         return ItemIter(v, False)
 

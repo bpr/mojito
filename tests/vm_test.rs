@@ -835,7 +835,7 @@ fn structured_reference_calls_cross_try_boundaries() {
 
 #[test]
 fn structured_reference_call_rebases_reference_bearing_aggregate_returns() {
-    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef wrap[origin: Origin[mut=True]](\n    ref[origin] item: Int\n) -> RefBox:\n    return RefBox(item)\n\ndef main():\n    var value = 40\n    try:\n        var box = wrap(value)\n        box.value += 2\n    except error:\n        print(error)\n    print(value)\n";
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\ndef wrap[origin: Origin[mut=True]](\n    ref[origin] item: Int\n) -> RefBox[origin]:\n    return RefBox(item)\n\ndef main():\n    var value = 40\n    try:\n        var box = wrap(value)\n        box.value += 2\n    except error:\n        print(error)\n    print(value)\n";
     assert_eq!(vm(src), "42\n");
 }
 
@@ -1496,7 +1496,7 @@ fn reference_valued_aggregate_preserves_and_writes_through_handle() {
 
 #[test]
 fn handwritten_initializer_stores_reference_field_handle() {
-    let src = "struct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n    def __init__(out self, ref[origin] value: Int):\n        self.value = value\n\ndef main():\n    var value = 40\n    var box = RefBox(value)\n    box.value += 2\n    print(value)\n";
+    let src = "struct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n    def __init__(out self, ref[Self.origin] value: Int):\n        self.value = value\n\ndef main():\n    var value = 40\n    var box = RefBox(value)\n    box.value += 2\n    print(value)\n";
     assert_eq!(parity(src), "42\n");
 }
 

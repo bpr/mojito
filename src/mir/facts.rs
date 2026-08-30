@@ -101,6 +101,26 @@ impl Flatten<'_> {
                 interior: None,
             }];
         }
+        // A materialized borrow-source temporary loans its hidden owned slot:
+        // the consuming aggregate's binding keeps the temporary alive exactly
+        // as long as the borrower, upstream's temporary-lifetime rule.
+        if let Some(crate::SemanticAdjustment::MaterializeBorrowSource { owner }) = self
+            .checked_adjustments(expression)
+            .into_iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    crate::SemanticAdjustment::MaterializeBorrowSource { .. }
+                )
+            })
+            && let Some(var) = self.owner_vars.get(&owner).copied()
+        {
+            return vec![MirLoan {
+                place: MirPlace::root(var, self.var_types.get(&var).cloned()),
+                mutable: true,
+                interior: None,
+            }];
+        }
         let borrow = self
             .checked_adjustments(expression)
             .into_iter()
@@ -246,6 +266,45 @@ impl Flatten<'_> {
                         mutable,
                         interior: None,
                     }];
+                }
+                // A free-function call returning a ref-field struct (a
+                // borrowing view) lends its borrowed sources to the result,
+                // mirroring the method-receiver rule below: recurse for
+                // chained temporaries first, else loan each aggregate-typed
+                // place argument the callee could have borrowed.
+                if self
+                    .checked_adjustments(expression)
+                    .iter()
+                    .any(|adjustment| {
+                        matches!(adjustment, crate::SemanticAdjustment::BorrowViewResult)
+                    })
+                {
+                    let arguments = || args.iter().chain(kwargs.iter().map(|kw| &kw.value));
+                    let loans: Vec<MirLoan> = arguments()
+                        .flat_map(|argument| self.aggregate_borrows(argument))
+                        .collect();
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                    let places: Vec<&Expr> = arguments()
+                        .filter(|argument| {
+                            matches!(
+                                argument.kind,
+                                ExprKind::Identifier(_) | ExprKind::Member { .. }
+                            ) && matches!(self.checked_ty(argument), Some(Ty::Struct(..)))
+                        })
+                        .collect();
+                    let loans: Vec<MirLoan> = places
+                        .into_iter()
+                        .map(|argument| MirLoan {
+                            place: self.place(argument),
+                            mutable: false,
+                            interior: None,
+                        })
+                        .collect();
+                    if !loans.is_empty() {
+                        return loans;
+                    }
                 }
                 args.iter()
                     .chain(kwargs.iter().map(|argument| &argument.value))

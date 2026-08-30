@@ -22,7 +22,7 @@ struct _SetIter[
     # writing through an element reference would corrupt the hash and
     # uniqueness invariants.
     def __next__(mut self) raises StopIteration -> ref[
-        Origin[mut=False].cast_from[iterable_origin._get_owned_interior["element"]]
+        Origin[mut=False].cast_from[Self.iterable_origin._get_owned_interior["element"]]
     ] Self.T:
         if self.index >= len(self.src):
             raise StopIteration()

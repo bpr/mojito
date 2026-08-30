@@ -18,7 +18,7 @@ struct TokenIter[o: Origin[mut=False]]:
     var src: ref[o] Token
     var done: Bool
 
-    def __next__(mut self) raises StopIteration -> ref[o] Token:
+    def __next__(mut self) raises StopIteration -> ref[Self.o] Token:
         if self.done:
             raise StopIteration()
         self.done = True
@@ -31,7 +31,7 @@ struct Tokens:
     def __init__(out self, value: Token):
         self.value = value
 
-    def __iter__(ref self) -> TokenIter:
+    def __iter__(ref self) -> TokenIter[origin_of(self.value)]:
         ref v = self.value
         return TokenIter(v, False)
 

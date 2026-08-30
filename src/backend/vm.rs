@@ -1758,9 +1758,20 @@ impl VmBackend {
                 let mut call_args = Vec::with_capacity(bound.len() + 1);
                 call_args.push(recv.clone());
                 call_args.extend(bound);
-                let ref_params = &prog.mir.functions[fidx].1.ref_params;
+                let function = &prog.mir.functions[fidx].1;
+                let ref_params = &function.ref_params;
+                // A borrowed receiver whose result carries reference fields
+                // must also enter as a caller-place handle: a value copy would
+                // root the result's `ref` fields in the callee frame, and
+                // return-time canonicalization has no caller storage to re-root
+                // them through. Owned/deinit receivers keep the value transfer.
+                let receiver_as_reference = ref_params.first().copied().unwrap_or(false)
+                    || (recv_place.is_some()
+                        && !function.owned_params.first().copied().unwrap_or(false)
+                        && !function.deinit_params.first().copied().unwrap_or(false)
+                        && Self::function_result_carries_reference(prog, fidx));
                 let mut reference_inputs = Vec::new();
-                if ref_params.first().copied().unwrap_or(false) {
+                if receiver_as_reference {
                     let place = recv_place.as_ref().ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
                             "vm: reference receiver for method '{fname}' must be a place"
@@ -1869,7 +1880,7 @@ impl VmBackend {
                     .copied()
                     .unwrap_or(false);
                 if (is_mut || is_named_destructor)
-                    && !ref_params.first().copied().unwrap_or(false)
+                    && !receiver_as_reference
                     && let Some(place) = recv_place
                 {
                     self.store_at_call_place(
@@ -1887,6 +1898,48 @@ impl VmBackend {
                 "vm backend does not support methods on {} yet",
                 crate::runtime::type_name(other)
             ))),
+        }
+    }
+
+    /// Whether a function's result can hold reference handles into its
+    /// receiver: it returns a reference directly, or its checked return type
+    /// structurally contains a `ref` field. Such a method's borrowed receiver
+    /// must enter as a caller-place handle rather than a value copy.
+    fn function_result_carries_reference(prog: &Prog, index: usize) -> bool {
+        let function = &prog.mir.functions[index].1;
+        if function.returns_reference {
+            return true;
+        }
+        let Some(ret) = &function.ret_ty else {
+            return false;
+        };
+        let mut visited = std::collections::HashSet::new();
+        Self::type_carries_reference_handle(prog, ret, &mut visited)
+    }
+
+    /// Structural reference-content test over MIR struct declarations, with a
+    /// visited set for recursive aggregates. Conservative `false` for generic
+    /// parameters and non-aggregate types: pointer-backed views (`Span`) copy
+    /// by value safely; only stored `ref` handles are frame-rooted.
+    fn type_carries_reference_handle(
+        prog: &Prog,
+        ty: &Ty,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        match ty {
+            Ty::Ref(_) => true,
+            Ty::Struct(name, _) => {
+                visited.insert(name.clone())
+                    && prog.structs.get(name).is_some_and(|declaration| {
+                        declaration.fields.iter().any(|(_, field_ty)| {
+                            Self::type_carries_reference_handle(prog, field_ty, visited)
+                        })
+                    })
+            }
+            Ty::Tuple(items) | Ty::RuntimePack(items) | Ty::Variant(items) => items
+                .iter()
+                .any(|item| Self::type_carries_reference_handle(prog, item, visited)),
+            _ => false,
         }
     }
 
@@ -1999,7 +2052,7 @@ impl VmBackend {
             crate::symbol::is_overload_of(fname, &init)
                 && function.n_params == expected_params
                 && !fname.contains("$kw$")
-                && !fname.ends_with("$ov$None")
+                && !crate::symbol::is_none_overload(fname)
         });
         let target = constructors.next().map(|(fname, _)| fname.clone());
         if let Some(target) = target

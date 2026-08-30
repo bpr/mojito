@@ -1,4 +1,4 @@
-# expect: requires exactly one zero-argument ref-returning overload
+# expect: requires exactly one ref-returning overload
 # A delegated-call origin expression must name a callee with an explicit
 # ref-return contract; a value-returning method offers no origin to inherit.
 @fieldwise_init

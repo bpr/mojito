@@ -8,6 +8,75 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Delegated-call origin expressions generalized (2026-08-30, pin-attested):
+  the callee may take arguments (`ref[self.iter.step(1).key]` — the
+  clause's origin depends only on the receiver walk, and arguments are
+  checked per call), and multi-origin-binder correspondences resolve
+  through the field application's recorded binder bindings
+  (`var second: EntryCursor[Self.o2]` maps the callee's binder to `o2`,
+  and the returned reference loans exactly the resolved source). The
+  former zero-argument rejection fixture graduated to `assets/ok`.
+- Struct origin binders in member origin clauses require the qualified
+  spelling (2026-08-30, pin-attested): `ref [o] src:` parameter clauses and
+  `-> ref[o]`-rooted return clauses inside a struct now reject with the
+  pin's exact message ("unqualified access to struct parameter 'o'; use
+  'Self.o' instead"), and the qualified spelling works in direct,
+  projected (`Self.o._get_owned_interior[...]`), and
+  `Origin[...].cast_from[...]`-wrapped clause forms. Function-, method-,
+  and alias-own origin binders stay bare (compiler-reserved `__`-prefixed
+  synthesized binders too), and ref-field annotations accept both
+  spellings (`ref[Self.o]` fields now resolve alongside the extension's
+  bare form). The bundled iterators and `String`/`Span` constructors now
+  use the upstream spellings.
+- Signature-position origin concreteness (2026-08-29, pin-attested).
+  Parameter annotations now follow the initialized-local rule: a bare
+  origin-slotted generic (`def read(h: Holder)`) infers per call, while a
+  partial application (`def first(s: Span[Int])`) rejects with the
+  placeholder hint — the accepted spelling is `Span[Int, _]` (the stdlib
+  `List.extend` signature updated to match upstream's). Return annotations
+  require applied origins: `-> EntryIter[origin_of(self.entries)]` is now
+  accepted (origin arguments in signature positions resolve syntactically
+  and erase), while a bare `-> EntryIter` or a placeholder return rejects
+  as not concrete, exactly like the pin. Compiler-generated (`$`-mangled)
+  specializations keep their reconstructed annotations exempt.
+- Origin placeholders `_` and `...` in type applications (2026-08-29,
+  pin-attested): `var s: Span[Int, _] = xs` and the `...` spelling mark the
+  origin slot explicitly inferred — the application counts as complete and
+  the origin resolves from the initializer or call context. Function
+  parameters accept them like the bare-generic spelling; struct fields and
+  uninitialized locals reject them exactly like an omitted slot
+  ("is not concrete").
+- Temporaries auto-borrow into `ref` constructor parameters and `ref`
+  bindings (2026-08-29, pin-attested): `View(make_list(), 0)` and
+  `ref x = make_list()` accept an owned temporary, which is materialized
+  into a hidden owned slot with the borrower's lifetime — upstream's
+  temporary-lifetime rule. The view's loans keep the temporary alive and
+  conflict-checked; returning a view of a temporary rejects with the same
+  `escapes storage` family as the owned-place precedent. Parameter origin
+  clauses additionally accept upstream's qualified `Self.o` binder spelling
+  (previously return-clause-only).
+
+### Fixed
+
+- Three pre-existing VM gaps in the ref-field adapter family (2026-08-29).
+  A ref-field view returned from a method with a plain (read) `self`
+  receiver, or from a free function borrowing a place argument, now keeps
+  its borrow contract: the VM passes such receivers as caller-place handles
+  (the returned view's `ref` fields root in the caller frame instead of the
+  dying callee frame), and free-function calls returning ref-field structs
+  install the same caller-side view loans methods do. A temporary
+  constructor result whose fields borrow caller storage
+  (`read(Holder(Pointer(to=n)))`) is anchored in a hidden slot whose loans
+  keep the borrowed source alive through the consuming call — previously the
+  source was dropped early and the pointer field read back `None`. A
+  heap-backed field projected off a reference-returning call result in
+  value position (`var k = it.__next__().key` with a `String` key) now runs
+  its `__copyinit__` instead of aliasing the source allocation, which
+  double-freed. A `return` leaving a `try` region now re-roots returned
+  reference handles exactly like an ordinary return.
+
+### Added
+
 - Ref-field adapter residues closed (2026-08): four acceptance gaps and two
   recorded over-acceptances around borrowing iterator adapters. A bare owned
   place now auto-borrows into a `ref` constructor parameter
