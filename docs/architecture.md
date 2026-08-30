@@ -1533,6 +1533,7 @@ Representative instructions:
 
 ```rust
 Const
+SizeOf
 UseVar
 MovePlace
 DefVar
@@ -2836,6 +2837,12 @@ Runtime helpers implement:
 - SIMD construction and lane access
 - builtin functions such as `print`, `len`, `range`, numeric conversions,
   `abs`, `min`, `max`, and `round`
+
+`size_of[T]()` is deliberately not a VM-value helper. Checking records `T`, MIR
+retains it in `SizeOf`, verification requires it to have a native layout, and
+both the VM and native lowering ask the shared `native::layout::LayoutCx` for
+the byte count. This keeps target layout below the checked-MIR waist without
+duplicating layout policy in either backend.
 
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR

@@ -1068,6 +1068,15 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                if let Some(crate::SemanticAdjustment::SizeOf { ty }) =
+                    self.checked_adjustments(e).into_iter().find(|adjustment| {
+                        matches!(adjustment, crate::SemanticAdjustment::SizeOf { .. })
+                    })
+                {
+                    let dest = self.fresh_typed(span(e), None, Ty::Int);
+                    self.emit(MirInstr::SizeOf { dest, ty });
+                    return dest;
+                }
                 // A checked pointer construction materializes the frame/slot
                 // handle for its source place; the checked pointer type keeps
                 // the origin while the runtime value erases it.

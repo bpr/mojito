@@ -1328,7 +1328,7 @@ fn is_specializable_declaration_in(
                     || type_params.iter().any(|parameter| {
                         matches!(parameter.bounds.as_slice(), [only] if only == "DType")
                     })
-                    || def_uses_param_simd_width(statement))
+                    || def_uses_layout_dependent_param(statement))
         }
         StmtKind::Struct { type_params, .. } => {
             type_params
@@ -1345,13 +1345,10 @@ fn is_specializable_declaration_in(
     }
 }
 
-/// Whether a generic `def` uses one of its parameters as a `SIMD`/`Scalar`
-/// width argument, in a signature/annotation type or an expression-position
-/// type application. Such a declaration must specialize per call: the width
-/// becomes a concrete compile-time value in each instance, so `simd_width`'s
-/// power-of-two validation runs during checked elaboration instead of
-/// failing on the symbolic template.
-fn def_uses_param_simd_width(statement: &Stmt) -> bool {
+/// Whether a generic `def` uses one of its parameters where checking or
+/// execution requires a concrete target layout: as a `SIMD`/`Scalar` width or
+/// as the operand of `size_of`. Such a declaration must specialize per call.
+fn def_uses_layout_dependent_param(statement: &Stmt) -> bool {
     let StmtKind::Def {
         type_params,
         params,
@@ -1476,6 +1473,12 @@ fn expr_uses_param_simd_width(e: &Expr, names: &[&str]) -> bool {
             kwargs,
         } => {
             args_use(name == "SIMD" || name == "Scalar", param_args)
+                || (name == "size_of"
+                    && param_args.iter().any(|argument| {
+                        matches!(argument,
+                            ParamArg::Type(Type::Named(parameter, arguments))
+                                if arguments.is_empty() && names.contains(&parameter.as_str()))
+                    }))
                 || args.iter().any(expr)
                 || kwargs.iter().any(|kwarg| expr(&kwarg.value))
         }

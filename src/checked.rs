@@ -448,6 +448,11 @@ pub enum SemanticAdjustment {
         dtype: crate::ast::Dtype,
         width: i64,
     },
+    /// `size_of[T]()` resolved to one concrete checked type. MIR retains the
+    /// type so every executable backend consults the shared native layout.
+    SizeOf {
+        ty: Ty,
+    },
     /// `v.cast[DType.target]()` — elementwise dtype conversion of a SIMD
     /// value. The target dtype and lane width are resolved at checking; MIR
     /// carries them so the VM never derives semantics from a runtime value.

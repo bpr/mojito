@@ -622,18 +622,33 @@ impl<'a> Iterator for Lexer<'a> {
                     continue;
                 }
                 '&' => {
-                    self.pos += 1;
-                    self.emit(Token::Amp);
+                    if self.remainder().starts_with("&=") {
+                        self.pos += 2;
+                        self.emit(Token::AmpEq);
+                    } else {
+                        self.pos += 1;
+                        self.emit(Token::Amp);
+                    }
                     continue;
                 }
                 '|' => {
-                    self.pos += 1;
-                    self.emit(Token::Pipe);
+                    if self.remainder().starts_with("|=") {
+                        self.pos += 2;
+                        self.emit(Token::PipeEq);
+                    } else {
+                        self.pos += 1;
+                        self.emit(Token::Pipe);
+                    }
                     continue;
                 }
                 '^' => {
-                    self.pos += 1;
-                    self.emit(Token::Caret);
+                    if self.remainder().starts_with("^=") {
+                        self.pos += 2;
+                        self.emit(Token::CaretEq);
+                    } else {
+                        self.pos += 1;
+                        self.emit(Token::Caret);
+                    }
                     continue;
                 }
                 ':' => {

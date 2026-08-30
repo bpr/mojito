@@ -51,6 +51,7 @@ pub(crate) fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>
         | MirInstr::ReadRef { dest, .. }
         | MirInstr::CopyValue { dest, .. }
         | MirInstr::Const { dest, .. }
+        | MirInstr::SizeOf { dest, .. }
         | MirInstr::MaterializeLiteral { dest, .. }
         | MirInstr::UseVar { dest, .. }
         | MirInstr::MovePlace { dest, .. }
@@ -354,6 +355,7 @@ pub(crate) fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg
         MirInstr::DefVar { src, .. } => out.push(*src),
         MirInstr::InvalidateInteriors { .. }
         | MirInstr::Const { .. }
+        | MirInstr::SizeOf { .. }
         | MirInstr::UseVar { .. }
         | MirInstr::KeepAlive { .. }
         | MirInstr::DropVar { .. }
@@ -2182,6 +2184,27 @@ fn verify_instruction(
                 if !valid_source {
                     errors.push(format!("{prefix}: cannot materialize {found} as {target}"));
                 }
+            }
+        }
+        MirInstr::SizeOf { dest, ty } => {
+            if let Some(found) = reg_ty(dest)
+                && found != &Ty::Int
+            {
+                errors.push(format!(
+                    "{prefix}: size_of result register has type {found}, expected Int"
+                ));
+            }
+            let target = crate::native::target::NativeTarget::new(
+                crate::native::target::Triple::X86_64UnknownLinuxGnu,
+            );
+            let structs = crate::native::layout::StructFieldIndex::from_declarations(declarations);
+            if let Err(error) = (crate::native::layout::LayoutCx {
+                target: &target,
+                structs: &structs,
+            })
+            .layout_of(ty)
+            {
+                errors.push(format!("{prefix}: size_of has no layout for {ty}: {error}"));
             }
         }
         MirInstr::CopyValue { dest, value } => {

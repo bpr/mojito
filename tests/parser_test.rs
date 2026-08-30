@@ -1883,6 +1883,16 @@ fn parses_augmented_assignment() {
             ..
         }
     ));
+    for (source, expected) in [
+        ("x &= 1\n", InfixOp::BitAnd),
+        ("x |= 2\n", InfixOp::BitOr),
+        ("x ^= 3\n", InfixOp::BitXor),
+    ] {
+        assert!(matches!(
+            &parse(source)[0].kind,
+            StmtKind::AugAssign { op, .. } if *op == expected
+        ));
+    }
 }
 
 #[test]

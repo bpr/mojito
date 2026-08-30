@@ -1341,6 +1341,14 @@ impl<'a> FnLowering<'a> {
     fn lower_instr(&mut self, ctx: &mut Context, instr: &MirInstr) -> Result<(), PlironError> {
         match instr {
             MirInstr::Const { dest, k } => self.lower_const(ctx, *dest, k),
+            MirInstr::SizeOf { dest, ty } => {
+                let size = self
+                    .layout
+                    .layout_of(ty)
+                    .map_err(|error| self.unsupported_reg(error.to_string(), *dest))?
+                    .size;
+                self.lower_const(ctx, *dest, &crate::mir::Const::Int(size as i64))
+            }
             MirInstr::MaterializeLiteral {
                 dest,
                 value,
@@ -13594,6 +13602,7 @@ fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::MakeClosure { .. } => "MakeClosure",
         MirInstr::KeepAlive { .. } => "KeepAlive",
         MirInstr::Const { .. } => "Const",
+        MirInstr::SizeOf { .. } => "SizeOf",
         MirInstr::MaterializeLiteral { .. } => "MaterializeLiteral",
         MirInstr::UseVar { .. } => "UseVar",
         MirInstr::MovePlace { .. } => "MovePlace",

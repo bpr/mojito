@@ -1176,8 +1176,8 @@ impl InfixOp {
 
     /// The in-place dunder an augmented assignment dispatches to on a user
     /// `struct` target (`a += b` → `a.__iadd__(b)`), or `None` for operators with
-    /// no augmented form. Only the seven parser-accepted augmented operators
-    /// (`+= -= *= /= //= %= **=`; see `aug_assign_op`) have an in-place dunder;
+    /// no augmented form. The parser-accepted augmented operators (see
+    /// `aug_assign_op`) have an in-place dunder;
     /// Mojo calls this dedicated method rather than the ordinary binary dunder.
     pub fn inplace_dunder(self) -> Option<&'static str> {
         Some(match self {
@@ -1188,6 +1188,9 @@ impl InfixOp {
             InfixOp::FloorDiv => "__ifloordiv__",
             InfixOp::Mod => "__imod__",
             InfixOp::Pow => "__ipow__",
+            InfixOp::BitAnd => "__iand__",
+            InfixOp::BitOr => "__ior__",
+            InfixOp::BitXor => "__ixor__",
             _ => return None,
         })
     }

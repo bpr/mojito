@@ -121,8 +121,8 @@ recreates this section's checkbox with the fresh divergence list.
 - [ ] **Parity-unblocking infrastructure** — compiler-side features that
   each unblock several recorded parity gaps at once. These are where
   "Mojito rejects/diverges from valid Mojo" clusters today; every item
-  lists what it unlocks so slices can be chosen by leverage. The items
-  below are in **recommended execution order**, not fan-out order. The
+  lists what it unlocks so slices can be chosen by leverage. The remaining
+  items below are in **recommended execution order**, not fan-out order. The
   load-bearing dependencies: the candidate-replay overload fix must land
   **before** the owned-`var` transfer convention (that convention injects
   mandatory `^`-moves at owned-parameter call sites in user code, which is
@@ -130,20 +130,10 @@ recreates this section's checkbox with the fresh divergence list.
   workaround is not available to user code); the bound relaxation is
   paired with the transfer convention; and the hasher work is sequenced
   next to the transfer convention so the shared Dict/Set/List signatures
-  are rewritten once. The small self-contained items lead because
-  they are cheap and stop rejecting valid programs immediately. The
-  ref-field adapter follow-ups are a **parallel track** (origin/ref-system
+  are rewritten once. The ref-field adapter follow-ups are a **parallel
+  track** (origin/ref-system
   refinements plus bug fixes, not coupled to the API-parity sequence) and
   are listed last with their own internal order.
-  - **A `size_of` builtin** (the shared native ABI layout tables in
-    `src/native/` can answer it). Tiny and self-contained. Unlocks
-    `List.byte_length` and upstream memory-oriented code that spells
-    `size_of[T]()`.
-  - **`|= &= ^=` augmented-assignment tokens** (grammar change:
-    `docs/grammar.md` first, then lexer/parser/AST/checker/MIR).
-    Self-contained. Unlocks the Dict/Set `__ior__`/`__iand__`/`__ixor__`
-    family, and — broader — augmented bitwise assignment on Int/UInt,
-    which is upstream-valid integer code Mojito rejects today.
   - **Overload-machinery hardening: candidate-replay ownership leak** — a
     checker defect that gates wide API parity. Do this before the owned-`var`
     transfer convention below. A `^`-moved argument

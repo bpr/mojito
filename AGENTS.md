@@ -86,10 +86,13 @@ move.
 
 ## Commands
 
-- Required gate: `env RUSTC_WRAPPER= scripts/check`
-- Full suite: `cargo nextest run`; iteration loop:
-  `cargo nextest run --profile quick` (excludes the per-fixture corpus
-  binary). Plain `cargo test` remains a working fallback.
+- Required agent gate: `cargo nextest run --profile quick` (excludes the
+  per-fixture corpus binary), plus focused tests for the changed behavior.
+- Do not run `scripts/check`, `cargo nextest run` without the `quick` profile,
+  or any other full-suite equivalent. The repository owner alone runs the full
+  test suite manually.
+- Plain `cargo test` is a working fallback only when scoped to a focused target
+  or named test; do not use it to run the full suite.
 - One integration target: `cargo nextest run --test vm_test`
 - One named test: `cargo nextest run test_name`
 - CLI: `cargo run -- <lex|parse|check|own|run> [FILE]`

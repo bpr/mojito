@@ -1563,7 +1563,7 @@ impl<'a> Specializer<'a> {
         // the instruction; seed it so the element's lifecycle methods
         // (notably `__deinit__` for the destroy forms) always join the walk
         // even when no register or variable carries the bare element type.
-        push_storage_element_types(&function.blocks, &mut types);
+        push_instruction_types(&function.blocks, &mut types);
         while let Some(ty) = types.pop() {
             collect_nested_types(&ty, &mut types);
             let Ty::Struct(name, arguments) = ty else {
@@ -2677,6 +2677,7 @@ fn substitute_instruction(
             }
         }
         MaterializeLiteral { target, .. }
+        | SizeOf { ty: target, .. }
         | PointerStorageTake {
             element: target, ..
         }
@@ -3206,9 +3207,10 @@ fn erase_specialized_generic_callable_storage(function: &mut MirFunction) {
     }
 }
 
-/// Collect the (already-substituted) `element` type each storage take/destroy
-/// intrinsic names on the instruction itself, recursing into `try` regions.
-fn push_storage_element_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
+/// Collect already-substituted types named only by instructions, recursing
+/// into `try` regions. These types need layouts or lifecycle declarations even
+/// when no register or variable carries them.
+fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
     for block in blocks {
         for instruction in &block.instrs {
             match instruction {
@@ -3219,17 +3221,18 @@ fn push_storage_element_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
                     finalbody,
                     ..
                 } => {
-                    push_storage_element_types(body, out);
+                    push_instruction_types(body, out);
                     if let Some((_, blocks)) = handler {
-                        push_storage_element_types(blocks, out);
+                        push_instruction_types(blocks, out);
                     }
                     if let Some(blocks) = orelse {
-                        push_storage_element_types(blocks, out);
+                        push_instruction_types(blocks, out);
                     }
                     if let Some(blocks) = finalbody {
-                        push_storage_element_types(blocks, out);
+                        push_instruction_types(blocks, out);
                     }
                 }
+                MirInstr::SizeOf { ty, .. } => out.push(ty.clone()),
                 MirInstr::PointerStorageTake { element, .. }
                 | MirInstr::PointerStorageDestroy { element, .. }
                 | MirInstr::UninitStorageTake { element, .. }

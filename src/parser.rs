@@ -3756,6 +3756,9 @@ fn aug_assign_op(tok: &Token) -> Option<InfixOp> {
         Token::DoubleSlashEq => InfixOp::FloorDiv,
         Token::PercentEq => InfixOp::Mod,
         Token::DoubleStarEq => InfixOp::Pow,
+        Token::AmpEq => InfixOp::BitAnd,
+        Token::PipeEq => InfixOp::BitOr,
+        Token::CaretEq => InfixOp::BitXor,
         _ => return None,
     })
 }

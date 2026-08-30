@@ -147,7 +147,7 @@ pub enum Token {
 
     // Operators & Punctuation
     Assign,
-    // Augmented assignment: `+= -= *= /= //= %= **=`
+    // Augmented assignment: `+= -= *= /= //= %= **= &= |= ^=`
     PlusEq,
     MinusEq,
     StarEq,
@@ -155,6 +155,9 @@ pub enum Token {
     DoubleSlashEq,
     PercentEq,
     DoubleStarEq,
+    AmpEq,
+    PipeEq,
+    CaretEq,
     Colon,
     ColonEq, // `:=` (the walrus / named-expression operator)
     Comma,

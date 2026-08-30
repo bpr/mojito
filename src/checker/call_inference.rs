@@ -213,6 +213,27 @@ impl Checker {
                     });
                 }
                 "print" => return self.infer_print(args),
+                "size_of" => {
+                    if param_args.len() != 1 {
+                        return Err(TypeError::WrongTypeArgCount {
+                            name: "size_of".to_string(),
+                            expected: 1,
+                            got: param_args.len(),
+                        });
+                    }
+                    if !args.is_empty() {
+                        return Err(TypeError::ArityMismatch {
+                            name: "size_of".to_string(),
+                            expected: 0,
+                            got: args.len(),
+                        });
+                    }
+                    let ty = self.type_param_argument(&param_args[0], "size_of")?;
+                    self.operation_adjustments
+                        .borrow_mut()
+                        .insert(span, crate::checked::SemanticAdjustment::SizeOf { ty });
+                    return Ok(Ty::Int);
+                }
                 // Compiler-private crossing for `std.os.abort`: an uncatchable
                 // VM trap carrying a nominal String message. Typed as returning
                 // None — the call never returns at runtime, and stdlib call

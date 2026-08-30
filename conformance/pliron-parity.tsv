@@ -17,6 +17,7 @@ assets/ok/array_fixed_size_core.mojo	main	exe-differential	sanitized
 assets/ok/array_struct_elements_and_fill.mojo	main	exe-differential	sanitized
 assets/ok/associated_trait_self_element.mojo	main	exe-differential	sanitized
 assets/ok/associated_type_return.mojo	main	exe-differential	sanitized
+assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
 assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
@@ -282,6 +283,7 @@ assets/ok/simd_generic_width.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_write.mojo	main	exe-differential	sanitized
 assets/ok/simd_methods.mojo	main	exe-differential	sanitized
 assets/ok/simd_shuffle.mojo	main	exe-differential	sanitized
+assets/ok/size_of_builtin.mojo	main	exe-differential	sanitized
 assets/ok/sized_generic_views.mojo	main	exe-differential	sanitized
 assets/ok/slice.mojo	main	exe-differential	sanitized
 assets/ok/span_implicit_from_list.mojo	main	exe-differential	sanitized

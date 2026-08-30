@@ -308,6 +308,16 @@ analysis this is a definition: storing into a moved variable reinitializes it.
 
 ## Scalar Computation
 
+### `layout.size_of` — Target-layout byte size
+
+```text
+layout.size_of { dest: %r0, type: Padded }
+```
+
+Produces an `Int` from the shared native ABI layout engine. The checked type is
+part of the instruction, and verification rejects types without a concrete
+runtime layout; the VM does not infer layout from a runtime value.
+
 ### Unary instructions
 
 ```text

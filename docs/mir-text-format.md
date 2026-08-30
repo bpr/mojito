@@ -369,7 +369,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
 | `CopyValue` | `value.copy` |
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` |
-| `Const` / `MaterializeLiteral` | `const` / `literal.materialize` |
+| `Const` / `MaterializeLiteral` / `SizeOf` | `const` / `literal.materialize` / `layout.size_of` |
 | `UseVar` / `DefVar` | `var.use` / `var.store` |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` |

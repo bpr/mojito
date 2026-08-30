@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `size_of[T]()` target-layout queries, backed by the shared native ABI layout
+  engine in both the VM and Pliron paths. Checked MIR retains the concrete type
+  in a typed `SizeOf` instruction, including aggregate padding, and generic
+  uses specialize before lowering.
+- Bitwise augmented assignment (`&=`, `|=`, and `^=`) for builtin Int/UInt
+  places and user-defined values through the dedicated `__iand__`, `__ior__`,
+  and `__ixor__` methods. The lexer distinguishes the new tokens from ordinary
+  bitwise operators and the transfer sigil.
 - Delegated-call origin expressions generalized (2026-08-30, pin-attested):
   the callee may take arguments (`ref[self.iter.step(1).key]` — the
   clause's origin depends only on the receiver walk, and arguments are

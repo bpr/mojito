@@ -118,6 +118,22 @@ impl VmBackend {
             }
             MirInstr::KeepAlive { .. } => {}
             MirInstr::Const { dest, k } => regs[dest.0 as usize] = const_value(k),
+            MirInstr::SizeOf { dest, ty } => {
+                let target = crate::native::target::NativeTarget::new(
+                    crate::native::target::Triple::X86_64UnknownLinuxGnu,
+                );
+                let structs = crate::native::layout::StructFieldIndex::from_declarations(
+                    &prog.mir.declarations,
+                );
+                let size = crate::native::layout::LayoutCx {
+                    target: &target,
+                    structs: &structs,
+                }
+                .layout_of(ty)
+                .map_err(|error| RuntimeError::Unsupported(error.to_string()))?
+                .size;
+                regs[dest.0 as usize] = Value::Int(size as i64);
+            }
             MirInstr::MaterializeLiteral {
                 dest,
                 value,

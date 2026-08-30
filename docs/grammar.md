@@ -120,7 +120,7 @@ var_decl: 'var' NAME [':' type] '=' expression   # annotation optional (inferred
 assignment: target '=' expression
 unpack_assignment: target (',' target)* ','? '=' expression   # a top-level comma ⇒ tuple unpacking
 augmented_assignment: target aug_op expression
-aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**='
+aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**=' | '&=' | '|=' | '^='
 target: NAME | place
 place: primary ('.' NAME | '[' expression ']')      # a field/index chain (checker: rooted at a variable)
 comptime_stmt: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression
@@ -951,6 +951,9 @@ intrinsics. Ordinary lexical bindings still shadow an implicit name.
   from zero).
 - `len(x)` — the length of a `String` (in bytes) or the result of the selected
   nominal `__len__` method (including List, Set, Dict, Range, and Tuple) → `Int`.
+- `size_of[T]()` — the target-layout byte size of concrete type `T`, including
+  aggregate padding, as an `Int`. It takes exactly one type argument and no
+  runtime arguments.
 - `List[T]()` / `List[T](a, b, …)` / `List(a, b, …)` — call a concrete
   specialization of the nominal prelude `List` struct (see **Collections**).
 - `IsTriviallyMovable[T]` / `IsTriviallyCopyable[T]` / `IsTriviallyDeinitable[T]`

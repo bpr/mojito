@@ -321,6 +321,11 @@ pub enum MirInstr {
         dest: Reg,
         k: Const,
     },
+    /// Target-layout byte size of one checker-resolved type.
+    SizeOf {
+        dest: Reg,
+        ty: Ty,
+    },
     /// Cross the compile-time literal boundary selected by the checker.  The
     /// operand is an exact `IntLiteral`/`FloatLiteral`; `target` is a concrete
     /// scalar (or width-one scalar alias).  Backends must implement this

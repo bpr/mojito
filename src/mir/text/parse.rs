@@ -935,6 +935,10 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 k: self.req(value, fields, "value", Self::constant)?,
             }),
+            "layout.size_of" => Some(MirInstr::SizeOf {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                ty: self.req(value, fields, "type", Self::ty)?,
+            }),
             "literal.materialize" => Some(MirInstr::MaterializeLiteral {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
