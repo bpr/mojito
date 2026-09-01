@@ -43,13 +43,24 @@ pub fn check_ownership_checked(
 /// standalone-MIR core the pipeline composes with `mir::verify` so production
 /// MIR is fully verified before execution.
 pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> {
+    let callees: CalleeRefParams<'_> = prog
+        .functions
+        .iter()
+        .map(|(name, function)| (name.as_str(), function.ref_params.as_slice()))
+        .collect();
     for (_name, f) in &prog.functions {
         analyze_moves(f)?;
         analyze_interior_origins(f)?;
-        analyze_loans(f)?;
+        analyze_loans(f, &callees)?;
     }
     Ok(())
 }
+
+/// Each program function's `ref_params` mask by lowered name. A retained call
+/// place is an exclusive write only at a `mut`/`ref` parameter; a place
+/// retained at a read-convention slot (a borrowing-view call lending its
+/// argument to the result) is a shared read.
+pub type CalleeRefParams<'a> = HashMap<&'a str, &'a [bool]>;
 
 // --- Liveness + ASAP drop elaboration ---------------------------------------
 
@@ -3226,7 +3237,7 @@ enum LoanAccess {
 /// from `EstablishLoans` through the reference's last use, including CFG
 /// joins/loops. Interior-storage loans have generation semantics instead of
 /// exclusive-owner semantics; the forward interior-origin pass checks those.
-fn analyze_loans(f: &MirFunction) -> Result<(), OwnershipError> {
+fn analyze_loans(f: &MirFunction, callees: &CalleeRefParams<'_>) -> Result<(), OwnershipError> {
     let mut generations: BTreeMap<u32, Vec<Loan>> = BTreeMap::new();
     for instr in f.blocks.iter().flat_map(|block| &block.instrs) {
         if let MirInstr::EstablishLoans {
@@ -3343,7 +3354,7 @@ fn analyze_loans(f: &MirFunction) -> Result<(), OwnershipError> {
                 transfer_loan_generation(&mut generation_state, instr, &generation_dests);
                 continue;
             }
-            for (place, access, span) in loan_accesses(f, instr) {
+            for (place, access, span) in loan_accesses(f, instr, callees) {
                 for reference in active {
                     let reference_loans =
                         reaching_loans(&generation_state, &generations, *reference);
@@ -3390,7 +3401,18 @@ fn mir_places_overlap(left: &MirPlace, right: &MirPlace) -> bool {
 fn loan_accesses(
     f: &MirFunction,
     instr: &MirInstr,
+    callees: &CalleeRefParams<'_>,
 ) -> Vec<(MirPlace, LoanAccess, crate::token::SourceSpan)> {
+    // The access a retained place at positional parameter `parameter` of
+    // `callee` performs: a write at a declared `mut`/`ref` slot, a shared read
+    // at a read-convention slot. An unknown callee (a builtin, an unresolved
+    // dispatch) stays conservatively exclusive.
+    let retained_access = |callee: &str, parameter: usize| -> LoanAccess {
+        match callees.get(callee).and_then(|mask| mask.get(parameter)) {
+            Some(false) => LoanAccess::Read,
+            _ => LoanAccess::Write,
+        }
+    };
     let fallback = crate::token::SourceSpan::new(None, crate::token::DUMMY_SPAN);
     let span_for = |reg: Reg| {
         f.spans
@@ -3607,20 +3629,31 @@ fn loan_accesses(
             ..
         } => {
             // Formatting intrinsics borrow their retained caller places only
-            // to keep pointer-backed values alive through `write_to`. Ordinary
-            // retained call places belong to `mut`/`ref` parameters and remain
-            // exclusive writes.
-            let access = if matches!(func.0.as_str(), "print" | "String" | "repr") {
-                LoanAccess::Read
-            } else {
-                LoanAccess::Write
+            // to keep pointer-backed values alive through `write_to`. Other
+            // retained places are classified by the callee's convention at
+            // that slot; a keyword place stays exclusive (its slot is not
+            // known positionally here).
+            let intrinsic_read = matches!(func.0.as_str(), "print" | "String" | "repr");
+            let access = |parameter: Option<usize>| match parameter {
+                _ if intrinsic_read => LoanAccess::Read,
+                Some(parameter) => retained_access(&func.0, parameter),
+                None => LoanAccess::Write,
             };
             let mut accesses = arg_places
                 .iter()
-                .flatten()
-                .chain(kwarg_places.iter().flatten())
-                .cloned()
-                .map(|place| (place, access, span_for(*dest)))
+                .enumerate()
+                .filter_map(|(parameter, place)| {
+                    place
+                        .clone()
+                        .map(|place| (place, access(Some(parameter)), span_for(*dest)))
+                })
+                .chain(
+                    kwarg_places
+                        .iter()
+                        .flatten()
+                        .cloned()
+                        .map(|place| (place, access(None), span_for(*dest))),
+                )
                 .collect::<Vec<_>>();
             accesses.extend(
                 capture_accesses
@@ -3653,6 +3686,7 @@ fn loan_accesses(
         }
         MirInstr::MethodCall {
             dest,
+            resolved,
             recv_place,
             recv_writes,
             arg_places,
@@ -3662,12 +3696,17 @@ fn loan_accesses(
         } => {
             // A borrowed `self` receiver reads its retained place; only a
             // `mut`/mutable-`ref`/consuming receiver writes through it.
-            // Retained argument places belong to `mut`/`ref` parameters and
-            // are always exclusive writes.
+            // Retained argument places are classified by the resolved
+            // callee's convention at that slot (`self` occupies slot zero);
+            // keyword places stay exclusive.
             let receiver_access = if *recv_writes {
                 LoanAccess::Write
             } else {
                 LoanAccess::Read
+            };
+            let argument_access = |argument: usize| match resolved {
+                Some(callee) => retained_access(callee, argument + 1),
+                None => LoanAccess::Write,
             };
             let mut accesses = recv_place
                 .iter()
@@ -3676,8 +3715,17 @@ fn loan_accesses(
                 .chain(
                     arg_places
                         .iter()
+                        .enumerate()
+                        .filter_map(|(argument, place)| {
+                            place
+                                .clone()
+                                .map(|place| (place, argument_access(argument), span_for(*dest)))
+                        }),
+                )
+                .chain(
+                    kwarg_places
+                        .iter()
                         .flatten()
-                        .chain(kwarg_places.iter().flatten())
                         .cloned()
                         .map(|place| (place, LoanAccess::Write, span_for(*dest))),
                 )
@@ -4512,7 +4560,7 @@ mod interior_origin_tests {
             )],
             &[],
         );
-        assert!(analyze_loans(&f).is_ok());
+        assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
     }
 
     #[test]
@@ -4530,7 +4578,7 @@ mod interior_origin_tests {
             &[],
         );
         assert!(matches!(
-            analyze_loans(&f),
+            analyze_loans(&f, &CalleeRefParams::new()),
             Err(OwnershipError::LoanConflict { .. })
         ));
     }

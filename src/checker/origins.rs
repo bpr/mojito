@@ -303,17 +303,27 @@ impl Checker {
                 // Origin arguments erase from struct type identity, so the
                 // callee's origin binder usually stays symbolic in its own
                 // namespace; remap it through the field application's
-                // recorded binder correspondences, falling back to the
-                // unambiguous single-binder case the signature resolver uses.
-                if let Some(map) = self.delegated_receiver_binder_map(object) {
-                    origin = super::origins::substitute_origin_params(origin, &|id| {
-                        map.iter()
-                            .find(|(callee_index, _)| *callee_index == id.0)
-                            .map(|(_, enclosing)| {
-                                Origin::Param(crate::origin::OriginParamId(*enclosing))
-                            })
-                    });
-                } else {
+                // recorded binder correspondences, then fall back to the
+                // unambiguous single-binder case the signature resolver uses
+                // for any binder the record leaves unmapped (the same
+                // map-then-fallback chain as `map_delegated_sig_origin`).
+                let map = self
+                    .delegated_receiver_binder_map(object)
+                    .unwrap_or_default();
+                let unmapped = std::cell::Cell::new(false);
+                origin = super::origins::substitute_origin_params(origin, &|id| {
+                    let mapped = map
+                        .iter()
+                        .find(|(callee_index, _)| *callee_index == id.0)
+                        .map(|(_, enclosing)| {
+                            Origin::Param(crate::origin::OriginParamId(*enclosing))
+                        });
+                    if mapped.is_none() {
+                        unmapped.set(true);
+                    }
+                    mapped
+                });
+                if unmapped.get() {
                     let callee_binders = info
                         .source_params
                         .iter()
@@ -331,6 +341,12 @@ impl Checker {
                         origin = super::origins::substitute_origin_params(origin, &|_| {
                             Some(binder.clone())
                         });
+                    } else if !receiver_rooted_at_self(object) {
+                        // A parameter-rooted delegation nothing can name
+                        // resolves to the carrier itself (the signature
+                        // resolver's `receiver_fallback`): the concrete
+                        // returned origin is the carrier's place.
+                        return self.origin_place(object).ok().map(Origin::Place);
                     }
                 }
                 Some(origin).filter(is_abstract)
@@ -583,6 +599,7 @@ impl Checker {
             )));
         };
         let callee_ref = callee.ref_return.as_ref().expect("filtered above");
+        let parameter_rooted = matches!(base, SigOrigin::Param(_));
         let receiver = if segs.is_empty() {
             base
         } else {
@@ -612,12 +629,22 @@ impl Checker {
         let correspondences = self
             .delegated_receiver_binder_map(object)
             .unwrap_or_default();
+        // A receiver rooted at a bare carrier PARAMETER (`ref[c.current().key]`
+        // with `c: EntryCursor`) has no binder record and no enclosing binder
+        // of its own to name the callee's: the returned reference is declared
+        // to borrow the carrier itself. The carrier's construction-time loans
+        // keep the ultimate source alive and conflict-checked transitively —
+        // a conservative encoding of upstream's exact origin (Mojito
+        // additionally rejects mutating the carrier while the reference
+        // lives).
+        let receiver_fallback = parameter_rooted.then_some(&receiver);
         let origin = map_delegated_sig_origin(
             &callee_ref.origin,
             receiver_args,
             &receiver,
             &correspondences,
             caller_binder.as_ref(),
+            receiver_fallback,
         )?;
         let mutability = match callee_ref.mutability {
             SigMutability::Immutable => SigMutability::Immutable,
@@ -858,49 +885,125 @@ impl Checker {
     /// (field-struct origin-param index, enclosing origin-param index) pairs,
     /// both in the full-declaration-list (`OriginParamId`) domain. Origin
     /// arguments are erased from checked identity, so delegated-call origin
-    /// clauses resolve binder correspondences through this record.
+    /// clauses resolve binder correspondences through this record. The
+    /// annotation may apply the struct directly (`EntryIter[Self.o]`) or
+    /// through one of the declaring struct's own comptime aliases
+    /// (`Self.dict_entry_iter`, `Self.view_t[o2]`), whose bodies are read
+    /// in source form with the alias's own binders substituted by the
+    /// application's arguments.
     pub(super) fn field_origin_binder_arguments(
         &self,
         annotation: &crate::ast::SourceType,
+        associated: &[crate::ast::StructComptime],
     ) -> Option<Vec<(u32, u32)>> {
-        let crate::ast::SourceType::Named(name, args) = annotation else {
-            return None;
-        };
-        let info = self.structs.get(name)?;
-        let is_origin = |parameter: &crate::ast::TypeParam| matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
-        let explicit: Vec<(usize, &crate::ast::TypeParam)> = info
-            .source_params
-            .iter()
-            .enumerate()
-            .filter(|(_, parameter)| !parameter.infer_only)
+        let mut binders = Vec::new();
+        self.collect_field_origin_binders(annotation, associated, &HashMap::new(), &mut binders)?;
+        let bindings: Vec<(u32, u32)> = binders
+            .into_iter()
+            .filter_map(|(full_index, binder)| {
+                self.enclosing_origin_type_param(&binder)
+                    .map(|(enclosing_index, _)| (full_index, enclosing_index))
+            })
             .collect();
-        if args.len() != explicit.len() {
-            return None;
-        }
-        let mut bindings = Vec::new();
-        for ((full_index, parameter), argument) in explicit.iter().zip(args) {
-            if !is_origin(parameter) {
-                continue;
-            }
-            let binder = match argument {
-                crate::ast::ParamArg::Type(crate::ast::Type::Named(name, targs))
-                    if targs.is_empty() =>
-                {
-                    Some(name.as_str())
-                }
-                crate::ast::ParamArg::Type(crate::ast::Type::SelfParam(name)) => {
-                    Some(name.as_str())
-                }
-                crate::ast::ParamArg::Value(expression) => origin_binder_name(expression),
-                _ => None,
-            };
-            let Some(binder) = binder else { continue };
-            let Some((enclosing_index, _)) = self.enclosing_origin_type_param(binder) else {
-                continue;
-            };
-            bindings.push((*full_index as u32, enclosing_index));
-        }
         (!bindings.is_empty()).then_some(bindings)
+    }
+
+    /// Collect `(field-struct origin-param full index, enclosing binder name)`
+    /// pairs from a field annotation. `substitution` maps a parameterized
+    /// alias's own binder names to the enclosing binder names its application
+    /// supplied; the declaring struct's binders pass through unchanged.
+    /// `None` when the annotation is not a recordable struct application.
+    fn collect_field_origin_binders(
+        &self,
+        annotation: &crate::ast::SourceType,
+        associated: &[crate::ast::StructComptime],
+        substitution: &HashMap<String, String>,
+        out: &mut Vec<(u32, String)>,
+    ) -> Option<()> {
+        use crate::ast::{ParamArg, SourceType};
+        let is_origin = |parameter: &crate::ast::TypeParam| matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
+        let applied_binder = |argument: &ParamArg| -> Option<String> {
+            let binder = match argument {
+                ParamArg::Type(crate::ast::Type::Named(name, targs)) if targs.is_empty() => {
+                    name.as_str()
+                }
+                ParamArg::Type(crate::ast::Type::SelfParam(name)) => name.as_str(),
+                ParamArg::Value(expression) => origin_binder_name(expression)?,
+                _ => return None,
+            };
+            Some(
+                substitution
+                    .get(binder)
+                    .cloned()
+                    .unwrap_or_else(|| binder.to_string()),
+            )
+        };
+        match annotation {
+            SourceType::Named(name, args) => {
+                let info = self.structs.get(name)?;
+                let explicit: Vec<(usize, &crate::ast::TypeParam)> = info
+                    .source_params
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, parameter)| !parameter.infer_only)
+                    .collect();
+                if args.len() != explicit.len() {
+                    return None;
+                }
+                for ((full_index, parameter), argument) in explicit.iter().zip(args) {
+                    if !is_origin(parameter) {
+                        continue;
+                    }
+                    if let Some(binder) = applied_binder(argument) {
+                        out.push((*full_index as u32, binder));
+                    }
+                }
+                Some(())
+            }
+            // A monomorphic alias of the declaring struct: read its body.
+            SourceType::SelfParam(alias) => {
+                let member = associated
+                    .iter()
+                    .find(|member| member.name == *alias && member.params.is_empty())?;
+                let body = super::constraints::assoc_body_source_type(&member.value).ok()?;
+                self.collect_field_origin_binders(&body, associated, substitution, out)
+            }
+            // A parameterized alias application (`Self.view_t[o2]`): bind the
+            // alias's explicit binders to the supplied arguments, then read
+            // its body under that substitution.
+            SourceType::IndexedProjection { base, index } => {
+                let SourceType::SelfParam(alias) = base.as_ref() else {
+                    return None;
+                };
+                let member = associated
+                    .iter()
+                    .find(|member| member.name == *alias && !member.params.is_empty())?;
+                let supplied: Vec<&Expr> = match &index.kind {
+                    ExprKind::TupleLit(items) => items.iter().collect(),
+                    _ => vec![index.as_ref()],
+                };
+                let explicit: Vec<&crate::ast::TypeParam> = member
+                    .params
+                    .iter()
+                    .filter(|parameter| !parameter.infer_only)
+                    .collect();
+                if explicit.len() != supplied.len() {
+                    return None;
+                }
+                let mut inner = HashMap::new();
+                for (parameter, argument) in explicit.iter().zip(supplied) {
+                    if !is_origin(parameter) {
+                        continue;
+                    }
+                    if let Some(binder) = applied_binder(&ParamArg::Value(argument.clone())) {
+                        inner.insert(parameter.name.clone(), binder);
+                    }
+                }
+                let body = super::constraints::assoc_body_source_type(&member.value).ok()?;
+                self.collect_field_origin_binders(&body, associated, &inner, out)
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn enclosing_origin_type_param(
@@ -1672,10 +1775,12 @@ impl Checker {
             return_signature,
             args,
             kwargs,
+            false,
         )?;
         Ok((conventions, returned))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn solve_call_origins_with_bool_bindings(
         &self,
         slots: &[ArgSlot],
@@ -1684,6 +1789,7 @@ impl Checker {
         return_signature: Option<&crate::origin::RefSig>,
         args: &[Expr],
         kwargs: &[crate::ast::KwArg],
+        carrier_slots: bool,
     ) -> Result<SolvedCallOrigins, TypeError> {
         use crate::origin::{Mutability, Origin, RefTy, SigMutability};
         let mut effective = conventions.to_vec();
@@ -1735,6 +1841,38 @@ impl Checker {
             };
             if !mutable[index] {
                 effective[index] = Some(ArgConvention::Imm);
+            }
+        }
+        // A by-value carrier parameter the returned reference borrows
+        // (`def first_key(c: EntryCursor) -> ref[c.current().key] Int` — a
+        // parameter-rooted delegated clause resolved to the carrier itself):
+        // the returned reference designates storage the carrier borrows, so
+        // it loans the sources the carrier holds (its construction-time
+        // origins — upstream's exact origin; the executable handle re-roots
+        // at that storage, not at the carrier). A carrier holding nothing
+        // falls back to the caller's place itself. Free-function calls only
+        // (`carrier_slots`): in a method signature `SigOrigin::Param` indexes
+        // the struct's origin binders, not argument slots.
+        if let (true, Some(return_signature)) = (carrier_slots, return_signature) {
+            for (index, slot) in slots.iter().enumerate() {
+                if origins[index].is_some()
+                    || !sig_origin_mentions_param(&return_signature.origin, index)
+                {
+                    continue;
+                }
+                let expression = match slot {
+                    ArgSlot::Positional(position) => &args[*position],
+                    ArgSlot::Keyword(position) => &kwargs[*position].value,
+                    ArgSlot::Default => continue,
+                };
+                if let Ok(place) = self.origin_place(expression) {
+                    let carried = self.aggregate_origins(expression);
+                    origins[index] = Some(if carried.is_empty() {
+                        Origin::Place(place)
+                    } else {
+                        Origin::union(carried)
+                    });
+                }
             }
         }
         // A mutable or parametrically-mutable argument may redefine every
@@ -2018,6 +2156,29 @@ fn unqualified_struct_binder(name: &str) -> TypeError {
     TypeError::Unsupported(format!(
         "unqualified access to struct parameter '{name}'; use 'Self.{name}' instead"
     ))
+}
+
+/// Whether a signature origin names parameter slot `index` (directly, or
+/// under a projection or union).
+fn sig_origin_mentions_param(origin: &crate::origin::SigOrigin, index: usize) -> bool {
+    use crate::origin::SigOrigin;
+    match origin {
+        SigOrigin::Param(slot) => *slot == index,
+        SigOrigin::Projected(base, _) => sig_origin_mentions_param(base, index),
+        SigOrigin::Union(members) => members
+            .iter()
+            .any(|member| sig_origin_mentions_param(member, index)),
+        _ => false,
+    }
+}
+
+/// Whether a delegated-call receiver path (`self.a.b`) roots at `self`.
+fn receiver_rooted_at_self(object: &Expr) -> bool {
+    let mut root = object;
+    while let ExprKind::Member { object, .. } = &root.kind {
+        root = object;
+    }
+    matches!(&root.kind, ExprKind::Identifier(name) if name == "self")
 }
 
 /// The origin-parameter binder an origin-clause expression names: the bare
@@ -2545,12 +2706,16 @@ pub(super) fn struct_origin_argument(
 /// receiver type's corresponding origin argument (already spelled in caller
 /// terms). Unresolvable forms are contextual errors, not silent fallbacks —
 /// a wrong origin identity would let a returned reference escape checking.
+/// `receiver_fallback`: for a parameter-rooted receiver, the receiver origin a
+/// callee struct binder resolves to when nothing names it (see
+/// `delegated_call_ref_sig`).
 fn map_delegated_sig_origin(
     callee: &crate::origin::SigOrigin,
     receiver_args: &[TyArg],
     receiver: &crate::origin::SigOrigin,
     correspondences: &[(u32, u32)],
     caller_binder: Option<&crate::origin::Origin>,
+    receiver_fallback: Option<&crate::origin::SigOrigin>,
 ) -> Result<crate::origin::SigOrigin, TypeError> {
     use crate::origin::{Origin, SigOrigin};
 
@@ -2594,12 +2759,12 @@ fn map_delegated_sig_origin(
 
     match callee {
         SigOrigin::Self_ => Ok(receiver.clone()),
-        SigOrigin::Bound(origin) => Ok(SigOrigin::Bound(map_bound(
-            origin,
-            receiver_args,
-            correspondences,
-            caller_binder,
-        )?)),
+        SigOrigin::Bound(origin) => {
+            match map_bound(origin, receiver_args, correspondences, caller_binder) {
+                Ok(bound) => Ok(SigOrigin::Bound(bound)),
+                Err(error) => receiver_fallback.cloned().ok_or(error),
+            }
+        }
         SigOrigin::Static => Ok(SigOrigin::Static),
         SigOrigin::Untracked { mutable } => Ok(SigOrigin::Untracked { mutable: *mutable }),
         SigOrigin::Projected(base, path) => Ok(SigOrigin::Projected(
@@ -2609,6 +2774,7 @@ fn map_delegated_sig_origin(
                 receiver,
                 correspondences,
                 caller_binder,
+                receiver_fallback,
             )?),
             path.clone(),
         )),
@@ -2622,6 +2788,7 @@ fn map_delegated_sig_origin(
                         receiver,
                         correspondences,
                         caller_binder,
+                        receiver_fallback,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -3337,7 +3504,17 @@ impl Checker {
                     return result;
                 };
                 for (field_name, field_ty) in fields {
-                    if !matches!(field_ty, Ty::Ref(_)) {
+                    // A `ref[o]` field, or upstream's `Pointer[T, Self.o]`
+                    // storage of a forwarded `ref[Self.o]` parameter.
+                    let origin_bearing = matches!(field_ty, Ty::Ref(_))
+                        || matches!(
+                            field_ty,
+                            Ty::Pointer {
+                                origin: crate::origin::PointerOrigin::Param { .. },
+                                ..
+                            }
+                        );
+                    if !origin_bearing {
                         continue;
                     }
                     let Some(index) = signature
@@ -3383,13 +3560,25 @@ impl Checker {
         }
     }
 
-    pub(super) fn register_reference_parameter(&mut self, name: &str, referent: Ty, mutable: bool) {
+    /// `binder`: the enclosing struct's origin binder the parameter's clause
+    /// names (`ref[Self.o] xs`), when it names one — see
+    /// [`Checker::reference_parameter_struct_binder`].
+    pub(super) fn register_reference_parameter(
+        &mut self,
+        name: &str,
+        referent: Ty,
+        mutable: bool,
+        binder: Option<crate::origin::PointerOrigin>,
+    ) {
         let Some(scope) = self.binding_scope(name) else {
             return;
         };
         let Some(owner) = self.lookup_owner(name) else {
             return;
         };
+        if let Some(binder) = binder {
+            self.reference_parameter_binders.insert(owner, binder);
+        }
         self.reference_parameter_scopes[scope].insert(
             name.to_string(),
             crate::origin::RefTy {
@@ -3405,6 +3594,37 @@ impl Checker {
                 },
             },
         );
+    }
+
+    /// The enclosing struct's origin binder a `ref` parameter's clause names
+    /// (`ref[Self.o] xs`, or the bare binder in a ref field annotation's
+    /// position), as the pointer origin a `Pointer[T, Self.o]` field declares
+    /// — the declared mutability, no interior, no subtree. `None` for a
+    /// method-own binder, an inferred clause, or any other spelling.
+    pub(super) fn reference_parameter_struct_binder(
+        &self,
+        origin: Option<&[Expr]>,
+    ) -> Option<crate::origin::PointerOrigin> {
+        let [expression] = origin? else {
+            return None;
+        };
+        let name = origin_binder_name(expression)?;
+        let index = self.enclosing_type_params.iter().position(|parameter| {
+            parameter.name == name && parameter.bounds.as_slice() == ["Origin"]
+        })?;
+        if index >= self.enclosing_struct_type_params.get() {
+            return None;
+        }
+        self.enclosing_origin_param(name).ok()
+    }
+
+    /// The struct binder recorded for a `ref` parameter binding, by name.
+    pub(super) fn lookup_reference_parameter_binder(
+        &self,
+        name: &str,
+    ) -> Option<crate::origin::PointerOrigin> {
+        let owner = self.lookup_owner(name)?;
+        self.reference_parameter_binders.get(&owner).cloned()
     }
 
     pub(super) fn lookup_reference_parameter(&self, name: &str) -> Option<crate::origin::RefTy> {

@@ -628,6 +628,11 @@ pub struct Checker {
     /// reads through to the declared referent, while storage contexts can ask
     /// for the handle explicitly.
     reference_parameter_scopes: Vec<HashMap<String, crate::origin::RefTy>>,
+    /// The enclosing struct's origin binder a `ref[Self.o]` parameter's clause
+    /// names, by the parameter's owner: `Pointer(to=param)` mints that binder
+    /// (upstream's iterator-storage shape `self.src = Pointer(to=xs)` into a
+    /// `Pointer[T, Self.o]` field) instead of the parameter slot's place.
+    reference_parameter_binders: HashMap<crate::origin::OwnerId, crate::origin::PointerOrigin>,
     /// Origin-parameter declarations for callable values, parallel to the
     /// lexical value scopes. The outer vector stored per name has one entry per
     /// overload declaration. Each entry also retains the original compile-time
@@ -906,6 +911,7 @@ impl Checker {
             aggregate_origin_scopes: vec![HashMap::new()],
             aggregate_field_origin_scopes: vec![HashMap::new()],
             reference_parameter_scopes: vec![HashMap::new()],
+            reference_parameter_binders: HashMap::new(),
             callable_origin_scopes: vec![HashMap::new()],
             next_owner: std::cell::Cell::new(0),
             signature_origin_leniency: std::cell::Cell::new(false),

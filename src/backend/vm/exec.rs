@@ -31,18 +31,7 @@ impl VmBackend {
                     } => (frame, slot, projection),
                     _ => (frame_id.0, place.root as usize, Vec::new()),
                 };
-                for segment in &place.proj {
-                    projection.push(match segment {
-                        Proj::Field(name) => RefProjection::Field(name.clone()),
-                        Proj::Index(register) => RefProjection::Index(value_as_index(
-                            &regs[register.0 as usize],
-                        )?
-                            as usize),
-                        Proj::ConstIndex(index) => RefProjection::Index(*index),
-                        Proj::Variant(index) => RefProjection::Variant(*index),
-                        Proj::UninitPayload => RefProjection::UninitPayload,
-                    });
-                }
+                projection.extend(super::references::place_projection_segments(place, regs)?);
                 regs[dest.0 as usize] = Value::Ref {
                     frame,
                     slot,
@@ -338,13 +327,19 @@ impl VmBackend {
                         }
                     }
                 }
-                // A free function with `mut`/`ref` parameters writes each one's final
-                // value back to the caller's argument place after the call.
+                // A free function with `mut`/`ref` parameters — or a retained
+                // shared-read place lent to a borrowing-view result — binds
+                // those parameters to caller-place handles.
+                let retains_place = arg_places
+                    .iter()
+                    .chain(kwarg_places.iter())
+                    .any(Option::is_some);
                 let writeback = constructor_index
                     .is_none()
                     .then(|| {
-                        prog.index_of(&func.0)
-                            .filter(|&idx| prog.mir.functions[idx].1.ref_params.iter().any(|&r| r))
+                        prog.index_of(&func.0).filter(|&idx| {
+                            retains_place || prog.mir.functions[idx].1.ref_params.iter().any(|&r| r)
+                        })
                     })
                     .flatten();
                 let runtime_value_params = prog
@@ -1299,7 +1294,7 @@ impl VmBackend {
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();
                 if let Some(reference) =
-                    self.extend_reference(&vars[place.root as usize], &place.proj, regs)?
+                    self.extend_reference(&vars[place.root as usize], place, regs)?
                 {
                     // A `ref`-typed field behind an aliased root holds another
                     // handle; the assignment writes through it into the
@@ -1341,7 +1336,7 @@ impl VmBackend {
                 // The read half of `c[i] += e` on a user struct goes through
                 // `c.__getitem__(i)`; any other place reads its slot / SIMD lane.
                 regs[dest.0 as usize] = if let Some(reference) =
-                    self.extend_reference(&vars[place.root as usize], &place.proj, regs)?
+                    self.extend_reference(&vars[place.root as usize], place, regs)?
                 {
                     // Reading through a reference-alias root (a `mut`/`ref self`
                     // receiver) reaches the referent in one handle read. A
@@ -1365,12 +1360,14 @@ impl VmBackend {
                             // field) cannot walk raw storage — route it
                             // through the reference walk, which chases stored
                             // handles mid-projection.
-                            let crosses_reference = place
-                                .projection_tys
-                                .iter()
-                                .rev()
-                                .skip(1)
-                                .any(|ty| matches!(ty, Ty::Ref(_)));
+                            // A single-pointee pointer field mid-projection
+                            // (`self.src[]` on `Pointer[List[T], o]` storage)
+                            // stores a handle the same way.
+                            let crosses_reference =
+                                place.projection_tys.iter().rev().skip(1).any(|ty| {
+                                    matches!(ty, Ty::Ref(_))
+                                        || super::references::single_pointee_pointer(Some(ty))
+                                });
                             if crosses_reference {
                                 let composed = Value::Ref {
                                     frame: frame_id.0,
@@ -1378,7 +1375,7 @@ impl VmBackend {
                                     projection: Vec::new(),
                                 };
                                 let composed = self
-                                    .extend_reference(&composed, &place.proj, regs)?
+                                    .extend_reference(&composed, place, regs)?
                                     .expect("a composed root handle extends");
                                 let value = self.read_reference(&composed, frame_id, vars)?;
                                 if matches!(value, Value::Ref { .. })
@@ -1405,8 +1402,7 @@ impl VmBackend {
                 // `Moved` tombstone so a later drop of the whole struct skips it (no
                 // double-drop) and any stray use fails loudly. The ownership analysis
                 // has already proven the moved field is not read again.
-                let reference =
-                    self.extend_reference(&vars[place.root as usize], &place.proj, regs)?;
+                let reference = self.extend_reference(&vars[place.root as usize], place, regs)?;
                 let value = if let Some(reference) = reference {
                     let old = self.read_reference(&reference, frame_id, vars)?;
                     self.write_reference(&reference, frame_id, vars, Value::Moved)?;

@@ -1135,10 +1135,12 @@ impl Checker {
                     || ref_parameter_is_writable(p, &reference_type_params),
             )?;
             if matches!(p.convention, Some(crate::ast::ArgConvention::Ref)) {
+                let binder = self.reference_parameter_struct_binder(p.origin.as_deref());
                 self.register_reference_parameter(
                     &p.name,
                     pty.clone(),
                     ref_parameter_is_writable(p, &reference_type_params),
+                    binder,
                 );
             }
             if !matches!(pty, Ty::Ref(_))

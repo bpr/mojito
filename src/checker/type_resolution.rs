@@ -1896,7 +1896,7 @@ impl Checker {
 
     /// Look up an enclosing `Origin`-bounded type parameter by name and
     /// resolve its declared mutability.
-    fn enclosing_origin_param(
+    pub(super) fn enclosing_origin_param(
         &self,
         name: &str,
     ) -> Result<crate::origin::PointerOrigin, TypeError> {

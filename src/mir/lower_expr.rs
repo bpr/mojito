@@ -1194,8 +1194,11 @@ impl Flatten<'_> {
                         .as_ref()
                         .map(generic_callable_param_decls)
                         .unwrap_or_default();
-                    let (regs, arg_places) = self.lower_call_arguments(args);
-                    let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
+                    let saved_anchor_permission = self.allow_argument_anchors;
+                    self.allow_argument_anchors = self.indirect_call_anchors_arguments(e);
+                    let (regs, arg_places) = self.lower_call_arguments(args, false);
+                    let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+                    self.allow_argument_anchors = saved_anchor_permission;
                     let place = self.resolved_place(name);
                     let callee_place = place.is_typed().then_some(place);
                     let dest = self.fresh(span(e), None);
@@ -1269,6 +1272,7 @@ impl Flatten<'_> {
                 // installs them).
                 // Calls with recorded transfer effects install their
                 // temporary's loans at the transfer destination themselves.
+                let view_result = self.borrows_view_result(e);
                 let saved_anchor_permission = self.allow_argument_anchors;
                 self.allow_argument_anchors =
                     !(matches!(
@@ -1280,7 +1284,7 @@ impl Flatten<'_> {
                             crate::SemanticAdjustment::BorrowRefArguments { .. }
                         )
                     }) || self.call_transfers.contains_key(&e.source_span()));
-                let (regs, arg_places) = self.lower_call_arguments(args);
+                let (regs, arg_places) = self.lower_call_arguments(args, view_result);
                 self.allow_argument_anchors = saved_anchor_permission;
                 // A copy construction (`Name(copy=place)`) binds its single
                 // keyword to the copy constructor's borrowed `copy: Self`
@@ -1315,7 +1319,7 @@ impl Flatten<'_> {
                     });
                     (vec![("copy".to_string(), source)], vec![Some(place)])
                 } else {
-                    self.lower_call_keywords(kwargs)
+                    self.lower_call_keywords(kwargs, view_result)
                 };
                 // The prelude rewrite renames every use of `String`, including
                 // the builtin Writable conversion the checker typed as the
@@ -1597,8 +1601,8 @@ impl Flatten<'_> {
                     // its receiver/environment escapable).
                     let (recv, recv_place) = self.lower_call_receiver(object);
                     let param_arg_regs = self.param_arg_regs(param_args);
-                    let (argument_regs, arg_places) = self.lower_call_arguments(args);
-                    let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs);
+                    let (argument_regs, arg_places) = self.lower_call_arguments(args, false);
+                    let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
                     let dest = self.fresh(span(e), None);
                     let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
                     self.emit_interior_invalidations(object, None);
@@ -1976,8 +1980,8 @@ impl Flatten<'_> {
                 if let ExprKind::Identifier(type_name) = &object.kind
                     && !self.vars.iter().any(|name| name == type_name)
                 {
-                    let (regs, arg_places) = self.lower_call_arguments(args);
-                    let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
+                    let (regs, arg_places) = self.lower_call_arguments(args, false);
+                    let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
                     let d = self.fresh(span(e), None);
                     let target = self
                         .resolved_callable(e)
@@ -2036,9 +2040,11 @@ impl Flatten<'_> {
                 };
                 let (recv, recv_place) = self.lower_call_receiver(receiver_expr);
                 // Retain checker-selected `mut`/`ref` ordinary-argument places,
-                // mirroring a free-function `Call`.
-                let (regs, arg_places) = self.lower_call_arguments(args);
-                let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
+                // mirroring a free-function `Call` — and the shared-read places
+                // a borrowing-view result lends to.
+                let view_result = self.borrows_view_result(e);
+                let (regs, arg_places) = self.lower_call_arguments(args, view_result);
+                let (kw, kwarg_places) = self.lower_call_keywords(kwargs, view_result);
                 // A wrapped `.format(...)` keeps its own callee but types its
                 // register as the compile-time string the nominal-String
                 // conversion consumes (mirroring the free-call builtins).
@@ -2900,8 +2906,11 @@ impl Flatten<'_> {
         let param_decls = callable_ty
             .map(generic_callable_param_decls)
             .unwrap_or_default();
-        let (arg_regs, arg_places) = self.lower_call_arguments(args);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
+        let saved_anchor_permission = self.allow_argument_anchors;
+        self.allow_argument_anchors = self.indirect_call_anchors_arguments(e);
+        let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        self.allow_argument_anchors = saved_anchor_permission;
         let dest = self.fresh(span(e), None);
         if call_site_invalidations {
             self.emit_call_invalidations(e, args, kwargs);
@@ -3084,8 +3093,11 @@ impl Flatten<'_> {
             .as_ref()
             .map(generic_callable_param_decls)
             .unwrap_or_default();
-        let (arg_regs, arg_places) = self.lower_call_arguments(args);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
+        let saved_anchor_permission = self.allow_argument_anchors;
+        self.allow_argument_anchors = self.indirect_call_anchors_arguments(e);
+        let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        self.allow_argument_anchors = saved_anchor_permission;
         let d = self.fresh(span(e), None);
         self.emit_call_invalidations(e, args, kwargs);
         let transfer_arg_places = arg_places.clone();

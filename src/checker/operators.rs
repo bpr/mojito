@@ -552,6 +552,25 @@ impl Checker {
             });
         }
         let value = &kwargs[0].value;
+        // A `ref[Self.o]` parameter names the enclosing struct's origin binder:
+        // its pointer carries that binder exactly as a `Pointer[T, Self.o]`
+        // field declares it (upstream's iterator storage `self.src =
+        // Pointer(to=xs)`), so the store type-checks by identity and the
+        // binder later resolves to the caller's source.
+        if let ExprKind::Identifier(name) = &value.kind
+            && let Some(origin) = self.lookup_reference_parameter_binder(name)
+            && let Some(reference) = self.lookup_reference_parameter(name)
+        {
+            let mutable = origin.statically_mutable() == Some(true);
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                crate::checked::SemanticAdjustment::PointerToPlace { mutable },
+            );
+            return Ok(Ty::Pointer {
+                element: reference.referent,
+                origin,
+            });
+        }
         if let ExprKind::Identifier(name) = &value.kind
             && (matches!(self.lookup(name), Some(Ty::Ref(_)))
                 || self.lookup_reference_parameter(name).is_some())

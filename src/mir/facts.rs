@@ -287,12 +287,7 @@ impl Flatten<'_> {
                         return loans;
                     }
                     let places: Vec<&Expr> = arguments()
-                        .filter(|argument| {
-                            matches!(
-                                argument.kind,
-                                ExprKind::Identifier(_) | ExprKind::Member { .. }
-                            ) && matches!(self.checked_ty(argument), Some(Ty::Struct(..)))
-                        })
+                        .filter(|argument| self.view_lends_argument(argument))
                         .collect();
                     let loans: Vec<MirLoan> = places
                         .into_iter()
@@ -385,8 +380,18 @@ impl Flatten<'_> {
                 // A method returning a ref-field struct (a borrowing
                 // view/iterator) lends its receiver to the result, exactly as
                 // a view-typed slice result does: recurse for chained
-                // temporaries, else loan the owning receiver place.
-                if let (true, ExprKind::MethodCall { object, .. }) = (
+                // temporaries, else loan the owning receiver place. Its
+                // aggregate-typed place arguments lend the same way (the
+                // free-function rule above).
+                if let (
+                    true,
+                    ExprKind::MethodCall {
+                        object,
+                        args,
+                        kwargs,
+                        ..
+                    },
+                ) = (
                     self.checked_adjustments(expression)
                         .iter()
                         .any(|adjustment| {
@@ -394,20 +399,30 @@ impl Flatten<'_> {
                         }),
                     &expression.kind,
                 ) {
-                    let loans = self.aggregate_borrows(object);
-                    if !loans.is_empty() {
-                        return loans;
+                    let lent = |source: &Expr, this: &mut Self| -> Vec<MirLoan> {
+                        let loans = this.aggregate_borrows(source);
+                        if !loans.is_empty() {
+                            return loans;
+                        }
+                        if matches!(
+                            source.kind,
+                            ExprKind::Identifier(_) | ExprKind::Member { .. }
+                        ) {
+                            return vec![MirLoan {
+                                place: this.place(source),
+                                mutable: false,
+                                interior: None,
+                            }];
+                        }
+                        Vec::new()
+                    };
+                    let mut loans = lent(object, self);
+                    for argument in args.iter().chain(kwargs.iter().map(|kw| &kw.value)) {
+                        if self.view_lends_argument(argument) {
+                            loans.extend(lent(argument, self));
+                        }
                     }
-                    if matches!(
-                        object.kind,
-                        ExprKind::Identifier(_) | ExprKind::Member { .. }
-                    ) {
-                        return vec![MirLoan {
-                            place: self.place(object),
-                            mutable: false,
-                            interior: None,
-                        }];
-                    }
+                    return loans;
                 }
                 Vec::new()
             }
@@ -471,6 +486,22 @@ impl Flatten<'_> {
                 self.collect_capture_loans(nested, loans, seen);
             }
         }
+    }
+
+    /// Whether a borrowing-view call lends this place argument to its result:
+    /// an aggregate place the callee could have borrowed into the view, or a
+    /// place bound to a `mut`/`ref` parameter (the checker retained its call
+    /// place), whatever its type — a `ref n: Int` source of a `Pointer[Int,
+    /// o]` field is lent exactly like a `ref xs: List[Int]` source.
+    pub(super) fn view_lends_argument(&self, argument: &Expr) -> bool {
+        matches!(
+            argument.kind,
+            ExprKind::Identifier(_) | ExprKind::Member { .. }
+        ) && (matches!(self.checked_ty(argument), Some(Ty::Struct(..)))
+            || self
+                .checked_adjustments(argument)
+                .iter()
+                .any(|adjustment| matches!(adjustment, crate::SemanticAdjustment::RetainCallPlace)))
     }
 
     pub(super) fn checked_adjustments(&self, expression: &Expr) -> Vec<crate::SemanticAdjustment> {

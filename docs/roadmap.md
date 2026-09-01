@@ -147,27 +147,15 @@ recreates this section's checkbox with the fresh divergence list.
     fan-out — do it last or opportunistically. Unlocks `Dict.fromkeys`
     (already stdlib-expressible) and the parametric-statics gap recorded
     by the contextual-member work.
-  - **Ref-field residue lifts** — small recorded gaps left by the completed
-    2026-08-29/30 ref-field adapter follow-ups arc (all six items landed;
-    outcomes in `docs/features.md` and `CHANGELOG.md`); each is
-    independently liftable:
-    - A ref-field view returned through a plain read-convention *parameter*
-      (not receiver) still traps at run: `lower_borrowed_read_argument`
-      deliberately retains no arg place and ownership/verify couple retained
-      places to `mut`/`ref` conventions — lift by retaining the place as a
-      shared read when the call carries `BorrowViewResult`. Relatedly,
-      temporary view arguments anchor only in plain function-call argument
-      lists (constructions, method calls, and transfer-effect callees carry
-      the loans through their own channels); `CallIndirect` (callable-value)
-      argument anchors are not implemented.
-    - Storing `Pointer(to=ref_param)` into a `Pointer[T, o]` field
-      (upstream's real iterator-storage shape) rejects with an origin
-      mismatch; ref-field storage remains the subset encoding.
-    - Delegated-origin binder correspondences resolve through single-hop
-      `self.field` receivers with recorded field applications; multi-hop
-      paths and alias-typed fields (`Self.dict_entry_iter`) fall back to the
-      unambiguous single-binder case, and parameter-rooted receivers keep
-      the erased-argument fallback.
+  - **Temporary view arguments to method calls** — a borrowing view built
+    inline as a *method* argument (`b.extend(Span(a))`) traps at run with
+    `vm: use after Pointer deallocation`: the loan-carrying temporary's
+    hidden `$arg_loan_r` anchor exists only for plain function-call and
+    callable-value argument lists, so the source is dropped before the
+    method runs (a named `var s = Span(a)` works). Lift by anchoring
+    method-call temporaries through the same statement-lifetime channel
+    without duplicating the receiver/transfer-effect loans that made the
+    method path opt out (three `mir_test` pins guard that duplication).
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
   the Writer and explicit-destroy foundations.
 - [ ] **Time, random, and testing slices** — add deterministic testable cores and

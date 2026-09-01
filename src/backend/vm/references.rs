@@ -27,17 +27,7 @@ impl VmBackend {
             } => (*frame, *slot, projection.clone()),
             _ => (frame_id.0, place.root as usize, Vec::new()),
         };
-        for segment in &place.proj {
-            projection.push(match segment {
-                Proj::Field(name) => RefProjection::Field(name.clone()),
-                Proj::Index(register) => {
-                    RefProjection::Index(value_as_index(&registers[register.0 as usize])? as usize)
-                }
-                Proj::ConstIndex(index) => RefProjection::Index(*index),
-                Proj::Variant(index) => RefProjection::Variant(*index),
-                Proj::UninitPayload => RefProjection::UninitPayload,
-            });
-        }
+        projection.extend(place_projection_segments(place, registers)?);
         Ok(Value::Ref {
             frame: target_frame,
             slot,
@@ -438,6 +428,8 @@ impl VmBackend {
                 // index 0 is the value. A non-collection pointee (a scalar, or a
                 // non-List struct falling through the guarded List arm) resolves here.
                 (RefProjection::Index(0), value) => value,
+                // The handle chased above already designates the pointee.
+                (RefProjection::Deref, value) => value,
                 (segment, value) => {
                     return Err(RuntimeError::TypeError(format!(
                         "invalid reference projection {segment:?} on {}",
@@ -641,7 +633,7 @@ impl VmBackend {
     pub(super) fn extend_reference(
         &self,
         root: &Value,
-        projection_path: &[Proj],
+        place: &MirPlace,
         registers: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
         let Value::Ref {
@@ -653,23 +645,55 @@ impl VmBackend {
             return Ok(None);
         };
         let mut projection = projection.clone();
-        for segment in projection_path {
-            projection.push(match segment {
-                Proj::Field(name) => RefProjection::Field(name.clone()),
-                Proj::Index(register) => {
-                    RefProjection::Index(value_as_index(&registers[register.0 as usize])? as usize)
-                }
-                Proj::ConstIndex(index) => RefProjection::Index(*index),
-                Proj::Variant(index) => RefProjection::Variant(*index),
-                Proj::UninitPayload => RefProjection::UninitPayload,
-            });
-        }
+        projection.extend(place_projection_segments(place, registers)?);
         Ok(Some(Value::Ref {
             frame: *frame,
             slot: *slot,
             projection,
         }))
     }
+}
+
+/// Whether a checked storage type is a single-pointee tracked pointer — a
+/// `to=place` pointer designating exactly one value (a place, or an origin
+/// parameter without a multi-element interior domain). Indexing such storage
+/// is the offset-0 dereference, not element selection.
+pub(super) fn single_pointee_pointer(ty: Option<&Ty>) -> bool {
+    matches!(
+        ty,
+        Some(Ty::Pointer { origin, .. }) if origin.as_origin().is_some() && !origin.multi_element()
+    )
+}
+
+/// The reference-projection segments of a MIR place's projections. An index
+/// step whose base storage is a single-pointee pointer becomes the identity
+/// [`RefProjection::Deref`] — the stored handle already designates the
+/// pointee — rather than an element index into it.
+pub(super) fn place_projection_segments(
+    place: &MirPlace,
+    registers: &[Value],
+) -> Result<Vec<RefProjection>, RuntimeError> {
+    let mut segments = Vec::with_capacity(place.proj.len());
+    for (position, segment) in place.proj.iter().enumerate() {
+        let base_ty = if position == 0 {
+            place.root_ty.as_ref()
+        } else {
+            place.projection_tys.get(position - 1)
+        };
+        segments.push(match segment {
+            Proj::Field(name) => RefProjection::Field(name.clone()),
+            Proj::Index(_) | Proj::ConstIndex(_) if single_pointee_pointer(base_ty) => {
+                RefProjection::Deref
+            }
+            Proj::Index(register) => {
+                RefProjection::Index(value_as_index(&registers[register.0 as usize])? as usize)
+            }
+            Proj::ConstIndex(index) => RefProjection::Index(*index),
+            Proj::Variant(index) => RefProjection::Variant(*index),
+            Proj::UninitPayload => RefProjection::UninitPayload,
+        });
+    }
+    Ok(segments)
 }
 
 /// Step one reference-projection segment into a concrete frame-stored value while
@@ -687,6 +711,7 @@ pub(super) fn navigate_reference_step<'a>(
             .find(|(field, _)| field == name)
             .map(|(_, value)| value),
         (RefProjection::Index(index), Value::Tuple(items)) => items.get(*index),
+        (RefProjection::Deref, value) => Some(value),
         (
             RefProjection::Variant(expected),
             Value::Variant {

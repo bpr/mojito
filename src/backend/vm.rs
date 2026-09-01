@@ -1253,7 +1253,7 @@ impl VmBackend {
                 projection: Vec::new(),
             };
             let composed = self
-                .extend_reference(&composed, &parent.proj, regs)?
+                .extend_reference(&composed, &parent, regs)?
                 .expect("a composed root handle extends");
             let value = self.read_reference(&composed, frame_id, vars)?;
             if matches!(value, Value::Ref { .. }) {
@@ -1322,12 +1322,10 @@ impl VmBackend {
                 (argv, slots)
             }
         };
-        let ref_params = prog.mir.functions[idx].1.ref_params.clone();
+        let function = &prog.mir.functions[idx].1;
+        let ref_params = function.ref_params.clone();
         let mut reference_inputs = Vec::new();
         for (i, is_ref) in ref_params.iter().enumerate() {
-            if !is_ref {
-                continue;
-            }
             // The reference parameter's caller place: it must have been supplied by
             // a positional argument that is a simple place.
             let place = bound_argument_place(
@@ -1341,6 +1339,20 @@ impl VmBackend {
                 &keyword_names,
                 kwarg_places,
             );
+            if !is_ref {
+                // A shared-read place lent to a borrowing-view result binds
+                // the caller's storage too (see the continuation path).
+                if let Some(place) = place
+                    && !function.owned_params.get(i).copied().unwrap_or(false)
+                    && !function.deinit_params.get(i).copied().unwrap_or(false)
+                {
+                    reference_inputs.push((
+                        i,
+                        Self::reference_to_place_parts(frame_id, regs, vars, place)?,
+                    ));
+                }
+                continue;
+            }
             let place = place.ok_or_else(|| {
                 RuntimeError::Unsupported(format!(
                     "vm: a mut/ref argument to '{name}' must be a plain variable or field \
@@ -1816,9 +1828,6 @@ impl VmBackend {
                     ));
                 }
                 for (i, is_ref) in ref_params.iter().enumerate().skip(1) {
-                    if !is_ref {
-                        continue;
-                    }
                     let place = bound_argument_place(
                         slots.get(i - 1),
                         prog.sigs
@@ -1830,6 +1839,20 @@ impl VmBackend {
                         &keyword_names,
                         kwarg_places,
                     );
+                    if !is_ref {
+                        // A shared-read place lent to a borrowing-view result
+                        // binds the caller's storage (as for free functions).
+                        if let Some(place) = place
+                            && !function.owned_params.get(i).copied().unwrap_or(false)
+                            && !function.deinit_params.get(i).copied().unwrap_or(false)
+                        {
+                            reference_inputs.push((
+                                i,
+                                Self::reference_to_place_parts(frame_id, regs, vars, place)?,
+                            ));
+                        }
+                        continue;
+                    }
                     let place = place.ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
                             "vm: a mut/ref argument to method '{fname}' must be a plain \
@@ -3331,6 +3354,9 @@ fn navigate_reference_mut<'a>(
                     ));
                 }
             },
+            // The single-pointee dereference: the handle reached here already
+            // designates the pointee.
+            RefProjection::Deref => value,
             RefProjection::Variant(expected) => match value {
                 Value::Variant {
                     index,

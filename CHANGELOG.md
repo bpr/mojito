@@ -8,6 +8,56 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Ref-field residue lifts: a ref-field view returned through a plain
+  read-convention *parameter* (free function or method argument) now executes.
+  A borrowing-view call (`BorrowViewResult`) retains its place arguments as
+  shared reads — MIR `arg_places` may name a read-convention slot, the
+  ownership analysis classifies a retained place by the callee's `ref_params`
+  at that slot (`check_ownership_program` threads a `CalleeRefParams` table
+  into the loan analysis), and the VM binds such a parameter to the caller's
+  storage — and a method's view result lends its aggregate place arguments
+  like a free function's. Loan-carrying temporary arguments anchor across
+  callable-value (`CallIndirect`) calls, and across `return` values and branch
+  conditions (terminator operands flush their anchors before the terminator;
+  previously the temporary's source could be dropped before the call).
+  Delegated-origin binder correspondences now resolve through alias-typed
+  fields: a field spelled through the declaring struct's comptime alias
+  (`var iter: Self.dict_entry_iter`, parameterized `Self.view_t[o2]`) records
+  the same binder bindings as a direct application, read from the alias body
+  in source form with the alias's own binders substituted by the application,
+  so two-binder delegations through such fields no longer fall back to the
+  single-binder heuristic (or reject). The return-site resolver now chains the
+  recorded map with the single-binder fallback exactly like the signature
+  side.
+  Upstream's iterator-storage shape — `var src: Pointer[T, Self.o]` stored
+  from `Pointer(to=xs)` of a `ref[Self.o] xs` constructor parameter, then
+  `self.src[][r]` — now checks and runs: the checker records the struct
+  binder a `ref[Self.o]` parameter names and mints it as the pointer's origin
+  (`PointerOrigin::Param`, matching the field by identity), handwritten
+  initializers record pointer-field sources like ref-field sources,
+  view-result borrowing (`BorrowViewResult`) covers results
+  carrying origin-bearing pointer fields and lends `mut`/`ref`-bound place
+  arguments of any type, and the VM gains `RefProjection::Deref` — the
+  offset-0 dereference of a single-pointee pointer is an identity projection
+  through the stored handle instead of an element-0 index into the pointee.
+  The `pointer-field-iterator-storage` conformance row pins the shape.
+  A delegated origin clause rooted at a bare carrier parameter
+  (`def first_key(c: EntryCursor) -> ref[c.current().key] Int`) is accepted:
+  the signature resolver falls back to the carrier for a callee binder nothing
+  names, the return-site check compares against the carrier's place, and the
+  call site records the carrier's construction-time origins as the returned
+  reference's loans. The `origin-delegated-parameter-receiver` conformance
+  row pins it. With that, the "Ref-field residue lifts" roadmap bullet is
+  closed. Regenerating the pliron parity manifest for the new fixtures
+  exposed a pre-existing native gap (`list_methods_growth`,
+  `overload_transfer_effect_isolation` failed natively at the previous head
+  despite their `exe-differential` rows): a trait-dispatched `copy()` whose
+  receiver register is typed as a `ref` to a scalar — a reference result
+  retained in a hidden `$call_ref` slot, `span[i].copy()` inside
+  `List.extend(Span)` — now lowers as the scalar value read like the plain
+  scalar receiver; the "unresolved method call" diagnostic names the
+  receiver's type.
+
 - The owned-`var` transfer convention: a place of a `Copyable`-only type can
   no longer be implicitly copied into a consuming position (`var`/`deinit`
   parameters and receivers, operator `var` operands such as `p + q` on

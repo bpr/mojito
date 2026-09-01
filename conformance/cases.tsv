@@ -226,8 +226,10 @@ ref-binding-temporary-source	run	conformance/fixtures/ref_binding_temporary_sour
 origin-placeholder-initialized-local	run	conformance/fixtures/origin_placeholder_initialized_local.mojo
 origin-placeholder-field	reject	conformance/fixtures/origin_placeholder_field.mojo
 unqualified-struct-origin-clause	reject	conformance/fixtures/unqualified_struct_origin_clause.mojo
+pointer-field-iterator-storage	run	conformance/fixtures/pointer_field_iterator_storage.mojo
 origin-delegated-call-arguments	run	conformance/fixtures/origin_delegated_call_arguments.mojo
 origin-delegated-multi-binder	run	conformance/fixtures/origin_delegated_multi_binder.mojo
+origin-delegated-parameter-receiver	run	conformance/fixtures/origin_delegated_parameter_receiver.mojo
 implicit-copy-owned-argument	reject	conformance/fixtures/implicit_copy_owned_argument.mojo
 implicit-copy-return-local	reject	conformance/fixtures/implicit_copy_return_local.mojo
 implicit-copy-var-init	reject	conformance/fixtures/implicit_copy_var_init.mojo

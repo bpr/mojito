@@ -19,9 +19,7 @@ impl Flatten<'_> {
         // statement completes via a trailing `KeepAlive` use.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
         self.lower_instr_dispatch(i, outer_map);
-        for var in std::mem::take(&mut self.pending_argument_anchors) {
-            self.emit(MirInstr::KeepAlive { var });
-        }
+        self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
     }
 
@@ -607,7 +605,8 @@ impl Flatten<'_> {
             return false;
         };
         let (recv, recv_place) = self.lower_call_receiver(place);
-        let (args, arg_places) = self.lower_call_arguments(std::slice::from_ref(rhs_expression));
+        let (args, arg_places) =
+            self.lower_call_arguments(std::slice::from_ref(rhs_expression), false);
         let dest = self.fresh(place.source_span(), None);
         self.emit_interior_invalidations(place, None);
         self.emit_checked_call_boundary(&contract, place.source_span());
@@ -1801,10 +1800,18 @@ impl Flatten<'_> {
         // each statement flushes exactly its own anchors.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
         self.lower_stmt_dispatch(s, statement_binding, outer_map);
+        self.flush_argument_anchors();
+        self.pending_argument_anchors = saved;
+    }
+
+    /// Emit the trailing `KeepAlive` use of every hidden `$arg_loan_r` slot
+    /// anchored so far, ending the temporaries' statement lifetime here. A
+    /// terminator operand (a `return`/branch expression) lowers outside any
+    /// statement bracket, so its anchors flush before the terminator itself.
+    pub(super) fn flush_argument_anchors(&mut self) {
         for var in std::mem::take(&mut self.pending_argument_anchors) {
             self.emit(MirInstr::KeepAlive { var });
         }
-        self.pending_argument_anchors = saved;
     }
 
     fn lower_stmt_dispatch(
@@ -2545,6 +2552,7 @@ impl Flatten<'_> {
                 else_b,
             } => {
                 let c = self.expr_hir(cond); // evaluated at the end of this block
+                self.flush_argument_anchors();
                 MirTerm::Branch {
                     cond: c,
                     then_b: map[then_b],
@@ -2552,7 +2560,9 @@ impl Flatten<'_> {
                 }
             }
             Terminator::Return(expression) => {
-                MirTerm::Return(expression.as_ref().map(|e| self.lower_return_value(e)))
+                let value = expression.as_ref().map(|e| self.lower_return_value(e));
+                self.flush_argument_anchors();
+                MirTerm::Return(value)
             }
             Terminator::ReturnWithCleanup { value, cleanup } => {
                 // Preserve source evaluation order: materialize the return value
@@ -2560,6 +2570,7 @@ impl Flatten<'_> {
                 // item^` must transfer the yielded element before the iterator's
                 // residual storage is released.
                 let value = value.as_ref().map(|e| self.lower_return_value(e));
+                self.flush_argument_anchors();
                 for var in cleanup {
                     // Keep the cleanup root live into this return block. Without
                     // this marker, edge-based last-use elaboration can destroy a

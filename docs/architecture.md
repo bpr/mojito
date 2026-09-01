@@ -1530,7 +1530,12 @@ record. Concrete targets are additionally checked against `MirDeclarations`. The
 pipeline composes it with
 `analysis::check_ownership_program`, which owns the ownership dataflow; the
 compiler rejects findings as `CompilerError::Verify`, and the VM re-verifies
-the drop-elaborated program it actually executes.
+the drop-elaborated program it actually executes. The loan analysis reads
+each call's retained argument places against the callee's declared
+`ref_params` (a program-wide `CalleeRefParams` table): a place retained at a
+`mut`/`ref` slot is an exclusive write, while a place retained at a
+read-convention slot — a borrowing-view call lending that argument to its
+result — is a shared read; an unknown callee stays exclusive.
 
 A place's storage type is distinct from its expression value type. For a field
 declared `ref[origin] T`, the place stores `Ty::Ref`, while an ordinary load

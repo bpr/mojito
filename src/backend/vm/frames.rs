@@ -640,10 +640,8 @@ impl VmBackend {
                 reify_value_parameters(&signature.param_decls, &supplied)
             })
             .unwrap_or_default();
-        for (parameter, is_ref) in prog.mir.functions[index].1.ref_params.iter().enumerate() {
-            if !is_ref {
-                continue;
-            }
+        let function = &prog.mir.functions[index].1;
+        for (parameter, is_ref) in function.ref_params.iter().enumerate() {
             let place = bound_argument_place(
                 slots.get(parameter),
                 prog.sigs
@@ -654,8 +652,29 @@ impl VmBackend {
                 arg_places,
                 &keyword_names,
                 kwarg_places,
-            )
-            .ok_or_else(|| {
+            );
+            if !is_ref {
+                // A place retained at a read-convention slot is a shared
+                // read lent to a borrowing-view result: bind the caller's
+                // storage, or the result's `ref` fields root in the callee
+                // frame. Owned/deinit slots keep the value transfer.
+                if let Some(place) = place
+                    && !function
+                        .owned_params
+                        .get(parameter)
+                        .copied()
+                        .unwrap_or(false)
+                    && !function
+                        .deinit_params
+                        .get(parameter)
+                        .copied()
+                        .unwrap_or(false)
+                {
+                    bound[parameter] = self.reference_to_place(caller, place)?;
+                }
+                continue;
+            }
+            let place = place.ok_or_else(|| {
                 RuntimeError::Unsupported(format!(
                     "vm: a mut/ref argument to '{}' must be a place",
                     func.0

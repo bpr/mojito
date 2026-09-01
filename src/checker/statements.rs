@@ -2140,10 +2140,12 @@ impl Checker {
                 if result.is_ok()
                     && matches!(param.convention, Some(crate::ast::ArgConvention::Ref))
                 {
+                    let binder = self.reference_parameter_struct_binder(param.origin.as_deref());
                     self.register_reference_parameter(
                         &param.name,
                         bind_ty.clone(),
                         ref_parameter_is_writable(param, type_params),
+                        binder,
                     );
                 }
                 if result.is_ok()

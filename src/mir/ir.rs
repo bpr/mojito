@@ -382,11 +382,14 @@ pub enum MirInstr {
     /// positional arguments; `kwargs` the keyword arguments (`name = value`). The
     /// backend matches them to the callee's parameter slots (filling defaults,
     /// collecting `*args`) via the phase-neutral call matcher.
-    /// A free-function call. `arg_places[i]` is `Some` only when checking selected
-    /// a `mut`/`ref` parameter and positional argument `i` is a simple place (a
-    /// variable or field chain, no dynamic index). It retains the caller place
-    /// for handle passing/write-back; ordinary copied arguments and unsupported
-    /// place shapes are `None`.
+    /// A free-function call. `arg_places[i]` is `Some` when positional argument
+    /// `i` is a simple place (a variable or field chain, no dynamic index) and
+    /// either checking selected a `mut`/`ref` parameter (the place is retained
+    /// for handle passing/write-back) or the call's result is a borrowing view
+    /// lending that argument (the place is retained as a shared read so the
+    /// callee binds the caller's storage; the analysis classifies it by the
+    /// callee's convention at that slot). Ordinary copied arguments and
+    /// unsupported place shapes are `None`.
     Call {
         dest: Reg,
         func: FuncRef,
@@ -480,9 +483,10 @@ pub enum MirInstr {
         /// (a reference result used as the receiver) does not conflict with
         /// the call. Unchecked lowering paths stay conservatively `true`.
         recv_writes: bool,
-        /// Like `Call::arg_places`: `arg_places[i]` is `Some` only for a
+        /// Like `Call::arg_places`: `arg_places[i]` is `Some` for a
         /// checker-selected `mut`/`ref` ordinary argument with a supported
-        /// caller place.
+        /// caller place, or for a shared-read place a borrowing-view result
+        /// lends to.
         arg_places: Vec<Option<MirPlace>>,
         /// Like `Call::kwarg_places`, aligned with `kwargs`.
         kwarg_places: Vec<Option<MirPlace>>,

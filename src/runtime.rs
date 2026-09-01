@@ -100,6 +100,11 @@ pub enum Value {
 pub enum RefProjection {
     Field(String),
     Index(usize),
+    /// The offset-0 dereference of a single-pointee `to=place` pointer
+    /// (`p[]`): the handle stored at this step already designates the
+    /// pointee, so the segment is the identity — distinct from `Index(0)`,
+    /// which selects element 0 of a collection reached the same way.
+    Deref,
     Variant(usize),
     /// One owned slot in a closure's declaration-created environment.
     Capture(usize),

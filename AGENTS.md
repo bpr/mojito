@@ -86,21 +86,33 @@ move.
 
 ## Commands
 
-- Required agent gate: `cargo nextest run --profile quick` (excludes the
-  per-fixture corpus binary), plus focused tests for the changed behavior.
-- Do not run `scripts/check`, `cargo nextest run` without the `quick` profile,
-  or any other full-suite equivalent. The repository owner alone runs the full
-  test suite manually.
-- Plain `cargo test` is a working fallback only when scoped to a focused target
-  or named test; do not use it to run the full suite.
-- One integration target: `cargo nextest run --test vm_test`
-- One named test: `cargo nextest run test_name`
+**Testing during development is deliberately minimal.** The repository owner
+runs the full gate (every suite, the corpus binary, and the pliron manifests)
+overnight and triages failures in the morning; that is where broad
+verification happens. In-session verification must take seconds, not hours:
+
+- The in-session gate is `cargo build` plus `cargo run -- run FILE` on the
+  handful of fixtures/probes that exercise the touched behavior (and
+  `--backend pliron` on them when native lowering changed). Nothing more.
+- Do NOT run test-suite binaries (`cargo nextest run --test …`), corpus
+  filters, `cargo nextest run --profile quick`, `scripts/check`, or the pliron
+  manifest regenerations unless the owner asks for them in the session. Say
+  in the summary which checks were left to the nightly gate.
+- A single named test is fine when it pins the exact behavior being changed:
+  `cargo nextest run test_name`.
+- New `assets/ok` fixtures: add their manifest rows by hand (parity:
+  `exe-differential`/`sanitized` when the native run matches; scalar:
+  `ineligible`/`no-scalar-entry-shape` unless the fixture has a scalar
+  `compute` entry) and bump the exe ratchet in `tests/pliron_backend_test.rs`
+  by the row count; do not run the regeneration.
 - CLI: `cargo run -- <lex|parse|check|own|run> [FILE]`
 - Module roots: repeat `--module-path PATH` / `-I PATH`; use `--stdlib PATH`
   to replace the bundled standard-library root.
 
-Do not report a task complete until formatting, tests, Clippy with warnings denied,
-and `git diff --check` pass.
+Before reporting a task complete: `cargo fmt`, `git diff --check`, and a clean
+`cargo build`; Clippy with warnings denied on the lib only when the change is
+small enough for it to be quick. Full tests and the manifests are the nightly
+gate's job — report what was and was not run.
 
 ## Test and Fixture Ownership
 

@@ -1410,7 +1410,7 @@ impl Checker {
                 && captures.is_empty()
                 && !resolved.consumes_receiver
                 && matches!(return_type, Ty::Struct(..))
-                && self.type_contains_reference(&return_type)
+                && self.type_carries_loans(&return_type)
             {
                 self.operation_adjustments
                     .borrow_mut()

@@ -14,6 +14,46 @@ impl Flatten<'_> {
     /// nominal accessor-produced reference uses the same hidden handle slot as
     /// a chained method receiver.
     pub(super) fn lower_call_argument(&mut self, expression: &Expr) -> (Reg, Option<MirPlace>) {
+        self.lower_call_argument_with(expression, false)
+    }
+
+    /// Whether a call expression's checked result is a borrowing view of its
+    /// arguments (`BorrowViewResult`): the caller-side loans lend the place
+    /// arguments to the result, so a read-convention place argument must
+    /// reach the callee as the caller's storage rather than a copy — a view
+    /// built over a callee-local copy would dangle once the frame unwinds.
+    pub(super) fn borrows_view_result(&self, expression: &Expr) -> bool {
+        self.checked_adjustments(expression)
+            .iter()
+            .any(|adjustment| matches!(adjustment, crate::SemanticAdjustment::BorrowViewResult))
+    }
+
+    /// Whether a callable-value (indirect) call's argument list may anchor
+    /// loan-carrying temporaries — the same rule as a plain function call
+    /// (see `allow_argument_anchors`): a construction carries its arguments'
+    /// loans in its result, and a callee with recorded transfer effects
+    /// installs them at the destination, so neither anchors.
+    pub(super) fn indirect_call_anchors_arguments(&self, expression: &Expr) -> bool {
+        !(self
+            .checked_adjustments(expression)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    crate::SemanticAdjustment::BorrowRefArguments { .. }
+                )
+            })
+            || self.call_transfers.contains_key(&expression.source_span()))
+    }
+
+    /// `view_result`: the enclosing call carries `BorrowViewResult`, so a
+    /// shared read of a place argument retains that place (see
+    /// [`Self::borrows_view_result`]).
+    fn lower_call_argument_with(
+        &mut self,
+        expression: &Expr,
+        view_result: bool,
+    ) -> (Reg, Option<MirPlace>) {
         let adjustments = self.checked_adjustments(expression);
         // A temporary bound to a `ref [origin]` parameter: store the value in
         // a hidden slot registered under the checker-minted owner identity and
@@ -76,10 +116,16 @@ impl Flatten<'_> {
             }) && self.implicit_conversion(expression).is_none()
                 && let Some(register) = self.lower_borrowed_read_argument(expression)
             {
-                // Deliberately no retained place: the analysis treats retained
-                // call places as exclusive writes and the VM's write-back
-                // binding is keyed to `mut`/`ref` parameters. Owner liveness
-                // through the call comes from the register's place provenance.
+                // A borrowing-view call retains the place as a SHARED read:
+                // the ownership analysis classifies a retained place by the
+                // callee's declared convention (a non-`mut`/`ref` slot reads),
+                // and the VM binds it as a caller-place handle so the view's
+                // reference fields root in caller storage. Every other call
+                // retains no place: owner liveness through the call comes from
+                // the register's place provenance.
+                if view_result {
+                    return (register, self.simple_place(expression));
+                }
                 return (register, None);
             }
             let value = self.expr(expression);
@@ -432,28 +478,32 @@ impl Flatten<'_> {
         value
     }
 
+    /// `view_result`: see [`Self::borrows_view_result`].
     pub(super) fn lower_call_arguments(
         &mut self,
         arguments: &[Expr],
+        view_result: bool,
     ) -> (Vec<Reg>, Vec<Option<MirPlace>>) {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            let (register, place) = self.lower_call_argument(argument);
+            let (register, place) = self.lower_call_argument_with(argument, view_result);
             registers.push(register);
             places.push(place);
         }
         (registers, places)
     }
 
+    /// `view_result`: see [`Self::borrows_view_result`].
     pub(super) fn lower_call_keywords(
         &mut self,
         arguments: &[crate::ast::KwArg],
+        view_result: bool,
     ) -> (Vec<(String, Reg)>, Vec<Option<MirPlace>>) {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            let (register, place) = self.lower_call_argument(&argument.value);
+            let (register, place) = self.lower_call_argument_with(&argument.value, view_result);
             registers.push((argument.name.clone(), register));
             places.push(place);
         }

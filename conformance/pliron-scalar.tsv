@@ -147,6 +147,8 @@ assets/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-
 assets/ok/origin_delegated_call_arguments_run.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_call_with_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_multi_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_delegated_multi_binder_alias_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_delegated_parameter_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_transfer_effect_isolation.mojo	-	ineligible	no-scalar-entry-shape
@@ -234,7 +236,12 @@ assets/ok/pliron_wrap_int_arith.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_pow.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_uint_arith.mojo	compute	differential	ret=UInt
 assets/ok/pointer_empty_deref.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_deref_index.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_iterator_storage.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_view_returned.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_temp_argument_loan_indirect.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_temp_argument_loan_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_write_through.mojo	-	ineligible	no-scalar-entry-shape
@@ -257,6 +264,7 @@ assets/ok/ref_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_free_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_plain_self.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_field_view_read_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_field_wrapper_iterator_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape

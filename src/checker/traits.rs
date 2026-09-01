@@ -575,7 +575,9 @@ impl Checker {
                 },
                 ty.clone(),
             );
-            if let Some(bindings) = self.field_origin_binder_arguments(&f.ty) {
+            if let Some(bindings) =
+                self.field_origin_binder_arguments(&f.ty, declaration.associated)
+            {
                 field_origin_arguments.insert(f.name.clone(), bindings);
             }
             field_tys.push((f.name.clone(), ty));

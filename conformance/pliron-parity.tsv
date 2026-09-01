@@ -147,6 +147,8 @@ assets/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitiz
 assets/ok/origin_delegated_call_arguments_run.mojo	main	exe-differential	sanitized
 assets/ok/origin_delegated_call_with_arguments.mojo	main	exe-differential	sanitized
 assets/ok/origin_delegated_multi_binder.mojo	main	exe-differential	sanitized
+assets/ok/origin_delegated_multi_binder_alias_field.mojo	main	exe-differential	sanitized
+assets/ok/origin_delegated_parameter_receiver.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/overload_transfer_effect_isolation.mojo	main	exe-differential	sanitized
@@ -234,7 +236,12 @@ assets/ok/pliron_wrap_int_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_pow.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_uint_arith.mojo	main	exe-differential	sanitized
 assets/ok/pointer_empty_deref.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_deref_index.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_iterator_storage.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_view_returned.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan.mojo	main	exe-differential	sanitized
+assets/ok/pointer_temp_argument_loan_indirect.mojo	main	exe-differential	sanitized
+assets/ok/pointer_temp_argument_loan_return.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_place.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
@@ -257,6 +264,7 @@ assets/ok/ref_field_view_for_temporary.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_view_free_function.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_view_method_return.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_view_plain_self.mojo	main	exe-differential	sanitized
+assets/ok/ref_field_view_read_parameter.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_view_ref_yield.mojo	main	exe-differential	sanitized
 assets/ok/ref_field_wrapper_iterator_protocol.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	-	ineligible	no-main-entry

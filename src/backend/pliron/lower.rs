@@ -6094,6 +6094,21 @@ impl<'a> FnLowering<'a> {
             self.reg_values.insert(dest.0, value);
             return Ok(());
         }
+        // The same dispatch on a receiver register typed as a `ref` to a
+        // scalar (a reference result retained in a hidden `$call_ref` slot,
+        // `span[i].copy()`): the receiver `LoadPlace` read the referent
+        // through the slot, so the register carries the scalar itself.
+        if resolved.is_none()
+            && method == "copy"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && let Some(Ty::Ref(reference)) = self.func.reg_types.get(&recv.0)
+            && let Some(scalar) = scalar_copy_ty(&reference.referent)
+        {
+            let value = self.reg_value(ctx, recv, scalar)?;
+            self.reg_values.insert(dest.0, value);
+            return Ok(());
+        }
         if resolved.is_none() && method == "__hash__" && args.is_empty() {
             match self.func.reg_types.get(&recv.0) {
                 Some(Ty::Int) => {
@@ -6158,7 +6173,16 @@ impl<'a> FnLowering<'a> {
             }
         }
         let Some(resolved) = resolved else {
-            return Err(self.unsupported_reg(format!("unresolved method call `{method}`"), dest));
+            let receiver = self
+                .func
+                .reg_types
+                .get(&recv.0)
+                .map(|ty| ty.to_string())
+                .unwrap_or_else(|| "an untyped register".to_string());
+            return Err(self.unsupported_reg(
+                format!("unresolved method call `{method}` on a receiver of type {receiver}"),
+                dest,
+            ));
         };
         let Some(signature) = self.signatures.get(resolved) else {
             return Err(

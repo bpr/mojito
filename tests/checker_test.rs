@@ -3731,6 +3731,62 @@ fn pointer_aggregates_bind_declared_origin_parameters_per_binding() {
 }
 
 #[test]
+fn pointer_to_ref_parameter_mints_the_declared_struct_binder() {
+    // Upstream's iterator storage: `Pointer(to=xs)` of a `ref[Self.o] xs`
+    // parameter carries the struct binder `o` exactly as the field declares
+    // it, so the store type-checks by identity (bare `o` and `Self.o` field
+    // spellings alike).
+    ok("struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
+    var src: Pointer[List[Int], Self.o]
+    var index: Int
+
+    def __init__(out self, ref[Self.o] xs: List[Int], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
+
+    def next_val(mut self) -> Int:
+        var r = self.index
+        self.index += 1
+        return self.src[][r]
+
+def main():
+    var data = List[Int]()
+    data.append(3)
+    var v = EntryIter(data, 0)
+    print(v.next_val())
+");
+    ok("struct View[m: Bool, //, o: Origin[mut=m]]:
+    var src: Pointer[Int, o]
+
+    def __init__(out self, ref[Self.o] n: Int):
+        self.src = Pointer(to=n)
+
+def main():
+    var n = 7
+    var v = View(n)
+    print(v.src[])
+");
+    // A plain read parameter's pointer has a fresh place origin, not the
+    // initializer's fixed binder.
+    assert!(matches!(
+        err(
+            "struct View[m: Bool, //, o: Origin[mut=m]]:
+    var src: Pointer[Int, Self.o]
+
+    def __init__(out self, n: Int):
+        self.src = Pointer(to=n)
+
+def main():
+    var n = 7
+    var v = View(n)
+    print(v.src[])
+"
+        ),
+        TypeError::TypeMismatch { context, .. } if context == "assignment target"
+    ));
+}
+
+#[test]
 fn checks_ref_self_return_origin() {
     assert!(check_source(
         "@fieldwise_init\nstruct Box:\n    var value: Int\n    def get(ref self) -> ref[self] Int:\n        return self.value\n"

@@ -703,7 +703,9 @@ impl Checker {
     /// caller-side loans. Reference results carry their own loan channel, and
     /// an already-recorded adjustment (captures, instantiated contracts) wins.
     fn record_view_result_borrow(&self, span: &SourceSpan, ret: &Ty) {
-        if matches!(ret, Ty::Struct(..)) && self.type_contains_reference(ret) {
+        // Reference fields and origin-bearing pointer fields (upstream's
+        // `Pointer[T, Self.o]` iterator storage) both borrow.
+        if matches!(ret, Ty::Struct(..)) && self.type_carries_loans(ret) {
             self.operation_adjustments
                 .borrow_mut()
                 .entry(span.clone())
@@ -1068,6 +1070,7 @@ impl Checker {
                 ref_return.as_deref(),
                 args,
                 kwargs,
+                true,
             )?;
         let copied_reads = slots
             .iter()
@@ -1311,6 +1314,7 @@ impl Checker {
                 ref_return.as_deref(),
                 args,
                 kwargs,
+                true,
             )?;
         let copied_reads = slots
             .iter()
