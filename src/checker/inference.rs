@@ -408,7 +408,7 @@ impl Checker {
                 .insert(expr.source_span(), ty.clone());
             if let Some(crate::checked::SemanticAdjustment::ReferenceResult { reference }) =
                 self.operation_adjustments.borrow().get(&expr.source_span())
-                && self.is_copyable(&reference.referent)
+                && self.is_implicitly_copyable(&reference.referent)
             {
                 self.copyable_reference_result_reads
                     .borrow_mut()
@@ -848,6 +848,14 @@ impl Checker {
                     }
                 }
                 let callable = self.infer(callee)?;
+                // Invoking a callable reached through a reference result
+                // (`(objs[0])(3)`) borrows the referent for its `__call__`
+                // receiver; it never reads the callable out as an owned value.
+                if self.infer_reference_value(callee).is_some() {
+                    self.borrowed_reference_receivers
+                        .borrow_mut()
+                        .insert(callee.source_span());
+                }
                 // `a.b[i](x)`: value brackets over an indexable runtime member
                 // are a subscript of the member value, not parameter
                 // application on a callable — the member-base mirror of the
@@ -1056,7 +1064,7 @@ impl Checker {
                     self.record_interior_reference(expr.source_span(), expr, "value");
                     // A projection value read copies a Copyable payload out of
                     // the variant's storage rather than aliasing it.
-                    if self.is_copyable(&result) {
+                    if self.is_implicitly_copyable(&result) {
                         self.copy_place_value_uses
                             .borrow_mut()
                             .insert(expr.source_span());
@@ -1252,7 +1260,7 @@ impl Checker {
                     self.record_interior_reference(expr.source_span(), expr, "value");
                     // A projection value read copies a Copyable payload out of
                     // the variant's storage rather than aliasing it.
-                    if self.is_copyable(&result) {
+                    if self.is_implicitly_copyable(&result) {
                         self.copy_place_value_uses
                             .borrow_mut()
                             .insert(expr.source_span());

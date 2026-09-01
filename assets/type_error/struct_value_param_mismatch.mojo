@@ -13,5 +13,5 @@ struct Tagged[e: Extent](Copyable, Movable):
 
 def main():
     var a = Tagged[Extent(2, 3)](1)
-    var c: Tagged[Extent(3, 2)] = a
+    var c: Tagged[Extent(3, 2)] = a.copy()
     print(c.scale)

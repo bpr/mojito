@@ -22,9 +22,9 @@ struct DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](
     var key: Self.K
     var value: Self.V
 
-    def __init__(out self, key: Self.K, value: Self.V):
-        self.key = key
-        self.value = value
+    def __init__(out self, var key: Self.K, var value: Self.V):
+        self.key = key^
+        self.value = value^
 
 # The `items` borrowing view: yields whole-entry references at `element`
 # interior granularity, read-only.
@@ -205,7 +205,7 @@ struct Dict[
             b += 1
         var i = 0
         while i < len(keys):
-            self[keys[i]] = values[i]
+            self[keys._get_copy(i)] = values._get_copy(i)
             i += 1
 
     def __init__(out self, *, copy: Self):
@@ -239,14 +239,14 @@ struct Dict[
             return self.entries[i].value
         raise Error("missing key")
 
-    def __setitem__(mut self, key: Self.K, value: Self.V) where conforms_to(
+    def __setitem__(mut self, var key: Self.K, var value: Self.V) where conforms_to(
         Self.K, Deinitable
     ) and conforms_to(Self.V, Deinitable):
         var i = self.find_index(key)
         if i >= 0:
-            self.entries[i] = DictEntry[Self.K, Self.V](key, value)
+            self.entries[i] = DictEntry[Self.K, Self.V](key^, value^)
         else:
-            self._append_new(DictEntry[Self.K, Self.V](key, value))
+            self._append_new(DictEntry[Self.K, Self.V](key^, value^))
 
     # Displacement-returning insertion: replacing an existing key moves the
     # previous entry (key and value) out and returns it; a fresh key returns
@@ -260,7 +260,7 @@ struct Dict[
             var displaced = Optional[DictEntry[Self.K, Self.V]](
                 self.entries.data.unsafe_offset(i).unsafe_take_pointee()
             )
-            self.entries.data[i] = DictEntry[Self.K, Self.V](key, value)
+            self.entries.data[i] = DictEntry[Self.K, Self.V](key^, value^)
             return displaced^
         self._append_new(DictEntry[Self.K, Self.V](key^, value^))
         return Optional[DictEntry[Self.K, Self.V]]()
@@ -326,7 +326,7 @@ struct Dict[
     ) and conforms_to(Self.V, Deinitable):
         var i = 0
         while i < len(other.entries):
-            self[other.entries._get_copy(i).key] = other.entries._get_copy(i).value
+            self[other.entries[i].key.copy()] = other.entries[i].value.copy()
             i += 1
 
     # Destroy every entry in place, leaving the dictionary empty.
@@ -361,14 +361,14 @@ struct Dict[
     def get(self, key: Self.K) -> Optional[Self.V]:
         var i = self.find_index(key)
         if i >= 0:
-            return Optional[Self.V](self.entries._get_copy(i).value)
+            return Optional[Self.V](self.entries[i].value.copy())
         return Optional[Self.V]()
 
     def get(self, key: Self.K, default: Self.V) -> Self.V:
         var i = self.find_index(key)
         if i >= 0:
-            return self.entries._get_copy(i).value
-        return default
+            return self.entries[i].value.copy()
+        return default.copy()
 
     def __len__(self) -> Int:
         return len(self.entries)
@@ -468,7 +468,7 @@ struct Dict[
             bucket_entries.append(i)
             new_index[bucket] = bucket_entries^
             i += 1
-        self.index = new_index
+        self.index = new_index^
         self.nbuckets = new_bucket_count
 
     # Rebuild the bucket index after a positional removal shifted entries.

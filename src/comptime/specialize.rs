@@ -3,6 +3,7 @@
 //! Extracted from `comptime.rs`; see `docs/symbol-map.md`.
 
 use super::*;
+use crate::types::tuple_elements;
 
 /// Read the concrete truth value from a folded declaration constraint while
 /// preserving validation of the diagnostic tuple form.
@@ -1300,10 +1301,7 @@ impl<'a> Elab<'a> {
                                 semantic_types[k],
                                 Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
                             )
-                            && self
-                                .conformance
-                                .require(&semantic_types[k], "ImplicitlyCopyable")
-                                .is_ok()
+                            && self.specialization_type_is_implicitly_copyable(&semantic_types[k])
                     {
                         let mut value_accessor = unrolled.clone();
                         let value_name = if accessor_name == "__getitem_param__" {
@@ -1644,5 +1642,18 @@ impl<'a> Elab<'a> {
             | Type::SelfType
             | Type::MaterializedCallable(_) => Ok(()),
         }
+    }
+
+    /// Test implicit-copyability while generated Tuple specializations are
+    /// still being ordered. Their declarations may not yet be registered in
+    /// the conformance environment, so inspect nested Tuple elements instead
+    /// of trusting an unresolved conditional conformance on the outer shell.
+    fn specialization_type_is_implicitly_copyable(&self, ty: &Ty) -> bool {
+        if let Some(elements) = tuple_elements(ty) {
+            return elements
+                .iter()
+                .all(|element| self.specialization_type_is_implicitly_copyable(element));
+        }
+        self.conformance.require(ty, "ImplicitlyCopyable").is_ok()
     }
 }

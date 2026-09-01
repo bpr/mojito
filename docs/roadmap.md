@@ -123,23 +123,15 @@ recreates this section's checkbox with the fresh divergence list.
   "Mojito rejects/diverges from valid Mojo" clusters today; every item
   lists what it unlocks so slices can be chosen by leverage. The remaining
   items below are in **recommended execution order**, not fan-out order. The
-  bound relaxation is paired with the owned-`var` transfer convention, and
-  the hasher work is sequenced next to that convention so the shared
+  hasher work is sequenced next to the bound relaxation so the shared
   Dict/Set/List signatures are rewritten once. The ref-field adapter
   follow-ups are a **parallel track** (origin/ref-system
   refinements plus bug fixes, not coupled to the API-parity sequence) and
   are listed last with their own internal order.
-  - **Owned-`var` transfer convention** — upstream requires `^` or
-    `.copy()` to pass a non-ImplicitlyCopyable value to an owned
-    parameter; Mojito implicitly copies, so `p + q` on Lists accepts
-    here and rejects upstream. Closes a whole convention-level
-    acceptance-divergence class rather than one API; large fixture blast
-    radius, so schedule it as its own pass and pair it with the bound
-    relaxation above.
   - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
     signature `__hash__(self, mut hasher: Some[Hasher])` with a
     reflection default; AHasher; `std.hashlib` module identity). Sequenced
-    next to the transfer convention because it rewrites the same
+    next to the bound relaxation because it rewrites the same
     Dict/Set/List signatures. Mojito's `__hash__() -> UInt` +
     `std.hashing` is fork surface: upstream user structs declaring the
     hasher-based method are rejected today — a direct acceptance gap for

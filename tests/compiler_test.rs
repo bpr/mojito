@@ -354,7 +354,7 @@ fn inferred_polymorphic_recursion_reports_specialization_divergence() {
     let compiler = Compiler::default();
     let error = compiler
         .compile_unlinked(
-            "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n",
+            "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x.copy()], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n",
         )
         .expect_err("inferred polymorphic recursion cannot converge");
     assert!(

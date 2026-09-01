@@ -10,7 +10,7 @@ struct Foo(Copyable):
 
 
 def copy_return[T: Copyable](value: T) -> T:
-    return value
+    return value.copy()
 
 
 def main():

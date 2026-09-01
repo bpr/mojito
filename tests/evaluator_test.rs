@@ -157,7 +157,7 @@ fn generic_function_value_rejects_contextual_specialization() {
     // Current Mojo does not infer a generic specialization from a local
     // callable annotation; the materialization rejects at check time.
     let program = parse(
-        "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) thin -> Int = identity\n    print(callback(42))\n",
+        "def identity[T: Copyable & Movable](value: T) -> T:\n    return value.copy()\n\ndef main():\n    var callback: def(Int) thin -> Int = identity\n    print(callback(42))\n",
     )
     .expect("parse");
     assert!(matches!(
@@ -731,7 +731,7 @@ fn generic_struct_preserves_element_runtime_type() {
 
 #[test]
 fn inferred_generic_methods_run_type_erased() {
-    let src = "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value\n    def echo[T: Copyable](self, value: T) -> T:\n        return value\n\ndef main():\n    var factory = Factory(0)\n    print(Factory.make(7), factory.echo(\"ok\"))\n";
+    let src = "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value.copy()\n    def echo[T: Copyable](self, value: T) -> T:\n        return value.copy()\n\ndef main():\n    var factory = Factory(0)\n    print(Factory.make(7), factory.echo(\"ok\"))\n";
     assert_eq!(output(src), "7 ok\n");
 }
 
@@ -744,7 +744,7 @@ fn generic_target_implicit_conversion_runs_selected_constructor() {
 #[test]
 fn generic_function_identity_runs_type_erased() {
     let e = run(
-        "def id[T: Copyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: StringLiteral = id(\"hi\")\n",
+        "def id[T: Copyable & Movable](x: T) -> T:\n    return x.copy()\n\nvar n: Int = id(5)\nvar s: StringLiteral = id(\"hi\")\n",
     );
     assert_eq!(binding(&e, "n"), Value::Int(5));
     assert_eq!(binding(&e, "s"), Value::Str("hi".into()));
@@ -753,7 +753,7 @@ fn generic_function_identity_runs_type_erased() {
 #[test]
 fn generic_function_over_generic_struct() {
     let e = run(&format!(
-        "{PAIR}def first[T: Copyable & Movable](p: Pair[T]) -> T:\n    return p.left\n\nvar p: Pair[Int] = Pair(10, 20)\nvar x: Int = first(p)\n"
+        "{PAIR}def first[T: Copyable & Movable](p: Pair[T]) -> T:\n    return p.left.copy()\n\nvar p: Pair[Int] = Pair(10, 20)\nvar x: Int = first(p)\n"
     ));
     assert_eq!(binding(&e, "x"), Value::Int(10));
 }
@@ -761,7 +761,7 @@ fn generic_function_over_generic_struct() {
 #[test]
 fn generic_struct_method_dispatches() {
     let e = run(
-        "@fieldwise_init\nstruct Box[T: Copyable & Movable]:\n    var val: Self.T\n\n    def get(self) -> Self.T:\n        return self.val\n\nvar b: Box[Int] = Box(7)\nvar g: Int = b.get()\n",
+        "@fieldwise_init\nstruct Box[T: Copyable & Movable]:\n    var val: Self.T\n\n    def get(self) -> Self.T:\n        return self.val.copy()\n\nvar b: Box[Int] = Box(7)\nvar g: Int = b.get()\n",
     );
     assert_eq!(binding(&e, "g"), Value::Int(7));
 }
@@ -1163,9 +1163,10 @@ fn inferred_list_promotes_numeric_elements() {
 
 #[test]
 fn list_assignment_is_a_copy() {
-    // `var b = a` copies; the two are equal but independent values.
+    // `var b = a.copy()` copies; the two are equal but independent values
+    // (a bare `var b = a` needs `ImplicitlyCopyable`, which `List` is not).
     let e = run(
-        "var a: List[Int] = [1, 2, 3]\nvar b: List[Int] = a\nvar a0 = a[0]\nvar b0 = b[0]\nvar an = len(a)\nvar bn = len(b)\n",
+        "var a: List[Int] = [1, 2, 3]\nvar b: List[Int] = a.copy()\nvar a0 = a[0]\nvar b0 = b[0]\nvar an = len(a)\nvar bn = len(b)\n",
     );
     assert_nominal(&binding(&e, "a"), "List");
     assert_nominal(&binding(&e, "b"), "List");
@@ -1213,7 +1214,7 @@ fn pop_returns_and_shrinks() {
 fn list_copy_is_independent_under_mutation() {
     // The crux of value semantics: mutating the copy must not touch the original.
     let e = run(
-        "var a: List[Int] = [1, 2, 3]\nvar b: List[Int] = a\nb.append(4)\nvar an = len(a)\nvar bn = len(b)\nvar blast = b[3]\n",
+        "var a: List[Int] = [1, 2, 3]\nvar b: List[Int] = a.copy()\nb.append(4)\nvar an = len(a)\nvar bn = len(b)\nvar blast = b[3]\n",
     );
     assert_nominal(&binding(&e, "a"), "List");
     assert_nominal(&binding(&e, "b"), "List");
@@ -1323,7 +1324,7 @@ fn not_in_drives_a_dedup_loop() {
 
 // --- Member-write: place assignment + mut self ---
 
-const EPT: &str = "@fieldwise_init\nstruct Point:\n    var x: Int\n    var y: Int\n    def __copyinit__(out self, existing: Point):\n        self.x = existing.x\n        self.y = existing.y\n\n";
+const EPT: &str = "@fieldwise_init\nstruct Point(Copyable):\n    var x: Int\n    var y: Int\n    def __copyinit__(out self, existing: Point):\n        self.x = existing.x\n        self.y = existing.y\n\n";
 
 #[test]
 fn field_write_mutates_in_place() {
@@ -1344,7 +1345,7 @@ fn field_write_mutates_in_place() {
 fn field_write_is_independent_across_copies() {
     // Value semantics: mutating a copy leaves the original unchanged.
     let e = run(&format!(
-        "{EPT}var p: Point = Point(1, 2)\nvar q: Point = p\nq.x = 100\n"
+        "{EPT}var p: Point = Point(1, 2)\nvar q: Point = p.copy()\nq.x = 100\n"
     ));
     let px = match binding(&e, "p") {
         Value::Struct { fields, .. } => fields[0].1.clone(),
@@ -1361,7 +1362,7 @@ fn field_write_is_independent_across_copies() {
 #[test]
 fn write_to_a_field_of_a_copied_list_element_then_store_it_back() {
     let e = run(&format!(
-        "{EPT}var ps: List[Point] = [Point(1, 1), Point(2, 2)]\nvar updated: Point = ps[1]\nupdated.x = 99\nps[1] = updated\nvar observed = ps[1].x\n"
+        "{EPT}var ps: List[Point] = [Point(1, 1), Point(2, 2)]\nvar updated: Point = ps[1].copy()\nupdated.x = 99\nps[1] = updated^\nvar observed = ps[1].x\n"
     ));
     assert_nominal(&binding(&e, "ps"), "List");
     assert_eq!(binding(&e, "observed"), Value::Int(99));

@@ -1,11 +1,11 @@
 @fieldwise_init
-struct Inner(Copyable, Movable):
+struct Inner(ImplicitlyCopyable, Movable):
     var a: Int
     var b: Bool
 
 
 @fieldwise_init
-struct Outer(Copyable, Movable):
+struct Outer(ImplicitlyCopyable, Movable):
     var inner: Inner
     var scale: Float64
 

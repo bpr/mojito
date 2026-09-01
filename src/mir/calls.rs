@@ -363,6 +363,7 @@ impl Flatten<'_> {
                         args: Vec::new(),
                         kwargs: Vec::new(),
                         recv_place: None,
+                        recv_writes: false,
                         arg_places: Vec::new(),
                         kwarg_places: Vec::new(),
                         capture_accesses: Vec::new(),
@@ -593,6 +594,25 @@ impl Flatten<'_> {
             }
             _ => None,
         }
+    }
+
+    /// Whether a checked method call writes through its receiver place. The
+    /// checker's effective receiver convention already collapses a `ref self`
+    /// reached through an immutable reference to `Imm`; a call without a
+    /// checked contract keeps the conservative exclusive classification.
+    pub(super) fn receiver_writes(&self, expression: &Expr) -> bool {
+        self.checked_call_contract(expression)
+            .is_none_or(|contract| {
+                matches!(
+                    contract.receiver_convention,
+                    Some(
+                        crate::ast::ArgConvention::Mut
+                            | crate::ast::ArgConvention::Ref
+                            | crate::ast::ArgConvention::Var
+                            | crate::ast::ArgConvention::Deinit
+                    )
+                )
+            })
     }
 
     /// Evaluate a call receiver and retain its executable place when checking

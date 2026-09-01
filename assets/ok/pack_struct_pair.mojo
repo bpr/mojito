@@ -15,7 +15,7 @@ def first_int(p: Pair[Int, Bool]) -> Int:
 
 def main():
     var p: Pair[Int, Bool] = Pair[Int, Bool]((1, True))
-    var q = p
+    var q = p.copy()
     var single = Pair[String](("solo",))
     var n: Int = p.storage[0] + 41
     print(n)

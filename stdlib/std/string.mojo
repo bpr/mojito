@@ -56,7 +56,7 @@ def check_slice_bounds(start: Int, end: Int, length: Int):
 
 
 struct String(
-    Comparable, Copyable, Equatable, Hashable, Iterable, Movable, Writable
+    Comparable, Copyable, Equatable, Hashable, ImplicitlyCopyable, Iterable, Movable, Writable
 ):
     # `Element` stays an unbound alias: `String` has no origin parameter to
     # forward, and an alias declaration is a legal unbound position upstream
@@ -652,7 +652,7 @@ struct String(
 # the scalar in ordinary library code through runtime `Byte(Int)`
 # conversions.
 struct Codepoint(
-    Comparable, Copyable, Equatable, Deinitable, Intable, Movable, Writable
+    Comparable, Copyable, Equatable, Deinitable, ImplicitlyCopyable, Intable, Movable, Writable
 ):
     var _scalar: Int
     var _text: String

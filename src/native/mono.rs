@@ -720,6 +720,7 @@ impl<'a> Specializer<'a> {
                             args: std::mem::take(args),
                             kwargs: std::mem::take(kwargs),
                             recv_place: callee_place.take(),
+                            recv_writes: true,
                             arg_places: std::mem::take(arg_places),
                             kwarg_places: std::mem::take(kwarg_places),
                             capture_accesses: Vec::new(),
@@ -1885,6 +1886,7 @@ fn dunder_method_call(
         args,
         kwargs: Vec::new(),
         recv_place: None,
+        recv_writes: false,
         arg_places: Vec::new(),
         kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),
@@ -3719,7 +3721,7 @@ mod tests {
                       \x20       self.value = value^\n\
                       \n\
                       \x20   def get(self) -> Self.T:\n\
-                      \x20       return self.value\n\
+                      \x20       return self.value.copy()\n\
                       \n\
                       \x20   def refresh(mut self, var value: Self.T):\n\
                       \x20       self.set(value^)\n\

@@ -1614,6 +1614,10 @@ impl Checker {
                         || matches!(
                             (available.as_str(), required),
                             ("ImplicitlyCopyable", "Copyable")
+                                | (
+                                    "TrivialRegisterPassable",
+                                    "ImplicitlyCopyable" | "Copyable" | "Movable" | "Deinitable"
+                                )
                                 | ("IsTriviallyCopyable", "Copyable" | "ImplicitlyCopyable")
                                 | ("IsTriviallyMovable", "Movable")
                                 | ("IsTriviallyDeinitable", "Deinitable")
@@ -1848,14 +1852,7 @@ impl Checker {
         match tr {
             "Copyable" => field_failure(&|field_ty| self.is_copyable(field_ty)),
             "ImplicitlyCopyable" => {
-                if info.methods.contains_key("__copyinit__") {
-                    Some(
-                        "defines '__copyinit__'; implicit copying requires fieldwise synthesis"
-                            .to_string(),
-                    )
-                } else {
-                    field_failure(&|field_ty| self.is_implicitly_copyable(field_ty))
-                }
+                field_failure(&|field_ty| self.is_implicitly_copyable(field_ty))
             }
             "Deinitable" => field_failure(&|field_ty| self.is_deinitable(field_ty)),
             "Movable" => info
@@ -1908,9 +1905,12 @@ impl Checker {
                     }) || s.methods.contains_key("__copyinit__")
                 })
                 .unwrap_or(true),
-            Ty::Param { bounds, .. } => bounds
-                .iter()
-                .any(|b| matches!(b.as_str(), "Copyable" | "ImplicitlyCopyable")),
+            Ty::Param { bounds, .. } => bounds.iter().any(|bound| {
+                matches!(
+                    bound.as_str(),
+                    "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
+                ) || self.trait_refines(bound, "Copyable")
+            }),
             // An abstract associated type (`C.Element`) is copyable only when
             // the bound trait's member declaration proves it — never
             // vacuously.
@@ -1948,20 +1948,43 @@ impl Checker {
             Ty::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.is_implicitly_copyable(alternative)),
-            Ty::Struct(name, args) => self.structs.get(name).is_some_and(|s| {
-                s.conforms.iter().any(|c| {
-                    c == "ImplicitlyCopyable"
-                        && s.conformance_conditions.get(c).is_none_or(|condition| {
-                            self.eval_conformance_condition(s, args, condition)
-                        })
-                }) && self.struct_implicitly_copyable_conformance_ok(name)
+            Ty::Struct(name, args) => self.structs.get(name).map_or_else(
+                || {
+                    crate::types::list_element(ty).is_none()
+                        && crate::types::dict_elements(ty).is_none()
+                        && crate::types::set_element(ty).is_none()
+                        && crate::types::optional_element(ty).is_none()
+                        && crate::types::array_element(ty).is_none()
+                        && crate::types::owned_pointer_element(ty).is_none()
+                },
+                |s| {
+                    s.conforms.iter().any(|c| {
+                        c == "ImplicitlyCopyable"
+                            && s.conformance_conditions.get(c).is_none_or(|condition| {
+                                self.eval_conformance_condition(s, args, condition)
+                            })
+                    }) && self.struct_implicitly_copyable_conformance_ok(name)
+                },
+            ),
+            Ty::Param { bounds, .. } => bounds.iter().any(|bound| {
+                matches!(
+                    bound.as_str(),
+                    "ImplicitlyCopyable" | "TrivialRegisterPassable"
+                ) || self.trait_refines(bound, "ImplicitlyCopyable")
             }),
-            Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "ImplicitlyCopyable"),
             // An abstract associated type is implicitly copyable only when its
             // declared member bounds say so, mirroring the `Ty::Param` rule.
             Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "ImplicitlyCopyable"),
             _ => true,
         }
+    }
+
+    /// Whether a shared call argument is materialized independently before
+    /// within-call exclusivity is checked. Upstream keeps nominal memory values
+    /// (including `String`) as overlapping reads even when their type conforms
+    /// to `ImplicitlyCopyable`; register-like values may be disarmed as copies.
+    pub(super) fn call_read_is_independent_copy(&self, ty: &Ty) -> bool {
+        self.is_implicitly_copyable(ty) && !matches!(ty, Ty::Struct(..))
     }
 
     /// Whether an associated type projected off a bounded parameter
@@ -2195,8 +2218,8 @@ impl Checker {
         let Some(info) = self.structs.get(name) else {
             return false;
         };
-        !info.methods.contains_key("__copyinit__")
-            && info
+        info.methods.contains_key("__copyinit__")
+            || info
                 .fields
                 .iter()
                 .all(|(_, ty)| self.is_implicitly_copyable(ty))
@@ -2250,6 +2273,17 @@ impl Checker {
                 return Err(TypeError::NonCopyable {
                     ty: ty.to_string(),
                     context: context.to_string(),
+                });
+            }
+            if !self.is_implicitly_copyable(ty) {
+                let transferable = self.is_movable(ty)
+                    && super::places::place_path(expr)
+                        .is_some_and(|(root, _)| self.is_binding_mutable(root));
+                return Err(TypeError::ImplicitCopy {
+                    ty: ty.to_string(),
+                    context: context.to_string(),
+                    transferable,
+                    copyable: true,
                 });
             }
             self.copy_place_value_uses

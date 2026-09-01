@@ -1,9 +1,11 @@
-# Consuming a borrowed loop binding runs the referent's __copyinit__:
-# the alias-bound element read must deep-copy an owning pointer field
-# rather than alias it (previously a double free).
+# Consuming a borrowed loop binding of an ImplicitlyCopyable element runs
+# the referent's explicit copy initializer: the alias-bound element read must
+# deep-copy an owning pointer field rather than alias it (previously a double
+# free). A Copyable-only element needs `element.copy()` instead
+# (assets/type_error/loop_binding_consuming_non_implicit.mojo).
 from std.memory import unsafe_alloc
 
-struct Buf(Copyable, Movable, Writable):
+struct Buf(ImplicitlyCopyable, Movable, Writable):
     var data: UnsafePointer[Byte]
 
     def __init__(out self, seed: Int):

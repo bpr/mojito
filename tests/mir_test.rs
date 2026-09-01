@@ -3176,7 +3176,7 @@ fn function_names(mir: &mojito::mir::MirProgram) -> Vec<&str> {
 #[test]
 fn inferred_bound_generic_call_monomorphizes_and_drops_the_template() {
     let mir = compiled_mir(
-        "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident(2))\n",
+        "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident(2))\n",
     );
     let names = function_names(&mir);
     assert!(
@@ -3203,7 +3203,7 @@ fn inferred_iteration_clone_uses_no_erased_iterator_dispatch() {
     // so this uses the stdlib `first_or` shape.) This is the Stage-E
     // retirement baseline for inferred applications.
     let mir = compiled_mir(
-        "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item\n    return default\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(first(xs, -1))\n",
+        "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(first(xs, -1))\n",
     );
     let names = function_names(&mir);
     let clone = mir
@@ -3226,7 +3226,7 @@ fn clone_interior_inferred_calls_reach_a_second_discovery_round() {
     // so its request is discovered in round two — pinning clone-span
     // stability across re-elaborations.
     let mir = compiled_mir(
-        "def inner[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef outer[T: Copyable & Movable](x: T) -> T:\n    return inner(x)\n\ndef main():\n    print(outer(7))\n",
+        "def inner[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef outer[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return inner(x)\n\ndef main():\n    print(outer(7))\n",
     );
     let names = function_names(&mir);
     assert!(
@@ -3254,7 +3254,7 @@ fn conflicting_unrolled_occurrences_stay_on_the_abstract_path() {
     // incompatible instantiations; the discovery loop drops the occurrence and
     // both calls keep the retained template's erased path.
     let mir = compiled_mir(
-        "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n",
+        "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"ident"), "{names:?}");
@@ -3274,7 +3274,7 @@ fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
     // over-monomorphizes or abstract checking of retained templates breaks,
     // this pin notices.
     let mir = compiled_mir(
-        "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item\n    return default\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i, i], i))\n",
+        "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i, i], i))\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"first"), "{names:?}");
@@ -3300,7 +3300,7 @@ fn function_value_reference_retains_the_bound_generic_template() {
     // erased-dispatch fallback. (Local callable storage no longer infers a
     // generic specialization, so the argument channel carries this shape.)
     let mir = compiled_mir(
-        "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    print(apply(ident, 41))\n",
+        "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    print(apply(ident, 41))\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"ident"), "{names:?}");
@@ -3405,7 +3405,7 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
     // One source Call node yields the getter-contract subscript read feeding
     // the element's CallIndirect; a raising getter keeps its raise on the
     // subscript instruction while the non-raising __call__ stays clean.
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) raises -> Doubler:\n        if index != 0:\n            raise Error(\"index out of range\")\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    try:\n        print(c[0](3))\n    except e:\n        print(\"caught\")\n";
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) raises -> Doubler:\n        if index != 0:\n            raise Error(\"index out of range\")\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    try:\n        print(c[0](3))\n    except e:\n        print(\"caught\")\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -3485,7 +3485,7 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
 
 #[test]
 fn multi_index_element_call_lowers_variadic_subscript_then_indirect_call() {
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Grid(Copyable):\n    var first: Doubler\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var g: Grid = Grid(Doubler(3))\n    print(g[1, 1](4))\n";
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Grid(Copyable):\n    var first: Doubler\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var g: Grid = Grid(Doubler(3))\n    print(g[1, 1](4))\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))

@@ -372,6 +372,7 @@ impl Flatten<'_> {
             args: args.clone(),
             kwargs: Vec::new(),
             recv_place: Some(MirPlace::root(collection, Some(target.clone()))),
+            recv_writes: true,
             arg_places: vec![None; args.len()],
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
@@ -726,6 +727,7 @@ impl Flatten<'_> {
                 args: Vec::new(),
                 kwargs: Vec::new(),
                 recv_place: None,
+                recv_writes: false,
                 arg_places: Vec::new(),
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
@@ -1025,6 +1027,7 @@ impl Flatten<'_> {
                     args: vec![argument],
                     kwargs: Vec::new(),
                     recv_place,
+                    recv_writes: self.receiver_writes(e),
                     arg_places: vec![arg_place],
                     kwarg_places: Vec::new(),
                     capture_accesses: self.checked_call_capture_accesses(e),
@@ -1068,6 +1071,12 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                if name == "__mojito_fieldwise_copy" {
+                    return self.expr(
+                        args.first()
+                            .expect("checked synthesized fieldwise copy has one argument"),
+                    );
+                }
                 if let Some(crate::SemanticAdjustment::SizeOf { ty }) =
                     self.checked_adjustments(e).into_iter().find(|adjustment| {
                         matches!(adjustment, crate::SemanticAdjustment::SizeOf { .. })
@@ -1613,6 +1622,7 @@ impl Flatten<'_> {
                         } else {
                             recv_place
                         },
+                        recv_writes: self.receiver_writes(e),
                         arg_places,
                         kwarg_places,
                         capture_accesses: self.checked_call_capture_accesses(e),
@@ -1666,6 +1676,17 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                // `x.copy()` on a built-in copyable value has no callee: the
+                // checker resolved it to the value read itself.
+                if method == "copy"
+                    && args.is_empty()
+                    && kwargs.is_empty()
+                    && self
+                        .checked_ty(object)
+                        .is_some_and(|ty| crate::checker::builtin_copy_is_value_read(&ty))
+                {
+                    return self.expr(object);
+                }
                 // `v.set(init_with=…)` infers its alternative from the factory
                 // (no explicit type parameter), so it arrives as an ordinary
                 // method call rather than a parameterized invoke.
@@ -2063,6 +2084,7 @@ impl Flatten<'_> {
                     } else {
                         recv_place
                     },
+                    recv_writes: self.receiver_writes(e),
                     arg_places,
                     kwarg_places,
                     capture_accesses,

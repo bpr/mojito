@@ -1731,6 +1731,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
                     args: Vec::new(),
                     kwargs: Vec::new(),
                     recv_place: None,
+                    recv_writes: true,
                     arg_places: Vec::new(),
                     kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),

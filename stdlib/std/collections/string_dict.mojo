@@ -56,19 +56,19 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     def __getitem__(self, key: StringLiteral) raises -> Self.V:
         var i: Int = self.find_index(key)
         if i >= 0:
-            return self.entries._get_copy(i).value
+            return self.entries[i].value.copy()
         raise Error("missing key")
 
-    def __setitem__(mut self, key: StringLiteral, value: Self.V) where conforms_to(
+    def __setitem__(mut self, key: StringLiteral, var value: Self.V) where conforms_to(
         Self.V, Deinitable
     ):
         var existing: Int = self.find_index(key)
         if existing >= 0:
-            self.entries[existing] = DictEntry[StringLiteral, Self.V](key, value)
+            self.entries[existing] = DictEntry[StringLiteral, Self.V](key, value^)
             return
 
         var entry_index: Int = len(self.entries)
-        self.entries.append(DictEntry[StringLiteral, Self.V](key, value))
+        self.entries.append(DictEntry[StringLiteral, Self.V](key, value^))
         var bucket: Int = bucket_index(key, self.nbuckets)
         var bucket_entries: List[Int] = self.index._get_copy(bucket)
         bucket_entries.append(entry_index)
@@ -92,7 +92,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
             bucket_entries.append(i)
             new_index[bucket] = bucket_entries^
             i = i + 1
-        self.index = new_index
+        self.index = new_index^
         self.nbuckets = new_bucket_count
 
     def bucket_count(self) -> Int:
@@ -102,7 +102,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     # previous entry (key and value) out and returns it; a fresh key returns
     # an empty Optional. Nothing is destroyed in place, so no `Deinitable`
     # bound is required.
-    def insert(mut self, key: StringLiteral, value: Self.V) -> Optional[
+    def insert(mut self, key: StringLiteral, var value: Self.V) -> Optional[
         DictEntry[StringLiteral, Self.V]
     ]:
         var existing: Int = self.find_index(key)
@@ -110,12 +110,12 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
             var displaced = Optional[DictEntry[StringLiteral, Self.V]](
                 self.entries.data.unsafe_offset(existing).unsafe_take_pointee()
             )
-            self.entries.data[existing] = DictEntry[StringLiteral, Self.V](key, value)
+            self.entries.data[existing] = DictEntry[StringLiteral, Self.V](key, value^)
             return displaced^
         # Fresh-key path: append and index directly (like `__setitem__`'s
         # fresh branch) — delegating would demand its `Deinitable` bound.
         var entry_index: Int = len(self.entries)
-        self.entries.append(DictEntry[StringLiteral, Self.V](key, value))
+        self.entries.append(DictEntry[StringLiteral, Self.V](key, value^))
         var bucket: Int = bucket_index(key, self.nbuckets)
         var bucket_entries: List[Int] = self.index._get_copy(bucket)
         bucket_entries.append(entry_index)
@@ -139,14 +139,14 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     def get(self, key: StringLiteral) -> Optional[Self.V]:
         var i: Int = self.find_index(key)
         if i >= 0:
-            return Optional[Self.V](self.entries._get_copy(i).value)
+            return Optional[Self.V](self.entries[i].value.copy())
         return Optional[Self.V]()
 
     def get(self, key: StringLiteral, default: Self.V) -> Self.V:
         var i: Int = self.find_index(key)
         if i >= 0:
-            return self.entries._get_copy(i).value
-        return default
+            return self.entries[i].value.copy()
+        return default.copy()
 
     def __len__(self) -> Int:
         return self.count
@@ -163,12 +163,12 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
         var result: List[Self.V] = List[Self.V]()
         var i: Int = 0
         while i < len(self.entries):
-            result.append(self.entries._get_copy(i).value)
+            result.append(self.entries[i].value.copy())
             i = i + 1
         return result^
 
     def items(self) -> List[DictEntry[StringLiteral, Self.V]]:
-        return self.entries
+        return self.entries.copy()
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         ref source = self.entries

@@ -1039,6 +1039,7 @@ impl Decoder {
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
                 recv_place: self
                     .req(value, fields, "recv_place", |d, v| Some(d.option_place(v)))?,
+                recv_writes: self.req(value, fields, "recv_writes", Self::boolean)?,
                 arg_places: self
                     .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
                 kwarg_places: self.req(value, fields, "kwarg_places", |d, v| {
@@ -3865,6 +3866,7 @@ mod tests {
                 args: vec![Reg(4)],
                 kwargs: vec![("count".into(), Reg(5))],
                 recv_place: Some(place(0)),
+                recv_writes: true,
                 arg_places: vec![Some(place(1))],
                 kwarg_places: vec![None],
                 capture_accesses: Vec::new(),

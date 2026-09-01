@@ -2488,7 +2488,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         mut left: Expr,
         min_precedence: Precedence,
     ) -> Result<Expr, ParseError> {
-        while min_precedence < self.peek_precedence()? {
+        loop {
+            // An adjacent `^` is the postfix transfer sigil (`primary '^'`),
+            // which binds tightest: `p + q^` transfers `q`, not the sum. A
+            // whitespace-separated `^` remains the bitwise-xor operator.
+            let precedence = if matches!(self.peek_token()?, Some(Token::Caret))
+                && left.span.1 == self.peek_start()
+            {
+                Precedence::Call
+            } else {
+                self.peek_precedence()?
+            };
+            if min_precedence >= precedence {
+                break;
+            }
             left = self.parse_infix(left)?;
         }
         Ok(left)

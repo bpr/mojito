@@ -1,7 +1,7 @@
 # The receiver and index of an in-place subscript are evaluated exactly once:
 # the side-effecting index prints a single time.
 @fieldwise_init
-struct Counter(Copyable, Movable):
+struct Counter(ImplicitlyCopyable, Movable):
     var value: Int
 
     def __iadd__(mut self, amount: Int):

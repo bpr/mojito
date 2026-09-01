@@ -3654,17 +3654,33 @@ fn loan_accesses(
         MirInstr::MethodCall {
             dest,
             recv_place,
+            recv_writes,
             arg_places,
             kwarg_places,
             capture_accesses,
             ..
         } => {
+            // A borrowed `self` receiver reads its retained place; only a
+            // `mut`/mutable-`ref`/consuming receiver writes through it.
+            // Retained argument places belong to `mut`/`ref` parameters and
+            // are always exclusive writes.
+            let receiver_access = if *recv_writes {
+                LoanAccess::Write
+            } else {
+                LoanAccess::Read
+            };
             let mut accesses = recv_place
                 .iter()
-                .chain(arg_places.iter().flatten())
-                .chain(kwarg_places.iter().flatten())
                 .cloned()
-                .map(|place| (place, LoanAccess::Write, span_for(*dest)))
+                .map(|place| (place, receiver_access, span_for(*dest)))
+                .chain(
+                    arg_places
+                        .iter()
+                        .flatten()
+                        .chain(kwarg_places.iter().flatten())
+                        .cloned()
+                        .map(|place| (place, LoanAccess::Write, span_for(*dest))),
+                )
                 .collect::<Vec<_>>();
             accesses.extend(
                 capture_accesses

@@ -1170,9 +1170,19 @@ methods just as they do on user structs. List, Set, Dict, and Range borrowed
 iteration likewise follows selected nominal methods; consuming bundled
 iteration is currently List-specific. Public Tuple has no runtime `__iter__`
 contract.
-Conditional lifecycle conformances are folded per specialization: a `deinit`
-method may implicitly copy a named tuple only when every element is
-`ImplicitlyCopyable`; otherwise the call must transfer the tuple with `^`.
+The checker owns the implicit-copy decision in one funnel
+(`Checker::check_consuming_as`): a *place* reaching a consuming position —
+`var`/`deinit` parameters and receivers, operator `var` operands, storage
+initialization, assignment, field stores, returns, displays — is an implicit
+copy only when its type is `ImplicitlyCopyable`, and MIR receives
+`CopyPlaceValue` only for such places; a `Copyable`-only place must spell `^`
+or `.copy()`, exactly as upstream, and there is no last-use move. Conditional
+lifecycle conformances are folded per specialization: a `deinit` method may
+implicitly copy a named tuple only when every element is `ImplicitlyCopyable`;
+otherwise the call must transfer the tuple with `^`. A borrowed `self` method
+receiver over a reference result reads its retained place — `MethodCall`
+records `recv_writes` for a `mut`/mutable-`ref`/consuming receiver — so a live
+shared loan on that place does not conflict with the call.
 
 Borrowed-source iteration lowers uniformly, in statements and comprehensions
 alike. The checker records a borrowed origin for a named source — a concrete

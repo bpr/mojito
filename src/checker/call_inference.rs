@@ -131,6 +131,26 @@ impl Checker {
         args: &[Expr],
         kwargs: &[crate::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        if name == "__mojito_fieldwise_copy" {
+            if !param_args.is_empty() || args.len() != 1 || !kwargs.is_empty() {
+                return Err(TypeError::InvariantViolation(
+                    "malformed synthesized fieldwise copy".to_string(),
+                ));
+            }
+            let ty = self.infer(&args[0])?;
+            if !self.is_copyable(&ty) {
+                return Err(TypeError::TraitNotSatisfied {
+                    param: "value".to_string(),
+                    ty: ty.to_string(),
+                    trait_name: "Copyable".to_string(),
+                    reason: self.trait_failure_reason(&ty, "Copyable"),
+                });
+            }
+            self.copy_place_value_uses
+                .borrow_mut()
+                .insert(args[0].source_span());
+            return Ok(ty);
+        }
         if is_variant_name(name)
             && (name != "Variant" || self.structs.contains_key(name))
             && self.lookup(name).is_none()
@@ -381,6 +401,9 @@ impl Checker {
                 let saved_invalidations = self.interior_invalidations.borrow().clone();
                 let saved_call_place_uses = self.call_place_uses.borrow().clone();
                 let saved_borrowed_read_places = self.borrowed_read_call_places.borrow().clone();
+                let saved_copy_place_value_uses = self.copy_place_value_uses.borrow().clone();
+                let saved_consuming_receivers =
+                    self.implicitly_copied_consuming_receivers.borrow().clone();
                 if let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
                     name,
                     param_args,
@@ -459,6 +482,9 @@ impl Checker {
                 *self.interior_invalidations.borrow_mut() = saved_invalidations;
                 *self.call_place_uses.borrow_mut() = saved_call_place_uses;
                 *self.borrowed_read_call_places.borrow_mut() = saved_borrowed_read_places;
+                *self.copy_place_value_uses.borrow_mut() = saved_copy_place_value_uses;
+                *self.implicitly_copied_consuming_receivers.borrow_mut() =
+                    saved_consuming_receivers;
             }
             return match select_callable_overload(matches) {
                 Ok((ret, target, error)) => {
@@ -1055,7 +1081,7 @@ impl Checker {
                 let convention = effective_conventions.get(index).copied().flatten();
                 Ok(
                     !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
-                        && self.is_copyable(&self.infer_with_expected(
+                        && self.call_read_is_independent_copy(&self.infer_with_expected(
                             expression,
                             &params[index],
                             true,
@@ -1298,7 +1324,7 @@ impl Checker {
                 let convention = effective_conventions.get(index).copied().flatten();
                 Ok(
                     !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
-                        && self.is_copyable(&self.infer(expression)?),
+                        && self.call_read_is_independent_copy(&self.infer(expression)?),
                 )
             })
             .collect::<Result<Vec<_>, TypeError>>()?;

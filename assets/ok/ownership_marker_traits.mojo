@@ -14,8 +14,8 @@ struct ExplicitBox(Copyable, Deinitable):
         self.n = copy.n
 
 def duplicate[T: Copyable](x: T) -> T:
-    var y: T = x
-    return y
+    var y: T = x.copy()
+    return y^
 
 def duplicate_implicit[T: ImplicitlyCopyable](x: T) -> T:
     var y: T = x

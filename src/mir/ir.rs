@@ -474,6 +474,12 @@ pub enum MirInstr {
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         recv_place: Option<MirPlace>,
+        /// Whether the call may write through `recv_place`: a `mut` or
+        /// mutable `ref` receiver, or a consuming one. A borrowed `self`
+        /// receiver only reads its place, so a live shared loan on that place
+        /// (a reference result used as the receiver) does not conflict with
+        /// the call. Unchecked lowering paths stay conservatively `true`.
+        recv_writes: bool,
         /// Like `Call::arg_places`: `arg_places[i]` is `Some` only for a
         /// checker-selected `mut`/`ref` ordinary argument with a supported
         /// caller place.

@@ -400,7 +400,11 @@ impl Checker {
                     Some(expected) => self.infer_with_expected(value, expected, true)?,
                     None => self.infer(value)?,
                 };
-                self.check_consuming(value, &found, &format!("variable '{name}'"))?;
+                // A borrowing view conversion (`var s: Span[Int, _] = xs`)
+                // consumes the conversion temporary, not the source place.
+                if !self.storage_conversion_borrows_source(&found, contextual.as_ref()) {
+                    self.check_consuming(value, &found, &format!("variable '{name}'"))?;
+                }
                 let declared = match ty {
                     // Annotated: the value must coerce to the annotation.
                     Some(anno) => {
@@ -550,7 +554,13 @@ impl Checker {
                     }
                     None => self.infer(value)?,
                 };
-                self.check_consuming(value, &found, &format!("assignment to '{name}'"))?;
+                let assigned = target.as_ref().map(|target| match target {
+                    Ty::Ref(reference) => (*reference.referent).clone(),
+                    other => other.clone(),
+                });
+                if !self.storage_conversion_borrows_source(&found, assigned.as_ref()) {
+                    self.check_consuming(value, &found, &format!("assignment to '{name}'"))?;
+                }
                 match target {
                     // Re-assignment: the value must keep the variable's type.
                     Some(target) => {
@@ -1143,7 +1153,9 @@ impl Checker {
                         // transfer stays a move, and a Copyable place read
                         // records its copy so the lowering runs the lifecycle
                         // instead of sharing the source's storage.
-                        self.check_consuming(value, &found, "assignment target")?;
+                        if !self.storage_conversion_borrows_source(&found, Some(&target)) {
+                            self.check_consuming(value, &found, "assignment target")?;
+                        }
                     }
                 }
                 let ok = self.record_implicit_conversion(value, &found, &target)?;
@@ -1158,7 +1170,10 @@ impl Checker {
                 // generic parameter to be installed without spelling a second
                 // source-level transfer. Preserve that constructor convention;
                 // this marker is needed only for an actual Copyable place read.
-                if !matches!(storage, Some(Ty::Ref(_))) && self.is_copyable(&found) {
+                if !matches!(storage, Some(Ty::Ref(_)))
+                    && self.is_copyable(&found)
+                    && !self.storage_conversion_borrows_source(&found, Some(&target))
+                {
                     self.check_consuming(value, &found, "assignment target")?;
                 }
                 Ok(())
@@ -1603,8 +1618,14 @@ impl Checker {
                     .return_ref_contracts
                     .last()
                     .is_some_and(Option::is_some);
+                if returning_reference && let Some(expression) = expr {
+                    self.reference_value_uses
+                        .borrow_mut()
+                        .insert(expression.source_span(), false);
+                }
                 if let Some(e) = expr
                     && !returning_reference
+                    && !self.storage_conversion_borrows_source(&found, Some(expected))
                 {
                     self.check_consuming(e, &found, "return value")?;
                 }

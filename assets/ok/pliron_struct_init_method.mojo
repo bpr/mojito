@@ -1,4 +1,4 @@
-struct Counter(Copyable, Movable):
+struct Counter(ImplicitlyCopyable, Movable):
     var count: Int
 
     def __init__(out self, start: Int):

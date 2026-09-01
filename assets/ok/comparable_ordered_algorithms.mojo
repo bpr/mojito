@@ -1,17 +1,17 @@
 # Phase 4: `Comparable` turns `<`/`<=`/`>`/`>=` into an ordering contract for an
-# opaque type parameter. `& Copyable` lets the helpers return `T` by value under
-# the move-only rule.
+# opaque type parameter. `& Copyable` lets the helpers return an explicit copy
+# of a borrowed `T` under the move-only rule.
 def min_value[T: Comparable & Copyable](a: T, b: T) -> T:
     if b < a:
-        return b
-    return a
+        return b.copy()
+    return a.copy()
 
 def clamp[T: Comparable & Copyable](x: T, lo: T, hi: T) -> T:
     if x < lo:
-        return lo
+        return lo.copy()
     if x > hi:
-        return hi
-    return x
+        return hi.copy()
+    return x.copy()
 
 def main():
     print(min_value(3, 5))

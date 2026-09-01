@@ -769,7 +769,7 @@ fn variadic_struct_annotations_and_methods_use_the_specialization() {
     // The struct type appears in a def parameter annotation (rewritten to the
     // specialized struct), and a concrete method runs against the expanded
     // storage.
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef first_int(p: Pair[Int, Bool]) -> Int:\n    return p.storage[0]\n\ndef main():\n    var p: Pair[Int, Bool] = Pair[Int, Bool]((1, True))\n    var q = p\n    print(first_int(q))\n    print(q.size())\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef first_int(p: Pair[Int, Bool]) -> Int:\n    return p.storage[0]\n\ndef main():\n    var p: Pair[Int, Bool] = Pair[Int, Bool]((1, True))\n    var q = p.copy()\n    print(first_int(q))\n    print(q.size())\n";
     assert_eq!(run(src).unwrap(), "1\n2\n");
 }
 
@@ -966,7 +966,7 @@ fn bound_generic_template_survives_for_inferred_calls() {
     // Mixed usage of one bound generic: the explicit application monomorphizes
     // while the inferred call stays on the retained template's abstract
     // erased-dispatch path.
-    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident[Int](1))\n    print(ident(2))\n";
+    let src = "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident[Int](1))\n    print(ident(2))\n";
     assert_eq!(run(src).unwrap(), "1\n2\n");
 }
 
@@ -975,7 +975,7 @@ fn conflicting_unrolled_inferred_calls_keep_the_abstract_path() {
     // Two `comptime for` copies share one source occurrence with different
     // inferred instantiations; both stay on the retained template's erased
     // dispatch and still run.
-    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n";
+    let src = "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n";
     assert_eq!(run(src).unwrap(), "1\ns\n");
 }
 

@@ -191,6 +191,25 @@ pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static
 /// Whether a *concrete* built-in type has an intrinsic `__hash__` — the scalar
 /// set the VM can hash directly (`Int`/`UInt`/`Bool`/`String`/`Float64`). This
 /// lets a user key struct combine `self.field.__hash__()` values.
+/// Whether `Copyable.copy` on a value of this type has no callee: built-in
+/// scalars, literals, tuples, packs, and variants copy by the ordinary value
+/// read. Nominal, parametric, associated, and reference types resolve their
+/// `copy` through declarations or trait dispatch instead.
+pub(crate) fn builtin_copy_is_value_read(ty: &Ty) -> bool {
+    !matches!(
+        ty,
+        Ty::Struct(..)
+            | Ty::Param { .. }
+            | Ty::Assoc { .. }
+            | Ty::Ref(_)
+            | Ty::SelfType
+            | Ty::Func { .. }
+            | Ty::GenericFunc { .. }
+            | Ty::Overload(_)
+            | Ty::Error
+    )
+}
+
 pub(super) fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty,

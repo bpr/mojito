@@ -1,7 +1,7 @@
 # A raising element in-place dunder participates in ordinary `try` handling; on
 # the non-raising path the subscript element mutation is committed.
 @fieldwise_init
-struct Counter(Copyable, Movable):
+struct Counter(ImplicitlyCopyable, Movable):
     var value: Int
 
     def __iadd__(mut self, amount: Int) raises:

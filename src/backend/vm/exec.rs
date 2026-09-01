@@ -1357,7 +1357,7 @@ impl VmBackend {
                         value
                     }
                 } else {
-                    match self.load_index_dunder(prog, place, regs, vars)? {
+                    match self.load_index_dunder(prog, place, regs, vars, frame_id)? {
                         Some(v) => v,
                         None => {
                             // A projection crossing an INTERMEDIATE ref-typed

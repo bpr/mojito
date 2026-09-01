@@ -1,7 +1,7 @@
 # A multi-argument subscript element dispatches its in-place dunder through the
 # same value-getter/setter path.
 @fieldwise_init
-struct Counter(Copyable, Movable):
+struct Counter(ImplicitlyCopyable, Movable):
     var value: Int
 
     def __iadd__(mut self, amount: Int):

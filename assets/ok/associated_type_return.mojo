@@ -9,7 +9,7 @@ struct Box[T: Copyable & Movable](HasElement):
     var value: Self.T
 
     def get(self) -> Self.T:
-        return self.value
+        return self.value.copy()
 
 def get[C: HasElement](c: C) -> C.Element:
     return c.get()

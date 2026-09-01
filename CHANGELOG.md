@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The owned-`var` transfer convention: a place of a `Copyable`-only type can
+  no longer be implicitly copied into a consuming position (`var`/`deinit`
+  parameters and receivers, operator `var` operands such as `p + q` on
+  `List`, variable initialization, assignment, field stores, returns, and
+  displays); spell `^` or `.copy()`, as upstream. The new
+  `TypeError::ImplicitCopy` diagnostic carries upstream's `^`/`.copy()` notes.
+  `String`, `Codepoint`, and `Optional[T: ImplicitlyCopyable]` are
+  `ImplicitlyCopyable`; an `ImplicitlyCopyable` struct may declare an explicit
+  copy initializer; `TrivialRegisterPassable` refines `ImplicitlyCopyable`;
+  `copy()` resolves on built-in copyable values and on generic parameters whose
+  copyability is proven by a where-clause assumption. Non-`ImplicitlyCopyable`
+  reads overlapping a `mut`/`ref` access in the same call are aliasing errors.
+  Textual MIR `call.method` records gain `recv_writes`. The pliron backend
+  lowers trait-dispatched `copy()` on a scalar receiver (a generic body's
+  `value.copy()` monomorphized to a builtin) as the value read, matching the
+  VM's non-struct `copy` intrinsic.
+
 - Overloaded method transfer effects are keyed and replayed by the selected
   signature-qualified callable identity. A consuming overload no longer
   inherits a borrowing sibling's loan effects; abstract trait dispatch still
@@ -71,6 +88,18 @@ to evolve under the `0.x` compatibility rules.
   (previously return-clause-only).
 
 ### Fixed
+
+- A borrowed `self` method call on a reference-result receiver
+  (`self.items[i].copy()`) no longer reports a false `$call_ref` self-conflict:
+  the loan analysis classifies the receiver access from the call's
+  `recv_writes` flag instead of treating every retained receiver as a write.
+- The VM reads a pointer-subscript receiver through a `ref`-typed field
+  (`self.src.data[i]` in Optional's borrowed iterator) instead of failing with
+  "field access on non-struct ref".
+- An adjacent postfix `^` binds tightest: `p + q^` transfers `q` rather than
+  the sum.
+- `Dict.get`/`StringDict.get`/`List._get_copy` copy elements without leaking a
+  one-element allocation.
 
 - Three pre-existing VM gaps in the ref-field adapter family (2026-08-29).
   A ref-field view returned from a method with a plain (read) `self`

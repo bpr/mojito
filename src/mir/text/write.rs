@@ -691,6 +691,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             args,
             kwargs,
             recv_place,
+            recv_writes,
             arg_places,
             kwarg_places,
             capture_accesses,
@@ -715,6 +716,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("args", regs(args)),
                 ("kwargs", kwargs_value(kwargs)),
                 ("recv_place", option(recv_place.as_ref().map(place_value))),
+                ("recv_writes", recv_writes.to_string()),
                 ("arg_places", places_option(arg_places)),
                 ("kwarg_places", places_option(kwarg_places)),
                 (

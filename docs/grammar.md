@@ -639,6 +639,8 @@ primary:
     | primary '[' ','.subscript_arg* ']' # index/slice arguments; empty brackets
                                          # (`p[]`) are the pointer dereference
     | primary '^'                        # transfer sigil; lowered and ownership-checked as a move
+                                         # (adjacent to its operand and binding tightest:
+                                         # `p + q^` transfers `q`; `a ^ b` is bitwise xor)
     | atom
 atom:
     | NAME

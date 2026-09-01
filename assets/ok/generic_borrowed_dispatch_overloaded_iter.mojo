@@ -53,8 +53,8 @@ struct Counter(Copyable, CountIterable, Deinitable, Movable):
 
 def first_count[C: CountIterable](items: C, default: C.Element) -> C.Element:
     for item in items:
-        return item
-    return default
+        return item.copy()
+    return default.copy()
 
 def main():
     print(first_count(Counter(3), -1))

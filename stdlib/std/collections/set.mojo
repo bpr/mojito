@@ -59,7 +59,7 @@ struct Set[T: Hashable & Equatable & Copyable & Movable](
             self.add(value^)
 
     def __init__(out self, *, copy: Self):
-        self.items = copy.items
+        self.items = copy.items.copy()
 
     def copy(self) -> Self:
         return Set[Self.T](copy: self)
@@ -138,19 +138,19 @@ struct Set[T: Hashable & Equatable & Copyable & Movable](
         Self.T, Deinitable
     ):
         var result = self.intersection(other)
-        self.items = result.items
+        self.items = result.items^
 
     def difference_update(mut self, other: Self) where conforms_to(
         Self.T, Deinitable
     ):
         var result = self.difference(other)
-        self.items = result.items
+        self.items = result.items^
 
     def symmetric_difference_update(mut self, other: Self) where conforms_to(
         Self.T, Deinitable
     ):
         var result = self.symmetric_difference(other)
-        self.items = result.items
+        self.items = result.items^
 
     def union(self, other: Self) -> Self where conforms_to(Self.T, Deinitable):
         var result = self.copy()

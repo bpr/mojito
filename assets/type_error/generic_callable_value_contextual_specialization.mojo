@@ -3,7 +3,7 @@
 # contextually); only explicit specialization materializes a generic value.
 # expect: does not infer a specialization
 def identity[T: Copyable & Movable](value: T) -> T:
-    return value
+    return value.copy()
 
 def main():
     var callback: def(Int) thin -> Int = identity

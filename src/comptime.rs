@@ -494,8 +494,8 @@ pub(crate) fn elaborate_with_requests(
 /// method here as ordinary source AST, keeping the checker, HIR, MIR, and VM on
 /// their existing method and constructor paths. A struct with an explicit copy
 /// constructor delegates to it (propagating its raising effect); a fieldwise
-/// Copyable struct returns `self`, a copying use that runs the fieldwise copy
-/// lifecycle. A conditional conformance carries its predicate over as the
+/// Copyable struct uses the same explicit copy-construction spelling, which
+/// lowers to the synthesized fieldwise copy lifecycle. A conditional conformance carries its predicate over as the
 /// method's `where` clause. Structs that already spell `copy` keep their own
 /// (the self-hosted collections predate this synthesis).
 fn synthesize_copyable_copy(program: &mut [Stmt]) {
@@ -520,29 +520,33 @@ fn synthesize_copyable_copy(program: &mut [Stmt]) {
         let copy_constructor = methods
             .iter()
             .find(|m| crate::symbol::lifecycle_method_name(m) == "__copyinit__");
-        let (result, raises, raises_type) = match copy_constructor {
-            Some(constructor) => (
-                Expr::new(
-                    ExprKind::Call {
-                        name: name.clone(),
-                        param_args: Vec::new(),
-                        args: Vec::new(),
-                        kwargs: vec![crate::ast::KwArg {
-                            name: "copy".to_string(),
-                            value: Expr::new(ExprKind::Identifier("self".to_string()), span),
-                        }],
-                    },
-                    span,
-                ),
-                constructor.raises,
-                constructor.raises_type.clone(),
-            ),
-            None => (
-                Expr::new(ExprKind::Identifier("self".to_string()), span),
-                false,
-                None,
-            ),
+        let result = if copy_constructor.is_some() {
+            Expr::new(
+                ExprKind::Call {
+                    name: name.clone(),
+                    param_args: Vec::new(),
+                    args: Vec::new(),
+                    kwargs: vec![crate::ast::KwArg {
+                        name: "copy".to_string(),
+                        value: Expr::new(ExprKind::Identifier("self".to_string()), span),
+                    }],
+                },
+                span,
+            )
+        } else {
+            Expr::new(
+                ExprKind::Call {
+                    name: "__mojito_fieldwise_copy".to_string(),
+                    param_args: Vec::new(),
+                    args: vec![Expr::new(ExprKind::Identifier("self".to_string()), span)],
+                    kwargs: Vec::new(),
+                },
+                span,
+            )
         };
+        let (raises, raises_type) = copy_constructor
+            .map(|constructor| (constructor.raises, constructor.raises_type.clone()))
+            .unwrap_or((false, None));
         let where_clauses = conformance_conditions
             .iter()
             .find(|(trait_name, _)| trait_name == "Copyable")

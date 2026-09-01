@@ -25,7 +25,7 @@ struct Wrap[T: Copyable & Deinitable & Movable](
 
 
 def dup[T: Copyable & Deinitable](value: T) -> T where IsSmallCopy[T]:
-    return value
+    return value.copy()
 
 
 def main():

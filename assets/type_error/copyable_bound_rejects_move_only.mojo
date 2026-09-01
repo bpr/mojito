@@ -4,8 +4,8 @@ struct Handle:
     var id: Int
 
 def duplicate[T: Copyable](x: T) -> T:
-    var y: T = x
-    return y
+    var y: T = x.copy()
+    return y^
 
 def main():
     var h: Handle = Handle(1)

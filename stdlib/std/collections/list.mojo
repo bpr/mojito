@@ -112,7 +112,7 @@ struct List[T: AnyType](
         self.data = unsafe_alloc[Self.T](self.cap)
         var i = 0
         while i < length:
-            self.data[i] = fill
+            self.data.unsafe_offset(i).unsafe_write(copy=fill)
             i += 1
 
     def __init__(
@@ -130,7 +130,7 @@ struct List[T: AnyType](
         self.data = unsafe_alloc[Self.T](copy.cap)
         var i = 0
         while i < copy.size:
-            self.data[i] = copy.data[i]
+            self.data.unsafe_offset(i).unsafe_write(copy=copy.data[i])
             i += 1
 
     def copy(self) -> Self where conforms_to(Self.T, Copyable):
@@ -197,7 +197,8 @@ struct List[T: AnyType](
             return
         self.reserve(length)
         while self.size < length:
-            self.append(fill)
+            self.data.unsafe_offset(self.size).unsafe_write(copy=fill)
+            self.size += 1
 
     # Discard elements at the end; aborts when `new_length` exceeds the
     # current length.
@@ -242,7 +243,7 @@ struct List[T: AnyType](
     def _get_copy(self, index: Int) -> Self.T where conforms_to(
         Self.T, Copyable
     ):
-        return self.data[index]
+        return self.data[index].copy()
 
     def __getitem__(self, slice: Slice) -> Self where conforms_to(
         Self.T, Copyable
@@ -254,11 +255,11 @@ struct List[T: AnyType](
         var result = List[Self.T]()
         if step > 0:
             while start < stop:
-                result.append(self.data[start])
+                result.append(self._get_copy(start))
                 start += step
         else:
             while start > stop:
-                result.append(self.data[start])
+                result.append(self._get_copy(start))
                 start += step
         return result^
 
@@ -275,7 +276,7 @@ struct List[T: AnyType](
         var result = List[Self.T]()
         var i = start
         while i < end:
-            result.append(self.data[i])
+            result.append(self._get_copy(i))
             i += 1
         return result^
 
@@ -385,7 +386,7 @@ struct List[T: AnyType](
         self.reserve(self.size + len(elements))
         var i = 0
         while i < len(elements):
-            self.append(elements[i])
+            self.append(elements[i].copy())
             i += 1
 
     def count(self, value: Self.T) -> Int where conforms_to(Self.T, Equatable):

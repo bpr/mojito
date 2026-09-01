@@ -2,7 +2,7 @@
 # `r[i] += v` materializes the element, applies `__iadd__`, and writes the result
 # back through `__setitem__` (Mojo does not use `__add__`).
 @fieldwise_init
-struct Counter(Copyable, Movable):
+struct Counter(ImplicitlyCopyable, Movable):
     var value: Int
 
     def __iadd__(mut self, amount: Int):

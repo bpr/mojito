@@ -122,7 +122,7 @@ Explain how free calls, methods, constructors, defaults, keyword slots, and comp
 
 ### 26. Mojito's Ownership Model
 
-Introduce owned, moved, borrowed, and reinitialized states and relate them to Mojo conventions and the `^` transfer sigil. Explain which types are copyable, how lifecycle traits affect legality, and why ownership is checked after MIR lowering rather than entirely during type checking.
+Introduce owned, moved, borrowed, and reinitialized states and relate them to Mojo conventions and the `^` transfer sigil. Explain which types are copyable, how lifecycle traits affect legality, and why ownership is checked after MIR lowering rather than entirely during type checking. The owned-`var` transfer convention — why a `Copyable`-only place needs `^` or `.copy()` at every consuming position while `ImplicitlyCopyable` values copy silently, and how the checker keeps that decision in one funnel — is worked through in `docs/notes/owned-var-transfer-convention.md`.
 
 ### 27. Ownership as Dataflow
 

@@ -614,7 +614,7 @@ fn method_argument_binding_matches_free_functions() {
 
 #[test]
 fn generic_argument_binding_matches_free_functions() {
-    let src = "def collect[T: AnyType](head: T, /, extra: Int = 2, *rest: Int, scale: Int = 1) -> Int:\n    return (extra + len(rest)) * scale\n\ndef replace[T: Copyable & Movable](mut value: T, replacement: T):\n    value = replacement\n\ndef main():\n    print(collect(\"x\", extra=3, scale=4))\n    print(collect(1, 2, 8, 9, scale=3))\n    var n: Int = 5\n    replace(n, replacement=9)\n    print(n)\n";
+    let src = "def collect[T: AnyType](head: T, /, extra: Int = 2, *rest: Int, scale: Int = 1) -> Int:\n    return (extra + len(rest)) * scale\n\ndef replace[T: Copyable & Movable](mut value: T, replacement: T):\n    value = replacement.copy()\n\ndef main():\n    print(collect(\"x\", extra=3, scale=4))\n    print(collect(1, 2, 8, 9, scale=3))\n    var n: Int = 5\n    replace(n, replacement=9)\n    print(n)\n";
     assert_eq!(parity(src), "12\n12\n9\n");
 }
 
@@ -820,7 +820,7 @@ fn ref_returning_subscript_preserves_receiver_storage_through_the_read() {
 
 #[test]
 fn ref_returning_list_subscript_copies_in_value_context_and_aliases_in_ref_context() {
-    let src = "from std.collections.list import List\n\ndef main():\n    var rows = List[List[Int]]()\n    var row = List[Int]()\n    row.append(1)\n    rows.append(row)\n\n    var copied: List[Int] = rows[0]\n    copied.append(2)\n\n    ref alias = rows[0]\n    alias.append(3)\n\n    var original: List[Int] = rows[0]\n    print(len(original), original[1])\n    print(len(copied), copied[1])\n";
+    let src = "from std.collections.list import List\n\ndef main():\n    var rows = List[List[Int]]()\n    var row = List[Int]()\n    row.append(1)\n    rows.append(row^)\n\n    var copied: List[Int] = rows[0].copy()\n    copied.append(2)\n\n    ref alias = rows[0]\n    alias.append(3)\n\n    var original: List[Int] = rows[0].copy()\n    print(len(original), original[1])\n    print(len(copied), copied[1])\n";
     assert_eq!(run_compiled(src).unwrap(), "2 3\n2 2\n");
 }
 
@@ -847,7 +847,7 @@ fn structured_reference_call_handwritten_constructors_use_caller_places() {
 
 #[test]
 fn generic_nested_def_is_type_erased_after_checker_inference() {
-    let src = "def outer() -> Int:\n    def identity[T: Copyable & Movable](value: T) {} -> T:\n        return value\n    return identity(42)\n\ndef main():\n    print(outer())\n";
+    let src = "def outer() -> Int:\n    def identity[T: Copyable & Movable](value: T) {} -> T:\n        return value.copy()\n    return identity(42)\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "42\n");
 }
 
@@ -1257,10 +1257,10 @@ fn self_hosted_vec_over_unsafe_pointer() {
 
 #[test]
 fn copyinit_gives_value_semantics() {
-    // A pointer-owning struct with `__copyinit__` deep-copies on `var b = a` and on
-    // pass-by-value, so writes through one don't affect the other. `__moveinit__`
-    // relocates on `^`.
-    let src = "from std.memory import unsafe_alloc\n\nstruct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = unsafe_alloc[Int](n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = unsafe_alloc[Int](e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = a\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
+    // A pointer-owning struct with `__copyinit__` deep-copies through the explicit
+    // `Buf(copy: a)` constructor, so writes through one don't affect the other.
+    // `__moveinit__` relocates on `^`.
+    let src = "from std.memory import unsafe_alloc\n\nstruct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = unsafe_alloc[Int](n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = unsafe_alloc[Int](e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
     assert_eq!(parity(src), "5 9\n9\n");
 }
 
@@ -1272,7 +1272,7 @@ fn current_unified_move_initializer_uses_the_deinit_convention() {
 
 #[test]
 fn mojo_copy_constructor_gives_value_semantics() {
-    let src = "from std.memory import unsafe_alloc\n\nstruct Buf(Copyable):\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = unsafe_alloc[Int](n)\n        self.n = n\n    def __init__(out self, *, copy: Self):\n        self.n = copy.n\n        self.data = unsafe_alloc[Int](copy.n)\n        var i: Int = 0\n        while i < copy.n:\n            self.data[i] = copy.data[i]\n            i = i + 1\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = a\n    c.set(0, 11)\n    print(a.get(0), c.get(0))\n";
+    let src = "from std.memory import unsafe_alloc\n\nstruct Buf(Copyable):\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = unsafe_alloc[Int](n)\n        self.n = n\n    def __init__(out self, *, copy: Self):\n        self.n = copy.n\n        self.data = unsafe_alloc[Int](copy.n)\n        var i: Int = 0\n        while i < copy.n:\n            self.data[i] = copy.data[i]\n            i = i + 1\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = a.copy()\n    c.set(0, 11)\n    print(a.get(0), c.get(0))\n";
     assert_eq!(parity(src), "5 9\n5 11\n");
 }
 
@@ -1768,7 +1768,7 @@ fn inferred_bound_generic_applications_monomorphize_end_to_end() {
     );
     assert_eq!(
         run_compiled(
-            "def inner[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef outer[T: Copyable & Movable](x: T) -> T:\n    return inner(x)\n\ndef main():\n    print(outer(7))\n"
+            "def inner[T: Copyable & Movable](x: T) -> T:\n    return x.copy()\n\ndef outer[T: Copyable & Movable](x: T) -> T:\n    return inner(x)\n\ndef main():\n    print(outer(7))\n"
         )
         .expect("round-two inferred instantiation runs"),
         "7\n"
@@ -1781,7 +1781,7 @@ fn raw_seam_executes_inferred_polymorphic_recursion_abstractly() {
     // divergence cap); the stage-composed seam stays request-free, so the
     // program the compiler rejects as divergent executes here on the erased
     // path.
-    let src = "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n";
+    let src = "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x.copy()], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n";
     assert_eq!(run(src).expect("abstract execution"), "0\n");
 }
 
@@ -1790,7 +1790,7 @@ fn retained_template_executes_erased_dispatch_under_the_compiler() {
     // The runtime half of the erased-dispatch residue witness: the retained
     // abstract template's `__iterator_dispatch` protocol and copy adapter
     // execute end to end through the authoritative pipeline.
-    let src = "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item\n    return default\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i, i], i))\n";
+    let src = "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i.copy(), i.copy()], i))\n";
     assert_eq!(run_compiled(src).expect("erased path runs"), "1\ns\n");
 }
 
@@ -1799,7 +1799,7 @@ fn bound_generic_function_value_rejects_contextual_specialization() {
     // Current Mojo does not infer a generic specialization from a local
     // callable annotation, so the authoritative pipeline rejects the
     // materialization at check time.
-    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    var callback: def(Int) thin -> Int = ident\n    print(callback(41))\n";
+    let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x.copy()\n\ndef main():\n    var callback: def(Int) thin -> Int = ident\n    print(callback(41))\n";
     let error = run_compiled(src).expect_err("contextual specialization rejects");
     assert!(error.contains("does not infer a specialization"), "{error}");
 }
@@ -1882,14 +1882,14 @@ fn span_iteration_rejects_source_mutation() {
 
 #[test]
 fn bare_element_calls_match_the_parenthesized_spelling() {
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var items: List[Doubler]\n\nstruct Grid(Copyable):\n    var cells: List[Doubler]\n    def __init__(out self, cells: List[Doubler]):\n        self.cells = cells\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.cells[row * 2 + column]\n\ndef main():\n    var objs: List[Doubler] = [Doubler(2)]\n    print(objs[0](3))\n    print((objs[0])(3))\n    var h: Holder = Holder([Doubler(3)])\n    print(h.items[0](5))\n    print((h.items[0])(5))\n    var g: Grid = Grid([Doubler(1), Doubler(2), Doubler(3), Doubler(4)])\n    print(g[1, 1](10))\n    print((g[1, 1])(10))\n";
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var items: List[Doubler]\n\nstruct Grid(Copyable):\n    var cells: List[Doubler]\n    def __init__(out self, var cells: List[Doubler]):\n        self.cells = cells^\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.cells[row * 2 + column].copy()\n\ndef main():\n    var objs: List[Doubler] = [Doubler(2)]\n    print(objs[0](3))\n    print((objs[0])(3))\n    var h: Holder = Holder([Doubler(3)])\n    print(h.items[0](5))\n    print((h.items[0])(5))\n    var g: Grid = Grid([Doubler(1), Doubler(2), Doubler(3), Doubler(4)])\n    print(g[1, 1](10))\n    print((g[1, 1])(10))\n";
     let output = run_compiled(source).expect("element calls execute");
     assert_eq!(output, "6\n6\n15\n15\n40\n40\n");
 }
 
 #[test]
 fn bare_element_call_raising_getter_propagates_through_try() {
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\nstruct Bank(Copyable):\n    var items: List[Doubler]\n    def __init__(out self, items: List[Doubler]):\n        self.items = items\n    def __getitem__(self, index: Int) raises -> Doubler:\n        if index >= len(self.items):\n            raise Error(\"bank index out of range\")\n        return self.items[index]\n\ndef main():\n    var bank: Bank = Bank([Doubler(2)])\n    try:\n        print(bank[7](3))\n    except e:\n        print(\"caught: bank getter raised\")\n    try:\n        print(bank[0](4))\n    except e:\n        print(\"unreachable\")\n";
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\nstruct Bank(Copyable):\n    var items: List[Doubler]\n    def __init__(out self, var items: List[Doubler]):\n        self.items = items^\n    def __getitem__(self, index: Int) raises -> Doubler:\n        if index >= len(self.items):\n            raise Error(\"bank index out of range\")\n        return self.items[index].copy()\n\ndef main():\n    var bank: Bank = Bank([Doubler(2)])\n    try:\n        print(bank[7](3))\n    except e:\n        print(\"caught: bank getter raised\")\n    try:\n        print(bank[0](4))\n    except e:\n        print(\"unreachable\")\n";
     let output = run_compiled(source).expect("raising element call executes");
     assert_eq!(output, "caught: bank getter raised\n8\n");
 }

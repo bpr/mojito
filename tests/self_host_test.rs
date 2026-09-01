@@ -86,9 +86,11 @@ fn self_hosted_generic_list_has_value_semantics() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var a: List[Int] = List[Int]()\n    a.append(1)\n    a.append(2)\n    var b: List[Int] = a\n    b.append(99)\n    b[0] = 555\n    print(len(a), len(b))\n    print(a[0], b[0])\n",
+        "from std.collections.list import List\n\ndef main():\n    var a: List[Int] = List[Int]()\n    a.append(1)\n    a.append(2)\n    var b: List[Int] = a.copy()\n    b.append(99)\n    b[0] = 555\n    print(len(a), len(b))\n    print(a[0], b[0])\n",
     );
-    // `var b = a` deep-copies via __copyinit__ — b's mutations don't touch a.
+    // `var b = a.copy()` deep-copies through the explicit copy initializer —
+    // b's mutations don't touch a (the implicit `var b = a` needs
+    // `ImplicitlyCopyable`, which `List` is not).
     assert_eq!(run(&main).unwrap(), "2 3\n1 555\n");
 }
 
@@ -205,7 +207,7 @@ fn nested_list_builds_and_reads_via_explicit_rows() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var r0: List[Int] = List[Int]()\n    r0.append(1)\n    r0.append(2)\n    var r1: List[Int] = List[Int]()\n    r1.append(3)\n    m.append(r0)\n    m.append(r1)\n    var first: List[Int] = m[0]\n    var second: List[Int] = m[1]\n    print(len(m))\n    print(first[0], first[1], second[0])\n    print(len(second))\n    var total: Int = 0\n    for x in first:\n        total = total + x\n    print(total)\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var r0: List[Int] = List[Int]()\n    r0.append(1)\n    r0.append(2)\n    var r1: List[Int] = List[Int]()\n    r1.append(3)\n    m.append(r0^)\n    m.append(r1^)\n    var first: List[Int] = m[0].copy()\n    var second: List[Int] = m[1].copy()\n    print(len(m))\n    print(first[0], first[1], second[0])\n    print(len(second))\n    var total: Int = 0\n    for x in first:\n        total = total + x\n    print(total)\n",
     );
     assert_eq!(run(&main).unwrap(), "2\n1 2 3\n1\n3\n");
 }
@@ -215,43 +217,45 @@ fn nested_list_chained_reference_receiver_uses_subscript_contracts() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var rows = List[List[Int]]()\n    var row = List[Int]()\n    row.append(7)\n    rows.append(row)\n    rows[0].append(8)\n    rows[0][0] = 9\n    print(rows[0][0], rows[0][1])\n",
+        "from std.collections.list import List\n\ndef main():\n    var rows = List[List[Int]]()\n    var row = List[Int]()\n    row.append(7)\n    rows.append(row^)\n    rows[0].append(8)\n    rows[0][0] = 9\n    print(rows[0][0], rows[0][1])\n",
     );
     assert_eq!(run(&main).unwrap(), "9 8\n");
 }
 
 #[test]
 fn nested_list_append_copies_row() {
-    // Passing a row to `append` copies it (by-value argument): later mutation of
-    // the original row must not reach the stored one.
+    // Passing an explicit row copy to `append` (a `List` place cannot be
+    // implicitly copied into the by-value argument): later mutation of the
+    // original row must not reach the stored one.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    row[0] = 42\n    row.append(7)\n    var stored: List[Int] = m[0]\n    print(stored[0], len(stored))\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row.copy())\n    row[0] = 42\n    row.append(7)\n    var stored: List[Int] = m[0].copy()\n    print(stored[0], len(stored))\n",
     );
     assert_eq!(run(&main).unwrap(), "1 1\n");
 }
 
 #[test]
 fn nested_list_copy_is_deep() {
-    // `var n = m` must deep-copy the rows: mutating a row read out of the copy
-    // (and stored back into the copy) must not reach the original.
+    // `var n = m.copy()` must deep-copy the rows: mutating a row read out of
+    // the copy (and stored back into the copy) must not reach the original.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    var n: List[List[Int]] = m\n    var changed: List[Int] = n[0]\n    changed[0] = 99\n    n[0] = changed^\n    var original: List[Int] = m[0]\n    var updated: List[Int] = n[0]\n    print(original[0], updated[0])\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row^)\n    var n: List[List[Int]] = m.copy()\n    var changed: List[Int] = n[0].copy()\n    changed[0] = 99\n    n[0] = changed^\n    var original: List[Int] = m[0].copy()\n    var updated: List[Int] = n[0].copy()\n    print(original[0], updated[0])\n",
     );
     assert_eq!(run(&main).unwrap(), "1 99\n");
 }
 
 #[test]
 fn nested_list_getitem_returns_a_copy() {
-    // Binding the ref-returning `m[0]` as an owned `List[Int]` copies the row;
-    // mutating that owned value does not change the original element.
+    // Binding the ref-returning `m[0]` as an owned `List[Int]` requires an
+    // explicit copy of the row; mutating that owned value does not change the
+    // original element.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    var copied: List[Int] = m[0]\n    copied[0] = 77\n    var original: List[Int] = m[0]\n    print(original[0], copied[0])\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row^)\n    var copied: List[Int] = m[0].copy()\n    copied[0] = 77\n    var original: List[Int] = m[0].copy()\n    print(original[0], copied[0])\n",
     );
     assert_eq!(run(&main).unwrap(), "1 77\n");
 }
@@ -263,7 +267,7 @@ fn nested_list_explicit_row_writeback() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row)\n    var updated: List[Int] = m[0]\n    updated.append(5)\n    m[0] = updated^\n    var stored: List[Int] = m[0]\n    print(len(stored), stored[1])\n",
+        "from std.collections.list import List\n\ndef main():\n    var m: List[List[Int]] = List[List[Int]]()\n    var row: List[Int] = List[Int]()\n    row.append(1)\n    m.append(row^)\n    var updated: List[Int] = m[0].copy()\n    updated.append(5)\n    m[0] = updated^\n    var stored: List[Int] = m[0].copy()\n    print(len(stored), stored[1])\n",
     );
     assert_eq!(run(&main).unwrap(), "2 5\n");
 }
@@ -274,7 +278,7 @@ fn nested_list_as_struct_field_bucket_shape() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.list import List\n\nstruct Grid:\n    var buckets: List[List[Int]]\n\n    def __init__(out self):\n        self.buckets = List[List[Int]]()\n        self.buckets.append(List[Int]())\n        self.buckets.append(List[Int]())\n\n    def add(mut self, i: Int, v: Int):\n        var bucket: List[Int] = self.buckets[i]\n        bucket.append(v)\n        self.buckets[i] = bucket^\n\n    def total(self, i: Int) -> Int:\n        var bucket: List[Int] = self.buckets[i]\n        var t: Int = 0\n        for x in bucket:\n            t = t + x\n        return t\n\ndef main():\n    var g: Grid = Grid()\n    g.add(0, 3)\n    g.add(1, 4)\n    g.add(0, 5)\n    print(g.total(0), g.total(1))\n",
+        "from std.collections.list import List\n\nstruct Grid:\n    var buckets: List[List[Int]]\n\n    def __init__(out self):\n        self.buckets = List[List[Int]]()\n        self.buckets.append(List[Int]())\n        self.buckets.append(List[Int]())\n\n    def add(mut self, i: Int, v: Int):\n        var bucket: List[Int] = self.buckets[i].copy()\n        bucket.append(v)\n        self.buckets[i] = bucket^\n\n    def total(self, i: Int) -> Int:\n        var bucket: List[Int] = self.buckets[i].copy()\n        var t: Int = 0\n        for x in bucket:\n            t = t + x\n        return t\n\ndef main():\n    var g: Grid = Grid()\n    g.add(0, 3)\n    g.add(1, 4)\n    g.add(0, 5)\n    print(g.total(0), g.total(1))\n",
     );
     assert_eq!(run(&main).unwrap(), "8 4\n");
 }
@@ -510,7 +514,7 @@ fn self_hosted_pack_tuple_constructs_and_indexes_with_exact_types() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "from std.collections.pack_tuple import PackTuple\n\ndef main():\n    var t = PackTuple[Int, String, Bool](3, \"mid\", True)\n    var n: Int = t[0]\n    print(n + 4)\n    print(t[1])\n    print(t[2])\n    print(len(t))\n    var copy = t\n    print(copy[0])\n    var moved = t^\n    print(moved[2])\n",
+        "from std.collections.pack_tuple import PackTuple\n\ndef main():\n    var t = PackTuple[Int, String, Bool](3, \"mid\", True)\n    var n: Int = t[0]\n    print(n + 4)\n    print(t[1])\n    print(t[2])\n    print(len(t))\n    var copy = t.copy()\n    print(copy[0])\n    var moved = t^\n    print(moved[2])\n",
     );
     assert_eq!(run(&main).unwrap(), "7\nmid\nTrue\n3\n3\nTrue\n");
 }

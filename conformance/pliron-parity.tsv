@@ -65,6 +65,7 @@ assets/ok/dunder_vec2.mojo	main	exe-differential	sanitized
 assets/ok/exceptions.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_raising.mojo	main	exe-differential	sanitized
+assets/ok/explicit_transfer_convention.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/ok/funarg_call_through_after_last_use.mojo	main	exe-differential	sanitized
 assets/ok/func_styles.mojo	main	exe-differential	sanitized

@@ -267,9 +267,22 @@ impl Checker {
         // Operator overloading: `a OP b` on a user struct dispatches to the left
         // operand's dunder method (`a.__add__(b)`, `a.__eq__(b)`, …).
         if let Some(dunder) = op.dunder()
-            && let Some(r) = self.struct_dunder(&lt, dunder, &[&rt])
+            && let Some((_, sig, _)) = self.struct_dunder_signature(&lt, dunder, 1)
         {
-            return r;
+            if matches!(
+                sig.conventions.first().copied().flatten(),
+                Some(ArgConvention::Var | ArgConvention::Deinit)
+            ) {
+                self.check_consuming_as(
+                    right,
+                    &rt,
+                    &format!("operand of '{}'", infix_symbol(op)),
+                    super::traits::ConsumeKind::Move,
+                )?;
+            }
+            return self
+                .struct_dunder(&lt, dunder, &[&rt])
+                .expect("dunder signature was resolved");
         }
         Err(TypeError::BadOperator {
             op: infix_symbol(op).to_string(),

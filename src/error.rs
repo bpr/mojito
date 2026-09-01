@@ -103,6 +103,14 @@ pub enum TypeError {
         ty: String,
         context: String,
     },
+    /// A Copyable-but-not-ImplicitlyCopyable place was used in an owned-value
+    /// position without an explicit transfer or copy.
+    ImplicitCopy {
+        ty: String,
+        context: String,
+        transferable: bool,
+        copyable: bool,
+    },
     /// Aliasing violation: a variable is borrowed mutably (`mut`/`ref`) and also
     /// borrowed (mutably or shared) at the same call — Mojo's borrow rule is
     /// mutable-XOR-shared. E.g. `f(mut a, mut a)` or `f(mut a, a)`.
@@ -432,6 +440,24 @@ impl fmt::Display for TypeError {
                 "cannot copy non-Copyable type '{ty}' ({context}); transfer it with '^' \
                  or make '{ty}' Copyable"
             ),
+            TypeError::ImplicitCopy {
+                ty,
+                context,
+                transferable,
+                copyable,
+            } => {
+                write!(
+                    f,
+                    "value of type '{ty}' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable' ({context})"
+                )?;
+                if *transferable {
+                    write!(f, "; consider transferring the value with '^'")?;
+                }
+                if *copyable {
+                    write!(f, "; you can copy it explicitly with '.copy()'")?;
+                }
+                Ok(())
+            }
             TypeError::AliasingViolation { var } => write!(
                 f,
                 "'{var}' is borrowed mutably and also used at the same call \

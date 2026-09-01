@@ -792,21 +792,21 @@ fn infers_struct_type_argument_from_construction() {
 #[test]
 fn accepts_generic_function_identity() {
     ok(
-        "def id[T: Copyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: StringLiteral = id(\"hi\")\n",
+        "def id[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: StringLiteral = id(\"hi\")\n",
     );
 }
 
 #[test]
 fn accepts_generic_function_over_generic_struct() {
     ok(&format!(
-        "{PAIR}def first[T: Copyable & Movable](p: Pair[T]) -> T:\n    return p.left\n\nvar p: Pair[Int] = Pair(1, 2)\nvar x: Int = first(p)\n"
+        "{PAIR}def first[T: ImplicitlyCopyable & Movable](p: Pair[T]) -> T:\n    return p.left\n\nvar p: Pair[Int] = Pair(1, 2)\nvar x: Int = first(p)\n"
     ));
 }
 
 #[test]
 fn accepts_generic_struct_method_returning_self_param() {
     ok(
-        "@fieldwise_init\nstruct Box[T: Copyable & Movable]:\n    var val: Self.T\n\n    def get(self) -> Self.T:\n        return self.val\n\nvar b: Box[Int] = Box(7)\nvar g: Int = b.get()\n",
+        "@fieldwise_init\nstruct Box[T: ImplicitlyCopyable & Movable]:\n    var val: Self.T\n\n    def get(self) -> Self.T:\n        return self.val\n\nvar b: Box[Int] = Box(7)\nvar g: Int = b.get()\n",
     );
 }
 
@@ -913,7 +913,8 @@ fn generic_call_sites_record_their_resolved_instantiations() {
 fn abstract_element_copyability_derives_from_member_bounds() {
     // A `C.Element` copy is proven by the bound trait's member declaration,
     // never vacuously: a Movable-only element cannot be returned by copy from
-    // a generic loop, while a Copyable-bounded one can.
+    // a generic loop, while a Copyable-only element still needs an explicit
+    // copy and an ImplicitlyCopyable element may be returned directly.
     let movable = "trait Items:\n    comptime Element: Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
     let error = err(movable);
     assert!(
@@ -921,7 +922,9 @@ fn abstract_element_copyability_derives_from_member_bounds() {
         "got {error:?}"
     );
     let copyable = "trait Items:\n    comptime Element: Copyable & Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
-    ok(copyable);
+    assert!(matches!(err(copyable), TypeError::ImplicitCopy { .. }));
+    let implicit = "trait Items:\n    comptime Element: ImplicitlyCopyable & Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
+    ok(implicit);
 }
 
 #[test]
@@ -2831,7 +2834,7 @@ fn supports_parameterized_aggregate_compile_time_values() {
 #[test]
 fn rejects_explicit_infer_only_compile_time_parameters() {
     let error = err(
-        "def identity[T: Copyable, // U: AnyType](value: T) -> T:\n    return value\n\nvar value: Int = identity[Int, Int](1)\n",
+        "def identity[T: Copyable, // U: AnyType](value: T) -> T:\n    return value.copy()\n\nvar value: Int = identity[Int, Int](1)\n",
     );
     assert!(
         matches!(&error, TypeError::Unsupported(message) if message.contains("infer-only")),
@@ -2842,14 +2845,14 @@ fn rejects_explicit_infer_only_compile_time_parameters() {
 #[test]
 fn infers_generic_static_and_instance_method_parameters() {
     ok(
-        "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value\n    def echo[T: Copyable](self, value: T) -> T:\n        return value\n\nvar factory = Factory(0)\nvar a: Int = Factory.make(1)\nvar b: StringLiteral = factory.echo(\"ok\")\n",
+        "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value.copy()\n    def echo[T: Copyable](self, value: T) -> T:\n        return value.copy()\n\nvar factory = Factory(0)\nvar a: Int = Factory.make(1)\nvar b: StringLiteral = factory.echo(\"ok\")\n",
     );
 }
 
 #[test]
 fn checks_generic_trait_method_signatures_in_their_parameter_scope() {
     ok(
-        "trait Echoer:\n    def echo[T: Copyable](self, value: T) -> T:\n        ...\n\n@fieldwise_init\nstruct Echo(Echoer):\n    var marker: Int\n    def echo[T: Copyable](self, value: T) -> T:\n        return value\n\nvar echo = Echo(0)\nvar answer: Int = echo.echo(42)\n",
+        "trait Echoer:\n    def echo[T: Copyable](self, value: T) -> T:\n        ...\n\n@fieldwise_init\nstruct Echo(Echoer):\n    var marker: Int\n    def echo[T: Copyable](self, value: T) -> T:\n        return value.copy()\n\nvar echo = Echo(0)\nvar answer: Int = echo.echo(42)\n",
     );
 }
 
@@ -2984,16 +2987,20 @@ fn rejects_bad_default_values_and_arity() {
         err("def f(a: Int, b: Int = 2) -> Int:\n    return a\n\nvar z: Int = f(1, 2, 3)\n"),
         TypeError::ArityMismatch { .. }
     ));
-    ok("def f[T: Copyable & Movable](a: T, b: Int = 2) -> T:\n    return a\n\nvar n: Int = f(1)\n");
+    ok(
+        "def f[T: Copyable & Movable](a: T, b: Int = 2) -> T:\n    return a.copy()\n\nvar n: Int = f(1)\n",
+    );
 }
 
 #[test]
 fn generic_calls_share_ordinary_argument_binding() {
     ok(
-        "def choose[T: Copyable & Movable](first: T, /, offset: Int = 0, *, use_offset: Bool = False) -> T:\n    return first\n\nvar a: Int = choose(1, offset=2, use_offset=True)\n",
+        "def choose[T: Copyable & Movable](first: T, /, offset: Int = 0, *, use_offset: Bool = False) -> T:\n    return first.copy()\n\nvar a: Int = choose(1, offset=2, use_offset=True)\n",
     );
     assert!(matches!(
-        err("def f[T: Copyable & Movable](x: T, /) -> T:\n    return x\n\nvar n: Int = f(x=1)\n"),
+        err(
+            "def f[T: Copyable & Movable](x: T, /) -> T:\n    return x.copy()\n\nvar n: Int = f(x=1)\n"
+        ),
         TypeError::BadCall { .. }
     ));
 }
@@ -3283,7 +3290,7 @@ fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effect
     assert!(matches!(mutable, TypeError::TraitNotSatisfied { .. }));
 
     let generic = err(
-        "def identity[T: Copyable & Deinitable](value: T) -> T:\n    return value\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(identity))\n",
+        "def identity[T: Copyable & Deinitable](value: T) -> T:\n    return value.copy()\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(identity))\n",
     );
     assert!(matches!(generic, TypeError::TraitNotSatisfied { .. }));
 
@@ -3299,7 +3306,7 @@ fn rejects_contextual_generic_callable_specialization() {
     // callable annotation; only explicit specialization materializes one.
     assert!(matches!(
         err(
-            "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef main():\n    var callback: def(Int) thin -> Int = identity\n    print(callback(42))\n"
+            "def identity[T: Copyable & Movable](value: T) -> T:\n    return value.copy()\n\ndef main():\n    var callback: def(Int) thin -> Int = identity\n    print(callback(42))\n"
         ),
         TypeError::Unsupported(_)
     ));
@@ -3750,8 +3757,21 @@ fn structs_are_non_copyable_by_default() {
     let moved = "@fieldwise_init\nstruct T:\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a^\n    print(b.x)\n";
     assert!(check_source(moved).is_ok());
 
+    // `Copyable` alone permits only explicit copies and transfers: the
+    // implicit place copy needs `ImplicitlyCopyable`.
     let copyable = "@fieldwise_init\nstruct T(Copyable):\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a\n    print(b.x)\n";
-    assert!(check_source(copyable).is_ok());
+    assert!(matches!(
+        check_source(copyable),
+        Err(TypeError::ImplicitCopy {
+            transferable: true,
+            copyable: true,
+            ..
+        })
+    ));
+    let copyable_moved = "@fieldwise_init\nstruct T(Copyable):\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a^\n    print(b.x)\n";
+    assert!(check_source(copyable_moved).is_ok());
+    let implicitly_copyable = "@fieldwise_init\nstruct T(ImplicitlyCopyable):\n    var x: Int\n\ndef main():\n    var a: T = T(1)\n    var b: T = a\n    print(b.x)\n";
+    assert!(check_source(implicitly_copyable).is_ok());
 
     // Scalars are Copyable.
     assert!(
@@ -4573,10 +4593,21 @@ fn retired_pointer_storage_method_spellings_stay_gone() {
 
 #[test]
 fn copyinit_makes_type_copyable_and_checks_di() {
-    // Defining `__copyinit__` makes a struct Copyable, so `var q = p` is allowed.
+    // Defining `__copyinit__` makes a struct Copyable: an explicit copy is
+    // allowed, while the implicit `var q = p` still needs `ImplicitlyCopyable`.
     ok(
-        "struct P:\n    var a: Int\n    def __init__(out self):\n        self.a = 1\n    def __copyinit__(out self, e: P):\n        self.a = e.a\n\ndef main():\n    var p: P = P()\n    var q: P = p\n    print(q.a)\n",
+        "struct P:\n    var a: Int\n    def __init__(out self):\n        self.a = 1\n    def __copyinit__(out self, e: P):\n        self.a = e.a\n\ndef main():\n    var p: P = P()\n    var q: P = P(copy: p)\n    print(q.a)\n",
     );
+    assert!(matches!(
+        err(
+            "struct P:\n    var a: Int\n    def __init__(out self):\n        self.a = 1\n    def __copyinit__(out self, e: P):\n        self.a = e.a\n\ndef main():\n    var p: P = P()\n    var q: P = p\n    print(q.a)\n"
+        ),
+        TypeError::ImplicitCopy {
+            transferable: true,
+            copyable: true,
+            ..
+        }
+    ));
     // Current Mojo spells the copy constructor as an `__init__` overload with a
     // keyword-only `copy: Self`; mojito registers that as the lifecycle copy
     // initializer internally.
@@ -4593,7 +4624,7 @@ fn copyinit_makes_type_copyable_and_checks_di() {
     // Definite-init applies to `__copyinit__` too (must set every field).
     assert!(matches!(
         err(
-            "struct P:\n    var a: Int\n    var b: Int\n    def __init__(out self):\n        self.a = 0\n        self.b = 0\n    def __copyinit__(out self, e: P):\n        self.a = e.a\n\ndef main():\n    var p: P = P()\n    var q: P = p\n"
+            "struct P:\n    var a: Int\n    var b: Int\n    def __init__(out self):\n        self.a = 0\n        self.b = 0\n    def __copyinit__(out self, e: P):\n        self.a = e.a\n\ndef main():\n    var p: P = P()\n    var q: P = P(copy: p)\n"
         ),
         TypeError::UninitializedField { .. }
     ));
@@ -4605,16 +4636,16 @@ fn generic_hand_written_init() {
     // by unifying the constructor's parameters against the arguments (inferred), or
     // supplied explicitly (`Box[Int](5)`).
     ok(
-        "struct Box[T: Copyable & Movable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v\n    def get(self) -> Self.T:\n        return self.v\n\ndef main():\n    var a: Box[Int] = Box(5)\n    var b: Box[Int] = Box[Int](6)\n    print(a.get(), b.get())\n",
+        "struct Box[T: Copyable & Movable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n    def get(self) -> Self.T:\n        return self.v.copy()\n\ndef main():\n    var a: Box[Int] = Box(5)\n    var b: Box[Int] = Box[Int](6)\n    print(a.get(), b.get())\n",
     );
     // A UnsafePointer field of the type parameter, allocated with `Self.T`.
     ok(
-        "struct Buf[T: Copyable & Movable]:\n    var data: UnsafePointer[Self.T]\n    def __init__(out self):\n        self.data = UnsafePointer[Self.T].alloc(4)\n    def set0(mut self, v: Self.T):\n        self.data[0] = v\n    def get0(self) -> Self.T:\n        return self.data[0]\n\ndef main():\n    var b: Buf[Int] = Buf[Int]()\n    b.set0(9)\n    print(b.get0())\n",
+        "struct Buf[T: Copyable & Movable]:\n    var data: UnsafePointer[Self.T]\n    def __init__(out self):\n        self.data = UnsafePointer[Self.T].alloc(4)\n    def set0(mut self, v: Self.T):\n        self.data[0] = v.copy()\n    def get0(self) -> Self.T:\n        return self.data[0].copy()\n\ndef main():\n    var b: Buf[Int] = Buf[Int]()\n    b.set0(9)\n    print(b.get0())\n",
     );
     // A wrong-typed constructor argument is still rejected (solved T = Int here).
     assert!(matches!(
         err(
-            "struct Box[T: Copyable & Movable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v\n\ndef main():\n    var a: Box[Int] = Box[Int](\"no\")\n"
+            "struct Box[T: Copyable & Movable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\ndef main():\n    var a: Box[Int] = Box[Int](\"no\")\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -4835,14 +4866,14 @@ fn concrete_conversions_and_abs_route_through_dunders() {
 #[test]
 fn conditional_iterable_conformance_proves_its_associated_iterator_contract() {
     ok(
-        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n\n@fieldwise_init\nstruct Container[T: Movable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value)\n",
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct Container[T: Movable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value.copy())\n",
     );
 }
 
 #[test]
 fn unrelated_conditional_conformance_does_not_prove_an_iterator_contract() {
     let error = err(
-        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n\n@fieldwise_init\nstruct BadContainer[T: Movable](IterableContract where conforms_to(T, Equatable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Equatable):\n        return Cursor[Self.T](self.value)\n",
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct BadContainer[T: Movable](IterableContract where conforms_to(T, Equatable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Equatable):\n        return Cursor[Self.T](self.value.copy())\n",
     );
     assert!(
         matches!(
@@ -4951,7 +4982,7 @@ fn conditional_conformance_discharges_a_parameterized_member_bound() {
     // the assumption that discharges it — the shape the origin-parameterized
     // collection iterators use.
     ok(
-        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: IteratorContract\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n\n@fieldwise_init\nstruct Container[T: Movable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Cursor[Self.T]\n    var value: Self.T\n    def make(ref self) -> Self.IterType[origin_of(self)] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value)\n",
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: IteratorContract\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct Container[T: Movable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Cursor[Self.T]\n    var value: Self.T\n    def make(ref self) -> Self.IterType[origin_of(self)] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value.copy())\n",
     );
 }
 
@@ -5511,14 +5542,14 @@ fn bool_bodied_comptime_aliases_are_predicates() {
     // declaration order between the alias and its consumer (aliases
     // pre-register like struct shells).
     ok(
-        "comptime IsCopy[T: AnyType] = conforms_to(T, Copyable)\n\ndef pick[T: Copyable](value: T) -> T where IsCopy[T]:\n    return value\n\ndef main():\n    print(pick(1))\n",
+        "comptime IsCopy[T: AnyType] = conforms_to(T, Copyable)\n\ndef pick[T: Copyable](value: T) -> T where IsCopy[T]:\n    return value.copy()\n\ndef main():\n    print(pick(1))\n",
     );
     // A predicate alias may expand an earlier one, mix with the builtin
     // IsTrivially* predicates, and gate a conditional conformance (the
     // `comptime if` position is exercised by the corpus fixture, since the
     // elaborator prunes those branches before checking).
     ok(
-        "comptime IsCopy[T: AnyType] = conforms_to(T, Copyable) and IsTriviallyCopyable[T]\ncomptime StillCopy[T: AnyType] = IsCopy[T]\n\nstruct Wrap[T: Copyable & Deinitable & Movable](Copyable where StillCopy[T], Deinitable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\ndef dup[T: Copyable](value: T) -> T:\n    return value\n\ndef main():\n    var doubled = dup(Wrap(7))\n    print(doubled.item)\n",
+        "comptime IsCopy[T: AnyType] = conforms_to(T, Copyable) and IsTriviallyCopyable[T]\ncomptime StillCopy[T: AnyType] = IsCopy[T]\n\nstruct Wrap[T: Copyable & Deinitable & Movable](Copyable where StillCopy[T], Deinitable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\ndef dup[T: Copyable](value: T) -> T:\n    return value.copy()\n\ndef main():\n    var doubled = dup(Wrap(7))\n    print(doubled.item)\n",
     );
 
     // A body referencing an undeclared name rejects at declaration rather
@@ -5708,7 +5739,7 @@ fn generic_lambda_is_a_closure() {
 
 #[test]
 fn bare_element_calls_record_the_element_invocation_plan() {
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[0](3))\n";
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[0](3))\n";
     let checked = check_program(&parse(source).expect("parse")).expect("check");
     let plans = checked
         .expressions()
@@ -5746,7 +5777,7 @@ fn bare_element_calls_record_the_element_invocation_plan() {
 
 #[test]
 fn member_base_and_multi_index_element_calls_record_plans() {
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var inner: Container\n\n@fieldwise_init\nstruct Grid(Copyable):\n    var first: Doubler\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var h: Holder = Holder(Container(Doubler(2)))\n    print(h.inner[0](3))\n    var g: Grid = Grid(Doubler(3))\n    print(g[1, 1](4))\n";
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var inner: Container\n\n@fieldwise_init\nstruct Grid(Copyable):\n    var first: Doubler\n    def __getitem__(self, row: Int, column: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var h: Holder = Holder(Container(Doubler(2)))\n    print(h.inner[0](3))\n    var g: Grid = Grid(Doubler(3))\n    print(g[1, 1](4))\n";
     let checked = check_program(&parse(source).expect("parse")).expect("check");
     let plans = checked
         .expressions()
@@ -5782,13 +5813,124 @@ fn element_call_shapes_that_stay_rejected() {
         "{error:?}"
     );
     // Type brackets over an indexable value keep the residual diagnostic.
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, Copyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[Int](3))\n";
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[Int](3))\n";
     let error = check_program(&parse(source).expect("parse")).expect_err("type brackets");
     assert!(
         matches!(&error, TypeError::Unsupported(message) if message.contains("runtime index arguments")),
         "{error:?}"
     );
     // Generic-function parameter application is untouched.
-    let source = "def pick[T: Copyable](value: T) -> T:\n    return value\n\ndef main():\n    print(pick[Int](7))\n";
+    let source = "def pick[T: Copyable](value: T) -> T:\n    return value.copy()\n\ndef main():\n    print(pick[Int](7))\n";
     check_program(&parse(source).expect("parse")).expect("generic parameter application");
+}
+
+// --- Owned-`var` transfer convention ---
+
+#[test]
+fn binary_operator_var_operand_requires_explicit_transfer() {
+    // A dunder's `var` operand binds like any owned argument: a place of a
+    // Copyable-only type must be transferred (or explicitly copied).
+    let declarations = "@fieldwise_init\nstruct Bag(Copyable, Movable):\n    var items: List[Int]\n\n    def __add__(self, var other: Self) -> Self:\n        return other^\n\n";
+    let rejected = err(&format!(
+        "{declarations}def main():\n    var p = Bag(List[Int]())\n    var q = Bag(List[Int]())\n    var r = p + q\n"
+    ));
+    assert!(
+        matches!(&rejected, TypeError::ImplicitCopy { context, transferable: true, .. } if context == "operand of '+'"),
+        "got {rejected:?}"
+    );
+    ok(&format!(
+        "{declarations}def main():\n    var p = Bag(List[Int]())\n    var q = Bag(List[Int]())\n    var r = p + q^\n"
+    ));
+}
+
+#[test]
+fn implicit_copy_diagnostic_notes_follow_the_source_binding() {
+    // An immutable parameter cannot be transferred, so its diagnostic carries
+    // only the `.copy()` note; a `var` parameter may be transferred.
+    let declarations = "@fieldwise_init\nstruct Holder:\n    var items: List[Int]\n\n";
+    let immutable = err(&format!(
+        "{declarations}def store(mut holder: Holder, value: List[Int]):\n    holder.items = value\n"
+    ));
+    assert!(
+        matches!(
+            &immutable,
+            TypeError::ImplicitCopy {
+                transferable: false,
+                copyable: true,
+                ..
+            }
+        ),
+        "got {immutable:?}"
+    );
+    assert!(!immutable.to_string().contains("transferring"));
+    let owned = err(&format!(
+        "{declarations}def store(mut holder: Holder, var value: List[Int]):\n    holder.items = value\n"
+    ));
+    assert!(
+        matches!(
+            &owned,
+            TypeError::ImplicitCopy {
+                transferable: true,
+                copyable: true,
+                ..
+            }
+        ),
+        "got {owned:?}"
+    );
+    assert!(
+        owned
+            .to_string()
+            .contains("transferring the value with '^'")
+    );
+}
+
+#[test]
+fn implicitly_copyable_refining_bounds_permit_place_copies() {
+    // `TrivialRegisterPassable` refines `ImplicitlyCopyable`; a plain
+    // `Copyable` bound does not permit the implicit copy.
+    ok(
+        "def dup[T: TrivialRegisterPassable](x: T) -> T:\n    var y: T = x\n    return y\n\nvar n: Int = dup(5)\n",
+    );
+    ok(
+        "def dup[T: ImplicitlyCopyable](x: T) -> T:\n    var y: T = x\n    return y\n\nvar n: Int = dup(5)\n",
+    );
+    assert!(matches!(
+        err(
+            "def dup[T: Copyable](x: T) -> T:\n    var y: T = x\n    return y^\n\nvar n: Int = dup(5)\n"
+        ),
+        TypeError::ImplicitCopy { .. }
+    ));
+}
+
+#[test]
+fn implicitly_copyable_struct_may_declare_an_explicit_copy_initializer() {
+    // Upstream `String` is ImplicitlyCopyable with a hand-written copy
+    // initializer; the explicit initializer is the conformance, so the
+    // fieldwise all-ImplicitlyCopyable rule applies only without one.
+    ok(
+        "struct S(ImplicitlyCopyable):\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = List[Int]()\n\n    def __init__(out self, *, copy: Self):\n        self.items = List[Int]()\n\ndef main():\n    var a = S()\n    var b = a\n    print(len(b.items))\n",
+    );
+    assert!(matches!(
+        err(
+            "struct S(ImplicitlyCopyable):\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = List[Int]()\n\ndef main():\n    var a = S()\n    var b = a\n"
+        ),
+        TypeError::TraitNotSatisfied { .. }
+    ));
+}
+
+#[test]
+fn rejected_overload_candidates_leave_no_place_copy_marks() {
+    // Speculative overload checking restores the copy-mark side table: the
+    // rejected consuming candidate must not leave `p` marked as an implicit
+    // place copy once the borrowing overload is selected.
+    let source = "@fieldwise_init\nstruct P(ImplicitlyCopyable):\n    var x: Int\n\ndef f(var value: P, extra: Int) -> Int:\n    return extra\n\ndef f(value: P) -> Int:\n    return value.x\n\ndef main():\n    var p = P(1)\n    print(f(p))\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let marked = checked.expressions().iter().any(|expression| {
+        matches!(&expression.syntax.kind, mojito::ast::ExprKind::Identifier(name) if name == "p")
+            && expression
+                .adjustments
+                .iter()
+                .any(|adjustment| matches!(adjustment, SemanticAdjustment::CopyPlaceValue))
+    });
+    assert!(!marked, "the rejected candidate's copy mark leaked");
 }

@@ -6079,6 +6079,21 @@ impl<'a> FnLowering<'a> {
         {
             return self.lower_string_hash(ctx, dest, recv);
         }
+        // Trait-dispatched `Copyable.copy` on a scalar receiver — a generic
+        // body's `value.copy()` monomorphized to a builtin, whose
+        // `__trait_dispatch.` target the specializer clears on non-struct
+        // receivers — is the value read itself, as the VM's non-struct `copy`
+        // intrinsic. Struct receivers arrive resolved to their own `copy`.
+        if resolved.is_none()
+            && method == "copy"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && let Some(scalar) = self.func.reg_types.get(&recv.0).and_then(scalar_copy_ty)
+        {
+            let value = self.reg_value(ctx, recv, scalar)?;
+            self.reg_values.insert(dest.0, value);
+            return Ok(());
+        }
         if resolved.is_none() && method == "__hash__" && args.is_empty() {
             match self.func.reg_types.get(&recv.0) {
                 Some(Ty::Int) => {
@@ -13302,6 +13317,20 @@ fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     let mut output = HashMap::new();
     visit(blocks, &mut output);
     output
+}
+
+/// The SSA scalar shape of a built-in copyable receiver whose `copy()` is the
+/// value read (the scalar arms of `lower_ty`); references and pointers are
+/// not value copies and aggregates copy through their own lifecycle.
+fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
+    match ty {
+        Ty::Int | Ty::IntLiteral => Some(ScalarTy::Int),
+        Ty::UInt => Some(ScalarTy::UInt),
+        Ty::Float64 | Ty::FloatLiteral => Some(ScalarTy::Float64),
+        Ty::Bool => Some(ScalarTy::Bool),
+        Ty::Simd { dtype, width: 1 } => Some(ScalarTy::of_dtype(*dtype)),
+        _ => None,
+    }
 }
 
 fn is_aggregate_ty(ty: &Ty) -> bool {

@@ -163,6 +163,14 @@ impl Checker {
             return result;
         }
         let obj_ty = self.infer(object)?;
+        // A receiver borrows a reference result for the call rather than
+        // reading the referent out as an owned value; a consuming receiver
+        // is gated on `ImplicitlyCopyable` below once the method resolves.
+        if self.infer_reference_value(object).is_some() {
+            self.borrowed_reference_receivers
+                .borrow_mut()
+                .insert(object.source_span());
+        }
         if let Ty::Struct(name, _) = &obj_ty
             && !self.structs.contains_key(name)
         {
@@ -365,6 +373,9 @@ impl Checker {
         if self.conforms_to(&obj_ty, "Writer") && method == "write" {
             reject_kwargs(kwargs)?;
             self.check_place(object)?;
+            self.borrowed_read_call_places
+                .borrow_mut()
+                .extend(args.iter().map(Expr::source_span));
             self.infer_print(args)?;
             return Ok(Ty::None);
         }
@@ -563,8 +574,24 @@ impl Checker {
                     None => Ok(None),
                 }
             }
-            Ty::Param { bounds, .. } => {
-                let signatures = self.lookup_trait_methods(bounds, method, args.len());
+            receiver @ (Ty::Param { .. } | Ty::Assoc { .. }) => {
+                let mut effective_bounds = match receiver {
+                    Ty::Param { bounds, .. } => bounds.clone(),
+                    Ty::Assoc { .. } => Vec::new(),
+                    _ => unreachable!("receiver pattern is parameter or associated type"),
+                };
+                // `Copyable.copy` is proven by any route that proves
+                // copyability (a refining bound, a member bound, or a
+                // `conforms_to(T, Copyable)` availability assumption), not
+                // only by a literal `Copyable` bound.
+                if method == "copy"
+                    && args.is_empty()
+                    && self.is_copyable(receiver)
+                    && !effective_bounds.iter().any(|bound| bound == "Copyable")
+                {
+                    effective_bounds.push("Copyable".to_string());
+                }
+                let signatures = self.lookup_trait_methods(&effective_bounds, method, args.len());
                 if signatures.is_empty() {
                     return Err(TypeError::NoSuchMethod {
                         object_type: obj_ty.to_string(),
@@ -684,6 +711,46 @@ impl Checker {
                     Some(matches!(object.kind, ExprKind::Transfer(_))),
                 )
                 .map(Some)
+            }
+            // `x.copy()` on a built-in copyable value (a scalar, literal,
+            // tuple, or variant) is `Copyable.copy` with no callee: the copy
+            // is the value read itself, and MIR lowers it as one.
+            _ if method == "copy"
+                && args.is_empty()
+                && kwargs.is_empty()
+                && param_args.is_empty()
+                && builtin_copy_is_value_read(&obj_ty)
+                && self.is_copyable(&obj_ty) =>
+            {
+                // A place receiver copies out of its storage exactly like an
+                // implicit place copy of an `ImplicitlyCopyable` value.
+                if is_place_expr(object) {
+                    self.copy_place_value_uses
+                        .borrow_mut()
+                        .insert(object.source_span());
+                }
+                Ok(Some(MethodCallResolution {
+                    conversion_score: 0,
+                    slots: vec![],
+                    positional_overflow: vec![],
+                    keyword_overflow: vec![],
+                    variadic_element: None,
+                    keyword_element: None,
+                    conventions: vec![],
+                    self_convention: None,
+                    return_type: obj_ty.clone(),
+                    result_adapter: None,
+                    raises: false,
+                    error: None,
+                    mutates_receiver: false,
+                    consumes_receiver: false,
+                    lowered_name: None,
+                    ref_params: vec![],
+                    ref_return: None,
+                    param_types: vec![],
+                    param_decls: vec![],
+                    parametric_origin_writes: Vec::new(),
+                }))
             }
             // `x.__hash__()` on a concrete built-in hashable type (`Int`, `String`,
             // …) is an intrinsic returning `UInt` — lets a key struct combine
@@ -1011,13 +1078,25 @@ impl Checker {
         // A `deinit self` call always consumes its receiver. Mojo may satisfy
         // that consumption by implicitly copying an `ImplicitlyCopyable` place;
         // a merely movable (or explicitly-copy-only) place still requires `^`.
-        if resolved.consumes_receiver && is_place_expr(object) {
+        if resolved.consumes_receiver
+            && (is_place_expr(object) || self.infer_reference_value(object).is_some())
+        {
             if !self.is_implicitly_copyable(&obj_ty) {
-                return Err(TypeError::NonCopyable {
+                let context = format!("consuming receiver of method '{method}'");
+                if !self.is_copyable(&obj_ty) {
+                    return Err(TypeError::NonCopyable {
+                        ty: obj_ty.to_string(),
+                        context,
+                    });
+                }
+                let transferable = self.is_movable(&obj_ty)
+                    && super::places::place_path(object)
+                        .is_some_and(|(root, _)| self.is_binding_mutable(root));
+                return Err(TypeError::ImplicitCopy {
                     ty: obj_ty.to_string(),
-                    context: format!(
-                        "consuming receiver of method '{method}' must be transferred with '^'"
-                    ),
+                    context,
+                    transferable,
+                    copyable: true,
                 });
             }
             self.implicitly_copied_consuming_receivers
@@ -1065,33 +1144,20 @@ impl Checker {
                     .expect("selected method slot has a parameter type"),
                 true,
             )?;
-            match resolved.conventions.get(index).copied().flatten() {
-                Some(ArgConvention::Deinit)
-                    if is_place_expr(expression) && !self.is_implicitly_copyable(&ty) =>
-                {
-                    return Err(TypeError::NonCopyable {
-                        ty: ty.to_string(),
-                        context: format!(
-                            "deinit argument {} to method '{}' must be transferred with '^'",
-                            index + 1,
-                            method
-                        ),
-                    });
-                }
-                Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) => {
-                    let kind = if convention == ArgConvention::Deinit {
-                        super::traits::ConsumeKind::Deinit
-                    } else {
-                        super::traits::ConsumeKind::Move
-                    };
-                    self.check_consuming_as(
-                        expression,
-                        &ty,
-                        &format!("argument {} to method '{}'", index + 1, method),
-                        kind,
-                    )?;
-                }
-                _ => {}
+            if let Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) =
+                resolved.conventions.get(index).copied().flatten()
+            {
+                let kind = if convention == ArgConvention::Deinit {
+                    super::traits::ConsumeKind::Deinit
+                } else {
+                    super::traits::ConsumeKind::Move
+                };
+                self.check_consuming_as(
+                    expression,
+                    &ty,
+                    &format!("argument {} to method '{}'", index + 1, method),
+                    kind,
+                )?;
             }
         }
         let (effective_conventions, solved_return) = self.solve_call_origins(
@@ -1115,7 +1181,7 @@ impl Checker {
                 let convention = effective_conventions.get(index).copied().flatten();
                 Ok(
                     !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
-                        && self.is_copyable(
+                        && self.call_read_is_independent_copy(
                             &self.infer_with_expected(
                                 expression,
                                 resolved
@@ -1212,6 +1278,16 @@ impl Checker {
                     reference: reference.clone(),
                 },
             );
+            // Iterator refinement: a `ref`-returning `__next__` satisfying a
+            // by-value `Self.Element` contract is read out as a checked copy
+            // (`CopyIteratorReference`). The generic body sees only the
+            // by-value contract, so the monomorphized re-check must not
+            // demand `ImplicitlyCopyable` where upstream sees no copy at all.
+            if method == "__next__" && self.is_copyable(&resolved.return_type) {
+                self.copyable_reference_result_reads
+                    .borrow_mut()
+                    .insert(span.clone());
+            }
             Some(reference)
         } else {
             None
@@ -2028,6 +2104,11 @@ impl Checker {
                         reason: self.trait_failure_reason(elem, "Copyable"),
                     });
                 }
+                if copy {
+                    self.copyable_reference_result_reads
+                        .borrow_mut()
+                        .insert(value.source_span());
+                }
                 let vty = self.infer(value)?;
                 if !coerces(&vty, elem) {
                     return Err(TypeError::TypeMismatch {
@@ -2220,15 +2301,7 @@ impl Checker {
         name: &str,
         args: &[&Ty],
     ) -> Option<Result<Ty, TypeError>> {
-        let Ty::Struct(sname, targs) = recv else {
-            return None;
-        };
-        let info = self.structs.get(sname)?;
-        let sig = info
-            .methods
-            .get(name)?
-            .iter()
-            .find(|sig| sig.params.len() == args.len())?;
+        let (info, sig, targs) = self.struct_dunder_signature(recv, name, args.len())?;
         let params: Vec<Ty> = sig
             .params
             .iter()
@@ -2251,6 +2324,27 @@ impl Checker {
             }
         }
         Some(Ok(substitute_at(&sig.ret, &info.decls, targs)))
+    }
+
+    /// Resolve the declaration selected by implicit dunder dispatch. Callers
+    /// that need convention semantics must inspect this signature before using
+    /// the type-only `struct_dunder` result.
+    pub(super) fn struct_dunder_signature<'a>(
+        &'a self,
+        recv: &'a Ty,
+        name: &str,
+        arity: usize,
+    ) -> Option<(&'a StructInfo, &'a MethodSig, &'a [TyArg])> {
+        let Ty::Struct(sname, targs) = recv else {
+            return None;
+        };
+        let info = self.structs.get(sname)?;
+        let sig = info
+            .methods
+            .get(name)?
+            .iter()
+            .find(|sig| sig.params.len() == arity)?;
+        Some((info, sig, targs))
     }
 
     /// Type a `List` method call. The **mutating** methods (`append`, `insert`,

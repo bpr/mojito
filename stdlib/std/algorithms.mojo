@@ -32,5 +32,5 @@ def static_size[T: StaticSized]() -> Int:
 
 def first_or[C: Iterable](items: C, default: C.Element) -> C.Element:
     for item in items:
-        return item
-    return default
+        return item.copy()
+    return default.copy()

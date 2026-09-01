@@ -495,7 +495,7 @@ fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
     // transferred, so both the source's and the destination's handles are live
     // and each must be released — two "handle del 7", never a leak and never a
     // double `box del`.
-    let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __copyinit__(out self, existing: Self):\n        self.id = existing.id\n    def __deinit__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h\n    def __deinit__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
+    let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __copyinit__(out self, existing: Self):\n        self.id = existing.id\n    def __deinit__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h.copy()\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h.copy()\n    def __deinit__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
     assert_eq!(vm(src), "handle del 7\nbox del\nhandle del 7\nmid 7\n");
 }
 
@@ -541,6 +541,11 @@ fn borrowed_comprehension_over_a_temporary_drops_the_source_once() {
 
 const COPYABLE_FOO: &str = "struct Foo(Copyable):\n    var s: String\n\n    def __init__(out self, s: String):\n        self.s = s\n\n    def __init__(out self, *, copy: Self):\n        print(\"copying value\")\n        self.s = copy.s\n\n";
 
+/// The same struct declaring `ImplicitlyCopyable` (its explicit copy
+/// initializer is the conformance, as for upstream `String`): a place may be
+/// implicitly copied into an owned position.
+const IMPLICITLY_COPYABLE_FOO: &str = "struct Foo(ImplicitlyCopyable):\n    var s: String\n\n    def __init__(out self, s: String):\n        self.s = s\n\n    def __init__(out self, *, copy: Self):\n        print(\"copying value\")\n        self.s = copy.s\n\n";
+
 #[test]
 fn copyable_conformance_synthesizes_the_copy_method() {
     // Current Mojo's `Copyable` trait carries a default `copy()` that
@@ -583,11 +588,12 @@ fn aggregate_field_read_keeps_its_owner_alive_until_the_copy_runs() {
 
 #[test]
 fn read_argument_binds_by_borrow_without_a_copy() {
-    // A read-convention argument is a borrow, not a copy: only the `return`
-    // runs the user's copy constructor. Before the borrow-read lowering the
-    // argument pass itself ran `__copyinit__` a second time.
+    // A read-convention argument is a borrow, not a copy: only the explicit
+    // `return value.copy()` runs the user's copy constructor. Before the
+    // borrow-read lowering the argument pass itself ran `__copyinit__` a
+    // second time.
     let src = format!(
-        "{COPYABLE_FOO}def ret(value: Foo) -> Foo:\n    return value\n\ndef main():\n    var a = Foo(\"Hello\")\n    var b = ret(a)\n    print(b.s)\n"
+        "{COPYABLE_FOO}def ret(value: Foo) -> Foo:\n    return value.copy()\n\ndef main():\n    var a = Foo(\"Hello\")\n    var b = ret(a)\n    print(b.s)\n"
     );
     let out = vm(&src);
     assert_eq!(
@@ -603,7 +609,7 @@ fn generic_read_argument_binds_by_borrow_without_a_copy() {
     // Upstream's `copy_return` example: the specialization path must borrow
     // the read argument exactly like the concrete one.
     let src = format!(
-        "{COPYABLE_FOO}def copy_return[T: Copyable](value: T) -> T:\n    return value\n\ndef main():\n    var a = Foo(\"Hello\")\n    var b = copy_return(a)\n    print(b.s)\n"
+        "{COPYABLE_FOO}def copy_return[T: Copyable](value: T) -> T:\n    return value.copy()\n\ndef main():\n    var a = Foo(\"Hello\")\n    var b = copy_return(a)\n    print(b.s)\n"
     );
     assert_eq!(vm(&src), "copying value\nHello\n");
 }
@@ -617,31 +623,43 @@ fn two_shared_read_arguments_stay_legal_and_copy_free() {
 }
 
 #[test]
-fn read_argument_overlapping_a_mut_argument_keeps_the_implicit_copy() {
-    // Within-call exclusivity accepts `f(a, a)` with a `mut` slot only because
-    // the read is implicitly copied; that copy must survive the borrow-read
-    // lowering (the borrowed value would otherwise observe the mutation). The
-    // `mut` pass itself is a rebound caller place and runs no copy.
-    let src = format!(
-        "{COPYABLE_FOO}def bump(mut x: Foo, y: Foo):\n    x.s = \"changed\"\n    print(y.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    bump(a, a)\n    print(a.s)\n"
-    );
-    let out = vm(&src);
-    assert_eq!(
-        out.matches("copying value").count(),
-        1,
-        "only the read copies"
-    );
-    assert_eq!(out, "copying value\nHello\nchanged\n");
+fn read_argument_overlapping_a_mut_argument_is_rejected() {
+    // Upstream never disarms within-call exclusivity by copying a nominal
+    // read argument — not even an `ImplicitlyCopyable` one (`String` rejects
+    // `bump(s, s)` at the pinned head) — so `f(mut a, a)` is an aliasing
+    // error for both spellings of `Foo`.
+    for declaration in [COPYABLE_FOO, IMPLICITLY_COPYABLE_FOO] {
+        let src = format!(
+            "{declaration}def bump(mut x: Foo, y: Foo):\n    x.s = \"changed\"\n    print(y.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    bump(a, a)\n    print(a.s)\n"
+        );
+        let error = compile_error(&src);
+        assert!(error.contains("borrowed mutably"), "got {error}");
+    }
 }
 
 #[test]
 fn var_argument_still_copies_a_live_source_once() {
+    // An `ImplicitlyCopyable` place passed to a `var` parameter is copied
+    // exactly once (the explicit copy initializer runs); the source stays
+    // live. A merely `Copyable` place must spell `a^` or `a.copy()`.
     let src = format!(
-        "{COPYABLE_FOO}def consume(var t: Foo):\n    print(\"consumed\", t.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    consume(a)\n    print(a.s)\n"
+        "{IMPLICITLY_COPYABLE_FOO}def consume(var t: Foo):\n    print(\"consumed\", t.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    consume(a)\n    print(a.s)\n"
     );
     let out = vm(&src);
     assert_eq!(out.matches("copying value").count(), 1);
     assert_eq!(out, "copying value\nconsumed Hello\nHello\n");
+    let rejected = format!(
+        "{COPYABLE_FOO}def consume(var t: Foo):\n    print(\"consumed\", t.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    consume(a)\n    print(a.s)\n"
+    );
+    let error = compile_error(&rejected);
+    assert!(
+        error.contains("cannot be implicitly copied") && error.contains("transferring"),
+        "got {error}"
+    );
+    let explicit = format!(
+        "{COPYABLE_FOO}def consume(var t: Foo):\n    print(\"consumed\", t.s)\n\ndef main():\n    var a = Foo(\"Hello\")\n    consume(a.copy())\n    print(a.s)\n"
+    );
+    assert_eq!(vm(&explicit), "copying value\nconsumed Hello\nHello\n");
 }
 
 #[test]

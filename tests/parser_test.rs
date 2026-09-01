@@ -3294,3 +3294,33 @@ fn lambda_is_a_reserved_word() {
         .parse_program()
         .expect_err("'lambda' as a var name must be rejected");
 }
+
+#[test]
+fn postfix_transfer_binds_tighter_than_infix_operators() {
+    // `primary '^'` is a postfix sigil: `p + q^` transfers `q`, not the sum,
+    // while a whitespace-separated `^` stays the bitwise-xor operator.
+    assert_eq!(
+        parse_expr("p + q^"),
+        Expr::from(ExprKind::Infix(
+            InfixOp::Add,
+            ident("p"),
+            bx(ExprKind::Transfer(ident("q")))
+        ))
+    );
+    assert_eq!(
+        parse_expr("a ^ b"),
+        Expr::from(ExprKind::Infix(InfixOp::BitXor, ident("a"), ident("b")))
+    );
+    assert_eq!(
+        parse_expr("p + q^ ^ r"),
+        Expr::from(ExprKind::Infix(
+            InfixOp::BitXor,
+            bx(ExprKind::Infix(
+                InfixOp::Add,
+                ident("p"),
+                bx(ExprKind::Transfer(ident("q")))
+            )),
+            ident("r")
+        ))
+    );
+}

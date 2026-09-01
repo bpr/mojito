@@ -26,7 +26,7 @@ struct Tagged[e: Extent](Copyable, Movable):
 def main():
     var a = Tagged[Extent(2, 3)](10)
     print(a.total())
-    var b: Tagged[Extent(2, 3)] = a
+    var b: Tagged[Extent(2, 3)] = a.copy()
     print(b.total())
     var c = Tagged[Extent.square(4)](2)
     print(c.total())

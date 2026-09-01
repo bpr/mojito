@@ -107,7 +107,7 @@ struct Array[T: AnyType, length: Int](
         self.data = unsafe_alloc[Self.T](Self.length)
         var i = 0
         while i < Self.length:
-            self.data[i] = fill
+            self.data.unsafe_offset(i).unsafe_write(copy=fill)
             i += 1
 
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
@@ -115,7 +115,7 @@ struct Array[T: AnyType, length: Int](
         self.data = unsafe_alloc[Self.T](Self.length)
         var i = 0
         while i < copy._size:
-            self.data[i] = copy.data[i]
+            self.data.unsafe_offset(i).unsafe_write(copy=copy.data[i])
             i += 1
 
     def copy(self) -> Self where conforms_to(Self.T, Copyable):

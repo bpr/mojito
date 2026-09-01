@@ -10,10 +10,11 @@ def main():
     var combined = append_to_fresh(moved^)
     print(len(combined), combined[3])
 
-    # The borrowing overload still records and executes its conversion.
+    # The borrowing overload still records and executes its conversion; a
+    # bare `List` place would select the consuming overload and require `^`.
     var source: List[Int] = [5, 6]
     var target: List[Int] = [0]
-    target.extend(source)
+    target.extend(Span(source))
     print(len(target), target[2], len(source))
 # stdout: 4 4
 # stdout: 3 6 2

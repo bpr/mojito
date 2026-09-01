@@ -228,3 +228,8 @@ origin-placeholder-field	reject	conformance/fixtures/origin_placeholder_field.mo
 unqualified-struct-origin-clause	reject	conformance/fixtures/unqualified_struct_origin_clause.mojo
 origin-delegated-call-arguments	run	conformance/fixtures/origin_delegated_call_arguments.mojo
 origin-delegated-multi-binder	run	conformance/fixtures/origin_delegated_multi_binder.mojo
+implicit-copy-owned-argument	reject	conformance/fixtures/implicit_copy_owned_argument.mojo
+implicit-copy-return-local	reject	conformance/fixtures/implicit_copy_return_local.mojo
+implicit-copy-var-init	reject	conformance/fixtures/implicit_copy_var_init.mojo
+list-concat-transfer	run	conformance/fixtures/list_concat_transfer.mojo
+string-implicit-copy	run	conformance/fixtures/string_implicit_copy.mojo

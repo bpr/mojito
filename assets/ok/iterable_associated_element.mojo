@@ -8,5 +8,5 @@ struct Bag[T: Copyable & Movable](Iterable):
 
 def consume[C: Iterable](c: C) raises -> C.Element:
     for item in c:
-        return item
+        return item.copy()
     raise "empty"

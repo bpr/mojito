@@ -1221,6 +1221,7 @@ impl VmBackend {
         place: &MirPlace,
         regs: &[Value],
         vars: &mut [Value],
+        frame_id: FrameId,
     ) -> Result<Option<Value>, RuntimeError> {
         let Some((Proj::Index(ireg), prefix)) = place.proj.split_last() else {
             return Ok(None);
@@ -1237,7 +1238,32 @@ impl VmBackend {
             },
             through: place.through,
         };
-        let recv = nav_mut(vars, regs, &parent)?.clone();
+        // A parent reached through a `ref`-typed field (`self.src.data[i]`
+        // with `src: ref[origin] Optional[T]`) is not raw storage: read it
+        // through the reference walk, which chases stored handles
+        // mid-projection, exactly like a plain `LoadPlace` does.
+        let recv = if parent
+            .projection_tys
+            .iter()
+            .any(|ty| matches!(ty, crate::types::Ty::Ref(_)))
+        {
+            let composed = Value::Ref {
+                frame: frame_id.0,
+                slot: parent.root as usize,
+                projection: Vec::new(),
+            };
+            let composed = self
+                .extend_reference(&composed, &parent.proj, regs)?
+                .expect("a composed root handle extends");
+            let value = self.read_reference(&composed, frame_id, vars)?;
+            if matches!(value, Value::Ref { .. }) {
+                self.read_reference(&value, frame_id, vars)?
+            } else {
+                value
+            }
+        } else {
+            nav_mut(vars, regs, &parent)?.clone()
+        };
         match &recv {
             Value::Struct { name, .. } => {
                 let sname = name.clone();
@@ -1603,6 +1629,13 @@ impl VmBackend {
         } else {
             recv
         };
+        // Trait-dispatched `Copyable.copy` on a non-struct value (a scalar or
+        // built-in aggregate reaching `__trait_dispatch.copy` through a
+        // generic body) is the value itself; concrete built-in receivers never
+        // reach here (the checker resolves them to the value read).
+        if method == "copy" && !matches!(recv, Value::Struct { .. }) {
+            return Ok(recv.clone());
+        }
         // Struct-to-literal bridge: the nominal String's `_as_string_literal`
         // reads the byte buffer back into a compile-time string value; the
         // declared body never executes.

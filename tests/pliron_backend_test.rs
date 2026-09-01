@@ -143,7 +143,7 @@ fn fib_lowers_verifies_and_prints_canonically() {
 
 #[test]
 fn backend_monomorphizes_one_generic_function_at_multiple_types() {
-    let source = "def identity[T: Copyable & Movable](value: T) -> T:\n    return value\n\ndef int_value() -> Int:\n    return identity(42)\n\ndef bool_value() -> Bool:\n    return identity(True)\n";
+    let source = "def identity[T: Copyable & Movable](value: T) -> T:\n    return value.copy()\n\ndef int_value() -> Int:\n    return identity(42)\n\ndef bool_value() -> Bool:\n    return identity(True)\n";
     let module = native_compile(source, &["int_value", "bool_value"]);
 
     assert_eq!(module.jit_i64("int_value").unwrap(), 42);

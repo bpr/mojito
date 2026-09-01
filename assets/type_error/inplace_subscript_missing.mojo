@@ -13,10 +13,10 @@ struct Row:
     var a: Only
 
     def __getitem__(self, i: Int) -> Only:
-        return self.a
+        return self.a.copy()
 
-    def __setitem__(mut self, i: Int, v: Only):
-        self.a = v
+    def __setitem__(mut self, i: Int, var v: Only):
+        self.a = v^
 
 def main():
     var r = Row(Only(1))

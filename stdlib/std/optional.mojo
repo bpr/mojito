@@ -33,7 +33,7 @@ struct _OptionalIter[
         if self.index >= self.src._size:
             raise StopIteration()
         self.index += 1
-        return self.src.data[0]
+        return self.src.data[0].copy()
 
 struct _OptionalOwnedIter[T: AnyType](
     Deinitable where conforms_to(T, Deinitable),
@@ -72,6 +72,7 @@ struct _OptionalOwnedIter[T: AnyType](
 
 struct Optional[T: AnyType](
     Copyable where conforms_to(T, Copyable),
+    ImplicitlyCopyable where conforms_to(T, ImplicitlyCopyable),
     Deinitable where conforms_to(T, Deinitable),
     Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Movable) and conforms_to(T, Deinitable),
@@ -113,7 +114,7 @@ struct Optional[T: AnyType](
         self._size = copy._size
         self.data = unsafe_alloc[Self.T](1)
         if copy._size == 1:
-            self.data[0] = copy.data[0]
+            self.data.unsafe_write(copy=copy.data[0])
 
     def copy(self) -> Self where conforms_to(Self.T, Copyable):
         return Optional(copy: self)
@@ -132,8 +133,8 @@ struct Optional[T: AnyType](
 
     def or_else(self, default: Self.T) -> Self.T where conforms_to(Self.T, Copyable):
         if self._size == 1:
-            return self.data[0]
-        return default
+            return self.data[0].copy()
+        return default.copy()
 
     def value(ref self) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         if self._size == 0:

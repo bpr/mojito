@@ -13,10 +13,10 @@ struct Row:
     var a: Counter
 
     def __getitem__(self, i: Int) -> Counter:
-        return self.a
+        return self.a.copy()
 
-    def __setitem__(mut self, i: Int, v: Counter):
-        self.a = v
+    def __setitem__(mut self, i: Int, var v: Counter):
+        self.a = v^
 
 def main():
     var r = Row(Counter(0))

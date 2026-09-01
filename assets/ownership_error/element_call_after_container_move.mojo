@@ -15,7 +15,7 @@ struct Container(Copyable):
     var first: Doubler
 
     def __getitem__(self, index: Int) -> Doubler:
-        return self.first
+        return self.first.copy()
 
 def consume(var c: Container):
     pass

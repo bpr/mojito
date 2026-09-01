@@ -848,6 +848,10 @@ pub struct Checker {
     /// constraint environment. Final validation runs after those method scopes
     /// have been popped, so it must retain rather than recompute this fact.
     copyable_reference_result_reads: RefCell<HashSet<SourceSpan>>,
+    /// Reference-result expressions used as method-call receivers. The call
+    /// borrows the referent for its `self` convention (consuming receivers
+    /// are gated separately), so the result is never read out as a value.
+    borrowed_reference_receivers: RefCell<HashSet<SourceSpan>>,
     /// Place expressions selected for an independent value copy at a consuming
     /// boundary. This stays checker-owned because conditional Copyable
     /// conformance can depend on the active generic constraint environment.
@@ -968,6 +972,7 @@ impl Checker {
             explicit_destroy_calls: RefCell::new(std::collections::HashSet::new()),
             reference_value_uses: RefCell::new(HashMap::new()),
             copyable_reference_result_reads: RefCell::new(HashSet::new()),
+            borrowed_reference_receivers: RefCell::new(HashSet::new()),
             copy_place_value_uses: RefCell::new(HashSet::new()),
             call_place_uses: RefCell::new(HashSet::new()),
             borrowed_read_call_places: RefCell::new(HashSet::new()),
@@ -1482,6 +1487,41 @@ impl Checker {
         from: &Ty,
         to: &Ty,
     ) -> Result<Option<(String, Option<bool>)>, TypeError> {
+        Ok(self
+            .implicit_conversion_constructor(from, to)?
+            .map(|(target, source_borrow, _)| (target, source_borrow)))
+    }
+
+    /// Whether storing a `found` value where `expected` is declared goes
+    /// through an implicit converting constructor that borrows its source
+    /// (a view construction such as `var s: Span[Int, _] = xs`). The value
+    /// consumed at that storage boundary is the conversion temporary, so the
+    /// source place is not implicitly copied.
+    pub(super) fn storage_conversion_borrows_source(
+        &self,
+        found: &Ty,
+        expected: Option<&Ty>,
+    ) -> bool {
+        let Some(expected) = expected else {
+            return false;
+        };
+        if self.value_coerces(found, expected) {
+            return false;
+        }
+        matches!(
+            self.implicit_conversion_constructor(found, expected),
+            Ok(Some((_, _, false)))
+        )
+    }
+
+    /// The selected implicit converting constructor from `from` to `to`, its
+    /// `ref`-parameter source-borrow mutability, and whether it consumes its
+    /// source (a `var`/`deinit` parameter).
+    fn implicit_conversion_constructor(
+        &self,
+        from: &Ty,
+        to: &Ty,
+    ) -> Result<Option<(String, Option<bool>, bool)>, TypeError> {
         let Ty::Struct(name, args) = to else {
             return Ok(None);
         };
@@ -1516,7 +1556,11 @@ impl Checker {
                     .first()
                     .and_then(|signature| signature.as_ref())
                     .map(|signature| signature.mutability == crate::origin::SigMutability::Mutable);
-                Ok(Some((target, source_borrow)))
+                let consumes_source = matches!(
+                    sig.conventions.first().copied().flatten(),
+                    Some(crate::ast::ArgConvention::Var | crate::ast::ArgConvention::Deinit)
+                );
+                Ok(Some((target, source_borrow, consumes_source)))
             }
             _ => Err(TypeError::BadCall {
                 func: name.clone(),
@@ -1720,6 +1764,8 @@ impl Checker {
         let operations = self.operation_adjustments.borrow();
         let retained_handles = self.reference_value_uses.borrow();
         let copyable_reads = self.copyable_reference_result_reads.borrow();
+        let borrowed_call_reads = self.borrowed_read_call_places.borrow();
+        let borrowed_receivers = self.borrowed_reference_receivers.borrow();
         for (span, adjustment) in operations.iter() {
             let crate::checked::SemanticAdjustment::ReferenceResult { reference } = adjustment
             else {
@@ -1727,13 +1773,24 @@ impl Checker {
             };
             if retained_handles.contains_key(span)
                 || copyable_reads.contains(span)
-                || self.is_copyable(&reference.referent)
+                || borrowed_call_reads.contains(span)
+                || borrowed_receivers.contains(span)
+                || self.is_implicitly_copyable(&reference.referent)
             {
                 continue;
             }
-            return Err(TypeError::NonCopyable {
+            let context = "ordinary value read through a reference result".to_string();
+            if !self.is_copyable(&reference.referent) {
+                return Err(TypeError::NonCopyable {
+                    ty: reference.referent.to_string(),
+                    context,
+                });
+            }
+            return Err(TypeError::ImplicitCopy {
                 ty: reference.referent.to_string(),
-                context: "ordinary value read through a reference result".to_string(),
+                context,
+                transferable: false,
+                copyable: true,
             });
         }
         Ok(())
@@ -3430,7 +3487,7 @@ use calls::*;
 
 mod builtins;
 
-pub(crate) use builtins::callable_environment_coerces;
+pub(crate) use builtins::{builtin_copy_is_value_read, callable_environment_coerces};
 
 use builtins::*;
 

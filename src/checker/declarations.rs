@@ -1304,17 +1304,33 @@ impl Checker {
             TypeError::InvariantViolation(format!("constructor target '{name}' is not registered"))
         })?;
         if !kwargs.is_empty() && args.is_empty() && kwargs.len() == 1 && kwargs[0].name == "copy" {
-            let Some(sig) = info
+            let sig = info
                 .methods
                 .get("__copyinit__")
-                .and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 1))
-            else {
-                return Err(TypeError::BadCall {
-                    func: name.to_string(),
-                    reason: "no matching copy constructor".to_string(),
-                });
-            };
-            let params = sig.params.clone();
+                .and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 1));
+            if sig.is_none() {
+                if !info.conforms.iter().any(|conformance| {
+                    matches!(conformance.as_str(), "Copyable" | "ImplicitlyCopyable")
+                }) {
+                    return Err(TypeError::BadCall {
+                        func: name.to_string(),
+                        reason: "no matching copy constructor".to_string(),
+                    });
+                }
+                let arg_ty = self.infer(&kwargs[0].value)?;
+                return match &arg_ty {
+                    Ty::Struct(actual, _) if actual == name => Ok(arg_ty),
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: name.to_string(),
+                        found: arg_ty.to_string(),
+                        context: format!("argument 'copy' to '{}.__init__'", name),
+                    }),
+                };
+            }
+            let params = sig
+                .expect("explicit copy constructor was resolved")
+                .params
+                .clone();
             let decls = info.decls.clone();
             let arg_ty = self.infer(&kwargs[0].value)?;
             let (subst, tyargs) = self.resolve_use_params(
@@ -1324,14 +1340,18 @@ impl Checker {
                 &params,
                 std::slice::from_ref(&arg_ty),
             )?;
-            let expected = substitute_assoc(
-                &params[0],
-                &AssocBindings {
-                    types: subst,
-                    values: solved_value_bindings(&decls, &tyargs),
-                    origins: HashMap::new(),
-                },
-            );
+            let expected = if let Some(parameter) = params.first() {
+                substitute_assoc(
+                    parameter,
+                    &AssocBindings {
+                        types: subst,
+                        values: solved_value_bindings(&decls, &tyargs),
+                        origins: HashMap::new(),
+                    },
+                )
+            } else {
+                self.struct_instance_type(name, tyargs.clone())
+            };
             if !coerces(&arg_ty, &expected) {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),

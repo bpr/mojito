@@ -17,6 +17,7 @@ assets/ok/array_fixed_size_core.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_struct_elements_and_fill.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/associated_trait_self_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/associated_type_return.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/augmented_bitwise_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_alias_predicate_where.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
@@ -64,6 +65,7 @@ assets/ok/dunder_vec2.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/exceptions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_destroy_partial_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_destroy_raising.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/explicit_transfer_convention.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/forward_struct_reference_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/funarg_call_through_after_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/func_styles.mojo	-	ineligible	no-scalar-entry-shape
@@ -147,6 +149,7 @@ assets/ok/origin_delegated_call_with_arguments.mojo	-	ineligible	no-scalar-entry
 assets/ok/origin_delegated_multi_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overload_transfer_effect_isolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_literal_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_struct_params.mojo	-	ineligible	no-scalar-entry-shape
@@ -282,6 +285,7 @@ assets/ok/simd_generic_width.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_shuffle.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/size_of_builtin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sized_generic_views.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/slice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_implicit_from_list.mojo	-	ineligible	no-scalar-entry-shape
