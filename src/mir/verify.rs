@@ -52,6 +52,7 @@ pub(crate) fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>
         | MirInstr::CopyValue { dest, .. }
         | MirInstr::Const { dest, .. }
         | MirInstr::SizeOf { dest, .. }
+        | MirInstr::ConstructTypeParam { dest, .. }
         | MirInstr::MaterializeLiteral { dest, .. }
         | MirInstr::UseVar { dest, .. }
         | MirInstr::MovePlace { dest, .. }
@@ -356,6 +357,7 @@ pub(crate) fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg
         MirInstr::InvalidateInteriors { .. }
         | MirInstr::Const { .. }
         | MirInstr::SizeOf { .. }
+        | MirInstr::ConstructTypeParam { .. }
         | MirInstr::UseVar { .. }
         | MirInstr::KeepAlive { .. }
         | MirInstr::DropVar { .. }
@@ -2184,6 +2186,16 @@ fn verify_instruction(
                 if !valid_source {
                     errors.push(format!("{prefix}: cannot materialize {found} as {target}"));
                 }
+            }
+        }
+        MirInstr::ConstructTypeParam { dest, param } => {
+            if let Some(found) = reg_ty(dest)
+                && !matches!(found, Ty::Param { name, .. } if name == param)
+                && !matches!(found, Ty::Struct(..))
+            {
+                errors.push(format!(
+                    "{prefix}: type-parameter construction of '{param}' has result type {found}"
+                ));
             }
         }
         MirInstr::SizeOf { dest, ty } => {

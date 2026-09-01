@@ -380,20 +380,58 @@ impl Checker {
             return Ok(Ty::None);
         }
         if matches!(&obj_ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
-            && method == "update"
         {
             reject_kwargs(kwargs)?;
-            self.check_place(object)?;
-            let tys = self.builtin_args("Hasher.update", 1, args)?;
-            if !self.conforms_to(&tys[0], "Hashable") {
-                return Err(TypeError::TraitNotSatisfied {
-                    param: "T".to_string(),
-                    ty: tys[0].to_string(),
-                    trait_name: "Hashable".to_string(),
-                    reason: self.trait_failure_reason(&tys[0], "Hashable"),
-                });
+            match method {
+                "update" => {
+                    self.check_place(object)?;
+                    let tys = self.builtin_args("Hasher.update", 1, args)?;
+                    if !self.conforms_to(&tys[0], "Hashable") {
+                        return Err(TypeError::TraitNotSatisfied {
+                            param: "T".to_string(),
+                            ty: tys[0].to_string(),
+                            trait_name: "Hashable".to_string(),
+                            reason: self.trait_failure_reason(&tys[0], "Hashable"),
+                        });
+                    }
+                    return Ok(Ty::None);
+                }
+                "_update_with_bytes" => {
+                    self.check_place(object)?;
+                    let tys = self.builtin_args("Hasher._update_with_bytes", 1, args)?;
+                    if !matches!(&tys[0], Ty::Struct(name, _) if name.ends_with("Span")) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: "Span[Byte, _]".to_string(),
+                            found: tys[0].to_string(),
+                            context: "Hasher._update_with_bytes".to_string(),
+                        });
+                    }
+                    return Ok(Ty::None);
+                }
+                "_update_with_simd" => {
+                    self.check_place(object)?;
+                    let tys = self.builtin_args("Hasher._update_with_simd", 1, args)?;
+                    let expected = Ty::Simd {
+                        dtype: Dtype::UInt64,
+                        width: 1,
+                    };
+                    if !coerces(&tys[0], &expected) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: tys[0].to_string(),
+                            context: "Hasher._update_with_simd".to_string(),
+                        });
+                    }
+                    return Ok(Ty::None);
+                }
+                "finish" if args.is_empty() => {
+                    return Ok(Ty::Simd {
+                        dtype: Dtype::UInt64,
+                        width: 1,
+                    });
+                }
+                _ => {}
             }
-            return Ok(Ty::None);
         }
         if method == "format"
             && (obj_ty == Ty::StringLiteral
@@ -752,24 +790,36 @@ impl Checker {
                     parametric_origin_writes: Vec::new(),
                 }))
             }
-            // `x.__hash__()` on a concrete built-in hashable type (`Int`, `String`,
-            // …) is an intrinsic returning `UInt` — lets a key struct combine
-            // `self.field.__hash__()` values (roadmap milestone 6).
+            // Hashable scalar leaves contribute their normalized bits to the
+            // caller-provided hasher. The `mut` argument is a place so its
+            // updated state is committed by ordinary call lowering.
             _ if method == "__hash__"
-                && args.is_empty()
+                && args.len() == 1
+                && kwargs.is_empty()
+                && param_args.is_empty()
                 && (builtin_hashable_ty(&obj_ty)
                     || matches!(&obj_ty, Ty::Variant(alternatives) if alternatives.iter().all(|alternative| self.is_hashable(alternative)))) =>
             {
+                let hasher = self.infer(&args[0])?;
+                if !self.conforms_to(&hasher, "Hasher") {
+                    return Err(TypeError::TraitNotSatisfied {
+                        param: "hasher".to_string(),
+                        ty: hasher.to_string(),
+                        trait_name: "Hasher".to_string(),
+                        reason: self.trait_failure_reason(&hasher, "Hasher"),
+                    });
+                }
+                self.check_place(&args[0])?;
                 Ok(Some(MethodCallResolution {
                     conversion_score: 0,
-                    slots: vec![],
+                    slots: vec![crate::call::ArgSlot::Positional(0)],
                     positional_overflow: vec![],
                     keyword_overflow: vec![],
                     variadic_element: None,
                     keyword_element: None,
-                    conventions: vec![],
+                    conventions: vec![Some(ArgConvention::Mut)],
                     self_convention: None,
-                    return_type: Ty::UInt,
+                    return_type: Ty::None,
                     result_adapter: None,
                     raises: false,
                     error: None,
@@ -778,7 +828,7 @@ impl Checker {
                     lowered_name: None,
                     ref_params: vec![],
                     ref_return: None,
-                    param_types: vec![],
+                    param_types: vec![hasher],
                     param_decls: vec![],
                     parametric_origin_writes: vec![],
                 }))

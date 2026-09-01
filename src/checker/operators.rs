@@ -393,6 +393,8 @@ impl Checker {
         match op {
             // Elementwise arithmetic on numeric lanes preserves the type.
             Add | Sub | Mul if dtype != Dtype::Bool => Ok(simd_ty(dtype, width)),
+            BitAnd | BitOr | BitXor if !dtype.is_float() => Ok(simd_ty(dtype, width)),
+            Shl | Shr if dtype != Dtype::Bool && !dtype.is_float() => Ok(simd_ty(dtype, width)),
             // True division is defined on float lanes only.
             Div if dtype.is_float() => Ok(simd_ty(dtype, width)),
             // Equality on any lanes; ordering on numeric lanes — a bool mask.

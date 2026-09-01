@@ -124,7 +124,7 @@ impl Checker {
                             reason: self.trait_failure_reason(&value_ty, "Hashable"),
                         });
                     }
-                    set_type(value_ty)
+                    self.nominal_set(value_ty)
                 }
                 crate::ast::CollectionKind::Dict => {
                     let key = key.as_ref().expect("dictionary comprehension has a key");
@@ -138,7 +138,7 @@ impl Checker {
                             reason: self.trait_failure_reason(&key_ty, "Hashable"),
                         });
                     }
-                    dict_type(key_ty, value_ty)
+                    self.nominal_dict(key_ty, value_ty)
                 }
             };
             self.record_collection_construction(expression.source_span(), &result_ty);
@@ -963,7 +963,7 @@ impl Checker {
                     });
                 }
                 if !dictionary {
-                    let result = set_type(key_ty);
+                    let result = self.nominal_set(key_ty);
                     self.record_collection_construction(expr.source_span(), &result);
                     return Ok(result);
                 }
@@ -975,7 +975,7 @@ impl Checker {
                 for value in &values {
                     self.check_consuming(value, &value_ty, "dictionary display value")?;
                 }
-                let result = dict_type(key_ty, value_ty);
+                let result = self.nominal_dict(key_ty, value_ty);
                 self.record_collection_construction(expr.source_span(), &result);
                 Ok(result)
             }
@@ -1831,7 +1831,7 @@ impl Checker {
                     .iter()
                     .map(|(key, _)| key.clone())
                     .collect::<Vec<_>>();
-                Some(set_type(self.infer_list_elem(&keys)?))
+                Some(self.nominal_set(self.infer_list_elem(&keys)?))
             }
             (ExprKind::BraceLit(entries), expected)
                 if dict_elements(expected).is_some()
@@ -1865,7 +1865,8 @@ impl Checker {
                 } else {
                     expected_value.clone()
                 };
-                (key != *expected_key || value != *expected_value).then(|| dict_type(key, value))
+                (key != *expected_key || value != *expected_value)
+                    .then(|| self.nominal_dict(key, value))
             }
             _ => None,
         };

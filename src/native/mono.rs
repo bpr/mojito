@@ -533,6 +533,19 @@ impl<'a> Specializer<'a> {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
                             self.error(Some(owner), "method receiver lacks a MIR type")
                         })?;
+                        // A scalar/literal Hashable leaf contributes to the
+                        // hasher through the hasher's compiled
+                        // `_update_with_simd` (a literal through the nominal
+                        // String's `__hash__`); enqueue those instances for
+                        // the lowered leaf dispatch.
+                        if method == "__hash__"
+                            && args.len() == 1
+                            && kwargs.is_empty()
+                            && !matches!(peel_refs(receiver), Ty::Struct(..))
+                        {
+                            let receiver = peel_refs(receiver).clone();
+                            self.enqueue_hash_leaf_instances(owner, function, args[0], &receiver)?;
+                        }
                         if resolved
                             .as_deref()
                             .is_some_and(|target| target.starts_with("__trait_dispatch."))
@@ -886,6 +899,110 @@ impl<'a> Specializer<'a> {
             CtValue::Bool(v) => Some(Const::Bool(*v)),
             _ => None,
         }
+    }
+
+    /// Enqueue the instances a lowered scalar `__hash__(hasher)` leaf calls:
+    /// the hasher's `_update_with_simd`, and for a string-literal receiver
+    /// the nominal String's `__hash__` bound to that hasher (the VM
+    /// materializes the literal and dispatches the same way).
+    fn enqueue_hash_leaf_instances(
+        &mut self,
+        owner: &str,
+        function: &MirFunction,
+        hasher: Reg,
+        receiver: &Ty,
+    ) -> Result<(), MonoError> {
+        let Some(hasher_ty) = function.reg_types.get(&hasher.0) else {
+            return Ok(());
+        };
+        let hasher_ty = peel_refs(hasher_ty).clone();
+        if !matches!(hasher_ty, Ty::Struct(..)) {
+            return Ok(());
+        }
+        self.enqueue_nominal_method_instance(owner, &hasher_ty, "_update_with_simd", 1, &[])?;
+        if matches!(receiver, Ty::StringLiteral) {
+            let string = Ty::Struct(crate::symbol::STDLIB_STRING_STRUCT.to_string(), Vec::new());
+            self.enqueue_nominal_method_instance(
+                owner,
+                &string,
+                "__hash__",
+                1,
+                &[("H", hasher_ty.clone())],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Enqueue one nominal method instance reached by a lowered intrinsic
+    /// rather than an explicit MIR call: the receiver binds the owner's
+    /// parameters, `method_bindings` bind the method's own type parameters,
+    /// and any remaining type parameter (a `Some[..]` sugar spelling)
+    /// instantiates at the builtin string, as `enqueue_display_instance`.
+    fn enqueue_nominal_method_instance(
+        &mut self,
+        owner: &str,
+        receiver: &Ty,
+        method: &str,
+        argc: usize,
+        method_bindings: &[(&str, Ty)],
+    ) -> Result<(), MonoError> {
+        let Ty::Struct(name, arguments) = receiver else {
+            return Ok(());
+        };
+        let target = crate::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(name),
+            method,
+            None,
+            argc,
+        );
+        if !self.functions.contains_key(target.as_str()) {
+            return Ok(());
+        }
+        let Some(declaration) = self.declarations.get(target.as_str()).copied() else {
+            return Ok(());
+        };
+        let mut bindings = self.base_bindings();
+        let mut owner_covered = 0;
+        if let Some(struct_decl) = self.structs.get(nominal_template(name)).copied() {
+            bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
+                self.error(
+                    Some(owner),
+                    format!("monomorphizing receiver for `{target}`: {e}"),
+                )
+            })?;
+            if nominal_template(name) != name.as_str() {
+                bindings.self_instance =
+                    Some((nominal_template(name).to_string(), receiver.clone()));
+                owner_covered =
+                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+            }
+        }
+        for (parameter, ty) in method_bindings {
+            bindings.types.insert((*parameter).to_string(), ty.clone());
+        }
+        for decl in &declaration.param_decls {
+            if let ParamDecl::Type { name, .. } = decl
+                && !bindings.types.contains_key(name.as_str())
+            {
+                bindings.types.insert(name.clone(), Ty::StringLiteral);
+            }
+        }
+        for ty in &declaration.param_types {
+            if let Ty::Param { name, .. } = ty
+                && !bindings.types.contains_key(name.as_str())
+            {
+                bindings.types.insert(name.clone(), Ty::StringLiteral);
+            }
+        }
+        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
+        arguments.drain(..owner_covered);
+        push_sugar_arguments(declaration, &bindings, &mut arguments);
+        self.enqueue(&target, bindings, arguments)?;
+        Ok(())
     }
 
     /// Enqueue the `write_to` instance a lowered `print` of a nominal struct
@@ -1285,6 +1402,7 @@ impl<'a> Specializer<'a> {
             arguments.push(InstanceArg::Value(CtValue::Int(arity as i64)));
         }
         arguments.extend(callable_arguments);
+        push_sugar_arguments(declaration, &bindings, &mut arguments);
         Ok((target.to_string(), bindings, arguments))
     }
 
@@ -2069,6 +2187,31 @@ fn reg_ty<'a>(function: &'a MirFunction, reg: Reg, owner: &str) -> Result<&'a Ty
     })
 }
 
+/// A `Some[Trait]` sugar parameter is infer-only and absent from the
+/// declaration's `param_decls`, yet each binding selects a different body
+/// (`update(value: Some[Hashable])` hashes an `Int` and a `Pair` through
+/// different leaves). Its binding joins the instance identity; the builtin
+/// string binding — the `Some[Writer]` display accumulator and the
+/// declaration-order default — keeps the unsuffixed spelling.
+fn push_sugar_arguments(
+    declaration: &MirFunctionDeclaration,
+    bindings: &Bindings,
+    arguments: &mut Vec<InstanceArg>,
+) {
+    for ty in &declaration.param_types {
+        if let Ty::Param { name, .. } = peel_refs(ty)
+            && !declaration
+                .param_decls
+                .iter()
+                .any(|decl| decl.name().trim_start_matches('*') == name)
+            && let Some(bound) = bindings.types.get(name.as_str())
+            && *bound != Ty::StringLiteral
+        {
+            arguments.push(InstanceArg::Ty(bound.clone()));
+        }
+    }
+}
+
 fn ordered_arguments(
     decls: &[ParamDecl],
     bindings: &Bindings,
@@ -2714,6 +2857,30 @@ fn substitute_instruction(
             sub_opt_ty(raises, bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
+        }
+        // `H()` on a type parameter constructs the bound struct: once the
+        // binding is concrete this is an ordinary nullary constructor call,
+        // which the call rewriting below then instantiates.
+        ConstructTypeParam { dest, param } => {
+            let Some(Ty::Struct(struct_name, _)) = bindings.types.get(param.as_str()) else {
+                return Err(MonoError {
+                    function: None,
+                    construct: format!(
+                        "constructing type parameter `{param}` without a concrete struct binding"
+                    ),
+                });
+            };
+            *instruction = Call {
+                dest: *dest,
+                func: crate::mir::FuncRef::named(struct_name),
+                raises: None,
+                args: Vec::new(),
+                kwargs: Vec::new(),
+                arg_places: Vec::new(),
+                kwarg_places: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+            };
         }
         CallIndirect {
             raises,

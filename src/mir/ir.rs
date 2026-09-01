@@ -321,6 +321,11 @@ pub enum MirInstr {
         dest: Reg,
         k: Const,
     },
+    /// Construct the concrete type reified for a checked type parameter.
+    ConstructTypeParam {
+        dest: Reg,
+        param: String,
+    },
     /// Target-layout byte size of one checker-resolved type.
     SizeOf {
         dest: Reg,

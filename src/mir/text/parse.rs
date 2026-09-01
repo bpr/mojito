@@ -939,6 +939,10 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 ty: self.req(value, fields, "type", Self::ty)?,
             }),
+            "type.construct" => Some(MirInstr::ConstructTypeParam {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                param: self.req(value, fields, "param", Self::string)?,
+            }),
             "literal.materialize" => Some(MirInstr::MaterializeLiteral {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,

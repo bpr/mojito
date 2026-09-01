@@ -107,6 +107,33 @@ impl VmBackend {
             }
             MirInstr::KeepAlive { .. } => {}
             MirInstr::Const { dest, k } => regs[dest.0 as usize] = const_value(k),
+            MirInstr::ConstructTypeParam { dest, param } => {
+                // A constructible type parameter is reified at runtime as the
+                // bound struct's name: a def binds it into the frame local of
+                // the same name; a struct method reads it from `self`'s
+                // reified parameters.
+                let definition = &prog.mir.functions[function].1;
+                let bound = definition
+                    .var_names
+                    .iter()
+                    .position(|candidate| candidate == param)
+                    .map(|slot| vars[slot].clone())
+                    .filter(|value| !matches!(value, Value::None))
+                    .or_else(|| match vars.first() {
+                        Some(Value::Struct { value_params, .. }) => value_params
+                            .iter()
+                            .find(|(candidate, _)| candidate == param)
+                            .map(|(_, value)| value.clone()),
+                        _ => None,
+                    });
+                let Some(Value::Str(type_name)) = bound else {
+                    return Err(RuntimeError::Unsupported(format!(
+                        "vm: constructing type parameter '{param}' requires a reified type argument"
+                    )));
+                };
+                regs[dest.0 as usize] =
+                    self.call_named(prog, &type_name, Vec::new(), Vec::new(), &[])?;
+            }
             MirInstr::SizeOf { dest, ty } => {
                 let target = crate::native::target::NativeTarget::new(
                     crate::native::target::Triple::X86_64UnknownLinuxGnu,

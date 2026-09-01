@@ -187,13 +187,32 @@ fn self_hosted_hash_bounded_set() {
 }
 
 #[test]
-fn incremental_hasher_accumulates_multiple_hash_parts() {
+fn hashlib_values_match_the_audited_head() {
+    // `hash` runs the stdlib's AHasher (`default_hasher`) and Fnv1a
+    // (`default_comp_time_hasher`); the printed values are current Mojo's.
     let directory = TempDir::new();
     let main = directory.write(
         "main.mojo",
-        "from std.hashing import IncrementalHasher\n\ndef main():\n    var first = IncrementalHasher.create()\n    first.update(UInt(3))\n    first.update(UInt(7))\n    var second = IncrementalHasher.create()\n    second.update(UInt(3))\n    second.update(UInt(8))\n    print(first.finish() == first.finish())\n    print(first.finish() == second.finish())\n",
+        include_str!("../assets/ok/hashlib_values.mojo"),
     );
-    assert_eq!(run(&main).unwrap(), "True\nFalse\n");
+    assert_eq!(
+        run(&main).unwrap(),
+        "int42 6298619649789039366\nint0 14824966480498192933\nintneg1 3480139124131340807\nuint7 7638567382403041238\nuint123 4498397628805512285\ntrue 7121024052126637824\nuint8_1 7121024052126637824\nf1.5 5099020174652265565\nfneg2.25 6219117112318796250\nzero_fold True\nint32neg1 3690585083486137738\nhello 15194610732995203403\nempty 11583516797109448887\nmojo 17357937956458713381\nabcdefghi 3705427243736962859\nfox 6372487330289112038\npoint12 14896942961954214815\npoint00 2853251017295103874\nfnv_int1 12638152016183539244\nfnv_int42 12638128926439346813\nfnv_f1.5 15000291120250992607\nfnv_hello 11831194018420276491\nfnv_point12 589729691727335466\n"
+    );
+}
+
+#[test]
+fn explicit_hasher_containers_run() {
+    // `Dict`/`Set` accept an explicit hasher parameter and hash keys with it.
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        include_str!("../assets/ok/hashlib_explicit_hasher_containers.mojo"),
+    );
+    assert_eq!(
+        run(&main).unwrap(),
+        "1 2 2\nTrue 1\n12638152016183539244\nTrue\n"
+    );
 }
 
 // --- Nested self-hosted lists (roadmap §2: the hash-set bucket-array shape) ---

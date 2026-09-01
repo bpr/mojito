@@ -15,6 +15,7 @@ from std.memory import unsafe_alloc
 
 from std.collections.list import List
 from std.optional import Optional
+from std.span import Span
 
 from std.iterable import Iterable, Iterator, StopIteration
 
@@ -262,14 +263,8 @@ struct String(
             i += 1
         return True
 
-    def __hash__(self) -> UInt:
-        # DJB2 over the UTF-8 bytes — the bundled IncrementalHasher recipe.
-        var state = UInt(5381)
-        var i = 0
-        while i < self.size:
-            state = state * UInt(33) + UInt(Int(self.data[i]))
-            i += 1
-        return state
+    def __hash__[H: Hasher](self, mut hasher: H):
+        hasher.update(StringSpan(self))
 
     def __getitem__(self, *, byte: Int) raises -> Byte:
         if byte < 0:
@@ -756,7 +751,7 @@ struct Codepoint(
 # grapheme-level operations delegate through an eager `to_string()` copy
 # for decoding while the returned views stay borrowed from this buffer.
 struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
-    ImplicitlyCopyable, Iterable, Movable, Writable
+    Hashable, ImplicitlyCopyable, Iterable, Movable, Writable
 ):
     comptime Element = StringSpan[Self.origin]
     comptime IteratorType[
@@ -781,6 +776,15 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
 
     def byte_length(self) -> Int:
         return self._size
+
+    def __hash__[H: Hasher](self, mut hasher: H):
+        var bytes = List[Byte]()
+        var i = 0
+        while i < self._size:
+            bytes.append(self._data[i])
+            i += 1
+        var view = Span(bytes)
+        hasher._update_with_bytes(view)
 
     def to_string(self) -> String:
         var result = String("")

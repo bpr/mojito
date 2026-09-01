@@ -817,11 +817,19 @@ method is absent, field reflection produces the default display or repr form.
 and accepts format-spec syntax; the scalar width/alignment mini-language remains
 representation-level work rather than a return to deprecated `__str__` hooks.
 
-Hashable values contribute to a caller-provided `Some[Hasher]` through
-`__hash__`; `Hasher.update` accepts any checked Hashable and incrementally mixes
-it into state. The bundled IncrementalHasher exposes `__init__`, `update`, and
-`finish`; its VM word-sized `UInt` result represents the standard `UInt64`
-contract in the current target-independent VM.
+Hashable values contribute to a caller-provided hasher through
+`__hash__(self, mut hasher: Some[Hasher])`; a conformer that omits it receives
+a synthesized field-by-field default at elaboration (next to the `copy`
+synthesis). `hash`, `Dict`'s bucketing, and the bundled `AHasher`/`Fnv1a` are
+ordinary stdlib code in `std.hashlib`. The compiler contributes only the leaf:
+a scalar or literal receiver's `__hash__(hasher)` is an intrinsic that
+normalizes the value to one `UInt64` (its unsigned bit pattern, `-0.0` folded
+to `0.0`; a `StringLiteral` materializes to `String` and hashes as that
+struct) and calls the hasher's `_update_with_simd` — a runtime dispatch on the
+VM, a monomorphized call natively — and a constructible type parameter (`H()`
+under a `Hasher`/`Defaultable` bound) is reified at runtime as the bound
+struct's name (`MirInstr::ConstructTypeParam`), bound into a def's frame or a
+struct's value parameters with the declaration default when unsupplied.
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features, `with`, and advanced expression/declaration forms that the VM

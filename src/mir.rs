@@ -729,6 +729,19 @@ fn value_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
                     (**ty).clone()
                 },
             )),
+            ParamDecl::Type {
+                name,
+                bounds,
+                callable_bound,
+                ..
+            } if crate::types::constructible_type_parameter(decl) => Some((
+                name.clone(),
+                Ty::Param {
+                    name: name.clone(),
+                    bounds: bounds.clone(),
+                    callable_bound: callable_bound.clone(),
+                },
+            )),
             ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
         })
         .collect()

@@ -157,6 +157,43 @@ impl Checker {
         {
             return self.infer_variant_construction(span, param_args, args, kwargs);
         }
+        if param_args.is_empty() && args.is_empty() && kwargs.is_empty() {
+            let type_parameter = self
+                .tparams
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(name).cloned())
+                .or_else(|| {
+                    self.self_decls
+                        .iter()
+                        .find_map(|declaration| match declaration {
+                            ParamDecl::Type {
+                                name: parameter,
+                                bounds,
+                                callable_bound,
+                                ..
+                            } if parameter == name => Some(Ty::Param {
+                                name: parameter.clone(),
+                                bounds: bounds.clone(),
+                                callable_bound: callable_bound.clone(),
+                            }),
+                            _ => None,
+                        })
+                });
+            if let Some(ref ty @ Ty::Param { ref bounds, .. }) = type_parameter
+                && bounds
+                    .iter()
+                    .any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable"))
+            {
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    crate::checked::SemanticAdjustment::ConstructTypeParam {
+                        param: name.to_string(),
+                    },
+                );
+                return Ok(ty.clone());
+            }
+        }
         let ty = match self.lookup(name) {
             Some(ty) => ty.clone(),
             // Built-ins and struct construction, resolved only when the name
@@ -298,18 +335,6 @@ impl Checker {
                         context: "argument to 'repr'".to_string(),
                     });
                 }
-                "hash" => {
-                    let tys = self.builtin_args("hash", 1, args)?;
-                    if self.conforms_to(&tys[0], "Hashable") {
-                        return Ok(Ty::UInt);
-                    }
-                    return Err(TypeError::TraitNotSatisfied {
-                        param: "T".to_string(),
-                        ty: tys[0].to_string(),
-                        trait_name: "Hashable".to_string(),
-                        reason: self.trait_failure_reason(&tys[0], "Hashable"),
-                    });
-                }
                 "abs" => return self.infer_abs(args),
                 "min" | "max" => return self.infer_min_max(name, args),
                 "round" => return self.infer_round(args),
@@ -353,7 +378,7 @@ impl Checker {
                         self.record_literal_materializations(argument, &actual, &element)?;
                         self.check_consuming(argument, &actual, "Set construction element")?;
                     }
-                    return Ok(set_type(element));
+                    return Ok(self.nominal_set(element));
                 }
                 "Dict" => {
                     if !args.is_empty() {

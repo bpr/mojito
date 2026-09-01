@@ -1,7 +1,9 @@
 # A hash-backed, insertion-ordered dictionary.
 #
 # Dense entries preserve insertion order; a nested-list index maps each hash
-# bucket to entry positions, doubling when the load factor reaches one. The
+# bucket (the low bits of the entry's cached `H` hash; the bucket count is
+# always a power of two) to entry positions, doubling when the load factor
+# reaches one. The
 # iterators borrow the entries list and yield references at `element`
 # interior granularity, so mutation during iteration is rejected;
 # `keys`/`values`/`items` return self-iterable, non-indexable borrowing
@@ -10,19 +12,31 @@
 # references).
 
 from std.collections.list import List
-from std.hashing import bucket_index
+from std.hashlib import Hasher, default_hasher, hash
 from std.iterable import Iterable, Iterator, StopIteration
 from std.optional import Optional
 
-struct DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](
+struct DictEntry[
+    K: Hashable & Equatable & Copyable & Movable,
+    V: Copyable & Movable,
+    H: Hasher = default_hasher,
+](
     Copyable,
     Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
     Movable,
 ):
+    # `key`'s hash under `H`, stored so lookups never rehash.
+    var _hash: UInt64
     var key: Self.K
     var value: Self.V
 
     def __init__(out self, var key: Self.K, var value: Self.V):
+        self._hash = hash[Self.H](key)
+        self.key = key^
+        self.value = value^
+
+    def __init__(out self, var key: Self.K, var value: Self.V, *, unsafe_hash: UInt64):
+        self._hash = unsafe_hash
         self.key = key^
         self.value = value^
 
@@ -31,16 +45,17 @@ struct DictEntry[K: Equatable & Copyable & Movable, V: Copyable & Movable](
 @fieldwise_init
 struct _DictEntryIter[
     iterable_mut: Bool, //,
-    K: Equatable & Copyable & Movable,
+    K: Hashable & Equatable & Copyable & Movable,
     V: Copyable & Movable,
+    H: Hasher,
     iterable_origin: Origin[mut=iterable_mut],
 ](Copyable, Iterator):
-    comptime Element = DictEntry[Self.K, Self.V]
+    comptime Element = DictEntry[Self.K, Self.V, Self.H]
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _DictEntryIter[Self.K, Self.V, view_origin]
+    ] = _DictEntryIter[Self.K, Self.V, Self.H, view_origin]
 
-    var src: ref[iterable_origin] List[DictEntry[Self.K, Self.V]]
+    var src: ref[iterable_origin] List[DictEntry[Self.K, Self.V, Self.H]]
     var index: Int
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
@@ -48,7 +63,7 @@ struct _DictEntryIter[
 
     def __next__(mut self) raises StopIteration -> ref[
         Origin[mut=False].cast_from[Self.iterable_origin._get_owned_interior["element"]]
-    ] DictEntry[Self.K, Self.V]:
+    ] DictEntry[Self.K, Self.V, Self.H]:
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index
@@ -60,15 +75,16 @@ struct _DictEntryIter[
 @fieldwise_init
 struct _DictKeyIter[
     iterable_mut: Bool, //,
-    K: Equatable & Copyable & Movable,
+    K: Hashable & Equatable & Copyable & Movable,
     V: Copyable & Movable,
+    H: Hasher,
     iterable_origin: Origin[mut=iterable_mut],
 ](Copyable, Iterator):
     comptime Element = Self.K
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _DictKeyIter[Self.K, Self.V, view_origin]
-    comptime dict_entry_iter = _DictEntryIter[Self.K, Self.V, Self.iterable_origin]
+    ] = _DictKeyIter[Self.K, Self.V, Self.H, view_origin]
+    comptime dict_entry_iter = _DictEntryIter[Self.K, Self.V, Self.H, Self.iterable_origin]
 
     var iter: Self.dict_entry_iter
 
@@ -90,16 +106,17 @@ struct _DictKeyIter[
 @fieldwise_init
 struct _DictValueIter[
     iterable_mut: Bool, //,
-    K: Equatable & Copyable & Movable,
+    K: Hashable & Equatable & Copyable & Movable,
     V: Copyable & Movable,
+    H: Hasher,
     iterable_origin: Origin[mut=iterable_mut],
 ](Copyable, Iterator):
     comptime Element = Self.V
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _DictValueIter[Self.K, Self.V, view_origin]
+    ] = _DictValueIter[Self.K, Self.V, Self.H, view_origin]
 
-    var iter: _DictEntryIter[Self.K, Self.V, Self.iterable_origin]
+    var iter: _DictEntryIter[Self.K, Self.V, Self.H, Self.iterable_origin]
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
@@ -119,19 +136,20 @@ struct _DictValueIter[
 struct _TakeDictEntryIter[
     K: Hashable & Equatable & Copyable & Movable,
     V: Copyable & Movable,
+    H: Hasher,
     origin: Origin[mut=True],
 ](Copyable, Iterator):
-    comptime Element = DictEntry[Self.K, Self.V]
+    comptime Element = DictEntry[Self.K, Self.V, Self.H]
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _TakeDictEntryIter[Self.K, Self.V, view_origin]
+    ] = _TakeDictEntryIter[Self.K, Self.V, Self.H, view_origin]
 
-    var src: ref[origin] Dict[Self.K, Self.V]
+    var src: ref[origin] Dict[Self.K, Self.V, Self.H]
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
-    def __next__(mut self) raises StopIteration -> DictEntry[Self.K, Self.V]:
+    def __next__(mut self) raises StopIteration -> DictEntry[Self.K, Self.V, Self.H]:
         if len(self.src.entries) == 0:
             raise StopIteration()
         var entry = self.src.entries.pop(0)
@@ -141,6 +159,7 @@ struct _TakeDictEntryIter[
 struct Dict[
     K: Hashable & Equatable & Copyable & Movable,
     V: Copyable & Movable,
+    H: Hasher = default_hasher,
 ](
     Copyable,
     Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
@@ -152,22 +171,22 @@ struct Dict[
     comptime Element = Self.K
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _DictKeyIter[Self.K, Self.V, iterable_origin]
+    ] = _DictKeyIter[Self.K, Self.V, Self.H, iterable_origin]
     comptime ValuesIterType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _DictValueIter[Self.K, Self.V, iterable_origin]
+    ] = _DictValueIter[Self.K, Self.V, Self.H, iterable_origin]
     comptime ItemsIterType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _DictEntryIter[Self.K, Self.V, iterable_origin]
+    ] = _DictEntryIter[Self.K, Self.V, Self.H, iterable_origin]
     comptime TakeIterType[
         take_origin: Origin[mut=True]
-    ] = _TakeDictEntryIter[Self.K, Self.V, take_origin]
-    var entries: List[DictEntry[Self.K, Self.V]]
+    ] = _TakeDictEntryIter[Self.K, Self.V, Self.H, take_origin]
+    var entries: List[DictEntry[Self.K, Self.V, Self.H]]
     var index: List[List[Int]]
     var nbuckets: Int
 
     def __init__(out self):
-        self.entries = List[DictEntry[Self.K, Self.V]]()
+        self.entries = List[DictEntry[Self.K, Self.V, Self.H]]()
         self.index = List[List[Int]]()
         self.nbuckets = 8
         var i = 0
@@ -178,7 +197,7 @@ struct Dict[
     # Capacity is a bucket-count hint: the index starts wide enough that the
     # first `capacity` insertions never rehash.
     def __init__(out self, *, capacity: Int):
-        self.entries = List[DictEntry[Self.K, Self.V]]()
+        self.entries = List[DictEntry[Self.K, Self.V, Self.H]]()
         self.index = List[List[Int]]()
         self.nbuckets = 8
         while self.nbuckets < capacity:
@@ -196,7 +215,7 @@ struct Dict[
     ) where conforms_to(Self.K, Deinitable) and conforms_to(
         Self.V, Deinitable
     ):
-        self.entries = List[DictEntry[Self.K, Self.V]]()
+        self.entries = List[DictEntry[Self.K, Self.V, Self.H]]()
         self.index = List[List[Int]]()
         self.nbuckets = 8
         var b = 0
@@ -209,12 +228,12 @@ struct Dict[
             i += 1
 
     def __init__(out self, *, copy: Self):
-        self.entries = List[DictEntry[Self.K, Self.V]](copy: copy.entries)
+        self.entries = List[DictEntry[Self.K, Self.V, Self.H]](copy: copy.entries)
         self.index = List[List[Int]](copy: copy.index)
         self.nbuckets = copy.nbuckets
 
     def copy(self) -> Self:
-        return Dict[Self.K, Self.V](copy: self)
+        return Dict[Self.K, Self.V, Self.H](copy: self)
 
     def __init__(out self, *, deinit move: Self):
         self.entries = move.entries^
@@ -222,7 +241,7 @@ struct Dict[
         self.nbuckets = move.nbuckets
 
     def find_index(self, key: Self.K) -> Int:
-        var bucket = bucket_index(key, self.nbuckets)
+        var bucket = Int(hash[Self.H](key)) & (self.nbuckets - 1)
         for entry_index in self.index._get_copy(bucket):
             if self.entries._get_copy(entry_index).key == key:
                 return entry_index
@@ -244,26 +263,26 @@ struct Dict[
     ) and conforms_to(Self.V, Deinitable):
         var i = self.find_index(key)
         if i >= 0:
-            self.entries[i] = DictEntry[Self.K, Self.V](key^, value^)
+            self.entries[i] = DictEntry[Self.K, Self.V, Self.H](key^, value^)
         else:
-            self._append_new(DictEntry[Self.K, Self.V](key^, value^))
+            self._append_new(DictEntry[Self.K, Self.V, Self.H](key^, value^))
 
     # Displacement-returning insertion: replacing an existing key moves the
     # previous entry (key and value) out and returns it; a fresh key returns
     # an empty Optional. Nothing is destroyed in place, so no `Deinitable`
     # bound is required.
     def insert(mut self, var key: Self.K, var value: Self.V) -> Optional[
-        DictEntry[Self.K, Self.V]
+        DictEntry[Self.K, Self.V, Self.H]
     ]:
         var i = self.find_index(key)
         if i >= 0:
-            var displaced = Optional[DictEntry[Self.K, Self.V]](
+            var displaced = Optional[DictEntry[Self.K, Self.V, Self.H]](
                 self.entries.data.unsafe_offset(i).unsafe_take_pointee()
             )
-            self.entries.data[i] = DictEntry[Self.K, Self.V](key^, value^)
+            self.entries.data[i] = DictEntry[Self.K, Self.V, Self.H](key^, value^)
             return displaced^
-        self._append_new(DictEntry[Self.K, Self.V](key^, value^))
-        return Optional[DictEntry[Self.K, Self.V]]()
+        self._append_new(DictEntry[Self.K, Self.V, Self.H](key^, value^))
+        return Optional[DictEntry[Self.K, Self.V, Self.H]]()
 
     # Drain every entry through a lazily draining borrowed iterator: each
     # step moves the next entry out (`len` shrinks as the drain progresses)
@@ -272,7 +291,7 @@ struct Dict[
         Self.K, Deinitable
     ) and conforms_to(Self.V, Deinitable):
         ref source = self
-        return _TakeDictEntryIter[Self.K, Self.V](source)
+        return _TakeDictEntryIter[Self.K, Self.V, Self.H](source)
 
     # Remove the entry for `key` and return its value; the discarded key
     # needs `Deinitable`. Missing keys raise (`pop(key, default)` instead
@@ -298,7 +317,7 @@ struct Dict[
         return entry.value^
 
     # Remove and return the last-inserted entry (LIFO), raising when empty.
-    def popitem(mut self) raises -> DictEntry[Self.K, Self.V]:
+    def popitem(mut self) raises -> DictEntry[Self.K, Self.V, Self.H]:
         if len(self.entries) == 0:
             raise Error("empty dictionary")
         var entry = self.entries.pop(len(self.entries) - 1)
@@ -317,7 +336,7 @@ struct Dict[
         var i = self.find_index(key)
         if i < 0:
             i = len(self.entries)
-            self._append_new(DictEntry[Self.K, Self.V](key^, default^))
+            self._append_new(DictEntry[Self.K, Self.V, Self.H](key^, default^))
         return self.entries[i].value
 
     # Copy every entry of `other` into self, overwriting existing keys.
@@ -386,7 +405,7 @@ struct Dict[
 
     def items(ref self) -> Self.ItemsIterType[origin_of(self)]:
         ref source = self.entries
-        return _DictEntryIter[Self.K, Self.V](source, 0)
+        return _DictEntryIter[Self.K, Self.V, Self.H](source, 0)
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         ref source = self.entries
@@ -442,9 +461,9 @@ struct Dict[
 
     # Append an entry known not to be present, growing the index at load
     # factor one.
-    def _append_new(mut self, var entry: DictEntry[Self.K, Self.V]):
+    def _append_new(mut self, var entry: DictEntry[Self.K, Self.V, Self.H]):
         var entry_index = len(self.entries)
-        var bucket = bucket_index(entry.key, self.nbuckets)
+        var bucket = Int(entry._hash) & (self.nbuckets - 1)
         self.entries.append(entry^)
         var bucket_entries = self.index._get_copy(bucket)
         bucket_entries.append(entry_index)
@@ -461,9 +480,7 @@ struct Dict[
             i += 1
         i = 0
         while i < len(self.entries):
-            var bucket = bucket_index(
-                self.entries._get_copy(i).key, new_bucket_count
-            )
+            var bucket = Int(self.entries._get_copy(i)._hash) & (new_bucket_count - 1)
             var bucket_entries = new_index._get_copy(bucket)
             bucket_entries.append(i)
             new_index[bucket] = bucket_entries^

@@ -38,11 +38,11 @@ use pliron_llvm::op_interfaces::{
     FloatBinArithOpWithFastMathFlags, IntBinArithOpWithOverflowFlag,
 };
 use pliron_llvm::ops::{
-    AShrOp, AddOp, AddressOfOp, AllocaOp, AndOp, BrOp, CallIntrinsicOp, CallOp, CondBrOp,
-    ConstantOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp, FPExtOp, FPTruncOp, FSubOp, FuncOp,
-    GepIndex, GetElementPtrOp, GlobalOp, ICmpOp, LShrOp, LoadOp, MulOp, OrOp, ReturnOp, SDivOp,
-    SExtOp, SIToFPOp, SRemOp, SelectOp, ShlOp, StoreOp, SubOp, TruncOp, UDivOp, UIToFPOp, URemOp,
-    UnreachableOp, XorOp, ZExtOp, ZeroOp,
+    AShrOp, AddOp, AddressOfOp, AllocaOp, AndOp, BitcastOp, BrOp, CallIntrinsicOp, CallOp,
+    CondBrOp, ConstantOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp, FPExtOp, FPTruncOp, FSubOp,
+    FuncOp, GepIndex, GetElementPtrOp, GlobalOp, ICmpOp, LShrOp, LoadOp, MulOp, OrOp, ReturnOp,
+    SDivOp, SExtOp, SIToFPOp, SRemOp, SelectOp, ShlOp, StoreOp, SubOp, TruncOp, UDivOp, UIToFPOp,
+    URemOp, UnreachableOp, XorOp, ZExtOp, ZeroOp,
 };
 use pliron_llvm::types::{ArrayType, FuncType, PointerType, VoidType};
 
@@ -1341,6 +1341,10 @@ impl<'a> FnLowering<'a> {
     fn lower_instr(&mut self, ctx: &mut Context, instr: &MirInstr) -> Result<(), PlironError> {
         match instr {
             MirInstr::Const { dest, k } => self.lower_const(ctx, *dest, k),
+            MirInstr::ConstructTypeParam { dest, param } => Err(self.unsupported_reg(
+                format!("constructing type parameter `{param}` after monomorphization"),
+                *dest,
+            )),
             MirInstr::SizeOf { dest, ty } => {
                 let size = self
                     .layout
@@ -6042,6 +6046,25 @@ impl<'a> FnLowering<'a> {
         kwarg_places: &[Option<MirPlace>],
         recv_place: Option<&MirPlace>,
     ) -> Result<(), PlironError> {
+        // A scalar/literal Hashable leaf: normalize its bits and contribute
+        // them to the caller-owned hasher through the hasher's compiled
+        // `_update_with_simd` (the VM's non-struct `__hash__` intrinsic).
+        if resolved.is_none()
+            && method == "__hash__"
+            && args.len() == 1
+            && kwargs.is_empty()
+            && let Some(receiver) = self.func.reg_types.get(&recv.0).cloned()
+            && !matches!(receiver, Ty::Struct(..) | Ty::Ref(..))
+        {
+            return self.lower_hash_leaf(
+                ctx,
+                dest,
+                recv,
+                &receiver,
+                args[0],
+                arg_places.first().and_then(Option::as_ref),
+            );
+        }
         // Pointer receivers dispatch to runtime intrinsics, never to compiled
         // stdlib bodies.
         if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
@@ -6072,13 +6095,6 @@ impl<'a> FnLowering<'a> {
         {
             return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
         }
-        if resolved.is_none()
-            && method == "__hash__"
-            && args.is_empty()
-            && matches!(self.func.reg_types.get(&recv.0), Some(Ty::StringLiteral))
-        {
-            return self.lower_string_hash(ctx, dest, recv);
-        }
         // Trait-dispatched `Copyable.copy` on a scalar receiver — a generic
         // body's `value.copy()` monomorphized to a builtin, whose
         // `__trait_dispatch.` target the specializer clears on non-struct
@@ -6108,29 +6124,6 @@ impl<'a> FnLowering<'a> {
             let value = self.reg_value(ctx, recv, scalar)?;
             self.reg_values.insert(dest.0, value);
             return Ok(());
-        }
-        if resolved.is_none() && method == "__hash__" && args.is_empty() {
-            match self.func.reg_types.get(&recv.0) {
-                Some(Ty::Int) => {
-                    let value = self.reg_value(ctx, recv, ScalarTy::Int)?;
-                    self.reg_values.insert(dest.0, value);
-                    return Ok(());
-                }
-                Some(Ty::UInt) => {
-                    let value = self.reg_value(ctx, recv, ScalarTy::UInt)?;
-                    self.reg_values.insert(dest.0, value);
-                    return Ok(());
-                }
-                Some(Ty::Bool) => {
-                    let value = self.reg_value(ctx, recv, ScalarTy::Bool)?;
-                    let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-                    let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
-                    self.append(ctx, cast.get_operation(), Some(dest));
-                    self.reg_values.insert(dest.0, cast.get_result(ctx));
-                    return Ok(());
-                }
-                _ => {}
-            }
         }
         // The struct-to-literal bridge (the VM's `string_struct_literal`):
         // the declared stub body must never execute, and the bridged bytes
@@ -10546,6 +10539,205 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
+    /// Contribute one scalar/literal Hashable leaf to a caller-owned hasher —
+    /// the VM's non-struct `__hash__` intrinsic. Scalars are normalized to
+    /// their unsigned bit pattern zero-extended to `UInt64` (`-0.0` folds to
+    /// `0.0`) and passed to the hasher's compiled `_update_with_simd`; a
+    /// string literal materializes as a nominal `String` and dispatches to
+    /// that struct's `__hash__` instance bound to the hasher.
+    fn lower_hash_leaf(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        receiver: &Ty,
+        hasher: Reg,
+        hasher_place: Option<&MirPlace>,
+    ) -> Result<(), PlironError> {
+        let Some(Ty::Struct(hasher_name, _)) = self.func.reg_types.get(&hasher.0).cloned() else {
+            return Err(self.unsupported_reg("`__hash__` without a nominal hasher".into(), dest));
+        };
+        let Some(place) = hasher_place else {
+            return Err(self.unsupported_reg(
+                "`__hash__` hasher argument without a mutable place".into(),
+                dest,
+            ));
+        };
+        let place = place.clone();
+        let hasher_ptr = self.place_address(ctx, &place, dest)?.0;
+        let unique_instance =
+            |this: &Self, prefix: &str, by_hasher: bool| -> Result<String, PlironError> {
+                // The nominal String's symbols are module-qualified; a
+                // `String.` prefix matches the owner segment of the symbol
+                // rather than its literal spelling.
+                let matches_prefix = |fname: &str| {
+                    if let Some(method) = prefix.strip_prefix("String.") {
+                        fname.rsplit_once(method).is_some_and(|(owner, rest)| {
+                            owner.ends_with('.')
+                                && owner[..owner.len() - 1]
+                                    .rsplit('$')
+                                    .next()
+                                    .is_some_and(crate::symbol::is_stdlib_string_struct)
+                                && (rest.is_empty() || rest.starts_with('$'))
+                        })
+                    } else {
+                        fname.starts_with(prefix)
+                    }
+                };
+                let mut candidates = this.signatures.iter().filter(|(fname, signature)| {
+                    matches_prefix(fname)
+                        && (!by_hasher
+                            || matches!(signature.params.get(1), Some(LowerTy::Aggregate { ty, .. })
+                            if matches!(&**ty, Ty::Struct(name, _) if *name == hasher_name)))
+                });
+                let Some((name, _)) = candidates.next() else {
+                    return Err(this.unsupported_reg(
+                        format!("hashing without a compiled `{prefix}` instance"),
+                        dest,
+                    ));
+                };
+                if candidates.next().is_some() {
+                    return Err(this.unsupported_reg(
+                        format!("hashing with ambiguous `{prefix}` instances"),
+                        dest,
+                    ));
+                }
+                Ok(name.clone())
+            };
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let bits = match receiver {
+            Ty::StringLiteral => {
+                // Materialize the literal as an owned nominal String, hash it
+                // through the struct's own `__hash__`, and release the copy.
+                let target = unique_instance(self, "String.__hash__", true)?;
+                let storage = self.entry_alloca(ctx, 24, 8);
+                if let Some(bytes) = self.str_consts.get(&recv.0).cloned() {
+                    let len = bytes.len() as u64;
+                    let global = self.shared.intern_string(ctx, &bytes);
+                    let len_value = self.uint_constant(ctx, len);
+                    let data = self.emit_alloc(ctx, len_value, 1, dest);
+                    if len > 0 {
+                        let literal = self.global_address(ctx, &global, dest);
+                        self.mem_copy(ctx, data, literal, len, dest);
+                    }
+                    self.store_string_fields(ctx, storage, data, len_value, len_value, dest);
+                } else if let Some(descriptor) = self.str_runtime.get(&recv.0).copied() {
+                    let data = self.emit_alloc(ctx, descriptor.len, 1, dest);
+                    self.mem_copy_dynamic(ctx, data, descriptor.data, descriptor.len, dest);
+                    self.store_string_fields(
+                        ctx,
+                        storage,
+                        data,
+                        descriptor.len,
+                        descriptor.len,
+                        dest,
+                    );
+                } else {
+                    let ptr = self.reg_ptr(ctx, recv)?;
+                    let (src_data, len) = self.string_parts(ctx, ptr, dest);
+                    let data = self.emit_alloc(ctx, len, 1, dest);
+                    self.mem_copy_dynamic(ctx, data, src_data, len, dest);
+                    self.store_string_fields(ctx, storage, data, len, len, dest);
+                }
+                self.emit_bound_call(ctx, dest, &target, vec![storage, hasher_ptr])?;
+                let (data, _) = self.string_parts(ctx, storage, dest);
+                self.emit_free(ctx, data);
+                return Ok(());
+            }
+            Ty::Variant(_) => {
+                return Err(self.unsupported_reg("Variant `__hash__` dispatch".into(), dest));
+            }
+            Ty::Int => self.reg_value(ctx, recv, ScalarTy::Int)?,
+            Ty::UInt => self.reg_value(ctx, recv, ScalarTy::UInt)?,
+            Ty::Bool => {
+                let value = self.reg_value(ctx, recv, ScalarTy::Bool)?;
+                let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
+                self.append(ctx, cast.get_operation(), Some(dest));
+                cast.get_result(ctx)
+            }
+            Ty::Float64 => {
+                let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
+                self.folded_float_bits(ctx, value, ScalarTy::Float64, dest)
+            }
+            Ty::Simd { dtype, width: 1 } => match ScalarTy::of_dtype(*dtype) {
+                ScalarTy::Int => self.reg_value(ctx, recv, ScalarTy::Int)?,
+                ScalarTy::Float64 => {
+                    let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
+                    self.folded_float_bits(ctx, value, ScalarTy::Float64, dest)
+                }
+                ScalarTy::Bool => {
+                    let value = self.reg_value(ctx, recv, ScalarTy::Bool)?;
+                    let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
+                    self.append(ctx, cast.get_operation(), Some(dest));
+                    cast.get_result(ctx)
+                }
+                ScalarTy::Sized(Dtype::Float32) => {
+                    let value = self.reg_value(ctx, recv, ScalarTy::Sized(Dtype::Float32))?;
+                    self.folded_float_bits(ctx, value, ScalarTy::Sized(Dtype::Float32), dest)
+                }
+                scalar @ ScalarTy::Sized(sized) => {
+                    let value = self.reg_value(ctx, recv, scalar)?;
+                    let (bits, _) =
+                        crate::runtime::integer_dtype_bits(sized).expect("sized integer lane");
+                    if bits == 64 {
+                        value
+                    } else {
+                        let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
+                        self.append(ctx, cast.get_operation(), Some(dest));
+                        cast.get_result(ctx)
+                    }
+                }
+                ScalarTy::UInt | ScalarTy::Ptr => {
+                    return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
+                }
+            },
+            other => {
+                return Err(self.unsupported_reg(format!("hashing a `{other}` leaf"), dest));
+            }
+        };
+        let target = unique_instance(self, &format!("{hasher_name}._update_with_simd"), false)?;
+        self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, bits])
+    }
+
+    /// The IEEE bit pattern of a float leaf zero-extended to i64, with
+    /// `-0.0` folded to `0.0` (the two compare equal, so they hash alike).
+    fn folded_float_bits(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        scalar: ScalarTy,
+        dest: Reg,
+    ) -> Value {
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let (zero, int_ty): (Value, TypeHandle) = match scalar {
+            ScalarTy::Sized(Dtype::Float32) => {
+                let f64_zero = self.float_constant(ctx, 0.0);
+                let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+                let narrowed = FPTruncOp::new(ctx, f64_zero, f32_ty);
+                self.append(ctx, narrowed.get_operation(), Some(dest));
+                (
+                    narrowed.get_result(ctx),
+                    IntegerType::get(ctx, 32, Signedness::Signless).into(),
+                )
+            }
+            _ => (self.float_constant(ctx, 0.0), i64_ty),
+        };
+        let is_zero = self.fcmp(ctx, FCmpPredicateAttr::OEQ, value, zero);
+        self.append(ctx, is_zero.get_operation(), Some(dest));
+        let folded = SelectOp::new(ctx, is_zero.get_result(ctx), zero, value);
+        self.append(ctx, folded.get_operation(), Some(dest));
+        let cast = BitcastOp::new(ctx, folded.get_result(ctx), int_ty);
+        self.append(ctx, cast.get_operation(), Some(dest));
+        let raw = cast.get_result(ctx);
+        if matches!(scalar, ScalarTy::Sized(Dtype::Float32)) {
+            let widened = ZExtOp::new_with_nneg(ctx, raw, i64_ty, false);
+            self.append(ctx, widened.get_operation(), Some(dest));
+            widened.get_result(ctx)
+        } else {
+            raw
+        }
+    }
+
     /// The builtin-string writer's `write`: grow-and-append each argument's
     /// display text into the `mut`-aliased `{data, len}` descriptor — the
     /// VM's `Value::Str` writer.
@@ -10990,76 +11182,6 @@ impl<'a> FnLowering<'a> {
             value = flipped.get_result(ctx);
         }
         self.reg_values.insert(dest.0, value);
-        Ok(())
-    }
-
-    fn lower_string_hash(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        source: Reg,
-    ) -> Result<(), PlironError> {
-        let (data, len) = self.string_operand_parts(ctx, source, dest)?;
-        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-        let hash_slot = self.entry_typed_alloca(ctx, i64_ty);
-        let index_slot = self.entry_typed_alloca(ctx, i64_ty);
-        let offset = self.uint_constant(ctx, 0xcbf29ce484222325);
-        let zero = self.uint_constant(ctx, 0);
-        let store = StoreOp::new(ctx, offset, hash_slot);
-        self.append(ctx, store.get_operation(), Some(dest));
-        let store = StoreOp::new(ctx, zero, index_slot);
-        self.append(ctx, store.get_operation(), Some(dest));
-        let region = self.region.expect("lowering is inside a function");
-        let head = BasicBlock::new(ctx, None, vec![]);
-        head.insert_at_back(region, ctx);
-        let body = BasicBlock::new(ctx, None, vec![]);
-        body.insert_at_back(region, ctx);
-        let done = BasicBlock::new(ctx, None, vec![]);
-        done.insert_at_back(region, ctx);
-        let branch = BrOp::new(ctx, head, vec![]);
-        self.append(ctx, branch.get_operation(), Some(dest));
-        self.current = Some(head);
-        let index = LoadOp::new(ctx, index_slot, i64_ty);
-        self.append(ctx, index.get_operation(), Some(dest));
-        let in_range = ICmpOp::new(ctx, ICmpPredicateAttr::ULT, index.get_result(ctx), len);
-        self.append(ctx, in_range.get_operation(), Some(dest));
-        let branch = CondBrOp::new(ctx, in_range.get_result(ctx), body, vec![], done, vec![]);
-        self.append(ctx, branch.get_operation(), Some(dest));
-        self.current = Some(body);
-        let byte_ptr = GetElementPtrOp::new(
-            ctx,
-            data,
-            vec![GepIndex::Value(index.get_result(ctx))],
-            i8_ty,
-        );
-        self.append(ctx, byte_ptr.get_operation(), Some(dest));
-        let byte = LoadOp::new(ctx, byte_ptr.get_result(ctx), i8_ty);
-        self.append(ctx, byte.get_operation(), Some(dest));
-        let wide = ZExtOp::new_with_nneg(ctx, byte.get_result(ctx), i64_ty, false);
-        self.append(ctx, wide.get_operation(), Some(dest));
-        let hash = LoadOp::new(ctx, hash_slot, i64_ty);
-        self.append(ctx, hash.get_operation(), Some(dest));
-        let mixed = XorOp::new(ctx, hash.get_result(ctx), wide.get_result(ctx));
-        self.append(ctx, mixed.get_operation(), Some(dest));
-        let prime = self.uint_constant(ctx, 0x100000001b3);
-        let next_hash =
-            MulOp::new_with_overflow_flag(ctx, mixed.get_result(ctx), prime, no_overflow_flags());
-        self.append(ctx, next_hash.get_operation(), Some(dest));
-        let store = StoreOp::new(ctx, next_hash.get_result(ctx), hash_slot);
-        self.append(ctx, store.get_operation(), Some(dest));
-        let one = self.uint_constant(ctx, 1);
-        let next_index =
-            AddOp::new_with_overflow_flag(ctx, index.get_result(ctx), one, no_overflow_flags());
-        self.append(ctx, next_index.get_operation(), Some(dest));
-        let store = StoreOp::new(ctx, next_index.get_result(ctx), index_slot);
-        self.append(ctx, store.get_operation(), Some(dest));
-        let branch = BrOp::new(ctx, head, vec![]);
-        self.append(ctx, branch.get_operation(), Some(dest));
-        self.current = Some(done);
-        let hash = LoadOp::new(ctx, hash_slot, i64_ty);
-        self.append(ctx, hash.get_operation(), Some(dest));
-        self.reg_values.insert(dest.0, hash.get_result(ctx));
         Ok(())
     }
 
@@ -11591,6 +11713,45 @@ impl<'a> FnLowering<'a> {
             InfixOp::Mul => {
                 let mul = MulOp::new_with_overflow_flag(ctx, lhs, rhs, no_overflow_flags());
                 self.define(ctx, dest, mul.get_operation(), mul.get_result(ctx))
+            }
+            InfixOp::BitAnd => {
+                let value = AndOp::new(ctx, lhs, rhs);
+                self.define(ctx, dest, value.get_operation(), value.get_result(ctx))
+            }
+            InfixOp::BitOr => {
+                let value = OrOp::new(ctx, lhs, rhs);
+                self.define(ctx, dest, value.get_operation(), value.get_result(ctx))
+            }
+            InfixOp::BitXor => {
+                let value = XorOp::new(ctx, lhs, rhs);
+                self.define(ctx, dest, value.get_operation(), value.get_result(ctx))
+            }
+            InfixOp::Shl | InfixOp::Shr => {
+                let (bits, signed) =
+                    crate::runtime::integer_dtype_bits(dtype).expect("sized integer SIMD dtype");
+                let mask = self.sized_int_constant(ctx, dtype, u64::from(bits - 1));
+                let masked = AndOp::new(ctx, rhs, mask);
+                self.append(ctx, masked.get_operation(), Some(dest));
+                match op {
+                    InfixOp::Shl => {
+                        let value = ShlOp::new_with_overflow_flag(
+                            ctx,
+                            lhs,
+                            masked.get_result(ctx),
+                            no_overflow_flags(),
+                        );
+                        self.define(ctx, dest, value.get_operation(), value.get_result(ctx))
+                    }
+                    InfixOp::Shr if signed => {
+                        let value = AShrOp::new(ctx, lhs, masked.get_result(ctx));
+                        self.define(ctx, dest, value.get_operation(), value.get_result(ctx))
+                    }
+                    InfixOp::Shr => {
+                        let value = LShrOp::new(ctx, lhs, masked.get_result(ctx));
+                        self.define(ctx, dest, value.get_operation(), value.get_result(ctx))
+                    }
+                    _ => unreachable!(),
+                }
             }
             other => Err(self.unsupported_reg(
                 format!(
@@ -13656,6 +13817,7 @@ fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::KeepAlive { .. } => "KeepAlive",
         MirInstr::Const { .. } => "Const",
         MirInstr::SizeOf { .. } => "SizeOf",
+        MirInstr::ConstructTypeParam { .. } => "ConstructTypeParam",
         MirInstr::MaterializeLiteral { .. } => "MaterializeLiteral",
         MirInstr::UseVar { .. } => "UseVar",
         MirInstr::MovePlace { .. } => "MovePlace",

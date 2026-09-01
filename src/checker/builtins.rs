@@ -100,7 +100,7 @@ pub(super) fn param_has_bound(ty: &Ty, bound: &str) -> bool {
 
 pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> {
     match trait_name {
-        "Hashable" => Some("__hash__() -> UInt"),
+        "Hashable" => Some("__hash__(self, mut hasher: Some[Hasher]) -> None"),
         "Absable" => Some("__abs__() -> Self"),
         "Roundable" => Some("__round__() -> Self"),
         "Powable" => Some("__pow__(Self) -> Self"),
@@ -213,7 +213,7 @@ pub(crate) fn builtin_copy_is_value_read(ty: &Ty) -> bool {
 pub(super) fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty,
-        Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64
+        Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64 | Ty::Simd { width: 1, .. }
     )
 }
 

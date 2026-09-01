@@ -87,7 +87,12 @@ impl Checker {
             else {
                 continue;
             };
-            if type_params.is_empty() {
+            if type_params.is_empty()
+                && !matches!(
+                    value.kind,
+                    ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
+                )
+            {
                 continue;
             }
             self.check_generic_comptime_alias(
@@ -1239,7 +1244,15 @@ impl Checker {
                 where_clauses,
                 value,
             } => {
-                if !type_params.is_empty() {
+                if !type_params.is_empty()
+                    || self.comptime_aliases.contains_key(name)
+                    || matches!(
+                        value.kind,
+                        ExprKind::Identifier(_)
+                            | ExprKind::TypeApply { .. }
+                            | ExprKind::TypeValue(_)
+                    )
+                {
                     // Top-level aliases were registered by `check_program`'s
                     // pre-pass; re-walking the same statement is not a
                     // redeclaration. Any other context still reports its own

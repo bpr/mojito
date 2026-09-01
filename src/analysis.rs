@@ -2954,6 +2954,7 @@ fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::Try { .. }
         | MirInstr::Const { .. }
         | MirInstr::SizeOf { .. }
+        | MirInstr::ConstructTypeParam { .. }
         | MirInstr::MaterializeLiteral { .. }
         | MirInstr::ReadRef { .. }
         | MirInstr::CopyValue { .. }

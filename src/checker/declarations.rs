@@ -1842,12 +1842,21 @@ impl Checker {
                             ));
                         }
                         while positional < decls.len()
-                            && !bound[positional].is_empty()
-                            && !matches!(
+                            && (matches!(
                                 decls[positional],
-                                ParamDecl::Type { variadic: true, .. }
-                                    | ParamDecl::Value { variadic: true, .. }
-                            )
+                                ParamDecl::Type {
+                                    infer_only: true,
+                                    ..
+                                } | ParamDecl::Value {
+                                    infer_only: true,
+                                    ..
+                                }
+                            ) || (!bound[positional].is_empty()
+                                && !matches!(
+                                    decls[positional],
+                                    ParamDecl::Type { variadic: true, .. }
+                                        | ParamDecl::Value { variadic: true, .. }
+                                )))
                         {
                             positional += 1;
                         }
@@ -1868,6 +1877,12 @@ impl Checker {
                         }
                     }
                 }
+            }
+            // Infer parameters hidden before `//` even when later parameters
+            // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
+            // `value` while binding the explicit hasher argument).
+            for (pattern, actual) in patterns.iter().zip(actuals) {
+                unify(pattern, actual, &mut subst)?;
             }
             let mut tyargs = Vec::with_capacity(decls.len());
             let mut value_environment = HashMap::new();
@@ -1945,6 +1960,10 @@ impl Checker {
                                 context: format!("default for parameter '{}'", decl.name()),
                             })?,
                     )
+                } else if let ParamDecl::Type { name, .. } = decl
+                    && let Some(inferred) = subst.get(name)
+                {
+                    TyArg::Ty(inferred.clone())
                 } else if let ParamDecl::Type {
                     default: Some(ty), ..
                 } = decl

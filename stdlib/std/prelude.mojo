@@ -16,3 +16,4 @@ from std.collections.tuple import Tuple
 from std.range import range
 from std.memory import alloc
 from std.span import Span
+from std.hashlib import hash

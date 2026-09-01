@@ -1674,8 +1674,119 @@ impl VmBackend {
         // its own implementation still dispatches to its method below.
         if !matches!(recv, Value::Struct { .. }) {
             match (method, args.len()) {
-                // `Hashable` — `x.__hash__()`.
-                ("__hash__", 0) => return self.hash_value(prog, recv).map(Value::UInt),
+                // Hashable scalar leaf: normalize its bits and contribute them
+                // to the caller-owned hasher through `_update_with_simd`.
+                ("__hash__", 1) => {
+                    // A string literal hashes as the nominal `String` it
+                    // materializes to, so literal and nominal keys agree.
+                    if let Value::Str(text) = &recv {
+                        let text = text.clone();
+                        let materialized = self.nominal_string_value(prog, &text)?;
+                        if matches!(materialized, Value::Struct { .. }) {
+                            return self.method_call(
+                                prog,
+                                MethodInvocation {
+                                    receiver: materialized,
+                                    method,
+                                    resolved_name: None,
+                                    result_adapter,
+                                    arguments: args,
+                                    keyword_arguments: kwargs,
+                                    receiver_place: recv_place,
+                                    argument_places: arg_places,
+                                    keyword_argument_places: kwarg_places,
+                                    parameter_arguments: param_arg_regs,
+                                    parameter_declarations: param_decls,
+                                },
+                                CallerFrame {
+                                    id: frame_id,
+                                    registers: regs,
+                                    variables: vars,
+                                },
+                            );
+                        }
+                    }
+                    let place = arg_places.first().and_then(Option::as_ref).ok_or_else(|| {
+                        RuntimeError::Unsupported(
+                            "vm: Hashable.__hash__ needs a mutable hasher place".into(),
+                        )
+                    })?;
+                    // A tagged union contributes its discriminant before the
+                    // active alternative (upstream `hasher.update(UInt8(i))`).
+                    if let Value::Variant { index, value, .. } = recv {
+                        let hasher = args[0].clone();
+                        let Value::Struct { name, .. } = &hasher else {
+                            return Err(RuntimeError::TypeError(format!(
+                                "Hashable.__hash__ expected a Hasher, got {}",
+                                crate::runtime::type_name(&hasher)
+                            )));
+                        };
+                        let fname = prog.runtime_method_name(name, "_update_with_simd", None, 1);
+                        let fidx = prog.index_of(&fname).ok_or_else(|| {
+                            RuntimeError::Unsupported(format!(
+                                "vm: Hasher implementation has no '{fname}'"
+                            ))
+                        })?;
+                        let tag = Value::Simd {
+                            dtype: crate::ast::Dtype::UInt64,
+                            lanes: crate::runtime::SimdLanes::Int(vec![index as i128]),
+                        };
+                        let (_, variables) = self.call_frame(prog, fidx, vec![hasher, tag], &[])?;
+                        let updated = variables.into_iter().next().unwrap_or(Value::None);
+                        self.store_at_call_place(
+                            prog,
+                            frame_id,
+                            place,
+                            updated.clone(),
+                            regs,
+                            vars,
+                        )?;
+                        return self.method_call(
+                            prog,
+                            MethodInvocation {
+                                receiver: *value,
+                                method,
+                                resolved_name: None,
+                                result_adapter,
+                                arguments: vec![updated],
+                                keyword_arguments: kwargs,
+                                receiver_place: recv_place,
+                                argument_places: arg_places,
+                                keyword_argument_places: kwarg_places,
+                                parameter_arguments: param_arg_regs,
+                                parameter_declarations: param_decls,
+                            },
+                            CallerFrame {
+                                id: frame_id,
+                                registers: regs,
+                                variables: vars,
+                            },
+                        );
+                    }
+                    let hasher = args[0].clone();
+                    let Value::Struct { name, .. } = &hasher else {
+                        return Err(RuntimeError::TypeError(format!(
+                            "Hashable.__hash__ expected a Hasher, got {}",
+                            crate::runtime::type_name(&hasher)
+                        )));
+                    };
+                    let fname = prog.runtime_method_name(name, "_update_with_simd", None, 1);
+                    let fidx = prog.index_of(&fname).ok_or_else(|| {
+                        RuntimeError::Unsupported(format!(
+                            "vm: Hasher implementation has no '{fname}'"
+                        ))
+                    })?;
+                    let bits = crate::runtime::hash_bits(&recv)?;
+                    let contribution = Value::Simd {
+                        dtype: crate::ast::Dtype::UInt64,
+                        lanes: crate::runtime::SimdLanes::Int(vec![i128::from(bits)]),
+                    };
+                    let (_, variables) =
+                        self.call_frame(prog, fidx, vec![hasher, contribution], &[])?;
+                    let updated = variables.into_iter().next().unwrap_or(Value::None);
+                    self.store_at_call_place(prog, frame_id, place, updated, regs, vars)?;
+                    return Ok(Value::None);
+                }
                 // `Floorable`/`Ceilable`/`Truncable` — `x.__floor__()` etc.
                 // (roadmap milestone 7).
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {
@@ -1687,21 +1798,6 @@ impl VmBackend {
             }
         }
         match &recv {
-            Value::UInt(state) if method == "update" && args.len() == 1 => {
-                let place = recv_place.as_ref().ok_or_else(|| {
-                    RuntimeError::Unsupported("vm: Hasher.update needs a mutable place".into())
-                })?;
-                let part = self.hash_value(prog, args[0].clone())?;
-                self.store_at_call_place(
-                    prog,
-                    frame_id,
-                    place,
-                    Value::UInt(state.wrapping_mul(33).wrapping_add(part)),
-                    regs,
-                    vars,
-                )?;
-                Ok(Value::None)
-            }
             Value::Str(template) if method == "format" => {
                 self.format_template(prog, template, &args).map(Value::Str)
             }
@@ -2240,14 +2336,6 @@ impl VmBackend {
                     got: 0,
                 }),
             },
-            "hash" => match args.into_iter().next() {
-                Some(value) => Ok(Value::UInt(self.hash_value(prog, value)?)),
-                None => Err(RuntimeError::ArityMismatch {
-                    name: "hash".to_string(),
-                    expected: 1,
-                    got: 0,
-                }),
-            },
             // `len(c)` on a user struct dispatches to `c.__len__()`.
             "len" => match args.into_iter().next() {
                 Some(Value::Str(s)) => Ok(Value::Int(s.len() as i64)),
@@ -2559,53 +2647,6 @@ impl VmBackend {
         }
         Ok(output)
     }
-
-    fn hash_value(&mut self, prog: &Prog, value: Value) -> Result<u64, RuntimeError> {
-        if let Value::Variant { index, value, .. } = value {
-            // Include both discriminant and payload. Equal payload bytes in
-            // different alternatives must not collapse to the same Variant hash.
-            let tag = crate::runtime::builtin_hash(&Value::UInt(index as u64))?;
-            return Ok(5381u64
-                .wrapping_mul(33)
-                .wrapping_add(tag)
-                .wrapping_mul(33)
-                .wrapping_add(self.hash_value(prog, *value)?));
-        }
-        let Value::Struct {
-            name,
-            fields,
-            value_params,
-        } = value
-        else {
-            return crate::runtime::builtin_hash(&value);
-        };
-        let source = format!("{name}.__hash__");
-        if let Some(index) = prog.index_of(&prog.overload_name(&source, 1)) {
-            let receiver = Value::Struct {
-                name,
-                fields,
-                value_params,
-            };
-            let (_, variables) =
-                self.call_frame(prog, index, vec![receiver, Value::UInt(5381)], &[])?;
-            return match variables.get(1) {
-                Some(Value::UInt(hash)) => Ok(*hash),
-                other => Err(RuntimeError::TypeError(format!(
-                    "{source} did not leave a Hasher value, got {}",
-                    other
-                        .map(crate::runtime::type_name)
-                        .unwrap_or_else(|| "missing".to_string())
-                ))),
-            };
-        }
-        let mut state = 5381u64;
-        for (_, field) in fields {
-            state = state
-                .wrapping_mul(33)
-                .wrapping_add(self.hash_value(prog, field)?);
-        }
-        Ok(state)
-    }
 }
 
 impl VmBackend {
@@ -2874,7 +2915,22 @@ fn reify_value_parameters(
         .enumerate()
         .filter_map(|(index, declaration)| {
             let ParamDecl::Value { name, ty, .. } = declaration else {
-                return None;
+                // A constructible type parameter is reified as the bound
+                // struct's name (supplied argument, else the declared default).
+                let ParamDecl::Type { name, default, .. } = declaration else {
+                    return None;
+                };
+                if !constructible_type_parameter(declaration) {
+                    return None;
+                }
+                let value = match resolved.get(index).cloned().flatten() {
+                    Some(value @ Value::Str(_)) => value,
+                    _ => match default.as_deref() {
+                        Some(Ty::Struct(struct_name, _)) => Value::Str(struct_name.clone()),
+                        _ => return None,
+                    },
+                };
+                return Some((name.clone(), value));
             };
             let value = resolved
                 .get(index)
@@ -3005,6 +3061,12 @@ fn arg2(name: &str, args: Vec<Value>) -> Result<(Value, Value), RuntimeError> {
 /// separate from frame-local naming so an indirect call can resolve the
 /// anonymous contract's defaults, then reify those concrete values under the
 /// implementation's (alpha-equivalent) declaration names.
+/// Whether a type parameter must be reified at runtime: its bound admits
+/// default construction (`H()`), which an erased body performs by name.
+pub(crate) fn constructible_type_parameter(declaration: &ParamDecl) -> bool {
+    crate::types::constructible_type_parameter(declaration)
+}
+
 fn resolve_value_parameter_slots(
     declarations: &[ParamDecl],
     supplied: &[Option<Value>],
@@ -3021,6 +3083,10 @@ fn resolve_value_parameter_slots(
             ..
         } = declaration
         else {
+            // A reified type argument passes through as the bound struct name.
+            if constructible_type_parameter(declaration) {
+                resolved[index] = supplied.get(index).cloned().flatten();
+            }
             continue;
         };
         let value = supplied
@@ -3534,6 +3600,7 @@ fn index_value(base: &Value, idx: i64) -> Result<Value, RuntimeError> {
 /// Whether a branch condition register holds `True`.
 fn is_true(v: &Value) -> bool {
     matches!(v, Value::Bool(true))
+        || matches!(v, Value::Simd { dtype: crate::ast::Dtype::Bool, lanes: crate::runtime::SimdLanes::Bool(values) } if values == &[true])
 }
 
 /// Materialize a MIR constant into a runtime value.

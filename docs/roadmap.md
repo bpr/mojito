@@ -117,29 +117,31 @@ recreates this section's checkbox with the fresh divergence list.
   - `write_repr_to` (blocked on deciding a `repr` surface at all)
   - `(*, unsafe_uninit_length)` construction/resize (blocked on an
     uninit-element storage story for List, MaybeUninit-adjacent)
+  - container `Hashable` conformances on the hasher protocol
+    (`List`/`Optional`/`Array`/`Set`/`Dict`/`Tuple.__hash__`; upstream
+    discriminates `Optional`/`Variant` alternatives with a `UInt8` tag before
+    delegating — `String`/`StringSpan` already conform)
+  - the upstream-exact `Hasher` member spellings: `_update_with_simd(mut
+    self, value: SIMD[_, _])` with `SIMD.to_bits()` (Mojito narrows the leaf
+    to one normalized `UInt64`, which both bundled hashers mix identically),
+    the keyed `AHasher[key: U256]` (Mojito's is key-less; the seeded
+    initializer remains), the bytes `hash(bytes: ImmPointer[UInt8, _], n)`
+    overload and `hash_seeded_bytes` (both need a pointer-backed `Span`
+    constructor), and a `Span`/`as_bytes` path for `StringSpan.__hash__`
+    (today it copies the bytes into a `List[Byte]`)
+  - native `Variant.__hash__` dispatch (the VM feeds the discriminant then
+    the active alternative; pliron reports the leaf unsupported) and CTFE
+    `hash`/`default_comp_time_hasher` for compile-time dictionaries
 
 - [ ] **Parity-unblocking infrastructure** — compiler-side features that
   each unblock several recorded parity gaps at once. These are where
   "Mojito rejects/diverges from valid Mojo" clusters today; every item
   lists what it unlocks so slices can be chosen by leverage. The remaining
   items below are in **recommended execution order**, not fan-out order. The
-  hasher work is sequenced next to the bound relaxation so the shared
-  Dict/Set/List signatures are rewritten once. The ref-field adapter
+  ref-field adapter
   follow-ups are a **parallel track** (origin/ref-system
   refinements plus bug fixes, not coupled to the API-parity sequence) and
   are listed last with their own internal order.
-  - **Hasher-based `Hashable` and `std.hashlib` alignment** (trait
-    signature `__hash__(self, mut hasher: Some[Hasher])` with a
-    reflection default; AHasher; `std.hashlib` module identity). Sequenced
-    next to the bound relaxation because it rewrites the same
-    Dict/Set/List signatures. Mojito's `__hash__() -> UInt` +
-    `std.hashing` is fork surface: upstream user structs declaring the
-    hasher-based method are rejected today — a direct acceptance gap for
-    real upstream code. Unlocks: accepting those programs; upstream-parity
-    `Dict.__hash__`/`List.__hash__`/`Set.__hash__` (do not implement these
-    on the fork protocol first); hash-value parity; and, together with the
-    `H` hasher type-parameter arity, the full `Dict[K, V, H]`/`Set[T, H]`
-    signature.
   - **Parametric statics** — static-method dispatch on parameterized
     nominal types (`Dict[Int, Int].fromkeys(...)`); the checker's
     TypeApply statics stop at the pointer family, and a bare `Dict`

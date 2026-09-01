@@ -166,10 +166,34 @@ impl<'a> Elab<'a> {
                 // template must not invalidate an otherwise scalar subprogram.
                 StmtKind::Struct { .. } => !self.is_specializable(stmt),
                 StmtKind::Trait { .. } => true,
+                // Module-scope literal constants are part of the declaration
+                // environment elaboration would otherwise fold into the
+                // retained bodies (a hasher body names its multiplier). Type
+                // aliases have no runtime statement form; they are folded
+                // into the retained declarations below.
+                StmtKind::Comptime {
+                    type_params, value, ..
+                } => {
+                    type_params.is_empty()
+                        && matches!(
+                            value.kind,
+                            ExprKind::Int(_)
+                                | ExprKind::Float(_)
+                                | ExprKind::Bool(_)
+                                | ExprKind::Str(_)
+                        )
+                }
                 _ => false,
             })
             .cloned()
             .collect::<Vec<_>>();
+        let type_aliases = self.vm_ctfe_type_aliases();
+        if !type_aliases.is_empty() {
+            let subs = |alias: &str| type_aliases.get(alias).cloned();
+            for statement in &mut program {
+                *statement = super::rewrite::rewrite_stmt_cloned(statement, &subs, true);
+            }
+        }
         self.rewrite_vm_ctfe_program(&mut program, name, locals)?;
         if program.is_empty() {
             return Err(ComptimeError::NotComptime(format!(
@@ -866,5 +890,39 @@ impl<'a> Elab<'a> {
             | ExprKind::Lambda { .. }
             | ExprKind::Uninitialized => false,
         }
+    }
+}
+
+impl Elab<'_> {
+    /// The module-scope type aliases (`comptime default_hasher = AHasher`)
+    /// elaboration folds into every use before the ordinary checker runs.
+    /// The VM-CTFE subprogram is checked from the linked source, so the same
+    /// fold is applied to its retained declarations.
+    fn vm_ctfe_type_aliases(&self) -> HashMap<String, CtValue> {
+        let mut aliases = HashMap::new();
+        for statement in self.program {
+            let StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            if !type_params.is_empty()
+                || !matches!(
+                    value.kind,
+                    ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
+                )
+            {
+                continue;
+            }
+            let env = HashMap::new();
+            if let Ok(ty @ CtValue::Type(_)) = self.eval(value, &env) {
+                aliases.insert(name.clone(), ty);
+            }
+        }
+        aliases
     }
 }

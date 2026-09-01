@@ -1,9 +1,9 @@
 # expect: does not conform to trait 'Hasher'
-# A Hasher needs `__init__`, `_update_with_bytes`, `_update_with_simd`,
-# `update`, and `finish`; omitting `finish` is a conformance error.
+# `Hasher.finish` consumes the hasher and returns `UInt64`; a word-sized
+# `UInt` result does not satisfy the protocol.
 from std.hashlib import Hasher
 
-struct BrokenHasher(Hasher):
+struct NarrowHasher(Hasher):
     var state: UInt64
 
     def __init__(out self):
@@ -18,5 +18,8 @@ struct BrokenHasher(Hasher):
     def update(mut self, value: Some[Hashable]):
         value.__hash__(self)
 
+    def finish(var self) -> UInt:
+        return UInt(0)
+
 def main():
-    print(hash[BrokenHasher](Int(1)))
+    print(hash[NarrowHasher](Int(1)))

@@ -461,58 +461,46 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-/// Intrinsic `__hash__` for a built-in hashable value (roadmap milestone 6) — a
-/// **deterministic**, no-seed FNV-1a over the value's bytes, returning `UInt`
-/// (mojito's native u64). Determinism across runs is a deliberate design
-/// decision: no per-process salt. A user struct provides its own `__hash__`
-/// (typically combining `self.field.__hash__()` values); only these scalars are
-/// hashed intrinsically.
-pub(crate) fn builtin_hash(value: &Value) -> Result<u64, RuntimeError> {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    fn mix(mut h: u64, bytes: &[u8]) -> u64 {
-        for &b in bytes {
-            h ^= b as u64;
-            h = h.wrapping_mul(FNV_PRIME);
+/// Normalize one scalar Hashable leaf to the UInt64 contribution consumed by
+/// the hasher protocol.
+pub(crate) fn hash_bits(value: &Value) -> Result<u64, RuntimeError> {
+    match value {
+        Value::Int(value) => Ok(*value as u64),
+        Value::UInt(value) => Ok(*value),
+        Value::Bool(value) => Ok(u64::from(*value)),
+        Value::Float64(value) => Ok(if *value == 0.0 { 0 } else { value.to_bits() }),
+        Value::IntLiteral(value) => value
+            .wrapping_signed(64)
+            .map(|value| value as u64)
+            .ok_or_else(|| RuntimeError::TypeError("integer literal does not fit Int".into())),
+        Value::Simd {
+            dtype,
+            lanes: SimdLanes::Int(values),
+        } if values.len() == 1 => {
+            let bits = integer_dtype_bits(*dtype).map_or(64, |(bits, _)| bits);
+            let mask = if bits == 64 {
+                u64::MAX
+            } else {
+                (1_u64 << bits) - 1
+            };
+            Ok((values[0] as u64) & mask)
         }
-        h
+        Value::Simd {
+            lanes: SimdLanes::Bool(values),
+            ..
+        } if values.len() == 1 => Ok(u64::from(values[0])),
+        Value::Simd {
+            dtype: Dtype::Float32,
+            lanes: SimdLanes::Float(values),
+        } if values.len() == 1 => {
+            let value = values[0] as f32;
+            Ok(u64::from(if value == 0.0 { 0 } else { value.to_bits() }))
+        }
+        other => Err(RuntimeError::TypeError(format!(
+            "cannot hash {} as a scalar leaf",
+            type_name(other)
+        ))),
     }
-    let h = match value {
-        Value::Int(_)
-        | Value::UInt(_)
-        | Value::IntLiteral(_)
-        | Value::FloatLiteral(_)
-        | Value::Float64(_)
-            if as_finite_numeric(value).is_some() =>
-        {
-            // Numeric equality is mathematical across finite scalar kinds at
-            // erased boundaries, so hash the canonical reduced rational rather
-            // than a representation-specific integer or IEEE bit pattern.
-            // This also gives +0 and -0 the same hash.
-            let exact = as_finite_numeric(value)
-                .expect("the guarded finite numeric value has an exact form")
-                .into_float();
-            let numerator = exact.as_rational().numer().to_signed_bytes_le();
-            let denominator = exact.as_rational().denom().to_signed_bytes_le();
-            let mut hash = mix(FNV_OFFSET, b"numeric");
-            hash = mix(hash, &(numerator.len() as u64).to_le_bytes());
-            hash = mix(hash, &numerator);
-            hash = mix(hash, &(denominator.len() as u64).to_le_bytes());
-            mix(hash, &denominator)
-        }
-        Value::Bool(b) => mix(FNV_OFFSET, &[*b as u8]),
-        // Non-finite floats cannot enter the exact rational domain. Equal
-        // infinities retain identical bits; NaNs never compare equal.
-        Value::Float64(x) => mix(FNV_OFFSET, &x.to_bits().to_le_bytes()),
-        Value::Str(s) => mix(FNV_OFFSET, s.as_bytes()),
-        other => {
-            return Err(RuntimeError::TypeError(format!(
-                "cannot hash {}",
-                type_name(other)
-            )));
-        }
-    };
-    Ok(h)
 }
 
 /// Apply a unary operator to an already-evaluated operand for VM execution and
@@ -997,6 +985,9 @@ pub(crate) fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, Run
                 .map(|(a, b)| match op {
                     Eq => a == b,
                     Ne => a != b,
+                    BitAnd => *a & *b,
+                    BitOr => *a | *b,
+                    BitXor => *a ^ *b,
                     _ => false, // checker rejects other ops on bool lanes
                 })
                 .collect();
@@ -1047,7 +1038,7 @@ pub(crate) fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, Run
                 let out: Vec<i128> = xs
                     .iter()
                     .zip(&ys)
-                    .map(|(a, b)| wrap(d, int_arith(op, *a, *b)))
+                    .map(|(a, b)| wrap(d, int_arith(op, d, *a, *b)))
                     .collect();
                 Ok(Value::Simd {
                     dtype: d,
@@ -2059,11 +2050,27 @@ fn materialize_literal_int_lane(value: &crate::literal::IntLiteral, dtype: Dtype
     }
 }
 
-fn int_arith(op: InfixOp, a: i128, b: i128) -> i128 {
+fn int_arith(op: InfixOp, dtype: Dtype, a: i128, b: i128) -> i128 {
     match op {
         InfixOp::Add => a + b,
         InfixOp::Sub => a - b,
         InfixOp::Mul => a * b,
+        InfixOp::BitAnd => a & b,
+        InfixOp::BitOr => a | b,
+        InfixOp::BitXor => a ^ b,
+        InfixOp::Shl => {
+            let bits = integer_dtype_bits(dtype).map_or(128, |(bits, _)| bits);
+            a << ((b as u32) & (bits - 1))
+        }
+        InfixOp::Shr => {
+            let (bits, signed) = integer_dtype_bits(dtype).unwrap_or((128, true));
+            let amount = (b as u32) & (bits - 1);
+            if signed {
+                a >> amount
+            } else {
+                ((a as u128) >> amount) as i128
+            }
+        }
         _ => 0, // checker rejects other arithmetic on SIMD ints
     }
 }
@@ -2197,15 +2204,11 @@ mod tests {
     }
 
     #[test]
-    fn exact_signed_zero_uses_numeric_equality_abs_and_hashing() {
+    fn exact_signed_zero_uses_numeric_equality_and_abs() {
         let positive = Value::FloatLiteral(FloatLiteral::parse_decimal("0.0").unwrap());
         let negative = Value::FloatLiteral(FloatLiteral::parse_decimal("0.0").unwrap().neg());
 
         assert!(values_equal(&positive, &negative).unwrap());
-        assert_eq!(
-            builtin_hash(&positive).unwrap(),
-            builtin_hash(&negative).unwrap()
-        );
         let Value::FloatLiteral(magnitude) = builtin_abs(negative).unwrap() else {
             panic!("literal abs changed the value kind");
         };
@@ -2213,19 +2216,20 @@ mod tests {
     }
 
     #[test]
-    fn finite_numeric_hashes_follow_cross_kind_equality() {
-        let values = [
-            Value::Int(1),
-            Value::UInt(1),
-            Value::Float64(1.0),
-            Value::IntLiteral(IntLiteral::from(1)),
-            Value::FloatLiteral(FloatLiteral::parse_decimal("1.0").unwrap()),
-        ];
-        for left in &values {
-            for right in &values {
-                assert!(values_equal(left, right).unwrap());
-                assert_eq!(builtin_hash(left).unwrap(), builtin_hash(right).unwrap());
-            }
-        }
+    fn hash_bits_fold_negative_zero_and_zero_extend_lanes() {
+        assert_eq!(
+            hash_bits(&Value::Float64(-0.0)).unwrap(),
+            hash_bits(&Value::Float64(0.0)).unwrap()
+        );
+        assert_eq!(hash_bits(&Value::Int(-1)).unwrap(), u64::MAX);
+        assert_eq!(hash_bits(&Value::Bool(true)).unwrap(), 1);
+        assert_eq!(
+            hash_bits(&Value::Simd {
+                dtype: Dtype::Int8,
+                lanes: SimdLanes::Int(vec![-1]),
+            })
+            .unwrap(),
+            0xFF
+        );
     }
 }

@@ -1077,6 +1077,18 @@ impl Flatten<'_> {
                             .expect("checked synthesized fieldwise copy has one argument"),
                     );
                 }
+                if let Some(crate::SemanticAdjustment::ConstructTypeParam { param }) =
+                    self.checked_adjustments(e).into_iter().find(|adjustment| {
+                        matches!(
+                            adjustment,
+                            crate::SemanticAdjustment::ConstructTypeParam { .. }
+                        )
+                    })
+                {
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::ConstructTypeParam { dest, param });
+                    return dest;
+                }
                 if let Some(crate::SemanticAdjustment::SizeOf { ty }) =
                     self.checked_adjustments(e).into_iter().find(|adjustment| {
                         matches!(adjustment, crate::SemanticAdjustment::SizeOf { .. })

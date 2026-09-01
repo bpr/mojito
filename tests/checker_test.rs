@@ -3871,7 +3871,7 @@ fn trait_bound_diagnostics_name_the_blocking_field_or_operation() {
     assert!(
         hashable
             .to_string()
-            .contains("missing required operation '__hash__() -> UInt'"),
+            .contains("does not declare Hashable conformance"),
         "got {hashable}"
     );
 
@@ -4750,12 +4750,39 @@ fn any_type_bound_does_not_permit_len() {
 }
 
 #[test]
-fn hashable_bound_permits_hash() {
-    // `x.__hash__()` type-checks (→ `UInt`) on an opaque `K: Hashable` (Phase 6),
-    // and on concrete hashable built-ins (so a key struct can combine fields).
-    ok("def h[K: Hashable](k: K) -> UInt:\n    return k.__hash__()\n");
-    ok("def hi(n: Int) -> UInt:\n    return n.__hash__()\n");
-    ok("def hs(s: StringLiteral) -> UInt:\n    return s.__hash__()\n");
+fn hashable_bound_permits_hasher_contribution() {
+    // `x.__hash__(hasher)` type-checks on an opaque `K: Hashable` and on
+    // concrete hashable built-ins: the value contributes to a caller-owned
+    // `Hasher` (current Mojo's protocol), so a key struct can feed its fields.
+    ok("def h[K: Hashable](k: K, mut hasher: Some[Hasher]):\n    k.__hash__(hasher)\n");
+    ok("def hi(n: Int, mut hasher: Some[Hasher]):\n    n.__hash__(hasher)\n");
+    ok("def hs(s: StringLiteral, mut hasher: Some[Hasher]):\n    s.__hash__(hasher)\n");
+    ok("def hf(x: Float64, mut hasher: Some[Hasher]):\n    x.__hash__(hasher)\n");
+    // The retired value-returning shape is no longer part of the protocol.
+    assert!(matches!(
+        err("def h[K: Hashable](k: K) -> UInt:\n    return k.__hash__()\n"),
+        TypeError::NoSuchMethod { .. } | TypeError::ArityMismatch { .. }
+    ));
+}
+
+#[test]
+fn hashable_conformance_requires_the_hasher_protocol() {
+    // A conformer spelling the retired `__hash__(self) -> UInt` is rejected
+    // with a diagnostic naming the hasher-based requirement.
+    let error = err(
+        "struct Old(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__(self) -> UInt:\n        return UInt(self.id)\n",
+    );
+    assert!(
+        error.to_string().contains("mut hasher: Some[Hasher]"),
+        "got {error}"
+    );
+    // Both accepted spellings conform.
+    ok(
+        "struct Sugar(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__(self, mut hasher: Some[Hasher]):\n        hasher.update(self.id)\n",
+    );
+    ok(
+        "struct Generic(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher.update(self.id)\n",
+    );
 }
 
 #[test]
@@ -4788,9 +4815,10 @@ fn hashable_bound_does_not_permit_equality() {
 
 #[test]
 fn any_type_bound_does_not_permit_hash() {
-    // A plain `T: AnyType` promises no hash — `x.__hash__()` on it is rejected.
+    // A plain `T: AnyType` promises no hash — `x.__hash__(hasher)` on it is
+    // rejected.
     assert!(matches!(
-        err("def h[T: AnyType](x: T) -> UInt:\n    return x.__hash__()\n"),
+        err("def h[T: AnyType](x: T, mut hasher: Some[Hasher]):\n    x.__hash__(hasher)\n"),
         TypeError::NoSuchMethod { .. }
     ));
 }

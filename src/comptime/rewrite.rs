@@ -99,10 +99,14 @@ pub(super) fn substitute_type_bindings_in_expr(expr: &mut Expr, subs: TypeSubs) 
 fn rewrite_expr(e: &mut Expr, subs: Subs) {
     match &mut e.kind {
         ExprKind::Identifier(name) => {
-            if let Some(v) = subs(name)
-                && let Some(materialized) = v.materialize(e.span)
-            {
-                *e = materialized;
+            if let Some(value) = subs(name) {
+                if let CtValue::Type(ty) = &value
+                    && let Some(ty) = source_type_from_ty(ty)
+                {
+                    e.kind = ExprKind::TypeValue(ty);
+                } else if let Some(materialized) = value.materialize(e.span) {
+                    *e = materialized;
+                }
             }
         }
         ExprKind::Spread(value) => rewrite_expr(value, subs),
@@ -134,11 +138,19 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
             }
         }
         ExprKind::Call {
+            name,
             param_args,
             args,
             kwargs,
-            ..
         } => {
+            // `H()` on a substituted type parameter constructs the bound struct.
+            if let Some(CtValue::Type(bound)) = subs(name)
+                && let Ty::Struct(struct_name, struct_args) = &*bound
+                && struct_args.is_empty()
+                && param_args.is_empty()
+            {
+                *name = struct_name.clone();
+            }
             rewrite_param_args(param_args, subs);
             rewrite_exprs(args, subs);
             for k in kwargs {
@@ -1245,7 +1257,12 @@ fn rewrite_param_args(args: &mut [crate::ast::ParamArg], subs: Subs) {
     for a in args {
         match a {
             crate::ast::ParamArg::Type(ty) => rewrite_type(ty, subs),
-            crate::ast::ParamArg::Value(e) => rewrite_expr(e, subs),
+            crate::ast::ParamArg::Value(e) => {
+                rewrite_expr(e, subs);
+                if let ExprKind::TypeValue(ty) = &e.kind {
+                    *a = crate::ast::ParamArg::Type(ty.clone());
+                }
+            }
             crate::ast::ParamArg::Named { value, .. } => {
                 rewrite_param_args(std::slice::from_mut(value), subs);
             }

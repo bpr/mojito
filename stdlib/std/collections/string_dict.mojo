@@ -9,7 +9,7 @@
 
 from std.collections.dict import DictEntry, _DictEntryIter, _DictKeyIter
 from std.collections.list import List
-from std.hashing import bucket_index
+from std.hashlib import default_hasher, hash
 from std.iterable import Iterable
 from std.optional import Optional
 
@@ -17,7 +17,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
     comptime Element = StringLiteral
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _DictKeyIter[StringLiteral, Self.V, iterable_origin]
+    ] = _DictKeyIter[StringLiteral, Self.V, default_hasher, iterable_origin]
 
     var entries: List[DictEntry[StringLiteral, Self.V]]
     var index: List[List[Int]]
@@ -44,7 +44,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
         return StringDict[Self.V](copy: self)
 
     def find_index(self, key: StringLiteral) -> Int:
-        var bucket: Int = bucket_index(key, self.nbuckets)
+        var bucket: Int = Int(hash(key)) & (self.nbuckets - 1)
         for entry_index in self.index._get_copy(bucket):
             if self.entries._get_copy(entry_index).key == key:
                 return entry_index
@@ -69,7 +69,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
 
         var entry_index: Int = len(self.entries)
         self.entries.append(DictEntry[StringLiteral, Self.V](key, value^))
-        var bucket: Int = bucket_index(key, self.nbuckets)
+        var bucket: Int = Int(hash(key)) & (self.nbuckets - 1)
         var bucket_entries: List[Int] = self.index._get_copy(bucket)
         bucket_entries.append(entry_index)
         self.index[bucket] = bucket_entries^
@@ -85,9 +85,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
             i = i + 1
         i = 0
         while i < len(self.entries):
-            var bucket: Int = bucket_index(
-                self.entries._get_copy(i).key, new_bucket_count
-            )
+            var bucket: Int = Int(self.entries._get_copy(i)._hash) & (new_bucket_count - 1)
             var bucket_entries: List[Int] = new_index._get_copy(bucket)
             bucket_entries.append(i)
             new_index[bucket] = bucket_entries^
@@ -116,7 +114,7 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
         # fresh branch) — delegating would demand its `Deinitable` bound.
         var entry_index: Int = len(self.entries)
         self.entries.append(DictEntry[StringLiteral, Self.V](key, value^))
-        var bucket: Int = bucket_index(key, self.nbuckets)
+        var bucket: Int = Int(hash(key)) & (self.nbuckets - 1)
         var bucket_entries: List[Int] = self.index._get_copy(bucket)
         bucket_entries.append(entry_index)
         self.index[bucket] = bucket_entries^

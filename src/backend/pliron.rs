@@ -949,6 +949,43 @@ fn visit_call_edges<'p>(
                         }
                     }
                 }
+                // A scalar/literal Hashable leaf lowers to the hasher's
+                // compiled `_update_with_simd` (a string literal through the
+                // nominal String's `__hash__` instance bound to that hasher).
+                MirInstr::MethodCall {
+                    recv,
+                    method,
+                    resolved: None,
+                    args,
+                    ..
+                } if method == "__hash__" && args.len() == 1 => {
+                    let hasher = function.reg_types.get(&args[0].0).map(|ty| match ty {
+                        Ty::Ref(reference) => &reference.referent,
+                        other => other,
+                    });
+                    if let Some(Ty::Struct(hasher, _)) = hasher {
+                        let prefix = format!("{hasher}._update_with_simd");
+                        for (fname, _) in functions.iter() {
+                            if fname.starts_with(prefix.as_str()) {
+                                targets.push(*fname);
+                            }
+                        }
+                        if matches!(function.reg_types.get(&recv.0), Some(Ty::StringLiteral)) {
+                            // The nominal String's symbols are module-qualified.
+                            for (fname, _) in functions.iter() {
+                                if fname.rsplit_once(".__hash__").is_some_and(|(owner, rest)| {
+                                    owner
+                                        .rsplit('$')
+                                        .next()
+                                        .is_some_and(crate::symbol::is_stdlib_string_struct)
+                                        && (rest.is_empty() || rest.starts_with('$'))
+                                }) {
+                                    targets.push(*fname);
+                                }
+                            }
+                        }
+                    }
+                }
                 // Iterator instructions carry their targets as symbols rather
                 // than call edges; monomorphization has already retargeted
                 // them to concrete instances.

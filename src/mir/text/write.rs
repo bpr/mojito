@@ -547,6 +547,9 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::SizeOf { dest, ty } => {
             record(tag, &[("dest", reg_value(*dest)), ("type", ty_value(ty))])
         }
+        MirInstr::ConstructTypeParam { dest, param } => {
+            record(tag, &[("dest", reg_value(*dest)), ("param", symbol(param))])
+        }
         MirInstr::MaterializeLiteral {
             dest,
             value,

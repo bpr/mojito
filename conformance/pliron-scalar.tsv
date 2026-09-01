@@ -77,6 +77,10 @@ assets/ok/generic_copyable_iterator_refinement.mojo	-	ineligible	no-scalar-entry
 assets/ok/generic_ctfe_associated_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_bucketing.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/hashable_hasher_protocol.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/hasher_user_conformer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/hashlib_explicit_hasher_containers.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/hashlib_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hello_world.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/init_out_self.mojo	-	ineligible	no-scalar-entry-shape

@@ -404,7 +404,17 @@ impl ConformanceOracle {
         // Every struct name registers before any field type resolves, so a
         // field may reference a struct declared later in the module (an
         // iterator holding `ref[o] List[T]` above `List` itself).
-        for statement in stmts {
+        // A struct whose parameter defaults name a comptime type alias
+        // (`H: Hasher = default_hasher`) classifies only once the alias is
+        // registered, and an alias body names structs — so structs register in
+        // two passes around the alias pass, deferring the ones whose
+        // classification fails the first time.
+        let mut deferred_structs = Vec::new();
+        let register_struct = |checker: &mut Checker,
+                               statement: &Stmt,
+                               defer: Option<&mut Vec<usize>>,
+                               index: usize|
+         -> Result<(), TypeError> {
             let StmtKind::Struct {
                 name,
                 type_params,
@@ -415,10 +425,19 @@ impl ConformanceOracle {
                 ..
             } = &statement.kind
             else {
-                continue;
+                return Ok(());
             };
 
-            let decls = checker.classify_params(type_params)?;
+            let decls = match checker.classify_params(type_params) {
+                Ok(decls) => decls,
+                Err(error) => match defer {
+                    Some(deferred) => {
+                        deferred.push(index);
+                        return Ok(());
+                    }
+                    None => return Err(error),
+                },
+            };
             let mut method_names: HashMap<String, Vec<MethodSig>> = HashMap::new();
             for method in methods {
                 method_names
@@ -446,6 +465,10 @@ impl ConformanceOracle {
                     explicit_destructors: HashMap::new(),
                 },
             );
+            Ok(())
+        };
+        for (index, statement) in stmts.iter().enumerate() {
+            register_struct(&mut checker, statement, Some(&mut deferred_structs), index)?;
         }
         // Best-effort generic comptime alias registration, so a struct
         // `where` clause compiled below can reference a predicate alias. A
@@ -464,7 +487,12 @@ impl ConformanceOracle {
             else {
                 continue;
             };
-            if type_params.is_empty() {
+            if type_params.is_empty()
+                && !matches!(
+                    value.kind,
+                    ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
+                )
+            {
                 continue;
             }
             let _ = checker.check_generic_comptime_alias(
@@ -474,6 +502,9 @@ impl ConformanceOracle {
                 where_clauses,
                 value,
             );
+        }
+        for index in deferred_structs {
+            register_struct(&mut checker, &stmts[index], None, index)?;
         }
         // Struct `where` clauses compile after alias registration and attach
         // to the registered declaration's final parameter (or validate
@@ -1136,6 +1167,22 @@ impl Checker {
                 crate::ast::ParamArg::Type(_) => None,
             };
             if let Some(expression) = expression {
+                // A bare type argument (`hash[MyHasher](x)`) is a value
+                // expression syntactically; binding already resolved it as a
+                // type and erased it, so it carries no runtime effect.
+                let erased = self
+                    .operation_adjustments
+                    .borrow()
+                    .get(&expression.source_span())
+                    .is_some_and(|adjustment| {
+                        matches!(
+                            adjustment,
+                            crate::checked::SemanticAdjustment::EraseCompileTimeArgument
+                        )
+                    });
+                if erased {
+                    continue;
+                }
                 types.push(checked_argument_type(expression)?);
             }
         }
@@ -1314,6 +1361,11 @@ impl Checker {
     /// binding or argument site.
     fn value_coerces(&self, from: &Ty, to: &Ty) -> bool {
         if coerces(from, to) {
+            return true;
+        }
+        if let Ty::Param { bounds, .. } = to
+            && bounds.iter().all(|bound| self.conforms_to(from, bound))
+        {
             return true;
         }
         if matches!((from, to), (Ty::GenericFunc { .. }, Ty::GenericFunc { .. }))
@@ -1832,7 +1884,15 @@ impl Checker {
     /// Require `expr` to have type `Bool` (used for `if`/`while` conditions).
     fn expect_bool(&self, expr: &Expr, context: &str) -> Result<(), TypeError> {
         let ty = self.infer(expr)?;
-        if ty == Ty::Bool {
+        if ty == Ty::Bool
+            || matches!(
+                ty,
+                Ty::Simd {
+                    dtype: crate::ast::Dtype::Bool,
+                    width: 1
+                }
+            )
+        {
             Ok(())
         } else {
             Err(TypeError::TypeMismatch {

@@ -310,9 +310,14 @@ pub fn set_type(element: Ty) -> Ty {
     nominal_type(SET_TYPE_NAME, vec![element])
 }
 
+/// `Set[T, H]` with an explicit hasher argument.
+pub fn set_type_with(element: Ty, hasher: Ty) -> Ty {
+    nominal_type(SET_TYPE_NAME, vec![element, hasher])
+}
+
 pub fn set_element(ty: &Ty) -> Option<&Ty> {
     let arguments = nominal_type_arguments(ty, SET_TYPE_NAME)?;
-    let [element] = arguments.as_slice() else {
+    let ([element] | [element, _]) = arguments.as_slice() else {
         return None;
     };
     Some(*element)
@@ -338,9 +343,14 @@ pub fn dict_type(key: Ty, value: Ty) -> Ty {
     nominal_type(DICT_TYPE_NAME, vec![key, value])
 }
 
+/// `Dict[K, V, H]` with an explicit hasher argument.
+pub fn dict_type_with(key: Ty, value: Ty, hasher: Ty) -> Ty {
+    nominal_type(DICT_TYPE_NAME, vec![key, value, hasher])
+}
+
 pub fn dict_elements(ty: &Ty) -> Option<(&Ty, &Ty)> {
     let arguments = nominal_type_arguments(ty, DICT_TYPE_NAME)?;
-    let [key, value] = arguments.as_slice() else {
+    let ([key, value] | [key, value, _]) = arguments.as_slice() else {
         return None;
     };
     Some((*key, *value))
@@ -458,6 +468,17 @@ pub fn contains_infer(ty: &Ty) -> bool {
 
 /// A declared compile-time parameter of a generic `struct`/`def`, classified
 /// from `[name: X]` by whether `X` is a trait or a type.
+/// Whether a type parameter's bound admits nullary construction (`H()`):
+/// such parameters are reified at runtime as the bound struct's name so an
+/// erased body can construct them.
+pub fn constructible_type_parameter(declaration: &ParamDecl) -> bool {
+    matches!(
+        declaration,
+        ParamDecl::Type { bounds, .. }
+            if bounds.iter().any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable"))
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamDecl {
     /// A type parameter `T: Trait & ...`.

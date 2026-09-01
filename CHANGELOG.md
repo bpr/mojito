@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Current Mojo's hasher-based `Hashable` and `std.hashlib`: `Hashable`'s
+  requirement is `__hash__(self, mut hasher: Some[Hasher])` (or
+  `__hash__[H: Hasher](self, mut hasher: H)`) with a reflective field default
+  synthesized at elaboration; `Hasher` is `__init__`/`_update_with_bytes`/
+  `_update_with_simd`/`update`/`finish(var self) -> UInt64`; the prelude
+  `hash[T: Hashable, //, HasherType: Hasher = default_hasher](x) -> UInt64`
+  is stdlib code, and `std.hashlib` ships `AHasher` (`default_hasher`) and
+  `Fnv1a` (`default_comp_time_hasher`) whose values match the audited head.
+  `Dict`/`Set` gain `H: Hasher = default_hasher` (entries cache their
+  `UInt64` hash), `String`/`StringSpan` conform through the hasher, and
+  scalar leaves reach the hasher through one normalized `UInt64`
+  (`-0.0` folded). Supporting compiler features: SIMD bitwise/shift
+  operators and `SIMD[DType.bool, 1]` conditions, zero-parameter `comptime`
+  type aliases, `H()` construction of a `Hasher`/`Defaultable`-bounded type
+  parameter (`MirInstr::ConstructTypeParam`, reified at runtime), `Some[…]`
+  arguments on concrete receivers, and `std.bit.rotate_bits_left`.
 - Ref-field residue lifts: a ref-field view returned through a plain
   read-convention *parameter* (free function or method argument) now executes.
   A borrowing-view call (`BorrowViewResult`) retains its place arguments as
@@ -136,6 +152,33 @@ to evolve under the `0.x` compatibility rules.
   `escapes storage` family as the owned-place precedent. Parameter origin
   clauses additionally accept upstream's qualified `Self.o` binder spelling
   (previously return-clause-only).
+
+### Removed
+
+- The fork hashing surface: `std.hashing` (`IncrementalHasher`,
+  `bucket_index`) and its flat `hashing` facade, the value-returning
+  `__hash__(self) -> UInt` shape (now a `Hashable` conformance error), the
+  checker/VM `hash` builtin, the runtime FNV intrinsic, and pliron's inline
+  string/identity hashes.
+- The Mojito-only `HashDict[K, V]` and `HashSet[T]` collections are retired:
+  upstream ships only `Dict`/`Set`, so the fork is burned down. `Dict`
+  absorbs HashDict's hash-bucketed layout (dense insertion-ordered entries,
+  nested-list bucket index, doubling at load factor one) behind its
+  unchanged API, and `Dict`/`Set` now carry upstream's `Hashable`
+  key/element bound (KeyElement); differential reject fixtures pin the
+  bound on both compilers. `std.hashing.bucket_index` stays as Dict's
+  engine.
+
+- The bundled `layout` package (`Layout`, `IntTuple`,
+  `LayoutTensor[dtype: DType, layout: Layout]`) is deleted. Upstream moved
+  the layout library out of the Mojo standard library to the MAX kernels
+  tree (`max/kernels/src/layout/` at the audited head), so under the
+  match-or-subset rule it is no longer Mojito surface. The DType and
+  frozen-struct value-parameter machinery it exercised is shared language
+  infrastructure (SIMD, generics) and stays, with its fixtures rewritten
+  onto neutral structs (`comptime_frozen_struct.mojo`,
+  `struct_value_param_frozen.mojo`). `std.memory.Layout[T]` — the
+  allocation descriptor — is unrelated and unchanged.
 
 ### Fixed
 
@@ -440,28 +483,6 @@ to evolve under the `0.x` compatibility rules.
   checks in the default lane (`tests/native_abi_test.rs`) and target-only
   LLVM cross checks in the pliron lane (target-data agreement, declaration
   snapshots, a clang data-layout pin, and `llvm-nm` symbol inspection).
-
-### Removed
-
-- The Mojito-only `HashDict[K, V]` and `HashSet[T]` collections are retired:
-  upstream ships only `Dict`/`Set`, so the fork is burned down. `Dict`
-  absorbs HashDict's hash-bucketed layout (dense insertion-ordered entries,
-  nested-list bucket index, doubling at load factor one) behind its
-  unchanged API, and `Dict`/`Set` now carry upstream's `Hashable`
-  key/element bound (KeyElement); differential reject fixtures pin the
-  bound on both compilers. `std.hashing.bucket_index` stays as Dict's
-  engine.
-
-- The bundled `layout` package (`Layout`, `IntTuple`,
-  `LayoutTensor[dtype: DType, layout: Layout]`) is deleted. Upstream moved
-  the layout library out of the Mojo standard library to the MAX kernels
-  tree (`max/kernels/src/layout/` at the audited head), so under the
-  match-or-subset rule it is no longer Mojito surface. The DType and
-  frozen-struct value-parameter machinery it exercised is shared language
-  infrastructure (SIMD, generics) and stays, with its fixtures rewritten
-  onto neutral structs (`comptime_frozen_struct.mojo`,
-  `struct_value_param_frozen.mojo`). `std.memory.Layout[T]` — the
-  allocation descriptor — is unrelated and unchanged.
 
 ### Fixed
 

@@ -79,15 +79,16 @@ only from their authoritative `std` modules.
   element references declared at `_get_owned_interior["element"]` granularity,
   resolved to the source's mutability at each loop site. Mapping mutation
   during iteration is lazily rejected; view iterators snapshot at the call.
-- `std/collections/set.mojo` — a generic, list-backed `Set[T]` for `Hashable & Equatable &
-  Copyable & Movable` elements (upstream's KeyElement bound; the dense list
-  preserves insertion order). It supports `add`, membership through `in`/`__contains__`, `len`, and
+- `std/collections/set.mojo` — a generic, list-backed `Set[T, H: Hasher = default_hasher]` for `Hashable & Equatable &
+  Copyable & Movable` elements (upstream's KeyElement bound and hasher
+  parameter; the dense list preserves insertion order and never hashes). It supports `add`, membership through `in`/`__contains__`, `len`, and
   borrowed reference-yielding iteration through the backing list's borrowed
   `_ListIter`. It conforms to
   `Iterable`.
 - `std/collections/dict.mojo` — a generic, hash-backed, insertion-ordered
-  `Dict[K: Hashable & Equatable & Copyable & Movable, V]`: dense entries
-  preserve order while `List[List[Int]]` buckets index them, doubling when
+  `Dict[K: Hashable & Equatable & Copyable & Movable, V, H: Hasher = default_hasher]`: dense entries
+  (each caching its `UInt64` hash under `H`) preserve order while
+  `List[List[Int]]` buckets index them by the hash's low bits, doubling when
   the load factor reaches one. It supports subscripts, overloaded `get`,
   membership, key iteration, self-iterable non-indexable `keys`/`values`/`items`
   borrowing views, lazily draining `take_items`, public
@@ -100,9 +101,18 @@ only from their authoritative `std` modules.
   code: type predicates, CTFE-computed constants, value parameters, and associated
   compile-time facts. It includes `first_or[C: Iterable]`, which consumes
   `C.Element` through an opaque iterable bound.
-- `std/hashing.mojo` — a tiny hash helper: `bucket_index[K: Hashable](key, bucket_count)`
-  maps a key into `[0, bucket_count)` via its `__hash__` (`-> UInt`). Built-in
-  scalar keys hash intrinsically; the hash is deterministic (no per-run seed).
+- `std/hashlib/` — current Mojo's hashing package: `hash.mojo` is the
+  `Hashable` home and defines `hash[T: Hashable, //, HasherType: Hasher =
+  default_hasher](x) -> UInt64`; `hasher.mojo` is the `Hasher` home and
+  defines `default_hasher` (`AHasher`) and `default_comp_time_hasher`
+  (`Fnv1a`); `_ahash.mojo` and `_fnv1a.mojo` port the two algorithms (a
+  32-bit-limb folded multiply stands in for the 128-bit product; the
+  rotation is spelled inline). `Hashable` and `Hasher` are compiler-known
+  traits; the compiler feeds every scalar leaf as one normalized `UInt64`
+  (`_update_with_simd`) and a string's bytes as a `Span[Byte, _]`
+  (`_update_with_bytes`). Values match the audited head.
+- `std/bit.mojo` — `rotate_bits_left[shift: Int](x: UInt64)`, the `std.bit`
+  subset (a `UInt64` instance of upstream's SIMD-generic helper).
 - `std/math.mojo` — self-hosted numeric rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`,
   each generic over its Mojo trait bound (`Floorable`/`Ceilable`/`Truncable`/`CeilDivable`).
   Unlike `abs`/`round`/`divmod` (Mojo prelude builtins, available bare), these mirror

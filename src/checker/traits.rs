@@ -1277,10 +1277,46 @@ impl Checker {
                 });
                 let finishes = info.methods.get("finish").is_some_and(|methods| {
                     methods.iter().any(|method| {
-                        method.params.is_empty() && method.ret == Ty::UInt
+                        method.params.is_empty()
+                            && method.self_convention == Some(ArgConvention::Var)
+                            && method.ret
+                                == Ty::Simd {
+                                    dtype: crate::ast::Dtype::UInt64,
+                                    width: 1,
+                                }
                     })
                 });
-                initializes && updates && finishes
+                let simd_updates = info.methods.get("_update_with_simd").is_some_and(|methods| {
+                    methods.iter().any(|method| {
+                        method.self_convention == Some(ArgConvention::Mut)
+                            && method.params
+                                == [Ty::Simd {
+                                    dtype: crate::ast::Dtype::UInt64,
+                                    width: 1,
+                                }]
+                            && method.ret == Ty::None
+                    })
+                });
+                let byte_updates = info.methods.get("_update_with_bytes").is_some_and(|methods| {
+                    methods.iter().any(|method| {
+                        method.self_convention == Some(ArgConvention::Mut)
+                            && method.params.len() == 1
+                            && method.ret == Ty::None
+                    })
+                });
+                initializes && updates && simd_updates && byte_updates && finishes
+            }),
+            "Hashable" => self.structs.get(name).is_some_and(|info| {
+                info.methods.get("__hash__").is_some_and(|methods| {
+                    methods.iter().any(|method| {
+                        method.has_self
+                            && method.self_convention.is_none()
+                            && method.params.len() == 1
+                            && method.conventions == [Some(ArgConvention::Mut)]
+                            && matches!(&method.params[0], Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
+                            && method.ret == Ty::None
+                    })
+                })
             }),
             "Writable" => self.structs.get(name).is_some_and(|info| {
                 ["write_to", "write_repr_to"].into_iter().all(|name| {
@@ -1852,6 +1888,50 @@ impl Checker {
                 })
         };
         match tr {
+            "Hashable" => {
+                let hashes = info.methods.get("__hash__");
+                if !info
+                    .conforms
+                    .iter()
+                    .any(|conformance| conformance == "Hashable")
+                {
+                    Some(format!("'{name}' does not declare Hashable conformance"))
+                } else if hashes.is_some_and(|methods| {
+                    methods
+                        .iter()
+                        .any(|method| method.params.is_empty() && method.ret == Ty::UInt)
+                }) {
+                    Some(
+                        "'__hash__(self) -> UInt' is not the Hashable protocol; spell \
+                         'def __hash__(self, mut hasher: Some[Hasher])' (or \
+                         '[H: Hasher](self, mut hasher: H)') and feed the hasher with \
+                         'hasher.update(...)'"
+                            .to_string(),
+                    )
+                } else if hashes.is_none() {
+                    field_failure(&|field_ty| self.is_hashable(field_ty))
+                } else {
+                    Some(
+                        "missing required operation '__hash__(self, mut hasher: Some[Hasher]) -> None'"
+                            .to_string(),
+                    )
+                }
+            }
+            "Hasher" => {
+                let has = |method: &str| info.methods.contains_key(method);
+                ["__init__", "_update_with_bytes", "_update_with_simd", "update", "finish"]
+                    .into_iter()
+                    .find(|method| !has(method))
+                    .map(|method| format!("missing required Hasher member '{method}'"))
+                    .or_else(|| {
+                        Some(
+                            "a Hasher member has the wrong shape (expected '_update_with_simd(mut self, UInt64)', \
+                             '_update_with_bytes(mut self, Span[Byte, _])', 'update(mut self, Some[Hashable])', \
+                             and 'finish(var self) -> UInt64')"
+                                .to_string(),
+                        )
+                    })
+            }
             "Copyable" => field_failure(&|field_ty| self.is_copyable(field_ty)),
             "ImplicitlyCopyable" => {
                 field_failure(&|field_ty| self.is_implicitly_copyable(field_ty))
@@ -2179,9 +2259,7 @@ impl Checker {
             Ty::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.is_hashable(alternative)),
-            Ty::Struct(name, _) => self.structs.get(name).is_some_and(|s| {
-                s.conforms.iter().any(|c| c == "Hashable") || s.methods.contains_key("__hash__")
-            }),
+            Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Hashable"),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Hashable"),
             _ => builtin_hashable_ty(ty),
         }
@@ -2306,11 +2384,55 @@ impl Checker {
         argc: usize,
     ) -> Vec<MethodSig> {
         let mut methods = Vec::new();
-        // The built-in `Hashable` trait contributes `__hash__(self) -> UInt`
-        // (roadmap milestone 6). A user trait cannot shadow a built-in name, so this is
-        // unambiguous.
-        if method == "__hash__" && argc == 0 && bounds.iter().any(|b| b == "Hashable") {
-            methods.push(MethodSig::intrinsic(vec![], Ty::UInt));
+        if method == "__hash__" && argc == 1 && bounds.iter().any(|b| b == "Hashable") {
+            let mut signature = MethodSig::intrinsic(
+                vec![Ty::Param {
+                    name: "Some[Hasher]".to_string(),
+                    bounds: vec!["Hasher".to_string()],
+                    callable_bound: None,
+                }],
+                Ty::None,
+            );
+            signature.conventions[0] = Some(ArgConvention::Mut);
+            methods.push(signature);
+        }
+        if bounds.iter().any(|bound| bound == "Hasher") {
+            let signature = match (method, argc) {
+                ("update", 1) => Some((
+                    Ty::Param {
+                        name: "Some[Hashable]".to_string(),
+                        bounds: vec!["Hashable".to_string()],
+                        callable_bound: None,
+                    },
+                    Ty::None,
+                    Some(ArgConvention::Mut),
+                )),
+                ("_update_with_simd", 1) => Some((
+                    Ty::Simd {
+                        dtype: crate::ast::Dtype::UInt64,
+                        width: 1,
+                    },
+                    Ty::None,
+                    Some(ArgConvention::Mut),
+                )),
+                _ => None,
+            };
+            if let Some((param, ret, convention)) = signature {
+                let mut signature = MethodSig::intrinsic(vec![param], ret);
+                signature.self_convention = convention;
+                methods.push(signature);
+            }
+            if method == "finish" && argc == 0 {
+                let mut signature = MethodSig::intrinsic(
+                    vec![],
+                    Ty::Simd {
+                        dtype: crate::ast::Dtype::UInt64,
+                        width: 1,
+                    },
+                );
+                signature.self_convention = Some(ArgConvention::Var);
+                methods.push(signature);
+            }
         }
         // Current Mojo's `Copyable` trait carries a non-overridable default
         // `copy(self) -> Self`; elaboration synthesizes the concrete method on

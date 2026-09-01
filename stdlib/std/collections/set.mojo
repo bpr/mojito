@@ -1,4 +1,5 @@
 from std.collections.list import List, _ListOwnedIter
+from std.hashlib import Hasher, default_hasher
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 from std.memory import unsafe_alloc
 from std.optional import Optional
@@ -30,7 +31,9 @@ struct _SetIter[
         self.index += 1
         return self.src[r]
 
-struct Set[T: Hashable & Equatable & Copyable & Movable](
+struct Set[
+    T: Hashable & Equatable & Copyable & Movable, H: Hasher = default_hasher
+](
     Copyable,
     Deinitable where conforms_to(T, Deinitable),
     Equatable,
@@ -62,7 +65,7 @@ struct Set[T: Hashable & Equatable & Copyable & Movable](
         self.items = copy.items.copy()
 
     def copy(self) -> Self:
-        return Set[Self.T](copy: self)
+        return Set[Self.T, Self.H](copy: self)
 
     def __init__(out self, *, deinit move: Self):
         self.items = move.items^
@@ -160,7 +163,7 @@ struct Set[T: Hashable & Equatable & Copyable & Movable](
     def intersection(self, other: Self) -> Self where conforms_to(
         Self.T, Deinitable
     ):
-        var result = Set[Self.T]()
+        var result = Set[Self.T, Self.H]()
         var i = 0
         while i < len(self.items):
             if other.contains(self.items._get_copy(i)):
@@ -171,7 +174,7 @@ struct Set[T: Hashable & Equatable & Copyable & Movable](
     def difference(self, other: Self) -> Self where conforms_to(
         Self.T, Deinitable
     ):
-        var result = Set[Self.T]()
+        var result = Set[Self.T, Self.H]()
         var i = 0
         while i < len(self.items):
             if not other.contains(self.items._get_copy(i)):

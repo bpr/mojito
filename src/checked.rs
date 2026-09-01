@@ -303,6 +303,10 @@ pub struct InteriorInvalidation {
 #[non_exhaustive]
 pub enum SemanticAdjustment {
     ResolveCallable(String),
+    /// Construct the concrete runtime type bound to a checked type parameter.
+    ConstructTypeParam {
+        param: String,
+    },
     /// Complete selected method/subscript contract.  `ResolveCallable` remains
     /// as a compatibility projection while downstream consumers migrate; this
     /// record is authoritative whenever both are present.

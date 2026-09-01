@@ -419,6 +419,7 @@ pub(crate) fn elaborate_with_requests(
     def_requests: &[DefSpecializationRequest],
 ) -> Result<Vec<Stmt>, ComptimeError> {
     synthesize_copyable_copy(&mut program);
+    synthesize_hashable_hash(&mut program);
     let conformance =
         crate::checker::ConformanceOracle::from_program(&program).map_err(|error| {
             ComptimeError::NotComptime(format!(
@@ -572,6 +573,96 @@ fn synthesize_copyable_copy(program: &mut [Stmt]) {
             ret: Some(Type::SelfType),
             where_clauses,
             body: vec![mk(StmtKind::Return(Some(result)), span)],
+        });
+    }
+}
+
+/// Materialize Hashable's reflective field default as ordinary source AST.
+/// Explicit implementations win; conditional conformances carry the same
+/// availability predicate onto the synthesized method.
+fn synthesize_hashable_hash(program: &mut [Stmt]) {
+    for statement in program {
+        let span = statement.span;
+        let StmtKind::Struct {
+            conforms,
+            conformance_conditions,
+            fields,
+            methods,
+            ..
+        } = &mut statement.kind
+        else {
+            continue;
+        };
+        if !conforms.iter().any(|conformance| conformance == "Hashable")
+            || methods.iter().any(|method| method.name == "__hash__")
+        {
+            continue;
+        }
+        let hasher = Expr::new(ExprKind::Identifier("hasher".to_string()), span);
+        let body = if fields.is_empty() {
+            vec![mk(StmtKind::Pass, span)]
+        } else {
+            fields
+                .iter()
+                .map(|field| {
+                    let value = Expr::new(
+                        ExprKind::Member {
+                            object: Box::new(Expr::new(
+                                ExprKind::Identifier("self".to_string()),
+                                span,
+                            )),
+                            field: field.name.clone(),
+                        },
+                        span,
+                    );
+                    mk(
+                        StmtKind::Expr(Expr::new(
+                            ExprKind::MethodCall {
+                                object: Box::new(hasher.clone()),
+                                method: "update".to_string(),
+                                args: vec![value],
+                                kwargs: Vec::new(),
+                            },
+                            span,
+                        )),
+                        span,
+                    )
+                })
+                .collect()
+        };
+        let where_clauses = conformance_conditions
+            .iter()
+            .find(|(trait_name, _)| trait_name == "Hashable")
+            .map(|(_, condition)| vec![condition.clone()])
+            .unwrap_or_default();
+        methods.push(crate::ast::Method {
+            name: "__hash__".to_string(),
+            type_params: Vec::new(),
+            has_self: true,
+            self_convention: None,
+            self_origin: None,
+            decorators: Vec::new(),
+            params: vec![crate::ast::FnParam {
+                name: "hasher".to_string(),
+                ty: Type::Named(
+                    "Some".to_string(),
+                    vec![ParamArg::Type(Type::Named(
+                        "Hasher".to_string(),
+                        Vec::new(),
+                    ))],
+                ),
+                default: None,
+                kind: crate::ast::ParamKind::Regular,
+                convention: Some(crate::ast::ArgConvention::Mut),
+                origin: None,
+            }],
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            raises_type: None,
+            ret: None,
+            where_clauses,
+            body,
         });
     }
 }

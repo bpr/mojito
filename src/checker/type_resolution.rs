@@ -374,6 +374,23 @@ impl Checker {
                     let alias = alias.clone();
                     return self.resolve_comptime_alias(name, &alias, args);
                 }
+                // Relative package re-exports may retain only the sibling
+                // module tail in a qualified comptime-alias reference. Resolve
+                // that spelling when it selects one unique registered alias.
+                if name.starts_with("__module$") {
+                    let leaf = name.rsplit('$').next().unwrap_or(name);
+                    let mut matches = self
+                        .comptime_aliases
+                        .iter()
+                        .filter(|(candidate, _)| candidate.rsplit('$').next() == Some(leaf));
+                    if let Some((candidate, alias)) = matches.next()
+                        && matches.next().is_none()
+                    {
+                        let candidate = candidate.clone();
+                        let alias = alias.clone();
+                        return self.resolve_comptime_alias(&candidate, &alias, args);
+                    }
+                }
                 if let Some(info) = self.structs.get(name) {
                     let decls = info.decls.clone();
                     let source_params = info.source_params.clone();
@@ -1617,33 +1634,94 @@ impl Checker {
 
     pub(super) fn set_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
         if args.is_empty() {
-            return Ok(set_type(Ty::Infer));
+            return Ok(self.nominal_set(Ty::Infer));
         }
-        if args.len() != 1 {
-            return Err(TypeError::WrongTypeArgCount {
+        match args {
+            [element] => Ok(self.nominal_set(self.collection_type_argument("Set", element)?)),
+            [element, hasher] => Ok(crate::types::set_type_with(
+                self.collection_type_argument("Set", element)?,
+                self.hasher_type_argument("Set", hasher)?,
+            )),
+            _ => Err(TypeError::WrongTypeArgCount {
                 name: "Set".to_string(),
-                expected: 1,
+                expected: 2,
                 got: args.len(),
-            });
+            }),
         }
-        Ok(set_type(self.collection_type_argument("Set", &args[0])?))
     }
 
     pub(super) fn dict_type(&self, args: &[crate::ast::ParamArg]) -> Result<Ty, TypeError> {
         if args.is_empty() {
-            return Ok(dict_type(Ty::Infer, Ty::Infer));
+            return Ok(self.nominal_dict(Ty::Infer, Ty::Infer));
         }
-        if args.len() != 2 {
-            return Err(TypeError::WrongTypeArgCount {
+        match args {
+            [key, value] => Ok(self.nominal_dict(
+                self.collection_type_argument("Dict", key)?,
+                self.collection_type_argument("Dict", value)?,
+            )),
+            [key, value, hasher] => Ok(crate::types::dict_type_with(
+                self.collection_type_argument("Dict", key)?,
+                self.collection_type_argument("Dict", value)?,
+                self.hasher_type_argument("Dict", hasher)?,
+            )),
+            _ => Err(TypeError::WrongTypeArgCount {
                 name: "Dict".to_string(),
-                expected: 2,
+                expected: 3,
                 got: args.len(),
+            }),
+        }
+    }
+
+    /// `Set[T]` with the hasher argument filled from the linked declaration's
+    /// default (`H: Hasher = default_hasher`); a seam program without the
+    /// stdlib keeps the element-only spelling.
+    pub(super) fn nominal_set(&self, element: Ty) -> Ty {
+        match self.default_hasher_argument(crate::types::SET_TYPE_NAME) {
+            Some(hasher) => crate::types::set_type_with(element, hasher),
+            None => set_type(element),
+        }
+    }
+
+    /// `Dict[K, V]` with the hasher argument filled from the linked
+    /// declaration's default; see [`Self::nominal_set`].
+    pub(super) fn nominal_dict(&self, key: Ty, value: Ty) -> Ty {
+        match self.default_hasher_argument(crate::types::DICT_TYPE_NAME) {
+            Some(hasher) => crate::types::dict_type_with(key, value, hasher),
+            None => dict_type(key, value),
+        }
+    }
+
+    /// The declared default of a hash collection's trailing `H: Hasher`
+    /// parameter, when the collection is linked with one.
+    fn default_hasher_argument(&self, collection: &str) -> Option<Ty> {
+        let info = self.structs.get(collection)?;
+        match info.decls.last()? {
+            ParamDecl::Type {
+                bounds,
+                default: Some(default),
+                ..
+            } if bounds.iter().any(|bound| bound == "Hasher") => Some((**default).clone()),
+            _ => None,
+        }
+    }
+
+    /// Resolve an explicit hasher type argument of a hash collection; it
+    /// must name a `Hasher` conformer.
+    fn hasher_type_argument(
+        &self,
+        collection: &str,
+        argument: &crate::ast::ParamArg,
+    ) -> Result<Ty, TypeError> {
+        let hasher = self.collection_type_argument(collection, argument)?;
+        if !self.conforms_to(&hasher, "Hasher") {
+            return Err(TypeError::TraitNotSatisfied {
+                param: "H".to_string(),
+                ty: hasher.to_string(),
+                trait_name: "Hasher".to_string(),
+                reason: self.trait_failure_reason(&hasher, "Hasher"),
             });
         }
-        Ok(dict_type(
-            self.collection_type_argument("Dict", &args[0])?,
-            self.collection_type_argument("Dict", &args[1])?,
-        ))
+        Ok(hasher)
     }
 
     /// Resolve current Mojo's `Pointer[T, origin]` (also spelled through the

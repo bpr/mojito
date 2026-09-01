@@ -522,11 +522,17 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
         "MutUnsafeAnyOrigin",
         "ImmUnsafeAnyOrigin",
     ];
+    const HASHABLE: &[&str] = &["Hashable"];
+    const HASHER: &[&str] = &["Hasher"];
     let normalized = canon.to_string_lossy().replace('\\', "/");
     if normalized.ends_with("std/traits.mojo") {
         Some(TRAITS)
     } else if normalized.ends_with("std/origin.mojo") {
         Some(ORIGIN)
+    } else if normalized.ends_with("std/hashlib/hash.mojo") {
+        Some(HASHABLE)
+    } else if normalized.ends_with("std/hashlib/hasher.mojo") {
+        Some(HASHER)
     } else {
         None
     }
@@ -1270,6 +1276,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "Codepoint",
     "TString",
     "alloc",
+    "hash",
 ];
 
 fn bundled_path(relative: &str) -> Option<PathBuf> {

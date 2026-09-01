@@ -77,6 +77,10 @@ assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	saniti
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
 assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
+assets/ok/hashable_hasher_protocol.mojo	main	exe-differential	sanitized
+assets/ok/hasher_user_conformer.mojo	main	exe-differential	sanitized
+assets/ok/hashlib_explicit_hasher_containers.mojo	main	exe-differential	sanitized
+assets/ok/hashlib_values.mojo	main	exe-differential	sanitized
 assets/ok/hello_world.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized

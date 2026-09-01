@@ -311,6 +311,7 @@ pub fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::KeepAlive { .. } => "lifetime.keep_alive",
         MirInstr::Const { .. } => "const",
         MirInstr::SizeOf { .. } => "layout.size_of",
+        MirInstr::ConstructTypeParam { .. } => "type.construct",
         MirInstr::MaterializeLiteral { .. } => "literal.materialize",
         MirInstr::UseVar { .. } => "var.use",
         MirInstr::MovePlace { .. } => "place.move",
