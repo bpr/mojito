@@ -6,7 +6,7 @@
 # fallback cannot separate.
 
 
-struct Box[T: Copyable & Movable]:
+struct Box[T: Copyable & Movable & Deinitable]:
     var item: Self.T
 
     def __init__(out self, var item: Self.T):

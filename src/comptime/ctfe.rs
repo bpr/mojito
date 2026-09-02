@@ -135,65 +135,7 @@ impl<'a> Elab<'a> {
         }
         let mut vm = VmBackend::new();
         let declarations = self.vm_ctfe_declaration_closure(needed);
-        let mut program = self
-            .program
-            .iter()
-            // The checked boundary needs the declaration environment, not just
-            // the transitively executed bodies. Retain all declarations so trait
-            // bounds, struct types, overloads, and helper calls resolve exactly;
-            // the VM still executes only the requested function.
-            .filter(|stmt| match &stmt.kind {
-                // Only the semantic free-callee graph crosses this checked
-                // boundary. Linked `$` spelling is neither a dependency nor a
-                // specialization test.
-                //
-                // The nominal `std.range` defs return the DType-value-param
-                // range-family structs, whose templates cannot cross this
-                // boundary (they are monomorphizer inputs, excluded below)
-                // and whose specializations do not exist yet during
-                // elaboration. Dropping the defs routes a CTFE `range(...)`
-                // call through the checker's focused Int intrinsic and the
-                // VM's own compile-time range materialization instead.
-                StmtKind::Def { name, .. } => {
-                    declarations.contains(name)
-                        && !stmt.module.as_deref().is_some_and(|module| {
-                            std::path::Path::new(module).ends_with("std/range.mojo")
-                        })
-                }
-                // A variadic struct template is a monomorphizer input and cannot
-                // cross the ordinary checked boundary. Concrete CTFE uses have
-                // already been specialized; an unused public `Tuple[*Ts]`
-                // template must not invalidate an otherwise scalar subprogram.
-                StmtKind::Struct { .. } => !self.is_specializable(stmt),
-                StmtKind::Trait { .. } => true,
-                // Module-scope literal constants are part of the declaration
-                // environment elaboration would otherwise fold into the
-                // retained bodies (a hasher body names its multiplier). Type
-                // aliases have no runtime statement form; they are folded
-                // into the retained declarations below.
-                StmtKind::Comptime {
-                    type_params, value, ..
-                } => {
-                    type_params.is_empty()
-                        && matches!(
-                            value.kind,
-                            ExprKind::Int(_)
-                                | ExprKind::Float(_)
-                                | ExprKind::Bool(_)
-                                | ExprKind::Str(_)
-                        )
-                }
-                _ => false,
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let type_aliases = self.vm_ctfe_type_aliases();
-        if !type_aliases.is_empty() {
-            let subs = |alias: &str| type_aliases.get(alias).cloned();
-            for statement in &mut program {
-                *statement = super::rewrite::rewrite_stmt_cloned(statement, &subs, true);
-            }
-        }
+        let mut program = self.vm_ctfe_subprogram(&declarations);
         self.rewrite_vm_ctfe_program(&mut program, name, locals)?;
         if program.is_empty() {
             return Err(ComptimeError::NotComptime(format!(
@@ -314,17 +256,7 @@ impl<'a> Elab<'a> {
         );
         let mut vm = VmBackend::new();
         let declarations = self.vm_ctfe_declaration_closure(&needed);
-        let mut program = self
-            .program
-            .iter()
-            .filter(|stmt| match &stmt.kind {
-                StmtKind::Def { name, .. } => declarations.contains(name),
-                StmtKind::Struct { .. } => !self.is_specializable(stmt),
-                StmtKind::Trait { .. } => true,
-                _ => false,
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut program = self.vm_ctfe_subprogram(&declarations);
         program.push(entry);
         let (value, remaining_fuel) = vm
             .run_function_value(
@@ -894,6 +826,71 @@ impl<'a> Elab<'a> {
 }
 
 impl Elab<'_> {
+    /// The declaration environment of a VM-CTFE subprogram. The checked
+    /// boundary needs declarations, not just the transitively executed
+    /// bodies: retain the free-callee closure plus every checkable struct,
+    /// trait, and literal constant so trait bounds, struct types, overloads,
+    /// and helper calls resolve exactly, then fold module-scope type aliases
+    /// into the retained statements. The VM still executes only the entry.
+    fn vm_ctfe_subprogram(&self, declarations: &HashSet<String>) -> Vec<Stmt> {
+        let mut program = self
+            .program
+            .iter()
+            .filter(|stmt| match &stmt.kind {
+                // Only the semantic free-callee graph crosses this checked
+                // boundary. Linked `$` spelling is neither a dependency nor a
+                // specialization test.
+                //
+                // The nominal `std.range` defs return the DType-value-param
+                // range-family structs, whose templates cannot cross this
+                // boundary (they are monomorphizer inputs, excluded below)
+                // and whose specializations do not exist yet during
+                // elaboration. Dropping the defs routes a CTFE `range(...)`
+                // call through the checker's focused Int intrinsic and the
+                // VM's own compile-time range materialization instead.
+                StmtKind::Def { name, .. } => {
+                    declarations.contains(name)
+                        && !stmt.module.as_deref().is_some_and(|module| {
+                            std::path::Path::new(module).ends_with("std/range.mojo")
+                        })
+                }
+                // A variadic struct template is a monomorphizer input and cannot
+                // cross the ordinary checked boundary. Concrete CTFE uses have
+                // already been specialized; an unused public `Tuple[*Ts]`
+                // template must not invalidate an otherwise scalar subprogram.
+                StmtKind::Struct { .. } => !self.is_specializable(stmt),
+                StmtKind::Trait { .. } => true,
+                // Module-scope literal constants are part of the declaration
+                // environment elaboration would otherwise fold into the
+                // retained bodies (a hasher body names its multiplier). Type
+                // aliases have no runtime statement form; they are folded
+                // into the retained declarations below.
+                StmtKind::Comptime {
+                    type_params, value, ..
+                } => {
+                    type_params.is_empty()
+                        && matches!(
+                            value.kind,
+                            ExprKind::Int(_)
+                                | ExprKind::Float(_)
+                                | ExprKind::Bool(_)
+                                | ExprKind::Str(_)
+                        )
+                }
+                _ => false,
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let type_aliases = self.vm_ctfe_type_aliases();
+        if !type_aliases.is_empty() {
+            let subs = |alias: &str| type_aliases.get(alias).cloned();
+            for statement in &mut program {
+                *statement = super::rewrite::rewrite_stmt_cloned(statement, &subs, true);
+            }
+        }
+        program
+    }
+
     /// The module-scope type aliases (`comptime default_hasher = AHasher`)
     /// elaboration folds into every use before the ordinary checker runs.
     /// The VM-CTFE subprogram is checked from the linked source, so the same

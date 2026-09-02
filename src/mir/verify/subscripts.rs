@@ -501,9 +501,21 @@ pub(super) fn verify_param_arguments(
         }
         occupied[index] = true;
         match (&declarations[index], argument.value) {
-            (crate::types::ParamDecl::Type { name, .. }, Some(_)) => errors.push(format!(
-                "{prefix}: type parameter '{name}' unexpectedly carries a runtime register"
-            )),
+            // A supplied type argument reifies as a string register naming
+            // the bound struct, feeding the VM's `ConstructTypeParam`
+            // dispatch on constructible slots (other slots ignore it). Any
+            // other register kind on a type slot is a lowering error.
+            (crate::types::ParamDecl::Type { name, .. }, Some(register)) => {
+                if !matches!(
+                    function.reg_types.get(&register.0),
+                    None | Some(Ty::StringLiteral)
+                ) {
+                    errors.push(format!(
+                        "{prefix}: type parameter '{name}' unexpectedly carries a non-reified \
+                         runtime register"
+                    ));
+                }
+            }
             (crate::types::ParamDecl::Value { name, .. }, None) => errors.push(format!(
                 "{prefix}: value parameter '{name}' has no runtime register"
             )),

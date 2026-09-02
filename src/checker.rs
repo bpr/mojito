@@ -936,6 +936,7 @@ impl Checker {
                         matches!(
                             adjustment,
                             crate::checked::SemanticAdjustment::EraseCompileTimeArgument
+                                | crate::checked::SemanticAdjustment::ReifyTypeArgument { .. }
                         )
                     });
                 if erased {

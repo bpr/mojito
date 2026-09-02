@@ -1502,12 +1502,27 @@ impl Checker {
                     ) => {
                         // The parser encodes a bare type-argument identifier
                         // as a value expression; once it resolves as a type,
-                        // MIR must not emit it as a runtime value register.
+                        // MIR must not emit it as a runtime value register. A
+                        // runtime-constructible parameter's binding instead
+                        // reifies as the bound struct's name, so an abstract
+                        // (non-specialized) callee's `ConstructTypeParam`
+                        // constructs the supplied type, not the default.
                         self.operation_adjustments.borrow_mut().insert(
                             expression.source_span(),
                             crate::checked::SemanticAdjustment::EraseCompileTimeArgument,
                         );
-                        self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?
+                        let ty = self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?;
+                        if let Ty::Struct(struct_name, _) = &ty
+                            && crate::types::constructible_type_parameter(decl)
+                        {
+                            self.operation_adjustments.borrow_mut().insert(
+                                expression.source_span(),
+                                crate::checked::SemanticAdjustment::ReifyTypeArgument {
+                                    name: struct_name.clone(),
+                                },
+                            );
+                        }
+                        ty
                     }
                     ParamArg::Value(_) => {
                         return Err(TypeError::TypeMismatch {

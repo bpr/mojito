@@ -355,7 +355,7 @@ impl Flatten<'_> {
                         .and_then(|variable| self.var_types.get(&(variable as VarId)))
                         .cloned()
                         .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-                    let param_arg_regs = self.param_arg_regs(param_args);
+                    let param_arg_regs = self.param_arg_regs(param_args, &span(e));
                     let param_decls = callable_ty
                         .as_ref()
                         .map(generic_callable_param_decls)
@@ -426,7 +426,7 @@ impl Flatten<'_> {
                 // evaluated before ordinary call arguments: a
                 // **value** parameter is a comptime `Int` expression flattened to a
                 // register; a **type** parameter is erased (`None`).
-                let param_arg_regs = self.param_arg_regs(param_args);
+                let param_arg_regs = self.param_arg_regs(param_args, &span(e));
                 // Retain only checker-selected `mut`/`ref` caller places. A
                 // syntactically simple copied argument remains eligible for
                 // ASAP destruction after its value has been evaluated.
@@ -758,7 +758,7 @@ impl Flatten<'_> {
                     // do not synthesize a bound-method value (which would make
                     // its receiver/environment escapable).
                     let (recv, recv_place) = self.lower_call_receiver(object);
-                    let param_arg_regs = self.param_arg_regs(param_args);
+                    let param_arg_regs = self.param_arg_regs(param_args, &span(e));
                     let saved_anchor_permission = self.allow_argument_anchors;
                     self.allow_argument_anchors = self.call_anchors_arguments(e);
                     let (argument_regs, arg_places) = self.lower_call_arguments(args, false);
@@ -819,7 +819,7 @@ impl Flatten<'_> {
                     let place = MirPlace::root(slot, callable_ty.clone());
                     callee_place = place.is_typed().then_some(place);
                 }
-                let param_arg_regs = self.param_arg_regs(param_args);
+                let param_arg_regs = self.param_arg_regs(param_args, &span(e));
                 let resolved = self.resolved_callable(e);
                 let raises = self.checked_raises(e);
                 self.emit_indirect_invocation(

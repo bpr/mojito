@@ -1454,26 +1454,37 @@ impl Flatten<'_> {
         args.iter().map(|a| self.expr(a)).collect()
     }
 
-    fn param_arg_reg(&mut self, argument: &ParamArg) -> Option<Reg> {
+    fn param_arg_reg(&mut self, argument: &ParamArg, site: &SourceSpan) -> Option<Reg> {
         let expression = match argument {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => match &**value {
                 ParamArg::Value(expression) => expression,
-                ParamArg::Type(_) => return None,
+                ParamArg::Type(t) => return self.reified_type_argument(t, site),
                 ParamArg::Named { .. } => unreachable!(),
             },
-            ParamArg::Type(_) => return None,
+            ParamArg::Type(t) => return self.reified_type_argument(t, site),
         };
-        if self
-            .checked_adjustments(expression)
-            .iter()
-            .any(|adjustment| {
-                matches!(
-                    adjustment,
-                    crate::SemanticAdjustment::EraseCompileTimeArgument
-                )
-            })
-        {
+        let adjustments = self.checked_adjustments(expression);
+        // A constructible type parameter's supplied binding reifies as the
+        // bound struct's name; the VM's `ConstructTypeParam` dispatch reads
+        // it from the parameter's frame slot.
+        if let Some(name) = adjustments.iter().find_map(|adjustment| match adjustment {
+            crate::SemanticAdjustment::ReifyTypeArgument { name } => Some(name.clone()),
+            _ => None,
+        }) {
+            let dest = self.fresh_typed(span(expression), None, Ty::StringLiteral);
+            self.emit(MirInstr::Const {
+                dest,
+                k: Const::Str(name),
+            });
+            return Some(dest);
+        }
+        if adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                crate::SemanticAdjustment::EraseCompileTimeArgument
+            )
+        }) {
             None
         } else {
             Some(self.expr(expression))
@@ -1505,7 +1516,27 @@ impl Flatten<'_> {
             })
     }
 
-    fn param_arg_regs(&mut self, arguments: &[ParamArg]) -> Vec<MirParamArg> {
+    /// A concrete nominal type argument may bind a runtime-constructible type
+    /// parameter (`hash[Fnv1a](x)`, alias-folded to type spelling): reify it
+    /// as the named struct so an abstract callee's `ConstructTypeParam`
+    /// dispatch constructs the supplied type rather than the declaration
+    /// default. The VM ignores the reified value in every other erased slot.
+    fn reified_type_argument(&mut self, ty: &crate::ast::Type, site: &SourceSpan) -> Option<Reg> {
+        let crate::ast::Type::Named(name, args) = ty else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+        let dest = self.fresh_typed(site.clone(), None, Ty::StringLiteral);
+        self.emit(MirInstr::Const {
+            dest,
+            k: Const::Str(name.clone()),
+        });
+        Some(dest)
+    }
+
+    fn param_arg_regs(&mut self, arguments: &[ParamArg], site: &SourceSpan) -> Vec<MirParamArg> {
         let mut registers = Vec::new();
         for argument in arguments {
             if !self.param_arg_is_erased(argument) {
@@ -1515,7 +1546,7 @@ impl Flatten<'_> {
                 };
                 registers.push(MirParamArg {
                     name,
-                    value: self.param_arg_reg(argument),
+                    value: self.param_arg_reg(argument, site),
                 });
             }
         }

@@ -131,6 +131,33 @@ impl VmBackend {
                         "vm: constructing type parameter '{param}' requires a reified type argument"
                     )));
                 };
+                // A reified argument can pass through an enclosing abstract
+                // binder's spelling rather than a concrete struct name; fall
+                // back to the declaration default there, as an unsupplied
+                // slot would.
+                let type_name = if prog.structs.contains_key(&type_name) {
+                    type_name
+                } else {
+                    prog.sigs
+                        .get(&prog.mir.functions[function].0)
+                        .and_then(|signature| {
+                            signature
+                                .param_decls
+                                .iter()
+                                .find(|declaration| declaration.name() == param)
+                        })
+                        .and_then(|declaration| match declaration {
+                            crate::types::ParamDecl::Type {
+                                default: Some(default),
+                                ..
+                            } => match default.as_ref() {
+                                Ty::Struct(struct_name, _) => Some(struct_name.clone()),
+                                _ => None,
+                            },
+                            _ => None,
+                        })
+                        .unwrap_or(type_name)
+                };
                 regs[dest.0 as usize] =
                     self.call_named(prog, &type_name, Vec::new(), Vec::new(), &[])?;
             }

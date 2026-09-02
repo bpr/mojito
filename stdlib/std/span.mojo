@@ -13,13 +13,41 @@ from std.iterable import Iterable, Iterator, StopIteration
 from std.os import abort
 
 
+from std.string import String
+
+# The audited head's strict-slice abort messages with the index and valid
+# range interpolated, mirroring `std.string.check_slice_bounds`. This module
+# loads before `std.string` (which imports `Span`), so it can reference the
+# `String` type but cannot call `std.string`'s defs; the helper is local.
+struct _BoundsMessage(Movable, Writer):
+    var text: String
+
+    def __init__(out self):
+        self.text = String("")
+
+    def write_string(mut self, chunk: String):
+        self.text = self.text + chunk
+
+
 def _check_span_slice_bounds(start: Int, end: Int, length: Int):
     if start < 0 or start > length:
-        abort("slice start index is out of bounds")
+        var message = _BoundsMessage()
+        message.write(
+            "slice start index ", start, " is out of bounds, valid range is 0 to ", length
+        )
+        abort(message.text)
     if end < 0 or end > length:
-        abort("slice end index is out of bounds")
+        var message = _BoundsMessage()
+        message.write(
+            "slice end index ", end, " is out of bounds, valid range is 0 to ", length
+        )
+        abort(message.text)
     if start > end:
-        abort("slice start index is greater than slice end index")
+        var message = _BoundsMessage()
+        message.write(
+            "slice start index ", start, " is greater than slice end index ", end
+        )
+        abort(message.text)
 
 
 struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](

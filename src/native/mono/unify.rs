@@ -8,7 +8,12 @@ use super::*;
 /// (`update(value: Some[Hashable])` hashes an `Int` and a `Pair` through
 /// different leaves). Its binding joins the instance identity; the builtin
 /// string binding — the `Some[Writer]` display accumulator and the
-/// declaration-order default — keeps the unsuffixed spelling.
+/// declaration-order default — keeps the unsuffixed spelling. An owner's
+/// parameter (`Self.T` in a method signature) is likewise absent from the
+/// method's `param_decls`, but when an instance-named owner
+/// (`bindings.self_instance`) already carries the binding it must not join
+/// again — only a `Some[..]` sugar binding does. A static path with no
+/// owner instance keeps every resolved binding in the identity.
 pub(super) fn push_sugar_arguments(
     declaration: &MirFunctionDeclaration,
     bindings: &Bindings,
@@ -16,6 +21,7 @@ pub(super) fn push_sugar_arguments(
 ) {
     for ty in &declaration.param_types {
         if let Ty::Param { name, .. } = peel_refs(ty)
+            && (name.starts_with("Some[") || bindings.self_instance.is_none())
             && !declaration
                 .param_decls
                 .iter()

@@ -2169,7 +2169,7 @@ pub(crate) fn builtin_abs(v: Value) -> Result<Value, RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::literal::{FloatLiteral, IntLiteral};
+    use crate::literal::FloatLiteral;
 
     /// Int/UInt overflow is defined two's-complement wrapping (the native ABI
     /// contract, docs/native-abi.md) — including the single overflowing

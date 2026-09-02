@@ -185,7 +185,7 @@ fn self_hosted_list_moves_and_destroys_raw_storage_exactly() {
 #[test]
 fn discarded_set_elements_and_replaced_dictionary_values_are_destroyed() {
     let output = vm(
-        "struct Token(Equatable, Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n    def __hash__(self, mut hasher: Some[Hasher]):\n        hasher.update(self.id)\n    def __eq__(self, other: Self) -> Bool:\n        return self.id == other.id\n\ndef main():\n    var dictionary = {0: Token(1), 0: Token(2)}\n    print(\"built dict\", len(dictionary))\n    var values = {Token(3), Token(3)}\n    print(\"built set\", len(values))\n",
+        "struct Token(Hashable, Equatable, Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n    def __hash__(self, mut hasher: Some[Hasher]):\n        hasher.update(self.id)\n    def __eq__(self, other: Self) -> Bool:\n        return self.id == other.id\n\ndef main():\n    var dictionary = {0: Token(1), 0: Token(2)}\n    print(\"built dict\", len(dictionary))\n    var values = {Token(3), Token(3)}\n    print(\"built set\", len(values))\n",
     );
     assert!(output.contains("built dict 1\n"), "{output}");
     assert!(output.contains("built set 1\n"), "{output}");

@@ -867,6 +867,10 @@ struct CtFn<'a> {
 /// associated facts such as `T.size`.
 struct CtStruct<'a> {
     decls: Vec<ParamDecl>,
+    /// The source parameters `decls` classified from — the fallback for
+    /// declared defaults classification cannot resolve without evaluation
+    /// (`H: Hasher = default_hasher` names a module alias).
+    source_params: &'a [TypeParam],
     associated: &'a [StructComptime],
     fields: &'a [crate::ast::Param],
     /// Whether instances construct fieldwise (`@fieldwise_init`, or a
@@ -1284,6 +1288,7 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
                 name.clone(),
                 CtStruct {
                     decls: classify_ct_params(type_params),
+                    source_params: type_params,
                     associated,
                     fields,
                     fieldwise: *fieldwise_init || mirrored_init,

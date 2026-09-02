@@ -591,7 +591,33 @@ impl<'a> Elab<'a> {
                 "'{name}' is not a compile-time type"
             )));
         };
-        if args.len() != info.decls.len() {
+        // Omitted trailing arguments fill from declared type-parameter
+        // defaults (`Set[Int]` is `Set[Int, default_hasher]`), matching the
+        // def-template default fill in `resolve_spec_args_for`. A default
+        // classification could not resolve (a module alias) evaluates from
+        // its source expression instead.
+        let source_defaults: Vec<Option<&Expr>> = info
+            .source_params
+            .iter()
+            .filter(|tp| classify_ct_param(tp, info.source_params).is_some())
+            .map(|tp| tp.default.as_ref())
+            .collect();
+        let defaults_fill = args.len() < info.decls.len()
+            && info
+                .decls
+                .iter()
+                .zip(&source_defaults)
+                .skip(args.len())
+                .all(|(decl, source_default)| {
+                    matches!(
+                        decl,
+                        ParamDecl::Type {
+                            default: Some(_),
+                            ..
+                        }
+                    ) || (matches!(decl, ParamDecl::Type { .. }) && source_default.is_some())
+                });
+        if args.len() > info.decls.len() || (args.len() < info.decls.len() && !defaults_fill) {
             return Err(ComptimeError::Arity(format!(
                 "type '{name}' expects {} compile-time argument(s), got {}",
                 info.decls.len(),
@@ -601,8 +627,29 @@ impl<'a> Elab<'a> {
         let tyargs = info
             .decls
             .iter()
-            .zip(args)
-            .map(|(decl, arg)| {
+            .enumerate()
+            .map(|(index, decl)| {
+                let Some(arg) = args.get(index) else {
+                    if let ParamDecl::Type {
+                        default: Some(default),
+                        ..
+                    } = decl
+                    {
+                        return Ok(TyArg::Ty((**default).clone()));
+                    }
+                    let default = source_defaults
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .expect("defaults_fill established trailing type defaults");
+                    return match self.eval(default, scope)? {
+                        CtValue::Type(ty) => Ok(TyArg::Ty(*ty)),
+                        other => Err(ComptimeError::NotComptime(format!(
+                            "default for type parameter '{}' of '{name}' is not a type: {other}",
+                            decl.name()
+                        ))),
+                    };
+                };
                 let value = self.resolve_ct_arg(decl, arg, scope)?;
                 match (decl, value) {
                     (ParamDecl::Type { .. }, CtValue::Type(ty)) => Ok(TyArg::Ty(*ty)),

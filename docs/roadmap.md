@@ -132,6 +132,12 @@ recreates this section's checkbox with the fresh divergence list.
   - native `Variant.__hash__` dispatch (the VM feeds the discriminant then
     the active alternative; pliron reports the leaf unsupported) and CTFE
     `hash`/`default_comp_time_hasher` for compile-time dictionaries
+  - propagating a constructible type argument through an enclosing abstract
+    binder on the raw seam (a generic body forwarding its own `H` into
+    `hash[H](x)` without specialization): the reified argument spells the
+    binder's name, and the VM's `ConstructTypeParam` falls back to the
+    declaration default instead of the caller's binding (the compiled
+    discovery path specializes the clone and is unaffected)
 
 - [ ] **Parity-unblocking infrastructure** — compiler-side features that
   each unblock several recorded parity gaps at once. These are where

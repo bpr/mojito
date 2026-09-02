@@ -1861,6 +1861,26 @@ impl Checker {
                             positional += 1;
                         }
                         if positional >= decls.len() {
+                            // Surplus positional arguments where infer-only
+                            // slots were skipped mean the caller spelled an
+                            // infer-only binder explicitly.
+                            if let Some(hidden) = decls.iter().find(|decl| {
+                                matches!(
+                                    decl,
+                                    ParamDecl::Type {
+                                        infer_only: true,
+                                        ..
+                                    } | ParamDecl::Value {
+                                        infer_only: true,
+                                        ..
+                                    }
+                                )
+                            }) {
+                                return Err(TypeError::Unsupported(format!(
+                                    "infer-only parameter '{}' cannot be supplied explicitly",
+                                    hidden.name().trim_start_matches('*')
+                                )));
+                            }
                             return Err(TypeError::WrongTypeArgCount {
                                 name: name.to_string(),
                                 expected: decls.len(),

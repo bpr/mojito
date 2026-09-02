@@ -210,7 +210,7 @@ impl Flatten<'_> {
             .callable_ty
             .clone()
             .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-        let param_arg_regs = self.param_arg_regs(param_args);
+        let param_arg_regs = self.param_arg_regs(param_args, &span(e));
         let param_decls = callable_ty
             .as_ref()
             .map(generic_callable_param_decls)

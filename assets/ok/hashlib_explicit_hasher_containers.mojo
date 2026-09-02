@@ -1,5 +1,6 @@
 # `Dict[K, V, H]` and `Set[T, H]` take an explicit `Hasher` parameter and hash
 # their keys with it; `hash[H](x)` selects a hasher the same way.
+from std.collections.set import Set
 from std.hashlib import default_comp_time_hasher
 
 def main() raises:
