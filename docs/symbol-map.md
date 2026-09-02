@@ -64,7 +64,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `impl Checker` blocks in the `checker/` submodules below; `checker.rs` retains
   the struct, constructors, `check_program` glue, the shared prelude types
   (`StructInfo`, `MethodSig`, overload helpers, `ConformanceOracle`), and the
-  call-effect/coercion helpers. Submodules extract by responsibility, not by
+  call-effect/coercion helpers; the `ConformanceOracle` impl lives in
+  `checker/conformance.rs`, and the free overload/signature and trait-support
+  helpers live in `checker/overload_support.rs` and
+  `checker/traits_support.rs`. Submodules extract by responsibility, not by
   line count; a moved method is `pub(super)` so siblings and the parent can call
   it.
 - `checker/statements.rs` owns `check_program`, block scoping, and the
@@ -94,7 +97,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   view-typed slice results), pointer offset/write checks (the single-place
   rule and its multi-element interior-domain lift), the positional
   String-slice rejection hint, and member access.
-- `checker/method_calls.rs` owns method-call inference, overload scoring
+- `checker/method_calls.rs` (split across
+  `method_calls/{mc_infer,selection,statics,builtin_types}.rs`) owns
+  method-call inference, overload scoring
   (score ties on receiver-overloaded methods break by the call's explicit `^`
   transfer), and static/pointer/uninit-storage/List/Tuple method inference
   (`infer_struct_static_method` dispatches statics on parameterized structs —
@@ -122,7 +127,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ast::canonical_destructor_name`, applied by the parser at the semantic
   positions and by the checker where trait names are extracted from
   expressions.
-- `checker/origins.rs` owns origin/reference-handle derivation, interior and
+- `checker/origins.rs` (split across `origins/{actuals,binders,transfer,
+  solve,sig,subst,interior,ref_params}.rs`) owns origin/reference-handle
+  derivation, interior and
   aggregate-origin tracking, capture-origin collection, origin-signature
   lowering (including the shared `SigOrigin` instantiation helpers
   `instantiate_sig_origin`/`instantiate_bound_origin` used by the iteration
@@ -177,7 +184,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `INSTRUCTION_MNEMONICS`/`TYPE_SPELLINGS` inventories the native capability
   matrix pins against); `mir/text/write.rs` owns structural
   serialization and ordering.
-- `mir/text/parse.rs` owns UTF-8 validation, the recoverable spanned schema
+- `mir/text/parse.rs` (split across
+  `parse/{reader,decls,instrs,operands,types,origins,prims}.rs`) owns UTF-8
+  validation, the recoverable spanned schema
   parser, full-schema typed reconstruction (every instruction, terminator,
   type, origin, and declaration-metadata form, including nested try-region
   block namespaces), structural diagnostics, and artifact source mapping. It
@@ -189,7 +198,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   call contracts, adjustments, capture accesses).
 - `mir/calls.rs` owns call-site lowering (arguments, keywords, receiver,
   reference results, checked-call boundaries, interior-origin invalidations).
-- `mir/lower_expr.rs` owns expression lowering (the `expr_unconverted`
+- `mir/lower_expr.rs` (split across `lower_expr/{entry,ctrl,expr,calls}.rs`)
+  owns expression lowering (the `expr_unconverted`
   dispatcher, collections/comprehensions, nested closures, the
   field-invocation indirect-call branch), and installs merged caller-side
   `EstablishLoans` — domain-keyed for interior-precise destinations — for
@@ -225,7 +235,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `runtime_declarations` (the contract table's LLVM rendering), `JitValue`,
   and the `TrapCategory` exit-code/VM-message contract (`OptLevel`/
   `EmitKind`/`NativeTarget` re-export from `native::target`). Its
-  submodules: `backend/pliron/lower.rs` (MIR-to-LLVM-dialect lowering —
+  submodules: `backend/pliron/lower.rs` (MIR-to-LLVM-dialect lowering,
+  itself split by instruction domain across the `backend/pliron/lower/`
+  submodules —
   scalar operators/conversions with keyword/default call binding via
   `call::match_call_slots`, trap guard blocks, the sanitized `MIN // -1`
   divisor, the `mjrt_pow` helper, aggregates/strings/allocation, Stage 4's
@@ -278,9 +290,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `backend/vm/places.rs` navigates projected runtime storage, including the
   `UninitPayload` projection into inline uninit storage (a final payload store
   initializes-or-overwrites raw; reads trap while uninitialized).
+- `backend/vm/values.rs` owns operator application, place stores,
+  construction, string materialization, cloning, and moves.
+- `backend/vm/adapters.rs` owns checked-result adapters and dunder-backed
+  index loads.
+- `backend/vm/invoke.rs` owns writeback/synchronous call machinery, argument
+  binding, kwargs collection, and method dispatch.
+- `backend/vm/dispatch.rs` owns named-call dispatch, drops, slice bounds, and
+  value formatting.
 - `comptime.rs` owns the `Elab` elaboration driver (`block`/`stmt`), type
   resolution, and the free-function/`Mono` support code; `Elab`'s remaining
-  methods are split across `impl<'a> Elab<'a>` blocks in the submodules below.
+  methods are split across `impl<'a> Elab<'a>` blocks in the submodules
+  below (`comptime/elab.rs` holds the root driver's own cluster), and the
+  root's helper clusters live in
+  `comptime/{synth,ctfe_calls,packs,params,simd_width}.rs`.
 - `comptime/eval.rs` owns compile-time expression evaluation (the `eval`
   dispatcher, reflection methods, infix/iteration folding).
 - `comptime/ctfe.rs` owns VM-driven compile-time function evaluation and the
@@ -301,7 +324,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 | Argument binding | `call.rs` | Checker/VM adapters and call-parity tests. |
 | Overload identity | `symbol.rs` | Checker selection, MIR declarations, symbol/rejection tests. |
 | Type rules | `checker.rs` or focused checker child | `CheckedProgram`, negative checker tests. |
-| Ownership/destruction | `analysis/mod.rs` | MIR place/use forms, ownership and drop tests. |
+| Ownership/destruction | `analysis.rs` and its `analysis/` submodules | MIR place/use forms, ownership and drop tests. |
 | Runtime behavior | `backend/vm.rs` or `runtime/mod.rs` | VM tests and file fixtures. |
 | Pipeline ordering | `compiler.rs` | CLI, architecture doc, compiler tests. |
 | Support status | `docs/features.md` | Roadmap/todo only if future work changes. |

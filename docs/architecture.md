@@ -248,15 +248,21 @@ policy or data-model responsibilities to focused children:
   `statements`, `inference`, `indexing`, `method_calls`, `call_inference`,
   `type_resolution`, `traits`, `origins`, `scopes`, `constraints`, `operators`,
   `iteration`, plus the earlier `annotations`, `builtins`, `calls`,
-  `declarations`, `generics`, and `places`. See `docs/symbol-map.md` for the
-  per-file responsibility map.
+  `declarations`, `generics`, and `places`; `conformance`,
+  `overload_support`, and `traits_support` hold the extracted conformance
+  oracle and free helpers, and `method_calls`/`origins` are themselves
+  directory modules split by responsibility. See `docs/symbol-map.md` for
+  the per-file responsibility map.
 - `mir/mod.rs` lowers ordinary code; `mir/ir.rs` defines the MIR data model and
   `mir/nested.rs` owns capture analysis and nested-function lifting.
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
-  navigation and access.
+  navigation and access; further `impl VmBackend` clusters live in
+  `backend/vm/{values,adapters,invoke,dispatch}.rs`.
 - `comptime.rs` runs elaboration and specialization;
-  `comptime/rewrite.rs` owns AST substitution and value materialization.
+  `comptime/rewrite.rs` owns AST substitution and value materialization, and
+  the root's extracted clusters live in
+  `comptime/{elab,synth,ctfe_calls,packs,params,simd_width}.rs`.
 
 Child modules expose only the phase-internal operations their coordinator needs.
 The public entry points for each compiler phase remain in its root module.

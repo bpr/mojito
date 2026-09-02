@@ -175,6 +175,32 @@ recreates this section's checkbox with the fresh divergence list.
   make the release check rebuild, test, document, and reproduce conformance
   results using only the crates.io archive contents.
 
+### 5. Code Organization Follow-Ups *(any order — behavior-preserving)*
+
+The 2026-09 module split (see `docs/symbol-map.md`) eliminated every source
+file over 3,000 lines by moving `impl` clusters into directory submodules.
+What remains needs semantic extraction, not line moves:
+
+- [ ] **Split `expr_unconverted`** — `mir/lower_expr/expr.rs` (~2,090 lines) is
+  one match over `ExprKind`; extract cohesive arm groups into `Flatten`
+  methods so the dispatcher reads as a table.
+- [ ] **Split `infer_method_call`** — `checker/method_calls/mc_infer.rs`
+  (~1,530 lines) is a single method; extract receiver-family branches into
+  helpers alongside the existing `selection`/`statics`/`builtin_types`
+  siblings.
+- [ ] **Split `verify_instruction`** — `mir/verify/instr.rs` (~1,320 lines) is
+  one match over `MirInstr`; extract per-instruction-family check helpers.
+- [ ] **Shrink the 2 kloc outlier band** — largest remaining files, all
+  already responsibility-scoped, splittable further if a cohesive seam
+  appears while touching them: `checker/traits.rs` (2,629),
+  `mir/lower_stmt.rs` (2,595), `checker/inference.rs` (2,520),
+  `checker/statements.rs` (2,471), `ast.rs` (2,464), `mir.rs` (2,426),
+  `checker/type_resolution.rs` (2,395), `runtime.rs` (2,235), `checker.rs`
+  (2,232 — the `Checker` struct + retained constructors/coercion helpers),
+  `comptime/rewrite.rs` (2,179), `checker/declarations.rs` (2,118),
+  `mir/text/write.rs` (2,116), `backend/vm/exec.rs` (2,085). Do not split
+  below cohesion just to hit a size target.
+
 ## Task Lifecycle Policy
 
 `roadmap.md` is the only task list. Do not create a parallel todo file, and do
