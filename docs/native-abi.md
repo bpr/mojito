@@ -97,7 +97,9 @@ its own explicit support decision and testing infrastructure.
   --backend pliron` validates every manifest field against the resolved
   toolchain before issuing the same deterministic link line, so nobody
   reconstructs the clang command by hand. Objects contain the synthesized
-  C `main` wrapper.
+  C `main` wrapper, and the `compile` verb's `--emit ll`/`--emit bc`
+  artifacts include it too, so hand-linking them against the runtime
+  archive resolves `main` exactly as `--emit exe` does.
 
 JIT execution additionally requires `target == host`.
 

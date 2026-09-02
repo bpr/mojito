@@ -480,12 +480,19 @@ fn run_compile(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
     match emit {
         pliron::EmitKind::Plir => write_text(module.plir_text()),
         pliron::EmitKind::LlvmIr => {
+            // Include the synthesized C `main` wrapper so the emitted IR can
+            // be hand-linked against the runtime exactly like `--emit exe`
+            // (the README's manual `opt`/`clang` flow).
+            module.ensure_exe_wrapper().map_err(|e| e.to_string())?;
             let text = module.llvm_ir(opt).map_err(|e| e.to_string())?;
             write_text(&text)
         }
-        pliron::EmitKind::Bitcode => module
-            .write_bitcode(output_path(), opt, debug)
-            .map_err(|e| e.to_string()),
+        pliron::EmitKind::Bitcode => {
+            module.ensure_exe_wrapper().map_err(|e| e.to_string())?;
+            module
+                .write_bitcode(output_path(), opt, debug)
+                .map_err(|e| e.to_string())
+        }
         pliron::EmitKind::Object => module
             .write_object(output_path(), opt, debug)
             .map_err(|e| e.to_string()),

@@ -407,7 +407,13 @@ impl NativeModule {
             .map(|meta| meta.mangled.as_str())
     }
 
-    fn ensure_exe_wrapper(&mut self) -> Result<(), PlironError> {
+    /// Synthesize the executable's C `main` wrapper into the module (once;
+    /// later calls are no-ops). `write_object` and the executable writers do
+    /// this themselves; call it before `llvm_ir` or `write_bitcode` when the
+    /// emitted artifact will be linked by hand, so the textual IR or bitcode
+    /// resolves `main` exactly as `--emit exe` would. Requires a compiled
+    /// zero-argument, non-returning `main` entry.
+    pub fn ensure_exe_wrapper(&mut self) -> Result<(), PlironError> {
         if self.exe_wrapper_added {
             return Ok(());
         }

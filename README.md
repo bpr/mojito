@@ -92,20 +92,33 @@ cargo run -- emit-mir assets/ok/defines_main.mojo | cargo run -- exec -
 ## Native Binaries with Pliron and LLVM
 
 The experimental Pliron backend lowers Mojito's verified MIR through Pliron's
-LLVM dialect. To inspect the resulting LLVM IR, build with the backend feature
-and emit an `.ll` file:
+LLVM dialect. It currently requires Linux and LLVM 22. The recommended way to
+get a native executable is a single `--emit exe` call, which drives the pinned
+LLVM optimization and linking tools and links the Mojito runtime behind the
+scenes:
 
 ```sh
-cargo build --features backend-pliron
+cargo build --release -p mojito-runtime
+cargo run --release --features backend-pliron -- compile program.mojo \
+  --backend pliron --emit exe --native-opt release -o program
+./program
+```
+
+`--print-toolchain` reports the resolved `opt` and `clang` tools and the
+runtime archive.
+
+To inspect the intermediate LLVM IR instead, emit an `.ll` file:
+
+```sh
 cargo run --features backend-pliron -- compile program.mojo \
   --backend pliron --emit ll -o program.ll
 ```
 
-You can then run the same LLVM 22 optimization and linking machinery by hand.
-The final link must include Mojito's native runtime:
+The emitted IR includes the synthesized C `main` wrapper, so you can also run
+the same LLVM 22 optimization and linking machinery by hand — the final link
+must include Mojito's native runtime:
 
 ```sh
-cargo build --release -p mojito-runtime
 opt-22 -passes='default<O1>' program.ll -o program.bc
 clang-22 --target=x86_64-unknown-linux-gnu --no-default-config \
   program.bc target/release/libmojito_runtime.a \
@@ -116,19 +129,8 @@ clang-22 --target=x86_64-unknown-linux-gnu --no-default-config \
 Use the LLVM 22 executable names provided by your installation if they differ
 from `opt-22` and `clang-22`.
 
-The backend currently requires Linux and LLVM 22. It can also pass that IR
-through the pinned LLVM optimization and linking tools to produce a fast,
-self-contained native executable linked with the Mojito runtime:
-
-```sh
-cargo run --release --features backend-pliron -- compile program.mojo \
-  --backend pliron --emit exe --native-opt release -o program
-./program
-```
-
 Use `--emit bc` or `--emit obj` when an intermediate LLVM bitcode or object
-artifact is more useful. `--print-toolchain` reports the resolved `opt` and
-`clang` tools. Pliron supports only the native subset recorded in the
+artifact is more useful. Pliron supports only the native subset recorded in the
 [feature matrix](docs/features.md); unsupported programs fail with a diagnostic
 instead of falling back to the VM. The native ABI and toolchain contract are
 documented in [the native ABI guide](docs/native-abi.md).
