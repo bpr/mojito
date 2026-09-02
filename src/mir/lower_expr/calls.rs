@@ -29,7 +29,7 @@ impl Flatten<'_> {
             .map(generic_callable_param_decls)
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.indirect_call_anchors_arguments(e);
+        self.allow_argument_anchors = self.call_anchors_arguments(e);
         let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
         let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
         self.allow_argument_anchors = saved_anchor_permission;
@@ -216,7 +216,7 @@ impl Flatten<'_> {
             .map(generic_callable_param_decls)
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.indirect_call_anchors_arguments(e);
+        self.allow_argument_anchors = self.call_anchors_arguments(e);
         let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
         let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
         self.allow_argument_anchors = saved_anchor_permission;

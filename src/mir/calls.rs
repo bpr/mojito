@@ -28,12 +28,14 @@ impl Flatten<'_> {
             .any(|adjustment| matches!(adjustment, crate::SemanticAdjustment::BorrowViewResult))
     }
 
-    /// Whether a callable-value (indirect) call's argument list may anchor
-    /// loan-carrying temporaries — the same rule as a plain function call
-    /// (see `allow_argument_anchors`): a construction carries its arguments'
-    /// loans in its result, and a callee with recorded transfer effects
-    /// installs them at the destination, so neither anchors.
-    pub(super) fn indirect_call_anchors_arguments(&self, expression: &Expr) -> bool {
+    /// Whether a callable-value (indirect) or method call's argument list
+    /// may anchor loan-carrying temporaries — the same rule as a plain
+    /// function call (see `allow_argument_anchors`): a callee borrowing
+    /// through checker-selected `ref` arguments or recorded transfer effects
+    /// carries a temporary's loans through that channel already, so anchoring
+    /// there adds a conflicting duplicate borrow. (A plain call additionally
+    /// excludes constructions; a method or callable value is never one.)
+    pub(super) fn call_anchors_arguments(&self, expression: &Expr) -> bool {
         !(self
             .checked_adjustments(expression)
             .iter()

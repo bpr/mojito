@@ -1869,6 +1869,60 @@ fn nested_call_transfer_to_an_enclosing_parameter_defers_to_the_caller() {
 }
 
 #[test]
+fn method_call_temporary_view_argument_anchors_its_source_loan() {
+    // A loan-carrying temporary built inline as a METHOD argument anchors in
+    // a hidden `$arg_loan_r` slot exactly like a plain call's (this callee
+    // has no transfer effects or checker-selected `ref`-argument borrows to
+    // carry the loan), and the statement-end `KeepAlive` keeps the view's
+    // source alive through the call.
+    let source = "def main():\n    var a: List[Int] = [1, 2]\n    var b = List[Int]()\n    b.extend(Span(a))\n    print(b[1])\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile method-call temporary view argument");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let a = main
+        .var_names
+        .iter()
+        .position(|name| name == "a")
+        .expect("a slot") as u32;
+    let anchor = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$arg_loan"))
+        .expect("hidden argument anchor slot") as u32;
+    let instructions = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    assert!(
+        instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::EstablishLoans { reference, loans, .. }
+                if *reference == anchor && loans.iter().any(|loan| loan.place.root == a)
+        )),
+        "the anchor slot borrows the temporary view's source"
+    );
+    let call = instructions
+        .iter()
+        .position(|instruction| matches!(instruction, MirInstr::MethodCall { .. }))
+        .expect("extend lowers to MethodCall");
+    let keep_alive = instructions
+        .iter()
+        .position(
+            |instruction| matches!(instruction, MirInstr::KeepAlive { var } if *var == anchor),
+        )
+        .expect("the anchor flushes as a statement-end KeepAlive");
+    assert!(keep_alive > call, "the anchor outlives the method call");
+}
+
+#[test]
 fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
     use mojito::OriginSeg;
 

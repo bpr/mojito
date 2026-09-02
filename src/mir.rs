@@ -828,11 +828,12 @@ struct Flatten<'a> {
     /// consuming call — the temporary's upstream lifetime is the full
     /// statement.
     pending_argument_anchors: Vec<VarId>,
-    /// True only while lowering the arguments of a plain (non-construction)
-    /// function call — the one consumer that carries no other channel for a
-    /// temporary argument's loans. Constructions aggregate their arguments'
-    /// loans into the result, and method calls carry them through
-    /// receiver/transfer machinery; anchoring there adds a conflicting
+    /// True only while lowering the argument list of a call that carries no
+    /// other channel for a temporary argument's loans — a plain, method, or
+    /// callable-value call without checker-selected `ref`-argument borrows or
+    /// recorded transfer effects. Constructions aggregate their arguments'
+    /// loans into the result, and the excluded callees install them at their
+    /// borrow or transfer destinations; anchoring there adds a conflicting
     /// duplicate borrow.
     allow_argument_anchors: bool,
     /// Accumulated transferred loans per interior destination domain

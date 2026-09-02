@@ -361,7 +361,7 @@ impl Flatten<'_> {
                         .map(generic_callable_param_decls)
                         .unwrap_or_default();
                     let saved_anchor_permission = self.allow_argument_anchors;
-                    self.allow_argument_anchors = self.indirect_call_anchors_arguments(e);
+                    self.allow_argument_anchors = self.call_anchors_arguments(e);
                     let (regs, arg_places) = self.lower_call_arguments(args, false);
                     let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
                     self.allow_argument_anchors = saved_anchor_permission;
@@ -430,26 +430,18 @@ impl Flatten<'_> {
                 // Retain only checker-selected `mut`/`ref` caller places. A
                 // syntactically simple copied argument remains eligible for
                 // ASAP destruction after its value has been evaluated.
-                // A plain function call is the one consumer with no other
-                // channel for a temporary argument's loans, so only here do
-                // nested loan-carrying temporaries anchor. A construction's
-                // aggregate result carries its arguments' loans forward
-                // instead (its binding — or its own anchor one call level up —
-                // installs them).
-                // Calls with recorded transfer effects install their
-                // temporary's loans at the transfer destination themselves.
+                // A call's argument list anchors nested loan-carrying
+                // temporaries unless another channel already carries their
+                // loans (see `call_anchors_arguments`). A construction's
+                // aggregate result additionally carries its arguments' loans
+                // forward instead (its binding — or its own anchor one call
+                // level up — installs them).
                 let view_result = self.borrows_view_result(e);
                 let saved_anchor_permission = self.allow_argument_anchors;
-                self.allow_argument_anchors =
-                    !(matches!(
-                        self.checked_ty(e),
-                        Some(Ty::Struct(constructed, _)) if constructed == *name
-                    ) || self.checked_adjustments(e).iter().any(|adjustment| {
-                        matches!(
-                            adjustment,
-                            crate::SemanticAdjustment::BorrowRefArguments { .. }
-                        )
-                    }) || self.call_transfers.contains_key(&e.source_span()));
+                self.allow_argument_anchors = !matches!(
+                    self.checked_ty(e),
+                    Some(Ty::Struct(constructed, _)) if constructed == *name
+                ) && self.call_anchors_arguments(e);
                 let (regs, arg_places) = self.lower_call_arguments(args, view_result);
                 self.allow_argument_anchors = saved_anchor_permission;
                 // A copy construction (`Name(copy=place)`) binds its single
@@ -767,7 +759,10 @@ impl Flatten<'_> {
                     // its receiver/environment escapable).
                     let (recv, recv_place) = self.lower_call_receiver(object);
                     let param_arg_regs = self.param_arg_regs(param_args);
+                    let saved_anchor_permission = self.allow_argument_anchors;
+                    self.allow_argument_anchors = self.call_anchors_arguments(e);
                     let (argument_regs, arg_places) = self.lower_call_arguments(args, false);
+                    self.allow_argument_anchors = saved_anchor_permission;
                     let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
                     let dest = self.fresh(span(e), None);
                     let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
@@ -1146,7 +1141,10 @@ impl Flatten<'_> {
                 if let ExprKind::Identifier(type_name) = &object.kind
                     && !self.vars.iter().any(|name| name == type_name)
                 {
+                    let saved_anchor_permission = self.allow_argument_anchors;
+                    self.allow_argument_anchors = self.call_anchors_arguments(e);
                     let (regs, arg_places) = self.lower_call_arguments(args, false);
+                    self.allow_argument_anchors = saved_anchor_permission;
                     let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
                     let d = self.fresh(span(e), None);
                     let target = self
@@ -1249,9 +1247,15 @@ impl Flatten<'_> {
                 let (recv, recv_place) = self.lower_call_receiver(receiver_expr);
                 // Retain checker-selected `mut`/`ref` ordinary-argument places,
                 // mirroring a free-function `Call` — and the shared-read places
-                // a borrowing-view result lends to.
+                // a borrowing-view result lends to. Loan-carrying temporary
+                // arguments anchor exactly as in a free call unless the
+                // callee's `ref`-argument borrows or transfer effects already
+                // carry their loans (see `call_anchors_arguments`).
                 let view_result = self.borrows_view_result(e);
+                let saved_anchor_permission = self.allow_argument_anchors;
+                self.allow_argument_anchors = self.call_anchors_arguments(e);
                 let (regs, arg_places) = self.lower_call_arguments(args, view_result);
+                self.allow_argument_anchors = saved_anchor_permission;
                 let (kw, kwarg_places) = self.lower_call_keywords(kwargs, view_result);
                 // A wrapped `.format(...)` keeps its own callee but types its
                 // register as the compile-time string the nominal-String
