@@ -497,7 +497,11 @@ least one member; fields and methods may interleave.
   parse as such. **Receiver conventions** `imm`/`mut`/`var`/`out`/`ref self` participate
   in checking and lowering, including lifecycle `out self` and origin-bearing reference
   receivers. A `@staticmethod` (no `self`) checks and executes through the ordinary
-  function call ABI. Unsupported receiver combinations are diagnosed by the checker.
+  function call ABI; on a parameterized struct it also dispatches through an
+  explicit `Type[Args].method(...)` receiver or a bare `Type.method(...)`
+  receiver with the struct's parameters inferred from the argument types (see
+  the parametric-static-receiver note under **Expressions**). Unsupported
+  receiver combinations are diagnosed by the checker.
 - Type and value **parameters** and trait **conformance** are supported (see
   **Parameterization** and `conformance`; value parameters take `Int`-family
   scalars, `StringLiteral`s, `DType`s, and frozen struct instances), but not
@@ -705,6 +709,14 @@ Notes:
   (Mojito lacks struct `comptime` associated values), parametric statics
   (`.make[4]()`), non-struct expected types (upstream resolves members on any
   expected type), generic expected types, and leading-dot in type positions.
+- **Parametric static receivers**: a compile-time application of a struct name
+  followed by a method call (`Dict[Int, String].fromkeys(...)`) is a static
+  call on the instantiated struct. There is no dedicated production — the
+  receiver parses as the `TypeApply` bracket-postfix fallback (or, for a
+  single non-builtin argument like `Box[String]`, as an ordinary subscript
+  that the checker reinterprets, since the parser cannot know `String` names
+  a type). The bare spelling `Dict.fromkeys(keys, 0)` infers the struct's
+  parameters from the call's argument types; parameter defaults fill in.
 - **A single comparison is an `Infix`; a chain of ≥ 2 (`a < b < c`, `0 <= i < n`) is a
   `Compare` node** — implemented as `(a < b) and (b < c)` with each operand evaluated
   **once**, left to right, short-circuiting (a false link stops the rest). Result `Bool`.

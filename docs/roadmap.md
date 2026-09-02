@@ -142,13 +142,6 @@ recreates this section's checkbox with the fresh divergence list.
   follow-ups are a **parallel track** (origin/ref-system
   refinements plus bug fixes, not coupled to the API-parity sequence) and
   are listed last with their own internal order.
-  - **Parametric statics** — static-method dispatch on parameterized
-    nominal types (`Dict[Int, Int].fromkeys(...)`); the checker's
-    TypeApply statics stop at the pointer family, and a bare `Dict`
-    identifier is not an expression binding. Fully independent, low
-    fan-out — do it last or opportunistically. Unlocks `Dict.fromkeys`
-    (already stdlib-expressible) and the parametric-statics gap recorded
-    by the contextual-member work.
   - **Temporary view arguments to method calls** — a borrowing view built
     inline as a *method* argument (`b.extend(Span(a))`) traps at run with
     `vm: use after Pointer deallocation`: the loan-carrying temporary's

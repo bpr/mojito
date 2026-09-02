@@ -235,6 +235,22 @@ struct Dict[
     def copy(self) -> Self:
         return Dict[Self.K, Self.V, Self.H](copy: self)
 
+    # Upstream's `fromkeys` is generic over `Iterable`/`IterableOwned` key
+    # sources; Mojito subsets it to the `List` key source, so upstream-valid
+    # calls like `Dict.fromkeys(keys, 0)` check against the same behavior.
+    @staticmethod
+    def fromkeys(
+        keys: List[Self.K], value: Self.V
+    ) -> Self where conforms_to(Self.K, Deinitable) and conforms_to(
+        Self.V, Deinitable
+    ):
+        var result = Dict[Self.K, Self.V, Self.H]()
+        var i = 0
+        while i < len(keys):
+            result[keys._get_copy(i)] = value.copy()
+            i += 1
+        return result^
+
     def __init__(out self, *, deinit move: Self):
         self.entries = move.entries^
         self.index = move.index^

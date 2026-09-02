@@ -2850,6 +2850,24 @@ fn infers_generic_static_and_instance_method_parameters() {
 }
 
 #[test]
+fn infers_parametric_struct_static_parameters() {
+    // Explicit TypeApply receiver and bare receiver (struct parameters
+    // inferred from the argument types) both dispatch a parametric struct's
+    // static; the receiver substitution resolves `Self` in the return type.
+    ok(
+        "struct Box[T: Copyable & Movable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a: Box[Int] = Box[Int].filled(7)\nvar b: Box[StringLiteral] = Box.filled(\"hi\")\n",
+    );
+    // A sole static candidate surfaces the receiver solver's own diagnostic
+    // instead of collapsing it into a generic no-overload failure.
+    assert!(matches!(
+        err(
+            "struct Box[T: Copyable & Movable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a = Box[Int, Int].filled(7)\n"
+        ),
+        TypeError::WrongTypeArgCount { .. }
+    ));
+}
+
+#[test]
 fn checks_generic_trait_method_signatures_in_their_parameter_scope() {
     ok(
         "trait Echoer:\n    def echo[T: Copyable](self, value: T) -> T:\n        ...\n\n@fieldwise_init\nstruct Echo(Echoer):\n    var marker: Int\n    def echo[T: Copyable](self, value: T) -> T:\n        return value.copy()\n\nvar echo = Echo(0)\nvar answer: Int = echo.echo(42)\n",

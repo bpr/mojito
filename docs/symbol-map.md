@@ -97,6 +97,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/method_calls.rs` owns method-call inference, overload scoring
   (score ties on receiver-overloaded methods break by the call's explicit `^`
   transfer), and static/pointer/uninit-storage/List/Tuple method inference
+  (`infer_struct_static_method` dispatches statics on parameterized structs —
+  explicit `TypeApply`/subscript-parsed receivers and bare receivers with
+  struct parameters inferred from argument types via `resolve_use_params`)
   (`infer_uninit_storage_method` types the compiler-private
   `__UninitStorage[T]` write/take/destroy crossings behind
   `MaybeUninit`).

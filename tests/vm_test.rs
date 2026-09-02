@@ -564,6 +564,19 @@ fn user_static_methods_use_the_shared_call_abi() {
 }
 
 #[test]
+fn parametric_static_methods_dispatch_on_both_spellings() {
+    // Explicit `Type[Args].static(...)` and bare `Type.static(...)` (struct
+    // parameters inferred from the argument types) share the ordinary call
+    // ABI; overloaded parametric statics run their checker-selected symbols.
+    assert_eq!(
+        parity(
+            "struct Box[T: Copyable & Movable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def of(var item: Self.T) -> Self:\n        return Box(item^)\n\n    @staticmethod\n    def of(var item: Self.T, extra: Int) -> Self:\n        return Box(item^)\n\ndef main():\n    var a = Box[Int].of(5)\n    print(a.item)\n    var b = Box.of(String(\"q\"), 3)\n    print(b.item)\n"
+        ),
+        "5\nq\n"
+    );
+}
+
+#[test]
 fn argument_markers_positional_only_keyword_only_and_variadic_tail() {
     let src = "def first(a: Int, b: Int, /) -> Int:\n    return a\n\ndef scale(a: Int, *, by: Int) -> Int:\n    return a * by\n\ndef total(*xs: Int, scale: Int) -> Int:\n    var s: Int = 0\n    for x in xs:\n        s = s + x\n    return s * scale\n\ndef main():\n    print(first(8, 9))\n    print(scale(6, by=7))\n    print(total(1, 2, 3, scale=10))\n";
     assert_eq!(parity(src), "8\n42\n60\n");

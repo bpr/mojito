@@ -173,6 +173,7 @@ assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin_return.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parametric_mut_iterator_read.mojo	main	exe-differential	sanitized
+assets/ok/parametric_static_methods.mojo	main	exe-differential	sanitized
 assets/ok/pliron_alloc_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/pliron_builtin_numeric_edges.mojo	main	exe-differential	sanitized
 assets/ok/pliron_callable_struct.mojo	main	exe-differential	sanitized

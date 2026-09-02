@@ -173,6 +173,7 @@ assets/ok/parameterized_assoc_self_origin.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/parameterized_assoc_self_origin_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_mut_iterator_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parametric_static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_alloc_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_builtin_numeric_edges.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_callable_struct.mojo	-	ineligible	no-scalar-entry-shape

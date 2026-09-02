@@ -941,7 +941,9 @@ impl Decoder {
             }),
             "type.construct" => Some(MirInstr::ConstructTypeParam {
                 dest: self.req(value, fields, "dest", Self::reg)?,
-                param: self.req(value, fields, "param", Self::string)?,
+                // The writer spells the parameter with `symbol` (a bare atom
+                // for identifier-safe names), so accept both spellings here.
+                param: self.req(value, fields, "param", Self::symbol)?,
             }),
             "literal.materialize" => Some(MirInstr::MaterializeLiteral {
                 dest: self.req(value, fields, "dest", Self::reg)?,

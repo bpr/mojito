@@ -2014,9 +2014,15 @@ impl Flatten<'_> {
                     self.emit_nested_closure_argument_keepalives(args, kwargs);
                     return d;
                 }
-                // A **static** method on a parameterized built-in type — the receiver
-                // is a type, not a value (`UnsafePointer[T].alloc(n)`). Lower to a
-                // builtin call `Type.method(args)`; the element type is erased.
+                // A **static** method on a parameterized type — the receiver is a
+                // type, not a value (`Dict[Int, Int].fromkeys(...)` or the pointer
+                // family's `UnsafePointer[T].alloc(n)`). Lower to a call on the
+                // checker-selected symbol (overloaded statics carry their exact
+                // spelling). The receiver's compile-time arguments are already
+                // resolved into that selection by the checker and erase here —
+                // a static's frame declares only the method's own parameters,
+                // so struct arguments must not occupy its `param_arg_regs`
+                // slots.
                 if let ExprKind::TypeApply { name, .. } = &object.kind {
                     let regs = self.args(args);
                     let kw: Vec<(String, Reg)> = kwargs
@@ -2024,10 +2030,46 @@ impl Flatten<'_> {
                         .map(|k| (k.name.clone(), self.expr(&k.value)))
                         .collect();
                     let d = self.fresh(span(e), None);
+                    let target = self
+                        .resolved_callable(e)
+                        .unwrap_or_else(|| format!("{name}.{method}"));
                     self.emit_call_invalidations(e, args, kwargs);
                     self.emit(MirInstr::Call {
                         dest: d,
-                        func: FuncRef::named(&format!("{name}.{method}")),
+                        func: FuncRef::named(&target),
+                        raises: self.checked_raises(e),
+                        args: regs,
+                        kwargs: kw,
+                        arg_places: vec![None; args.len()],
+                        kwarg_places: vec![None; kwargs.len()],
+                        capture_accesses: self.checked_call_capture_accesses(e),
+                        param_arg_regs: Vec::new(),
+                    });
+                    self.emit_nested_closure_argument_keepalives(args, kwargs);
+                    return d;
+                }
+                // The single-argument spelling of the same static receiver
+                // (`Box[String].filled(...)`) parses as a value subscript; the
+                // checker routed it as a static call, and a subscript base
+                // naming no local is likewise a type, never a place. The
+                // bracket content is a compile-time argument — do not lower it.
+                if let ExprKind::Index { object: base, .. } = &object.kind
+                    && let ExprKind::Identifier(type_name) = &base.kind
+                    && !self.vars.iter().any(|name| name == type_name)
+                {
+                    let regs = self.args(args);
+                    let kw: Vec<(String, Reg)> = kwargs
+                        .iter()
+                        .map(|k| (k.name.clone(), self.expr(&k.value)))
+                        .collect();
+                    let d = self.fresh(span(e), None);
+                    let target = self
+                        .resolved_callable(e)
+                        .unwrap_or_else(|| format!("{type_name}.{method}"));
+                    self.emit_call_invalidations(e, args, kwargs);
+                    self.emit(MirInstr::Call {
+                        dest: d,
+                        func: FuncRef::named(&target),
                         raises: self.checked_raises(e),
                         args: regs,
                         kwargs: kw,

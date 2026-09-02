@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Static-method dispatch on parameterized nominal types (parametric statics):
+  the explicit `Dict[Int, String].fromkeys(...)` receiver — whether it parses
+  as a `TypeApply` or, for a single non-builtin type argument, as a subscript
+  the checker reinterprets — and the bare `Dict.fromkeys(keys, 0)` receiver
+  with struct parameters inferred from the argument types via the constructor
+  binder. `Self` and `Self.K`-style signature references resolve to the
+  instantiated struct; overloads (including same-arity pairs) resolve through
+  the checker-selected symbols and execute on the VM and pliron backends.
+  `Dict.fromkeys` lands in the bundled stdlib (a `List` key source subsetting
+  upstream's `Iterable`/`IterableOwned` overloads) as the first parametric
+  static.
+
 - Current Mojo's hasher-based `Hashable` and `std.hashlib`: `Hashable`'s
   requirement is `__hash__(self, mut hasher: Some[Hasher])` (or
   `__hash__[H: Hasher](self, mut hasher: H)`) with a reflective field default
