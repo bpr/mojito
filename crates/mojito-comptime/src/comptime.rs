@@ -764,6 +764,32 @@ fn source_type_from_ty_with_origins(
                 .map(ParamArg::Type)
                 .collect(),
         ),
+        // A generated public-Tuple specialization retains its element types
+        // as semantic metadata behind an argument-less symbol. Spell it as the
+        // canonical `Tuple[...]` application, which the checker maps back onto
+        // the discovered specialization, instead of applying the retained
+        // arguments to the erased symbol.
+        Ty::Struct(name, _)
+            if name != mojito_types::types::TUPLE_TYPE_NAME
+                && let Some(elements) = mojito_types::types::tuple_elements(ty) =>
+        {
+            Type::Named(
+                mojito_types::types::TUPLE_TYPE_NAME.to_string(),
+                elements
+                    .into_iter()
+                    .map(|element| {
+                        source_type_from_ty_with_origins(
+                            element,
+                            origin_names,
+                            materialized_callables,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()?
+                    .into_iter()
+                    .map(ParamArg::Type)
+                    .collect(),
+            )
+        }
         Ty::Struct(name, arguments) => Type::Named(
             name.clone(),
             arguments

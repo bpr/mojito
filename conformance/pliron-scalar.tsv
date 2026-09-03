@@ -330,6 +330,7 @@ assets/ok/try_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_generic_interpolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_lazy.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_hashable_dict_key.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_predicate_comptime_if.mojo	-	ineligible	no-scalar-entry-shape

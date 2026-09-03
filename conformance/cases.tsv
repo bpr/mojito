@@ -240,3 +240,5 @@ hashlib-explicit-hashers	run	assets/ok/hashlib_explicit_hasher_containers.mojo
 hashable-user-struct	run	conformance/fixtures/hashable_user_struct.mojo
 parametric-statics	run	assets/ok/parametric_static_methods.mojo
 parametric-static-arity	reject	assets/type_error/parametric_static_arity.mojo
+tuple-hashable	run	assets/ok/tuple_hashable_dict_key.mojo
+tuple-unhashable-key	reject	assets/type_error/tuple_unhashable_element_key.mojo

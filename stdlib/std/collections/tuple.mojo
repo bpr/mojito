@@ -6,9 +6,11 @@ struct Tuple[*Ts: Movable](
     Comparable where conforms_to(Ts.values, Comparable) and conforms_to(Ts.values, Equatable),
     Copyable where conforms_to(Ts.values, Copyable),
     Equatable where conforms_to(Ts.values, Equatable),
+    Hashable where conforms_to(Ts.values, Hashable),
     ImplicitlyCopyable where conforms_to(Ts.values, ImplicitlyCopyable),
     Deinitable where conforms_to(Ts.values, Deinitable),
     Movable,
+    Sized,
     Writable where conforms_to(Ts.values, Writable),
 ):
     comptime element_types = Ts
@@ -82,9 +84,13 @@ struct Tuple[*Ts: Movable](
                 return False
         return True
 
-    def __contains__[T: Equatable & Copyable & Movable](
-        self, value: T
-    ) -> Bool:
+    def __hash__[H: Hasher](self, mut hasher: H) where conforms_to(
+        Ts.values, Hashable
+    ):
+        comptime for i in range(len(Ts)):
+            hasher.update(self.storage[i])
+
+    def __contains__[T: Equatable](self, value: T) -> Bool:
         comptime for i in range(len(Ts)):
             comptime if is_same_type[T, Ts[i]]():
                 if self.storage[i] == value:

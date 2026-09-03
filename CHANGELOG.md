@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Tuple` is `Hashable` when every element is (hasher-protocol `__hash__`
+  feeding the elements in order, matching upstream) and declares `Sized`;
+  tuples now serve as `Dict` keys and `Set` elements, `__contains__` takes
+  upstream's `[T: Equatable]` bound, and a public tuple satisfies
+  `Hashable`/`Equatable`/`Writable` generic bounds — the checker evaluates
+  those contracts structurally across the specialization staging seam (as it
+  already did for `Comparable`), and compile-time elaboration spells a tuple
+  specialization back as the canonical `Tuple[...]` when it re-checks a
+  generic body, so `hash(x)` with a tuple-bound `T` resolves
+  (`case:tuple-hashable`, `case:tuple-unhashable-key`).
 - Static-method dispatch on parameterized nominal types (parametric statics):
   the explicit `Dict[Int, String].fromkeys(...)` receiver — whether it parses
   as a `TypeApply` or, for a single non-builtin type argument, as a subscript

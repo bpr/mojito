@@ -330,6 +330,7 @@ assets/ok/try_return.mojo	main	exe-differential	sanitized
 assets/ok/tstring_forms.mojo	main	exe-differential	sanitized
 assets/ok/tstring_generic_interpolation.mojo	main	exe-differential	sanitized
 assets/ok/tstring_lazy.mojo	main	exe-differential	sanitized
+assets/ok/tuple_hashable_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
 assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized

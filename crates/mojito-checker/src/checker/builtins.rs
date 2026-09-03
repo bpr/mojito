@@ -56,6 +56,14 @@ pub(super) fn has_equality_bound(ty: &Ty) -> bool {
 }
 
 pub(super) fn has_equality_bound_or_concrete(checker: &Checker, ty: &Ty) -> bool {
+    // A public Tuple's conditional Equatable contract is evaluated structurally
+    // until its concrete specialization replaces the variadic template (the
+    // same discovery-staging seam as `Checker::is_comparable`).
+    if let Some(elements) = mojito_types::types::tuple_elements(ty) {
+        return elements
+            .into_iter()
+            .all(|element| has_equality_bound_or_concrete(checker, element));
+    }
     match ty {
         Ty::Struct(name, _) => checker
             .structs

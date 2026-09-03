@@ -93,14 +93,60 @@ recreates this section's checkbox with the fresh divergence list.
 
 ### 3. Grow The CPU Standard Library *(demand-first — any order)*
 
-- [ ] **Collection API parity** — grow tuple, slice, optional/variant, and
-  String result APIs (`replace`/`join`/`strip`/...) demand-first from
-  conformance cases (the 2026-08 pass landed the hashed insertion-ordered
-  Dict, retired HashDict/HashSet, and grew the List/Dict/Set method
-  surfaces — see `docs/features.md`). For `Variant`, finish:
-  - representation writing
-  - fully generic TypeList-driven conditional protocol synthesis rather than
-    adding compiler special cases for every standard-library method
+- [ ] **Collection API parity** — grow the tuple, slice, optional/variant,
+  and String result-API surfaces demand-first toward the audited head, one
+  session-sized slice each (`docs/features.md` records what lands):
+  - [ ] Slice descriptors: `Slice.__eq__`/`Writable` (`Slice(1, 4, None)`
+    text), the 2-tuple `ContiguousSlice.indices`, and List's `StridedSlice`
+    overload with the `Slice -> StridedSlice` widening (closes the
+    normalizing-overload residue in `conformance/parity.tsv` `types.slices`).
+  - [ ] Optional: declared `Boolable`/`Defaultable`, conditional
+    `Equatable`/`Hashable` (`UInt8` tag)/`Writable`, the `@implicit` value
+    constructor, consuming `or_else(deinit self, var default)`,
+    `unsafe_value`/`unsafe_take`/`bounds`; then the `is`/`is not` operator
+    (grammar first) with `__is__`/`__isnot__(NoneType)`.
+  - [ ] Variant inside the intrinsic design: the `init_with=` placement
+    constructor, `unsafe_get[T]()`, static `is_type_supported`, the
+    upstream repr text (`Variant[Int, String](7)`), and a pliron
+    `variant.hash` leaf (the VM feeds the discriminant then the active
+    alternative today; native reports the leaf unsupported).
+  - [ ] String result APIs, three batches: (1) `replace`/`join`/the strip
+    family as views/`removeprefix`/`removesuffix`/`count`/`start=` on
+    `find`/`rfind`/`startswith`/`endswith`/`split(maxsplit)` and whitespace
+    `split`/`splitlines`/`__bool__`/`__mul__`, String as `Writer`, StringSpan
+    `Equatable`/`__contains__`/`__bool__`, prelude-visible `StringSpan`;
+    (2) `upper`/`lower`/`isupper`/`islower`/`isspace`/`is_ascii_digit`/
+    `is_ascii_printable`/`ascii_center`/`ascii_ljust`/`ascii_rjust`, the
+    `count_codepoints`/`count_graphemes` spellings, Codepoint predicates;
+    (3) the pointer-backed `Span` constructor with `as_bytes`/`unsafe_ptr`,
+    `capacity_bytes`/`resize`/`append`, `__int__`/`__float__`/`atol`/`atof`,
+    and the `codepoints`/`codepoint_slices`/`graphemes` iterators.
+  - [ ] Repr vocabulary: `_unqualified_type_name[T]()` comptime builtin
+    (`std.reflection.type_info`) plus `std.format._utils` `FormatStruct`/
+    `TypeNames`, then `write_repr_to` on Tuple, Optional, and the slice
+    descriptors.
+  - [ ] **Self-hosted `Variant`** — replace the intrinsic `Ty::Variant` (8
+    MIR instructions, 13 checker protocol arms,
+    `crates/mojito-pliron/src/lower/variants.rs`) with upstream's pure-Mojo
+    `struct Variant[*Ts: AnyType]` whose conformances are TypeList-conditional
+    (`Copyable where Ts.all_conforms_to[Copyable]()`, ...). Prerequisites, in
+    order: (1) a storage primitive the VM can execute and pliron can lay out
+    (a compiler-provided `_VariantStorage[*Ts]` with `isa[T]`,
+    `unsafe_set_active[T]`, `unsafe_ptr[T]`, `unwrap[T]`; the register VM has
+    no byte-addressed union); (2) `comptime T = Self.Ts[i]` type bindings
+    inside `comptime for` bodies (Tuple only unrolls element indices today);
+    (3) infer-only method type parameters resolved from a closure's return
+    type in ordinary struct methods; (4) pack-conditional
+    `__deinit__`/`__eq__`/`__hash__`/`write_to` bodies through the new
+    storage, then retiring the intrinsic arms, the `variant.*` capability
+    rows, and the `utils/__init__.mojo` name shim. Not session-sized; each
+    prerequisite is its own slice.
+
+  Tuple residues (2026-09; the Tuple slice landed `Hashable`/`Sized` and
+  upstream's `__contains__[T: Equatable]` bound): `Defaultable` needs
+  `Ts[i]()` element default construction (the `Self.T()` blocker shared with
+  Array), and the static `__len__()` overload cannot coexist with the
+  instance one under arity-keyed dunder selection.
 
   Deferred from the 2026-08 Dict/Set/List pass with no shared blocker
   (each recorded in `conformance/parity.tsv` notes):
@@ -114,24 +160,23 @@ recreates this section's checkbox with the fresh divergence list.
   - `__reversed__`/`reversed()` (needs a short investigation: possibly
     self-hostable as a `Reversible` trait plus a prelude free function —
     no compiler protocol exists today)
-  - `write_repr_to` (blocked on deciding a `repr` surface at all)
   - `(*, unsafe_uninit_length)` construction/resize (blocked on an
     uninit-element storage story for List, MaybeUninit-adjacent)
   - container `Hashable` conformances on the hasher protocol
-    (`List`/`Optional`/`Array`/`Set`/`Dict`/`Tuple.__hash__`; upstream
+    (`List`/`Optional`/`Array`/`Set`/`Dict.__hash__`; upstream
     discriminates `Optional`/`Variant` alternatives with a `UInt8` tag before
-    delegating — `String`/`StringSpan` already conform)
+    delegating — `String`/`StringSpan`/`Tuple` already conform)
   - the upstream-exact `Hasher` member spellings: `_update_with_simd(mut
     self, value: SIMD[_, _])` with `SIMD.to_bits()` (Mojito narrows the leaf
-    to one normalized `UInt64`, which both bundled hashers mix identically),
-    the keyed `AHasher[key: U256]` (Mojito's is key-less; the seeded
-    initializer remains), the bytes `hash(bytes: ImmPointer[UInt8, _], n)`
-    overload and `hash_seeded_bytes` (both need a pointer-backed `Span`
-    constructor), and a `Span`/`as_bytes` path for `StringSpan.__hash__`
-    (today it copies the bytes into a `List[Byte]`)
-  - native `Variant.__hash__` dispatch (the VM feeds the discriminant then
-    the active alternative; pliron reports the leaf unsupported) and CTFE
-    `hash`/`default_comp_time_hasher` for compile-time dictionaries
+    to one normalized `UInt64`, which both bundled hashers mix identically,
+    so the VM's `UInt64` Variant discriminant lane is bit-identical to
+    upstream's `UInt8` tag until this lands), the keyed `AHasher[key: U256]`
+    (Mojito's is key-less; the seeded initializer remains), the bytes
+    `hash(bytes: ImmPointer[UInt8, _], n)` overload and `hash_seeded_bytes`
+    (both need a pointer-backed `Span` constructor), and a `Span`/`as_bytes`
+    path for `StringSpan.__hash__` (today it copies the bytes into a
+    `List[Byte]`)
+  - CTFE `hash`/`default_comp_time_hasher` for compile-time dictionaries
   - propagating a constructible type argument through an enclosing abstract
     binder on the raw seam (a generic body forwarding its own `H` into
     `hash[H](x)` without specialization): the reified argument spells the
@@ -146,6 +191,18 @@ recreates this section's checkbox with the fresh divergence list.
 
 ### 4. Packaging, Artifacts, And Developer Tooling *(any order unless noted)*
 
+- [ ] **Compile-time performance** — `mojito run assets/ok/hello_world.mojo`
+  takes ~25 s on the debug build and ~13 s on the release build (2026-09-03,
+  i7-10875H); `check` alone is ~23 s of the debug 25 s, `parse` is
+  instantaneous, so the cost is linking, elaborating, and checking the
+  bundled stdlib (35 files, ~3.8k lines) on every process — roughly 300
+  lines/s optimized, which is algorithmic, not build-profile, overhead.
+  Target: under one second for hello world. Steps: add per-phase `--timings`
+  for the VM path (today the flag only reaches the pliron backend), profile
+  the front end over the stdlib and fix the super-linear passes, then cache
+  the elaborated/checked stdlib across processes (the per-process
+  `elaborated_mir` cache is the seed). This also shrinks every corpus/test
+  process and the nightly gate.
 - [ ] **Feature and target options** — expose checked CLI/build configuration and
   record it in artifacts and diagnostics.
 - [ ] **Compiled package artifacts** — define and load a versioned `.mojoc`

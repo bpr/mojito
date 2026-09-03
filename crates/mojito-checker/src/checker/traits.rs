@@ -1576,7 +1576,9 @@ impl Checker {
                     // template's Writable contract structurally across that
                     // staging seam, exactly like unmaterialized public Tuple
                     // in `is_comparable`.
-                    if let Some(elements) = mojito_types::types::tstring_elements(ty) {
+                    if let Some(elements) =
+                        mojito_types::types::tstring_elements(ty).or_else(|| tuple_elements(ty))
+                    {
                         return elements
                             .into_iter()
                             .all(|element| self.conforms_to(element, tr));
@@ -2260,6 +2262,14 @@ impl Checker {
     pub(super) fn is_hashable(&self, ty: &Ty) -> bool {
         if self.has_assumed_conformance(ty, "Hashable") {
             return true;
+        }
+        // Same discovery-staging seam as `is_comparable`: a public Tuple's
+        // conditional Hashable contract is evaluated structurally until its
+        // concrete specialization replaces the variadic template.
+        if let Some(elements) = tuple_elements(ty) {
+            return elements
+                .into_iter()
+                .all(|element| self.is_hashable(element));
         }
         match ty {
             Ty::Variant(alternatives) => alternatives
