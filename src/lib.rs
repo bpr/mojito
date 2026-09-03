@@ -1,6 +1,10 @@
 pub use mojito_ast::{ast, call};
 pub use mojito_checked::checked;
 pub use mojito_common::{error, literal, token};
+pub use mojito_hir::hir;
+pub use mojito_lexer::lexer;
+pub use mojito_module::module;
+pub use mojito_parser::parser;
 pub use mojito_symbol::symbol;
 pub use mojito_types::{ct, origin, types};
 
@@ -11,12 +15,8 @@ pub mod checker;
 pub mod compiler;
 pub mod comptime;
 mod explicit_destroy;
-pub mod hir;
-pub mod lexer;
 pub mod mir;
-pub mod module;
 pub mod native;
-pub mod parser;
 pub mod runtime;
 
 // Re-export commonly used types at the crate root for convenience

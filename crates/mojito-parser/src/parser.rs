@@ -2,19 +2,19 @@
 //!
 //! Statement, declaration, type, and suite parsing use recursive descent;
 //! expressions use precedence climbing with postfix call/member/index tails.
-//! [`parse`](crate::parse) is fail-fast, while the diagnostic entry point
+//! `mojito::parse` is fail-fast, while the diagnostic entry point
 //! recovers at statement boundaries so it can report multiple syntax errors.
 
 use std::iter::Peekable;
 
-use crate::ast::{
+use mojito_ast::ast::{
     ArgConvention, Capture, CaptureKind, CaptureList, Decorator, Expr, ExprKind, FnParam,
     FunctionTypeParam, InfixOp, KwArg, LoopBindingMode, Method, Param, ParamKind, PrefixOp, Stmt,
     StmtKind, SubscriptArg, TStringPart, Type, WithItem,
 };
-use crate::error::{LexError, ParseError};
-use crate::lexer::Lexer;
-use crate::token::{Span, TStringChunk, Token};
+use mojito_common::error::{LexError, ParseError};
+use mojito_common::token::{Span, TStringChunk, Token};
+use mojito_lexer::lexer::Lexer;
 
 /// A syntax-only recovery result. `program` is deliberately partial and must not
 /// be sent to semantic phases when `errors` is non-empty.
@@ -51,7 +51,7 @@ enum Precedence {
 }
 
 enum ParsedBracketItem {
-    Param(crate::ast::ParamArg),
+    Param(mojito_ast::ast::ParamArg),
     Slice {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
@@ -165,9 +165,9 @@ fn push_tstring_literal(parts: &mut Vec<TStringPart>, text: String) {
     }
 }
 
-fn param_argument_name(arg: &crate::ast::ParamArg) -> Result<String, ParseError> {
+fn param_argument_name(arg: &mojito_ast::ast::ParamArg) -> Result<String, ParseError> {
     match arg {
-        crate::ast::ParamArg::Value(Expr {
+        mojito_ast::ast::ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..
         }) => Ok(name.clone()),
@@ -260,7 +260,7 @@ fn self_param_rooted_expression(ty: &Type) -> Option<()> {
         Type::Assoc { base, args, .. } => {
             self_param_rooted_expression(base)?;
             match args.as_slice() {
-                [] | [crate::ast::ParamArg::Value(_)] => Some(()),
+                [] | [mojito_ast::ast::ParamArg::Value(_)] => Some(()),
                 _ => None,
             }
         }

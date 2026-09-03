@@ -84,7 +84,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
             if matches!(self.peek_token()?, Some(Token::LBracket)) {
                 let arguments = self.parse_param_args()?;
-                let [crate::ast::ParamArg::Value(index)] = arguments.as_slice() else {
+                let [mojito_ast::ast::ParamArg::Value(index)] = arguments.as_slice() else {
                     return Err(ParseError::UnexpectedToken(
                         Token::RBracket,
                         "a dependent type projection requires exactly one compile-time value index"
@@ -286,14 +286,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Parses a parameter-argument list `'[' param_arg (',' param_arg)* ']'`. The
     /// next token must be `[`. Used for `Pair[Int]` / `FixedBuffer[8]`.
-    pub(super) fn parse_param_args(&mut self) -> Result<Vec<crate::ast::ParamArg>, ParseError> {
+    pub(super) fn parse_param_args(
+        &mut self,
+    ) -> Result<Vec<mojito_ast::ast::ParamArg>, ParseError> {
         self.expect(Token::LBracket, "Expected '[' to begin parameter arguments")?;
         let mut args = Vec::new();
         loop {
             let mut arg = self.parse_param_arg()?;
             if matches!(self.peek_token()?, Some(Token::Assign)) {
                 let name = match &arg {
-                    crate::ast::ParamArg::Value(Expr {
+                    mojito_ast::ast::ParamArg::Value(Expr {
                         kind: ExprKind::Identifier(name),
                         ..
                     }) => name.clone(),
@@ -305,9 +307,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     }
                 };
                 self.next_token()?;
-                arg = crate::ast::ParamArg::Named {
+                arg = mojito_ast::ast::ParamArg::Named {
                     name,
-                    value: Box::new(crate::ast::ParamArg::Value(
+                    value: Box::new(mojito_ast::ast::ParamArg::Value(
                         self.parse_expression(Precedence::Lowest)?,
                     )),
                 };
@@ -332,8 +334,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `[` is a parameterized type (`Foo[Int]`); otherwise an identifier starts a
     /// value expression (a lone identifier is left for the checker to reinterpret
     /// as a type when the parameter is a type one). Anything else is a value.
-    pub(super) fn parse_param_arg(&mut self) -> Result<crate::ast::ParamArg, ParseError> {
-        use crate::ast::ParamArg;
+    pub(super) fn parse_param_arg(&mut self) -> Result<mojito_ast::ast::ParamArg, ParseError> {
+        use mojito_ast::ast::ParamArg;
         if self.peek_starts_type()? {
             let start = self.peek_start();
             let ty = self.parse_type()?;
@@ -434,7 +436,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 matches!(
                     id.as_str(),
                     "Int" | "UInt" | "Bool" | "StringLiteral" | "Float64" | "Self" | "ref"
-                ) || crate::ast::Dtype::from_scalar_alias(id).is_some()
+                ) || mojito_ast::ast::Dtype::from_scalar_alias(id).is_some()
             }
             _ => false,
         })
@@ -444,12 +446,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// following a `struct`/`def` name. Returns an empty list if the next token is
     /// not `[`. Each parameter must carry a `: bound` (one or more trait names
     /// joined by `&`) — Mojo has no unconstrained type parameters.
-    pub(super) fn parse_type_params(&mut self) -> Result<Vec<crate::ast::TypeParam>, ParseError> {
+    pub(super) fn parse_type_params(
+        &mut self,
+    ) -> Result<Vec<mojito_ast::ast::TypeParam>, ParseError> {
         if !matches!(self.peek_token()?, Some(Token::LBracket)) {
             return Ok(Vec::new());
         }
         self.next_token()?; // consume '['
-        let mut params: Vec<crate::ast::TypeParam> = Vec::new();
+        let mut params: Vec<mojito_ast::ast::TypeParam> = Vec::new();
         loop {
             // Mojo's `//` marker ends the infer-only prefix. Parameters before it
             // are inferred; parameters after it may be supplied explicitly.
@@ -490,7 +494,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             } else {
                 let bound =
                     self.expect_identifier("Expected a trait or type in the type-parameter bound")?;
-                (crate::ast::canonical_trait_name(&bound).to_string(), None)
+                (
+                    mojito_ast::ast::canonical_trait_name(&bound).to_string(),
+                    None,
+                )
             };
             // Origin parameters use `Origin[mut=<bool expression>]`. Preserve the
             // Origin classification and parse the mutability expression; semantic
@@ -521,7 +528,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             while matches!(self.peek_token()?, Some(Token::Amp)) {
                 self.next_token()?; // consume '&'
                 let bound = self.expect_identifier("Expected a trait name after '&'")?;
-                bounds.push(crate::ast::canonical_trait_name(&bound).to_string());
+                bounds.push(mojito_ast::ast::canonical_trait_name(&bound).to_string());
             }
             if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
                 return Err(ParseError::UnexpectedToken(
@@ -536,7 +543,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             } else {
                 None
             };
-            params.push(crate::ast::TypeParam {
+            params.push(mojito_ast::ast::TypeParam {
                 name,
                 bounds,
                 value_type,

@@ -681,20 +681,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         let names = if matches!(self.peek_token()?, Some(Token::Star)) {
             self.next_token()?; // consume '*'
-            crate::ast::ImportNames::Wildcard
+            mojito_ast::ast::ImportNames::Wildcard
         } else {
             let mut targets = Vec::new();
             while !parenthesized || !matches!(self.peek_token()?, Some(Token::RParen)) {
                 let name = self.expect_identifier("Expected an imported name")?;
                 let alias = self.parse_import_alias()?;
-                targets.push(crate::ast::ImportName { name, alias });
+                targets.push(mojito_ast::ast::ImportName { name, alias });
                 if matches!(self.peek_token()?, Some(Token::Comma)) {
                     self.next_token()?; // consume ','
                 } else {
                     break;
                 }
             }
-            crate::ast::ImportNames::Names(targets)
+            mojito_ast::ast::ImportNames::Names(targets)
         };
         if parenthesized {
             self.expect(Token::RParen, "Expected ')' after imported names")?;

@@ -4,9 +4,8 @@
 //! the flat checked-program pipeline. Imports are lexical, dependencies are
 //! deduplicated by canonical path, and source provenance survives rewriting.
 
-use crate::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
-use crate::error::ParseError;
-use crate::parse;
+use mojito_ast::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
+use mojito_common::error::ParseError;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -94,7 +93,7 @@ pub fn link_with_options(
     let dir = entry_path.parent().unwrap_or_else(|| Path::new("."));
     let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
     let entry_module = display(entry_path);
-    crate::ast::stamp_source(&mut body, &entry_module);
+    mojito_ast::ast::stamp_source(&mut body, &entry_module);
     let mut result = linker.decls;
     result.extend(body);
     Ok(result)
@@ -120,7 +119,7 @@ pub fn link_source_with_options(
     let dir = entry_path.parent().unwrap_or_else(|| Path::new("."));
     let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
     let entry_module = display(entry_path);
-    crate::ast::stamp_source(&mut body, &entry_module);
+    mojito_ast::ast::stamp_source(&mut body, &entry_module);
     let mut result = linker.decls;
     result.extend(body);
     Ok(result)
@@ -282,14 +281,14 @@ fn rewrite_expr(
             rewrite_expr(object, names, namespaces);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value)
-                    | crate::ast::SubscriptArg::Keyword { value, .. } => {
+                    mojito_ast::ast::SubscriptArg::Index(value)
+                    | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
                         rewrite_expr(value, names, namespaces)
                     }
-                    crate::ast::SubscriptArg::Slice {
+                    mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
                     }
-                    | crate::ast::SubscriptArg::KeywordSlice {
+                    | mojito_ast::ast::SubscriptArg::KeywordSlice {
                         lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
@@ -561,14 +560,14 @@ fn program_uses_kwargs(program: &[Stmt]) -> bool {
         StmtKind::Def { params, body, .. } => {
             params
                 .iter()
-                .any(|p| p.kind == crate::ast::ParamKind::KwVariadic)
+                .any(|p| p.kind == mojito_ast::ast::ParamKind::KwVariadic)
                 || program_uses_kwargs(body)
         }
         StmtKind::Struct { methods, .. } => methods.iter().any(|method| {
             method
                 .params
                 .iter()
-                .any(|p| p.kind == crate::ast::ParamKind::KwVariadic)
+                .any(|p| p.kind == mojito_ast::ast::ParamKind::KwVariadic)
                 || program_uses_kwargs(&method.body)
         }),
         StmtKind::If { branches, orelse } => {
@@ -796,7 +795,7 @@ impl Linker {
         self.resolve_scoped_imports(&mut declarations, dir, Some(path), &bindings, &namespaces)?;
         rewrite_program(&mut declarations, &bindings, &namespaces);
         for mut stmt in declarations {
-            crate::ast::stamp_source(std::slice::from_mut(&mut stmt), &display(path));
+            mojito_ast::ast::stamp_source(std::slice::from_mut(&mut stmt), &display(path));
             self.decls.push(stmt);
         }
         let mut exports = local;
@@ -1133,11 +1132,11 @@ impl Linker {
         &self,
         path: &Path,
         module_name: &str,
-        names: &crate::ast::ImportNames,
+        names: &mojito_ast::ast::ImportNames,
     ) -> Result<(), ModuleError> {
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let exports = self.exports.get(&canon);
-        if let crate::ast::ImportNames::Names(list) = names {
+        if let mojito_ast::ast::ImportNames::Names(list) = names {
             for item in list {
                 let known = exports.is_some_and(|e| e.contains_key(&item.name))
                     || self
@@ -1166,7 +1165,7 @@ impl Linker {
 }
 
 fn rewrite_type_param(
-    parameter: &mut crate::ast::TypeParam,
+    parameter: &mut mojito_ast::ast::TypeParam,
     names: &HashMap<String, String>,
     namespaces: &HashMap<String, HashMap<String, String>>,
 ) {
@@ -1287,15 +1286,20 @@ fn bundled_path(relative: &str) -> Option<PathBuf> {
 /// containing `stdlib/`): the development source tree when it exists, else
 /// the installation bundle's `share/mojito/` next to the running
 /// executable. Resolved once per process.
-pub(crate) fn bundled_root() -> Option<PathBuf> {
+pub fn bundled_root() -> Option<PathBuf> {
     static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     // The prelude is the existence probe: a root without it cannot serve
     // the bundled stdlib, whatever directories it has.
     ROOT.get_or_init(|| {
         if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
-            let root = PathBuf::from(manifest);
-            if root.join(PRELUDE_PATH).is_file() {
-                return Some(root);
+            // This crate lives at `crates/mojito-module/`, so the development
+            // tree's `stdlib/` sits two levels above its manifest; probe the
+            // manifest dir too in case the crate is ever vendored flat.
+            let manifest = PathBuf::from(manifest);
+            for root in [manifest.clone(), manifest.join("../..")] {
+                if root.join(PRELUDE_PATH).is_file() {
+                    return Some(root);
+                }
             }
         }
         let exe = std::env::current_exe().ok()?;
@@ -1677,4 +1681,10 @@ fn module_file(
 
 fn read_and_parse(path: &Path) -> Result<Vec<Stmt>, ModuleError> {
     read_and_parse_named(path, &display(path))
+}
+
+/// Fail-fast parse of one linked source file (the root crate's `parse`
+/// convenience, restated here so linking depends on the parser directly).
+fn parse(source: &str) -> Result<Vec<Stmt>, mojito_common::error::ParseError> {
+    mojito_parser::parser::Parser::new(mojito_lexer::lexer::Lexer::new(source)).parse_program()
 }

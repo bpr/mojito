@@ -112,7 +112,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     ) -> Result<
         (
             Option<ArgConvention>,
-            Option<crate::ast::OriginSpec>,
+            Option<mojito_ast::ast::OriginSpec>,
             String,
         ),
         ParseError,
@@ -156,7 +156,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// origin, or `_`); it is retained for semantic resolution by the checker.
     pub(super) fn parse_optional_origin_specifier(
         &mut self,
-    ) -> Result<Option<crate::ast::OriginSpec>, ParseError> {
+    ) -> Result<Option<mojito_ast::ast::OriginSpec>, ParseError> {
         if !matches!(self.peek_token()?, Some(Token::LBracket)) {
             return Ok(None);
         }
@@ -180,7 +180,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         name: String,
         kind: ParamKind,
         convention: Option<ArgConvention>,
-        origin: Option<crate::ast::OriginSpec>,
+        origin: Option<mojito_ast::ast::OriginSpec>,
     ) -> Result<FnParam, ParseError> {
         self.expect(Token::Colon, "Parameters require a type annotation")?;
         let ty = self.parse_type()?;
@@ -294,7 +294,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `comptime NAME = expr` — an associated compile-time fact inside a struct.
     pub(super) fn parse_struct_comptime(
         &mut self,
-    ) -> Result<crate::ast::StructComptime, ParseError> {
+    ) -> Result<mojito_ast::ast::StructComptime, ParseError> {
         self.expect(Token::Comptime, "Expected 'comptime'")?;
         let name = self.expect_identifier("Expected a name after 'comptime'")?;
         // A parameterized associated type: `comptime IteratorType[params] = ...`.
@@ -313,7 +313,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect(Token::Assign, "Expected '=' after the comptime member name")?;
         let value = self.parse_expression(Precedence::Lowest)?;
         self.expect_stmt_end()?;
-        Ok(crate::ast::StructComptime {
+        Ok(mojito_ast::ast::StructComptime {
             name,
             params,
             ty,
@@ -334,7 +334,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         loop {
             let trait_name =
                 self.expect_identifier("Expected a trait name in the conformance list")?;
-            traits.push(crate::ast::canonical_trait_name(&trait_name).to_string());
+            traits.push(mojito_ast::ast::canonical_trait_name(&trait_name).to_string());
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
                 if matches!(self.peek_token()?, Some(Token::RParen)) {
@@ -380,7 +380,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let trait_name = {
                 let spelled =
                     self.expect_identifier("Expected a trait name in the conformance list")?;
-                crate::ast::canonical_trait_name(&spelled).to_string()
+                mojito_ast::ast::canonical_trait_name(&spelled).to_string()
             };
             traits.push(trait_name.clone());
             if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
@@ -448,7 +448,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// `comptime NAME: Type` — a compile-time member requirement inside a trait.
-    pub(super) fn parse_trait_comptime(&mut self) -> Result<crate::ast::TraitComptime, ParseError> {
+    pub(super) fn parse_trait_comptime(
+        &mut self,
+    ) -> Result<mojito_ast::ast::TraitComptime, ParseError> {
         self.expect(Token::Comptime, "Expected 'comptime'")?;
         let name = self.expect_identifier("Expected a name after 'comptime'")?;
         // A parameterized associated type requirement:
@@ -469,14 +471,17 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let ty = if bounds.len() == 1 {
             bounds.pop().expect("one associated member annotation")
         } else {
-            crate::ast::Type::Named(
+            mojito_ast::ast::Type::Named(
                 "$trait_composition".to_string(),
-                bounds.into_iter().map(crate::ast::ParamArg::Type).collect(),
+                bounds
+                    .into_iter()
+                    .map(mojito_ast::ast::ParamArg::Type)
+                    .collect(),
             )
         };
         let where_clauses = self.parse_where_clauses()?;
         self.expect_stmt_end()?;
-        Ok(crate::ast::TraitComptime {
+        Ok(mojito_ast::ast::TraitComptime {
             name,
             params,
             ty,
@@ -487,11 +492,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `def name([convention] self [, params]) -> ret:` followed by an indented
     /// body that is either `...` (a pure requirement) or real statements (a
     /// **default implementation**, stored in `default_body`).
-    pub(super) fn parse_trait_method(&mut self) -> Result<crate::ast::TraitMethod, ParseError> {
+    pub(super) fn parse_trait_method(
+        &mut self,
+    ) -> Result<mojito_ast::ast::TraitMethod, ParseError> {
         self.expect(Token::Def, "Expected 'def'")?;
         let name = {
             let spelled = self.expect_identifier("Expected a method name after 'def'")?;
-            crate::ast::canonical_destructor_name(&spelled).to_string()
+            mojito_ast::ast::canonical_destructor_name(&spelled).to_string()
         };
         let type_params = self.parse_type_params()?;
 
@@ -569,7 +576,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // default implementation (parsed, flagged unsupported by the checker).
         let default_body = self.parse_trait_method_body()?;
 
-        Ok(crate::ast::TraitMethod {
+        Ok(mojito_ast::ast::TraitMethod {
             name,
             type_params,
             self_convention,
@@ -593,7 +600,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect(Token::Def, "Expected 'def'")?;
         let name = {
             let spelled = self.expect_identifier("Expected a method name after 'def'")?;
-            crate::ast::canonical_destructor_name(&spelled).to_string()
+            mojito_ast::ast::canonical_destructor_name(&spelled).to_string()
         };
         let type_params = self.parse_type_params()?;
 

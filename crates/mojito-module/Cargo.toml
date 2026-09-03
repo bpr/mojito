@@ -1,0 +1,12 @@
+[package]
+name = "mojito-module"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+mojito-ast = { path = "../mojito-ast" }
+mojito-common = { path = "../mojito-common" }
+mojito-lexer = { path = "../mojito-lexer" }
+mojito-parser = { path = "../mojito-parser" }

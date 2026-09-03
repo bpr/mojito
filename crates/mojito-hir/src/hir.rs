@@ -8,12 +8,13 @@
 //! (`if`/`while`/`for`/`break`/`continue`/`return`) becomes blocks + edges, so
 //! later passes are pure graph traversal.
 
-use crate::ast::{Expr, ExprKind, Stmt, StmtKind};
-use crate::token::{DUMMY_SPAN, SourceSpan};
-use crate::{
+use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
+use mojito_checked::checked::{
     CheckedDeclId, CheckedDeclaration, CheckedExpr, CheckedNodeId, CheckedProgram, EffectFacts,
-    SemanticAdjustment, Ty, ValueCategory,
+    SemanticAdjustment, ValueCategory,
 };
+use mojito_common::token::{DUMMY_SPAN, SourceSpan};
+use mojito_types::types::Ty;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use std::collections::{HashMap, HashSet};
 
@@ -25,7 +26,7 @@ pub struct HirExpr {
     pub category: ValueCategory,
     /// Stable checked binding selected by lexical lookup. Calls and type
     /// applications carry this even though they are not places.
-    pub binding: Option<crate::origin::OwnerId>,
+    pub binding: Option<mojito_types::origin::OwnerId>,
     /// Checker-selected effect contract for this expression. Calls through a
     /// trait bound retain the requirement's typed error here just like direct
     /// and indirect calls.
@@ -40,12 +41,12 @@ pub struct HirExpr {
     pub place: Option<HirPlace>,
     /// Stable generator binders introduced by a comprehension, in source
     /// `for`-clause order. Ordinary expressions leave this empty.
-    pub comprehension_bindings: Vec<crate::checked::CheckedComprehensionBinding>,
+    pub comprehension_bindings: Vec<mojito_checked::checked::CheckedComprehensionBinding>,
 }
 
 #[derive(Debug, Clone)]
 pub struct HirPlace {
-    pub owner: crate::origin::OwnerId,
+    pub owner: mojito_types::origin::OwnerId,
     pub root_ty: Ty,
     pub projections: Vec<HirPlaceProjection>,
     pub ty: Ty,
@@ -93,7 +94,7 @@ impl std::ops::Deref for HirExpr {
 pub struct HirStmt {
     pub syntax: Stmt,
     pub declaration: Option<CheckedDeclId>,
-    pub binding: Option<crate::origin::OwnerId>,
+    pub binding: Option<mojito_types::origin::OwnerId>,
     /// Checked roots directly owned by this opaque statement, in source/AST
     /// order. Nested control-flow regions build their own CFGs.
     pub expressions: Vec<HirExpr>,
@@ -120,7 +121,7 @@ pub enum HirInstr {
         binding_ty: Option<Ty>,
         /// Stable checker identity introduced by this binding, when this is a
         /// declaration rather than a write to an existing slot.
-        binding: Option<crate::origin::OwnerId>,
+        binding: Option<mojito_types::origin::OwnerId>,
     },
     /// Bind a concrete borrowed collection place without invoking its value-copy
     /// lifecycle. `origin` is the checker-proven interior generation retained by
@@ -129,7 +130,7 @@ pub enum HirInstr {
     BorrowIter {
         dest: VarId,
         expr: HirExpr,
-        origin: crate::origin::OriginPlace,
+        origin: mojito_types::origin::OriginPlace,
     },
     /// A bare expression evaluated for its effect/value (`f(x)`).
     Eval(HirExpr),
@@ -154,7 +155,7 @@ pub enum HirInstr {
     GetIter {
         source: VarId,
         dest: VarId,
-        protocol: crate::IterationProtocol,
+        protocol: mojito_checked::checked::IterationProtocol,
     },
     /// Iterator protocol (`for` loops): `dest = whether `iter` yields another
     /// element` (a `Bool`), a pure read of the iterator's state. `iter`/`dest` are
@@ -174,7 +175,7 @@ pub enum HirInstr {
         /// Exact checker-selected `__next__` operation. `None` is reserved for
         /// compiler-private iterator storage; nominal iterators always retain
         /// their selected target and executable result convention here.
-        call: Option<crate::checked::CheckedIteratorCall>,
+        call: Option<mojito_checked::checked::CheckedIteratorCall>,
         /// Exact checker-resolved result type of `__next__`. Keeping it on HIR
         /// makes legacy bounded iteration as typed as the raising path.
         element_ty: Ty,
@@ -188,7 +189,7 @@ pub enum HirInstr {
         raw: VarId,
         yielded: VarId,
         /// Exact checker-selected reference/value result and effect contract.
-        call: crate::checked::CheckedIteratorCall,
+        call: mojito_checked::checked::CheckedIteratorCall,
         exhaustion: Ty,
         element_ty: Ty,
     },
@@ -200,8 +201,8 @@ pub enum HirInstr {
         raw: VarId,
         dest: VarId,
         iter: VarId,
-        plan: crate::checked::CheckedIterationBinding,
-        binding: crate::origin::OwnerId,
+        plan: mojito_checked::checked::CheckedIterationBinding,
+        binding: mojito_types::origin::OwnerId,
     },
     /// A `try` statement whose sub-regions are lowered in Stage 5 as mini-CFGs.
     /// `loop_targets` snapshots the enclosing **function-level** loop stack
@@ -300,7 +301,7 @@ impl Cfg {
         )
     }
 
-    pub(crate) fn build_fn_with_captures(
+    pub fn build_fn_with_captures(
         params: &[String],
         shadow_captures: HashSet<String>,
         body: &[Stmt],
@@ -308,7 +309,7 @@ impl Cfg {
         Self::build_fn_with_context(params, shadow_captures, body, &[], &[])
     }
 
-    pub(crate) fn build_checked_fn_with_captures(
+    pub fn build_checked_fn_with_captures(
         checked: &CheckedProgram,
         params: &[String],
         shadow_captures: HashSet<String>,
@@ -413,7 +414,7 @@ impl Cfg {
         Self::build_seeded_checked_with_declarations(seed_vars, body, &external_loops, checked, &[])
     }
 
-    pub(crate) fn build_seeded_checked_with_declarations(
+    pub fn build_seeded_checked_with_declarations(
         seed_vars: Vec<String>,
         body: &[Stmt],
         external_loops: &[(BlockId, BlockId, Vec<VarId>)],
@@ -555,14 +556,14 @@ fn collect_named_expr(expression: &Expr, names: &mut HashSet<String>) {
             collect_named_expr(object, names);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value)
-                    | crate::ast::SubscriptArg::Keyword { value, .. } => {
+                    mojito_ast::ast::SubscriptArg::Index(value)
+                    | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
                         collect_named_expr(value, names)
                     }
-                    crate::ast::SubscriptArg::Slice {
+                    mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
                     }
-                    | crate::ast::SubscriptArg::KeywordSlice {
+                    | mojito_ast::ast::SubscriptArg::KeywordSlice {
                         lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
@@ -594,7 +595,7 @@ fn collect_named_expr(expression: &Expr, names: &mut HashSet<String>) {
         }
         ExprKind::TString { parts, .. } => {
             for part in parts {
-                if let crate::ast::TStringPart::Expr(value) = part {
+                if let mojito_ast::ast::TStringPart::Expr(value) = part {
                     collect_named_expr(value, names);
                 }
             }
@@ -603,7 +604,7 @@ fn collect_named_expr(expression: &Expr, names: &mut HashSet<String>) {
     }
 }
 
-fn rename_expr(e: &mut Expr, resolve: &impl Fn(&crate::token::SourceSpan, &str) -> String) {
+fn rename_expr(e: &mut Expr, resolve: &impl Fn(&mojito_common::token::SourceSpan, &str) -> String) {
     let span = e.source_span();
     match &mut e.kind {
         ExprKind::Identifier(n) => *n = resolve(&span, n),
@@ -663,14 +664,14 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&crate::token::SourceSpan, &str) 
             rename_expr(object, resolve);
             for argument in args {
                 match argument {
-                    crate::ast::SubscriptArg::Index(value)
-                    | crate::ast::SubscriptArg::Keyword { value, .. } => {
+                    mojito_ast::ast::SubscriptArg::Index(value)
+                    | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
                         rename_expr(value, resolve)
                     }
-                    crate::ast::SubscriptArg::Slice {
+                    mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
                     }
-                    | crate::ast::SubscriptArg::KeywordSlice {
+                    | mojito_ast::ast::SubscriptArg::KeywordSlice {
                         lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
@@ -705,8 +706,10 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&crate::token::SourceSpan, &str) 
             rename_expr(value, resolve);
             for clause in clauses {
                 match clause {
-                    crate::ast::ComprehensionClause::For { iter, .. } => rename_expr(iter, resolve),
-                    crate::ast::ComprehensionClause::If(condition) => {
+                    mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
+                        rename_expr(iter, resolve)
+                    }
+                    mojito_ast::ast::ComprehensionClause::If(condition) => {
                         rename_expr(condition, resolve)
                     }
                 }
@@ -1013,7 +1016,7 @@ impl Lower {
             // A `$contextual` leading-dot root substitutes its checker-
             // resolved base type name; everything downstream sees the
             // ordinary spelled form.
-            if n == crate::ast::CONTEXTUAL_SENTINEL
+            if n == mojito_ast::ast::CONTEXTUAL_SENTINEL
                 && let Some(base) = self
                     .checked_by_span
                     .get(span)
@@ -1197,8 +1200,10 @@ impl Lower {
                 // storage owned elsewhere; only a `Bind`'d owned temporary is kept
                 // alive and dropped by the loop.
                 let borrowed = protocol.borrowed_origin.is_some();
-                let split_source = matches!(protocol.mode, crate::IterationMode::Borrowed)
-                    && (borrowed || !protocol.prepare.is_empty());
+                let split_source = matches!(
+                    protocol.mode,
+                    mojito_checked::checked::IterationMode::Borrowed
+                ) && (borrowed || !protocol.prepare.is_empty());
                 if let Some(origin) = protocol.borrowed_origin.clone() {
                     self.push(HirInstr::BorrowIter {
                         dest: it_var,

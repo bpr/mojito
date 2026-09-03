@@ -46,8 +46,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// precedence so the next clause's `if` is not mistaken for a ternary.
     pub(super) fn parse_comprehension_clauses(
         &mut self,
-    ) -> Result<Vec<crate::ast::ComprehensionClause>, ParseError> {
-        use crate::ast::ComprehensionClause;
+    ) -> Result<Vec<mojito_ast::ast::ComprehensionClause>, ParseError> {
+        use mojito_ast::ast::ComprehensionClause;
 
         let mut clauses = Vec::new();
         loop {
@@ -275,7 +275,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.expect(Token::RBracket, "Expected ']' after list comprehension")?;
                     return Ok(self.node(
                         ExprKind::Comprehension {
-                            kind: crate::ast::CollectionKind::List,
+                            kind: mojito_ast::ast::CollectionKind::List,
                             key: None,
                             value: Box::new(first),
                             clauses,
@@ -308,9 +308,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 };
                 if matches!(self.peek_token()?, Some(Token::For)) {
                     let kind = if first_value.is_some() {
-                        crate::ast::CollectionKind::Dict
+                        mojito_ast::ast::CollectionKind::Dict
                     } else {
-                        crate::ast::CollectionKind::Set
+                        mojito_ast::ast::CollectionKind::Set
                     };
                     let value = first_value.unwrap_or_else(|| first_key.clone());
                     let clauses = self.parse_comprehension_clauses()?;
@@ -318,7 +318,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     return Ok(self.node(
                         ExprKind::Comprehension {
                             kind,
-                            key: (kind == crate::ast::CollectionKind::Dict)
+                            key: (kind == mojito_ast::ast::CollectionKind::Dict)
                                 .then(|| Box::new(first_key)),
                             value: Box::new(value),
                             clauses,
@@ -360,7 +360,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // chains and calls attach through ordinary infix parsing.
             Token::Dot => {
                 let sentinel = self.node(
-                    ExprKind::Identifier(crate::ast::CONTEXTUAL_SENTINEL.into()),
+                    ExprKind::Identifier(mojito_ast::ast::CONTEXTUAL_SENTINEL.into()),
                     start,
                 );
                 let field = self.expect_identifier("Expected a member name after a leading '.'")?;

@@ -80,7 +80,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 );
                 match args.as_slice() {
                     [] => Some(member),
-                    [crate::ast::ParamArg::Value(index)] => Some(self.node(
+                    [mojito_ast::ast::ParamArg::Value(index)] => Some(self.node(
                         ExprKind::Index {
                             object: Box::new(member),
                             index: Box::new(index.clone()),
@@ -109,7 +109,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             kind,
             span: (start, self.last_span.1),
             source: None,
-            syntax_id: crate::token::SyntaxId::fresh(),
+            syntax_id: mojito_common::token::SyntaxId::fresh(),
         }
     }
 

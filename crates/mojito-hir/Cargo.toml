@@ -1,0 +1,13 @@
+[package]
+name = "mojito-hir"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+mojito-ast = { path = "../mojito-ast" }
+mojito-checked = { path = "../mojito-checked" }
+mojito-common = { path = "../mojito-common" }
+mojito-types = { path = "../mojito-types" }
+petgraph = { workspace = true }

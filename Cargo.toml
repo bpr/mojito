@@ -67,6 +67,10 @@ llvm-sys = { version = "221", optional = true }
 mojito-ast = { path = "crates/mojito-ast" }
 mojito-checked = { path = "crates/mojito-checked" }
 mojito-common = { path = "crates/mojito-common" }
+mojito-hir = { path = "crates/mojito-hir" }
+mojito-lexer = { path = "crates/mojito-lexer" }
+mojito-module = { path = "crates/mojito-module" }
+mojito-parser = { path = "crates/mojito-parser" }
 mojito-symbol = { path = "crates/mojito-symbol" }
 mojito-types = { path = "crates/mojito-types" }
 # Pure-Rust ELF/archive inspection and digests for the resolved-toolchain
@@ -76,7 +80,6 @@ object = { version = "0.40.0", optional = true, default-features = false, featur
     "read",
     "std",
 ] }
-petgraph = { workspace = true }
 pliron = { version = "=0.17.0", optional = true }
 pliron-llvm = { version = "=0.17.0", optional = true }
 sha2 = { version = "0.11.0", optional = true }

@@ -59,16 +59,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         }
                         continue;
                     }
-                    argument = crate::ast::ParamArg::Named {
+                    argument = mojito_ast::ast::ParamArg::Named {
                         name,
-                        value: Box::new(crate::ast::ParamArg::Value(
+                        value: Box::new(mojito_ast::ast::ParamArg::Value(
                             self.parse_expression(Precedence::Lowest)?,
                         )),
                     };
                 }
                 if matches!(self.peek_token()?, Some(Token::Colon)) {
                     match argument {
-                        crate::ast::ParamArg::Value(value) => {
+                        mojito_ast::ast::ParamArg::Value(value) => {
                             let (upper, step, explicit_step) = self.parse_slice_components()?;
                             items.push(ParsedBracketItem::Slice {
                                 lower: Some(Box::new(value)),
@@ -79,10 +79,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         }
                         // `s[byte=a:b]` — a keyword slice whose lower bound
                         // was parsed as the keyword argument's value.
-                        crate::ast::ParamArg::Named { name, value }
-                            if matches!(value.as_ref(), crate::ast::ParamArg::Value(_)) =>
+                        mojito_ast::ast::ParamArg::Named { name, value }
+                            if matches!(value.as_ref(), mojito_ast::ast::ParamArg::Value(_)) =>
                         {
-                            let crate::ast::ParamArg::Value(lower) = *value else {
+                            let mojito_ast::ast::ParamArg::Value(lower) = *value else {
                                 unreachable!("guard established a value argument");
                             };
                             let (upper, step, explicit_step) = self.parse_slice_components()?;
@@ -162,7 +162,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let mut arguments = Vec::with_capacity(items.len());
             for item in items {
                 arguments.push(match item {
-                    ParsedBracketItem::Param(crate::ast::ParamArg::Value(value)) => {
+                    ParsedBracketItem::Param(mojito_ast::ast::ParamArg::Value(value)) => {
                         SubscriptArg::Index(value)
                     }
                     ParsedBracketItem::Param(_) => {
@@ -258,26 +258,26 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // via the TypeApply fallback below.
         if param_args
             .iter()
-            .any(|argument| matches!(argument, crate::ast::ParamArg::Named { .. }))
+            .any(|argument| matches!(argument, mojito_ast::ast::ParamArg::Named { .. }))
             && param_args.iter().all(|argument| match argument {
-                crate::ast::ParamArg::Named { value, .. } => {
-                    matches!(value.as_ref(), crate::ast::ParamArg::Value(_))
+                mojito_ast::ast::ParamArg::Named { value, .. } => {
+                    matches!(value.as_ref(), mojito_ast::ast::ParamArg::Value(_))
                 }
-                crate::ast::ParamArg::Value(_) => true,
-                crate::ast::ParamArg::Type(_) => false,
+                mojito_ast::ast::ParamArg::Value(_) => true,
+                mojito_ast::ast::ParamArg::Type(_) => false,
             })
             && expression_name_starts_lowercase(&object)
         {
             let args = param_args
                 .into_iter()
                 .map(|argument| match argument {
-                    crate::ast::ParamArg::Named { name, value } => {
-                        let crate::ast::ParamArg::Value(value) = *value else {
+                    mojito_ast::ast::ParamArg::Named { name, value } => {
+                        let mojito_ast::ast::ParamArg::Value(value) = *value else {
                             unreachable!("guard admits only value keyword arguments");
                         };
                         SubscriptArg::Keyword { name, value }
                     }
-                    crate::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
+                    mojito_ast::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
                     _ => unreachable!(),
                 })
                 .collect();
@@ -296,19 +296,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // immediately calling it (`var f = borrow[origin_of(value)]`).
             // Keep ordinary `values[index]` syntax on the Index path while
             // preserving this compiler-known origin argument as TypeApply.
-            Ok([crate::ast::ParamArg::Value(origin)])
+            Ok([mojito_ast::ast::ParamArg::Value(origin)])
                 if is_explicit_origin_argument(&origin)
                     && matches!(object.kind, ExprKind::Identifier(_)) =>
             {
                 Ok(self.node(
                     ExprKind::TypeApply {
                         name: call_name(object)?,
-                        args: vec![crate::ast::ParamArg::Value(origin)],
+                        args: vec![mojito_ast::ast::ParamArg::Value(origin)],
                     },
                     start,
                 ))
             }
-            Ok([crate::ast::ParamArg::Value(index)]) => Ok(self.node(
+            Ok([mojito_ast::ast::ParamArg::Value(index)]) => Ok(self.node(
                 ExprKind::Index {
                     object: Box::new(object),
                     index: Box::new(index),
@@ -322,7 +322,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // binder parses as a type/assoc chain, but a member object has no
             // parameterized-application form — re-materialize the chain as
             // the index expression.
-            Ok([crate::ast::ParamArg::Type(binder_ty)])
+            Ok([mojito_ast::ast::ParamArg::Type(binder_ty)])
                 if !matches!(object.kind, ExprKind::Identifier(_))
                     && self_param_rooted_expression(&binder_ty).is_some() =>
             {
@@ -351,7 +351,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // callable, while `grid[row, column]` remains a runtime index.
             Err(param_args)
                 if param_args.iter().any(|argument| {
-                    matches!(argument, crate::ast::ParamArg::Value(value) if is_explicit_origin_argument(value))
+                    matches!(argument, mojito_ast::ast::ParamArg::Value(value) if is_explicit_origin_argument(value))
                 }) =>
             {
                 Ok(self.node(
@@ -365,13 +365,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Err(param_args)
                 if param_args
                     .iter()
-                    .all(|argument| matches!(argument, crate::ast::ParamArg::Value(_)))
+                    .all(|argument| matches!(argument, mojito_ast::ast::ParamArg::Value(_)))
                     && expression_name_starts_lowercase(&object) =>
             {
                 let args = param_args
                     .into_iter()
                     .map(|argument| match argument {
-                        crate::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
+                        mojito_ast::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
                         _ => unreachable!(),
                     })
                     .collect();
@@ -518,7 +518,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     ));
                 }
                 kwargs.push(KwArg {
-                    name: crate::ast::FORWARDED_KWARGS_NAME.to_string(),
+                    name: mojito_ast::ast::FORWARDED_KWARGS_NAME.to_string(),
                     value,
                 });
                 if matches!(self.peek_token()?, Some(Token::Comma)) {

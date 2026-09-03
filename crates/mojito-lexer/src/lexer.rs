@@ -5,8 +5,8 @@
 //! every token. A small pending queue handles one input event producing several
 //! layout tokens.
 
-use crate::error::LexError;
-use crate::token::{Span, TStringChunk, Token};
+use mojito_common::error::LexError;
+use mojito_common::token::{Span, TStringChunk, Token};
 use std::collections::VecDeque;
 
 pub struct Lexer<'a> {
@@ -694,7 +694,7 @@ impl<'a> Iterator for Lexer<'a> {
                             .chars()
                             .filter(|&ch| ch != '_')
                             .collect();
-                        match crate::literal::FloatLiteral::parse_decimal(&cleaned) {
+                        match mojito_common::literal::FloatLiteral::parse_decimal(&cleaned) {
                             Some(value) => self.emit(Token::FloatLiteral(value)),
                             None => return Some(Err(LexError::InvalidFloat(start))),
                         }
@@ -927,7 +927,7 @@ impl<'a> Iterator for Lexer<'a> {
                             .chars()
                             .filter(|&c| c != '_')
                             .collect();
-                        match crate::literal::IntLiteral::parse_radix(&cleaned, radix) {
+                        match mojito_common::literal::IntLiteral::parse_radix(&cleaned, radix) {
                             Some(num) => self.emit(Token::IntLiteral(num)),
                             None => return Some(Err(LexError::InvalidInteger(start))),
                         }
@@ -964,7 +964,7 @@ impl<'a> Iterator for Lexer<'a> {
                         .filter(|&c| c != '_')
                         .collect();
                     if is_float {
-                        match crate::literal::FloatLiteral::parse_decimal(&cleaned) {
+                        match mojito_common::literal::FloatLiteral::parse_decimal(&cleaned) {
                             Some(num) => self.emit(Token::FloatLiteral(num)),
                             None => return Some(Err(LexError::InvalidFloat(start))),
                         }
@@ -974,7 +974,7 @@ impl<'a> Iterator for Lexer<'a> {
                     {
                         return Some(Err(LexError::InvalidInteger(start)));
                     } else {
-                        match crate::literal::IntLiteral::parse_radix(&cleaned, 10) {
+                        match mojito_common::literal::IntLiteral::parse_radix(&cleaned, 10) {
                             Some(num) => self.emit(Token::IntLiteral(num)),
                             None => return Some(Err(LexError::InvalidInteger(start))),
                         }
