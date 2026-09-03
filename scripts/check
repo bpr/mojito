@@ -9,12 +9,14 @@ scripts/check-parity-manifest
 echo "==> cargo fmt --all --check"
 cargo fmt --all --check
 
-echo "==> cargo nextest run --workspace"
+echo "==> cargo nextest run --workspace (minus the LLVM-lane crate)"
 # nextest does not run doctests; this workspace has none. If doctests are
 # ever added, run them separately here (cargo test --doc).
 # --no-fail-fast: a gate run reports every failure, so one early failure
 # cannot hide the true pass rate of everything queued behind it.
-cargo nextest run --workspace --no-fail-fast
+# --exclude mojito-pliron: that member is the LLVM lane; this default gate
+# must never require LLVM (scripts/check-pliron covers it).
+cargo nextest run --workspace --exclude mojito-pliron --no-fail-fast
 
 echo "==> cargo clippy --workspace --all-targets -- -D warnings"
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --exclude mojito-pliron --all-targets -- -D warnings

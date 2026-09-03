@@ -29,12 +29,49 @@ Read these documents before changing behavior:
 - `docs/grammar.md` and `docs/frontend.md` — accepted syntax and parser design.
 - `docs/roadmap.md` — current direction, pending work, and task lifecycle policy.
 - `docs/native-abi.md` — the normative native target/layout/runtime-ABI
-  contract; owned in code by `src/native/` and implemented by the
-  `crates/mojito-runtime` workspace member.
+  contract; owned in code by `crates/mojito-native-core` (target/layout/
+  rt_abi, below the MIR waist) plus `crates/mojito-native` (mono/mangle,
+  above it) and implemented by the `crates/mojito-runtime` workspace member.
 
 Do not copy the feature inventory into this file. Update `docs/features.md` when
 support changes and update `docs/symbol-map.md` when ownership or entry points
 move.
+
+## Workspace Layout
+
+The compiler is a Cargo workspace with one crate per phase under `crates/`;
+the root `mojito` crate is the facade: driver (`compiler::Compiler`,
+`artifact`), CLI (`main.rs`), and a `lib.rs` re-exporting every crate at its
+historical `mojito::<module>` path, so tests and consumers never spell crate
+names. Bottom-up dependency order (Cargo-enforced):
+
+```text
+mojito-common      token/literal/error vocabulary (no mojito deps)
+mojito-ast         AST + structural call binding (call.rs)
+mojito-types       Ty lattice + pure coercion/contract predicates, origins, ct
+mojito-symbol      callable identity / overload + specialization mangling
+mojito-checked     the CheckedProgram semantic handoff
+mojito-lexer       tokenization
+mojito-parser      parsing
+mojito-module      linking + bundled stdlib root
+mojito-hir         checked-AST CFG lowering
+mojito-native-core native target/layout/rt_abi (below the MIR waist)
+mojito-checker     semantic checking (+ explicit_destroy)
+mojito-mir         MIR lowering, verifier, textual round-trip
+mojito-analysis    ownership/liveness + drop elaboration
+mojito-vm          register VM + Backend enum (re-checks: seam contract)
+mojito-native      monomorphization + mangling (above the waist)
+mojito-pliron      Pliron/LLVM backend (only crate that may need LLVM)
+mojito-comptime    elaboration + CTFE (ABOVE the VM: CTFE runs VmBackend)
+mojito (root)      facade: compiler driver, CLI, re-exports, tests/
+```
+
+**Rule:** a crate may depend only on crates above it in this list (the crate
+DAG is not the pipeline order — see `docs/architecture.md` §Workspace
+Layout). If a change seems to require a new dependency edge, stop and raise
+it as a design question rather than adding the edge to fix a compile error.
+The default lane must never build LLVM: only `mojito-pliron` (reached via
+the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 
 ## Non-Negotiable Invariants
 
@@ -56,8 +93,9 @@ move.
 5. MIR is the stable waist. Backends consume register-typed MIR that has passed
    `mir::verify` plus ownership analysis, with checked declaration metadata,
    rather than rediscovering language rules from AST syntax.
-6. `src/call.rs` owns structural call binding and `src/symbol.rs` owns callable
-   identity. Do not duplicate either policy in the checker, MIR, or VM.
+6. `crates/mojito-ast/src/call.rs` owns structural call binding and
+   `crates/mojito-symbol/src/symbol.rs` owns callable identity. Do not
+   duplicate either policy in the checker, MIR, or VM.
 7. Preserve source/module provenance on every AST and lowered location.
 
 ## Working Practices
@@ -109,9 +147,10 @@ verification happens. In-session verification must take seconds, not hours:
 - Module roots: repeat `--module-path PATH` / `-I PATH`; use `--stdlib PATH`
   to replace the bundled standard-library root.
 
-Before reporting a task complete: `cargo fmt`, `git diff --check`, and a clean
-`cargo build`; Clippy with warnings denied on the lib only when the change is
-small enough for it to be quick. Full tests and the manifests are the nightly
+Before reporting a task complete: `cargo fmt --all`, `git diff --check`, and
+a clean `cargo build`; Clippy (`cargo clippy --workspace --exclude
+mojito-pliron --lib -- -D warnings`) only when the change is small enough for
+it to be quick. Full tests and the manifests are the nightly
 gate's job — report what was and was not run.
 
 ## Test and Fixture Ownership

@@ -19,10 +19,16 @@ cargo fmt --check
 echo "==> cargo clippy --features backend-pliron --all-targets -- -D warnings"
 cargo clippy --features backend-pliron --all-targets -- -D warnings
 
+echo "==> cargo clippy -p mojito-pliron --all-targets -- -D warnings"
+cargo clippy -p mojito-pliron --all-targets -- -D warnings
+
 echo "==> cargo nextest run --features backend-pliron (pliron tests)"
 # --no-fail-fast: report every failure in one gate run. binary(pliron_*)
 # catches every pliron integration target as slices add them.
 cargo nextest run --no-fail-fast --features backend-pliron -E 'binary(pliron_*) + test(pliron)'
+
+echo "==> cargo nextest run -p mojito-pliron (crate unit tests)"
+cargo nextest run -p mojito-pliron --no-fail-fast
 
 echo "==> bench smoke (machinery validation only; no performance claims)"
 # Debug builds are fine here: the smoke lane validates the driver, the

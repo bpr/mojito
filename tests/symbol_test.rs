@@ -262,16 +262,24 @@ fn self_typed_overload_keys_agree_between_declaration_and_call() {
 }
 
 /// Repository hygiene: the `$ov$` spelling may exist only in the canonical
-/// symbol module. A new hand-built overload symbol anywhere else in `src/`
-/// reintroduces the checker/MIR/VM drift this module exists to prevent.
+/// symbol module. A new hand-built overload symbol anywhere else in the
+/// compiler sources (the facade's `src/` or any workspace crate under
+/// `crates/`) reintroduces the checker/MIR/VM drift this module exists to
+/// prevent.
 #[test]
 fn ov_spelling_appears_only_in_the_symbol_module() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut offenders = Vec::new();
-    scan_rs_files(&root, &mut offenders);
+    scan_rs_files(&manifest.join("src"), &mut offenders);
+    for entry in std::fs::read_dir(manifest.join("crates")).expect("read crates dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            scan_rs_files(&path.join("src"), &mut offenders);
+        }
+    }
     assert!(
         offenders.is_empty(),
-        "'$ov$' outside src/symbol.rs — route it through mojito::symbol: {offenders:?}"
+        "'$ov$' outside the symbol module — route it through mojito::symbol: {offenders:?}"
     );
 }
 

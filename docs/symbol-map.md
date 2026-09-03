@@ -4,6 +4,11 @@ This map answers “where does this rule live?” It names the production entry
 points and the symbols that own cross-phase contracts. Keep it synchronized with
 refactors; implementation details belong in `docs/architecture.md`.
 
+Module paths below (`checker::…`, `mir::…`) are the root `mojito` facade's
+paths; since the crate split each phase lives in its own workspace crate
+(`crates/mojito-<phase>/`) and the facade re-exports it unchanged. The crate
+map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
+
 ## Production Path
 
 | Stage | Owning symbols | Output / invariant |

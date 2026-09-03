@@ -11,6 +11,7 @@ keywords = ["mojo", "compiler", "interpreter", "language", "vm"]
 categories = ["command-line-utilities", "compilers", "development-tools"]
 include = [
     "/src/**",
+    "/crates/**",
     "/stdlib/**",
     "/tests/**",
     "/assets/**",
@@ -31,9 +32,11 @@ include = [
 ]
 
 [workspace]
-# The root package plus the independently versioned native runtime. The
-# `spikes/` crates deliberately stay outside (each carries its own empty
-# `[workspace]` table) so the default lane never builds LLVM.
+# The root facade package plus one crate per compiler phase and the
+# independently versioned native runtime (see AGENTS.md "Workspace Layout").
+# The `spikes/` crates deliberately stay outside (each carries its own empty
+# `[workspace]` table), and only `crates/mojito-pliron` — reached via the
+# optional `backend-pliron` feature — may require LLVM.
 members = ["crates/*"]
 
 [workspace.package]

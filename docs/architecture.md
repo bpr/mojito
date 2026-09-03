@@ -18,6 +18,26 @@ This file starts where the parser stops and follows a program through module
 linking, compile-time elaboration, semantic checking, HIR lowering, MIR lowering,
 compiler analyses, drop elaboration, and execution on the register VM.
 
+## Workspace Layout
+
+Since the 2026-09 crate split, each pipeline phase is its own workspace crate
+under `crates/`, and the root `mojito` crate is the facade: the driver
+(`compiler::Compiler`, `artifact`), the CLI (`main.rs`), and a `lib.rs` that
+re-exports every crate at its historical module path (`mojito::checker`,
+`mojito::mir`, ...), so consumers and tests are unaffected by the split.
+
+Dependency direction is enforced by Cargo. Bottom-up: `mojito-common`
+(token/literal/errors) → `mojito-ast` (+ structural call binding) →
+`mojito-types` (Ty/origins/ct) → `mojito-symbol` → `mojito-checked` →
+{`mojito-lexer` → `mojito-parser` → `mojito-module`, `mojito-hir`,
+`mojito-native-core`} → `mojito-checker` → `mojito-mir` → `mojito-analysis` →
+`mojito-vm` → {`mojito-native` → `mojito-pliron` (feature-gated),
+`mojito-comptime`} → the root facade. Note that the crate DAG is not the
+pipeline order: `mojito-comptime` sits **above** the VM because CTFE compiles
+and executes sub-programs through `VmBackend`, which itself re-runs checking
+(the stage-composed seam contract). `crates/mojito-runtime` remains the
+independently versioned native C-ABI runtime, depending on nothing above.
+
 ## Big Picture
 
 The post-parse pipeline is:
@@ -120,7 +140,7 @@ LLVM or MLIR lowering and eBPF are no longer prioritized.
 Native-backend work is isolated from the default build as an invariant: the
 default `mojito` build and `scripts/check` resolve no LLVM or Pliron
 dependency (`tests/backend_isolation_test.rs` guards the default feature
-graph). The experimental backend lives in `src/backend/pliron/` behind the
+graph). The experimental backend lives in the workspace crate `crates/mojito-pliron/` behind the
 optional `backend-pliron` feature — a compile path
 (`mojito compile --backend pliron`, plus `run --backend pliron` for the
 advertised subset) consuming the cached post-drop `elaborated_mir` artifact,
@@ -131,7 +151,9 @@ VM/native divergence policies in `docs/notes/pliron-stage1.md` through
 `docs/notes/pliron-stage4.md`.
 
 The backend-independent half of that work has one owner: the un-gated
-`src/native/` module holds the checked build configuration (target triple
+`native` surface (`crates/mojito-native-core/` for target/layout/runtime-ABI
+below the MIR waist, re-exported with monomorphization and mangling by
+`crates/mojito-native/`) holds the checked build configuration (target triple
 with a pinned data-layout string, CPU features, optimization level, output
 kind), the layout engine, the injective symbol mangler, and the runtime ABI
 contract table, and the workspace crate `crates/mojito-runtime` implements
@@ -272,7 +294,7 @@ The public entry points for each compiler phase remain in its root module.
 Module:
 
 ```rust
-src/module.rs
+crates/mojito-module/src/module.rs
 ```
 
 Entry points:
@@ -350,7 +372,7 @@ source stamping is no longer relied on as semantic identity.
 Module:
 
 ```rust
-src/comptime.rs
+crates/mojito-comptime/src/comptime.rs
 ```
 
 Entry point:
@@ -452,7 +474,7 @@ backend-ready MIR checkpoint re-confirms before freezing the schema.
 
 The important distinction is that the elaborator still owns compile-time AST
 rewriting, while function-body execution now goes through the MIR/VM path. The
-remaining expression evaluator in `src/comptime.rs` is not a second function
+remaining expression evaluator in `crates/mojito-comptime/src/comptime.rs` is not a second function
 runtime; it exists to decide `comptime if`, enumerate `comptime for`, resolve
 type-valued compile-time facts, and fold those facts before a CTFE helper is
 lowered to MIR.
@@ -540,9 +562,9 @@ those checks run.
 
 That layering is useful but not final. Today there are two related mechanisms:
 
-- `src/comptime.rs` handles language-level `comptime` declarations, branch
+- `crates/mojito-comptime/src/comptime.rs` handles language-level `comptime` declarations, branch
   selection, loop unrolling, materialization, and CTFE.
-- `src/checker.rs` still validates type/value-parameter positions and folds the
+- `crates/mojito-checker/src/checker.rs` still validates type/value-parameter positions and folds the
   small expression subset it needs for those positions.
 
 `ParamDecl::Value` retains its declared checked type and optional compile-time
@@ -976,7 +998,7 @@ segment, and rejects subtree segments in transfer destination domains.
 Module:
 
 ```rust
-src/hir/mod.rs
+crates/mojito-hir/src/hir.rs
 ```
 
 Main type:
@@ -1343,7 +1365,7 @@ the way out.
 Module:
 
 ```rust
-src/mir/mod.rs
+crates/mojito-mir/src/mir.rs
 ```
 
 Main entry points:
@@ -2009,12 +2031,13 @@ It also keeps arity overloads and type overloads on one mechanism instead of
 special-casing `name#arity`.
 
 Signature identity and this name scheme are owned by one canonical module,
-`src/symbol.rs`: a signature is typed data (`SignatureKey`, built from either
+`crates/mojito-symbol/src/symbol.rs`: a signature is typed data (`SignatureKey`, built from either
 the declared `ast::SourceType` or the checker-resolved `Ty` — both spell a type
 from its annotation, e.g. `Point`, `Pair$Int`) and only the module formats the
 final symbol. Checker, MIR, and VM all route through it, so the recorded
 callee always names the emitted function; `tests/symbol_test.rs` pins the
-spellings and scans `src/` for stray hand-built `$ov$` strings.
+spellings and scans the facade's `src/` and every `crates/*/src/` for stray
+hand-built `$ov$` strings.
 
 The signature stores a keyword-variadic collector separately from positional
 types and emits a `$kwv$Type` component when present. Thus
@@ -2074,7 +2097,7 @@ though expressions have been flattened into temporaries.
 Module:
 
 ```rust
-src/analysis/mod.rs
+crates/mojito-analysis/src/analysis.rs
 ```
 
 Production entry point:
@@ -2500,7 +2523,7 @@ runtime-varying indexed transfers remain rejected.
 Same module:
 
 ```rust
-src/analysis/mod.rs
+crates/mojito-analysis/src/analysis.rs
 ```
 
 Entry point:
@@ -2679,7 +2702,7 @@ return-value evaluation order and carries destruction through nested
 Module:
 
 ```rust
-src/backend/vm.rs
+crates/mojito-vm/src/backend/vm.rs
 ```
 
 The register VM executes verified MIR. It is structured rather than
@@ -2843,7 +2866,7 @@ The rule is:
 Module:
 
 ```rust
-src/runtime/mod.rs
+crates/mojito-vm/src/runtime.rs
 ```
 
 The VM operates on `runtime::Value`, the shared representation for supported
