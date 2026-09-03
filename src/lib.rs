@@ -1,26 +1,48 @@
 pub use mojito_ast::{ast, call};
 pub use mojito_checked::checked;
+pub use mojito_checker::{checker, explicit_destroy};
 pub use mojito_common::{error, literal, token};
 pub use mojito_hir::hir;
 pub use mojito_lexer::lexer;
+
+/// MIR facade: the extracted crate's surface plus the root-owned
+/// `lower_program` convenience (check + lower in one step), which cannot live
+/// in `mojito-mir` because MIR must not depend on the checker.
+pub mod mir {
+    pub use mojito_mir::mir::*;
+
+    /// Lower a whole program (a top-level statement list) into per-function
+    /// MIR. See `lower_checked_program`; this convenience checks first.
+    pub fn lower_program(
+        program: &[crate::ast::Stmt],
+    ) -> Result<MirProgram, crate::error::TypeError> {
+        let checked = crate::checker::check_program(program)?;
+        Ok(lower_checked_program(&checked))
+    }
+}
 pub use mojito_module::module;
 pub use mojito_parser::parser;
 pub use mojito_symbol::symbol;
 pub use mojito_types::{ct, origin, types};
 
-pub mod analysis;
 pub mod artifact;
 pub mod backend;
-pub mod checker;
 pub mod compiler;
 pub mod comptime;
-mod explicit_destroy;
-pub mod mir;
 pub mod native;
 pub mod runtime;
 
 // Re-export commonly used types at the crate root for convenience
-pub use analysis::{check_ownership, check_ownership_checked, check_ownership_program};
+pub use analysis::{check_ownership_checked, check_ownership_program};
+pub use mojito_analysis::analysis;
+
+/// Run the ownership analysis over a whole program (parse-level convenience:
+/// checks, lowers, then analyzes). Root-owned because it needs the checker.
+pub fn check_ownership(program: &[ast::Stmt]) -> Result<(), error::OwnershipError> {
+    let prog = mir::lower_program(program)
+        .map_err(|error| error::OwnershipError::InvalidInput(error.to_string()))?;
+    check_ownership_program(&prog)
+}
 pub use artifact::{ArtifactRunError, run_artifact};
 pub use ast::{
     Dtype, Expr, ImportName, ImportNames, InfixOp, Param, PrefixOp, SourceType, Stmt, Type,

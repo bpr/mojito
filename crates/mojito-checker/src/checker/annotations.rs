@@ -1,0 +1,163 @@
+//! Source-annotation conversion into resolved checked types and origins.
+
+use super::*;
+pub use mojito_types::types::splats_to;
+
+pub(super) fn dtype_from_arg(arg: &mojito_ast::ast::ParamArg) -> Result<Dtype, TypeError> {
+    if let mojito_ast::ast::ParamArg::Value(Expr {
+        kind: ExprKind::Member { object, field },
+        ..
+    }) = arg
+        && let ExprKind::Identifier(ns) = &object.kind
+        && ns == "DType"
+        && let Some(dtype) = Dtype::from_name(field)
+    {
+        return Ok(dtype);
+    }
+    Err(TypeError::BadDtype(match arg {
+        mojito_ast::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Member { field, .. },
+            ..
+        }) => {
+            format!("DType.{}", field)
+        }
+        _ => "a non-DType argument".to_string(),
+    }))
+}
+
+/// Whether `ty` may be an **explicit construction** argument for a `dtype`
+/// lane — `SIMD[...](...)`, a scalar alias like `Byte(...)`, or
+/// `Scalar[DType.x](...)`. Explicit construction converts where the implicit
+/// contexts `splats_to` governs (operator splats, coercions) stay
+/// literal-exact: runtime integers wrap to any integer width and convert to
+/// float lanes, and runtime floats adjust precision across float widths. A
+/// float source never converts to an integer lane — spell the truncation
+/// (`Int(x)`) first. `Intable` params/structs are the caller's separate,
+/// `conforms_to`-backed clause (`check_simd_args`).
+pub(super) fn converts_to_lane(ty: &Ty, dtype: Dtype) -> bool {
+    if splats_to(ty, dtype) {
+        return true;
+    }
+    let integer_source = matches!(ty, Ty::Int | Ty::UInt)
+        || matches!(ty, Ty::Simd { dtype: d, width: 1 } if !d.is_float() && *d != Dtype::Bool);
+    if dtype == Dtype::Bool {
+        return false;
+    }
+    if dtype.is_float() {
+        let float_source = matches!(ty, Ty::Float64)
+            || matches!(ty, Ty::Simd { dtype: d, width: 1 } if d.is_float());
+        return float_source || integer_source;
+    }
+    integer_source
+}
+
+pub(super) fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
+    match dtype {
+        Dtype::Int
+        | Dtype::Int8
+        | Dtype::Int16
+        | Dtype::Int32
+        | Dtype::Int64
+        | Dtype::UInt8
+        | Dtype::UInt16
+        | Dtype::UInt32
+        | Dtype::UInt64 => true,
+        // Integer and floating literals round during floating materialization;
+        // overflow is the corresponding IEEE infinity.
+        Dtype::Float32 | Dtype::Float64 => true,
+        Dtype::Bool => false,
+    }
+}
+
+/// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`: a **width-1 `float64`**
+/// is the native `Ty::Float64` (Mojo unifies `Float64` with `SIMD[DType.float64,
+/// 1]`); everything else is a `Ty::Simd`.
+pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {
+    match (dtype, width) {
+        (Dtype::Int, 1) => Ty::Int,
+        (Dtype::Float64, 1) => Ty::Float64,
+        _ => Ty::Simd { dtype, width },
+    }
+}
+
+/// The scalar `Ty` a value-parameter type name denotes, or `None` if the name is
+/// not a scalar type (so it is a trait, i.e. a type parameter). Used to classify
+/// `[name: X]` as a value vs. type parameter.
+pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
+    match name {
+        "Int" => Some(Ty::Int),
+        // A `[dtype: DType]` value parameter; compile-time-only.
+        "DType" => Some(Ty::Dtype),
+        // The removed `SIMDSize` spelling rejects (upstream removed it 2026-08).
+        "SIMDLength" => Some(Ty::Int),
+        "UInt" => Some(Ty::UInt),
+        "Bool" => Some(Ty::Bool),
+        "String" => Some(Ty::StringLiteral),
+        "StringLiteral" => Some(Ty::StringLiteral),
+        "Float64" => Some(Ty::Float64),
+        // The prelude rewrite qualifies `String` bounds like any other name;
+        // a `[text: String]` value parameter keeps the compile-time string
+        // type regardless of the nominal stdlib struct.
+        _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => Some(Ty::StringLiteral),
+        _ => None,
+    }
+}
+
+/// The type-parameter scope of a parameter list, for resolving a bare `T`
+/// annotation. Retaining the complete checked `Ty::Param` is important for
+/// callable bounds: a name-only/bounds-only scope would discard the signature
+/// needed to type `f(...)` inside `[F: def(...) -> ...]`.
+pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Ty> {
+    decls
+        .iter()
+        .filter_map(|d| match d {
+            ParamDecl::Type {
+                name,
+                bounds,
+                callable_bound,
+                ..
+            } => Some((
+                name.clone(),
+                Ty::Param {
+                    name: name.clone(),
+                    bounds: bounds.clone(),
+                    callable_bound: callable_bound.clone(),
+                },
+            )),
+            ParamDecl::Value { .. } => None,
+        })
+        .collect()
+}
+
+/// A struct's own parameter, as the `TyArg` it contributes to the struct's `Self`
+/// type while its body is checked: a type parameter as `Ty::Param`, a value
+/// parameter as a symbolic `CtValue::Param`.
+pub(super) fn param_as_arg(decl: &ParamDecl) -> TyArg {
+    match decl {
+        ParamDecl::Type {
+            name,
+            bounds,
+            callable_bound,
+            ..
+        } => TyArg::Ty(Ty::Param {
+            name: name.clone(),
+            bounds: bounds.clone(),
+            callable_bound: callable_bound.clone(),
+        }),
+        ParamDecl::Value { name, .. } => TyArg::Val(CtValue::Param(name.clone())),
+    }
+}
+
+/// The substitution mapping a struct's type-parameter names to a value's type
+/// arguments (`[T] @ [Int]` ⟹ `{T: Int}`). Value parameters/arguments are
+/// skipped (they never appear in a type). Empty for a non-generic struct.
+pub(super) fn struct_subst(decls: &[ParamDecl], targs: &[TyArg]) -> HashMap<String, Ty> {
+    decls
+        .iter()
+        .zip(targs)
+        .filter_map(|(d, a)| match (d, a) {
+            (ParamDecl::Type { name, .. }, TyArg::Ty(t)) => Some((name.clone(), t.clone())),
+            _ => None,
+        })
+        .collect()
+}

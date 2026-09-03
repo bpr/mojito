@@ -11,8 +11,7 @@
 //! this module or in the `mojito-runtime` crate may depend on that
 //! representation — the native ABI is defined only by the types here.
 
-pub mod layout;
 pub mod mangle;
 pub mod mono;
-pub mod rt_abi;
-pub mod target;
+
+pub use mojito_native_core::{layout, rt_abi, target};

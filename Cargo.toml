@@ -64,12 +64,16 @@ backend-pliron = [
 # Direct llvm-sys (same 221/LLVM-22 pin pliron-llvm resolves) powers the
 # target-data layout cross checks in tests/pliron_backend_test.rs.
 llvm-sys = { version = "221", optional = true }
+mojito-analysis = { path = "crates/mojito-analysis" }
 mojito-ast = { path = "crates/mojito-ast" }
 mojito-checked = { path = "crates/mojito-checked" }
+mojito-checker = { path = "crates/mojito-checker" }
 mojito-common = { path = "crates/mojito-common" }
 mojito-hir = { path = "crates/mojito-hir" }
 mojito-lexer = { path = "crates/mojito-lexer" }
+mojito-mir = { path = "crates/mojito-mir" }
 mojito-module = { path = "crates/mojito-module" }
+mojito-native-core = { path = "crates/mojito-native-core" }
 mojito-parser = { path = "crates/mojito-parser" }
 mojito-symbol = { path = "crates/mojito-symbol" }
 mojito-types = { path = "crates/mojito-types" }

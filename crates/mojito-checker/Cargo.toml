@@ -1,0 +1,14 @@
+[package]
+name = "mojito-checker"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+mojito-ast = { path = "../mojito-ast" }
+mojito-checked = { path = "../mojito-checked" }
+mojito-common = { path = "../mojito-common" }
+mojito-module = { path = "../mojito-module" }
+mojito-symbol = { path = "../mojito-symbol" }
+mojito-types = { path = "../mojito-types" }

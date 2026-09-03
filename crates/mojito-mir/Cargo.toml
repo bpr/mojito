@@ -1,0 +1,15 @@
+[package]
+name = "mojito-mir"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+mojito-ast = { path = "../mojito-ast" }
+mojito-checked = { path = "../mojito-checked" }
+mojito-common = { path = "../mojito-common" }
+mojito-hir = { path = "../mojito-hir" }
+mojito-native-core = { path = "../mojito-native-core" }
+mojito-symbol = { path = "../mojito-symbol" }
+mojito-types = { path = "../mojito-types" }
