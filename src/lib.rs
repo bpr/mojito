@@ -2,6 +2,7 @@ pub use mojito_ast::{ast, call};
 pub use mojito_checked::checked;
 pub use mojito_checker::{checker, explicit_destroy};
 pub use mojito_common::{error, literal, token};
+pub use mojito_comptime::comptime;
 pub use mojito_hir::hir;
 pub use mojito_lexer::lexer;
 
@@ -21,16 +22,15 @@ pub mod mir {
     }
 }
 pub use mojito_module::module;
+pub use mojito_native::native;
 pub use mojito_parser::parser;
 pub use mojito_symbol::symbol;
 pub use mojito_types::{ct, origin, types};
+pub use mojito_vm::runtime;
 
 pub mod artifact;
 pub mod backend;
 pub mod compiler;
-pub mod comptime;
-pub mod native;
-pub mod runtime;
 
 // Re-export commonly used types at the crate root for convenience
 pub use analysis::{check_ownership_checked, check_ownership_program};

@@ -1861,14 +1861,17 @@ impl Flatten<'_> {
                 // owner; the binding then aliases that slot exactly like an
                 // owned place (the place branch below resolves the expression
                 // to the slot's root).
-                let materialized = self.checked_adjustments(value).into_iter().find_map(
-                    |adjustment| match adjustment {
+                let materialized =
+                    self.checked_adjustments(value)
+                        .into_iter()
+                        .find_map(|adjustment| {
+                            match adjustment {
                         mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                             owner,
                         } => Some(owner),
                         _ => None,
-                    },
-                );
+                    }
+                        });
                 if let Some(owner) = materialized {
                     let source = self.expr(value);
                     // Reference-context expression lowering may already have

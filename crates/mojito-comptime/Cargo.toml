@@ -1,0 +1,17 @@
+[package]
+name = "mojito-comptime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+mojito-ast = { path = "../mojito-ast" }
+mojito-checker = { path = "../mojito-checker" }
+mojito-common = { path = "../mojito-common" }
+mojito-symbol = { path = "../mojito-symbol" }
+mojito-types = { path = "../mojito-types" }
+mojito-vm = { path = "../mojito-vm" }
+
+[dev-dependencies]
+mojito = { path = "../.." }

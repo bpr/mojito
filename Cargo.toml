@@ -53,8 +53,7 @@ petgraph = "0.8.3"
 # The default build must stay free of LLVM: tests/backend_isolation_test.rs
 # guards the default dependency graph. See docs/notes/pliron-stage0.md.
 backend-pliron = [
-    "dep:pliron",
-    "dep:pliron-llvm",
+    "dep:mojito-pliron",
     "dep:llvm-sys",
     "dep:object",
     "dep:sha2",
@@ -69,14 +68,18 @@ mojito-ast = { path = "crates/mojito-ast" }
 mojito-checked = { path = "crates/mojito-checked" }
 mojito-checker = { path = "crates/mojito-checker" }
 mojito-common = { path = "crates/mojito-common" }
+mojito-comptime = { path = "crates/mojito-comptime" }
 mojito-hir = { path = "crates/mojito-hir" }
 mojito-lexer = { path = "crates/mojito-lexer" }
 mojito-mir = { path = "crates/mojito-mir" }
 mojito-module = { path = "crates/mojito-module" }
+mojito-native = { path = "crates/mojito-native" }
 mojito-native-core = { path = "crates/mojito-native-core" }
+mojito-pliron = { path = "crates/mojito-pliron", optional = true }
 mojito-parser = { path = "crates/mojito-parser" }
 mojito-symbol = { path = "crates/mojito-symbol" }
 mojito-types = { path = "crates/mojito-types" }
+mojito-vm = { path = "crates/mojito-vm" }
 # Pure-Rust ELF/archive inspection and digests for the resolved-toolchain
 # report, runtime ABI validation, and reproducibility diagnostics. Read-only,
 # no compression backends.
@@ -84,8 +87,6 @@ object = { version = "0.40.0", optional = true, default-features = false, featur
     "read",
     "std",
 ] }
-pliron = { version = "=0.17.0", optional = true }
-pliron-llvm = { version = "=0.17.0", optional = true }
 sha2 = { version = "0.11.0", optional = true }
 
 [dev-dependencies]

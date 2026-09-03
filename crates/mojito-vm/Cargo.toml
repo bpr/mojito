@@ -1,0 +1,18 @@
+[package]
+name = "mojito-vm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+mojito-analysis = { path = "../mojito-analysis" }
+mojito-ast = { path = "../mojito-ast" }
+mojito-checked = { path = "../mojito-checked" }
+mojito-checker = { path = "../mojito-checker" }
+mojito-common = { path = "../mojito-common" }
+mojito-hir = { path = "../mojito-hir" }
+mojito-mir = { path = "../mojito-mir" }
+mojito-native-core = { path = "../mojito-native-core" }
+mojito-symbol = { path = "../mojito-symbol" }
+mojito-types = { path = "../mojito-types" }
