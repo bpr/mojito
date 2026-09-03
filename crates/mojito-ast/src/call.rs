@@ -2,13 +2,16 @@
 //!
 //! Checking, MIR declaration lowering, and runtime frame construction share
 //! this structural contract. It deliberately knows nothing about types or
-//! values; each phase interprets the matched slots and maps errors itself.
+//! values; each phase interprets the matched slots. The one error adaptation
+//! kept here is `MatchError::into_type_error`, the checker-facing rendering
+//! that must live beside the type it converts.
 
 use crate::ast::{FnParam, ParamKind};
+use mojito_common::error::TypeError;
 
 #[derive(Clone, Copy)]
 /// Source argument selected for one regular parameter slot.
-pub(crate) enum ArgSlot {
+pub enum ArgSlot {
     Positional(usize),
     Keyword(usize),
     Default,
@@ -16,7 +19,7 @@ pub(crate) enum ArgSlot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Structural reason an argument list cannot bind to a declaration.
-pub(crate) enum MatchError {
+pub enum MatchError {
     TooManyPositional { expected: usize, got: usize },
     UnknownKeyword(String),
     PositionalOnly(String),
@@ -26,20 +29,48 @@ pub(crate) enum MatchError {
 
 #[derive(Clone, Copy)]
 /// Whether positional and keyword overflow collectors are present.
-pub(crate) struct CallVariadics {
+pub struct CallVariadics {
     pub positional: bool,
     pub keyword: bool,
 }
 
+/// Checker-facing adaptation: the structural mismatch as a `TypeError`.
+impl MatchError {
+    pub fn into_type_error(self, func: &str) -> TypeError {
+        match self {
+            MatchError::TooManyPositional { expected, got } => TypeError::ArityMismatch {
+                name: func.to_string(),
+                expected,
+                got,
+            },
+            MatchError::UnknownKeyword(k) => TypeError::BadCall {
+                func: func.to_string(),
+                reason: format!("unexpected keyword argument '{}'", k),
+            },
+            MatchError::PositionalOnly(k) => TypeError::BadCall {
+                func: func.to_string(),
+                reason: format!("argument '{}' is positional-only", k),
+            },
+            MatchError::Duplicate(k) => TypeError::BadCall {
+                func: func.to_string(),
+                reason: format!("argument '{}' supplied more than once", k),
+            },
+            MatchError::Missing(m) => TypeError::BadCall {
+                func: func.to_string(),
+                reason: format!("missing required argument '{}'", m),
+            },
+        }
+    }
+}
 /// Fully matched regular slots plus variadic overflow source indexes.
-pub(crate) struct CallSlots {
+pub struct CallSlots {
     pub slots: Vec<ArgSlot>,
     pub positional_overflow: Vec<usize>,
     pub keyword_overflow: Vec<usize>,
 }
 
 /// Match positional and keyword arguments to regular parameter slots.
-pub(crate) fn match_call_slots(
+pub fn match_call_slots(
     param_names: &[String],
     required: &[bool],
     positional_only: Option<usize>,
@@ -105,7 +136,7 @@ pub(crate) fn match_call_slots(
 }
 
 /// Convert a parser marker to the regular-parameter index space used by calls.
-pub(crate) fn regular_marker_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
+pub fn regular_marker_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
     marker.map(|index| {
         params[..index]
             .iter()
@@ -115,7 +146,7 @@ pub(crate) fn regular_marker_index(params: &[FnParam], marker: Option<usize>) ->
 }
 
 /// Effective keyword-only boundary after combining `*` and `*args` markers.
-pub(crate) fn effective_keyword_only_index(
+pub fn effective_keyword_only_index(
     params: &[FnParam],
     keyword_only: Option<usize>,
     variadic_index: Option<usize>,

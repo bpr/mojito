@@ -8,7 +8,7 @@
 //! at source. The span is *metadata*: [`Expr`]'s `PartialEq` compares only the
 //! `kind`, so AST-literal assertions in the tests stay span-agnostic.
 
-use crate::token::Span;
+use mojito_common::token::Span;
 
 /// Canonicalize a trait name: upstream deprecated `ImplicitlyDeletable` in
 /// favor of `Deinitable`. The parser normalizes the compat spelling wherever a
@@ -19,7 +19,7 @@ use crate::token::Span;
 /// The compiler-internal base of a leading-dot contextual member reference
 /// (`.red`); unspellable in source, resolved against the expected type during
 /// checking and substituted during HIR syntax renaming.
-pub(crate) const CONTEXTUAL_SENTINEL: &str = "$contextual";
+pub const CONTEXTUAL_SENTINEL: &str = "$contextual";
 
 pub fn canonical_trait_name(name: &str) -> &str {
     match name {
@@ -154,7 +154,7 @@ pub struct FunctionTypeParam {
 pub type OriginSpec = Vec<Expr>;
 
 /// Explicit name for [`Type`] when code handles parsed source annotations rather
-/// than the checked semantic lattice in [`crate::types::Ty`]. `Type` remains as a
+/// than the checked semantic lattice in `types::Ty`. `Type` remains as a
 /// compatibility name for the public AST API.
 pub type SourceType = Type;
 
@@ -584,7 +584,7 @@ pub struct Stmt {
     pub module: Option<String>,
     /// Concrete occurrence identity. It is deliberately ignored by structural
     /// AST equality, like source spans and module provenance.
-    pub syntax_id: crate::token::SyntaxId,
+    pub syntax_id: mojito_common::token::SyntaxId,
 }
 
 impl Stmt {
@@ -594,12 +594,12 @@ impl Stmt {
             kind,
             span,
             module: None,
-            syntax_id: crate::token::SyntaxId::fresh(),
+            syntax_id: mojito_common::token::SyntaxId::fresh(),
         }
     }
 
-    pub fn source_span(&self) -> crate::token::SourceSpan {
-        crate::token::SourceSpan::syntax(self.module.clone(), self.span, self.syntax_id)
+    pub fn source_span(&self) -> mojito_common::token::SourceSpan {
+        mojito_common::token::SourceSpan::syntax(self.module.clone(), self.span, self.syntax_id)
     }
 }
 
@@ -614,7 +614,7 @@ impl PartialEq for Stmt {
 /// building AST literals in tests (where the span is irrelevant).
 impl From<StmtKind> for Stmt {
     fn from(kind: StmtKind) -> Self {
-        Stmt::new(kind, crate::token::DUMMY_SPAN)
+        Stmt::new(kind, mojito_common::token::DUMMY_SPAN)
     }
 }
 
@@ -878,7 +878,7 @@ pub struct Expr {
     pub span: Span,
     pub source: Option<String>,
     /// Concrete occurrence identity; ignored by structural AST equality.
-    pub syntax_id: crate::token::SyntaxId,
+    pub syntax_id: mojito_common::token::SyntaxId,
 }
 
 impl Expr {
@@ -888,12 +888,12 @@ impl Expr {
             kind,
             span,
             source: None,
-            syntax_id: crate::token::SyntaxId::fresh(),
+            syntax_id: mojito_common::token::SyntaxId::fresh(),
         }
     }
 
-    pub fn source_span(&self) -> crate::token::SourceSpan {
-        crate::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
+    pub fn source_span(&self) -> mojito_common::token::SourceSpan {
+        mojito_common::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
     }
 }
 
@@ -902,7 +902,7 @@ impl Expr {
 /// span is irrelevant — [`Expr`]'s equality ignores it).
 impl From<ExprKind> for Expr {
     fn from(kind: ExprKind) -> Self {
-        Expr::new(kind, crate::token::DUMMY_SPAN)
+        Expr::new(kind, mojito_common::token::DUMMY_SPAN)
     }
 }
 
@@ -916,8 +916,8 @@ impl PartialEq for Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
-    Int(crate::literal::IntLiteral),
-    Float(crate::literal::FloatLiteral),
+    Int(mojito_common::literal::IntLiteral),
+    Float(mojito_common::literal::FloatLiteral),
     Bool(bool),
     Str(String),
     None,
@@ -1200,7 +1200,7 @@ impl InfixOp {
 /// does **not** descend into a collected lambda's own body — inner lambdas
 /// belong to the inner definition's scope and are found when that body is
 /// processed. Type positions are not walked: a lambda is a runtime expression.
-pub(crate) fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     match &expr.kind {
         ExprKind::Lambda { .. } => out.push(expr),
         ExprKind::Prefix(_, value)
@@ -1360,7 +1360,7 @@ pub(crate) fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
 /// outermost first. Deliberately shallow: nested statement bodies are not
 /// walked, because every caller already recurses over blocks and a lambda in
 /// an inner statement belongs to that statement's visit.
-pub(crate) fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
+pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
     match &stmt.kind {
         StmtKind::VarDecl { value, .. }
         | StmtKind::RefDecl { value, .. }
@@ -1424,20 +1424,23 @@ fn lambdas_in_param_args<'a>(args: &'a [ParamArg], out: &mut Vec<&'a Expr>) {
 /// recorded. Already-unique parser IDs are retained so source-oriented public
 /// lookups remain compatible with the input AST; a repeated ID is never trusted
 /// and receives a deterministic final-tree identity here.
-pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
+pub fn rekey_syntax(statements: &mut [Stmt]) {
     struct Rekey {
         next: u64,
-        used: std::collections::HashSet<crate::token::SyntaxId>,
+        used: std::collections::HashSet<mojito_common::token::SyntaxId>,
         lambda_names: std::collections::HashSet<String>,
     }
 
     impl Rekey {
-        fn id(&mut self, current: crate::token::SyntaxId) -> crate::token::SyntaxId {
+        fn id(
+            &mut self,
+            current: mojito_common::token::SyntaxId,
+        ) -> mojito_common::token::SyntaxId {
             if self.used.insert(current) {
                 return current;
             }
             loop {
-                let id = crate::token::SyntaxId(self.next);
+                let id = mojito_common::token::SyntaxId(self.next);
                 self.next += 1;
                 if self.used.insert(id) {
                     return id;
@@ -1971,7 +1974,7 @@ pub(crate) fn rekey_syntax(statements: &mut [Stmt]) {
 
 /// Attach one linked source path to an entire AST subtree. Spans remain local
 /// byte ranges; `source_span()` combines them with this provenance.
-pub(crate) fn stamp_source(statements: &mut [Stmt], source: &str) {
+pub fn stamp_source(statements: &mut [Stmt], source: &str) {
     for statement in statements {
         statement.module = Some(source.to_string());
         stamp_stmt_kind(&mut statement.kind, source);

@@ -16,7 +16,7 @@ impl SyntaxId {
     /// Allocate an identity for syntax synthesized outside the final checker
     /// re-keying pass. The high bit keeps these process-local IDs disjoint from
     /// traversal-ordered replacement IDs used for final-tree clones.
-    pub(crate) fn fresh() -> Self {
+    pub fn fresh() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -45,7 +45,7 @@ impl SourceSpan {
         }
     }
 
-    pub(crate) fn syntax(source: Option<String>, span: Span, syntax: SyntaxId) -> Self {
+    pub fn syntax(source: Option<String>, span: Span, syntax: SyntaxId) -> Self {
         Self {
             source,
             span,

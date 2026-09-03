@@ -23,8 +23,7 @@ use crate::ast::{
     StructComptime, SubscriptArg, TStringPart, TraitComptime, Type as SourceType,
 };
 use crate::call::{
-    ArgSlot, CallVariadics, MatchError, effective_keyword_only_index, match_call_slots,
-    regular_marker_index,
+    ArgSlot, CallVariadics, effective_keyword_only_index, match_call_slots, regular_marker_index,
 };
 use crate::ct::{CtExpr, CtValue};
 use crate::error::TypeError;

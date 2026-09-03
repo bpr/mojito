@@ -1,9 +1,9 @@
 //! Checked semantic handoff between the frontend and lowering.
 
-use crate::ast::Stmt;
-use crate::ast::{Expr, ExprKind, PrefixOp};
-use crate::token::{SourceSpan, Span};
-use crate::types::Ty;
+use mojito_ast::ast::Stmt;
+use mojito_ast::ast::{Expr, ExprKind, PrefixOp};
+use mojito_common::token::{SourceSpan, Span};
+use mojito_types::types::Ty;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -46,7 +46,7 @@ pub struct CheckedCallArgument {
     /// an immutable `ref` into an effective read for conflict analysis.
     pub requires_place: bool,
     /// Effective access after parametric reference mutability is solved.
-    pub convention: Option<crate::ast::ArgConvention>,
+    pub convention: Option<mojito_ast::ast::ArgConvention>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,12 +132,12 @@ pub struct CheckedCallContract {
     pub receiver_requires_place: bool,
     /// Effective receiver access; `receiver_requires_place` independently
     /// retains the declared ABI handle requirement.
-    pub receiver_convention: Option<crate::ast::ArgConvention>,
+    pub receiver_convention: Option<mojito_ast::ast::ArgConvention>,
     pub arguments: Vec<CheckedCallArgument>,
-    pub captures: Vec<crate::origin::CaptureOrigin>,
-    pub reference_result: Option<crate::origin::RefTy>,
+    pub captures: Vec<mojito_types::origin::CaptureOrigin>,
+    pub reference_result: Option<mojito_types::origin::RefTy>,
     pub parameter_arguments: Vec<CheckedCallParameterArgument>,
-    pub param_decls: Vec<crate::types::ParamDecl>,
+    pub param_decls: Vec<mojito_types::types::ParamDecl>,
     pub boundary: CheckedCallBoundary,
 }
 
@@ -220,7 +220,7 @@ pub enum IterationBindingAction {
 /// type. `mutable` is the loop variable's declared mutability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedIterationBinding {
-    pub mode: crate::ast::LoopBindingMode,
+    pub mode: mojito_ast::ast::LoopBindingMode,
     pub action: IterationBindingAction,
     pub yielded_ty: Ty,
     pub binding_ty: Ty,
@@ -236,7 +236,7 @@ pub struct CheckedIterationBinding {
 pub struct CheckedIteratorCall {
     pub target: String,
     pub result_ty: Ty,
-    pub reference_result: Option<crate::origin::RefTy>,
+    pub reference_result: Option<mojito_types::origin::RefTy>,
     pub raises: Option<Ty>,
     pub result_adapter: Option<CheckedResultAdapter>,
 }
@@ -247,7 +247,7 @@ pub struct CheckedIteratorCall {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericInstantiation {
     pub callee: String,
-    pub arguments: Vec<crate::types::TyArg>,
+    pub arguments: Vec<mojito_types::types::TyArg>,
 }
 
 /// Fully resolved iterator protocol retained across the checked boundary.
@@ -271,14 +271,14 @@ pub struct IterationProtocol {
     /// invalidation.  Generic `Iterable` remains `None`: its abstract
     /// `__iterator_dispatch` contract yields `Element` values, so a `ref`
     /// loop target over a generic bound is rejected outright.
-    pub borrowed_origin: Option<crate::origin::OriginPlace>,
+    pub borrowed_origin: Option<mojito_types::origin::OriginPlace>,
     /// The declared interior projection of the yielded reference relative to
     /// the source origin (`__next__ -> ref[o._get_owned_interior["element"]]`
     /// leaves `[Interior("element")]`). Appended to the attached borrowed
     /// origin so the source loan carries the iterator's declared granularity;
     /// empty when the iterator declares no projection (whole-place loan) or
     /// the projection already resolved onto a concrete origin.
-    pub yield_interior: Vec<crate::origin::OriginSeg>,
+    pub yield_interior: Vec<mojito_types::origin::OriginSeg>,
     pub prepare: Vec<String>,
     pub has_next: Option<String>,
     pub next: Option<Box<CheckedIteratorCall>>,
@@ -293,8 +293,8 @@ pub struct IterationProtocol {
 /// replaces that exact generation) from an ordinary write through its storage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InteriorInvalidation {
-    pub base: crate::origin::OriginPlace,
-    pub except: Option<crate::origin::OwnerId>,
+    pub base: mojito_types::origin::OriginPlace,
+    pub except: Option<mojito_types::origin::OwnerId>,
     pub include_base_generation: bool,
 }
 
@@ -342,7 +342,7 @@ pub enum SemanticAdjustment {
     /// here lets HIR/MIR lower an ordinary method call without treating a bound
     /// method as an escapable first-class value.
     ParameterizedMethodCall {
-        param_decls: Vec<crate::types::ParamDecl>,
+        param_decls: Vec<mojito_types::types::ParamDecl>,
     },
     /// A method-call-shaped expression (`holder.callback(1)`) dispatching
     /// through a callable-typed FIELD rather than a declared method. MIR
@@ -367,7 +367,7 @@ pub enum SemanticAdjustment {
         /// including defaults. These are the substitution witness for the
         /// monomorphic contract; executable MIR must not rediscover them from
         /// the instructions which happened to materialize parameter registers.
-        arguments: Vec<crate::types::TyArg>,
+        arguments: Vec<mojito_types::types::TyArg>,
     },
     ImplicitConversion(String),
     /// Materialize an exact, compile-time-only numeric literal expression into
@@ -392,7 +392,7 @@ pub enum SemanticAdjustment {
     /// place (upstream's temporary lifetime extension — the temporary lives as
     /// long as its borrower).
     MaterializeBorrowSource {
-        owner: crate::origin::OwnerId,
+        owner: mojito_types::origin::OwnerId,
     },
     /// An `@implicit` conversion whose selected constructor borrows its single
     /// argument through a `ref [origin]` parameter (a view construction): the
@@ -416,7 +416,7 @@ pub enum SemanticAdjustment {
     /// reads through that handle to the referent. Reference-valued contexts
     /// retain the handle; MIR emits an explicit `ReadRef` everywhere else.
     ReferenceResult {
-        reference: crate::origin::RefTy,
+        reference: mojito_types::origin::RefTy,
     },
     /// Exact per-element extraction selected for one tuple-unpacking RHS. The
     /// unpack syntax has no source `Index` child nodes, so checking carries the
@@ -442,7 +442,7 @@ pub enum SemanticAdjustment {
     /// call. The checker derives these from the selected callable and any
     /// non-escaping callable arguments; MIR translates stable owner identities
     /// to function-local slots and loan analysis treats them as call effects.
-    CallableCaptureAccesses(Vec<crate::origin::CaptureOrigin>),
+    CallableCaptureAccesses(Vec<mojito_types::origin::CaptureOrigin>),
     /// This checked compile-time argument is semantic-only. MIR retains its
     /// source position for declaration alignment but must not evaluate it into
     /// a runtime register (notably an explicitly supplied `Origin`).
@@ -456,7 +456,7 @@ pub enum SemanticAdjustment {
     ExplicitDestroy,
     Iterate(IterationProtocol),
     ConstructSimd {
-        dtype: crate::ast::Dtype,
+        dtype: mojito_ast::ast::Dtype,
         width: i64,
     },
     /// `size_of[T]()` resolved to one concrete checked type. MIR retains the
@@ -468,7 +468,7 @@ pub enum SemanticAdjustment {
     /// value. The target dtype and lane width are resolved at checking; MIR
     /// carries them so the VM never derives semantics from a runtime value.
     SimdCast {
-        dtype: crate::ast::Dtype,
+        dtype: mojito_ast::ast::Dtype,
         width: i64,
     },
     /// `v.shuffle[*mask]()` — lane gather by checker-resolved compile-time
@@ -557,7 +557,7 @@ pub enum SemanticAdjustment {
     /// resolved target origin is retained so aggregate-origin bookkeeping can
     /// carry the rebound loan without re-resolving the parameter argument.
     PointerOriginCast {
-        origin: crate::origin::PointerOrigin,
+        origin: mojito_types::origin::PointerOrigin,
     },
     /// Construct compiler-private inline uninit storage (`__UninitStorage[T]()`
     /// or `__UninitStorage[T](value^)`). Only bundled standard-library sources
@@ -607,7 +607,7 @@ pub enum SemanticAdjustment {
     /// ordinary index; `Some` denotes a source slice and records whether overload
     /// selection chose the contiguous, strided, or general Slice protocol.
     SliceDescriptors {
-        descriptors: Vec<Option<crate::types::SliceKind>>,
+        descriptors: Vec<Option<mojito_types::types::SliceKind>>,
         /// A variadic `__setitem__` receives the assignment value through its
         /// required keyword-only `value` slot. Reads and fixed-arity writes leave
         /// this false.
@@ -617,7 +617,7 @@ pub enum SemanticAdjustment {
     /// owned by a container. The full stable path is a checker fact; MIR must
     /// not reconstruct it from source indexing syntax.
     InteriorReference {
-        origin: crate::origin::OriginPlace,
+        origin: mojito_types::origin::OriginPlace,
     },
     /// Mutating this expression may invalidate existing interior-reference
     /// generations rooted below one or more checked base origins.
@@ -630,7 +630,7 @@ pub enum SemanticAdjustment {
 pub struct CheckedTupleUnpackElement {
     pub ty: Ty,
     pub accessor: Option<String>,
-    pub reference: Option<crate::origin::RefTy>,
+    pub reference: Option<mojito_types::origin::RefTy>,
 }
 
 /// One expression in the typed semantic arena. `syntax` is retained for
@@ -648,7 +648,7 @@ pub struct CheckedExpr {
     /// or inferred binding. Lowering must not re-resolve its source annotation.
     pub binding_ty: Option<Ty>,
     pub category: ValueCategory,
-    pub binding: Option<crate::origin::OwnerId>,
+    pub binding: Option<mojito_types::origin::OwnerId>,
     /// Checker-resolved base type name for a `$contextual` leading-dot
     /// sentinel at this node; HIR substitutes it during syntax renaming.
     pub contextual_base: Option<String>,
@@ -665,7 +665,7 @@ pub struct CheckedExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedComprehensionBinding {
     pub name: String,
-    pub owner: crate::origin::OwnerId,
+    pub owner: mojito_types::origin::OwnerId,
     pub ty: Ty,
     pub plan: CheckedIterationBinding,
     /// Whether this binding's storage is droppable in the checked constraint
@@ -674,8 +674,7 @@ pub struct CheckedComprehensionBinding {
     pub deinitable: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CheckedDeclId(pub u32);
+pub use mojito_types::types::CheckedDeclId;
 
 /// Declaration identity is independent of declaration spelling. Future classes,
 /// pattern binders, coroutine state declarations, and generated declarations can
@@ -698,7 +697,7 @@ pub struct CheckedDeclaration {
     pub location: SourceSpan,
     /// Stable value-binding identity for declarations which introduce a runtime
     /// name. This is independent of spelling and therefore survives shadowing.
-    pub binding: Option<crate::origin::OwnerId>,
+    pub binding: Option<mojito_types::origin::OwnerId>,
     /// Explicit closure captures resolved in the declaration's enclosing scope.
     /// Default captures are discovered from checked expression bindings.
     pub captures: Vec<CheckedCapture>,
@@ -709,16 +708,16 @@ pub struct CheckedDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedCapture {
     pub name: String,
-    pub binding: crate::origin::OwnerId,
+    pub binding: mojito_types::origin::OwnerId,
     /// Exact storage type at the captured binding. This is retained even when
     /// the capture is explicit but unused by the closure body, so forwarding
     /// through an intermediate lifted function remains fully typed.
     pub ty: Ty,
-    pub kind: crate::ast::CaptureKind,
+    pub kind: mojito_ast::ast::CaptureKind,
     /// Canonical outer-owner effects retained by this environment entry. Owned
     /// copy/move captures contribute only loans already stored in their value;
     /// read/ref/mut captures also contribute their source place.
-    pub origins: Vec<crate::origin::CaptureOrigin>,
+    pub origins: Vec<mojito_types::origin::CaptureOrigin>,
 }
 
 /// A successfully checked program plus semantic facts that downstream phases
@@ -733,7 +732,7 @@ pub struct CheckedProgram {
     call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
     compatibility_implicit_conversions: HashMap<SourceSpan, String>,
     checked_types: HashMap<AnnotationSite, Ty>,
-    generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
+    generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
     expressions: Vec<CheckedExpr>,
     expression_index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     declarations: Vec<CheckedDeclaration>,
@@ -753,11 +752,11 @@ pub struct ExplicitDestroyInfo {
 /// syntax itself, this identity preserves the scope in which syntax such as a
 /// bare `T` was resolved.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum AnnotationSite {
+pub enum AnnotationSite {
     FunctionParam {
         module: Option<String>,
         declaration: Span,
-        syntax: crate::token::SyntaxId,
+        syntax: mojito_common::token::SyntaxId,
         param: usize,
     },
     /// Struct-owned sites are identified by the struct's unique name, not its
@@ -778,7 +777,7 @@ pub(crate) enum AnnotationSite {
     FunctionReturn {
         module: Option<String>,
         declaration: Span,
-        syntax: crate::token::SyntaxId,
+        syntax: mojito_common::token::SyntaxId,
     },
     /// The checked callable type of a free function declaration — the exact
     /// `Func`/`GenericFunc` type the checker binds the name to. Lowering uses
@@ -786,7 +785,7 @@ pub(crate) enum AnnotationSite {
     FunctionType {
         module: Option<String>,
         declaration: Span,
-        syntax: crate::token::SyntaxId,
+        syntax: mojito_common::token::SyntaxId,
     },
     /// The checked return type of a struct method declaration.
     MethodReturn {
@@ -800,11 +799,11 @@ pub(crate) enum AnnotationSite {
 /// Runtime reification consumes these already-resolved declarations instead of
 /// reclassifying source bounds in MIR or the VM.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum GenericSite {
+pub enum GenericSite {
     Function {
         module: Option<String>,
         declaration: Span,
-        syntax: crate::token::SyntaxId,
+        syntax: mojito_common::token::SyntaxId,
     },
     Struct {
         module: Option<String>,
@@ -817,7 +816,7 @@ pub(crate) enum GenericSite {
     },
 }
 
-pub use crate::types::{TransferEffect, TransferSet};
+pub use mojito_types::types::{TransferEffect, TransferSet};
 
 /// A higher-order transfer residue: the callable's body calls through one of
 /// its own callable parameters, whose transfer effects are unknowable in the
@@ -826,14 +825,14 @@ pub use crate::types::{TransferEffect, TransferSet};
 /// through the recorded argument mapping into effects of THIS callable and
 /// replays them against its own actuals.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CallThroughEffect {
+pub struct CallThroughEffect {
     pub callee: CallThroughCallee,
     /// Signature abstraction of each inner-call argument slot.
     pub args: Vec<CallThroughArg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CallThroughCallee {
+pub enum CallThroughCallee {
     /// An ordinary runtime parameter with a function type (its slot index).
     RuntimeParam(usize),
     /// A compile-time callable value parameter (its declaration name).
@@ -842,11 +841,11 @@ pub(crate) enum CallThroughCallee {
 
 /// How one inner-call actual maps to the enclosing signature.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct CallThroughArg {
+pub struct CallThroughArg {
     /// The actual's own place, when rooted at the enclosing signature.
-    pub place: Option<crate::origin::SigOrigin>,
+    pub place: Option<mojito_types::origin::SigOrigin>,
     /// Origins carried by the actual that abstract to the signature.
-    pub carried: Vec<crate::origin::SigOrigin>,
+    pub carried: Vec<mojito_types::origin::SigOrigin>,
     /// Whether the actual's place or carried loans root at frame-local
     /// storage — an escape if the inner callee stores them outward.
     pub local: bool,
@@ -855,31 +854,31 @@ pub(crate) struct CallThroughArg {
 /// One caller-substituted transfer at a call site: which actual receives
 /// loans rooted at which caller origins. MIR lowering installs the loans.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CheckedCallTransfer {
+pub struct CheckedCallTransfer {
     pub dest: CheckedTransferDest,
     /// Interior path below the destination actual's root that receives the
     /// loans (empty = the whole root). Lowering turns a non-empty path into
     /// the `EstablishLoans` destination domain.
-    pub dest_path: Vec<crate::origin::OriginSeg>,
-    pub sources: Vec<crate::origin::Origin>,
+    pub dest_path: Vec<mojito_types::origin::OriginSeg>,
+    pub sources: Vec<mojito_types::origin::Origin>,
     pub mutable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CheckedTransferDest {
+pub enum CheckedTransferDest {
     Receiver,
     Argument(usize),
     /// A concrete captured owner (a `Bound` destination): lowering resolves
     /// it through its owner-variable map, skipping owners that live in an
     /// ancestor frame — the verbatim-propagated effect installs those where
     /// the storage lives.
-    Owner(crate::origin::OwnerId),
+    Owner(mojito_types::origin::OwnerId),
 }
 
 /// the declaration returns a reference. Recorded per callable so lowering
 /// never re-reads source `raises`/return annotations.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeclarationEffect {
+pub struct DeclarationEffect {
     pub raises: bool,
     pub error: Option<Ty>,
     pub returns_reference: bool,
@@ -888,8 +887,8 @@ pub(crate) struct DeclarationEffect {
 #[derive(Debug, Clone)]
 /// Literal value retained after semantic checking for declaration metadata.
 pub enum CheckedConst {
-    Int(crate::literal::IntLiteral),
-    Float(crate::literal::FloatLiteral),
+    Int(mojito_common::literal::IntLiteral),
+    Float(mojito_common::literal::FloatLiteral),
     Bool(bool),
     String(String),
     None,
@@ -927,7 +926,7 @@ impl CheckedProgram {
     // This is the single checker-to-checked-boundary assembly point. Keeping the
     // phase-owned fact tables explicit makes accidental omission visible.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub fn new(
         statements: Vec<Stmt>,
         overload_targets: HashMap<SourceSpan, String>,
         contextual_bases: HashMap<SourceSpan, String>,
@@ -936,22 +935,25 @@ impl CheckedProgram {
         implicit_conversions: HashMap<SourceSpan, String>,
         conversion_source_borrows: HashMap<SourceSpan, bool>,
         checked_types: HashMap<AnnotationSite, Ty>,
-        generic_parameters: HashMap<GenericSite, Vec<crate::types::ParamDecl>>,
+        generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
         expression_types: HashMap<SourceSpan, Ty>,
-        expression_bindings: HashMap<SourceSpan, crate::origin::OwnerId>,
-        statement_bindings: HashMap<SourceSpan, crate::origin::OwnerId>,
+        expression_bindings: HashMap<SourceSpan, mojito_types::origin::OwnerId>,
+        statement_bindings: HashMap<SourceSpan, mojito_types::origin::OwnerId>,
         declaration_captures: HashMap<SourceSpan, Vec<CheckedCapture>>,
         comprehension_bindings: HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
         expression_place_types: HashMap<SourceSpan, Ty>,
         binding_types: HashMap<SourceSpan, Ty>,
         expression_effects: HashMap<SourceSpan, EffectFacts>,
         selected_calls: HashMap<SourceSpan, CheckedCallContract>,
-        subscript_descriptors: HashMap<SourceSpan, (Vec<Option<crate::types::SliceKind>>, bool)>,
+        subscript_descriptors: HashMap<
+            SourceSpan,
+            (Vec<Option<mojito_types::types::SliceKind>>, bool),
+        >,
         iteration_protocols: HashMap<SourceSpan, IterationProtocol>,
-        simd_constructions: HashMap<SourceSpan, (crate::ast::Dtype, i64)>,
+        simd_constructions: HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
         operation_adjustments: HashMap<SourceSpan, SemanticAdjustment>,
         tuple_unpack_plans: HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-        interior_references: HashMap<SourceSpan, crate::origin::OriginPlace>,
+        interior_references: HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
         interior_invalidations: HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
         explicit_destroy_calls: HashSet<SourceSpan>,
@@ -1032,7 +1034,7 @@ impl CheckedProgram {
     }
 
     /// The caller-substituted loan transfers per call occurrence.
-    pub(crate) fn call_transfers(&self) -> &HashMap<SourceSpan, Vec<CheckedCallTransfer>> {
+    pub fn call_transfers(&self) -> &HashMap<SourceSpan, Vec<CheckedCallTransfer>> {
         &self.call_transfers
     }
 
@@ -1042,23 +1044,20 @@ impl CheckedProgram {
         &self.compatibility_implicit_conversions
     }
 
-    pub(crate) fn checked_type_at(&self, site: &AnnotationSite) -> Option<&Ty> {
+    pub fn checked_type_at(&self, site: &AnnotationSite) -> Option<&Ty> {
         self.checked_types.get(site)
     }
 
-    pub(crate) fn generic_parameters_at(
+    pub fn generic_parameters_at(
         &self,
         site: &GenericSite,
-    ) -> Option<&[crate::types::ParamDecl]> {
+    ) -> Option<&[mojito_types::types::ParamDecl]> {
         self.generic_parameters.get(site).map(Vec::as_slice)
     }
 
     /// Checked raising contract and reference-return fact for a callable
     /// declaration site.
-    pub(crate) fn declaration_effect_at(
-        &self,
-        site: &AnnotationSite,
-    ) -> Option<&DeclarationEffect> {
+    pub fn declaration_effect_at(&self, site: &AnnotationSite) -> Option<&DeclarationEffect> {
         self.declaration_effects.get(site)
     }
 
@@ -1088,7 +1087,7 @@ impl CheckedProgram {
             .unwrap_or(&[])
     }
 
-    pub(crate) fn explicit_destroy_types(&self) -> &HashMap<String, ExplicitDestroyInfo> {
+    pub fn explicit_destroy_types(&self) -> &HashMap<String, ExplicitDestroyInfo> {
         &self.explicit_destroy_types
     }
 
@@ -1105,18 +1104,21 @@ fn build_checked_expressions(
     statements: &[Stmt],
     contextual_bases: &HashMap<SourceSpan, String>,
     types: &HashMap<SourceSpan, Ty>,
-    bindings: &HashMap<SourceSpan, crate::origin::OwnerId>,
+    bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
     comprehension_bindings: &HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
     place_types: &HashMap<SourceSpan, Ty>,
     binding_types: &HashMap<SourceSpan, Ty>,
     effects: &HashMap<SourceSpan, EffectFacts>,
     selected_calls: &HashMap<SourceSpan, CheckedCallContract>,
-    subscript_descriptors: &HashMap<SourceSpan, (Vec<Option<crate::types::SliceKind>>, bool)>,
+    subscript_descriptors: &HashMap<
+        SourceSpan,
+        (Vec<Option<mojito_types::types::SliceKind>>, bool),
+    >,
     iteration_protocols: &HashMap<SourceSpan, IterationProtocol>,
-    simd_constructions: &HashMap<SourceSpan, (crate::ast::Dtype, i64)>,
+    simd_constructions: &HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
     operation_adjustments: &HashMap<SourceSpan, SemanticAdjustment>,
     tuple_unpack_plans: &HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-    interior_references: &HashMap<SourceSpan, crate::origin::OriginPlace>,
+    interior_references: &HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
     interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
     calls: &HashMap<SourceSpan, String>,
     conversions: &HashMap<SourceSpan, String>,
@@ -1133,19 +1135,19 @@ fn build_checked_expressions(
         index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
         contextual_bases: &'a HashMap<SourceSpan, String>,
         types: &'a HashMap<SourceSpan, Ty>,
-        bindings: &'a HashMap<SourceSpan, crate::origin::OwnerId>,
+        bindings: &'a HashMap<SourceSpan, mojito_types::origin::OwnerId>,
         comprehension_bindings: &'a HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
         place_types: &'a HashMap<SourceSpan, Ty>,
         binding_types: &'a HashMap<SourceSpan, Ty>,
         effects: &'a HashMap<SourceSpan, EffectFacts>,
         selected_calls: &'a HashMap<SourceSpan, CheckedCallContract>,
         subscript_descriptors:
-            &'a HashMap<SourceSpan, (Vec<Option<crate::types::SliceKind>>, bool)>,
+            &'a HashMap<SourceSpan, (Vec<Option<mojito_types::types::SliceKind>>, bool)>,
         iteration_protocols: &'a HashMap<SourceSpan, IterationProtocol>,
-        simd_constructions: &'a HashMap<SourceSpan, (crate::ast::Dtype, i64)>,
+        simd_constructions: &'a HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
         operation_adjustments: &'a HashMap<SourceSpan, SemanticAdjustment>,
         tuple_unpack_plans: &'a HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-        interior_references: &'a HashMap<SourceSpan, crate::origin::OriginPlace>,
+        interior_references: &'a HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
         interior_invalidations: &'a HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         calls: &'a HashMap<SourceSpan, String>,
         conversions: &'a HashMap<SourceSpan, String>,
@@ -1182,13 +1184,13 @@ fn build_checked_expressions(
                 } => {
                     for argument in param_args {
                         match argument {
-                            crate::ast::ParamArg::Value(value) => add(self, value),
-                            crate::ast::ParamArg::Named { value, .. } => {
-                                if let crate::ast::ParamArg::Value(value) = &**value {
+                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                            mojito_ast::ast::ParamArg::Named { value, .. } => {
+                                if let mojito_ast::ast::ParamArg::Value(value) = &**value {
                                     add(self, value);
                                 }
                             }
-                            crate::ast::ParamArg::Type(_) => {}
+                            mojito_ast::ast::ParamArg::Type(_) => {}
                         }
                     }
                     for value in args {
@@ -1207,13 +1209,13 @@ fn build_checked_expressions(
                     add(self, callee);
                     for argument in param_args {
                         match argument {
-                            crate::ast::ParamArg::Value(value) => add(self, value),
-                            crate::ast::ParamArg::Named { value, .. } => {
-                                if let crate::ast::ParamArg::Value(value) = &**value {
+                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                            mojito_ast::ast::ParamArg::Named { value, .. } => {
+                                if let mojito_ast::ast::ParamArg::Value(value) = &**value {
                                     add(self, value);
                                 }
                             }
-                            crate::ast::ParamArg::Type(_) => {}
+                            mojito_ast::ast::ParamArg::Type(_) => {}
                         }
                     }
                     for value in args {
@@ -1259,8 +1261,12 @@ fn build_checked_expressions(
                 } => {
                     for clause in clauses {
                         match clause {
-                            crate::ast::ComprehensionClause::For { iter, .. } => add(self, iter),
-                            crate::ast::ComprehensionClause::If(condition) => add(self, condition),
+                            mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
+                                add(self, iter)
+                            }
+                            mojito_ast::ast::ComprehensionClause::If(condition) => {
+                                add(self, condition)
+                            }
                         }
                     }
                     if let Some(key) = key {
@@ -1299,13 +1305,18 @@ fn build_checked_expressions(
                     add(self, object);
                     for argument in args {
                         match argument {
-                            crate::ast::SubscriptArg::Index(value)
-                            | crate::ast::SubscriptArg::Keyword { value, .. } => add(self, value),
-                            crate::ast::SubscriptArg::Slice {
+                            mojito_ast::ast::SubscriptArg::Index(value)
+                            | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
+                                add(self, value)
+                            }
+                            mojito_ast::ast::SubscriptArg::Slice {
                                 lower, upper, step, ..
                             }
-                            | crate::ast::SubscriptArg::KeywordSlice {
-                                lower, upper, step, ..
+                            | mojito_ast::ast::SubscriptArg::KeywordSlice {
+                                lower,
+                                upper,
+                                step,
+                                ..
                             } => {
                                 for value in [lower, upper, step].into_iter().flatten() {
                                     add(self, value);
@@ -1316,7 +1327,7 @@ fn build_checked_expressions(
                 }
                 TString { parts, .. } => {
                     for part in parts {
-                        if let crate::ast::TStringPart::Expr(value) = part {
+                        if let mojito_ast::ast::TStringPart::Expr(value) = part {
                             add(self, value);
                         }
                     }
@@ -1334,13 +1345,13 @@ fn build_checked_expressions(
                 TypeApply { args, .. } => {
                     for argument in args {
                         match argument {
-                            crate::ast::ParamArg::Value(value) => add(self, value),
-                            crate::ast::ParamArg::Named { value, .. } => {
-                                if let crate::ast::ParamArg::Value(value) = &**value {
+                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                            mojito_ast::ast::ParamArg::Named { value, .. } => {
+                                if let mojito_ast::ast::ParamArg::Value(value) = &**value {
                                     add(self, value);
                                 }
                             }
-                            crate::ast::ParamArg::Type(_) => {}
+                            mojito_ast::ast::ParamArg::Type(_) => {}
                         }
                     }
                 }
@@ -1360,7 +1371,7 @@ fn build_checked_expressions(
                 });
             }
             if let Some(target) = self.conversions.get(&span) {
-                if crate::symbol::is_index_normalization_symbol(target) {
+                if mojito_symbol::symbol::is_index_normalization_symbol(target) {
                     adjustments.push(SemanticAdjustment::IndexNormalization {
                         target: target.clone(),
                     });
@@ -1474,7 +1485,7 @@ fn build_checked_expressions(
         }
 
         fn block(&mut self, statements: &[Stmt]) {
-            use crate::ast::StmtKind::*;
+            use mojito_ast::ast::StmtKind::*;
             for statement in statements {
                 match &statement.kind {
                     VarDecl { value, .. }
@@ -1672,7 +1683,7 @@ fn build_checked_expressions(
 fn build_checked_declarations(
     statements: &[Stmt],
     annotation_types: &HashMap<AnnotationSite, Ty>,
-    statement_bindings: &HashMap<SourceSpan, crate::origin::OwnerId>,
+    statement_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
     declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
     binding_types: &HashMap<SourceSpan, Ty>,
 ) -> Vec<CheckedDeclaration> {
@@ -1680,19 +1691,19 @@ fn build_checked_declarations(
         statements: &[Stmt],
         out: &mut Vec<CheckedDeclaration>,
         annotation_types: &HashMap<AnnotationSite, Ty>,
-        statement_bindings: &HashMap<SourceSpan, crate::origin::OwnerId>,
+        statement_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
         declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
         binding_types: &HashMap<SourceSpan, Ty>,
     ) -> Vec<CheckedDeclId> {
-        use crate::ast::StmtKind;
+        use mojito_ast::ast::StmtKind;
         let mut ids = Vec::new();
         for statement in statements {
             // Lambda expressions in this statement's own expressions declare
             // hidden nested functions in this block's scope.
             let mut lambda_nodes = Vec::new();
-            crate::ast::lambdas_in_stmt(statement, &mut lambda_nodes);
+            mojito_ast::ast::lambdas_in_stmt(statement, &mut lambda_nodes);
             for lambda in lambda_nodes {
-                let crate::ast::ExprKind::Lambda { def } = &lambda.kind else {
+                let mojito_ast::ast::ExprKind::Lambda { def } = &lambda.kind else {
                     continue;
                 };
                 let StmtKind::Def {
@@ -1908,8 +1919,8 @@ mod transfer_set_tests {
         // Two otherwise-equal function types must never differ by their
         // inferred effects; acceptance and coercion do not consult them.
         let effect = TransferEffect {
-            dest: crate::origin::SigOrigin::Self_,
-            src: crate::origin::SigOrigin::Param(0),
+            dest: mojito_types::origin::SigOrigin::Self_,
+            src: mojito_types::origin::SigOrigin::Param(0),
             src_is_place: false,
             mutable: true,
         };

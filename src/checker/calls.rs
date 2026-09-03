@@ -2,34 +2,6 @@
 
 use super::*;
 
-impl MatchError {
-    pub(crate) fn into_type_error(self, func: &str) -> TypeError {
-        match self {
-            MatchError::TooManyPositional { expected, got } => TypeError::ArityMismatch {
-                name: func.to_string(),
-                expected,
-                got,
-            },
-            MatchError::UnknownKeyword(k) => TypeError::BadCall {
-                func: func.to_string(),
-                reason: format!("unexpected keyword argument '{}'", k),
-            },
-            MatchError::PositionalOnly(k) => TypeError::BadCall {
-                func: func.to_string(),
-                reason: format!("argument '{}' is positional-only", k),
-            },
-            MatchError::Duplicate(k) => TypeError::BadCall {
-                func: func.to_string(),
-                reason: format!("argument '{}' supplied more than once", k),
-            },
-            MatchError::Missing(m) => TypeError::BadCall {
-                func: func.to_string(),
-                reason: format!("missing required argument '{}'", m),
-            },
-        }
-    }
-}
-
 /// The per-slot **required** mask for regular parameters. Defaults must be
 /// trailing within the positional-or-keyword section and within the keyword-only
 /// section, but an optional positional parameter may be followed by a required

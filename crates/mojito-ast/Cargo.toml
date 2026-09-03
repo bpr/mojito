@@ -1,0 +1,9 @@
+[package]
+name = "mojito-ast"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+mojito-common = { path = "../mojito-common" }

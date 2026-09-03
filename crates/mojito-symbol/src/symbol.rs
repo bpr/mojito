@@ -22,12 +22,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{
+use mojito_ast::ast::{
     ArgConvention, Expr, ExprKind, FnParam, Method, ParamArg, ParamKind, Stmt, StmtKind, Type,
     TypeParam,
 };
-use crate::ct::CtValue;
-use crate::types::{Ty, TyArg};
+use mojito_types::ct::CtValue;
+use mojito_types::types::{Ty, TyArg};
 
 /// One declaration visible to phase-neutral runtime/backend dispatch.
 #[derive(Debug, Clone, Copy)]
@@ -178,12 +178,12 @@ impl SignatureKey {
         SignatureKey {
             types: params
                 .iter()
-                .filter(|parameter| parameter.kind != crate::ast::ParamKind::KwVariadic)
+                .filter(|parameter| parameter.kind != mojito_ast::ast::ParamKind::KwVariadic)
                 .map(|parameter| TypeKey::from_ast(&parameter.ty))
                 .collect(),
             kw_variadic: params
                 .iter()
-                .find(|parameter| parameter.kind == crate::ast::ParamKind::KwVariadic)
+                .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::KwVariadic)
                 .map(|parameter| TypeKey::from_ast(&parameter.ty)),
             keywords: Vec::new(),
         }
@@ -274,7 +274,7 @@ impl SignatureKey {
 /// The bundled stdlib's nominal `String` struct under its linked module
 /// identity. The checker's construction routing and the VM's
 /// literal-to-struct bridge both key on this exact declaration.
-pub(crate) use crate::types::{STDLIB_STRING_STRUCT, is_stdlib_string_struct};
+pub use mojito_types::types::{STDLIB_STRING_STRUCT, is_stdlib_string_struct};
 
 pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
     format!("{base}{}", sig.suffix())
@@ -540,7 +540,7 @@ pub fn nested_lifted_name(outer: &str, inner: &str) -> String {
 pub fn nested_lifted_declaration_name(
     outer: &str,
     inner: &str,
-    declaration: crate::CheckedDeclId,
+    declaration: mojito_types::types::CheckedDeclId,
 ) -> String {
     format!("{outer}${inner}$decl{}", declaration.0)
 }
@@ -757,7 +757,7 @@ fn ast_raw(
                 if matches!(
                     arg,
                     ParamArg::Value(value)
-                        if matches!(&value.kind, crate::ast::ExprKind::Identifier(name) if name == "_" || name == "...")
+                        if matches!(&value.kind, mojito_ast::ast::ExprKind::Identifier(name) if name == "_" || name == "...")
                 ) {
                     continue;
                 }
@@ -916,7 +916,7 @@ fn annotation_display(ty: &Type) -> String {
 }
 
 /// The dtype named by a `DType.<dt>` annotation argument, if that is what it is.
-fn param_arg_dtype(argument: &ParamArg) -> Option<crate::ast::Dtype> {
+fn param_arg_dtype(argument: &ParamArg) -> Option<mojito_ast::ast::Dtype> {
     let ParamArg::Value(Expr {
         kind: ExprKind::Member { object, field },
         ..
@@ -925,7 +925,7 @@ fn param_arg_dtype(argument: &ParamArg) -> Option<crate::ast::Dtype> {
         return None;
     };
     matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
-        .then(|| crate::ast::Dtype::from_name(field))
+        .then(|| mojito_ast::ast::Dtype::from_name(field))
         .flatten()
 }
 
@@ -940,16 +940,16 @@ fn param_arg_width(argument: &ParamArg, comptimes: &HashMap<String, i64>) -> Opt
 /// The canonical checked spelling of a scalar/SIMD annotation: width-1
 /// `int`/`float64` canonicalize to the native scalars, everything else uses
 /// the `Ty::Simd` display (the scalar alias where one exists).
-fn simd_annotation_raw(dtype: crate::ast::Dtype, width: i64) -> String {
+fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
     match (dtype, width) {
-        (crate::ast::Dtype::Int, 1) => "Int".to_string(),
-        (crate::ast::Dtype::Float64, 1) => "Float64".to_string(),
+        (mojito_ast::ast::Dtype::Int, 1) => "Int".to_string(),
+        (mojito_ast::ast::Dtype::Float64, 1) => "Float64".to_string(),
         _ => Ty::Simd { dtype, width }.to_string(),
     }
 }
 
 fn eval_comptime_int(expr: &Expr, comptimes: &HashMap<String, i64>) -> Option<i64> {
-    use crate::ast::{InfixOp, PrefixOp};
+    use mojito_ast::ast::{InfixOp, PrefixOp};
     match &expr.kind {
         ExprKind::Int(value) => value.to_i64(),
         ExprKind::Identifier(name) => comptimes.get(name).copied(),
@@ -1038,7 +1038,7 @@ fn signature_from_ast(
     SignatureKey {
         types: params
             .iter()
-            .filter(|param| param.kind != crate::ast::ParamKind::KwVariadic)
+            .filter(|param| param.kind != mojito_ast::ast::ParamKind::KwVariadic)
             .map(|param| {
                 TypeKey(sanitize(&ast_raw(
                     &param.ty,
@@ -1050,7 +1050,7 @@ fn signature_from_ast(
             .collect(),
         kw_variadic: params
             .iter()
-            .find(|param| param.kind == crate::ast::ParamKind::KwVariadic)
+            .find(|param| param.kind == mojito_ast::ast::ParamKind::KwVariadic)
             .map(|param| {
                 TypeKey(sanitize(&ast_raw(
                     &param.ty,
@@ -1105,7 +1105,7 @@ fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<St
 fn keyword_only_names(params: &[FnParam], keyword_only: Option<usize>) -> Vec<String> {
     let variadic = params
         .iter()
-        .position(|param| param.kind == crate::ast::ParamKind::Variadic);
+        .position(|param| param.kind == mojito_ast::ast::ParamKind::Variadic);
     let boundary = match (keyword_only, variadic) {
         (Some(marker), Some(variadic)) => marker.min(variadic + 1),
         (Some(marker), None) => marker,
@@ -1118,7 +1118,7 @@ fn keyword_only_names(params: &[FnParam], keyword_only: Option<usize>) -> Vec<St
         .filter(|param| {
             !matches!(
                 param.kind,
-                crate::ast::ParamKind::Variadic | crate::ast::ParamKind::KwVariadic
+                mojito_ast::ast::ParamKind::Variadic | mojito_ast::ast::ParamKind::KwVariadic
             )
         })
         .map(|param| param.name.clone())
@@ -1163,7 +1163,7 @@ fn is_mojo_copy_constructor(m: &Method) -> bool {
 /// avoids falling back to arity when a callable struct overloads `__call__` on
 /// parameter type.
 pub fn callable_contract_target(ty: &Ty) -> Option<String> {
-    let contract = crate::types::callable_contract_ty(ty)?;
+    let contract = mojito_types::types::callable_contract_ty(ty)?;
     let (params, variadic, kw_variadic) = match contract {
         Ty::Func {
             params,

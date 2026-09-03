@@ -12,10 +12,10 @@
 //! Scalar values and recursively materializable tuples/lists have a runtime
 //! literal form; `Type`, `Reflected`, and `Param` are compile-time-only.
 
-use crate::ast::{Expr, ExprKind};
-use crate::literal::{FloatLiteral, IntLiteral};
-use crate::token::Span;
 use crate::types::{Ty, list_element, tuple_elements};
+use mojito_ast::ast::{Expr, ExprKind};
+use mojito_common::literal::{FloatLiteral, IntLiteral};
+use mojito_common::token::Span;
 use std::fmt;
 
 /// A compile-time value. Scalar values drive folding; `Tuple`/`List`
@@ -42,7 +42,7 @@ pub enum CtValue {
     /// A `DType.<dt>` compile-time value — the binding of a `[dtype: DType]`
     /// value parameter. Materializes as the member spelling, which type
     /// resolution already accepts inside `SIMD[...]`/`Scalar[...]` brackets.
-    Dtype(crate::ast::Dtype),
+    Dtype(mojito_ast::ast::Dtype),
     /// A frozen struct instance (declaration-ordered fields) — the binding of
     /// a struct-typed value parameter such as `[e: Extent]`. Freezing is
     /// restricted to structs constructible fieldwise from recursively
@@ -304,7 +304,7 @@ impl CtValue {
                     kind: ExprKind::Identifier("DType".to_string()),
                     span,
                     source: None,
-                    syntax_id: crate::token::SyntaxId::fresh(),
+                    syntax_id: mojito_common::token::SyntaxId::fresh(),
                 }),
                 field: dtype.name().to_string(),
             },
@@ -326,7 +326,7 @@ impl CtValue {
             kind,
             span,
             source: None,
-            syntax_id: crate::token::SyntaxId::fresh(),
+            syntax_id: mojito_common::token::SyntaxId::fresh(),
         })
     }
 }

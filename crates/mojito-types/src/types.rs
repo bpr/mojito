@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ast::{ArgConvention, Dtype};
 use crate::ct::{CtExpr, CtValue};
+use mojito_ast::ast::{ArgConvention, Dtype};
 
 /// Descriptor type selected for a slice literal at the checked boundary.
 /// Two-component literals can use the view-oriented contiguous descriptor;
@@ -257,7 +257,7 @@ pub const SCALAR_RANGE_FAMILY: [&str; 3] =
 /// concrete dtype value argument. This form exists only in the discovery
 /// round: the specialization fixpoint rewrites every occurrence into a
 /// registered concrete struct before MIR lowering.
-pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, crate::ast::Dtype)> {
+pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, mojito_ast::ast::Dtype)> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
     };
@@ -746,7 +746,7 @@ pub enum TyArg {
 impl TyArg {
     /// The compile-time value this argument binds in a CTFE/elaboration
     /// scope. Origins erase from runtime state and bind no value.
-    pub(crate) fn ct_value(&self) -> Option<CtValue> {
+    pub fn ct_value(&self) -> Option<CtValue> {
         match self {
             TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
             TyArg::Val(value) => Some(value.clone()),
@@ -2125,6 +2125,12 @@ pub const STDLIB_STRING_STRUCT: &str = "__module$std$string$String";
 pub fn is_stdlib_string_struct(name: &str) -> bool {
     name == "String" || name == STDLIB_STRING_STRUCT
 }
+
+/// Identity of one checked declaration, stable across the checked program.
+/// Defined here (below the checked handoff) so symbol mangling can spell
+/// declaration-qualified names without depending on the handoff crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CheckedDeclId(pub u32);
 
 #[cfg(test)]
 mod collection_representation_tests {

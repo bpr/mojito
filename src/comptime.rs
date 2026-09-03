@@ -236,8 +236,17 @@ pub(crate) fn tuple_materialized_callables(
 }
 
 /// Comptime-specific accessors on the shared [`CtValue`], reporting a
-/// [`ComptimeError`] when a value is not of the required kind.
-impl CtValue {
+/// [`ComptimeError`] when a value is not of the required kind. An extension
+/// trait: `CtValue` lives in the types layer below this phase, so an
+/// inherent impl cannot.
+pub(crate) trait CtValueExt {
+    fn as_bool(&self, ctx: &str) -> Result<bool, ComptimeError>;
+    fn as_int(&self, ctx: &str) -> Result<i64, ComptimeError>;
+    fn as_sequence(&self, ctx: &str) -> Result<Vec<CtValue>, ComptimeError>;
+    fn typelist_elements(&self) -> Option<&[CtValue]>;
+}
+
+impl CtValueExt for CtValue {
     fn as_bool(&self, ctx: &str) -> Result<bool, ComptimeError> {
         match self {
             CtValue::Bool(b) => Ok(*b),
