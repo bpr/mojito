@@ -2294,7 +2294,7 @@ impl Checker {
     /// specialization when the compiler's discovery pass has materialized it,
     /// and the public nominal `TString[...]` spelling before that.
     pub(super) fn public_tstring_type(&self, elements: Vec<Ty>) -> Ty {
-        let specialized = crate::comptime::tstring_specialization_symbol(&elements);
+        let specialized = crate::symbol::tstring_specialization_symbol(&elements);
         let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();
         match self.structs.get(&specialized) {
             Some(info) if info.fixed_arguments.as_ref() == Some(&arguments) => {
@@ -2306,7 +2306,7 @@ impl Checker {
     }
 
     pub(super) fn public_tuple_type(&self, elements: Vec<Ty>) -> Ty {
-        let specialized = crate::comptime::tuple_specialization_symbol(&elements);
+        let specialized = crate::symbol::tuple_specialization_symbol(&elements);
         let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();
         match self.structs.get(&specialized) {
             Some(info) if info.fixed_arguments.as_ref() == Some(&arguments) => {

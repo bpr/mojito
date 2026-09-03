@@ -5,6 +5,7 @@
 //! of `checker.rs` lets [`CtValue`](crate::ct::CtValue) represent `Type(Box<Ty>)`
 //! without making the checker the owner of all type-level facts.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::ast::{ArgConvention, Dtype};
@@ -28,6 +29,46 @@ impl SliceKind {
             Self::ContiguousSlice => "ContiguousSlice",
             Self::StridedSlice => "StridedSlice",
         }
+    }
+}
+
+/// A loan-transfer effect inferred from a callable's body: an accepted store
+/// into an outliving destination (`self` or a parameter) whose loan roots at
+/// another parameter or `self`. Call sites replay the effect against their
+/// actuals, installing the caller-side loan the callee's store implies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferEffect {
+    pub dest: crate::origin::SigOrigin,
+    pub src: crate::origin::SigOrigin,
+    /// Whether the loan roots at the source parameter's own (borrowed)
+    /// storage — a `mut`/`ref` actual's place is loaned at the call — as
+    /// opposed to loans merely carried by an owned value moving through.
+    pub src_is_place: bool,
+    pub mutable: bool,
+}
+
+/// Inferred transfer effects riding a checked function type, so a call
+/// through a function-typed VALUE replays the effects of the `def` the value
+/// came from. Transparent to type identity: two otherwise-equal function
+/// types never differ by their inferred effects, and acceptance/coercion
+/// must not consult them — a `def(...)` contract cannot spell effects (Mojo
+/// has no such syntax), so soundness comes from call-site replay off the
+/// value's type, never from acceptance filtering.
+#[derive(Debug, Clone, Default, Eq)]
+pub struct TransferSet(pub Vec<TransferEffect>);
+
+impl TransferSet {
+    /// Iterate the canonical transfer effects retained by a callable type.
+    pub fn iter(&self) -> impl Iterator<Item = &TransferEffect> {
+        self.0.iter()
+    }
+}
+
+impl PartialEq for TransferSet {
+    /// Always equal BY DESIGN: the set is metadata on the type, not part of
+    /// its identity. See the type-level comment before relying on `==`.
+    fn eq(&self, _other: &Self) -> bool {
+        true
     }
 }
 
@@ -96,8 +137,8 @@ pub enum Ty {
         ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
         ref_return: Option<Box<crate::origin::RefSig>>,
         /// Identity-transparent inferred transfer effects; see
-        /// [`crate::checked::TransferSet`].
-        transfers: crate::checked::TransferSet,
+        /// [`TransferSet`].
+        transfers: TransferSet,
     },
     /// A generic function synthesized from a `def` with a `[params]` list.
     GenericFunc {
@@ -118,8 +159,8 @@ pub enum Ty {
         ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
         ref_return: Option<Box<crate::origin::RefSig>>,
         /// Identity-transparent inferred transfer effects; see
-        /// [`crate::checked::TransferSet`].
-        transfers: crate::checked::TransferSet,
+        /// [`TransferSet`].
+        transfers: TransferSet,
     },
     /// A source name that denotes multiple callable signatures. The checker
     /// resolves an overload set at each call site. The first implementation
@@ -946,7 +987,7 @@ impl fmt::Display for Ty {
             Ty::Struct(name, args) => {
                 // The prelude-qualified nominal String prints its public
                 // spelling rather than leaking the module-qualified symbol.
-                if args.is_empty() && crate::symbol::is_stdlib_string_struct(name) {
+                if args.is_empty() && is_stdlib_string_struct(name) {
                     return write!(f, "String");
                 }
                 write!(f, "{}", name)?;
@@ -983,6 +1024,1106 @@ fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>>
             TyArg::Val(_) | TyArg::Origin(_) => None,
         })
         .collect()
+}
+
+/// The checker's value-coercion predicate, shared with MIR verification so the
+/// verifier never re-derives conversion rules.
+pub fn value_coerces(from: &Ty, to: &Ty) -> bool {
+    coerces(from, to)
+}
+
+/// Whether a value of type `from` can be used where `to` is required. Only the
+/// literal types coerce (to the concrete numeric types, or `IntLiteral` up to
+/// `FloatLiteral`); everything else must match exactly.
+pub fn coerces(from: &Ty, to: &Ty) -> bool {
+    if *from == Ty::Never {
+        return true;
+    }
+    if from == to {
+        return true;
+    }
+    match (from, to) {
+        (Ty::Struct(from, from_args), Ty::Struct(to, to_args))
+            if matches!(from.as_str(), "ContiguousSlice" | "StridedSlice")
+                && to == "Slice"
+                && from_args.is_empty()
+                && to_args.is_empty() =>
+        {
+            true
+        }
+        // Public Tuple remains nominal, but its generated specialization symbol
+        // deliberately differs from the canonical discovery-pass name. Compare
+        // the retained semantic element arguments instead of requiring those
+        // implementation symbols to match.
+        (from, to) if tuple_elements(from).is_some() && tuple_elements(to).is_some() => {
+            let from = tuple_elements(from).expect("guard established Tuple elements");
+            let to = tuple_elements(to).expect("guard established Tuple elements");
+            from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
+        }
+        // The same public-vs-specialized bridge for the lazy TString.
+        (from, to)
+            if crate::types::tstring_elements(from).is_some()
+                && crate::types::tstring_elements(to).is_some() =>
+        {
+            let from =
+                crate::types::tstring_elements(from).expect("guard established TString elements");
+            let to =
+                crate::types::tstring_elements(to).expect("guard established TString elements");
+            from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
+        }
+        (Ty::Param { name: a, .. }, Ty::Param { name: b, .. }) => a == b,
+        (Ty::Struct(an, aargs), Ty::Struct(bn, bargs)) => {
+            an == bn
+                && aargs.len() == bargs.len()
+                && aargs.iter().zip(bargs).all(|(a, b)| match (a, b) {
+                    (TyArg::Ty(a), TyArg::Ty(b)) => coerces(a, b),
+                    (TyArg::Val(a), TyArg::Val(b)) => a == b,
+                    _ => false,
+                })
+        }
+        (Ty::ComptimeList(a), Ty::ComptimeList(b)) => coerces(a, b),
+        (
+            Ty::Pointer {
+                element: a,
+                origin: ao,
+            },
+            Ty::Pointer {
+                element: b,
+                origin: bo,
+            },
+        ) => coerces(a, b) && ao == bo,
+        (
+            Ty::Func {
+                environment: from_environment,
+                params: from_params,
+                ret: from_ret,
+                required,
+                variadic,
+                conventions,
+                raises: from_raises,
+                error: from_error,
+                ref_params: from_ref_params,
+                ref_return: from_ref_return,
+                ..
+            },
+            Ty::Func {
+                environment: to_environment,
+                params: to_params,
+                ret: to_ret,
+                required: to_required,
+                variadic: to_variadic,
+                conventions: to_conventions,
+                raises: to_raises,
+                error: to_error,
+                ref_params: to_ref_params,
+                ref_return: to_ref_return,
+                ..
+            },
+        ) => {
+            callable_environment_value_coerces(from_environment, to_environment)
+                && required == to_required
+                && variadic.is_none()
+                && to_variadic.is_none()
+                && conventions == to_conventions
+                // Reference conventions are not represented by the ordinary
+                // parameter/result `Ty`s. They carry the storage origin and
+                // permission contract, so erasing them here could coerce a
+                // value-returning callable to a reference-returning contract,
+                // or silently rebase a result from one argument to another.
+                && from_ref_params == to_ref_params
+                && from_ref_return == to_ref_return
+                && (!from_raises || *to_raises)
+                && match (from_error.as_deref(), to_error.as_deref()) {
+                    (None, None) => true,
+                    (None, Some(Ty::Never)) => true,
+                    (None, Some(_)) => true,
+                    (Some(from), Some(Ty::Error)) => from != &Ty::Never,
+                    (Some(from), Some(to)) => from == to,
+                    (Some(Ty::Never), None) => true,
+                    (Some(_), None) => false,
+                }
+                && from_params.len() == to_params.len()
+                && from_params
+                    .iter()
+                    .zip(to_params)
+                    .all(|(from, to)| from == to)
+                && from_ret == to_ret
+        }
+        (Ty::IntLiteral, Ty::Int | Ty::UInt | Ty::Float64 | Ty::FloatLiteral) => true,
+        (Ty::FloatLiteral, Ty::Float64) => true,
+        (literal, Ty::Simd { dtype, width: 1 }) if splats_to(literal, *dtype) => true,
+        (
+            Ty::Simd {
+                dtype: from_dtype,
+                width: from_width,
+            },
+            Ty::Simd {
+                dtype: to_dtype,
+                width: -1,
+            },
+        ) => from_dtype == to_dtype && *from_width > 0,
+        // A tuple coerces element-wise (same arity) — so a literal element
+        // materializes: `(1, 2.0)` fits `Tuple[Float64, Float64]`.
+        (Ty::Tuple(a), Ty::Tuple(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| coerces(x, y))
+        }
+        (Ty::Variant(a), Ty::Variant(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| coerces(x, y))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a value of type `ty` can be a `dtype` SIMD element (a construction
+/// argument, or the non-SIMD operand of an elementwise operator that splats). A
+/// numeric literal fits any matching-kind lane; a same-dtype width-1 SIMD fits.
+pub fn splats_to(ty: &Ty, dtype: Dtype) -> bool {
+    match ty {
+        Ty::IntLiteral => dtype != Dtype::Bool,
+        Ty::FloatLiteral => dtype.is_float(),
+        Ty::Bool => dtype == Dtype::Bool,
+        Ty::Int => dtype == Dtype::Int,
+        // `Float64` is `SIMD[DType.float64, 1]`, so it splats into a float64 vector.
+        Ty::Float64 => dtype == Dtype::Float64,
+        Ty::Simd { dtype: d, width: 1 } => *d == dtype,
+        _ => false,
+    }
+}
+
+/// The value-coercion policy for callable environments: current Mojo rejects
+/// binding a capturing closure to an unqualified `def(...)` value position —
+/// the contract must spell `capturing[...]` — while a thin function value
+/// still binds. Comptime callable *bounds* stay on the permissive
+/// `callable_environment_coerces` below.
+pub fn callable_environment_value_coerces(
+    from: &crate::origin::CallableEnvironment,
+    to: &crate::origin::CallableEnvironment,
+) -> bool {
+    use crate::origin::CallableEnvironment;
+    if matches!(
+        (from, to),
+        (
+            CallableEnvironment::Capturing(_),
+            CallableEnvironment::Default
+        )
+    ) {
+        return false;
+    }
+    callable_environment_coerces(from, to)
+}
+
+pub fn callable_environment_coerces(
+    from: &crate::origin::CallableEnvironment,
+    to: &crate::origin::CallableEnvironment,
+) -> bool {
+    use crate::origin::{CallableEnvironment, CaptureOriginSet};
+    if from == to {
+        return true;
+    }
+    match (from, to) {
+        // An unqualified callable contract does not constrain the environment
+        // in the *bound* channel: a supplied `@parameter`/comptime callable
+        // argument against `F: def(...)` may capture (upstream accepts this —
+        // see `subscript_call_contracts.mojo`), so `unify`,
+        // `callable_bound_accepts`, and MIR verify stay on this permissive
+        // predicate. Runtime value coercion uses the strict
+        // `callable_environment_value_coerces` above.
+        (
+            CallableEnvironment::Thin | CallableEnvironment::Capturing(_),
+            CallableEnvironment::Default,
+        ) => true,
+        // A non-capturing callable satisfies every `capturing[...]` contract:
+        // its capture set is empty, a subset of any allowed origin set
+        // (upstream accepts a thin function for a capturing funarg).
+        (CallableEnvironment::Thin, CallableEnvironment::Capturing(_)) => true,
+        (
+            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(_)),
+            CallableEnvironment::Capturing(CaptureOriginSet::Infer | CaptureOriginSet::Param(_)),
+        ) => true,
+        (
+            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(actual)),
+            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(allowed)),
+        ) => actual.iter().all(|capture| allowed.contains(capture)),
+        _ => false,
+    }
+}
+
+/// Whether a *concrete* built-in type has an intrinsic `__hash__` — the scalar
+/// set the VM can hash directly (`Int`/`UInt`/`Bool`/`String`/`Float64`). This
+/// lets a user key struct combine `self.field.__hash__()` values.
+/// Whether `Copyable.copy` on a value of this type has no callee: built-in
+/// scalars, literals, tuples, packs, and variants copy by the ordinary value
+/// read. Nominal, parametric, associated, and reference types resolve their
+/// `copy` through declarations or trait dispatch instead.
+pub fn builtin_copy_is_value_read(ty: &Ty) -> bool {
+    !matches!(
+        ty,
+        Ty::Struct(..)
+            | Ty::Param { .. }
+            | Ty::Assoc { .. }
+            | Ty::Ref(_)
+            | Ty::SelfType
+            | Ty::Func { .. }
+            | Ty::GenericFunc { .. }
+            | Ty::Overload(_)
+            | Ty::Error
+    )
+}
+
+/// Recover the monomorphic or generic callable contract carried either directly
+/// by a function type or indirectly by a callable-bounded type parameter.
+pub fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::Func { .. } | Ty::GenericFunc { .. } => Some(ty),
+        Ty::Param {
+            callable_bound: Some(bound),
+            ..
+        } => callable_contract_ty(bound),
+        _ => None,
+    }
+}
+
+/// Whether a concrete monomorphic callable implementation fulfills an
+/// anonymous `def(...)` trait contract. This is intentionally directional:
+/// non-raising/read-only implementations may fulfill raising/mutable contracts,
+/// but not vice versa. Binder constraints are directional the other way
+/// (upstream 2026-08): every `where` constraint the implementation declares
+/// must be declared by the contract — otherwise calls through the contract
+/// could violate the implementation's precondition — while an unconstrained
+/// implementation may serve a constrained contract.
+pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
+    if matches!(actual, Ty::GenericFunc { .. }) || matches!(contract, Ty::GenericFunc { .. }) {
+        let (Some((actual_decls, actual)), Some((contract_decls, contract))) = (
+            erase_generic_callable_binders(actual),
+            erase_generic_callable_binders(contract),
+        ) else {
+            return false;
+        };
+        let strip = |decl: &ParamDecl| {
+            let mut decl = decl.clone();
+            match &mut decl {
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                    constraints.clear()
+                }
+            }
+            decl
+        };
+        let constraints_of = |decl: &ParamDecl| -> Vec<GenericConstraint> {
+            match decl {
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                    constraints.clone()
+                }
+            }
+        };
+        let structural = actual_decls.len() == contract_decls.len()
+            && actual_decls
+                .iter()
+                .zip(&contract_decls)
+                .all(|(actual, contract)| strip(actual) == strip(contract));
+        let constraints_declared =
+            actual_decls
+                .iter()
+                .zip(&contract_decls)
+                .all(|(actual, contract)| {
+                    let declared = constraints_of(contract);
+                    constraints_of(actual)
+                        .iter()
+                        .all(|constraint| declared.contains(constraint))
+                });
+        return structural && constraints_declared && callable_bound_accepts(&actual, &contract);
+    }
+
+    let (
+        Ty::Func {
+            environment: actual_environment,
+            params: actual_params,
+            ret: actual_ret,
+            required: actual_required,
+            variadic: actual_variadic,
+            kw_variadic: actual_kw_variadic,
+            positional_only: actual_positional_only,
+            keyword_only: actual_keyword_only,
+            raises: actual_raises,
+            error: actual_error,
+            conventions: actual_conventions,
+            ref_params: actual_ref_params,
+            ref_return: actual_ref_return,
+            ..
+        },
+        Ty::Func {
+            environment: contract_environment,
+            params: contract_params,
+            ret: contract_ret,
+            required: contract_required,
+            variadic: contract_variadic,
+            kw_variadic: contract_kw_variadic,
+            positional_only: contract_positional_only,
+            keyword_only: contract_keyword_only,
+            raises: contract_raises,
+            error: contract_error,
+            conventions: contract_conventions,
+            ref_params: contract_ref_params,
+            ref_return: contract_ref_return,
+            ..
+        },
+    ) = (actual, contract)
+    else {
+        return false;
+    };
+
+    callable_environment_coerces(actual_environment, contract_environment)
+        && actual_params.len() == contract_params.len()
+        && actual_params
+            .iter()
+            .zip(contract_params)
+            .all(|(actual, contract)| actual == contract)
+        && coerces(actual_ret, contract_ret)
+        && actual_required.len() == contract_required.len()
+        && actual_required
+            .iter()
+            .zip(contract_required)
+            .all(|(actual, contract)| !*actual || *contract)
+        && actual_variadic.is_none()
+        && contract_variadic.is_none()
+        && actual_kw_variadic.is_none()
+        && contract_kw_variadic.is_none()
+        && actual_positional_only == contract_positional_only
+        && actual_keyword_only == contract_keyword_only
+        && actual_conventions.len() == contract_conventions.len()
+        && actual_conventions
+            .iter()
+            .zip(contract_conventions)
+            .all(|(actual, contract)| callable_convention_accepts(*actual, *contract))
+        && actual_ref_params == contract_ref_params
+        && actual_ref_return == contract_ref_return
+        && (!*actual_raises || *contract_raises)
+        && match (actual_error.as_deref(), contract_error.as_deref()) {
+            (None, _) | (Some(Ty::Never), _) => true,
+            (Some(_), None) => false,
+            (Some(actual), Some(Ty::Error)) => actual != &Ty::Never,
+            (Some(actual), Some(contract)) => actual == contract,
+        }
+}
+
+/// Alpha-normalize a generic anonymous callable into its declaration list and
+/// a monomorphic callable shape whose parameter occurrences use canonical
+/// `$N` names.  Generic callable compatibility can then reuse the ordinary
+/// directional callable-contract rules without making source binder spelling
+/// part of the type identity.
+pub fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)> {
+    let Ty::GenericFunc {
+        environment,
+        decls,
+        params,
+        names,
+        ret,
+        required,
+        variadic,
+        kw_variadic,
+        positional_only,
+        keyword_only,
+        raises,
+        error,
+        conventions,
+        ref_params,
+        ref_return,
+        transfers,
+    } = callable
+    else {
+        return None;
+    };
+
+    let mut signature = params.clone();
+    let variadic_index = variadic.as_ref().map(|parameter| {
+        let index = signature.len();
+        signature.push((**parameter).clone());
+        index
+    });
+    let kw_variadic_index = kw_variadic.as_ref().map(|parameter| {
+        let index = signature.len();
+        signature.push((**parameter).clone());
+        index
+    });
+    let return_index = signature.len();
+    signature.push((**ret).clone());
+    let error_index = error.as_ref().map(|error| {
+        let index = signature.len();
+        signature.push((**error).clone());
+        index
+    });
+    let (decls, signature) = canonical_generic_signature(decls, &signature);
+
+    Some((
+        decls,
+        Ty::Func {
+            environment: environment.clone(),
+            params: signature[..params.len()].to_vec(),
+            names: names.clone(),
+            ret: Box::new(signature[return_index].clone()),
+            required: required.clone(),
+            variadic: variadic_index.map(|index| Box::new(signature[index].clone())),
+            kw_variadic: kw_variadic_index.map(|index| Box::new(signature[index].clone())),
+            positional_only: *positional_only,
+            keyword_only: *keyword_only,
+            raises: *raises,
+            error: error_index.map(|index| Box::new(signature[index].clone())),
+            conventions: conventions.clone(),
+            ref_params: ref_params.clone(),
+            ref_return: ref_return.clone(),
+            transfers: transfers.clone(),
+        },
+    ))
+}
+
+pub fn canonical_generic_signature(
+    decls: &[ParamDecl],
+    params: &[Ty],
+) -> (Vec<ParamDecl>, Vec<Ty>) {
+    let identity_constraints = |constraints: &[GenericConstraint]| {
+        constraints
+            .iter()
+            .map(|constraint| match constraint {
+                GenericConstraint::WithMessage(condition, _) => (**condition).clone(),
+                constraint => constraint.clone(),
+            })
+            .collect()
+    };
+    let mut subst = HashMap::new();
+    let mut value_names = HashMap::new();
+    let canonical_decls = decls
+        .iter()
+        .enumerate()
+        .map(|(index, decl)| match decl {
+            ParamDecl::Type {
+                name,
+                bounds,
+                callable_bound,
+                default: _,
+                infer_only: _,
+                variadic,
+                constraints,
+            } => {
+                let canonical_name = format!("${index}");
+                let canonical_callable_bound = callable_bound.as_ref().map(|bound| {
+                    Box::new(rename_dependent_parameters(
+                        &substitute(bound, &subst),
+                        &value_names,
+                    ))
+                });
+                subst.insert(
+                    name.clone(),
+                    Ty::Param {
+                        name: canonical_name.clone(),
+                        bounds: bounds.clone(),
+                        callable_bound: canonical_callable_bound.clone(),
+                    },
+                );
+                ParamDecl::Type {
+                    name: canonical_name,
+                    bounds: bounds.clone(),
+                    callable_bound: canonical_callable_bound,
+                    // Binder defaults and the `//` inference marker govern a
+                    // call through the contract; current Mojo does not make
+                    // either part of generic callable conformance identity.
+                    default: None,
+                    infer_only: false,
+                    variadic: *variadic,
+                    constraints: identity_constraints(constraints),
+                }
+            }
+            ParamDecl::Value {
+                name,
+                ty,
+                default: _,
+                callable_default: _,
+                infer_only: _,
+                variadic,
+                constraints,
+                ..
+            } => {
+                let canonical_name = format!("${index}");
+                let canonical_ty =
+                    rename_dependent_parameters(&substitute(ty, &subst), &value_names);
+                value_names.insert(
+                    name.trim_start_matches('*').to_string(),
+                    canonical_name.clone(),
+                );
+                ParamDecl::Value {
+                    name: canonical_name,
+                    ty: Box::new(canonical_ty),
+                    default: None,
+                    callable_default: None,
+                    infer_only: false,
+                    variadic: *variadic,
+                    constraints: identity_constraints(constraints),
+                }
+            }
+        })
+        .collect();
+    let canonical_params = params
+        .iter()
+        .map(|ty| rename_dependent_parameters(&substitute(ty, &subst), &value_names))
+        .collect();
+    // Second pass: alpha-rename binder references INSIDE the retained
+    // constraints, so `def[w: Int](…) where w > 0` and `def[n: Int](…) where
+    // n > 0` share one canonical identity. The maps are complete only after
+    // the fold above (a clause on the last binder may reference any of them);
+    // names the contract does not bind (an enclosing declaration's
+    // parameters) stay as-is and correctly distinguish contracts.
+    let mut binder_names: HashMap<String, String> = value_names.clone();
+    for (name, ty) in &subst {
+        if let Ty::Param {
+            name: canonical, ..
+        } = ty
+        {
+            binder_names.insert(name.clone(), canonical.clone());
+        }
+    }
+    let mut canonical_decls: Vec<ParamDecl> = canonical_decls;
+    for decl in &mut canonical_decls {
+        match decl {
+            ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                *constraints = constraints
+                    .iter()
+                    .map(|constraint| {
+                        rename_constraint_parameters(
+                            constraint,
+                            &binder_names,
+                            &subst,
+                            &value_names,
+                        )
+                    })
+                    .collect();
+            }
+        }
+    }
+    (canonical_decls, canonical_params)
+}
+
+/// Replace every `Ty::Param` in `ty` with its solution from `subst` (leaving an
+/// unsolved parameter untouched). Recurses into struct type arguments.
+pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
+    match ty {
+        Ty::Param {
+            name,
+            bounds,
+            callable_bound,
+        } => subst.get(name).cloned().unwrap_or_else(|| Ty::Param {
+            name: name.clone(),
+            bounds: bounds.clone(),
+            callable_bound: callable_bound
+                .as_ref()
+                .map(|bound| Box::new(substitute(bound, subst))),
+        }),
+        Ty::Struct(name, args) => {
+            Ty::Struct(name.clone(), map_tyargs(args, |t| substitute(t, subst)))
+        }
+        Ty::Dependent(crate::types::DependentType::Indexed { elements, index }) => {
+            Ty::Dependent(crate::types::DependentType::Indexed {
+                elements: elements.iter().map(|ty| substitute(ty, subst)).collect(),
+                index: index.clone(),
+            })
+        }
+        Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(substitute(elem, subst))),
+        Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| substitute(t, subst)).collect()),
+        Ty::RuntimePack(elems) => {
+            Ty::RuntimePack(elems.iter().map(|t| substitute(t, subst)).collect())
+        }
+        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(substitute(element, subst))),
+        Ty::Variant(alternatives) => Ty::Variant(
+            alternatives
+                .iter()
+                .map(|ty| substitute(ty, subst))
+                .collect(),
+        ),
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(substitute(element, subst)),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(substitute(&reference.referent, subst));
+            Ty::Ref(reference)
+        }
+        Ty::Assoc { base, name, args } => Ty::Assoc {
+            base: Box::new(substitute(base, subst)),
+            name: name.clone(),
+            args: map_tyargs(args, |t| substitute(t, subst)),
+        },
+        Ty::Func {
+            environment,
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+            transfers,
+        } => Ty::Func {
+            environment: environment.clone(),
+            params: params.iter().map(|p| substitute(p, subst)).collect(),
+            names: names.clone(),
+            ret: Box::new(substitute(ret, subst)),
+            required: required.clone(),
+            variadic: variadic.as_ref().map(|v| Box::new(substitute(v, subst))),
+            kw_variadic: kw_variadic.as_ref().map(|v| Box::new(substitute(v, subst))),
+            positional_only: *positional_only,
+            keyword_only: *keyword_only,
+            raises: *raises,
+            error: error
+                .as_ref()
+                .map(|error| Box::new(substitute(error, subst))),
+            conventions: conventions.clone(),
+            ref_params: ref_params.clone(),
+            ref_return: ref_return.clone(),
+            transfers: transfers.clone(),
+        },
+        Ty::GenericFunc {
+            environment,
+            decls,
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+            transfers,
+        } => {
+            // An anonymous callable's own binders shadow names from the
+            // surrounding substitution. Outer parameters may still occur in
+            // its bounds and signature, so substitute with only those shadowed
+            // entries removed.
+            let mut nested = subst.clone();
+            for declaration in decls {
+                nested.remove(declaration.name());
+            }
+            let decls = decls
+                .iter()
+                .map(|declaration| match declaration {
+                    ParamDecl::Type {
+                        name,
+                        bounds,
+                        callable_bound,
+                        default,
+                        infer_only,
+                        variadic,
+                        constraints,
+                    } => ParamDecl::Type {
+                        name: name.clone(),
+                        bounds: bounds.clone(),
+                        callable_bound: callable_bound
+                            .as_ref()
+                            .map(|bound| Box::new(substitute(bound, &nested))),
+                        default: default
+                            .as_ref()
+                            .map(|default| Box::new(substitute(default, &nested))),
+                        infer_only: *infer_only,
+                        variadic: *variadic,
+                        constraints: constraints.clone(),
+                    },
+                    ParamDecl::Value {
+                        name,
+                        ty,
+                        default,
+                        callable_default,
+                        infer_only,
+                        variadic,
+                        constraints,
+                    } => ParamDecl::Value {
+                        name: name.clone(),
+                        ty: Box::new(substitute(ty, &nested)),
+                        default: default.clone(),
+                        callable_default: callable_default.clone(),
+                        infer_only: *infer_only,
+                        variadic: *variadic,
+                        constraints: constraints.clone(),
+                    },
+                })
+                .collect();
+            Ty::GenericFunc {
+                environment: environment.clone(),
+                decls,
+                params: params
+                    .iter()
+                    .map(|parameter| substitute(parameter, &nested))
+                    .collect(),
+                names: names.clone(),
+                ret: Box::new(substitute(ret, &nested)),
+                required: required.clone(),
+                variadic: variadic
+                    .as_ref()
+                    .map(|parameter| Box::new(substitute(parameter, &nested))),
+                kw_variadic: kw_variadic
+                    .as_ref()
+                    .map(|parameter| Box::new(substitute(parameter, &nested))),
+                positional_only: *positional_only,
+                keyword_only: *keyword_only,
+                raises: *raises,
+                error: error
+                    .as_ref()
+                    .map(|error| Box::new(substitute(error, &nested))),
+                conventions: conventions.clone(),
+                ref_params: ref_params.clone(),
+                ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
+            }
+        }
+        Ty::Overload(candidates) => Ty::Overload(
+            candidates
+                .iter()
+                .map(|candidate| substitute(candidate, subst))
+                .collect(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
+/// Alpha-rename compile-time value binders referenced by structural dependent
+/// types. Type-parameter substitution and value-parameter renaming are kept
+/// separate: a value binder occurs inside [`CtExpr`], never as `Ty::Param`.
+/// Nested generic callable declarations shadow an outer binder of the same
+/// spelling, so only genuinely free references are renamed while descending.
+pub fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, String>) -> Ty {
+    match ty {
+        Ty::Param {
+            name,
+            bounds,
+            callable_bound,
+        } => Ty::Param {
+            name: name.clone(),
+            bounds: bounds.clone(),
+            callable_bound: callable_bound
+                .as_ref()
+                .map(|bound| Box::new(rename_dependent_parameters(bound, names))),
+        },
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            map_tyargs(arguments, |ty| rename_dependent_parameters(ty, names)),
+        ),
+        Ty::Dependent(crate::types::DependentType::Indexed { elements, index }) => {
+            Ty::Dependent(crate::types::DependentType::Indexed {
+                elements: elements
+                    .iter()
+                    .map(|ty| rename_dependent_parameters(ty, names))
+                    .collect(),
+                index: index.rename_parameters(names),
+            })
+        }
+        Ty::ComptimeList(element) => {
+            Ty::ComptimeList(Box::new(rename_dependent_parameters(element, names)))
+        }
+        Ty::Tuple(elements) => Ty::Tuple(
+            elements
+                .iter()
+                .map(|ty| rename_dependent_parameters(ty, names))
+                .collect(),
+        ),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(
+            elements
+                .iter()
+                .map(|ty| rename_dependent_parameters(ty, names))
+                .collect(),
+        ),
+        Ty::VariadicPack(element) => {
+            Ty::VariadicPack(Box::new(rename_dependent_parameters(element, names)))
+        }
+        Ty::Variant(alternatives) => Ty::Variant(
+            alternatives
+                .iter()
+                .map(|ty| rename_dependent_parameters(ty, names))
+                .collect(),
+        ),
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(rename_dependent_parameters(element, names)),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(rename_dependent_parameters(&reference.referent, names));
+            Ty::Ref(reference)
+        }
+        Ty::Assoc { base, name, args } => Ty::Assoc {
+            base: Box::new(rename_dependent_parameters(base, names)),
+            name: name.clone(),
+            args: map_tyargs(args, |t| rename_dependent_parameters(t, names)),
+        },
+        Ty::Func {
+            environment,
+            params,
+            names: parameter_names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+            transfers,
+        } => Ty::Func {
+            environment: environment.clone(),
+            params: params
+                .iter()
+                .map(|ty| rename_dependent_parameters(ty, names))
+                .collect(),
+            names: parameter_names.clone(),
+            ret: Box::new(rename_dependent_parameters(ret, names)),
+            required: required.clone(),
+            variadic: variadic
+                .as_ref()
+                .map(|ty| Box::new(rename_dependent_parameters(ty, names))),
+            kw_variadic: kw_variadic
+                .as_ref()
+                .map(|ty| Box::new(rename_dependent_parameters(ty, names))),
+            positional_only: *positional_only,
+            keyword_only: *keyword_only,
+            raises: *raises,
+            error: error
+                .as_ref()
+                .map(|ty| Box::new(rename_dependent_parameters(ty, names))),
+            conventions: conventions.clone(),
+            ref_params: ref_params.clone(),
+            ref_return: ref_return.clone(),
+            transfers: transfers.clone(),
+        },
+        Ty::GenericFunc {
+            environment,
+            decls,
+            params,
+            names: parameter_names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+            transfers,
+        } => {
+            let mut free_names = names.clone();
+            for declaration in decls {
+                free_names.remove(declaration.name().trim_start_matches('*'));
+            }
+            let decls = decls
+                .iter()
+                .map(|declaration| match declaration {
+                    ParamDecl::Type {
+                        name,
+                        bounds,
+                        callable_bound,
+                        default,
+                        infer_only,
+                        variadic,
+                        constraints,
+                    } => ParamDecl::Type {
+                        name: name.clone(),
+                        bounds: bounds.clone(),
+                        callable_bound: callable_bound
+                            .as_ref()
+                            .map(|bound| Box::new(rename_dependent_parameters(bound, &free_names))),
+                        default: default.as_ref().map(|default| {
+                            Box::new(rename_dependent_parameters(default, &free_names))
+                        }),
+                        infer_only: *infer_only,
+                        variadic: *variadic,
+                        constraints: constraints.clone(),
+                    },
+                    ParamDecl::Value {
+                        name,
+                        ty,
+                        default,
+                        callable_default,
+                        infer_only,
+                        variadic,
+                        constraints,
+                    } => ParamDecl::Value {
+                        name: name.clone(),
+                        ty: Box::new(rename_dependent_parameters(ty, &free_names)),
+                        default: default
+                            .as_ref()
+                            .map(|value| value.rename_parameters(&free_names)),
+                        callable_default: callable_default.clone(),
+                        infer_only: *infer_only,
+                        variadic: *variadic,
+                        constraints: constraints.clone(),
+                    },
+                })
+                .collect();
+            Ty::GenericFunc {
+                environment: environment.clone(),
+                decls,
+                params: params
+                    .iter()
+                    .map(|ty| rename_dependent_parameters(ty, &free_names))
+                    .collect(),
+                names: parameter_names.clone(),
+                ret: Box::new(rename_dependent_parameters(ret, &free_names)),
+                required: required.clone(),
+                variadic: variadic
+                    .as_ref()
+                    .map(|ty| Box::new(rename_dependent_parameters(ty, &free_names))),
+                kw_variadic: kw_variadic
+                    .as_ref()
+                    .map(|ty| Box::new(rename_dependent_parameters(ty, &free_names))),
+                positional_only: *positional_only,
+                keyword_only: *keyword_only,
+                raises: *raises,
+                error: error
+                    .as_ref()
+                    .map(|ty| Box::new(rename_dependent_parameters(ty, &free_names))),
+                conventions: conventions.clone(),
+                ref_params: ref_params.clone(),
+                ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
+            }
+        }
+        Ty::Overload(candidates) => Ty::Overload(
+            candidates
+                .iter()
+                .map(|ty| rename_dependent_parameters(ty, names))
+                .collect(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
+/// Apply `f` to each type argument of a struct's parameter list, passing value
+/// arguments through unchanged.
+pub fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<TyArg> {
+    args.iter()
+        .map(|a| match a {
+            TyArg::Ty(t) => TyArg::Ty(f(t)),
+            TyArg::Val(v) => TyArg::Val(v.clone()),
+            // Origin substitution is threaded separately; pass origins through.
+            TyArg::Origin(o) => TyArg::Origin(o.clone()),
+        })
+        .collect()
+}
+
+/// Alpha-rename the binder references inside one canonicalized constraint:
+/// `param`-shaped fields rename through `binder_names` (falling back to the
+/// pack-trimmed spelling), and embedded types canonicalize exactly like
+/// signature types.
+pub fn rename_constraint_parameters(
+    constraint: &GenericConstraint,
+    binder_names: &HashMap<String, String>,
+    subst: &HashMap<String, Ty>,
+    value_names: &HashMap<String, String>,
+) -> GenericConstraint {
+    let rename = |name: &str| -> String {
+        if let Some(canonical) = binder_names.get(name) {
+            return canonical.clone();
+        }
+        let trimmed = name.trim_start_matches('*');
+        if let Some(canonical) = binder_names.get(trimmed) {
+            return canonical.clone();
+        }
+        name.to_string()
+    };
+    let operand = |operand: &crate::types::ConstraintOperand| -> crate::types::ConstraintOperand {
+        use crate::types::ConstraintOperand;
+        match operand {
+            ConstraintOperand::Param(name) => ConstraintOperand::Param(rename(name)),
+            ConstraintOperand::PackLength(name) => ConstraintOperand::PackLength(rename(name)),
+            ConstraintOperand::Value(value) => ConstraintOperand::Value(value.clone()),
+            ConstraintOperand::Type(ty) => ConstraintOperand::Type(rename_dependent_parameters(
+                &substitute(ty, subst),
+                value_names,
+            )),
+        }
+    };
+    let recurse = |inner: &GenericConstraint| {
+        rename_constraint_parameters(inner, binder_names, subst, value_names)
+    };
+    match constraint {
+        GenericConstraint::WithMessage(inner, message) => {
+            GenericConstraint::WithMessage(Box::new(recurse(inner)), message.clone())
+        }
+        GenericConstraint::Conforms { param, trait_name } => GenericConstraint::Conforms {
+            param: rename(param),
+            trait_name: trait_name.clone(),
+        },
+        GenericConstraint::ConformsPack { param, trait_name } => GenericConstraint::ConformsPack {
+            param: rename(param),
+            trait_name: trait_name.clone(),
+        },
+        GenericConstraint::PackPredicate {
+            param,
+            predicate,
+            all,
+        } => GenericConstraint::PackPredicate {
+            param: rename(param),
+            predicate: predicate.clone(),
+            all: *all,
+        },
+        GenericConstraint::PackContains { param, element } => GenericConstraint::PackContains {
+            param: rename(param),
+            element: operand(element),
+        },
+        GenericConstraint::Trivial(kind, inner) => {
+            GenericConstraint::Trivial(*kind, operand(inner))
+        }
+        GenericConstraint::Eq(a, b) => GenericConstraint::Eq(operand(a), operand(b)),
+        GenericConstraint::Ne(a, b) => GenericConstraint::Ne(operand(a), operand(b)),
+        GenericConstraint::Lt(a, b) => GenericConstraint::Lt(operand(a), operand(b)),
+        GenericConstraint::Le(a, b) => GenericConstraint::Le(operand(a), operand(b)),
+        GenericConstraint::Gt(a, b) => GenericConstraint::Gt(operand(a), operand(b)),
+        GenericConstraint::Ge(a, b) => GenericConstraint::Ge(operand(a), operand(b)),
+        GenericConstraint::And(a, b) => {
+            GenericConstraint::And(Box::new(recurse(a)), Box::new(recurse(b)))
+        }
+        GenericConstraint::Or(a, b) => {
+            GenericConstraint::Or(Box::new(recurse(a)), Box::new(recurse(b)))
+        }
+        GenericConstraint::Not(inner) => GenericConstraint::Not(Box::new(recurse(inner))),
+        GenericConstraint::Bool(value) => GenericConstraint::Bool(*value),
+    }
+}
+
+pub fn callable_convention_accepts(
+    actual: Option<ArgConvention>,
+    contract: Option<ArgConvention>,
+) -> bool {
+    let actual = actual.unwrap_or(ArgConvention::Imm);
+    let contract = contract.unwrap_or(ArgConvention::Imm);
+    match (actual, contract) {
+        // A read-only callee demands less access than a mutable callable
+        // contract promises to supply, so it is a valid implementation.
+        (ArgConvention::Imm, ArgConvention::Imm | ArgConvention::Mut) => true,
+        (ArgConvention::Mut, ArgConvention::Mut) => true,
+        // Ownership-changing and parametric-reference conventions retain their
+        // exact ABI until their full subtyping rules are modeled.
+        (actual, contract) => actual == contract,
+    }
+}
+
+pub const STDLIB_STRING_STRUCT: &str = "__module$std$string$String";
+
+/// Whether `name` is the bundled nominal `String` struct — the linked
+/// qualified identity, or the bare name in unlinked/focused contexts.
+pub fn is_stdlib_string_struct(name: &str) -> bool {
+    name == "String" || name == STDLIB_STRING_STRUCT
 }
 
 #[cfg(test)]

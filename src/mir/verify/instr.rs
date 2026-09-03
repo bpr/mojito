@@ -343,7 +343,7 @@ pub(super) fn verify_instruction(
             let target = crate::native::target::NativeTarget::new(
                 crate::native::target::Triple::X86_64UnknownLinuxGnu,
             );
-            let structs = crate::native::layout::StructFieldIndex::from_declarations(declarations);
+            let structs = crate::mir::struct_field_index(declarations);
             if let Err(error) = (crate::native::layout::LayoutCx {
                 target: &target,
                 structs: &structs,
@@ -1117,7 +1117,7 @@ pub(super) fn verify_instruction(
                     "{prefix}: indirect-call place metadata is not aligned with its arguments"
                 ));
             }
-            let stored_contract = reg_ty(callee).and_then(crate::checker::callable_contract_ty);
+            let stored_contract = reg_ty(callee).and_then(crate::types::callable_contract_ty);
             let mut verified_instantiation = None;
             let contract = match stored_contract {
                 Some(symbolic @ Ty::GenericFunc { .. }) => {
@@ -1196,7 +1196,7 @@ pub(super) fn verify_instruction(
             if let Some(target) = resolved {
                 if nominal_name.is_none()
                     && let Some(expected) =
-                        reg_ty(callee).and_then(crate::checker::callable_contract_target)
+                        reg_ty(callee).and_then(crate::symbol::callable_contract_target)
                     && target != &expected
                 {
                     errors.push(format!(

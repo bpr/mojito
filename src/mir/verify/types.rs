@@ -25,7 +25,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     }
     if let (Some(found), Some(expected)) =
         (callable_environment(found), callable_environment(expected))
-        && !crate::checker::callable_environment_coerces(found, expected)
+        && !crate::types::callable_environment_coerces(found, expected)
     {
         // Environment differences are semantic, not a representational detail
         // that lowering may erase. In particular, an inference/default contract
@@ -78,7 +78,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if matches!(found, Ty::Struct(..)) && matches!(expected, Ty::Func { .. }) {
         return true;
     }
-    crate::checker::value_coerces(found, expected) || crate::checker::value_coerces(expected, found)
+    crate::types::value_coerces(found, expected) || crate::types::value_coerces(expected, found)
 }
 
 pub(super) fn declared<'a>(

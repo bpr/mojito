@@ -9,12 +9,13 @@ use crate::comptime::{
     elaborate_with_requests, tuple_materialized_callables,
 };
 use crate::ct::CtValue;
-use crate::error::{OwnershipError, ParseError, RuntimeError, TypeError};
+use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
 use crate::mir::text::{DisassembleError, disassemble};
 use crate::module::{
     LinkOptions, ModuleError, inject_prelude, link_source_with_options, link_with_options,
 };
+use crate::runtime::RuntimeError;
 use crate::runtime::Value;
 use crate::{Stmt, ast::StmtKind, check_program, parse};
 use crate::{Ty, TyArg};

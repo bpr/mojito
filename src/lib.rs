@@ -40,7 +40,7 @@ pub use checker::{Checker, check, check_program};
 pub use compiler::{CompiledProgram, Compiler, CompilerError, Execution, validate_module_scope};
 pub use comptime::{ComptimeError, elaborate};
 pub use ct::CtValue;
-pub use error::{LexError, OwnershipError, ParseError, RuntimeError, TypeError};
+pub use error::{LexError, OwnershipError, ParseError, TypeError};
 pub use lexer::Lexer;
 pub use literal::{FloatLiteral, IntLiteral};
 pub use module::{
@@ -52,6 +52,7 @@ pub use origin::{
     Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefTy,
 };
 pub use parser::{ParseReport, Parser};
+pub use runtime::RuntimeError;
 pub use runtime::Value;
 pub use token::{SourceSpan, SyntaxId, Token};
 pub use types::{ParamDecl, Ty, TyArg};

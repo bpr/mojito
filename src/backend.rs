@@ -11,7 +11,7 @@
 //! `match` below rather than introducing dynamic dispatch.
 
 use crate::checked::CheckedProgram;
-use crate::error::RuntimeError;
+use crate::runtime::RuntimeError;
 use crate::runtime::Value;
 
 #[cfg(feature = "backend-pliron")]

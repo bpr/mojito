@@ -76,6 +76,22 @@ pub struct MirDeclarations {
     pub functions: Vec<MirFunctionDeclaration>,
 }
 
+/// Build the native layout's struct-field index from MIR declaration
+/// metadata. Lives with MIR (not `native::layout`) so the layout vocabulary
+/// stays below the MIR waist while this MIR-consuming constructor sits at it.
+pub fn struct_field_index(
+    declarations: &MirDeclarations,
+) -> crate::native::layout::StructFieldIndex {
+    let mut index = crate::native::layout::StructFieldIndex::default();
+    for decl in &declarations.structs {
+        index.insert(
+            decl.name.clone(),
+            decl.fields.iter().map(|(_, ty)| ty.clone()).collect(),
+        );
+    }
+    index
+}
+
 #[derive(Debug, Clone)]
 pub struct MirStructDeclaration {
     pub name: String,
@@ -2188,7 +2204,7 @@ fn close_register_types(
                         dest,
                         reg_types
                             .get(&callee.0)
-                            .and_then(crate::checker::callable_contract_ty)
+                            .and_then(crate::types::callable_contract_ty)
                             .and_then(|ty| match ty {
                                 Ty::Func { ret, .. } => Some((**ret).clone()),
                                 _ => None,

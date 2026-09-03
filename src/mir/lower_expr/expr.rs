@@ -848,7 +848,7 @@ impl Flatten<'_> {
                     && kwargs.is_empty()
                     && self
                         .checked_ty(object)
-                        .is_some_and(|ty| crate::checker::builtin_copy_is_value_read(&ty))
+                        .is_some_and(|ty| crate::types::builtin_copy_is_value_read(&ty))
                 {
                     return self.expr(object);
                 }

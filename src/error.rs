@@ -337,33 +337,6 @@ pub enum TypeError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum RuntimeError {
-    UndefinedVariable(String),
-    TypeError(String),
-    NotCallable(String),
-    ArityMismatch {
-        name: String,
-        expected: usize,
-        got: usize,
-    },
-    /// A closure value tried to escape its defining scope (e.g. by being
-    /// returned). Mojo does not support escaping closures — downward funargs
-    /// only. See the strict-subset design notes.
-    ClosureEscape,
-    /// An error raised by `raise` that was not caught by any `try`/`except`. It
-    /// propagates through VM execution and is reported if it reaches the top.
-    Raised(crate::runtime::Value),
-    /// A valid-Mojo construct that reaches a compiler/backend boundary whose
-    /// semantics Mojito does not implement. Carries a feature description.
-    Unsupported(String),
-    /// An uncatchable trap: `os.abort` under the CPU-default assertion
-    /// configuration (strict slice bounds, explicit assertion failures).
-    /// Unlike `Raised`, no `try`/`except` observes it; it always propagates
-    /// to the top and ends the program.
-    Abort(String),
-}
-
 impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -726,36 +699,6 @@ impl fmt::Display for TypeError {
     }
 }
 
-impl fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RuntimeError::UndefinedVariable(name) => write!(f, "Undefined variable '{}'", name),
-            RuntimeError::TypeError(msg) => write!(f, "Type error: {}", msg),
-            RuntimeError::NotCallable(name) => write!(f, "'{}' is not callable", name),
-            RuntimeError::ArityMismatch {
-                name,
-                expected,
-                got,
-            } => {
-                write!(
-                    f,
-                    "'{}' expects {} argument(s), got {}",
-                    name, expected, got
-                )
-            }
-            RuntimeError::ClosureEscape => {
-                write!(
-                    f,
-                    "closures cannot escape their defining scope (downward funargs only)"
-                )
-            }
-            RuntimeError::Raised(value) => write!(f, "unhandled error: {}", value),
-            RuntimeError::Unsupported(what) => write!(f, "unsupported feature: {}", what),
-            RuntimeError::Abort(message) => write!(f, "abort: {}", message),
-        }
-    }
-}
-
 /// Errors from the ownership analysis (`analysis`), a compiler pass over the MIR
 /// that runs after type-checking. These model Mojo's move semantics — a value
 /// transferred with `^` is left uninitialized, so using it again is an error.
@@ -869,5 +812,4 @@ impl OwnershipError {
 impl std::error::Error for LexError {}
 impl std::error::Error for ParseError {}
 impl std::error::Error for TypeError {}
-impl std::error::Error for RuntimeError {}
 impl std::error::Error for OwnershipError {}

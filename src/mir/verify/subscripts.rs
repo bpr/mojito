@@ -522,7 +522,7 @@ pub(super) fn verify_param_arguments(
             (crate::types::ParamDecl::Value { name, ty, .. }, Some(register)) => {
                 if let Some(found) = function.reg_types.get(&register.0)
                     && !(matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. })
-                        && crate::checker::callable_bound_accepts(found, ty))
+                        && crate::types::callable_bound_accepts(found, ty))
                     && !types_compatible(found, ty)
                 {
                     errors.push(format!(

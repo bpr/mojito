@@ -817,46 +817,7 @@ pub(crate) enum GenericSite {
     },
 }
 
-/// Checked declaration-level control facts: the raising contract and whether
-/// A loan-transfer effect inferred from a callable's body: an accepted store
-/// into an outliving destination (`self` or a parameter) whose loan roots at
-/// another parameter or `self`. Call sites replay the effect against their
-/// actuals, installing the caller-side loan the callee's store implies.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransferEffect {
-    pub dest: crate::origin::SigOrigin,
-    pub src: crate::origin::SigOrigin,
-    /// Whether the loan roots at the source parameter's own (borrowed)
-    /// storage — a `mut`/`ref` actual's place is loaned at the call — as
-    /// opposed to loans merely carried by an owned value moving through.
-    pub src_is_place: bool,
-    pub mutable: bool,
-}
-
-/// Inferred transfer effects riding a checked function type, so a call
-/// through a function-typed VALUE replays the effects of the `def` the value
-/// came from. Transparent to type identity: two otherwise-equal function
-/// types never differ by their inferred effects, and acceptance/coercion
-/// must not consult them — a `def(...)` contract cannot spell effects (Mojo
-/// has no such syntax), so soundness comes from call-site replay off the
-/// value's type, never from acceptance filtering.
-#[derive(Debug, Clone, Default, Eq)]
-pub struct TransferSet(pub(crate) Vec<TransferEffect>);
-
-impl TransferSet {
-    /// Iterate the canonical transfer effects retained by a callable type.
-    pub fn iter(&self) -> impl Iterator<Item = &TransferEffect> {
-        self.0.iter()
-    }
-}
-
-impl PartialEq for TransferSet {
-    /// Always equal BY DESIGN: the set is metadata on the type, not part of
-    /// its identity. See the type-level comment before relying on `==`.
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
+pub use crate::types::{TransferEffect, TransferSet};
 
 /// A higher-order transfer residue: the callable's body calls through one of
 /// its own callable parameters, whose transfer effects are unknowable in the

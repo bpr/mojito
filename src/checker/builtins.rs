@@ -1,6 +1,10 @@
 //! Typing and capability rules for compiler-known builtin types and operations.
 
 use super::*;
+pub(crate) use crate::types::{
+    builtin_copy_is_value_read, callable_environment_coerces, callable_environment_value_coerces,
+    coerces,
+};
 
 pub(super) fn default_literal(ty: &Ty) -> Ty {
     match ty {
@@ -188,28 +192,6 @@ pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static
     }
 }
 
-/// Whether a *concrete* built-in type has an intrinsic `__hash__` — the scalar
-/// set the VM can hash directly (`Int`/`UInt`/`Bool`/`String`/`Float64`). This
-/// lets a user key struct combine `self.field.__hash__()` values.
-/// Whether `Copyable.copy` on a value of this type has no callee: built-in
-/// scalars, literals, tuples, packs, and variants copy by the ordinary value
-/// read. Nominal, parametric, associated, and reference types resolve their
-/// `copy` through declarations or trait dispatch instead.
-pub(crate) fn builtin_copy_is_value_read(ty: &Ty) -> bool {
-    !matches!(
-        ty,
-        Ty::Struct(..)
-            | Ty::Param { .. }
-            | Ty::Assoc { .. }
-            | Ty::Ref(_)
-            | Ty::SelfType
-            | Ty::Func { .. }
-            | Ty::GenericFunc { .. }
-            | Ty::Overload(_)
-            | Ty::Error
-    )
-}
-
 pub(super) fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty,
@@ -296,170 +278,6 @@ pub(super) fn is_numeric(ty: &Ty) -> bool {
     )
 }
 
-/// Whether a value of type `from` can be used where `to` is required. Only the
-/// literal types coerce (to the concrete numeric types, or `IntLiteral` up to
-/// `FloatLiteral`); everything else must match exactly.
-pub(super) fn coerces(from: &Ty, to: &Ty) -> bool {
-    if *from == Ty::Never {
-        return true;
-    }
-    if from == to {
-        return true;
-    }
-    match (from, to) {
-        (Ty::Struct(from, from_args), Ty::Struct(to, to_args))
-            if matches!(from.as_str(), "ContiguousSlice" | "StridedSlice")
-                && to == "Slice"
-                && from_args.is_empty()
-                && to_args.is_empty() =>
-        {
-            true
-        }
-        // Public Tuple remains nominal, but its generated specialization symbol
-        // deliberately differs from the canonical discovery-pass name. Compare
-        // the retained semantic element arguments instead of requiring those
-        // implementation symbols to match.
-        (from, to) if tuple_elements(from).is_some() && tuple_elements(to).is_some() => {
-            let from = tuple_elements(from).expect("guard established Tuple elements");
-            let to = tuple_elements(to).expect("guard established Tuple elements");
-            from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
-        }
-        // The same public-vs-specialized bridge for the lazy TString.
-        (from, to)
-            if crate::types::tstring_elements(from).is_some()
-                && crate::types::tstring_elements(to).is_some() =>
-        {
-            let from =
-                crate::types::tstring_elements(from).expect("guard established TString elements");
-            let to =
-                crate::types::tstring_elements(to).expect("guard established TString elements");
-            from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
-        }
-        (Ty::Param { name: a, .. }, Ty::Param { name: b, .. }) => a == b,
-        (Ty::Struct(an, aargs), Ty::Struct(bn, bargs)) => {
-            an == bn
-                && aargs.len() == bargs.len()
-                && aargs.iter().zip(bargs).all(|(a, b)| match (a, b) {
-                    (TyArg::Ty(a), TyArg::Ty(b)) => coerces(a, b),
-                    (TyArg::Val(a), TyArg::Val(b)) => a == b,
-                    _ => false,
-                })
-        }
-        (Ty::ComptimeList(a), Ty::ComptimeList(b)) => coerces(a, b),
-        (
-            Ty::Pointer {
-                element: a,
-                origin: ao,
-            },
-            Ty::Pointer {
-                element: b,
-                origin: bo,
-            },
-        ) => coerces(a, b) && ao == bo,
-        (
-            Ty::Func {
-                environment: from_environment,
-                params: from_params,
-                ret: from_ret,
-                required,
-                variadic,
-                conventions,
-                raises: from_raises,
-                error: from_error,
-                ref_params: from_ref_params,
-                ref_return: from_ref_return,
-                ..
-            },
-            Ty::Func {
-                environment: to_environment,
-                params: to_params,
-                ret: to_ret,
-                required: to_required,
-                variadic: to_variadic,
-                conventions: to_conventions,
-                raises: to_raises,
-                error: to_error,
-                ref_params: to_ref_params,
-                ref_return: to_ref_return,
-                ..
-            },
-        ) => {
-            callable_environment_value_coerces(from_environment, to_environment)
-                && required == to_required
-                && variadic.is_none()
-                && to_variadic.is_none()
-                && conventions == to_conventions
-                // Reference conventions are not represented by the ordinary
-                // parameter/result `Ty`s. They carry the storage origin and
-                // permission contract, so erasing them here could coerce a
-                // value-returning callable to a reference-returning contract,
-                // or silently rebase a result from one argument to another.
-                && from_ref_params == to_ref_params
-                && from_ref_return == to_ref_return
-                && (!from_raises || *to_raises)
-                && match (from_error.as_deref(), to_error.as_deref()) {
-                    (None, None) => true,
-                    (None, Some(Ty::Never)) => true,
-                    (None, Some(_)) => true,
-                    (Some(from), Some(Ty::Error)) => from != &Ty::Never,
-                    (Some(from), Some(to)) => from == to,
-                    (Some(Ty::Never), None) => true,
-                    (Some(_), None) => false,
-                }
-                && from_params.len() == to_params.len()
-                && from_params
-                    .iter()
-                    .zip(to_params)
-                    .all(|(from, to)| from == to)
-                && from_ret == to_ret
-        }
-        (Ty::IntLiteral, Ty::Int | Ty::UInt | Ty::Float64 | Ty::FloatLiteral) => true,
-        (Ty::FloatLiteral, Ty::Float64) => true,
-        (literal, Ty::Simd { dtype, width: 1 }) if splats_to(literal, *dtype) => true,
-        (
-            Ty::Simd {
-                dtype: from_dtype,
-                width: from_width,
-            },
-            Ty::Simd {
-                dtype: to_dtype,
-                width: -1,
-            },
-        ) => from_dtype == to_dtype && *from_width > 0,
-        // A tuple coerces element-wise (same arity) — so a literal element
-        // materializes: `(1, 2.0)` fits `Tuple[Float64, Float64]`.
-        (Ty::Tuple(a), Ty::Tuple(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| coerces(x, y))
-        }
-        (Ty::Variant(a), Ty::Variant(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| coerces(x, y))
-        }
-        _ => false,
-    }
-}
-
-/// The value-coercion policy for callable environments: current Mojo rejects
-/// binding a capturing closure to an unqualified `def(...)` value position —
-/// the contract must spell `capturing[...]` — while a thin function value
-/// still binds. Comptime callable *bounds* stay on the permissive
-/// `callable_environment_coerces` below.
-pub(crate) fn callable_environment_value_coerces(
-    from: &crate::origin::CallableEnvironment,
-    to: &crate::origin::CallableEnvironment,
-) -> bool {
-    use crate::origin::CallableEnvironment;
-    if matches!(
-        (from, to),
-        (
-            CallableEnvironment::Capturing(_),
-            CallableEnvironment::Default
-        )
-    ) {
-        return false;
-    }
-    callable_environment_coerces(from, to)
-}
-
 /// True when `from` fails to bind to `to` solely because a capturing
 /// environment meets an unqualified `def(...)` value contract — the shape that
 /// deserves the "spell `capturing[...]`" migration hint.
@@ -487,42 +305,6 @@ pub(super) fn callable_mismatch_is_environment_only(from: &Ty, to: &Ty) -> bool 
         *environment = to_environment.clone();
     }
     coerces(&aligned, to)
-}
-
-pub(crate) fn callable_environment_coerces(
-    from: &crate::origin::CallableEnvironment,
-    to: &crate::origin::CallableEnvironment,
-) -> bool {
-    use crate::origin::{CallableEnvironment, CaptureOriginSet};
-    if from == to {
-        return true;
-    }
-    match (from, to) {
-        // An unqualified callable contract does not constrain the environment
-        // in the *bound* channel: a supplied `@parameter`/comptime callable
-        // argument against `F: def(...)` may capture (upstream accepts this —
-        // see `subscript_call_contracts.mojo`), so `unify`,
-        // `callable_bound_accepts`, and MIR verify stay on this permissive
-        // predicate. Runtime value coercion uses the strict
-        // `callable_environment_value_coerces` above.
-        (
-            CallableEnvironment::Thin | CallableEnvironment::Capturing(_),
-            CallableEnvironment::Default,
-        ) => true,
-        // A non-capturing callable satisfies every `capturing[...]` contract:
-        // its capture set is empty, a subset of any allowed origin set
-        // (upstream accepts a thin function for a capturing funarg).
-        (CallableEnvironment::Thin, CallableEnvironment::Capturing(_)) => true,
-        (
-            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(_)),
-            CallableEnvironment::Capturing(CaptureOriginSet::Infer | CaptureOriginSet::Param(_)),
-        ) => true,
-        (
-            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(actual)),
-            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(allowed)),
-        ) => actual.iter().all(|capture| allowed.contains(capture)),
-        _ => false,
-    }
 }
 
 /// The common type of two list elements: numeric elements unify like operands

@@ -8,8 +8,8 @@
 
 use crate::backend::BackendKind;
 use crate::compiler::Execution;
-use crate::error::RuntimeError;
 use crate::mir::text::{ArtifactReport, load_artifact};
+use crate::runtime::RuntimeError;
 use std::fmt;
 
 /// Load and execute one textual MIR artifact, capturing its output and final

@@ -135,7 +135,7 @@ impl VmBackend {
                 // specialization deliberately materializes its executable
                 // field (`IntLiteral` -> `Int`, for example). This is the same
                 // checked, directional coercion used by MIR verification.
-                .all(|(public, storage)| crate::checker::value_coerces(public, storage))
+                .all(|(public, storage)| crate::types::value_coerces(public, storage))
         {
             return Err(RuntimeError::TypeError(format!(
                 "vm: public Tuple result does not match specialization '{name}' \

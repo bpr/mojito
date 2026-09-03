@@ -10,12 +10,12 @@ use crate::ast::Stmt;
 use crate::call::{ArgSlot, CallVariadics, match_call_slots};
 use crate::checked::CheckedConst;
 use crate::ct::CtValue;
-use crate::error::RuntimeError;
 use crate::hir::VarId;
 use crate::mir::{
     Const, MirBlock, MirCaptureMode, MirInstr, MirIntrinsicSubscript, MirPlace, MirProgram,
     MirSubscriptArg, MirTerm, Proj, Reg,
 };
+use crate::runtime::RuntimeError;
 use crate::runtime::{
     ClosureCapture, RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_convert,
     builtin_divmod, builtin_error, builtin_input, builtin_min_max, builtin_round, read_simd_lane,

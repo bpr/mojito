@@ -1,6 +1,7 @@
 //! Source-annotation conversion into resolved checked types and origins.
 
 use super::*;
+pub(crate) use crate::types::splats_to;
 
 pub(super) fn dtype_from_arg(arg: &crate::ast::ParamArg) -> Result<Dtype, TypeError> {
     if let crate::ast::ParamArg::Value(Expr {
@@ -22,22 +23,6 @@ pub(super) fn dtype_from_arg(arg: &crate::ast::ParamArg) -> Result<Dtype, TypeEr
         }
         _ => "a non-DType argument".to_string(),
     }))
-}
-
-/// Whether a value of type `ty` can be a `dtype` SIMD element (a construction
-/// argument, or the non-SIMD operand of an elementwise operator that splats). A
-/// numeric literal fits any matching-kind lane; a same-dtype width-1 SIMD fits.
-pub(super) fn splats_to(ty: &Ty, dtype: Dtype) -> bool {
-    match ty {
-        Ty::IntLiteral => dtype != Dtype::Bool,
-        Ty::FloatLiteral => dtype.is_float(),
-        Ty::Bool => dtype == Dtype::Bool,
-        Ty::Int => dtype == Dtype::Int,
-        // `Float64` is `SIMD[DType.float64, 1]`, so it splats into a float64 vector.
-        Ty::Float64 => dtype == Dtype::Float64,
-        Ty::Simd { dtype: d, width: 1 } => *d == dtype,
-        _ => false,
-    }
 }
 
 /// Whether `ty` may be an **explicit construction** argument for a `dtype`

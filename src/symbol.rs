@@ -274,13 +274,7 @@ impl SignatureKey {
 /// The bundled stdlib's nominal `String` struct under its linked module
 /// identity. The checker's construction routing and the VM's
 /// literal-to-struct bridge both key on this exact declaration.
-pub(crate) const STDLIB_STRING_STRUCT: &str = "__module$std$string$String";
-
-/// Whether `name` is the bundled nominal `String` struct — the linked
-/// qualified identity, or the bare name in unlinked/focused contexts.
-pub(crate) fn is_stdlib_string_struct(name: &str) -> bool {
-    name == "String" || name == STDLIB_STRING_STRUCT
-}
+pub(crate) use crate::types::{STDLIB_STRING_STRUCT, is_stdlib_string_struct};
 
 pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
     format!("{base}{}", sig.suffix())
@@ -291,9 +285,10 @@ pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
 /// under one overload key, and its declared body is a never-execute
 /// field-contract stub, so native lowering routes the call to the string
 /// constructor bridge instead of the compiled signature. Returns the
-/// receiver struct name when `symbol` has that exact shape.
-#[cfg(feature = "backend-pliron")]
-pub(crate) fn string_ctor_overload_struct(symbol: &str) -> Option<&str> {
+/// receiver struct name when `symbol` has that exact shape. Compiled
+/// unconditionally (its only caller is the pliron backend) so this crate's
+/// surface does not vary by feature.
+pub fn string_ctor_overload_struct(symbol: &str) -> Option<&str> {
     symbol
         .strip_suffix(".__init__$ov$String")
         .filter(|name| is_stdlib_string_struct(name))
@@ -1160,4 +1155,107 @@ fn is_mojo_copy_constructor(m: &Method) -> bool {
         && m.params[0].convention.is_none()
         && matches!(m.params[0].ty, Type::SelfType)
         && m.ret.is_none()
+}
+
+/// A signature-qualified abstract `__call__` symbol for an indirect callable
+/// contract. The VM retargets this symbol to a nominal receiver's runtime type;
+/// ordinary function and closure values ignore it. Keeping the signature here
+/// avoids falling back to arity when a callable struct overloads `__call__` on
+/// parameter type.
+pub fn callable_contract_target(ty: &Ty) -> Option<String> {
+    let contract = crate::types::callable_contract_ty(ty)?;
+    let (params, variadic, kw_variadic) = match contract {
+        Ty::Func {
+            params,
+            variadic,
+            kw_variadic,
+            ..
+        } => (params, variadic, kw_variadic),
+        _ => return None,
+    };
+    let signature_types = params.iter().chain(variadic.iter().map(Box::as_ref));
+    let signature =
+        SignatureKey::from_tys(signature_types).with_kw_variadic(kw_variadic.as_deref());
+    Some(method_symbol("__trait_dispatch", "__call__", &signature))
+}
+
+/// Canonical concrete symbol selected for public `Tuple[*Ts]` element types.
+pub fn tuple_specialization_symbol(elements: &[Ty]) -> String {
+    mangle("Tuple", &tuple_specialization_values(elements))
+}
+
+pub fn tstring_specialization_symbol(elements: &[Ty]) -> String {
+    mangle("TString", &tuple_specialization_values(elements))
+}
+
+pub fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
+    vec![CtValue::Tuple(
+        elements
+            .iter()
+            .cloned()
+            .map(Box::new)
+            .map(CtValue::Type)
+            .collect(),
+    )]
+}
+
+/// The specialized name for `orig` at value arguments `vals` — e.g. `f$0`, `f$1`.
+/// `$` cannot appear in a source identifier, so a specialization never collides
+/// with a user-written name.
+pub fn mangle(orig: &str, vals: &[CtValue]) -> String {
+    let mut s = orig.to_string();
+    for v in vals {
+        s.push('$');
+        encode_specialization_value(v, &mut s);
+    }
+    s
+}
+
+fn encode_specialization_value(value: &CtValue, out: &mut String) {
+    match value {
+        CtValue::Int(value) => out.push_str(&format!("i{value};")),
+        CtValue::UInt(value) => out.push_str(&format!("u{value};")),
+        CtValue::Dtype(dtype) => out.push_str(&format!("d{};", dtype.name())),
+        CtValue::Struct { name, fields } => {
+            out.push_str(&format!("S{}:{name}{{", name.len()));
+            for (_, value) in fields {
+                encode_specialization_value(value, out);
+            }
+            out.push('}');
+        }
+        CtValue::Float(bits) => out.push_str(&format!("f{bits:016x};")),
+        CtValue::IntLiteral(value) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("I{}:{rendered}", rendered.len()));
+        }
+        CtValue::FloatLiteral(value) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("F{}:{rendered}", rendered.len()));
+        }
+        CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
+        CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
+        CtValue::Tuple(values) => {
+            out.push_str(&format!("t{}[", values.len()));
+            for value in values {
+                encode_specialization_value(value, out);
+            }
+            out.push(']');
+        }
+        CtValue::List(values) => {
+            out.push_str(&format!("l{}[", values.len()));
+            for value in values {
+                encode_specialization_value(value, out);
+            }
+            out.push(']');
+        }
+        CtValue::Type(ty) => {
+            let rendered = ty.to_string();
+            out.push_str(&format!("y{}:{rendered}", rendered.len()));
+        }
+        CtValue::Reflected(ty) => {
+            let rendered = ty.to_string();
+            out.push_str(&format!("r{}:{rendered}", rendered.len()));
+        }
+        CtValue::Param(name) => out.push_str(&format!("p{}:{name}", name.len())),
+    }
 }

@@ -171,18 +171,6 @@ pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
     })
 }
 
-/// The specialized name for `orig` at value arguments `vals` — e.g. `f$0`, `f$1`.
-/// `$` cannot appear in a source identifier, so a specialization never collides
-/// with a user-written name.
-pub(super) fn mangle(orig: &str, vals: &[CtValue]) -> String {
-    let mut s = orig.to_string();
-    for v in vals {
-        s.push('$');
-        encode_specialization_value(v, &mut s);
-    }
-    s
-}
-
 /// CTFE does not evaluate an Origin as a runtime value, but nested type
 /// annotations still need its stable declaration-order identity while the
 /// monomorphizer resolves a variadic Tuple element pack. Encode that semantic

@@ -91,8 +91,7 @@ pub fn compile(
         .iter()
         .map(|decl| (decl.name.as_str(), decl))
         .collect();
-    let struct_index =
-        crate::native::layout::StructFieldIndex::from_declarations(&program.declarations);
+    let struct_index = crate::mir::struct_field_index(&program.declarations);
     let layout = crate::native::layout::LayoutCx {
         target: &options.target,
         structs: &struct_index,

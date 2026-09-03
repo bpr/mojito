@@ -2084,7 +2084,7 @@ impl Checker {
                 )),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if crate::comptime::tuple_specialization_symbol(&semantic) != name {
+        if crate::symbol::tuple_specialization_symbol(&semantic) != name {
             return Ok(None);
         }
         Ok(Some(semantic.into_iter().map(TyArg::Ty).collect()))

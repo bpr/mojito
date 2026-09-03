@@ -36,6 +36,10 @@ use crate::ast::{
     ArgConvention, Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
     StructComptime, TStringPart, Type, TypeParam, WithItem,
 };
+pub(crate) use crate::symbol::{
+    mangle, tstring_specialization_symbol, tuple_specialization_symbol, tuple_specialization_values,
+};
+
 use crate::backend::VmBackend;
 use crate::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use crate::ct::{CtExpr, CtValue};
@@ -229,15 +233,6 @@ pub(crate) fn tuple_materialized_callables(
         .enumerate()
         .map(|(index, callable)| (format!("$mojito$callable_type${index}"), callable))
         .collect()
-}
-
-/// Canonical concrete symbol selected for public `Tuple[*Ts]` element types.
-pub(crate) fn tuple_specialization_symbol(elements: &[Ty]) -> String {
-    mangle("Tuple", &tuple_specialization_values(elements))
-}
-
-pub(crate) fn tstring_specialization_symbol(elements: &[Ty]) -> String {
-    mangle("TString", &tuple_specialization_values(elements))
 }
 
 /// Comptime-specific accessors on the shared [`CtValue`], reporting a
@@ -927,55 +922,6 @@ fn is_specializable_declaration_in(
     }
 }
 
-fn encode_specialization_value(value: &CtValue, out: &mut String) {
-    match value {
-        CtValue::Int(value) => out.push_str(&format!("i{value};")),
-        CtValue::UInt(value) => out.push_str(&format!("u{value};")),
-        CtValue::Dtype(dtype) => out.push_str(&format!("d{};", dtype.name())),
-        CtValue::Struct { name, fields } => {
-            out.push_str(&format!("S{}:{name}{{", name.len()));
-            for (_, value) in fields {
-                encode_specialization_value(value, out);
-            }
-            out.push('}');
-        }
-        CtValue::Float(bits) => out.push_str(&format!("f{bits:016x};")),
-        CtValue::IntLiteral(value) => {
-            let rendered = value.to_string();
-            out.push_str(&format!("I{}:{rendered}", rendered.len()));
-        }
-        CtValue::FloatLiteral(value) => {
-            let rendered = value.to_string();
-            out.push_str(&format!("F{}:{rendered}", rendered.len()));
-        }
-        CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
-        CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
-        CtValue::Tuple(values) => {
-            out.push_str(&format!("t{}[", values.len()));
-            for value in values {
-                encode_specialization_value(value, out);
-            }
-            out.push(']');
-        }
-        CtValue::List(values) => {
-            out.push_str(&format!("l{}[", values.len()));
-            for value in values {
-                encode_specialization_value(value, out);
-            }
-            out.push(']');
-        }
-        CtValue::Type(ty) => {
-            let rendered = ty.to_string();
-            out.push_str(&format!("y{}:{rendered}", rendered.len()));
-        }
-        CtValue::Reflected(ty) => {
-            let rendered = ty.to_string();
-            out.push_str(&format!("r{}:{rendered}", rendered.len()));
-        }
-        CtValue::Param(name) => out.push_str(&format!("p{}:{name}", name.len())),
-    }
-}
-
 /// The maximum number of compile-time "steps" (loop iterations, statements
 /// executed, function calls) across a whole program — a hard bound so compile-time
 /// execution can't hang the compiler (cf. Zig's quota).
@@ -1225,17 +1171,6 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         // classification keeps the literal type via `ct_value_param_type`.
         _ => None,
     }
-}
-
-fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
-    vec![CtValue::Tuple(
-        elements
-            .iter()
-            .cloned()
-            .map(Box::new)
-            .map(CtValue::Type)
-            .collect(),
-    )]
 }
 
 fn collect_fns(program: &[Stmt]) -> HashMap<String, CtFn<'_>> {

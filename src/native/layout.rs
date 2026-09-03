@@ -19,7 +19,6 @@
 use std::collections::HashMap;
 
 use crate::ast::Dtype;
-use crate::mir::MirDeclarations;
 use crate::native::target::NativeTarget;
 use crate::types::Ty;
 
@@ -64,17 +63,6 @@ pub struct StructFieldIndex {
 }
 
 impl StructFieldIndex {
-    pub fn from_declarations(declarations: &MirDeclarations) -> StructFieldIndex {
-        let mut index = StructFieldIndex::default();
-        for decl in &declarations.structs {
-            index.insert(
-                decl.name.clone(),
-                decl.fields.iter().map(|(_, ty)| ty.clone()).collect(),
-            );
-        }
-        index
-    }
-
     pub fn insert(&mut self, name: String, field_types: Vec<Ty>) {
         self.fields.insert(name, field_types);
     }

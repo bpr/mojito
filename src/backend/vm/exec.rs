@@ -165,9 +165,7 @@ impl VmBackend {
                 let target = crate::native::target::NativeTarget::new(
                     crate::native::target::Triple::X86_64UnknownLinuxGnu,
                 );
-                let structs = crate::native::layout::StructFieldIndex::from_declarations(
-                    &prog.mir.declarations,
-                );
+                let structs = crate::mir::struct_field_index(&prog.mir.declarations);
                 let size = crate::native::layout::LayoutCx {
                     target: &target,
                     structs: &structs,
