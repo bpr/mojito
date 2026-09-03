@@ -1176,11 +1176,11 @@ impl Flatten<'_> {
                 // so struct arguments must not occupy its `param_arg_regs`
                 // slots.
                 if let ExprKind::TypeApply { name, .. } = &object.kind {
-                    let regs = self.args(args);
-                    let kw: Vec<(String, Reg)> = kwargs
-                        .iter()
-                        .map(|k| (k.name.clone(), self.expr(&k.value)))
-                        .collect();
+                    let saved_anchor_permission = self.allow_argument_anchors;
+                    self.allow_argument_anchors = self.call_anchors_arguments(e);
+                    let (regs, arg_places) = self.lower_call_arguments(args, false);
+                    self.allow_argument_anchors = saved_anchor_permission;
+                    let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
                     let d = self.fresh(span(e), None);
                     let target = self
                         .resolved_callable(e)
@@ -1192,8 +1192,8 @@ impl Flatten<'_> {
                         raises: self.checked_raises(e),
                         args: regs,
                         kwargs: kw,
-                        arg_places: vec![None; args.len()],
-                        kwarg_places: vec![None; kwargs.len()],
+                        arg_places,
+                        kwarg_places,
                         capture_accesses: self.checked_call_capture_accesses(e),
                         param_arg_regs: Vec::new(),
                     });
@@ -1209,11 +1209,11 @@ impl Flatten<'_> {
                     && let ExprKind::Identifier(type_name) = &base.kind
                     && !self.vars.iter().any(|name| name == type_name)
                 {
-                    let regs = self.args(args);
-                    let kw: Vec<(String, Reg)> = kwargs
-                        .iter()
-                        .map(|k| (k.name.clone(), self.expr(&k.value)))
-                        .collect();
+                    let saved_anchor_permission = self.allow_argument_anchors;
+                    self.allow_argument_anchors = self.call_anchors_arguments(e);
+                    let (regs, arg_places) = self.lower_call_arguments(args, false);
+                    self.allow_argument_anchors = saved_anchor_permission;
+                    let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
                     let d = self.fresh(span(e), None);
                     let target = self
                         .resolved_callable(e)
@@ -1225,8 +1225,8 @@ impl Flatten<'_> {
                         raises: self.checked_raises(e),
                         args: regs,
                         kwargs: kw,
-                        arg_places: vec![None; args.len()],
-                        kwarg_places: vec![None; kwargs.len()],
+                        arg_places,
+                        kwarg_places,
                         capture_accesses: self.checked_call_capture_accesses(e),
                         param_arg_regs: Vec::new(),
                     });

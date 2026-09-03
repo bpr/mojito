@@ -305,6 +305,7 @@ assets/ok/span_implicit_from_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_move_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_method_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/span_temp_static_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_view_basics.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape

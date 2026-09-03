@@ -1923,6 +1923,71 @@ fn method_call_temporary_view_argument_anchors_its_source_loan() {
 }
 
 #[test]
+fn parameterized_static_temporary_view_arguments_anchor_their_source_loans() {
+    // A loan-carrying temporary built inline as a parameterized-static
+    // argument anchors in a hidden `$arg_loan_r` slot for BOTH
+    // static-receiver parses — the TypeApply spelling (`Pair[Int,
+    // String].sum(...)`) and the single-argument subscript spelling
+    // (`Tally[Int].total(...)`) — and each statement-end `KeepAlive` keeps
+    // the view's source alive through its call.
+    let source = include_str!("../assets/ok/span_temp_static_argument.mojo");
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile parameterized-static temporary view arguments");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let instructions = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    for (list, callee) in [("a", "sum"), ("b", "total")] {
+        let list_slot = main
+            .var_names
+            .iter()
+            .position(|name| name == list)
+            .unwrap_or_else(|| panic!("{list} slot")) as u32;
+        let anchor = instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::EstablishLoans {
+                    reference, loans, ..
+                } if main.var_names[*reference as usize].starts_with("$arg_loan")
+                    && loans.iter().any(|loan| loan.place.root == list_slot) =>
+                {
+                    Some(*reference)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("an anchor slot borrows the view over `{list}`"));
+        let call = instructions
+            .iter()
+            .position(|instruction| {
+                matches!(
+                    instruction,
+                    MirInstr::Call { func, .. } if func.0.contains(callee)
+                )
+            })
+            .unwrap_or_else(|| panic!("{callee} lowers to a static Call"));
+        let keep_alive = instructions
+            .iter()
+            .position(
+                |instruction| matches!(instruction, MirInstr::KeepAlive { var } if *var == anchor),
+            )
+            .unwrap_or_else(|| panic!("the `{list}` anchor flushes as a statement-end KeepAlive"));
+        assert!(
+            keep_alive > call,
+            "the `{list}` anchor outlives the {callee} call"
+        );
+    }
+}
+
+#[test]
 fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
     use mojito::OriginSeg;
 

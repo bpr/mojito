@@ -305,6 +305,7 @@ assets/ok/span_implicit_from_list.mojo	main	exe-differential	sanitized
 assets/ok/span_iteration.mojo	main	exe-differential	sanitized
 assets/ok/span_move_use.mojo	main	exe-differential	sanitized
 assets/ok/span_temp_method_argument.mojo	main	exe-differential	sanitized
+assets/ok/span_temp_static_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_view_basics.mojo	main	exe-differential	sanitized
 assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized

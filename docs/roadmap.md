@@ -139,28 +139,6 @@ recreates this section's checkbox with the fresh divergence list.
     declaration default instead of the caller's binding (the compiled
     discovery path specializes the clone and is unaffected)
 
-- [ ] **Parity-unblocking infrastructure** — compiler-side features that
-  each unblock several recorded parity gaps at once. These are where
-  "Mojito rejects/diverges from valid Mojo" clusters today; every item
-  lists what it unlocks so slices can be chosen by leverage. The remaining
-  items below are in **recommended execution order**, not fan-out order. The
-  ref-field adapter
-  follow-ups are a **parallel track** (origin/ref-system
-  refinements plus bug fixes, not coupled to the API-parity sequence) and
-  are listed last with their own internal order.
-  - **Temporary view arguments to parameterized static calls** — the
-    2026-09-01 lift anchored loan-carrying temporary arguments
-    (`b.extend(Span(a))`) for method, parameterized-method, and
-    bare-identifier static calls, but the `TypeApply`/`Index`
-    static-receiver lowerings (`Dict[Int, Int].fromkeys(...)`,
-    `Box[String].filled(...)`) still lower arguments through bare
-    `args()` with no `arg_places` and no `$arg_loan_r` anchor, so
-    `Foo[T].bar(Span(a))` with no later use of `a` still traps at run
-    with `vm: use after Pointer deallocation`. Lift by routing those two
-    arms through `lower_call_arguments` under the same
-    `call_anchors_arguments` gate (watch the place-retention change that
-    swap introduces; the three transfer-effect `mir_test` pins guard
-    duplicate loans).
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
   the Writer and explicit-destroy foundations.
 - [ ] **Time, random, and testing slices** — add deterministic testable cores and
