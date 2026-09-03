@@ -58,6 +58,7 @@ petgraph = "0.8.3"
 backend-pliron = [
     "dep:mojito-pliron",
     "dep:llvm-sys",
+    "dep:pliron",
     "dep:object",
     "dep:sha2",
 ]
@@ -83,6 +84,10 @@ mojito-parser = { path = "crates/mojito-parser" }
 mojito-symbol = { path = "crates/mojito-symbol" }
 mojito-types = { path = "crates/mojito-types" }
 mojito-vm = { path = "crates/mojito-vm" }
+# Direct pliron (the same =0.17.0 pin crates/mojito-pliron resolves) powers
+# the canonical-text parse -> print fixpoint check in
+# tests/pliron_backend_test.rs.
+pliron = { version = "=0.17.0", optional = true }
 # Pure-Rust ELF/archive inspection and digests for the resolved-toolchain
 # report, runtime ABI validation, and reproducibility diagnostics. Read-only,
 # no compression backends.
