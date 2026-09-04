@@ -1548,13 +1548,11 @@ impl Flatten<'_> {
         ext_loops: &[(hir::BlockId, hir::BlockId, Vec<VarId>)],
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) -> Vec<MirBlock> {
-        let checked: Vec<_> = self.checked_expressions.values().cloned().collect();
-        let region_cfg = hir::Cfg::build_seeded_checked_with_declarations(
+        let region_cfg = hir::Cfg::build_seeded_checked_region(
             self.vars.clone(),
             body,
             ext_loops,
-            &checked,
-            &self.checked_declarations,
+            std::sync::Arc::clone(&self.checked),
         );
         let mut region = MirFunction {
             blocks: Vec::new(),
@@ -1599,8 +1597,7 @@ impl Flatten<'_> {
                 owner_vars: self.owner_vars.clone(),
                 nested: self.nested.clone(), // a `try` region may call a nested `def`
                 overloads: self.overloads.clone(),
-                checked_expressions: self.checked_expressions.clone(),
-                checked_declarations: self.checked_declarations.clone(),
+                checked: std::sync::Arc::clone(&self.checked),
                 active_semantics: Vec::new(),
                 aliases: self.aliases.clone(),
                 runtime_aliases: self.runtime_aliases.clone(),
@@ -2053,7 +2050,8 @@ impl Flatten<'_> {
                 // type so MIR verification can prove `place.through` instead of
                 // treating the analytical alias slot as untyped storage.
                 if let Some(reference_ty) = statement_binding.and_then(|binding| {
-                    self.checked_declarations
+                    self.checked
+                        .declarations
                         .iter()
                         .find(|declaration| declaration.binding == Some(binding))
                         .and_then(|declaration| declaration.ty.clone())

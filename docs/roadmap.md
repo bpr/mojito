@@ -298,20 +298,20 @@ recreates this section's checkbox with the fresh divergence list.
 
 ### 4. Packaging, Artifacts, And Developer Tooling *(any order unless noted)*
 
-- [ ] **Compile-time performance** — `mojito run` of Hello World takes ~12–25 s
-  on the release build and ~25–50 s on the debug build (i7-10875H). Measured
-  2026-09-04 (`docs/performance.md` §Measurements): MIR lowering is 97 % of
-  it because `hir::Cfg::build_fn_with_context` clones the whole program's
-  checked-expression table (with AST syntax) for every one of the 515
-  linked functions; link is 0.02 s and each full checker pass 0.08 s. Target:
-  under one second for hello world. Steps: (1) make `Cfg::build_checked_fn`
-  borrow or slice the checked tables instead of cloning them per function,
-  re-measure with `--timings`; (2) re-profile with `scripts/sample-stacks`
-  and fix the next bucket (candidates: `checked_var_types`' per-variable
-  scan, `lower_cfg_nested`'s table clone, `explicit_destroy`'s 0.05 s/pass);
-  (3) only then consider caching the elaborated/checked stdlib across
-  processes. This also shrinks every corpus/test process and the nightly
-  gate.
+- [ ] **Compile-time performance** — Hello World is 0.8 s release / 4.6 s
+  debug after the 2026-09-04 fix that shares one `Arc<CheckedTables>`
+  across all function lowerings (`docs/performance.md` §Measurements; it
+  was 24 s / 52 s). The release profile is now flat: four checker passes at
+  0.09 s each (two discovery rounds × two transfer rounds), `explicit_destroy`
+  0.06 s per check, MIR lowering 0.12 s, drop elaboration 0.07 s. Next steps,
+  in order: (1) avoid the redundant checker passes — Hello World needs no
+  specialization yet re-elaborates and re-checks once because the request
+  scan always finds the prelude's own Tuple/def requests, and every check
+  runs two transfer rounds; (2) `checked_var_types` still scans the whole
+  expression table per variable and `explicit_destroy` re-derives
+  deinitability per struct per pass; (3) only then consider caching the
+  elaborated/checked stdlib across processes. This also shrinks every
+  corpus/test process and the nightly gate.
 - [ ] **Feature and target options** — expose checked CLI/build configuration and
   record it in artifacts and diagnostics.
 - [ ] **Compiled package artifacts** — define and load a versioned `.mojoc`

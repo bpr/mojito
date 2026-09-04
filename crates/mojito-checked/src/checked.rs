@@ -6,6 +6,7 @@ use mojito_common::token::{SourceSpan, Span};
 use mojito_types::types::Ty;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// Stable identity within one checked program. Unlike a source span this remains
 /// unique for synthesized nodes and for multiple semantic nodes at one location.
@@ -737,6 +738,68 @@ pub struct CheckedCapture {
     pub origins: Vec<mojito_types::origin::CaptureOrigin>,
 }
 
+/// The whole program's checked expressions and declarations, shared by every
+/// function's HIR and MIR lowering through one `Arc` — lowering a function
+/// never copies program-wide tables.
+#[derive(Debug, Default)]
+pub struct CheckedTables {
+    /// Indexed by `CheckedNodeId`.
+    pub expressions: Vec<CheckedExpr>,
+    /// Indexed by `CheckedDeclId`.
+    pub declarations: Vec<CheckedDeclaration>,
+    /// Nodes whose syntax sits at a source location (several may share one).
+    expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
+    /// The last declaration recorded at a source location.
+    declarations_by_span: HashMap<SourceSpan, usize>,
+}
+
+impl CheckedTables {
+    pub fn new(expressions: Vec<CheckedExpr>, declarations: Vec<CheckedDeclaration>) -> Self {
+        let mut expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>> = HashMap::new();
+        for node in &expressions {
+            expressions_by_span
+                .entry(node.syntax.source_span())
+                .or_default()
+                .push(node.id);
+        }
+        let declarations_by_span = declarations
+            .iter()
+            .enumerate()
+            .map(|(index, declaration)| (declaration.location.clone(), index))
+            .collect();
+        CheckedTables {
+            expressions,
+            declarations,
+            expressions_by_span,
+            declarations_by_span,
+        }
+    }
+
+    pub fn expression(&self, id: CheckedNodeId) -> Option<&CheckedExpr> {
+        self.expressions.get(id.0 as usize)
+    }
+
+    /// Nodes whose syntax sits at `span`, in checked order. Several nodes may
+    /// share a location, so the span itself is never semantic identity.
+    pub fn expression_ids_at(&self, span: &SourceSpan) -> &[CheckedNodeId] {
+        self.expressions_by_span
+            .get(span)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn declaration(&self, id: CheckedDeclId) -> Option<&CheckedDeclaration> {
+        self.declarations.get(id.0 as usize)
+    }
+
+    /// The declaration recorded at a statement's source location.
+    pub fn declaration_at(&self, span: &SourceSpan) -> Option<&CheckedDeclaration> {
+        self.declarations_by_span
+            .get(span)
+            .and_then(|&index| self.declarations.get(index))
+    }
+}
+
 /// A successfully checked program plus semantic facts that downstream phases
 /// previously recomputed from AST syntax or checker-private side tables.
 #[derive(Debug, Clone)]
@@ -752,9 +815,8 @@ pub struct CheckedProgram {
     implicit_conversion_types: HashMap<SourceSpan, Ty>,
     checked_types: HashMap<AnnotationSite, Ty>,
     generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
-    expressions: Vec<CheckedExpr>,
+    tables: Arc<CheckedTables>,
     expression_index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
-    declarations: Vec<CheckedDeclaration>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
 }
@@ -1028,9 +1090,8 @@ impl CheckedProgram {
             implicit_conversion_types,
             checked_types,
             generic_parameters,
-            expressions,
+            tables: Arc::new(CheckedTables::new(expressions, declarations)),
             expression_index,
-            declarations,
             explicit_destroy_types,
             declaration_effects,
         }
@@ -1090,19 +1151,25 @@ impl CheckedProgram {
     }
 
     pub fn expressions(&self) -> &[CheckedExpr] {
-        &self.expressions
+        &self.tables.expressions
     }
 
     pub fn declarations(&self) -> &[CheckedDeclaration] {
-        &self.declarations
+        &self.tables.declarations
+    }
+
+    /// The shared expression/declaration tables that HIR and MIR lowering
+    /// borrow per function.
+    pub fn tables(&self) -> &Arc<CheckedTables> {
+        &self.tables
     }
 
     pub fn declaration(&self, id: CheckedDeclId) -> Option<&CheckedDeclaration> {
-        self.declarations.get(id.0 as usize)
+        self.tables.declaration(id)
     }
 
     pub fn expression(&self, id: CheckedNodeId) -> Option<&CheckedExpr> {
-        self.expressions.get(id.0 as usize)
+        self.tables.expression(id)
     }
 
     /// Compatibility lookup while HIR migrates from syntax to checked ids.

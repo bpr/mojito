@@ -838,9 +838,8 @@ struct Flatten<'a> {
     /// The program's overloaded declarations. Kept only for unchecked HIR tests;
     /// production lowering consumes `ResolveCallable` checked adjustments.
     overloads: mojito_symbol::symbol::OverloadSets,
-    checked_expressions:
-        HashMap<mojito_checked::checked::CheckedNodeId, mojito_checked::checked::CheckedExpr>,
-    checked_declarations: Vec<mojito_checked::checked::CheckedDeclaration>,
+    /// The program's checked tables, shared with HIR construction.
+    checked: std::sync::Arc<mojito_checked::checked::CheckedTables>,
     /// Semantic facts indexed by the in-memory identity of the active HIR syntax
     /// tree. Maps are installed only while lowering that expression/statement;
     /// source spans are never used as semantic keys.
@@ -1747,8 +1746,7 @@ fn lower_cfg_nested(
                 .collect(),
             nested: nested.clone(),
             overloads: overloads.clone(),
-            checked_expressions: cfg.checked_expressions.clone(),
-            checked_declarations: cfg.checked_declarations.clone(),
+            checked: std::sync::Arc::clone(&cfg.checked),
             call_transfers: call_transfers.clone(),
             active_semantics: Vec::new(),
             aliases: HashMap::new(),

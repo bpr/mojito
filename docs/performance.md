@@ -51,6 +51,9 @@ of the 25 s release `run`, and `run` adds elaboration, the extra discovery
 rounds, drop elaboration, and execution. User CPU equals wall time within
 3 s of system time (the 2 M minor page faults) in every row.
 
+These rows are the pre-fix baseline; see "After the fix" below for the
+current numbers.
+
 **Where the time goes** (`mojito run --timings benchmarks/compile/hello.mojo`,
 inclusive seconds; the full tree has ~90 records):
 
@@ -96,11 +99,38 @@ compile: quadratic in program size, and the reason the stdlib dominates
 Hello World.
 
 **Decision.** The first decision point below resolves to "neither": not
-link plus initial check, not the rounds. The next step is to make
-`Cfg::build_checked_fn` borrow the program-wide checked tables (or receive
-a per-function slice of them) instead of cloning them per function, then
-re-measure. Only after that does a precompiled-prelude cache become worth
-designing; at 0.5 s per full check today, it would buy little.
+link plus initial check, not the rounds. The fix was to share the tables
+instead of copying them.
+
+**After the fix** (same day): `CheckedProgram` now owns one
+`Arc<CheckedTables>` (expressions, declarations, and their span indexes,
+built once at construction) that every `Cfg` and MIR `Flatten` borrows.
+Hello World on the same machine:
+
+| | Release | Debug |
+|---|---:|---:|
+| `total` before | 24.3 s | 51.5 s |
+| `total` after | **0.82 s** | **4.6 s** |
+| `compile.mir.lower` after | 0.12 s | 0.43 s |
+
+The external matrix after the fix (same method as the baseline above; 5
+release / 3 debug runs):
+
+| Fixture | Release `check` | Release `run` | Debug `check` | Debug `run` |
+|---|---:|---:|---:|---:|
+| `empty` | 0.42 (0.41–0.42) | 0.79 (0.78–0.80) | 2.41 (2.41–2.45) | 4.78 (4.73–4.80) |
+| `hello` | 0.41 (0.41–0.42) | 0.78 (0.69–0.80) | 2.35 (2.35–2.50) | 4.77 (4.72–4.80) |
+| `add` | 0.41 (0.40–0.41) | 0.79 (0.78–0.79) | 2.42 (2.36–2.46) | 4.67 (4.66–4.68) |
+| `generic` | 0.42 (0.41–0.44) | 0.80 (0.77–0.81) | 2.41 (2.40–2.42) | 4.72 (4.69–4.78) |
+| `tuple` | 0.43 (0.41–0.45) | 0.81 (0.72–0.88) | 2.28 (2.24–2.29) | 4.49 (4.47–4.56) |
+| `tstring` | 0.41 (0.41–0.42) | 1.09 (1.08–1.11) | 2.58 (2.25–2.58) | 6.11 (6.06–6.28) |
+| `stdlib_heavy` | 0.41 (0.41–0.44) | 0.81 (0.79–0.82) | 2.57 (2.51–2.61) | 5.15 (5.08–5.19) |
+
+The remaining release profile is flat: four checker passes at 0.09 s each,
+`explicit_destroy` at 0.06 s per check, MIR lowering 0.12 s, drop
+elaboration 0.07 s, link 0.02 s, VM 0.005 s. The next bucket to attack is
+the nested discovery/transfer rounds (0.55 s of the 0.82 s), then a
+precompiled-prelude cache if sub-0.3 s matters.
 
 **Tooling that exists now.** `--timings` on every command
 (`docs/usage.md`); `scripts/bench-compile` (hyperfine matrix over

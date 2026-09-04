@@ -10,13 +10,14 @@
 
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::checked::{
-    CheckedDeclId, CheckedDeclaration, CheckedExpr, CheckedNodeId, CheckedProgram, EffectFacts,
+    CheckedDeclId, CheckedExpr, CheckedNodeId, CheckedProgram, CheckedTables, EffectFacts,
     SemanticAdjustment, ValueCategory,
 };
-use mojito_common::token::{DUMMY_SPAN, SourceSpan};
+use mojito_common::token::DUMMY_SPAN;
 use mojito_types::types::Ty;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct HirExpr {
@@ -268,10 +269,10 @@ pub struct Cfg {
     /// caller binds its argument values to these var slots. `0` for the top-level
     /// block and for bodies built without a parameter list.
     pub n_params: usize,
-    /// Typed semantic nodes available to region lowering. Kept by stable node id;
+    /// The program's typed semantic nodes and declarations, shared (not
+    /// copied) with every other function's lowering. Kept by stable node id;
     /// source locations are used only once, when AST syntax enters checked HIR.
-    pub checked_expressions: HashMap<CheckedNodeId, CheckedExpr>,
-    pub checked_declarations: Vec<CheckedDeclaration>,
+    pub checked: Arc<CheckedTables>,
     /// Checked storage types for variable slots known at HIR construction.
     pub var_types: HashMap<VarId, Ty>,
 }
@@ -292,13 +293,7 @@ impl Cfg {
     }
 
     pub fn build_checked_fn(checked: &CheckedProgram, params: &[String], body: &[Stmt]) -> Cfg {
-        Self::build_fn_with_context(
-            params,
-            HashSet::new(),
-            body,
-            checked.expressions(),
-            checked.declarations(),
-        )
+        Self::build_fn_with_context(params, HashSet::new(), body, Arc::clone(checked.tables()))
     }
 
     pub fn build_fn_with_captures(
@@ -306,7 +301,7 @@ impl Cfg {
         shadow_captures: HashSet<String>,
         body: &[Stmt],
     ) -> Cfg {
-        Self::build_fn_with_context(params, shadow_captures, body, &[], &[])
+        Self::build_fn_with_context(params, shadow_captures, body, Arc::default())
     }
 
     pub fn build_checked_fn_with_captures(
@@ -315,21 +310,14 @@ impl Cfg {
         shadow_captures: HashSet<String>,
         body: &[Stmt],
     ) -> Cfg {
-        Self::build_fn_with_context(
-            params,
-            shadow_captures,
-            body,
-            checked.expressions(),
-            checked.declarations(),
-        )
+        Self::build_fn_with_context(params, shadow_captures, body, Arc::clone(checked.tables()))
     }
 
     fn build_fn_with_context(
         params: &[String],
         shadow_captures: HashSet<String>,
         body: &[Stmt],
-        checked: &[CheckedExpr],
-        declarations: &[CheckedDeclaration],
+        checked: Arc<CheckedTables>,
     ) -> Cfg {
         let mut g = StableGraph::new();
         let entry = g.add_node(BasicBlock::default());
@@ -355,26 +343,19 @@ impl Cfg {
             scopes: vec![root_scope],
             captures: shadow_captures,
             is_function: true,
-            checked_by_span: checked_index(checked),
-            checked_expressions: checked.iter().cloned().map(|n| (n.id, n)).collect(),
-            checked_declarations: declarations
-                .iter()
-                .cloned()
-                .map(|declaration| (declaration.location.clone(), declaration))
-                .collect(),
+            checked,
         };
         for s in body {
             lower.stmt(s);
         }
         lower.seal(Terminator::Return(None)); // implicit `return None` off the end
-        let var_types = checked_var_types(&lower.vars, &lower.checked_expressions);
+        let var_types = checked_var_types(&lower.vars, &lower.checked.expressions);
         Cfg {
             g: lower.g,
             entry,
             vars: lower.vars,
             n_params: params.len(),
-            checked_expressions: lower.checked_expressions,
-            checked_declarations: declarations.to_vec(),
+            checked: lower.checked,
             var_types,
         }
     }
@@ -398,28 +379,21 @@ impl Cfg {
         body: &[Stmt],
         external_loops: &[(BlockId, BlockId)],
     ) -> Cfg {
-        Self::build_seeded_checked_with_loops(seed_vars, body, external_loops, &[])
-    }
-
-    pub fn build_seeded_checked_with_loops(
-        seed_vars: Vec<String>,
-        body: &[Stmt],
-        external_loops: &[(BlockId, BlockId)],
-        checked: &[CheckedExpr],
-    ) -> Cfg {
         let external_loops = external_loops
             .iter()
             .map(|&(header, exit)| (header, exit, Vec::new()))
             .collect::<Vec<_>>();
-        Self::build_seeded_checked_with_declarations(seed_vars, body, &external_loops, checked, &[])
+        Self::build_seeded_checked_region(seed_vars, body, &external_loops, Arc::default())
     }
 
-    pub fn build_seeded_checked_with_declarations(
+    /// Lower a checked `try` region: [`Cfg::build_seeded_with_loops`] with the
+    /// enclosing function's loop cleanups and the program's shared checked
+    /// tables.
+    pub fn build_seeded_checked_region(
         seed_vars: Vec<String>,
         body: &[Stmt],
         external_loops: &[(BlockId, BlockId, Vec<VarId>)],
-        checked: &[CheckedExpr],
-        declarations: &[CheckedDeclaration],
+        checked: Arc<CheckedTables>,
     ) -> Cfg {
         let mut g = StableGraph::new();
         let entry = g.add_node(BasicBlock::default());
@@ -440,26 +414,19 @@ impl Cfg {
             captures: HashSet::new(),
             vars: seed_vars,
             is_function: false,
-            checked_by_span: checked_index(checked),
-            checked_expressions: checked.iter().cloned().map(|n| (n.id, n)).collect(),
-            checked_declarations: declarations
-                .iter()
-                .cloned()
-                .map(|declaration| (declaration.location.clone(), declaration))
-                .collect(),
+            checked,
         };
         for s in body {
             lower.stmt(s);
         }
         lower.seal(Terminator::FallOff); // region completed normally (not a return)
-        let var_types = checked_var_types(&lower.vars, &lower.checked_expressions);
+        let var_types = checked_var_types(&lower.vars, &lower.checked.expressions);
         Cfg {
             g: lower.g,
             entry,
             vars: lower.vars,
             n_params: 0,
-            checked_expressions: lower.checked_expressions,
-            checked_declarations: declarations.to_vec(),
+            checked: lower.checked,
             var_types,
         }
     }
@@ -858,9 +825,8 @@ struct Lower {
     /// function's own loops are function-level, so a `try` inside one can escape to
     /// them; a region's own loops are region-local and cannot be escape targets.
     is_function: bool,
-    checked_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
-    checked_expressions: HashMap<CheckedNodeId, CheckedExpr>,
-    checked_declarations: HashMap<SourceSpan, CheckedDeclaration>,
+    /// The program's checked tables, shared with every other lowering.
+    checked: Arc<CheckedTables>,
 }
 
 impl Lower {
@@ -873,7 +839,7 @@ impl Lower {
                 ty: node.place_ty.clone()?,
             }),
             ExprKind::Member { field, .. } => {
-                let base = self.checked_expressions.get(node.children.first()?)?;
+                let base = self.checked.expression(*node.children.first()?)?;
                 let mut place = self.checked_place(base)?;
                 let ty = node.place_ty.clone()?;
                 let base_ty = place.ty.clone();
@@ -886,7 +852,7 @@ impl Lower {
                 Some(place)
             }
             ExprKind::Index { .. } => {
-                let base = self.checked_expressions.get(node.children.first()?)?;
+                let base = self.checked.expression(*node.children.first()?)?;
                 let index = *node.children.get(1)?;
                 let mut place = self.checked_place(base)?;
                 let ty = node.place_ty.clone()?;
@@ -1018,10 +984,10 @@ impl Lower {
             // ordinary spelled form.
             if n == mojito_ast::ast::CONTEXTUAL_SENTINEL
                 && let Some(base) = self
-                    .checked_by_span
-                    .get(span)
-                    .and_then(|ids| ids.first())
-                    .and_then(|id| self.checked_expressions.get(id))
+                    .checked
+                    .expression_ids_at(span)
+                    .first()
+                    .and_then(|id| self.checked.expression(*id))
                     .and_then(|node| node.contextual_base.clone())
             {
                 return base;
@@ -1029,10 +995,10 @@ impl Lower {
             self.resolved(n)
         });
         let checked = self
-            .checked_by_span
-            .get(&original_span)
-            .and_then(|ids| ids.first())
-            .and_then(|id| self.checked_expressions.get(id));
+            .checked
+            .expression_ids_at(&original_span)
+            .first()
+            .and_then(|id| self.checked.expression(*id));
         if let Some(node) = checked {
             HirExpr {
                 syntax,
@@ -1045,7 +1011,7 @@ impl Lower {
                 children: node
                     .children
                     .iter()
-                    .filter_map(|id| self.checked_expressions.get(id))
+                    .filter_map(|id| self.checked.expression(*id))
                     .map(|child| self.checked_expr(child))
                     .collect(),
                 place: self.checked_place(node),
@@ -1068,7 +1034,7 @@ impl Lower {
             children: node
                 .children
                 .iter()
-                .filter_map(|id| self.checked_expressions.get(id))
+                .filter_map(|id| self.checked.expression(*id))
                 .map(|child| self.checked_expr(child))
                 .collect(),
             place: self.checked_place(node),
@@ -1077,7 +1043,7 @@ impl Lower {
     }
 
     fn statement(&self, syntax: Stmt) -> HirStmt {
-        let declaration = self.checked_declarations.get(&syntax.source_span());
+        let declaration = self.checked.declaration_at(&syntax.source_span());
         let expressions = statement_expression_roots(&syntax)
             .into_iter()
             .map(|expression| self.expr(expression))
@@ -1238,8 +1204,8 @@ impl Lower {
                 self.scopes.push(HashMap::new());
                 let v = self.declare_var(var);
                 let declaration = self
-                    .checked_declarations
-                    .get(&s.source_span())
+                    .checked
+                    .declaration_at(&s.source_span())
                     .expect("checked for-loop binding declaration");
                 let binding = declaration
                     .binding
@@ -1387,12 +1353,12 @@ impl Lower {
                 let value = self.expr(value);
                 let v = self.declare_var(name);
                 let binding = self
-                    .checked_declarations
-                    .get(&s.source_span())
+                    .checked
+                    .declaration_at(&s.source_span())
                     .and_then(|declaration| declaration.binding);
                 let binding_ty = value.checked.and_then(|id| {
-                    self.checked_expressions
-                        .get(&id)
+                    self.checked
+                        .expression(id)
                         .and_then(|node| node.binding_ty.clone())
                 });
                 self.push(HirInstr::Bind {
@@ -1415,8 +1381,8 @@ impl Lower {
             StmtKind::Assign { name, value } => {
                 let value = self.expr(value);
                 let binding = self
-                    .checked_declarations
-                    .get(&s.source_span())
+                    .checked
+                    .declaration_at(&s.source_span())
                     .and_then(|declaration| declaration.binding);
                 let captured = self.captures.remove(name);
                 if !self.scopes.iter().any(|s| s.contains_key(name))
@@ -1486,26 +1452,12 @@ struct LoopFrame {
     cleanup: Vec<VarId>,
 }
 
-fn checked_index(nodes: &[CheckedExpr]) -> HashMap<SourceSpan, Vec<CheckedNodeId>> {
-    let mut result: HashMap<SourceSpan, Vec<CheckedNodeId>> = HashMap::new();
-    for node in nodes {
-        result
-            .entry(node.syntax.source_span())
-            .or_default()
-            .push(node.id);
-    }
-    result
-}
-
-fn checked_var_types(
-    vars: &[String],
-    nodes: &HashMap<CheckedNodeId, CheckedExpr>,
-) -> HashMap<VarId, Ty> {
+fn checked_var_types(vars: &[String], nodes: &[CheckedExpr]) -> HashMap<VarId, Ty> {
     vars.iter()
         .enumerate()
         .filter_map(|(slot, runtime_name)| {
             let source_name = runtime_name.split("$shadow").next().unwrap_or(runtime_name);
-            let ty = nodes.values().find_map(|node| match &node.syntax.kind {
+            let ty = nodes.iter().find_map(|node| match &node.syntax.kind {
                 ExprKind::Identifier(name) if name == source_name => {
                     node.place_ty.clone().or_else(|| node.ty.clone())
                 }
