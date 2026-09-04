@@ -298,18 +298,20 @@ recreates this section's checkbox with the fresh divergence list.
 
 ### 4. Packaging, Artifacts, And Developer Tooling *(any order unless noted)*
 
-- [ ] **Compile-time performance** — `mojito run assets/ok/hello_world.mojo`
-  takes ~25 s on the debug build and ~13 s on the release build (2026-09-03,
-  i7-10875H); `check` alone is ~23 s of the debug 25 s, `parse` is
-  instantaneous, so the cost is linking, elaborating, and checking the
-  bundled stdlib (35 files, ~3.8k lines) on every process — roughly 300
-  lines/s optimized, which is algorithmic, not build-profile, overhead.
-  Target: under one second for hello world. Steps: add per-phase `--timings`
-  for the VM path (today the flag only reaches the pliron backend), profile
-  the front end over the stdlib and fix the super-linear passes, then cache
-  the elaborated/checked stdlib across processes (the per-process
-  `elaborated_mir` cache is the seed). This also shrinks every corpus/test
-  process and the nightly gate.
+- [ ] **Compile-time performance** — `mojito run` of Hello World takes ~12–25 s
+  on the release build and ~25–50 s on the debug build (i7-10875H). Measured
+  2026-09-04 (`docs/performance.md` §Measurements): MIR lowering is 97 % of
+  it because `hir::Cfg::build_fn_with_context` clones the whole program's
+  checked-expression table (with AST syntax) for every one of the 515
+  linked functions; link is 0.02 s and each full checker pass 0.08 s. Target:
+  under one second for hello world. Steps: (1) make `Cfg::build_checked_fn`
+  borrow or slice the checked tables instead of cloning them per function,
+  re-measure with `--timings`; (2) re-profile with `scripts/sample-stacks`
+  and fix the next bucket (candidates: `checked_var_types`' per-variable
+  scan, `lower_cfg_nested`'s table clone, `explicit_destroy`'s 0.05 s/pass);
+  (3) only then consider caching the elaborated/checked stdlib across
+  processes. This also shrinks every corpus/test process and the nightly
+  gate.
 - [ ] **Feature and target options** — expose checked CLI/build configuration and
   record it in artifacts and diagnostics.
 - [ ] **Compiled package artifacts** — define and load a versioned `.mojoc`

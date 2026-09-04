@@ -134,3 +134,9 @@ required-features = ["backend-pliron"]
 [[test]]
 name = "pliron_dist_test"
 required-features = ["backend-pliron"]
+
+# Release code with full debug info for sampling profilers (samply/perf):
+# `cargo build --profile profiling` -> target/profiling/mojito.
+[profile.profiling]
+inherits = "release"
+debug = true

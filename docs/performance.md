@@ -13,9 +13,107 @@ apples-to-apples compiler comparison: Mojo may be loading compiled standard
 library artifacts or using persistent caches that Mojito does not have. The
 first objective is therefore to account for Mojito's own time reliably.
 
+## Measurements (2026-09-04)
+
+The first step of the timing plan below has been carried out; the sections
+after this one remain the plan, annotated with what now exists.
+
+**Environment.** Commit `fc1692b` plus the timing instrumentation of this
+change; rustc 1.96.1; Intel i7-10875H (8 cores, turbo on, `intel_pstate`
+in `powersave`, package at ~77 °C — the numbers below are ~1.5–2× the
+2026-09-03 observations in the roadmap and should be read as ratios, not
+absolutes); Linux 7.1.1-76070101; VM backend; page cache warm; nothing else
+running except where noted.
+
+**Hello World is pure single-threaded CPU.** Under `/usr/bin/time -v` the
+debug binary spends 50 s user + 3 s system, has zero major page faults, one
+voluntary context switch, a 266 MB peak RSS, and 2.1 M minor page faults;
+`strace -c` shows 27 file opens and 1139 `brk` calls. Startup, disk, and
+stdlib I/O are not the problem.
+
+**External baseline** (`scripts/bench-compile`; wall seconds, median with
+min–max, 3 release / 2 debug runs after a warm-up; `parse` is 1–4 ms for
+every fixture and omitted). Every program costs the same regardless of its
+content — the fixed-cost signature:
+
+| Fixture | Release `check` | Release `run` | Debug `check` | Debug `run` |
+|---|---:|---:|---:|---:|
+| `empty` | 18.1 (18.0–18.2) | 24.5 (24.0–24.6) | 43.0 (43.0–43.0) | 52.3 (52.3–52.4) |
+| `hello` | 19.8 (17.7–20.4) | 29.5 (26.3–30.3) | 42.6 (42.6–42.7) | 52.6 (52.4–52.7) |
+| `add` | 18.5 (18.3–19.4) | 25.0 (24.2–29.7) | 42.6 (42.5–42.7) | 52.7 (52.4–52.9) |
+| `generic` | 18.3 (18.0–19.2) | 25.5 (24.6–25.6) | 43.0 (42.7–43.4) | 53.3 (53.1–53.5) |
+| `tuple` | 21.0 (21.0–21.5) | 27.7 (27.5–28.3) | 52.1 (51.8–52.3) | 62.5 (62.1–62.8) |
+| `tstring` | 18.1 (18.0–18.4) | 28.2 (28.1–29.0) | 43.1 (43.1–43.1) | 61.5 (60.6–62.4) |
+| `stdlib_heavy` | 18.5 (18.2–18.6) | 24.6 (24.4–24.7) | 43.4 (43.4–43.5) | 53.1 (53.1–53.2) |
+
+`check` (link + one checker pass + MIR + ownership, no elaboration) is 18 s
+of the 25 s release `run`, and `run` adds elaboration, the extra discovery
+rounds, drop elaboration, and execution. User CPU equals wall time within
+3 s of system time (the 2 M minor page faults) in every row.
+
+**Where the time goes** (`mojito run --timings benchmarks/compile/hello.mojo`,
+inclusive seconds; the full tree has ~90 records):
+
+| Phase | Release | Debug |
+|---|---:|---:|
+| `total` | 24.3 | 51.5 |
+| `frontend.link` (20 stdlib modules, 169 KB, 75 linked declarations) | 0.02 | 0.06 |
+| `compile.discovery.initial.check` (2 transfer rounds) | 0.21 | 1.24 |
+| `compile.discovery.round[0]` (elaborate + check, 2 transfer rounds) | 0.31 | 1.39 |
+| `compile.mir.lower` | **23.6** | **48.2** |
+| — `mir.lower.struct` (41 structs) | 22.1 | — |
+| — `mir.lower.def` (28 functions) | 1.4 | — |
+| — `mir.lower.verify.pre_drop` | 0.006 | — |
+| `compile.ownership` (515 functions, 3 analyses) | 0.03 | 0.17 |
+| `backend.prepare` (drop elaboration, post-drop verify, MIR clone) | 0.08 | 0.37 |
+| `backend.vm` | 0.004 | 0.006 |
+
+The inferred-generic fixture (`benchmarks/compile/generic.mojo`, 522
+functions after specialization) shows the same shape: 27.3 s total, 24.9 s
+in `mir.lower.struct` and 1.7 s in `mir.lower.def`, with link at 0.02 s and
+the two discovery rounds at 0.26 s.
+
+Each individual checker pass over the full prelude costs 0.08 s (release);
+Hello World runs four of them (two discovery rounds × two transfer rounds),
+so the nested fixpoints that the plan below feared cost 0.5 s in total. The
+linker is negligible. **MIR lowering of the 515 stdlib functions is 97 % of
+the run**, and the cost sits in struct methods.
+
+**Why** (stack samples from `scripts/sample-stacks` over the `profiling`
+build, 178 samples at 0.2 s): 43 % of samples are inside
+`mir::nested::lower_fn_nested`, and the self time is almost entirely
+`memmove`, `malloc`/`free`, and `HashMap<CheckedNodeId, CheckedExpr>` clone
+and drop. The mechanism is in `hir::Cfg::build_fn_with_context`
+(`crates/mojito-hir/src/hir.rs`): for **every** function it lowers, it
+clones the checked-expression table of the **entire linked program** —
+`checked.iter().cloned().map(|n| (n.id, n)).collect()`, each `CheckedExpr`
+carrying its own AST `syntax: Expr` — plus a span index over the same table
+(`checked_index`) and a clone of every checked declaration; `checked_var_types`
+then scans that whole map once per variable, and `mir::lower_cfg_nested`
+clones the map again into its `Flatten` state. With ~10 k checked
+expressions and 515 functions that is ~5 M `CheckedExpr` deep clones per
+compile: quadratic in program size, and the reason the stdlib dominates
+Hello World.
+
+**Decision.** The first decision point below resolves to "neither": not
+link plus initial check, not the rounds. The next step is to make
+`Cfg::build_checked_fn` borrow the program-wide checked tables (or receive
+a per-function slice of them) instead of cloning them per function, then
+re-measure. Only after that does a precompiled-prelude cache become worth
+designing; at 0.5 s per full check today, it would buy little.
+
+**Tooling that exists now.** `--timings` on every command
+(`docs/usage.md`); `scripts/bench-compile` (hyperfine matrix over
+`benchmarks/compile/`, results under `benchmarks/compile/results/`,
+gitignored); `scripts/sample-stacks` (gdb-based sampler, no sudo; `samply`
+is installed but needs `kernel.perf_event_paranoid=1`); the `profiling`
+Cargo profile (release + debug info).
+
 ## Where to look first
 
-These are investigation priorities, not conclusions from a profile.
+These were the investigation priorities before the measurement above; the
+profile answered them (item 5's MIR lowering, via the HIR clone, dominates;
+items 1–3 are cheap today).
 
 1. **Rebuilding the implicit standard library for every command.** The linker
    unconditionally loads `std.prelude`, parses its transitive imports, flattens
@@ -75,7 +173,7 @@ It is not enough evidence to choose among those causes.
 
 ## Timing plan
 
-### 1. Establish a reproducible external baseline
+### 1. Establish a reproducible external baseline *(driver: `scripts/bench-compile`)*
 
 Benchmark the already-built executable, never `cargo run`. Build debug and
 release once, then run each case in a fresh process. Report the median and p90
@@ -97,7 +195,7 @@ CPU, operating system, backend, input hash, and whether caches were warm. Mojo
 numbers should record the same environment and explicitly state whether its
 stdlib/compiler caches were warm.
 
-### 2. Extend `--timings` across the production pipeline
+### 2. Extend `--timings` across the production pipeline *(done)*
 
 `--timings` currently reports the frontend as one aggregate for the Pliron path
 and then reports native phases. Make it available to ordinary VM `run` and to
@@ -176,7 +274,7 @@ cheap counters beside the spans:
 Counters must be defined once and tested on tiny fixtures so changes in their
 meaning do not silently invalidate historical results.
 
-### 4. Profile the dominant measured phase
+### 4. Profile the dominant measured phase *(done for Hello World: `scripts/sample-stacks`)*
 
 After phase timing identifies the large bucket, build release with debug info
 and collect a sampling flame graph (`perf`/`samply` on Linux). If clone/drop or

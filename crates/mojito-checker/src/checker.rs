@@ -18,6 +18,8 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use mojito_common::timing;
+
 use mojito_ast::ast::{
     ArgConvention, Dtype, Expr, ExprKind, FnParam, InfixOp, Method, PrefixOp, Stmt, StmtKind,
     StructComptime, SubscriptArg, TStringPart, TraitComptime, Type as SourceType,
@@ -51,11 +53,17 @@ pub fn check_program_with_materialized_callables(
     stmts: &[Stmt],
     materialized_callables: HashMap<String, Ty>,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
-    let mut expanded = expand_trait_defaults(stmts)?;
+    let mut expanded = {
+        let _expand = timing::span("trait_defaults_expand");
+        expand_trait_defaults(stmts)?
+    };
     // Source locations survive elaboration clones and therefore cannot identify
     // semantic occurrences. Re-key the final checked tree after the last
     // checker-side cloning transform, before any fact table is populated.
-    mojito_ast::ast::rekey_syntax(&mut expanded);
+    {
+        let _rekey = timing::span("syntax_rekey");
+        mojito_ast::ast::rekey_syntax(&mut expanded);
+    }
     // Two-phase transfer effects: a call site checked before its callee's
     // body only sees effects already committed, so the check reruns — seeded
     // with the prior round's committed map — whenever some call site
@@ -69,13 +77,20 @@ pub fn check_program_with_materialized_callables(
         HashMap::new();
     let mut rounds = 0;
     let checker = loop {
+        let _round = timing::round("transfer.round", rounds);
         let mut checker = Checker::new_with_materialized_callables(
             materialized_callables.clone(),
             std::mem::take(&mut transfer_seed),
             std::mem::take(&mut call_through_seed),
         );
-        checker.check_program(&expanded)?;
-        checker.check_reference_result_reads()?;
+        {
+            let _check = timing::span("check_program");
+            checker.check_program(&expanded)?;
+        }
+        {
+            let _reads = timing::span("reference_reads");
+            checker.check_reference_result_reads()?;
+        }
         fn first_stale<E: PartialEq + Clone>(
             committed: &HashMap<String, Vec<E>>,
             observations: &HashMap<String, Vec<E>>,
@@ -111,6 +126,7 @@ pub fn check_program_with_materialized_callables(
         transfer_seed = checker.transfer_effects.borrow().clone();
         call_through_seed = checker.call_through_effects.borrow().clone();
     };
+    let _finish = timing::span("explicit_destroy");
     let explicit_destroy_types = checker
         .structs
         .iter()

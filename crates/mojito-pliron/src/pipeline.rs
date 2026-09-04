@@ -16,17 +16,12 @@ use pliron::printable::Printable;
 
 use super::{OptLevel, PlironError, PlironErrorKind};
 
-/// Run `work`, printing a `timing\t<phase>\t<micros>` line to stderr when
-/// `MOJITO_TIMINGS` is set — the bench driver's per-phase compile-timing
-/// channel. Instrumentation stays inert unless measurement is requested.
-pub(super) fn timing<T>(phase: &str, work: impl FnOnce() -> T) -> T {
-    if std::env::var_os("MOJITO_TIMINGS").is_none() {
-        return work();
-    }
-    let start = std::time::Instant::now();
-    let value = work();
-    eprintln!("timing\t{phase}\t{}", start.elapsed().as_micros());
-    value
+/// Run `work` as one phase of the `--timings` report (the bench driver's
+/// per-phase compile-timing channel, keyed by this leaf name).
+/// Instrumentation stays inert unless measurement is requested.
+pub(super) fn timing<T>(phase: &'static str, work: impl FnOnce() -> T) -> T {
+    let _span = mojito_common::timing::span(phase);
+    work()
 }
 
 /// One profile's complete optimization policy: the pliron cleanup stage plus

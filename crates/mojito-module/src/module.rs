@@ -6,6 +6,7 @@
 
 use mojito_ast::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
 use mojito_common::error::ParseError;
+use mojito_common::timing;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -88,14 +89,19 @@ pub fn link_with_options(
     entry_path: &Path,
     options: LinkOptions,
 ) -> Result<Vec<Stmt>, ModuleError> {
+    let _link = timing::span("link");
     let mut linker = Linker::new(options);
-    let program = read_and_parse(entry_path)?;
+    let program = {
+        let _parse = timing::span("entry.parse");
+        read_and_parse(entry_path)?
+    };
     let dir = entry_path.parent().unwrap_or_else(|| Path::new("."));
     let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
     let entry_module = display(entry_path);
     mojito_ast::ast::stamp_source(&mut body, &entry_module);
     let mut result = linker.decls;
     result.extend(body);
+    timing::count("declarations", result.len() as u64);
     Ok(result)
 }
 
@@ -111,10 +117,14 @@ pub fn link_source_with_options(
     entry_path: &Path,
     options: LinkOptions,
 ) -> Result<Vec<Stmt>, ModuleError> {
-    let program = parse(source).map_err(|err| ModuleError::Parse {
-        module: display(entry_path),
-        err,
-    })?;
+    let _link = timing::span("link");
+    let program = {
+        let _parse = timing::span("entry.parse");
+        parse(source).map_err(|err| ModuleError::Parse {
+            module: display(entry_path),
+            err,
+        })?
+    };
     let mut linker = Linker::new(options);
     let dir = entry_path.parent().unwrap_or_else(|| Path::new("."));
     let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
@@ -122,6 +132,7 @@ pub fn link_source_with_options(
     mojito_ast::ast::stamp_source(&mut body, &entry_module);
     let mut result = linker.decls;
     result.extend(body);
+    timing::count("declarations", result.len() as u64);
     Ok(result)
 }
 
@@ -643,6 +654,7 @@ impl Linker {
         if self.prelude_bindings.is_some() {
             return Ok(());
         }
+        let _prelude = timing::span("prelude.load");
         let Some(path) = bundled_path(PRELUDE_PATH) else {
             // `CARGO_MANIFEST_DIR` is present for normal Cargo builds. Keeping
             // this branch permits parse-only consumers on unusual build systems.
@@ -674,6 +686,7 @@ impl Linker {
         dir: &Path,
         importer: Option<&Path>,
     ) -> Result<Vec<Stmt>, ModuleError> {
+        let _resolve = timing::span("entry.resolve");
         self.ensure_prelude()?;
         let uses_kwargs = program_uses_kwargs(&program);
         if uses_kwargs
@@ -1610,10 +1623,13 @@ fn rewrite_stmt(
 }
 
 fn read_and_parse_named(path: &Path, module_name: &str) -> Result<Vec<Stmt>, ModuleError> {
+    let _read_parse = timing::span("read_parse");
     let src = std::fs::read_to_string(path).map_err(|err| ModuleError::Io {
         module: module_name.to_string(),
         err,
     })?;
+    timing::count("modules", 1);
+    timing::count("bytes", src.len() as u64);
     parse(&src).map_err(|err| ModuleError::Parse {
         module: module_name.to_string(),
         err,

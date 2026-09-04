@@ -68,14 +68,11 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if !matches!(command, Some("compile" | "run"))
-        && (cli.native_opt.is_some()
-            || cli.target.is_some()
-            || cli.timings
-            || cli.native_debug.is_some())
+        && (cli.native_opt.is_some() || cli.target.is_some() || cli.native_debug.is_some())
     {
         eprintln!(
-            "--native-opt, --target, --timings, and --native-debug are only valid with the \
-             compile and run commands"
+            "--native-opt, --target, and --native-debug are only valid with the compile and \
+             run commands"
         );
         return ExitCode::FAILURE;
     }
@@ -84,9 +81,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if cli.timings {
-        // Single-threaded here; the env var is the backend's (and any child
-        // phase's) timing gate.
-        unsafe { std::env::set_var("MOJITO_TIMINGS", "1") };
+        mojito::timing::enable();
     }
     #[cfg(feature = "backend-pliron")]
     if let Some(path) = &cli.runtime_lib {
@@ -97,16 +92,25 @@ fn main() -> ExitCode {
         eprintln!("--runtime-lib requires a build with the backend-pliron feature");
         return ExitCode::FAILURE;
     }
+    let code = run_command(command, file, &cli);
+    // Failed commands report their phases too; the report is empty unless
+    // `--timings` enabled collection.
+    eprint!("{}", mojito::timing::report());
+    code
+}
+
+fn run_command(command: Option<&str>, file: Option<&str>, cli: &CliArgs) -> ExitCode {
+    let _total = mojito::timing::span("total");
     match command {
         None => ExitCode::SUCCESS,
         Some("lex") => stage("lex", file, run_lex),
         Some("parse") => stage_parse(file),
         Some("check") => program_stage("check", file, &cli.link_options, run_check),
         Some("own") => program_stage("own", file, &cli.link_options, run_own),
-        Some("run") => stage_run(file, &cli),
+        Some("run") => stage_run(file, cli),
         Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
-        Some("compile") => stage_compile(file, &cli),
-        Some("link") => stage_link(file, &cli),
+        Some("compile") => stage_compile(file, cli),
+        Some("link") => stage_link(file, cli),
         Some("exec") => stage_exec(file, cli.backend),
         Some("-h" | "--help" | "help") => {
             print_usage();
@@ -138,8 +142,8 @@ struct CliArgs {
     /// `--print-toolchain` for `compile`: report the resolved external
     /// toolchain (tools, versions, runtime archive) instead of compiling.
     print_toolchain: bool,
-    /// `--timings` for `compile`/`run --backend pliron`: print
-    /// `timing\t<phase>\t<micros>` lines to stderr for each compile phase —
+    /// `--timings`: print `timing\t<phase>\t<micros>...` lines to stderr for
+    /// each pipeline phase (see `mojito_common::timing`) —
     /// the bench driver's channel.
     timings: bool,
     /// `--native-debug LEVEL` for `compile`/`run --backend pliron` (parsed
@@ -272,6 +276,7 @@ fn program_stage(
     link_options: &LinkOptions,
     f: fn(&[Stmt]) -> Result<(), String>,
 ) -> ExitCode {
+    let _frontend = mojito::timing::span("frontend");
     let program = match load_program(file, link_options) {
         Ok(p) => p,
         Err(e) => {
@@ -384,10 +389,16 @@ fn run_program(
     link_options: &LinkOptions,
 ) -> Result<(), String> {
     let compiler = Compiler::new(link_options.clone(), backend);
-    let compiled = compile_input(&compiler, file)?;
-    let execution = compiler
-        .execute(&compiled)
-        .map_err(|error| error.to_string())?;
+    let compiled = {
+        let _frontend = mojito::timing::span("frontend");
+        compile_input(&compiler, file)?
+    };
+    let execution = {
+        let _backend = mojito::timing::span("backend");
+        compiler
+            .execute(&compiled)
+            .map_err(|error| error.to_string())?
+    };
     if !execution.output.is_empty() {
         print!("{}", execution.output);
     }
@@ -549,18 +560,13 @@ fn compile_native_module(
         .map_err(|error| error.display_with_sources(&options.sources))
 }
 
-/// Run `work`, printing a `timing\t<phase>\t<micros>` line to stderr when
-/// `--timings` set `MOJITO_TIMINGS` — the CLI half of the backend's
-/// phase-timing channel (the backend prints its own internal phases).
+/// Run `work` as one `--timings` phase — the CLI half of the native lane's
+/// phase-timing channel (the backend records its own internal phases under
+/// the same collector).
 #[cfg(feature = "backend-pliron")]
-fn cli_timing<T>(phase: &str, work: impl FnOnce() -> T) -> T {
-    if std::env::var_os("MOJITO_TIMINGS").is_none() {
-        return work();
-    }
-    let start = std::time::Instant::now();
-    let value = work();
-    eprintln!("timing\t{phase}\t{}", start.elapsed().as_micros());
-    value
+fn cli_timing<T>(phase: &'static str, work: impl FnOnce() -> T) -> T {
+    let _span = mojito::timing::span(phase);
+    work()
 }
 
 /// The `--native-debug` level (default `lines`).
@@ -641,7 +647,10 @@ fn compile_input(
     compiler: &Compiler,
     file: Option<&str>,
 ) -> Result<mojito::CompiledProgram, String> {
-    let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
+    let source = {
+        let _read = mojito::timing::span("input.read");
+        read_source(file).map_err(|e| format!("cannot read input: {e}"))?
+    };
     match file {
         Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),
         _ => compiler.compile_unlinked(&source),
@@ -734,7 +743,7 @@ fn print_usage() {
          \x20 --native-debug LEVEL   native debug info: none|lines (default lines)\n\
          \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\
          \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\
-         \x20 --timings              print compile-phase timings to stderr (compile|run)\n\n\
+         \x20 --timings              print per-phase timings and counters to stderr\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\
@@ -850,8 +859,14 @@ fn run_lex(source: &str) -> Result<(), String> {
 /// ownership all consume the same checked program.
 fn run_check(program: &[Stmt]) -> Result<(), String> {
     mojito::validate_module_scope(program).map_err(|e| e.to_string())?;
-    let checked = mojito::check_program(program).map_err(|e| e.to_string())?;
-    let mir = mojito::mir::lower_checked_program(&checked);
+    let checked = {
+        let _check = mojito::timing::span("check");
+        mojito::check_program(program).map_err(|e| e.to_string())?
+    };
+    let mir = {
+        let _lower = mojito::timing::span("mir.lower");
+        mojito::mir::lower_checked_program(&checked)
+    };
     if !mir.invariant_errors.is_empty() {
         return Err(format!(
             "invalid checked program: {}",
@@ -859,6 +874,7 @@ fn run_check(program: &[Stmt]) -> Result<(), String> {
         ));
     }
     // The ownership analysis is part of a full check.
+    let _ownership = mojito::timing::span("ownership");
     mojito::check_ownership_program(&mir).map_err(|e| e.to_string())?;
     println!("ok");
     Ok(())
@@ -868,14 +884,21 @@ fn run_check(program: &[Stmt]) -> Result<(), String> {
 /// MIR. Reports `ok`, or the first move violation with its source byte range.
 fn run_own(program: &[Stmt]) -> Result<(), String> {
     mojito::validate_module_scope(program).map_err(|e| e.to_string())?;
-    let checked = mojito::check_program(program).map_err(|e| e.to_string())?;
-    let mir = mojito::mir::lower_checked_program(&checked);
+    let checked = {
+        let _check = mojito::timing::span("check");
+        mojito::check_program(program).map_err(|e| e.to_string())?
+    };
+    let mir = {
+        let _lower = mojito::timing::span("mir.lower");
+        mojito::mir::lower_checked_program(&checked)
+    };
     if !mir.invariant_errors.is_empty() {
         return Err(format!(
             "invalid checked program: {}",
             mir.invariant_errors.join("; ")
         ));
     }
+    let _ownership = mojito::timing::span("ownership");
     match mojito::check_ownership_program(&mir) {
         Ok(()) => {
             println!("ok");

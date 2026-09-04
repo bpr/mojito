@@ -428,7 +428,10 @@ fn run_measured(mut command: Command) -> Result<Sample, String> {
     })
 }
 
-/// `timing\t<phase>\t<micros>` lines from the CLI's `--timings` channel.
+/// `timing\t<phase>\t<micros>[\t...]` lines from the CLI's `--timings`
+/// channel. The phase is a dotted path (`total.frontend.link`); its leaf
+/// segment is the metric key, so the native phases keep their baseline names
+/// wherever the CLI nests them.
 fn parse_timings(stderr: &str) -> Vec<(String, u64)> {
     stderr
         .lines()
@@ -437,7 +440,8 @@ fn parse_timings(stderr: &str) -> Vec<(String, u64)> {
             if cells.next() != Some("timing") {
                 return None;
             }
-            let phase = cells.next()?.to_string();
+            let path = cells.next()?;
+            let phase = path.rsplit('.').next().unwrap_or(path).to_string();
             let micros = cells.next()?.parse().ok()?;
             Some((phase, micros))
         })
@@ -712,7 +716,8 @@ mod tests {
 
     #[test]
     fn timings_parse_only_timing_lines() {
-        let stderr = "noise\ntiming\tfrontend\t123\ntiming\tclang\t42\nother\tstuff\n";
+        let stderr =
+            "noise\ntiming\ttotal.frontend\t123\t100\t1\ntiming\tclang\t42\nother\tstuff\n";
         assert_eq!(
             parse_timings(stderr),
             vec![("frontend".to_string(), 123), ("clang".to_string(), 42)]

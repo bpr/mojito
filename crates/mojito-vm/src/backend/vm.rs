@@ -15,6 +15,7 @@ use crate::runtime::{
 use mojito_ast::ast::Stmt;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
+use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     Const, MirBlock, MirCaptureMode, MirInstr, MirIntrinsicSubscript, MirPlace, MirProgram,
@@ -357,9 +358,14 @@ impl VmBackend {
                 mir.invariant_errors.join("; ")
             )));
         }
-        let structs = build_structs(&mir.declarations);
-        let sigs = build_sigs(&mir.declarations);
-        self.run_prog(Prog { mir, structs, sigs })
+        let prog = {
+            let _registry = timing::span("registry_build");
+            let structs = build_structs(&mir.declarations);
+            let sigs = build_sigs(&mir.declarations);
+            Prog { mir, structs, sigs }
+        };
+        let _run = timing::span("execute");
+        self.run_prog(prog)
     }
 
     /// Captured standard output.

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Compile-time benchmark lane (docs/performance.md §1): time an already-built
+# `mojito` binary over benchmarks/compile/*.mojo with hyperfine, one fresh
+# process per run, and write one JSON per (binary, subcommand, fixture) plus a
+# TSV summary (median/min/max/p90 wall seconds). Never uses `cargo run`.
+#
+#   scripts/bench-compile [--bin PATH] [--runs N] [--out DIR] [--cmds "parse check run"]
+#
+# Defaults: --bin target/release/mojito, --runs 10 (use 3 for a debug binary),
+# --out benchmarks/compile/results/<bin-name>. Results are gitignored.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+BIN=target/release/mojito
+RUNS=10
+OUT=
+CMDS="parse check run"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --bin) BIN="$2"; shift 2 ;;
+        --runs) RUNS="$2"; shift 2 ;;
+        --out) OUT="$2"; shift 2 ;;
+        --cmds) CMDS="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[[ -x "$BIN" ]] || { echo "not executable: $BIN" >&2; exit 2; }
+label=$(basename "$(dirname "$BIN")")
+OUT="${OUT:-benchmarks/compile/results/$label}"
+mkdir -p "$OUT"
+
+{
+    echo "commit: $(git rev-parse --short HEAD)$(git diff --quiet HEAD -- . ':!benchmarks/compile' && echo '' || echo ' (dirty)')"
+    echo "binary: $BIN ($(stat -c %y "$BIN"))"
+    echo "rustc: $(rustc -V)"
+    echo "cpu: $(grep -m1 'model name' /proc/cpuinfo | sed 's/.*: //')"
+    echo "kernel: $(uname -r)"
+    echo "governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo unknown)"
+    echo "runs: $RUNS (after 1 warm-up), page cache warm"
+    echo "date: $(date -Is)"
+} > "$OUT/environment.txt"
+
+summary="$OUT/summary.tsv"
+printf 'fixture\tcommand\tmedian_s\tmin_s\tmax_s\tp90_s\tuser_s\tsystem_s\n' > "$summary"
+for fixture in benchmarks/compile/*.mojo; do
+    name=$(basename "$fixture" .mojo)
+    for cmd in $CMDS; do
+        json="$OUT/$name.$cmd.json"
+        hyperfine --warmup 1 --runs "$RUNS" --style basic --ignore-failure \
+            --export-json "$json" "$BIN $cmd $fixture" >/dev/null 2>&1
+        python3 - "$json" "$name" "$cmd" >> "$summary" <<'PY'
+import json, sys, statistics
+data = json.load(open(sys.argv[1]))["results"][0]
+times = sorted(data["times"])
+p90 = times[min(len(times) - 1, int(round(0.9 * (len(times) - 1))))]
+print("\t".join([sys.argv[2], sys.argv[3],
+      f'{statistics.median(times):.3f}', f'{times[0]:.3f}', f'{times[-1]:.3f}',
+      f'{p90:.3f}', f'{data["user"]:.3f}', f'{data["system"]:.3f}']))
+PY
+        echo "$name $cmd: $(tail -1 "$summary" | cut -f3)s median"
+    done
+done
+echo "summary: $summary"

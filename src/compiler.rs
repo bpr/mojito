@@ -17,6 +17,7 @@ use crate::module::{
 };
 use crate::runtime::RuntimeError;
 use crate::runtime::Value;
+use crate::timing;
 use crate::{Stmt, ast::StmtKind, check_program, parse};
 use crate::{Ty, TyArg};
 use std::fmt;
@@ -48,7 +49,11 @@ impl CompiledProgram {
     /// `invariant_errors`; consumers refuse a non-empty list.
     pub fn elaborated_mir(&self) -> &MirProgram {
         self.elaborated.get_or_init(|| {
-            let mut mir = crate::analysis::elaborate_drops_program(self.mir.clone());
+            let mut mir = {
+                let _drops = timing::span("drops.elaborate");
+                crate::analysis::elaborate_drops_program(self.mir.clone())
+            };
+            let _verify = timing::span("mir.verify.post_drop");
             let findings = crate::mir::verify::verify(&mir);
             mir.invariant_errors.extend(findings);
             mir
@@ -219,15 +224,22 @@ impl Compiler {
         // than oscillate.
         let mut conflicted = std::collections::HashSet::new();
         let mut last_new_callee = String::from("Tuple");
+        let _compile = timing::span("compile");
         let mut checked = {
-            let discovery = elaborate(linked.clone()).map_err(CompilerError::Comptime)?;
+            let discovery = {
+                let _elaborate = timing::span("discovery.initial.elaborate");
+                elaborate(linked.clone()).map_err(CompilerError::Comptime)?
+            };
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
+            let _check = timing::span("discovery.initial.check");
             check_program(&discovery).map_err(CompilerError::Type)?
         };
         let mut converged = false;
-        for _round in 0..=SPECIALIZATION_ROUNDS {
+        for round in 0..=SPECIALIZATION_ROUNDS {
+            let _round = timing::round("discovery.round", round);
+            let requests = timing::span("requests");
             let mut grew = false;
             for request in tuple_specialization_requests(&checked) {
                 if !tuple_requests.contains(&request) {
@@ -264,20 +276,28 @@ impl Compiler {
                     Some(_) => {}
                 }
             }
+            drop(requests);
+            timing::count("tuple_requests", tuple_requests.len() as u64);
+            timing::count("tstring_requests", tstring_requests.len() as u64);
+            timing::count("def_requests", def_requests.len() as u64);
             if !grew {
                 converged = true;
                 break;
             }
-            let elaborated = elaborate_with_requests(
-                linked.clone(),
-                &tuple_requests,
-                &tstring_requests,
-                &def_requests,
-            )
-            .map_err(CompilerError::Comptime)?;
+            let elaborated = {
+                let _elaborate = timing::span("elaborate");
+                elaborate_with_requests(
+                    linked.clone(),
+                    &tuple_requests,
+                    &tstring_requests,
+                    &def_requests,
+                )
+                .map_err(CompilerError::Comptime)?
+            };
             if !self.allow_executable_module_scope {
                 validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
             }
+            let _check = timing::span("check");
             checked = crate::checker::check_program_with_materialized_callables(
                 &elaborated,
                 tuple_materialized_callables(&tuple_requests),
@@ -290,11 +310,18 @@ impl Compiler {
                 callee: last_new_callee,
             });
         }
-        let mir = crate::mir::lower_checked_program(&checked);
+        let mir = {
+            let _lower = timing::span("mir.lower");
+            crate::mir::lower_checked_program(&checked)
+        };
+        timing::count("mir_functions", mir.functions.len() as u64);
         if !mir.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }
-        crate::analysis::check_ownership_program(&mir).map_err(CompilerError::Ownership)?;
+        {
+            let _ownership = timing::span("ownership");
+            crate::analysis::check_ownership_program(&mir).map_err(CompilerError::Ownership)?;
+        }
         Ok(CompiledProgram {
             checked,
             mir,
@@ -306,10 +333,16 @@ impl Compiler {
         let mut backend = self.backend.instantiate().map_err(|unimplemented| {
             CompilerError::Runtime(RuntimeError::Unsupported(unimplemented))
         })?;
-        let mir = program.elaborated_mir().clone();
+        let mir = {
+            let _prepare = timing::span("prepare");
+            let elaborated = program.elaborated_mir();
+            let _clone = timing::span("mir_clone");
+            elaborated.clone()
+        };
         if !mir.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }
+        let _run = timing::span("vm");
         backend
             .run_elaborated(mir)
             .map_err(CompilerError::Runtime)?;

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Sudo-free stack sampler (docs/performance.md §4): run BINARY under gdb as a
+# child (Yama ptrace_scope 1 allows tracing descendants), send it SIGUSR1
+# every INTERVAL seconds, and let scripts/sample-stacks.py record the innermost
+# frames at each stop. Prints self/inclusive frame histograms and the top
+# stacks. Build the binary with `cargo build --profile profiling` so frames
+# carry names and inlined-frame debug info.
+#
+#   scripts/sample-stacks [--interval SECONDS] [--out FILE] -- BINARY ARGS...
+#
+# The sampling overhead is a ptrace stop per sample (~1 ms), so 0.2 s sampling
+# of a 25 s run perturbs it by well under 1%. Prefer `samply`/`perf` when
+# `perf_event_paranoid` allows them; this is the fallback that always works.
+set -euo pipefail
+INTERVAL=0.2
+OUT=/dev/stdout
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --interval) INTERVAL="$2"; shift 2 ;;
+        --out) OUT="$2"; shift 2 ;;
+        --) shift; break ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[[ $# -gt 0 ]] || { echo "usage: scripts/sample-stacks [--interval S] [--out FILE] -- BINARY ARGS..." >&2; exit 2; }
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+RAW=$(mktemp)
+trap 'rm -f "$RAW"' EXIT
+gdb -q -batch -ex 'set startup-with-shell off' -x "$HERE/sample-stacks.py" --args "$@" > "$RAW" 2>&1 &
+GDB=$!
+# gdb loads the binary's debug info before starting the child; wait for it.
+PID=
+for _ in $(seq 1200); do
+    PID=$(pgrep -P "$GDB" -x "$(basename "$1")" | head -1 || true)
+    [[ -n "$PID" ]] && break
+    sleep 0.05
+done
+[[ -n "$PID" ]] || { echo "inferior never started" >&2; wait "$GDB" || true; cat "$RAW" >&2; exit 1; }
+while kill -0 "$GDB" 2>/dev/null && kill -USR1 "$PID" 2>/dev/null; do
+    sleep "$INTERVAL"
+done
+wait "$GDB" || true
+# Keep the program's own output and the histograms; drop gdb's stop chatter.
+grep -v -e '^Program received signal' -e '^SIGUSR1' -e '^Thread ' -e '^\[' \
+    -e '^warning:' -e "^Use \`info auto-load" -e '^of file ' -e '^$' "$RAW" \
+    | grep -v -E '^[^ ]+ \(.*\) at .*:[0-9]+$' | grep -v -E '^[0-9]+\s' > "$OUT"

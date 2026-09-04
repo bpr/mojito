@@ -24,6 +24,7 @@ use mojito_ast::ast::{
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
 use mojito_checked::checked::{CheckedConst, CheckedProgram};
+use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
 use mojito_types::types::{ParamDecl, Ty, TyArg, dict_elements, tuple_elements};
@@ -152,9 +153,17 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     let mut declarations = MirDeclarations::default();
     let mut invariant_errors = Vec::new();
     let mut toplevel: Vec<Stmt> = Vec::new();
-    let overloads = mojito_symbol::symbol::OverloadSets::scan(program);
+    let overloads = {
+        let _scan = timing::span("overloads.scan");
+        mojito_symbol::symbol::OverloadSets::scan(program)
+    };
 
     for s in program {
+        let _stmt = timing::span(match &s.kind {
+            StmtKind::Def { .. } => "def",
+            StmtKind::Struct { .. } => "struct",
+            _ => "other",
+        });
         match &s.kind {
             StmtKind::Def {
                 name,
@@ -653,26 +662,41 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
         }
     }
 
-    let mut toplevel_fn = lower_cfg_nested(
-        &Cfg::build_checked_fn(checked, &[], &toplevel),
-        &HashMap::new(),
-        &overloads,
-        false,
-        &[],
-        &[],
-        checked.call_transfers(),
-    );
+    let mut toplevel_fn = {
+        let _toplevel = timing::span("toplevel");
+        lower_cfg_nested(
+            &Cfg::build_checked_fn(checked, &[], &toplevel),
+            &HashMap::new(),
+            &overloads,
+            false,
+            &[],
+            &[],
+            checked.call_transfers(),
+        )
+    };
     // The synthetic module initializer returns nothing and never raises.
     toplevel_fn.ret_ty = Some(Ty::None);
     functions.push(("__toplevel__".to_string(), toplevel_fn));
-    for (name, function) in &mut functions {
-        close_register_types(name, function, &declarations, &mut invariant_errors);
+    {
+        let _close = timing::span("close_register_types");
+        for (name, function) in &mut functions {
+            close_register_types(name, function, &declarations, &mut invariant_errors);
+        }
     }
     let mut result = MirProgram {
         functions,
         declarations,
         invariant_errors,
     };
+    timing::count(
+        "instructions",
+        result
+            .functions
+            .iter()
+            .map(|(_, f)| f.blocks.iter().map(|b| b.instrs.len() as u64).sum::<u64>())
+            .sum(),
+    );
+    let _verify = timing::span("verify.pre_drop");
     result.invariant_errors.extend(verify::verify(&result));
     result
 }

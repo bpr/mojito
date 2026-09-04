@@ -15,6 +15,7 @@
 //! to insert ASAP drops and control-flow-edge cleanup.
 
 use mojito_common::error::OwnershipError;
+use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     MirBlock, MirCaptureMode, MirFunction, MirInstr, MirInteriorOrigin, MirPlace, MirProgram,
@@ -38,9 +39,17 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
         .iter()
         .map(|(name, function)| (name.as_str(), function.ref_params.as_slice()))
         .collect();
+    timing::count("functions", prog.functions.len() as u64);
     for (_name, f) in &prog.functions {
-        analyze_moves(f)?;
-        analyze_interior_origins(f)?;
+        {
+            let _moves = timing::span("moves");
+            analyze_moves(f)?;
+        }
+        {
+            let _origins = timing::span("interior_origins");
+            analyze_interior_origins(f)?;
+        }
+        let _loans = timing::span("loans");
         analyze_loans(f, &callees)?;
     }
     Ok(())

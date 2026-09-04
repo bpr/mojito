@@ -3,9 +3,11 @@
 //! type lowering. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
 use super::*;
+use mojito_common::timing;
 
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        let phase = timing::span("declarations.tuple_prepass");
         self.declared_structs
             .extend(stmts.iter().filter_map(|statement| match &statement.kind {
                 StmtKind::Struct { name, .. } => Some(name.clone()),
@@ -42,6 +44,8 @@ impl Checker {
             }
         }
         self.allow_generated_tuple_forward_types = saved_forward_types;
+        drop(phase);
+        let phase = timing::span("declarations.shells");
         // Same-module declarations resolve order-independently: every
         // top-level struct registers its shell (name and parameters), then
         // every trait, then every struct's field/associated types, then every
@@ -57,6 +61,8 @@ impl Checker {
             self.predeclared_structs
                 .insert(declaration.name.to_string());
         }
+        drop(phase);
+        let phase = timing::span("declarations.traits");
         for statement in stmts {
             let StmtKind::Trait {
                 name,
@@ -76,6 +82,8 @@ impl Checker {
         // condition) may reference an alias regardless of declaration order.
         // The pre-pass keeps source order, so an alias body still sees only
         // earlier aliases.
+        drop(phase);
+        let phase = timing::span("declarations.aliases");
         for statement in stmts {
             let StmtKind::Comptime {
                 name,
@@ -103,21 +111,29 @@ impl Checker {
                 value,
             )?;
         }
+        drop(phase);
+        let phase = timing::span("declarations.types");
         for statement in stmts {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
             self.check_struct_types(&declaration)?;
         }
+        drop(phase);
+        let phase = timing::span("declarations.signatures");
         for statement in stmts {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
             self.check_struct_method_signatures(&declaration)?;
         }
+        drop(phase);
+        let phase = timing::span("bodies");
         // `ret = None` marks "not inside a function", so a top-level `return`
         // is rejected; `in_loop = false` likewise rejects a top-level `break`.
-        self.check_block(stmts, None, false)
+        let result = self.check_block(stmts, None, false);
+        drop(phase);
+        result
     }
 
     /// Check the statements of a block in the current scope. `ret` is the

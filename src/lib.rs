@@ -1,7 +1,7 @@
 pub use mojito_ast::{ast, call};
 pub use mojito_checked::checked;
 pub use mojito_checker::{checker, explicit_destroy};
-pub use mojito_common::{error, literal, token};
+pub use mojito_common::{error, literal, timing, token};
 pub use mojito_comptime::comptime;
 pub use mojito_hir::hir;
 pub use mojito_lexer::lexer;
