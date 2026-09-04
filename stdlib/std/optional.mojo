@@ -71,12 +71,17 @@ struct _OptionalOwnedIter[T: AnyType](
         self.data.unsafe_free()
 
 struct Optional[T: AnyType](
+    Boolable,
     Copyable where conforms_to(T, Copyable),
-    ImplicitlyCopyable where conforms_to(T, ImplicitlyCopyable),
+    Defaultable,
     Deinitable where conforms_to(T, Deinitable),
+    Equatable where conforms_to(T, Equatable),
+    Hashable where conforms_to(T, Hashable),
+    ImplicitlyCopyable where conforms_to(T, ImplicitlyCopyable),
     Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Movable) and conforms_to(T, Deinitable),
     Movable where conforms_to(T, Movable),
+    Writable where conforms_to(T, Writable),
 ):
     comptime Element = Self.T
     comptime IteratorType[
@@ -100,7 +105,10 @@ struct Optional[T: AnyType](
         self._size = 0
         self.data = unsafe_alloc[Self.T](1)
 
-    def __init__(out self, var value: Self.T, /) where conforms_to(Self.T, Movable):
+    # Upstream's `@implicit` value constructor: `var x: Optional[Int] = 5` and
+    # `f(5)` for an `Optional[Int]` parameter both convert.
+    @implicit
+    def __init__(out self, var value: Self.T) where conforms_to(Self.T, Movable):
         self._size = 1
         self.data = unsafe_alloc[Self.T](1)
         self.data[0] = value^
@@ -131,14 +139,61 @@ struct Optional[T: AnyType](
     def __bool__(self) -> Bool:
         return self._size == 1
 
-    def or_else(self, default: Self.T) -> Self.T where conforms_to(Self.T, Copyable):
+    # `opt is None` / `opt is not None` (upstream's identity dunders).
+    def __is__(self, other: NoneType) -> Bool:
+        return self._size == 0
+
+    def __isnot__(self, other: NoneType) -> Bool:
+        return self._size == 1
+
+    # `rhs` is spelled `Optional[Self.T]` rather than `Self` so the native
+    # monomorphizer sees the substituted receiver type (the bare `Self`
+    # spelling erases the argument list on the raw seam).
+    def __eq__(self, rhs: Optional[Self.T]) -> Bool where conforms_to(Self.T, Equatable):
         if self._size == 1:
-            return self.data[0].copy()
-        return default.copy()
+            if rhs._size == 1:
+                return self.data[0] == rhs.data[0]
+            return False
+        return rhs._size == 0
+
+    def __ne__(self, rhs: Optional[Self.T]) -> Bool where conforms_to(Self.T, Equatable):
+        return not (self == rhs)
+
+    # Upstream feeds a `UInt8` presence tag before the payload.
+    def __hash__[H: Hasher](self, mut hasher: H) where conforms_to(Self.T, Hashable):
+        if self._size == 1:
+            hasher.update(UInt8(1))
+            hasher.update(self.data[0])
+        else:
+            hasher.update(UInt8(0))
+
+    # Writes the payload's text or `None` (upstream's `_write_to`).
+    def write_to(self, mut writer: Some[Writer]) where conforms_to(Self.T, Writable):
+        if self._size == 1:
+            writer.write(self.data[0])
+        else:
+            writer.write("None")
+
+    # Consuming, like upstream: the payload (or `default`) moves out and the
+    # slot is released either way.
+    def or_else(deinit self, var default: Self.T) -> Self.T where conforms_to(
+        Self.T, Movable
+    ) and conforms_to(Self.T, Deinitable):
+        if self._size == 1:
+            var result = self.data.unsafe_take_pointee()
+            self.data.unsafe_free()
+            return result^
+        self.data.unsafe_free()
+        return default^
 
     def value(ref self) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         if self._size == 0:
             _mojito_abort("Optional.value on an empty Optional")
+        return self.data[0]
+
+    # Unchecked read: an empty Optional is a deterministic abort on the VM
+    # rather than upstream's undefined behavior.
+    def unsafe_value(ref self) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         return self.data[0]
 
     def take(mut self) -> Self.T where conforms_to(Self.T, Movable):
@@ -146,6 +201,14 @@ struct Optional[T: AnyType](
             _mojito_abort("Optional.take on an empty Optional")
         self._size = 0
         return self.data.unsafe_take_pointee()
+
+    def unsafe_take(mut self) -> Self.T where conforms_to(Self.T, Movable):
+        self._size = 0
+        return self.data.unsafe_take_pointee()
+
+    # Iterator-bounds protocol: exactly `_size` elements.
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        return (self._size, Optional[Int](self._size))
 
     def deinit_assert_empty(deinit self):
         if self._size == 1:

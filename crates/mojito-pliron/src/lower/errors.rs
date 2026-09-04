@@ -134,6 +134,19 @@ impl<'a> FnLowering<'a> {
         let mut vars: Vec<u32> = self.drop_flags.keys().copied().collect();
         vars.sort_unstable();
         for var in vars {
+            // A borrowed parameter aliases caller storage (its flag arrives
+            // set only because parameters are bound at entry): the caller
+            // frees it, so only owned parameters release here.
+            if (var as usize) < self.func.n_params
+                && !self
+                    .func
+                    .owned_params
+                    .get(var as usize)
+                    .copied()
+                    .unwrap_or(false)
+            {
+                continue;
+            }
             let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)? else {
                 continue;
             };

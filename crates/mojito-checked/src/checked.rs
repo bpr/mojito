@@ -370,6 +370,10 @@ pub enum SemanticAdjustment {
         arguments: Vec<mojito_types::types::TyArg>,
     },
     ImplicitConversion(String),
+    /// The converted-to checked type of the `ImplicitConversion` at the same
+    /// site (the constructed type with its arguments, e.g. `Optional[Int]`),
+    /// so the emit-site register is not typed by the constructor's bare name.
+    ConversionResultType(Ty),
     /// Materialize an exact, compile-time-only numeric literal expression into
     /// its checked runtime scalar type.  Keeping this distinct from a user
     /// `@implicit` constructor preserves the language boundary: literal
@@ -464,6 +468,12 @@ pub enum SemanticAdjustment {
     SizeOf {
         ty: Ty,
     },
+    /// `_unqualified_type_name[T]()` resolved to upstream's unqualified
+    /// spelling of the checked type (`SIMD[DType.int, 1]`, `Optional[String]`);
+    /// MIR lowers it to a string constant.
+    TypeName {
+        text: String,
+    },
     /// `v.cast[DType.target]()` — elementwise dtype conversion of a SIMD
     /// value. The target dtype and lane width are resolved at checking; MIR
     /// carries them so the VM never derives semantics from a runtime value.
@@ -479,6 +489,13 @@ pub enum SemanticAdjustment {
     },
     /// Construct the selected alternative of a checked `Variant` type.
     ConstructVariant {
+        alternatives: Vec<Ty>,
+        index: usize,
+    },
+    /// Placement construction (`Variant[...](init_with=factory)`): the
+    /// zero-parameter factory's result becomes the payload of the alternative
+    /// selected by its return type (no `Movable` requirement).
+    ConstructVariantInitWith {
         alternatives: Vec<Ty>,
         index: usize,
     },
@@ -731,6 +748,8 @@ pub struct CheckedProgram {
     /// call expression's span; MIR lowering installs the implied loans.
     call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
     compatibility_implicit_conversions: HashMap<SourceSpan, String>,
+    /// The converted-to checked type of each implicit conversion site.
+    implicit_conversion_types: HashMap<SourceSpan, Ty>,
     checked_types: HashMap<AnnotationSite, Ty>,
     generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
     expressions: Vec<CheckedExpr>,
@@ -933,6 +952,7 @@ impl CheckedProgram {
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
         call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
+        implicit_conversion_types: HashMap<SourceSpan, Ty>,
         conversion_source_borrows: HashMap<SourceSpan, bool>,
         checked_types: HashMap<AnnotationSite, Ty>,
         generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
@@ -983,6 +1003,7 @@ impl CheckedProgram {
             &interior_invalidations,
             &overload_targets,
             &implicit_conversions,
+            &implicit_conversion_types,
             &conversion_source_borrows,
             &explicit_destroy_calls,
             &reference_value_uses,
@@ -1004,6 +1025,7 @@ impl CheckedProgram {
             generic_instantiations,
             call_transfers,
             compatibility_implicit_conversions: implicit_conversions,
+            implicit_conversion_types,
             checked_types,
             generic_parameters,
             expressions,
@@ -1042,6 +1064,12 @@ impl CheckedProgram {
     /// context that permits a user-defined implicit conversion.
     pub fn implicit_conversions(&self) -> &HashMap<SourceSpan, String> {
         &self.compatibility_implicit_conversions
+    }
+
+    /// The checked type an implicit conversion at `span` converts to (the
+    /// constructed type with its arguments, e.g. `Optional[Int]`).
+    pub fn implicit_conversion_type(&self, span: &SourceSpan) -> Option<&Ty> {
+        self.implicit_conversion_types.get(span)
     }
 
     pub fn checked_type_at(&self, site: &AnnotationSite) -> Option<&Ty> {
@@ -1122,6 +1150,7 @@ fn build_checked_expressions(
     interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
     calls: &HashMap<SourceSpan, String>,
     conversions: &HashMap<SourceSpan, String>,
+    conversion_types: &HashMap<SourceSpan, Ty>,
     conversion_source_borrows: &HashMap<SourceSpan, bool>,
     explicit_destroy: &HashSet<SourceSpan>,
     reference_value_uses: &HashMap<SourceSpan, bool>,
@@ -1151,6 +1180,7 @@ fn build_checked_expressions(
         interior_invalidations: &'a HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         calls: &'a HashMap<SourceSpan, String>,
         conversions: &'a HashMap<SourceSpan, String>,
+        conversion_types: &'a HashMap<SourceSpan, Ty>,
         conversion_source_borrows: &'a HashMap<SourceSpan, bool>,
         explicit_destroy: &'a HashSet<SourceSpan>,
         reference_value_uses: &'a HashMap<SourceSpan, bool>,
@@ -1377,6 +1407,9 @@ fn build_checked_expressions(
                     });
                 } else {
                     adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
+                    if let Some(ty) = self.conversion_types.get(&span) {
+                        adjustments.push(SemanticAdjustment::ConversionResultType(ty.clone()));
+                    }
                     if let Some(mutable) = self.conversion_source_borrows.get(&span) {
                         adjustments
                             .push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
@@ -1668,6 +1701,7 @@ fn build_checked_expressions(
         interior_invalidations,
         calls,
         conversions,
+        conversion_types,
         conversion_source_borrows,
         explicit_destroy,
         reference_value_uses,

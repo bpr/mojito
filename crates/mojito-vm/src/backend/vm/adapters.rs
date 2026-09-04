@@ -97,9 +97,15 @@ impl VmBackend {
         let Some(public_elements) = mojito_types::types::tuple_elements(target) else {
             return Ok(crate::runtime::coerce_checked(value, target));
         };
-        let Value::Tuple(items) = value else {
+        let Value::Tuple(mut items) = value else {
             return Ok(crate::runtime::coerce_checked(value, target));
         };
+        // `ContiguousSlice.indices` is checked as the two-element `(start,
+        // end)` while the intrinsic computes the three normalized bounds; the
+        // checked destination selects the shape.
+        if items.len() == 3 && public_elements.len() == 2 {
+            items.truncate(2);
+        }
         // Ordinary generic functions are type-erased: while their body runs,
         // an intrinsic such as `divmod` can have the symbolic checked result
         // `Tuple[T, T]`. There is deliberately no nominal implementation for an

@@ -216,7 +216,9 @@ fn infix_precedence(op: InfixOp) -> Precedence {
         | InfixOp::Le
         | InfixOp::Ge
         | InfixOp::In
-        | InfixOp::NotIn => Precedence::Comparison,
+        | InfixOp::NotIn
+        | InfixOp::Is
+        | InfixOp::IsNot => Precedence::Comparison,
         InfixOp::Add
         | InfixOp::Sub
         | InfixOp::Shl

@@ -1141,6 +1141,11 @@ pub enum InfixOp {
     In,
     /// Non-membership: `x not in container` → `Bool`.
     NotIn,
+    /// Identity: `x is y` → `Bool`, dispatching to `__is__` on the left
+    /// operand (current Mojo: `Optional.__is__(self, other: NoneType)`).
+    Is,
+    /// Negated identity: `x is not y` → `Bool`, dispatching to `__isnot__`.
+    IsNot,
 }
 
 impl InfixOp {
@@ -1170,6 +1175,8 @@ impl InfixOp {
             InfixOp::Gt => "__gt__",
             InfixOp::Le => "__le__",
             InfixOp::Ge => "__ge__",
+            InfixOp::Is => "__is__",
+            InfixOp::IsNot => "__isnot__",
             InfixOp::And | InfixOp::Or | InfixOp::In | InfixOp::NotIn => return None,
         })
     }

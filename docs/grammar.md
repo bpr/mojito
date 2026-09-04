@@ -618,7 +618,7 @@ comparison:
     | sum (compare_op sum)+       # chained: `a < b < c` (implemented — each operand once, short-circuits)
     | sum compare_op sum          # a single comparison stays an `Infix`
     | sum
-compare_op: '==' | '!=' | '<=' | '<' | '>=' | '>' | 'in' | 'not' 'in'
+compare_op: '==' | '!=' | '<=' | '<' | '>=' | '>' | 'in' | 'not' 'in' | 'is' | 'is' 'not'
 sum:
     | sum '+' term
     | sum '-' term

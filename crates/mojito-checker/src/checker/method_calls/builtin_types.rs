@@ -330,7 +330,7 @@ impl Checker {
         name: &str,
         args: &[&Ty],
     ) -> Option<Result<Ty, TypeError>> {
-        let (info, sig, targs) = self.struct_dunder_signature(recv, name, args.len())?;
+        let (info, sig, targs) = self.struct_dunder_signature_for(recv, name, args)?;
         let params: Vec<Ty> = sig
             .params
             .iter()
@@ -355,24 +355,35 @@ impl Checker {
         Some(Ok(substitute_at(&sig.ret, &info.decls, targs)))
     }
 
-    /// Resolve the declaration selected by implicit dunder dispatch. Callers
-    /// that need convention semantics must inspect this signature before using
-    /// the type-only `struct_dunder` result.
-    pub(in crate::checker) fn struct_dunder_signature<'a>(
+    /// The dunder overload implicit dispatch selects for `args`: among the
+    /// same-arity declarations, the first whose parameters accept the operand
+    /// types (`StringSpan.__eq__(rhs: Self)` beside `__eq__(rhs: String)`), else
+    /// the first same-arity declaration so the mismatch diagnostic names a
+    /// real signature.
+    pub(in crate::checker) fn struct_dunder_signature_for<'a>(
         &'a self,
         recv: &'a Ty,
         name: &str,
-        arity: usize,
+        args: &[&Ty],
     ) -> Option<(&'a StructInfo, &'a MethodSig, &'a [TyArg])> {
         let Ty::Struct(sname, targs) = recv else {
             return None;
         };
         let info = self.structs.get(sname)?;
-        let sig = info
-            .methods
-            .get(name)?
-            .iter()
-            .find(|sig| sig.params.len() == arity)?;
+        let candidates = info.methods.get(name)?;
+        let same_arity = || {
+            candidates
+                .iter()
+                .filter(|sig| sig.params.len() == args.len())
+        };
+        let accepts = |sig: &MethodSig| {
+            sig.params.iter().zip(args).all(|(param, arg)| {
+                self.value_coerces(arg, &substitute_at(param, &info.decls, targs))
+            })
+        };
+        let sig = same_arity()
+            .find(|sig| accepts(sig))
+            .or_else(|| same_arity().next())?;
         Some((info, sig, targs))
     }
 

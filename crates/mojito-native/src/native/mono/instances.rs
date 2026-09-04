@@ -35,9 +35,11 @@ impl<'a> Specializer<'a> {
     }
 
     /// Enqueue the instances a lowered scalar `__hash__(hasher)` leaf calls:
-    /// the hasher's `_update_with_simd`, and for a string-literal receiver
-    /// the nominal String's `__hash__` bound to that hasher (the VM
-    /// materializes the literal and dispatches the same way).
+    /// the hasher's `_update_with_simd`, for a string-literal receiver the
+    /// nominal String's `__hash__` bound to that hasher (the VM materializes
+    /// the literal and dispatches the same way), and for a Variant receiver
+    /// the `__hash__` of every nominal alternative (the lowered tag switch
+    /// dispatches whichever is active).
     pub(super) fn enqueue_hash_leaf_instances(
         &mut self,
         owner: &str,
@@ -65,6 +67,19 @@ impl<'a> Specializer<'a> {
                 1,
                 &[("H", hasher_ty.clone())],
             )?;
+        }
+        if let Ty::Variant(alternatives) = receiver {
+            for alternative in alternatives {
+                if matches!(alternative, Ty::Struct(..)) {
+                    self.enqueue_nominal_method_instance(
+                        owner,
+                        alternative,
+                        "__hash__",
+                        1,
+                        &[("H", hasher_ty.clone())],
+                    )?;
+                }
+            }
         }
         Ok(())
     }

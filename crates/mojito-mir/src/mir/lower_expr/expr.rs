@@ -97,11 +97,19 @@ impl Flatten<'_> {
                     )
                 }) && !matches!(self.checked_ty(e), Some(Ty::Ref(_)))
                 {
-                    let copied = self.fresh_typed(
-                        span(e),
-                        Some(var),
-                        self.checked_ty(e).unwrap_or(Ty::Error),
-                    );
+                    // The copy has the read register's exact type: the
+                    // variable's recorded type can keep a literal element
+                    // (`var t = 4, "four"` binds `Tuple[IntLiteral, ...]`)
+                    // where the identifier's checked type defaulted it, and
+                    // the verifier compares the two for equality.
+                    let ty = self
+                        .f
+                        .reg_types
+                        .get(&d.0)
+                        .cloned()
+                        .or_else(|| self.checked_ty(e))
+                        .unwrap_or(Ty::Error);
+                    let copied = self.fresh_typed(span(e), Some(var), ty);
                     self.emit(MirInstr::CopyValue {
                         dest: copied,
                         value: d,
@@ -258,6 +266,16 @@ impl Flatten<'_> {
                     self.emit(MirInstr::SizeOf { dest, ty });
                     return dest;
                 }
+                if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text }) =
+                    self.checked_adjustments(e).into_iter().find(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::TypeName { .. }
+                        )
+                    })
+                {
+                    return self.constant(e, Const::Str(text));
+                }
                 // A checked pointer construction materializes the frame/slot
                 // handle for its source place; the checked pointer type keeps
                 // the origin while the runtime value erases it.
@@ -316,6 +334,56 @@ impl Flatten<'_> {
                         index,
                         value,
                     });
+                    return dest;
+                }
+                if let Some(
+                    mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith {
+                        alternatives,
+                        index,
+                    },
+                ) = self.checked_adjustments(e).into_iter().find(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith { .. }
+                    )
+                }) {
+                    // Invoke the zero-parameter factory, then wrap its result:
+                    // the payload temporary is consumed by the construction.
+                    let factory = self.expr(
+                        &kwargs
+                            .first()
+                            .expect("checked Variant(init_with=) has one factory")
+                            .value,
+                    );
+                    let payload = self.fresh_typed(
+                        span(e),
+                        None,
+                        alternatives.get(index).cloned().unwrap_or(Ty::Error),
+                    );
+                    self.emit(MirInstr::CallIndirect {
+                        dest: payload,
+                        callee: factory,
+                        resolved: None,
+                        raises: None,
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                        callee_place: None,
+                        arg_places: Vec::new(),
+                        kwarg_places: Vec::new(),
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: Vec::new(),
+                        param_decls: Vec::new(),
+                        instantiated_contract: None,
+                        instantiated_args: Vec::new(),
+                    });
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::MakeVariant {
+                        dest,
+                        alternatives,
+                        index,
+                        value: payload,
+                    });
+                    self.emit_nested_closure_argument_keepalives(args, kwargs);
                     return dest;
                 }
                 // SIMD construction resolves its `[DType.<dt>, width]` parameters
@@ -604,6 +672,7 @@ impl Flatten<'_> {
                         matches!(
                             adjustment,
                             mojito_checked::checked::SemanticAdjustment::VariantIs { .. }
+                                | mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
                                 | mojito_checked::checked::SemanticAdjustment::VariantTypeSupported { .. }
                                 | mojito_checked::checked::SemanticAdjustment::VariantSet { .. }
                                 | mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { .. }
@@ -632,6 +701,18 @@ impl Flatten<'_> {
                             self.emit(MirInstr::Const {
                                 dest,
                                 k: Const::Bool(supported),
+                            });
+                            return dest;
+                        }
+                        // `unsafe_get[T]()`: the method spelling of the checked
+                        // projection read (`v[T]`).
+                        mojito_checked::checked::SemanticAdjustment::VariantProject { index, .. } => {
+                            let variant = self.expr(object);
+                            let dest = self.fresh(span(e), None);
+                            self.emit(MirInstr::VariantGet {
+                                dest,
+                                variant,
+                                index,
                             });
                             return dest;
                         }
@@ -772,6 +853,12 @@ impl Flatten<'_> {
                     // do not synthesize a bound-method value (which would make
                     // its receiver/environment escapable).
                     let (recv, recv_place) = self.lower_call_receiver(object);
+                    let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
+                    let recv = if implicitly_copied_receiver {
+                        self.copy_consuming_receiver(object, recv, recv_place.as_ref())
+                    } else {
+                        recv
+                    };
                     let param_arg_regs = self.param_arg_regs(param_args, &span(e));
                     let saved_anchor_permission = self.allow_argument_anchors;
                     self.allow_argument_anchors = self.call_anchors_arguments(e);
@@ -779,7 +866,6 @@ impl Flatten<'_> {
                     self.allow_argument_anchors = saved_anchor_permission;
                     let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
                     let dest = self.fresh(span(e), None);
-                    let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
                     self.emit_interior_invalidations(object, None);
                     self.emit_call_invalidations(e, args, kwargs);
                     self.emit(MirInstr::MethodCall {
@@ -1268,6 +1354,11 @@ impl Flatten<'_> {
                     object.as_ref()
                 };
                 let (recv, recv_place) = self.lower_call_receiver(receiver_expr);
+                let recv = if implicitly_copied_receiver {
+                    self.copy_consuming_receiver(receiver_expr, recv, recv_place.as_ref())
+                } else {
+                    recv
+                };
                 // Retain checker-selected `mut`/`ref` ordinary-argument places,
                 // mirroring a free-function `Call` — and the shared-read places
                 // a borrowing-view result lends to. Loan-carrying temporary
@@ -1398,11 +1489,17 @@ impl Flatten<'_> {
                             )
                         })
                     {
-                        let copied = self.fresh_typed(
-                            span(e),
-                            Some(place_root),
-                            self.checked_ty(e).unwrap_or(Ty::Error),
-                        );
+                        // The copy has the loaded register's exact type (a
+                        // public tuple field can keep a literal element where
+                        // the checked expression type defaulted it).
+                        let ty = self
+                            .f
+                            .reg_types
+                            .get(&loaded.0)
+                            .cloned()
+                            .or_else(|| self.checked_ty(e))
+                            .unwrap_or(Ty::Error);
+                        let copied = self.fresh_typed(span(e), Some(place_root), ty);
                         self.emit(MirInstr::CopyValue {
                             dest: copied,
                             value: loaded,

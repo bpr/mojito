@@ -128,6 +128,15 @@ impl Checker {
                 return Ok(Ty::Bool);
             }
         }
+        // `Slice` is Equatable (upstream `builtin_slice.mojo`); its
+        // `ContiguousSlice`/`StridedSlice` sub-kinds are not, so only exact
+        // `Slice` operands compare. The VM compares the three bounds.
+        if matches!(op, Eq | Ne)
+            && matches!((&lt, &rt), (Ty::Struct(left, left_args), Ty::Struct(right, right_args))
+                if left == "Slice" && right == "Slice" && left_args.is_empty() && right_args.is_empty())
+        {
+            return Ok(Ty::Bool);
+        }
         if let (Ty::Variant(left), Ty::Variant(right)) = (&lt, &rt)
             && left == right
             && matches!(op, Eq | Ne)
@@ -265,12 +274,59 @@ impl Checker {
             return r;
         }
         // Operator overloading: `a OP b` on a user struct dispatches to the left
-        // operand's dunder method (`a.__add__(b)`, `a.__eq__(b)`, …).
+        // operand's dunder method (`a.__add__(b)`, `a.__eq__(b)`, …). Among
+        // same-arity overloads the operand type selects (first by value
+        // coercion, then through an `@implicit` conversion of the right
+        // operand, as a call argument would convert); an overloaded dunder
+        // records the exact lowered symbol so `BinOp.resolved` names it.
         if let Some(dunder) = op.dunder()
-            && let Some((_, sig, _)) = self.struct_dunder_signature(&lt, dunder, 1)
+            && let Some((info, sig, targs)) = self.struct_dunder_signature_for(&lt, dunder, &[&rt])
         {
+            let Ty::Struct(sname, _) = &lt else {
+                unreachable!("dunder signatures resolve on struct receivers")
+            };
+            let overloaded = info.methods.get(dunder).is_some_and(|sigs| sigs.len() > 1);
+            let mut operand_ty = rt.clone();
+            let mut selected = sig;
+            let param = substitute_at(&sig.params[0], &info.decls, targs);
+            if !self.value_coerces(&rt, &param) {
+                let same_arity = info
+                    .methods
+                    .get(dunder)
+                    .into_iter()
+                    .flatten()
+                    .filter(|sig| sig.params.len() == 1);
+                for candidate in same_arity {
+                    let param = substitute_at(&candidate.params[0], &info.decls, targs);
+                    if self.implicit_conversion_target(&rt, &param)?.is_some() {
+                        self.record_implicit_conversion(right, &rt, &param)?;
+                        operand_ty = param;
+                        selected = candidate;
+                        break;
+                    }
+                }
+            }
+            // The dunder's availability clause (`__eq__ ... where
+            // conforms_to(Self.T, Equatable)`) is judged against the
+            // receiver's arguments, as a method call judges it; a failing
+            // clause leaves the operator undefined for these operands.
+            let environment: HashMap<String, TyArg> = info
+                .decls
+                .iter()
+                .map(|decl| decl.name().to_string())
+                .zip(targs.iter().cloned())
+                .collect();
+            if self
+                .method_constraint_result(selected, &environment)
+                .is_err()
+            {
+                return Err(TypeError::BadOperator {
+                    op: infix_symbol(op).to_string(),
+                    operands: format!("{} and {}", lt, rt),
+                });
+            }
             if matches!(
-                sig.conventions.first().copied().flatten(),
+                selected.conventions.first().copied().flatten(),
                 Some(ArgConvention::Var | ArgConvention::Deinit)
             ) {
                 self.check_consuming_as(
@@ -280,8 +336,19 @@ impl Checker {
                     super::traits::ConsumeKind::Move,
                 )?;
             }
+            if overloaded && let Some(span) = span.clone() {
+                self.overload_targets.borrow_mut().insert(
+                    span,
+                    method_lowered_name(
+                        sname,
+                        dunder,
+                        selected,
+                        self.self_instance_ty(sname).as_ref(),
+                    ),
+                );
+            }
             return self
-                .struct_dunder(&lt, dunder, &[&rt])
+                .struct_dunder(&lt, dunder, &[&operand_ty])
                 .expect("dunder signature was resolved");
         }
         Err(TypeError::BadOperator {
@@ -662,6 +729,8 @@ pub(super) fn infix_symbol(op: InfixOp) -> &'static str {
         InfixOp::Or => "or",
         InfixOp::In => "in",
         InfixOp::NotIn => "not in",
+        InfixOp::Is => "is",
+        InfixOp::IsNot => "is not",
     }
 }
 

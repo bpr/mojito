@@ -537,11 +537,20 @@ impl VmBackend {
                 let length = value_as_index(&args[0])?;
                 let (start, end, step) =
                     crate::runtime::normalize_slice_bounds(length, *start, *end, *step)?;
+                // Always the three normalized bounds: the checked destination
+                // type (`materialize_checked_result`) trims the private pack to
+                // `ContiguousSlice.indices`' two-element `(start, end)`, since
+                // the runtime kind of a widened literal is not the receiver's
+                // checked descriptor type.
                 Ok(Value::Tuple(vec![
                     Value::Int(start),
                     Value::Int(end),
                     Value::Int(step),
                 ]))
+            }
+            Value::Slice { .. } if matches!(method, "__eq__" | "__ne__") && args.len() == 1 => {
+                let equal = crate::runtime::values_equal(&recv, &args[0])?;
+                Ok(Value::Bool(if method == "__eq__" { equal } else { !equal }))
             }
             Value::Slice { kind, .. } => Err(RuntimeError::Unsupported(format!(
                 "vm: {} has no method '{method}'",

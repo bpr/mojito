@@ -315,6 +315,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 },
                 start,
             )),
+            // `None` parses as a type in a bracket, but over a lowercase
+            // (value) base it is the `None` value (`table[None]` on a
+            // `Dict[Optional[Int], _]`), not a parameter application.
+            Ok([mojito_ast::ast::ParamArg::Type(Type::None)])
+                if expression_name_starts_lowercase(&object) =>
+            {
+                let index = Expr::new(ExprKind::None, (start, self.last_span.1));
+                Ok(self.node(
+                    ExprKind::Index {
+                        object: Box::new(object),
+                        index: Box::new(index),
+                    },
+                    start,
+                ))
+            }
             // A `Self.o`-rooted binder (possibly projected —
             // `Self.o._get_owned_interior["element"]`) as the sole bracket
             // argument of a member subscript
@@ -363,15 +378,22 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 ))
             }
             Err(param_args)
-                if param_args
-                    .iter()
-                    .all(|argument| matches!(argument, mojito_ast::ast::ParamArg::Value(_)))
-                    && expression_name_starts_lowercase(&object) =>
+                if param_args.iter().all(|argument| {
+                    matches!(
+                        argument,
+                        mojito_ast::ast::ParamArg::Value(_)
+                            | mojito_ast::ast::ParamArg::Type(Type::None)
+                    )
+                }) && expression_name_starts_lowercase(&object) =>
             {
+                let none_span = (start, self.last_span.1);
                 let args = param_args
                     .into_iter()
                     .map(|argument| match argument {
                         mojito_ast::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
+                        mojito_ast::ast::ParamArg::Type(Type::None) => {
+                            SubscriptArg::Index(Expr::new(ExprKind::None, none_span))
+                        }
                         _ => unreachable!(),
                     })
                     .collect();
@@ -421,7 +443,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Whether the next token begins a comparison operator (`== != < > <= >=`,
-    /// `in`, or `not` — which in infix position can only start `not in`).
+    /// `in`, `is`, or `not` — which in infix position can only start `not in`).
     pub(super) fn peek_is_comparison(&mut self) -> Result<bool, ParseError> {
         Ok(matches!(
             self.peek_token()?,
@@ -433,6 +455,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     | Token::Le
                     | Token::Ge
                     | Token::In
+                    | Token::Is
                     | Token::Not
             )
         ))
@@ -448,6 +471,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::Le => InfixOp::Le,
             Token::Ge => InfixOp::Ge,
             Token::In => InfixOp::In,
+            // `is` / `is not` (two words): identity comparison dispatching to
+            // `__is__` / `__isnot__` on the left operand.
+            Token::Is => {
+                if matches!(self.peek_token()?, Some(Token::Not)) {
+                    self.next_token()?;
+                    InfixOp::IsNot
+                } else {
+                    InfixOp::Is
+                }
+            }
             Token::Not => {
                 self.expect(Token::In, "Expected 'in' after 'not' in a membership test")?;
                 InfixOp::NotIn
@@ -474,9 +507,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Some(Token::EqEq | Token::NotEq | Token::Lt | Token::Gt | Token::Le | Token::Ge) => {
                 Precedence::Comparison
             }
-            // Membership `in` / `not in` share comparison precedence. In infix
-            // position (after an operand) `not` can only start `not in`.
-            Some(Token::In | Token::Not) => Precedence::Comparison,
+            // Membership `in` / `not in` and identity `is` / `is not` share
+            // comparison precedence. In infix position (after an operand)
+            // `not` can only start `not in`.
+            Some(Token::In | Token::Not | Token::Is) => Precedence::Comparison,
             Some(
                 Token::Plus
                 | Token::Minus

@@ -977,7 +977,27 @@ fn visit_call_edges<'p>(
                                 targets.push(*fname);
                             }
                         }
-                        if matches!(function.reg_types.get(&recv.0), Some(Ty::StringLiteral)) {
+                        let receiver = function.reg_types.get(&recv.0).map(|ty| match ty {
+                            Ty::Ref(reference) => &reference.referent,
+                            other => other,
+                        });
+                        // A Variant leaf dispatches the active alternative's
+                        // `__hash__` under a tag switch: every nominal
+                        // alternative's instances are edges.
+                        let mut nominal_alternatives: Vec<&str> = Vec::new();
+                        let mut string_leaf = matches!(receiver, Some(Ty::StringLiteral));
+                        if let Some(Ty::Variant(alternatives)) = receiver {
+                            for alternative in alternatives {
+                                if let Ty::Struct(name, _) = alternative {
+                                    if mojito_symbol::symbol::is_stdlib_string_struct(name) {
+                                        string_leaf = true;
+                                    } else {
+                                        nominal_alternatives.push(name.as_str());
+                                    }
+                                }
+                            }
+                        }
+                        if string_leaf {
                             // The nominal String's symbols are module-qualified.
                             for (fname, _) in functions.iter() {
                                 if fname.rsplit_once(".__hash__").is_some_and(|(owner, rest)| {
@@ -988,6 +1008,51 @@ fn visit_call_edges<'p>(
                                         && (rest.is_empty() || rest.starts_with('$'))
                                 }) {
                                     targets.push(*fname);
+                                }
+                            }
+                        }
+                        for alternative in nominal_alternatives {
+                            let prefix = format!("{alternative}.__hash__");
+                            for (fname, _) in functions.iter() {
+                                if fname.starts_with(prefix.as_str()) {
+                                    targets.push(*fname);
+                                }
+                            }
+                        }
+                    }
+                }
+                // Variant equality dispatches each nominal alternative's
+                // `__eq__` under a tag switch: those instances are edges.
+                MirInstr::BinOp {
+                    op: mojito_ast::ast::InfixOp::Eq | mojito_ast::ast::InfixOp::Ne,
+                    a,
+                    ..
+                } => {
+                    let operand = function.reg_types.get(&a.0).map(|ty| match ty {
+                        Ty::Ref(reference) => &reference.referent,
+                        other => other,
+                    });
+                    if let Some(Ty::Variant(alternatives)) = operand {
+                        for alternative in alternatives {
+                            let Ty::Struct(name, _) = alternative else {
+                                continue;
+                            };
+                            if mojito_symbol::symbol::is_stdlib_string_struct(name) {
+                                for (fname, _) in functions.iter() {
+                                    if fname.rsplit_once(".__eq__").is_some_and(|(owner, rest)| {
+                                        owner.rsplit('$').next().is_some_and(
+                                            mojito_symbol::symbol::is_stdlib_string_struct,
+                                        ) && (rest.is_empty() || rest.starts_with('$'))
+                                    }) {
+                                        targets.push(*fname);
+                                    }
+                                }
+                            } else {
+                                let prefix = format!("{name}.__eq__");
+                                for (fname, _) in functions.iter() {
+                                    if fname.starts_with(prefix.as_str()) {
+                                        targets.push(*fname);
+                                    }
                                 }
                             }
                         }

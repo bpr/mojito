@@ -115,6 +115,8 @@ pub enum Token {
     While,
     For,
     In,
+    /// `is` — identity comparison; dispatches to `__is__`/`__isnot__`.
+    Is,
     With,
     Break,
     Continue,
@@ -229,6 +231,7 @@ impl Token {
             "while" => Token::While,
             "for" => Token::For,
             "in" => Token::In,
+            "is" => Token::Is,
             "with" => Token::With,
             "break" => Token::Break,
             "continue" => Token::Continue,

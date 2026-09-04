@@ -164,20 +164,23 @@ impl PartialEq for Value {
             ) => aa == ba && ao == bo,
             (Value::None, Value::None) => true,
             // Closures have identity, not structural, equality.
+            // Descriptor equality compares the bounds only: a `[a:b]` literal
+            // widened into a `Slice`-typed parameter keeps its runtime
+            // sub-kind, while upstream constructs a real `Slice` there.
             (
                 Value::Slice {
-                    kind: ak,
                     start: as_,
                     end: ae,
                     step: ap,
+                    ..
                 },
                 Value::Slice {
-                    kind: bk,
                     start: bs,
                     end: be,
                     step: bp,
+                    ..
                 },
-            ) => ak == bk && as_ == bs && ae == be && ap == bp,
+            ) => as_ == bs && ae == be && ap == bp,
             (
                 Value::Struct {
                     name: n1,
@@ -247,19 +250,23 @@ impl fmt::Display for Value {
             Value::None => write!(f, "None"),
             Value::Function(name) => write!(f, "<function {name}>"),
             Value::Closure { function, .. } => write!(f, "<closure {function}>"),
+            // Upstream's `Slice.write_to` text; the contiguous and strided
+            // descriptors delegate to it, so every kind prints as `Slice`.
             Value::Slice {
-                kind,
-                start,
-                end,
-                step,
-            } => write!(
-                f,
-                "{}({:?}, {:?}, {:?})",
-                kind.type_name(),
-                start,
-                end,
-                step
-            ),
+                start, end, step, ..
+            } => {
+                let bound = |bound: &Option<i64>| match bound {
+                    Some(value) => value.to_string(),
+                    None => "None".to_string(),
+                };
+                write!(
+                    f,
+                    "Slice({}, {}, {})",
+                    bound(start),
+                    bound(end),
+                    bound(step)
+                )
+            }
             Value::Struct {
                 name,
                 fields,
@@ -452,6 +459,8 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             }
             Ok(true)
         }
+        // `Slice.__eq__`: bound-wise (the structural `PartialEq` arm).
+        (Value::Slice { .. }, Value::Slice { .. }) => Ok(a == b),
         _ => Err(RuntimeError::TypeError(format!(
             "cannot compare {} and {}",
             type_name(a),
@@ -1851,7 +1860,7 @@ fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Valu
                         _ => unreachable!(),
                     }));
                 }
-                MatMul | And | Or | In | NotIn => {
+                MatMul | And | Or | In | NotIn | Is | IsNot => {
                     return Err(RuntimeError::TypeError(format!(
                         "operator '{op:?}' is invalid for IntLiteral"
                     )));
@@ -1900,7 +1909,7 @@ fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Valu
             Ne => !left.numeric_cmp(&right).is_eq(),
             _ => unreachable!(),
         }),
-        Shl | Shr | BitAnd | BitOr | BitXor | MatMul | And | Or | In | NotIn => {
+        Shl | Shr | BitAnd | BitOr | BitXor | MatMul | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for FloatLiteral"
             )));
@@ -1946,7 +1955,7 @@ fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
         Ge => Value::Bool(x >= y),
         Eq => Value::Bool(x == y),
         Ne => Value::Bool(x != y),
-        Div | MatMul | And | Or | In | NotIn => {
+        Div | MatMul | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for integer dispatch"
             )));
@@ -1976,7 +1985,7 @@ fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
         Ge => Value::Bool(x >= y),
         Eq => Value::Bool(x == y),
         Ne => Value::Bool(x != y),
-        Div | MatMul | And | Or | In | NotIn => {
+        Div | MatMul | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for unsigned dispatch"
             )));
@@ -1999,7 +2008,7 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
         Ge => Value::Bool(x >= y),
         Eq => Value::Bool(x == y),
         Ne => Value::Bool(x != y),
-        Div | MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn => {
+        Div | MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for float dispatch"
             )));

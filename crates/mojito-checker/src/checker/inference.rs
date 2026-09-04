@@ -1312,9 +1312,21 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Result<Ty, TypeError>> {
-        let object_ty = match self.infer(object) {
-            Ok(ty) => ty,
-            Err(error) => return Some(Err(error)),
+        // `Variant[Int, String].is_type_supported[T]()` — upstream's static
+        // spelling: the receiver is the parameterized type itself.
+        let object_ty = if let ExprKind::TypeApply { name, args } = &object.kind
+            && super::traits_support::is_variant_name(name)
+            && self.lookup(name).is_none()
+        {
+            match self.variant_type(args) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            match self.infer(object) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            }
         };
         let Ty::Variant(alternatives) = object_ty else {
             return None;
@@ -1326,6 +1338,7 @@ impl Checker {
                 | "set"
                 | "unwrap"
                 | "unsafe_unwrap"
+                | "unsafe_get"
                 | "replace"
                 | "unsafe_replace"
                 | "deinit_with"
@@ -1414,6 +1427,31 @@ impl Checker {
                         },
                     );
                     Ok(Ty::Bool)
+                }
+                // `unsafe_get[T]()` — the unchecked projection read. The VM
+                // still validates the tag deterministically; the result is a
+                // value read of the payload (a Copyable alternative copies).
+                "unsafe_get" => {
+                    let (index, alternative) =
+                        self.variant_alternative(&alternatives, param_args)?;
+                    if !args.is_empty() {
+                        return Err(TypeError::ArityMismatch {
+                            name: "Variant.unsafe_get".to_string(),
+                            expected: 0,
+                            got: args.len(),
+                        });
+                    }
+                    self.operation_adjustments.borrow_mut().insert(
+                        span.clone(),
+                        mojito_checked::checked::SemanticAdjustment::VariantProject {
+                            alternatives,
+                            index,
+                        },
+                    );
+                    if self.is_implicitly_copyable(&alternative) {
+                        self.copy_place_value_uses.borrow_mut().insert(span);
+                    }
+                    Ok(alternative)
                 }
                 "is_type_supported" => {
                     if param_args.len() != 1 {
@@ -2392,6 +2430,56 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        // `Variant[...](init_with=factory)`: the placement constructor. The
+        // zero-parameter factory's result type selects the alternative (an
+        // infer-only parameter upstream), and the result lands directly in
+        // storage — no `Movable` requirement on the alternative.
+        if let [kwarg] = kwargs
+            && kwarg.name == "init_with"
+        {
+            if !args.is_empty() {
+                return Err(TypeError::ArityMismatch {
+                    name: "Variant".to_string(),
+                    expected: 0,
+                    got: args.len(),
+                });
+            }
+            let Ty::Variant(alternatives) = self.variant_type(param_args)? else {
+                return Err(TypeError::InvariantViolation(
+                    "Variant type construction did not produce a variant".to_string(),
+                ));
+            };
+            let factory = self.infer(&kwarg.value)?;
+            let factory_ret = match &factory {
+                Ty::Func {
+                    params,
+                    raises: false,
+                    ret,
+                    ..
+                } if params.is_empty() => Some(ret.as_ref()),
+                _ => None,
+            };
+            let index = factory_ret.and_then(|ret| {
+                alternatives
+                    .iter()
+                    .position(|alternative| coerces(ret, alternative))
+            });
+            let Some(index) = index else {
+                return Err(TypeError::TypeMismatch {
+                    expected: "def() -> T for one alternative T".to_string(),
+                    found: factory.to_string(),
+                    context: "'init_with' factory for 'Variant'".to_string(),
+                });
+            };
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith {
+                    alternatives: alternatives.clone(),
+                    index,
+                },
+            );
+            return Ok(Ty::Variant(alternatives));
+        }
         if !kwargs.is_empty() {
             return Err(TypeError::BadCall {
                 func: "Variant".to_string(),

@@ -1574,6 +1574,30 @@ fn parses_subscript_as_index() {
 }
 
 #[test]
+fn parses_is_and_is_not_as_comparisons() {
+    // `x is None` is an identity comparison (dispatching to `__is__`); the
+    // two-word `is not` is one operator, never `is (not None)`.
+    assert!(matches!(
+        parse_expr("x is None").kind,
+        ExprKind::Infix(InfixOp::Is, ref left, ref right)
+            if matches!(left.kind, ExprKind::Identifier(ref name) if name == "x")
+                && matches!(right.kind, ExprKind::None)
+    ));
+    assert!(matches!(
+        parse_expr("x is not None").kind,
+        ExprKind::Infix(InfixOp::IsNot, ref left, ref right)
+            if matches!(left.kind, ExprKind::Identifier(ref name) if name == "x")
+                && matches!(right.kind, ExprKind::None)
+    ));
+    // `is` sits at comparison precedence: a sum binds tighter on either side.
+    assert!(matches!(
+        parse_expr("a + 1 is b").kind,
+        ExprKind::Infix(InfixOp::Is, ref left, _)
+            if matches!(left.kind, ExprKind::Infix(InfixOp::Add, _, _))
+    ));
+}
+
+#[test]
 fn parses_empty_subscript_as_pointer_dereference_marker() {
     // `p[]` is the pointer-dereference subscript: the index child is the
     // dedicated marker, distinct from a source `p[None]` index expression.
@@ -1583,11 +1607,19 @@ fn parses_empty_subscript_as_pointer_dereference_marker() {
             if matches!(object.kind, ExprKind::Identifier(ref name) if name == "p")
                 && matches!(index.kind, ExprKind::EmptySubscript)
     ));
-    // `p[None]` is not a dereference: the bracket reads as compile-time
-    // parameter application (rejected later in value position), never the
-    // marker.
+    // `p[None]` is not a dereference either: over a value base the bracket
+    // is an ordinary subscript whose index is the `None` value (a
+    // `Dict[Optional[T], _]` key), never the marker.
     assert!(matches!(
         parse_expr("p[None]").kind,
+        ExprKind::Index { object, index }
+            if matches!(object.kind, ExprKind::Identifier(ref name) if name == "p")
+                && matches!(index.kind, ExprKind::None)
+    ));
+    // Over a type name the same bracket stays compile-time parameter
+    // application.
+    assert!(matches!(
+        parse_expr("Wrapper[None]").kind,
         ExprKind::TypeApply { .. }
     ));
     // The marker composes as an ordinary suffix: deref of an offset call.

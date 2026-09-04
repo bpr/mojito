@@ -1038,6 +1038,43 @@ impl Flatten<'_> {
             })
     }
 
+    /// A `deinit self` call whose receiver the checker satisfied by implicit
+    /// copy: an `ImplicitlyCopyable` nominal receiver runs its copy lifecycle
+    /// (`__init__(copy:)`) into a fresh temporary the callee consumes, so the
+    /// original place keeps its own storage and its ordinary drop. Scalars
+    /// and other non-nominal values copy by plain read.
+    fn copy_consuming_receiver(
+        &mut self,
+        receiver: &Expr,
+        recv: Reg,
+        recv_place: Option<&MirPlace>,
+    ) -> Reg {
+        // The copy has its source's exact type — the receiver place's when
+        // the register is a place read (the verifier types that register
+        // from the place): the checker's expression type can spell the same
+        // nominal type with a different argument representation (a public
+        // tuple binding keeps a literal element the expression defaulted),
+        // which the verifier's equality check would reject.
+        let ty = self
+            .f
+            .reg_types
+            .get(&recv.0)
+            .cloned()
+            .or_else(|| recv_place.and_then(|place| place.ty.clone()))
+            .or_else(|| self.checked_ty(receiver));
+        match ty {
+            Some(ty @ Ty::Struct(..)) => {
+                let copied = self.fresh_typed(span(receiver), None, ty);
+                self.emit(MirInstr::CopyValue {
+                    dest: copied,
+                    value: recv,
+                });
+                copied
+            }
+            _ => recv,
+        }
+    }
+
     fn implicitly_copies_consuming_receiver(&self, expression: &Expr) -> bool {
         self.checked_adjustments(expression)
             .iter()
@@ -2168,7 +2205,9 @@ fn close_register_types(
                             | InfixOp::And
                             | InfixOp::Or
                             | InfixOp::In
-                            | InfixOp::NotIn => Some(Ty::Bool),
+                            | InfixOp::NotIn
+                            | InfixOp::Is
+                            | InfixOp::IsNot => Some(Ty::Bool),
                             _ => reg_types.get(&a.0).or_else(|| reg_types.get(&b.0)).cloned(),
                         },
                     )),

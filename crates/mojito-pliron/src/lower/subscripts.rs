@@ -410,16 +410,103 @@ impl<'a> FnLowering<'a> {
         self.append(ctx, default_stop.get_operation(), Some(dest));
         let stop = SelectOp::new(ctx, has_upper, adjusted_upper, default_stop.get_result(ctx));
         self.append(ctx, stop.get_operation(), Some(dest));
-        let storage = self.entry_alloca(ctx, 24, 8);
-        for (index, value) in [start.get_result(ctx), stop.get_result(ctx), step]
-            .into_iter()
-            .enumerate()
-        {
+        // `ContiguousSlice.indices` is upstream's two-element `(start, end)`;
+        // the strided family keeps the three-element normalization.
+        let contiguous = self
+            .func
+            .reg_types
+            .get(&recv.0)
+            .and_then(slice_struct_name)
+            .is_some_and(|name| name == "ContiguousSlice");
+        let mut elements = vec![start.get_result(ctx), stop.get_result(ctx)];
+        if !contiguous {
+            elements.push(step);
+        }
+        let storage = self.entry_alloca(ctx, elements.len() as u64 * 8, 8);
+        for (index, value) in elements.into_iter().enumerate() {
             let address = self.offset_address(ctx, storage, index as u64 * 8);
             let store = StoreOp::new(ctx, value, address);
             self.append(ctx, store.get_operation(), Some(dest));
         }
         self.reg_values.insert(dest.0, storage);
         Ok(())
+    }
+
+    /// `Slice(start, end)`, `Slice(start, end, step)`, `slice(end)`,
+    /// `slice(start, end)`, `slice(start, end, step)`: a `None`-typed
+    /// argument is an absent bound, every other argument an `Int` bound.
+    pub(super) fn lower_slice_constructor(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        name: &str,
+        args: &[Reg],
+    ) -> Result<(), PlironError> {
+        let bound = |lowering: &Self, reg: Reg| {
+            (!matches!(lowering.func.reg_types.get(&reg.0), Some(Ty::None))).then_some(reg)
+        };
+        let (lower, upper, step) = match (name, args) {
+            ("slice", [end]) => (None, bound(self, *end), None),
+            (_, [start, end]) => (bound(self, *start), bound(self, *end), None),
+            (_, [start, end, step]) => (bound(self, *start), bound(self, *end), bound(self, *step)),
+            _ => {
+                return Err(self.unsupported_reg(format!("`{name}` constructor arity"), dest));
+            }
+        };
+        let storage = self.build_slice_descriptor(ctx, dest, lower, upper, step)?;
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// `Slice.__eq__`/`__ne__`: the descriptors are equal when all four raw
+    /// words match (absent bounds store 0 and are distinguished by the
+    /// presence bitmask, so word equality is exact bound equality).
+    pub(super) fn lower_slice_equality(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        args: &[Reg],
+        negate: bool,
+    ) -> Result<(), PlironError> {
+        if args.len() != 1 {
+            return Err(self.unsupported_reg("slice equality call contract".into(), dest));
+        }
+        let left = self.reg_ptr(ctx, recv)?;
+        let right = self.reg_ptr(ctx, args[0])?;
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let mut all_equal: Option<Value> = None;
+        for offset in [0u64, 8, 16, 24] {
+            let left_address = self.offset_address(ctx, left, offset);
+            let left_word = LoadOp::new(ctx, left_address, i64_handle);
+            self.append(ctx, left_word.get_operation(), Some(dest));
+            let right_address = self.offset_address(ctx, right, offset);
+            let right_word = LoadOp::new(ctx, right_address, i64_handle);
+            self.append(ctx, right_word.get_operation(), Some(dest));
+            let equal = ICmpOp::new(
+                ctx,
+                ICmpPredicateAttr::EQ,
+                left_word.get_result(ctx),
+                right_word.get_result(ctx),
+            );
+            self.append(ctx, equal.get_operation(), Some(dest));
+            all_equal = Some(match all_equal {
+                None => equal.get_result(ctx),
+                Some(previous) => {
+                    let both = AndOp::new(ctx, previous, equal.get_result(ctx));
+                    self.append(ctx, both.get_operation(), Some(dest));
+                    both.get_result(ctx)
+                }
+            });
+        }
+        let equal = all_equal.expect("four words compared");
+        if negate {
+            let truth = self.bool_constant(ctx, true);
+            let differ = XorOp::new(ctx, equal, truth);
+            self.define(ctx, dest, differ.get_operation(), differ.get_result(ctx))
+        } else {
+            self.reg_values.insert(dest.0, equal);
+            Ok(())
+        }
     }
 }

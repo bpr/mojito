@@ -1,0 +1,22 @@
+# Codepoint's scalar predicates (ASCII case/digit/printable, POSIX space,
+# Python space) and the count_codepoints/count_graphemes spellings.
+def main() raises:
+    var maybe_upper = Codepoint.from_u32(65)
+    var upper = maybe_upper.value()
+    print(upper.is_ascii_upper(), upper.is_ascii_lower(), upper.is_ascii_digit(), upper.is_ascii_printable(), upper.is_posix_space(), upper.is_python_space())
+    var maybe_space = Codepoint.from_u32(32)
+    var maybe_nel = Codepoint.from_u32(0x85)
+    var space = maybe_space.value()
+    var nel = maybe_nel.value()
+    print(space.is_posix_space(), space.is_python_space(), nel.is_python_space(), nel.is_posix_space())
+    var maybe_seven = Codepoint.from_u32(55)
+    var maybe_zed = Codepoint.from_u32(122)
+    var maybe_rubout = Codepoint.from_u32(0x7F)
+    var maybe_paragraph = Codepoint.from_u32(0x2029)
+    var seven = maybe_seven.value()
+    var zed = maybe_zed.value()
+    var rubout = maybe_rubout.value()
+    var paragraph = maybe_paragraph.value()
+    print(seven.is_ascii_digit(), zed.is_ascii_lower(), rubout.is_ascii_printable(), paragraph.is_python_space())
+    var text = String("héllo")
+    print(text.count_codepoints(), text.count_graphemes())

@@ -8,7 +8,7 @@
 from std.collections.array import Array
 from std.collections.list import List
 from std.format.tstring import TString
-from std.string import Codepoint, String, StringSpan
+from std.string import Codepoint, String, StringSpan, atof, atol
 from std.collections.set import Set
 from std.collections.dict import Dict
 from std.optional import Optional

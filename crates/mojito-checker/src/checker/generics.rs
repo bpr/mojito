@@ -40,6 +40,16 @@ pub(super) fn unify(
                         unify(p, a, subst)?;
                     }
                 }
+            } else if is_span_struct_name(pn)
+                && let Some(TyArg::Ty(element_pattern)) = pargs.first()
+                && let Some(element) = list_element(actual)
+            {
+                // The checked analogue of `Span`'s `@implicit` constructor from
+                // a `List`: a `List[X]` argument solves a `Span[T, _]`
+                // parameter's element (`join[T](elems: Span[T, _])` called with
+                // a `List[String]`); the argument then converts as a call
+                // argument does.
+                unify(element_pattern, element, subst)?;
             }
             Ok(())
         }
@@ -844,4 +854,10 @@ impl Checker {
         }
         Ok(())
     }
+}
+
+/// Whether a struct symbol names the bundled `Span` view (bare or
+/// module-qualified).
+fn is_span_struct_name(name: &str) -> bool {
+    name == "Span" || name.ends_with("$Span")
 }

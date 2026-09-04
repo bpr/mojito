@@ -64,9 +64,50 @@ unchecked box is the default next task. Sections marked *(recurring)* or
   with a fresh decision record.
 
 - [ ] **Native SIMD lowering** — after the selected backend reaches supported
-  language parity, map completed SIMD semantics to native vectors where the
-  target supports them and preserve defined scalar fallback behavior.
+  language parity, replace Pliron's current memory-resident, lane-by-lane SIMD
+  computation with LLVM fixed-vector SSA operations while preserving the
+  existing target/layout/runtime ABI at storage and call boundaries. The
+  capability analysis and design rationale live in
+  `docs/notes/native-simd-pliron-assessment.md`. Keep width-one scalar aliases
+  scalar; use `<N x lane>` only as the compute form,
+  allowing LLVM to legalize values wider than a physical target register and
+  retaining the scalar-aggregate path as the defined fallback when a target or
+  operation cannot use vectors. Implement and demonstrate the slice in this
+  order:
+  1. construction/splat and aggregate↔vector boundary conversion;
+  2. elementwise arithmetic, bitwise operations, comparisons, and mask select;
+  3. checked dynamic extract/insert and compile-time shuffle;
+  4. casts, including the VM-exact wrapping, Float32 rounding, and saturating
+     float-to-integer-before-rewrap behavior; and
+  5. reductions, preserving signedness, NaN behavior, and deterministic
+     floating reduction order unless the language contract explicitly permits
+     reassociation.
 
+  Pliron 0.17 already exposes fixed/scalable `VectorType`, vector-capable LLVM
+  arithmetic/comparison/cast/select operations, `InsertElementOp`,
+  `ExtractElementOp`, `ShuffleVectorOp`, and `CallIntrinsicOp` for
+  `llvm.vector.reduce.*`; use fixed vectors because Mojito widths are
+  compile-time source facts. Bounds-check dynamic lane indexes before LLVM
+  operations, whose out-of-range result may be poison, and convert LLVM
+  `<N x i1>` masks to the existing byte-lane storage form only at boundaries.
+  Acceptance requires VM/native differential coverage at `O0` and release for
+  every dtype, supported width, operation, edge conversion, shuffle, and
+  reduction; sanitizer-clean storage/ABI crossings; unchanged `LayoutCx` and
+  `docs/native-abi.md` contracts (or an explicit ABI-versioned revision); and
+  target-code inspection proving representative supported cases select vector
+  instructions rather than merely producing legal vector IR.
+
+- [ ] **Native generic-holder temporaries with heap-owning implicitly
+  copyable fields** — a generic struct temporary whose field is an
+  `ImplicitlyCopyable` heap-owning struct (`GenericHolder[Box](Box(5))`,
+  Dict's `DictEntry[Optional[Int], V]`) appended to a `List` reads freed
+  memory natively (`use after Pointer deallocation`; the VM is correct; a
+  non-generic holder and `List[Optional[Int]]` are fine). Consequence:
+  `Dict[Optional[Int], _]` and `Dict[_, Optional[Int]]` are VM-only today
+  (`conformance/fixtures/optional_dict_keys.mojo` is kept out of
+  `assets/ok`). Bisect the `var` field-move of the copy-lifecycle value inside
+  the generic constructor against the owned-temp marking in
+  `crates/mojito-pliron/src/lower/calls.rs`.
 - [ ] **Native converting-constructor defaults** — lower a
   `CheckedConst::Construct` default (e.g. `arg: Optional[T] = None`, which the
   VM materializes by running the empty-Optional constructor). The pliron
@@ -96,35 +137,6 @@ recreates this section's checkbox with the fresh divergence list.
 - [ ] **Collection API parity** — grow the tuple, slice, optional/variant,
   and String result-API surfaces demand-first toward the audited head, one
   session-sized slice each (`docs/features.md` records what lands):
-  - [ ] Slice descriptors: `Slice.__eq__`/`Writable` (`Slice(1, 4, None)`
-    text), the 2-tuple `ContiguousSlice.indices`, and List's `StridedSlice`
-    overload with the `Slice -> StridedSlice` widening (closes the
-    normalizing-overload residue in `conformance/parity.tsv` `types.slices`).
-  - [ ] Optional: declared `Boolable`/`Defaultable`, conditional
-    `Equatable`/`Hashable` (`UInt8` tag)/`Writable`, the `@implicit` value
-    constructor, consuming `or_else(deinit self, var default)`,
-    `unsafe_value`/`unsafe_take`/`bounds`; then the `is`/`is not` operator
-    (grammar first) with `__is__`/`__isnot__(NoneType)`.
-  - [ ] Variant inside the intrinsic design: the `init_with=` placement
-    constructor, `unsafe_get[T]()`, static `is_type_supported`, the
-    upstream repr text (`Variant[Int, String](7)`), and a pliron
-    `variant.hash` leaf (the VM feeds the discriminant then the active
-    alternative today; native reports the leaf unsupported).
-  - [ ] String result APIs, three batches: (1) `replace`/`join`/the strip
-    family as views/`removeprefix`/`removesuffix`/`count`/`start=` on
-    `find`/`rfind`/`startswith`/`endswith`/`split(maxsplit)` and whitespace
-    `split`/`splitlines`/`__bool__`/`__mul__`, String as `Writer`, StringSpan
-    `Equatable`/`__contains__`/`__bool__`, prelude-visible `StringSpan`;
-    (2) `upper`/`lower`/`isupper`/`islower`/`isspace`/`is_ascii_digit`/
-    `is_ascii_printable`/`ascii_center`/`ascii_ljust`/`ascii_rjust`, the
-    `count_codepoints`/`count_graphemes` spellings, Codepoint predicates;
-    (3) the pointer-backed `Span` constructor with `as_bytes`/`unsafe_ptr`,
-    `capacity_bytes`/`resize`/`append`, `__int__`/`__float__`/`atol`/`atof`,
-    and the `codepoints`/`codepoint_slices`/`graphemes` iterators.
-  - [ ] Repr vocabulary: `_unqualified_type_name[T]()` comptime builtin
-    (`std.reflection.type_info`) plus `std.format._utils` `FormatStruct`/
-    `TypeNames`, then `write_repr_to` on Tuple, Optional, and the slice
-    descriptors.
   - [ ] **Self-hosted `Variant`** — replace the intrinsic `Ty::Variant` (8
     MIR instructions, 13 checker protocol arms,
     `crates/mojito-pliron/src/lower/variants.rs`) with upstream's pure-Mojo
@@ -142,11 +154,106 @@ recreates this section's checkbox with the fresh divergence list.
     rows, and the `utils/__init__.mojo` name shim. Not session-sized; each
     prerequisite is its own slice.
 
+  String residues (2026-09; batch 1 landed the search/count/replace/join/
+  split/splitlines/strip families, `Boolable`, `__mul__`, String as `Writer`,
+  and StringSpan `Equatable`/`Boolable`/`in`): `String == StringSpan` needs a
+  second same-arity `String.__eq__` overload, which would make the String
+  struct's trait-dispatch symbol (`__trait_dispatch.__eq__` retargeted to
+  `String.__eq__`) ambiguous — spell `view == string`; a view-returning call
+  on a temporary receiver (`String("x").strip()`) rejects with "reference
+  binding to a non-place expression" (the receiver anchor only handles bound
+  places) — bind the receiver; a `StringSpan` argument does not convert to a
+  `String` parameter (upstream's parameters are `StringSpan`; Mojito's are
+  `String`) — use `to_string()`; `split(sep, maxsplit=-1)` is one defaulted
+  overload where upstream declares two (call sites are identical); bare `if
+  s:` truthiness stays with the collection-truthiness item below. Batch 2
+  (case/predicates/justification) residues: `upper`/`lower` cover a
+  simple-case subset (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic,
+  `ß` -> `SS`) where upstream ships the full Unicode simple + special casing
+  tables (`_unicode.mojo`, generated lookups — port when a fixture needs
+  another script); the batch-2 members live on `String` only, not
+  `StringSpan` (call them on `view.to_string()`); `isspace` drops upstream's
+  `single_character` parameter; `count_codepoints`/`count_graphemes` still
+  `raise` on invalid UTF-8 (upstream's are non-raising over trusted buffers);
+  `__radd__` (`"lit" + s` on a StringLiteral left operand already dispatches
+  through the mixed-string path, so only user-struct reflected operators are
+  missing: the checker has no `__r*__` fallback). Batch 3 (bytes, parsing,
+  iterators) residues: `atof` is correctly rounded only while the
+  significand (≤ 19 digits) and the power of ten (≤ 22) stay exact, and
+  Mojito prints NaN as `NaN` where upstream prints `nan`; the `next(it)`
+  builtin does not exist (iterate with `for` or call `__next__`);
+  `Span(unsafe_ptr=, length=)` takes a `Pointer[T, MutUntrackedOrigin]`
+  (a `Pointer[T, origin]` parameter cannot bind through a constructor type
+  application: Pointer parameters coerce only on exact origins, and the
+  constructor path resolves type applications without origin slots, so
+  `Span[Byte, origin_of(self)](...)` rejects with a type-argument count);
+  `Pointer`'s `[unsafe_offset=]` keyword subscript (upstream deprecates the
+  positional form); `codepoint_slices_reversed`/`graphemes_reversed`/
+  `__reversed__`, `bytes()`, `split_at_grapheme`, and `peek_next` on the
+  iterators; and `count_codepoints`/`count_graphemes` (used by the iterators'
+  `__len__`) still decode through an eager `to_string()` copy per step.
+
+  Repr residues (2026-09; the repr slice landed `_unqualified_type_name[T]()`,
+  `TypeNames`, upstream's scalar/String/Tuple/Slice repr texts): upstream's
+  `FormatStruct(writer, "Name").params(...).fields(...)` builder needs
+  variadic-pack methods on a struct (`def fields[*Ts: Writable](self, *args:
+  *Ts)` — the elaborator reports "'Ts' is not a compile-time type" for a
+  method-level pack, while the same shape on a free def specializes) plus a
+  `ref` field to the writer; `write_repr_to` on `Optional` and other
+  non-variadic generic structs needs either per-specialization checking of
+  the body or runtime type bindings (the VM runs one erased body, and an
+  `Optional[Int]` value carries no reified `T`, so
+  `_unqualified_type_name[Self]` spells `Optional[T]`); `List`/`Dict`/`Set`
+  repr falls back to the field-wise `Name(field=value)` text (upstream:
+  `List[SIMD[DType.int, 1]]([Int(1), Int(2)])`); the bundled `Writable`
+  trait declares only `write_to`, so a bounded `T: Writable` cannot call
+  `write_repr_to` (spell `repr(x)`); natively `repr` lowers only for
+  Strings and without escapes (scalars, tuples, and structs reject); a
+  subscript view temporary passed as a call argument at its source's last
+  use (`writer.write(s[byte=a:b])`) still frees the source first — bind the
+  view to a local (the `$arg_loan_r` anchor covers call and method-call
+  temporaries only); and upstream spells `_unqualified_type_name[Tuple[Int,
+  Bool]]()` as `Tuple[<unprintable>, {}]`, so shared fixtures avoid tuple
+  type names.
+
   Tuple residues (2026-09; the Tuple slice landed `Hashable`/`Sized` and
   upstream's `__contains__[T: Equatable]` bound): `Defaultable` needs
   `Ts[i]()` element default construction (the `Self.T()` blocker shared with
   Array), and the static `__len__()` overload cannot coexist with the
   instance one under arity-keyed dunder selection.
+
+  Optional residues (2026-09; the Optional slice landed declared
+  `Boolable`/`Defaultable`, conditional `Equatable`/`Hashable`/`Writable`,
+  the `@implicit` value constructor, consuming `or_else`,
+  `unsafe_value`/`unsafe_take`/`bounds`): `opt == None` needs same-arity
+  dunder overload selection (`__eq__(rhs: Self)` beside `__eq__(rhs:
+  NoneType)` — `struct_dunder_signature` and the VM's
+  `call_resolved_dunder` key dunders by arity; record a `ResolveCallable`
+  adjustment on the infix so `BinOp.resolved` names the exact overload),
+  `__invert__` needs a `~` prefix operator, the raising `opt[]` subscript
+  needs the empty-subscript form on nominal receivers plus
+  `EmptyOptionalError`'s `TypeNames` text, and `copied`/`OptionalReg` need
+  self-type-constrained methods / `TrivialRegisterPassable`.
+
+  Variant residues (2026-09; the Variant slice landed the `init_with=`
+  constructor, `unsafe_get`, static `is_type_supported`, the repr frame,
+  and native hashing/equality of Variants): native `print`/`String(v)`/
+  `repr(v)` of a Variant value (the VM forwards `write_to` to the payload;
+  pliron's print and repr paths have no Variant arm), the payload repr text
+  inside the frame now spells `Int(7)`/`'mojo'` like upstream), and
+  `ref r = v.unsafe_get[T]()` as a place (the projection `v[T]` is the
+  place form), and the projection tag-mismatch trap categories: the VM
+  raises a `TypeError` (`Variant holds 'Int', not 'String'`) where native
+  traps `UnhandledError`, so no error-differential fixture pins it.
+
+  Slice residues (2026-09; the Slice slice landed `Slice.__eq__`, the
+  `Slice(start, end, step)` writer text, the two-element
+  `ContiguousSlice.indices`, native explicit construction, and the
+  `Slice -> StridedSlice` widening): `Slice(...)` construction reads only
+  `Int`/`None` argument expressions (`infer_slice_construction`; an
+  `Optional[Int]`-typed variable needs the nominal Optional's slot read), and
+  the explicit `.write_to(writer)` method spelling on a descriptor is not
+  wired (print/`String(x)`/`Writer.write` are).
 
   Deferred from the 2026-08 Dict/Set/List pass with no shared blocker
   (each recorded in `conformance/parity.tsv` notes):
@@ -169,13 +276,13 @@ recreates this section's checkbox with the fresh divergence list.
   - the upstream-exact `Hasher` member spellings: `_update_with_simd(mut
     self, value: SIMD[_, _])` with `SIMD.to_bits()` (Mojito narrows the leaf
     to one normalized `UInt64`, which both bundled hashers mix identically,
-    so the VM's `UInt64` Variant discriminant lane is bit-identical to
+    so both backends' `UInt64` Variant discriminant lane is bit-identical to
     upstream's `UInt8` tag until this lands), the keyed `AHasher[key: U256]`
-    (Mojito's is key-less; the seeded initializer remains), the bytes
+    (Mojito's is key-less; the seeded initializer remains), and the bytes
     `hash(bytes: ImmPointer[UInt8, _], n)` overload and `hash_seeded_bytes`
-    (both need a pointer-backed `Span` constructor), and a `Span`/`as_bytes`
-    path for `StringSpan.__hash__` (today it copies the bytes into a
-    `List[Byte]`)
+    (the pointer-backed `Span(unsafe_ptr=, length=)` constructor they need
+    landed 2026-09 over an untracked pointer; `StringSpan.__hash__` feeds
+    `as_bytes()` to `_update_with_bytes` without copying)
   - CTFE `hash`/`default_comp_time_hasher` for compile-time dictionaries
   - propagating a constructible type argument through an enclosing abstract
     binder on the raw seam (a generic body forwarding its own `H` into

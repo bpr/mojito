@@ -792,6 +792,29 @@ impl<'a> Specializer<'a> {
                             call.target = target;
                         }
                     }
+                    // Variant equality lowers to a tag switch that calls each
+                    // nominal alternative's `__eq__`; enqueue those instances.
+                    MirInstr::BinOp {
+                        op: mojito_ast::ast::InfixOp::Eq | mojito_ast::ast::InfixOp::Ne,
+                        a,
+                        ..
+                    } => {
+                        if let Some(Ty::Variant(alternatives)) =
+                            function.reg_types.get(&a.0).map(peel_refs).cloned()
+                        {
+                            for alternative in &alternatives {
+                                if matches!(alternative, Ty::Struct(..)) {
+                                    self.enqueue_nominal_method_instance(
+                                        owner,
+                                        alternative,
+                                        "__eq__",
+                                        1,
+                                        &[],
+                                    )?;
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }

@@ -245,7 +245,7 @@ struct List[T: AnyType](
     ):
         return self.data[index].copy()
 
-    def __getitem__(self, slice: Slice) -> Self where conforms_to(
+    def __getitem__(self, slice: StridedSlice) -> Self where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Movable):
         var bounds = slice.indices(self.size)
@@ -264,9 +264,10 @@ struct List[T: AnyType](
         return result^
 
     # Strict contiguous slice (current Mojo bounds): negative, out-of-range,
-    # or reversed bounds abort instead of normalizing. Strided slicing keeps
-    # `StridedSlice.indices()` normalization through the `Slice` overload
-    # above; omitted bounds are preserved and default to the full extent.
+    # or reversed bounds abort instead of normalizing. Strided slicing (and a
+    # `Slice`-typed descriptor value, which widens to `StridedSlice` like
+    # upstream's implicit conversion) keeps `indices()` normalization through
+    # the overload above; omitted bounds default to the full extent.
     def __getitem__(self, slice: ContiguousSlice) -> Self where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Movable):

@@ -137,9 +137,21 @@ impl Flatten<'_> {
             let argument = self.expr_unconverted(e);
             // The conversion result is the constructed type, not the source
             // expression's checked type; targets are concrete constructors.
+            // The checker records the converted-to type (with its arguments,
+            // `Optional[Int]`); the constructor's bare name is the fallback.
             let provenance = source_place.as_ref().map(|place| place.root);
-            let dest = match target.split(".__init__").next() {
-                Some(constructed) if !constructed.is_empty() => self.fresh_typed(
+            let recorded = self
+                .checked_adjustments(e)
+                .into_iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::ConversionResultType(ty) => {
+                        Some(ty)
+                    }
+                    _ => None,
+                });
+            let dest = match (recorded, target.split(".__init__").next()) {
+                (Some(ty @ Ty::Struct(..)), _) => self.fresh_typed(span(e), provenance, ty),
+                (_, Some(constructed)) if !constructed.is_empty() => self.fresh_typed(
                     span(e),
                     provenance,
                     Ty::Struct(constructed.to_string(), Vec::new()),

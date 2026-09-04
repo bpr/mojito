@@ -295,6 +295,35 @@ impl Checker {
                     );
                     return Ok(Ty::Int);
                 }
+                // `_unqualified_type_name[T]()` (upstream `std.reflection`):
+                // the unqualified spelling of one checked type, a compile-time
+                // string. Recorded for every resolution — a still-generic
+                // spelling names the parameter, which only the specialized
+                // re-check's constant ever reaches a backend.
+                "_unqualified_type_name" => {
+                    if param_args.len() != 1 {
+                        return Err(TypeError::WrongTypeArgCount {
+                            name: "_unqualified_type_name".to_string(),
+                            expected: 1,
+                            got: param_args.len(),
+                        });
+                    }
+                    if !args.is_empty() {
+                        return Err(TypeError::ArityMismatch {
+                            name: "_unqualified_type_name".to_string(),
+                            expected: 0,
+                            got: args.len(),
+                        });
+                    }
+                    let ty = self.type_param_argument(&param_args[0], "_unqualified_type_name")?;
+                    self.operation_adjustments.borrow_mut().insert(
+                        span,
+                        mojito_checked::checked::SemanticAdjustment::TypeName {
+                            text: mojito_types::types::unqualified_type_name(&ty),
+                        },
+                    );
+                    return Ok(Ty::StringLiteral);
+                }
                 // Compiler-private crossing for `std.os.abort`: an uncatchable
                 // VM trap carrying a nominal String message. Typed as returning
                 // None — the call never returns at runtime, and stdlib call
@@ -347,10 +376,10 @@ impl Checker {
                 "len" => return self.infer_len(args),
                 "range" => return self.infer_range(args),
                 "Slice" | "slice" => return self.infer_slice_construction(name, args),
-                "Int" => return self.infer_conversion(Ty::Int, args),
-                "UInt" => return self.infer_conversion(Ty::UInt, args),
-                "Float64" => return self.infer_conversion(Ty::Float64, args),
-                "Bool" => return self.infer_conversion(Ty::Bool, args),
+                "Int" => return self.infer_conversion(&span, Ty::Int, args),
+                "UInt" => return self.infer_conversion(&span, Ty::UInt, args),
+                "Float64" => return self.infer_conversion(&span, Ty::Float64, args),
+                "Bool" => return self.infer_conversion(&span, Ty::Bool, args),
                 "divmod" => return self.infer_divmod(args),
                 "SIMD" => return self.infer_simd_construction(param_args, args),
                 "Scalar" => {

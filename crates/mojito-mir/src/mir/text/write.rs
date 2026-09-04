@@ -2054,6 +2054,8 @@ fn infix(value: InfixOp) -> &'static str {
         InfixOp::Or => "or",
         InfixOp::In => "in",
         InfixOp::NotIn => "not_in",
+        InfixOp::Is => "is",
+        InfixOp::IsNot => "is_not",
     }
 }
 fn slice_kind(value: mojito_types::types::SliceKind) -> &'static str {

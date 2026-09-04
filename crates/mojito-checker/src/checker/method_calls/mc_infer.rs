@@ -369,6 +369,22 @@ impl Checker {
         if matches!(&obj_ty, Ty::Struct(name, args) if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty())
         {
             reject_kwargs(kwargs)?;
+            let Ty::Struct(kind, _) = &obj_ty else {
+                unreachable!("slice descriptor receivers are nominal");
+            };
+            // `Slice.__eq__`/`__ne__` (only `Slice` is Equatable upstream).
+            if matches!(method, "__eq__" | "__ne__") && kind == "Slice" {
+                let types = self.builtin_args(&format!("Slice.{method}"), 1, args)?;
+                if !matches!(&types[0], Ty::Struct(name, args) if name == "Slice" && args.is_empty())
+                {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "Slice".to_string(),
+                        found: types[0].to_string(),
+                        context: format!("Slice.{method} operand"),
+                    });
+                }
+                return Ok(Ty::Bool);
+            }
             if method != "indices" {
                 return Err(TypeError::NoSuchMethod {
                     object_type: obj_ty.to_string(),
@@ -382,6 +398,11 @@ impl Checker {
                     found: types[0].to_string(),
                     context: "Slice.indices length".to_string(),
                 });
+            }
+            // Upstream `ContiguousSlice.indices` yields `(start, end)`; the
+            // strided family keeps the three-element normalization.
+            if kind == "ContiguousSlice" {
+                return Ok(self.public_tuple_type(vec![Ty::Int, Ty::Int]));
             }
             return Ok(self.public_tuple_type(vec![Ty::Int, Ty::Int, Ty::Int]));
         }

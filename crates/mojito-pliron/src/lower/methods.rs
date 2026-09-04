@@ -50,7 +50,8 @@ impl<'a> FnLowering<'a> {
             return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
         }
         // Slice descriptors are checker-virtual: `indices` is the VM's
-        // intrinsic normalization, and no other method exists on them.
+        // intrinsic normalization and `__eq__`/`__ne__` compare the raw
+        // bounds; no other method exists on them.
         if self
             .func
             .reg_types
@@ -60,6 +61,9 @@ impl<'a> FnLowering<'a> {
         {
             if method == "indices" {
                 return self.lower_slice_indices(ctx, dest, recv, args);
+            }
+            if matches!(method, "__eq__" | "__ne__") {
+                return self.lower_slice_equality(ctx, dest, recv, args, method == "__ne__");
             }
             return Err(self.unsupported_reg(format!("slice descriptor method `{method}`"), dest));
         }
@@ -191,6 +195,12 @@ impl<'a> FnLowering<'a> {
         let mut lowered = vec![recv_value];
         if kwargs.is_empty() && args.len() == rest.len() && !self.variadic_callee(resolved) {
             for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
+                // A zero-sized argument (the `NoneType` operand of
+                // `Optional.__is__`) has no physical operand: the compiled
+                // signature erased its slot.
+                if matches!(expected, LowerTy::ZeroSized) {
+                    continue;
+                }
                 let owned = rest_owned.get(i).copied().unwrap_or(false);
                 let value = if rest_by_reference.get(i).copied().unwrap_or(false) {
                     // A `mut`/`ref` argument passes the address of the
@@ -299,7 +309,7 @@ impl<'a> FnLowering<'a> {
         let total = AddOp::new_with_overflow_flag(ctx, len, two, no_overflow_flags());
         self.append(ctx, total.get_operation(), Some(dest));
         let output = self.emit_alloc(ctx, total.get_result(ctx), 1, dest);
-        let quote = self.shared.intern_string(ctx, b"\"");
+        let quote = self.shared.intern_string(ctx, b"'");
         let quote = self.global_address(ctx, &quote, dest);
         let one = self.uint_constant(ctx, 1);
         self.mem_copy_dynamic(ctx, output, quote, one, dest);

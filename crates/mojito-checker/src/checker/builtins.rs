@@ -142,7 +142,8 @@ pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> 
 /// The operation trait a binary operator dispatches through, for both builtin
 /// scalars and user structs. `None` for operators that do not route this way:
 /// `and`/`or` (Bool short-circuit), `in`/`not in` (`__contains__` on the right
-/// operand), and `@`/matmul (no scalar meaning — struct dunder only).
+/// operand), `is`/`is not` (identity — `__is__`/`__isnot__` struct dunders
+/// only, no scalar meaning), and `@`/matmul (struct dunder only).
 pub(super) fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Option<&'static str> {
     use mojito_ast::ast::InfixOp::*;
     Some(match op {
@@ -160,7 +161,7 @@ pub(super) fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Option<&'st
         BitXor => "Xorable",
         Lt | Gt | Le | Ge => "Comparable",
         Eq | Ne => "Equatable",
-        MatMul | And | Or | In | NotIn => return None,
+        MatMul | And | Or | In | NotIn | Is | IsNot => return None,
     })
 }
 
@@ -712,7 +713,12 @@ impl Checker {
     /// conversion — `Int(x)` on `T: Intable`, `Float64(x)` on `T: Floatable`,
     /// `Bool(x)` on `T: Boolable` (`__int__`/`__float__`/`__bool__` run after
     /// type erasure).
-    pub(super) fn infer_conversion(&self, target: Ty, args: &[Expr]) -> Result<Ty, TypeError> {
+    pub(super) fn infer_conversion(
+        &self,
+        span: &SourceSpan,
+        target: Ty,
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
         if args.len() != 1 {
             return Err(TypeError::ArityMismatch {
                 name: target.to_string(),
@@ -734,6 +740,15 @@ impl Checker {
             && let Some(result) = self.struct_dunder(&arg_ty, dunder, &[])
         {
             require_dunder_ret(result?, expected, dunder)?;
+            // A raising conversion dunder (`String.__int__() raises`) makes
+            // the conversion a raising call.
+            if let Some((_, sig, _)) = self.struct_dunder_signature_for(&arg_ty, dunder, &[])
+                && sig.raises
+            {
+                let error = sig.error.as_deref().cloned().unwrap_or(Ty::Error);
+                self.record_call_effect(span.clone(), error.clone());
+                self.require_error(format!("call to raising conversion '{target}'"), error)?;
+            }
             return Ok(target);
         }
         let bounded = match target {

@@ -197,7 +197,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "slice.get",
         CapabilityStatus::Supported,
-        "raw bound descriptors through the nominal `__getitem__` contract; bound accesses materialize compiled `Optional`s and `indices` normalizes natively",
+        "raw bound descriptors through the nominal `__getitem__` contract; bound accesses materialize compiled `Optional`s, `indices` normalizes natively (two-element for `ContiguousSlice`), explicit `Slice(...)`/`slice(...)` construction builds the descriptor, `Slice.__eq__`/`__ne__` compare the raw words, and printing writes `Slice(start, end, step)`",
     ),
     (
         "index.multi",
@@ -268,6 +268,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "variant.replace",
         CapabilityStatus::Supported,
         "owning replacement returning the previous payload",
+    ),
+    (
+        "variant.hash",
+        CapabilityStatus::Supported,
+        "`__hash__` feeds the discriminant to the hasher, then dispatches the active alternative's hash under a tag switch",
     ),
     (
         "simd.make",

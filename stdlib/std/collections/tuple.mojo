@@ -2,6 +2,9 @@
 # aggregate: users see this nominal struct, while the private field gives the
 # compiler exact per-index storage and move tracking.
 
+from std.reflection.type_info import _unqualified_type_name
+
+
 struct Tuple[*Ts: Movable](
     Comparable where conforms_to(Ts.values, Comparable) and conforms_to(Ts.values, Equatable),
     Copyable where conforms_to(Ts.values, Copyable),
@@ -107,6 +110,17 @@ struct Tuple[*Ts: Movable](
             writer.write(self.storage[i])
         comptime if len(Ts) == 1:
             writer.write(",")
+        writer.write(")")
+
+    # Upstream's `Tuple[<element types>](<element reprs>)`.
+    def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
+        Ts.values, Writable
+    ):
+        writer.write(_unqualified_type_name[Self](), "(")
+        comptime for i in range(len(Ts)):
+            comptime if i > 0:
+                writer.write(", ")
+            writer.write(repr(self.storage[i]))
         writer.write(")")
 
     def consume_elements[

@@ -159,6 +159,7 @@ pub fn check_program_with_materialized_callables(
         checker.generic_instantiations.into_inner(),
         checker.call_transfers.into_inner(),
         checker.implicit_conversions.into_inner(),
+        checker.implicit_conversion_types.into_inner(),
         checker.conversion_source_borrows.into_inner(),
         checker.declaration_types.into_inner(),
         checker.generic_parameters.into_inner(),
@@ -403,6 +404,10 @@ pub struct Checker {
     /// abort the region itself.
     raise_observation_frames: RefCell<Vec<(usize, bool)>>,
     implicit_conversions: RefCell<HashMap<SourceSpan, String>>,
+    /// The converted-to type of each selected implicit conversion, so a
+    /// parameterized target (`Optional[Int]`) keeps its arguments at the
+    /// emit site rather than the constructor's bare struct name.
+    implicit_conversion_types: RefCell<HashMap<SourceSpan, Ty>>,
     /// Sites in `implicit_conversions` whose selected constructor borrows its
     /// single argument through a `ref [origin]` parameter: the conversion
     /// result borrows the source place (temporary-origin inference). The
@@ -585,6 +590,7 @@ impl Checker {
             transferred_origins: RefCell::new(HashMap::new()),
             raise_observation_frames: RefCell::new(Vec::new()),
             implicit_conversions: RefCell::new(HashMap::new()),
+            implicit_conversion_types: RefCell::new(HashMap::new()),
             conversion_source_borrows: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
@@ -1251,7 +1257,7 @@ impl Checker {
         let Some((target, source_borrow)) = self.implicit_conversion_target(from, to)? else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, target, source_borrow);
+        self.record_selected_conversion(expression, target, to, source_borrow);
         Ok(true)
     }
 
@@ -1262,6 +1268,7 @@ impl Checker {
         &self,
         expression: &Expr,
         target: String,
+        to: &Ty,
         source_borrow: Option<bool>,
     ) {
         let span = expression.source_span();
@@ -1270,6 +1277,9 @@ impl Checker {
                 .borrow_mut()
                 .insert(span.clone(), mutable);
         }
+        self.implicit_conversion_types
+            .borrow_mut()
+            .insert(span.clone(), to.clone());
         self.implicit_conversions.borrow_mut().insert(span, target);
     }
 
@@ -1317,7 +1327,7 @@ impl Checker {
         let Some((target, source_borrow)) = self.implicit_conversion_target(from, to)? else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, target, source_borrow);
+        self.record_selected_conversion(expression, target, to, source_borrow);
         Ok(true)
     }
 

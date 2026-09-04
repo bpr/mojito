@@ -67,6 +67,12 @@ impl<'a> FnLowering<'a> {
                 && !rest_by_reference.iter().any(|&by_ref| by_ref)
             {
                 for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
+                    // A zero-sized argument (the `NoneType` of an `@implicit`
+                    // `Optional.__init__(out self, value: NoneType)`) has no
+                    // physical operand: the compiled signature erased its slot.
+                    if matches!(expected, LowerTy::ZeroSized) {
+                        continue;
+                    }
                     let owned = rest_owned.get(i).copied().unwrap_or(false);
                     lowered.push(self.arg_value(ctx, *arg, expected, owned, dest)?);
                 }

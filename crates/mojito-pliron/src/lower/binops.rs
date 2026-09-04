@@ -15,6 +15,19 @@ impl<'a> FnLowering<'a> {
         if let Some(target) = resolved {
             return Err(self.unsupported_reg(format!("nominal operator overload `{target}`"), dest));
         }
+        // Variant equality: same tag, then the active alternative's equality
+        // (the VM's `apply_binop` Variant arm).
+        if matches!(op, InfixOp::Eq | InfixOp::Ne)
+            && matches!(
+                self.func.reg_types.get(&a.0).map(|ty| match ty {
+                    Ty::Ref(reference) => &reference.referent,
+                    other => other,
+                }),
+                Some(Ty::Variant(_))
+            )
+        {
+            return self.lower_variant_equality(ctx, dest, a, b, matches!(op, InfixOp::Ne));
+        }
         if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&a.0).cloned()
             && width > 1
         {

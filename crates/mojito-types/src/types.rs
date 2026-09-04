@@ -401,6 +401,76 @@ pub fn tuple_type(elements: Vec<Ty>) -> Ty {
     nominal_type(TUPLE_TYPE_NAME, elements)
 }
 
+/// Current Mojo's unqualified type-name spelling (`_unqualified_type_name`)
+/// for the proof subset: the scalar aliases spell through their `SIMD`
+/// identity (`Int` is `SIMD[DType.int, 1]`), nominal structs drop their
+/// module qualification, and applied arguments are spelled recursively.
+pub fn unqualified_type_name(ty: &Ty) -> String {
+    match ty {
+        Ty::Int | Ty::IntLiteral => "SIMD[DType.int, 1]".to_string(),
+        Ty::UInt => "SIMD[DType.uint, 1]".to_string(),
+        Ty::Float64 | Ty::FloatLiteral => "SIMD[DType.float64, 1]".to_string(),
+        Ty::Bool => "Bool".to_string(),
+        Ty::Simd { dtype, width } => format!("SIMD[DType.{}, {}]", dtype.name(), width),
+        Ty::StringLiteral => "StringLiteral".to_string(),
+        Ty::None => "NoneType".to_string(),
+        Ty::Struct(name, args) => {
+            // A public tuple's specialization symbol encodes its elements;
+            // spell it as upstream's `Tuple[...]`.
+            if let Some(elements) = tuple_elements(ty) {
+                let elements = elements
+                    .into_iter()
+                    .map(unqualified_type_name)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return format!("Tuple[{elements}]");
+            }
+            let base = name
+                .strip_prefix("__module$")
+                .map(|rest| rest.rsplit('$').next().unwrap_or(rest))
+                .unwrap_or(name.as_str());
+            // A specialization suffix (`Name$...`) is never part of the name.
+            let base = base.split('$').next().unwrap_or(base);
+            if args.is_empty() {
+                base.to_string()
+            } else {
+                let arguments = args
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => unqualified_type_name(ty),
+                        // A bound type pack (`TypeNames[Int, String]`) spells
+                        // its element types.
+                        TyArg::Val(CtValue::Tuple(values))
+                            if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
+                        {
+                            values
+                                .iter()
+                                .map(|value| match value {
+                                    CtValue::Type(ty) => unqualified_type_name(ty),
+                                    other => other.to_string(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                        other => other.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{base}[{arguments}]")
+            }
+        }
+        Ty::Variant(alternatives) => format!(
+            "Variant[{}]",
+            alternatives
+                .iter()
+                .map(unqualified_type_name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => other.to_string(),
+    }
+}
+
 pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
@@ -1046,6 +1116,18 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (Ty::Struct(from, from_args), Ty::Struct(to, to_args))
             if matches!(from.as_str(), "ContiguousSlice" | "StridedSlice")
                 && to == "Slice"
+                && from_args.is_empty()
+                && to_args.is_empty() =>
+        {
+            true
+        }
+        // The checked analogue of upstream's `@implicit StridedSlice(other:
+        // Slice)`: a `Slice`-typed descriptor value selects the strided
+        // (normalizing) overloads. A contiguous literal does not widen this
+        // way, matching upstream where `[a:b]` never builds a `StridedSlice`.
+        (Ty::Struct(from, from_args), Ty::Struct(to, to_args))
+            if from == "Slice"
+                && to == "StridedSlice"
                 && from_args.is_empty()
                 && to_args.is_empty() =>
         {

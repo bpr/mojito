@@ -148,12 +148,16 @@ impl Flatten<'_> {
             // or its sources are dropped before the consuming call runs. Bare
             // reference/pointer handles stay unanchored: a `LoadPlace` read
             // out of the hidden slot would dereference the handle.
-            // Scope: only a plain `Call` temporary in a plain function call's
-            // argument list anchors (see `allow_argument_anchors`) — every
-            // other consumer carries the temporary's loans through its own
-            // channel, and an extra anchor is a conflicting duplicate borrow.
+            // Scope: only a plain `Call` or method-call temporary (a view
+            // result such as `s.strip()`) in a call's argument list anchors
+            // (see `allow_argument_anchors`) — every other consumer carries
+            // the temporary's loans through its own channel, and an extra
+            // anchor is a conflicting duplicate borrow.
             if self.allow_argument_anchors
-                && matches!(expression.kind, ExprKind::Call { .. })
+                && matches!(
+                    expression.kind,
+                    ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                )
                 && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
             {
                 let loans = self.aggregate_borrows(expression);

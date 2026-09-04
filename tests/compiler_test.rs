@@ -281,7 +281,10 @@ fn variant_protocols_are_conditioned_on_every_alternative() {
     let execution = compiler
         .execute(&program)
         .expect("execute conditional Variant protocols");
-    assert_eq!(execution.output, "True False\nstyled=4 Styled[4]\nTrue\n");
+    assert_eq!(
+        execution.output,
+        "True False\nstyled=4 Variant[Styled, SIMD[DType.int, 1]](Styled[4])\nTrue\n"
+    );
 
     for (name, body, expected_trait) in [
         ("hash", "print(hash(value))", "Hashable"),

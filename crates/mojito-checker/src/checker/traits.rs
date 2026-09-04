@@ -1584,6 +1584,17 @@ impl Checker {
                             .all(|element| self.conforms_to(element, tr));
                     }
                     match ty {
+                        // The intrinsic slice descriptors write as
+                        // `Slice(start, end, step)` (upstream's `Writable`).
+                        Ty::Struct(name, args)
+                            if args.is_empty()
+                                && matches!(
+                                    name.as_str(),
+                                    "Slice" | "ContiguousSlice" | "StridedSlice"
+                                ) =>
+                        {
+                            true
+                        }
                         Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
                         Ty::Variant(alternatives) => alternatives
                             .iter()

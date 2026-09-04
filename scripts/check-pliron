@@ -22,6 +22,15 @@ cargo clippy --features backend-pliron --all-targets -- -D warnings
 echo "==> cargo clippy -p mojito-pliron --all-targets -- -D warnings"
 cargo clippy -p mojito-pliron --all-targets -- -D warnings
 
+# The pliron integration tests spawn the CLI through CARGO_BIN_EXE_mojito.
+# Link the featured binary first: cargo does not re-uplift a fresh featured
+# bin over a newer default-lane build of the same path, so a session that
+# ended on `cargo build` would otherwise hand these tests a binary that
+# "lacks the backend-pliron feature".
+echo "==> cargo build --features backend-pliron (CLI for the spawning tests)"
+touch src/main.rs
+cargo build --quiet --features backend-pliron
+
 echo "==> cargo nextest run --features backend-pliron (pliron tests)"
 # --no-fail-fast: report every failure in one gate run. binary(pliron_*)
 # catches every pliron integration target as slices add them.

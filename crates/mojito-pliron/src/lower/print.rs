@@ -153,45 +153,9 @@ impl<'a> FnLowering<'a> {
         };
         let place = place.clone();
         let hasher_ptr = self.place_address(ctx, &place, dest)?.0;
-        let unique_instance =
-            |this: &Self, prefix: &str, by_hasher: bool| -> Result<String, PlironError> {
-                // The nominal String's symbols are module-qualified; a
-                // `String.` prefix matches the owner segment of the symbol
-                // rather than its literal spelling.
-                let matches_prefix = |fname: &str| {
-                    if let Some(method) = prefix.strip_prefix("String.") {
-                        fname.rsplit_once(method).is_some_and(|(owner, rest)| {
-                            owner.ends_with('.')
-                                && owner[..owner.len() - 1]
-                                    .rsplit('$')
-                                    .next()
-                                    .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct)
-                                && (rest.is_empty() || rest.starts_with('$'))
-                        })
-                    } else {
-                        fname.starts_with(prefix)
-                    }
-                };
-                let mut candidates = this.signatures.iter().filter(|(fname, signature)| {
-                    matches_prefix(fname)
-                        && (!by_hasher
-                            || matches!(signature.params.get(1), Some(LowerTy::Aggregate { ty, .. })
-                            if matches!(&**ty, Ty::Struct(name, _) if *name == hasher_name)))
-                });
-                let Some((name, _)) = candidates.next() else {
-                    return Err(this.unsupported_reg(
-                        format!("hashing without a compiled `{prefix}` instance"),
-                        dest,
-                    ));
-                };
-                if candidates.next().is_some() {
-                    return Err(this.unsupported_reg(
-                        format!("hashing with ambiguous `{prefix}` instances"),
-                        dest,
-                    ));
-                }
-                Ok(name.clone())
-            };
+        let unique_instance = |this: &Self, prefix: &str, by_hasher: bool| {
+            this.unique_hash_instance(dest, &hasher_name, prefix, by_hasher)
+        };
         let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
         let bits = match receiver {
             Ty::StringLiteral => {
@@ -233,7 +197,7 @@ impl<'a> FnLowering<'a> {
                 return Ok(());
             }
             Ty::Variant(_) => {
-                return Err(self.unsupported_reg("Variant `__hash__` dispatch".into(), dest));
+                return self.lower_hash_variant(ctx, dest, recv, hasher, hasher_place);
             }
             Ty::Int => self.reg_value(ctx, recv, ScalarTy::Int)?,
             Ty::UInt => self.reg_value(ctx, recv, ScalarTy::UInt)?,
@@ -285,6 +249,197 @@ impl<'a> FnLowering<'a> {
         };
         let target = unique_instance(self, &format!("{hasher_name}._update_with_simd"), false)?;
         self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, bits])
+    }
+
+    /// The unique compiled instance whose symbol starts with `prefix` (a
+    /// `String.` prefix matches the module-qualified nominal String owner);
+    /// with `by_hasher` the instance's second parameter must be the hasher.
+    pub(super) fn unique_hash_instance(
+        &self,
+        dest: Reg,
+        hasher_name: &str,
+        prefix: &str,
+        by_hasher: bool,
+    ) -> Result<String, PlironError> {
+        let matches_prefix = |fname: &str| {
+            if let Some(method) = prefix.strip_prefix("String.") {
+                fname.rsplit_once(method).is_some_and(|(owner, rest)| {
+                    owner.ends_with('.')
+                        && owner[..owner.len() - 1]
+                            .rsplit('$')
+                            .next()
+                            .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct)
+                        && (rest.is_empty() || rest.starts_with('$'))
+                })
+            } else {
+                fname.starts_with(prefix)
+            }
+        };
+        let mut candidates = self.signatures.iter().filter(|(fname, signature)| {
+            matches_prefix(fname)
+                && (!by_hasher
+                    || matches!(signature.params.get(1), Some(LowerTy::Aggregate { ty, .. })
+                    if matches!(&**ty, Ty::Struct(name, _) if *name == hasher_name)))
+        });
+        let Some((name, _)) = candidates.next() else {
+            return Err(self.unsupported_reg(
+                format!("hashing without a compiled `{prefix}` instance"),
+                dest,
+            ));
+        };
+        if candidates.next().is_some() {
+            return Err(
+                self.unsupported_reg(format!("hashing with ambiguous `{prefix}` instances"), dest)
+            );
+        }
+        Ok(name.clone())
+    }
+
+    /// `Variant.__hash__`: feed the discriminant to the hasher as a `UInt64`
+    /// lane (the VM's `_update_with_simd` contract), then hash the active
+    /// alternative under a tag switch — nominal alternatives through their
+    /// compiled `__hash__` instance bound to this hasher, scalar alternatives
+    /// through the leaf normalization.
+    pub(super) fn lower_hash_variant(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        hasher: Reg,
+        hasher_place: Option<&MirPlace>,
+    ) -> Result<(), PlironError> {
+        let Some(Ty::Struct(hasher_name, _)) = self.func.reg_types.get(&hasher.0).cloned() else {
+            return Err(self.unsupported_reg("`__hash__` without a nominal hasher".into(), dest));
+        };
+        let Some(place) = hasher_place else {
+            return Err(self.unsupported_reg(
+                "`__hash__` hasher argument without a mutable place".into(),
+                dest,
+            ));
+        };
+        let place = place.clone();
+        let hasher_ptr = self.place_address(ctx, &place, dest)?.0;
+        let (ptr, alternatives, layout) = self.variant_parts(ctx, recv, dest)?;
+        let update = self.unique_hash_instance(
+            dest,
+            &hasher_name,
+            &format!("{hasher_name}._update_with_simd"),
+            false,
+        )?;
+        let tag_handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let tag = LoadOp::new(ctx, ptr, tag_handle);
+        self.append(ctx, tag.get_operation(), Some(dest));
+        let wide_tag = ZExtOp::new_with_nneg(ctx, tag.get_result(ctx), i64_handle, false);
+        self.append(ctx, wide_tag.get_operation(), Some(dest));
+        self.emit_bound_call(
+            ctx,
+            dest,
+            &update,
+            vec![hasher_ptr, wide_tag.get_result(ctx)],
+        )?;
+        let payload_address = self.offset_address(ctx, ptr, layout.payload_offset);
+        let region = self.region.expect("Variant hash is inside a function");
+        let continuation = BasicBlock::new(ctx, None, vec![]);
+        continuation.insert_at_back(region, ctx);
+        let mut next = self.current.expect("Variant hash has a current block");
+        for (index, alternative) in alternatives.iter().enumerate() {
+            self.current = Some(next);
+            let hash_block = BasicBlock::new(ctx, None, vec![]);
+            hash_block.insert_at_back(region, ctx);
+            let rest = BasicBlock::new(ctx, None, vec![]);
+            rest.insert_at_back(region, ctx);
+            let expected = self.tag_constant(ctx, index as u32);
+            let matches = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), expected);
+            self.append(ctx, matches.get_operation(), Some(dest));
+            let branch = CondBrOp::new(
+                ctx,
+                matches.get_result(ctx),
+                hash_block,
+                vec![],
+                rest,
+                vec![],
+            );
+            self.append(ctx, branch.get_operation(), Some(dest));
+            self.current = Some(hash_block);
+            match alternative {
+                Ty::Struct(name, _) => {
+                    // The nominal String's instances are matched by owner
+                    // segment (`String.` prefix), like the literal leaf.
+                    let prefix = if mojito_symbol::symbol::is_stdlib_string_struct(name) {
+                        "String.__hash__".to_string()
+                    } else {
+                        format!("{name}.__hash__")
+                    };
+                    let target = self.unique_hash_instance(dest, &hasher_name, &prefix, true)?;
+                    self.emit_bound_call(ctx, dest, &target, vec![payload_address, hasher_ptr])?;
+                }
+                scalar => {
+                    // Load the scalar payload and normalize it exactly like
+                    // the leaf: the unsigned bit pattern zero-extended to i64.
+                    let LowerTy::Scalar(kind) =
+                        lower_ty(self.name, scalar, &self.layout, self.reg_span(dest))?
+                    else {
+                        return Err(self.unsupported_reg(
+                            format!("hashing a `{scalar}` Variant alternative"),
+                            dest,
+                        ));
+                    };
+                    let handle = kind.handle(ctx);
+                    let load = LoadOp::new(ctx, payload_address, handle);
+                    self.append(ctx, load.get_operation(), Some(dest));
+                    let bits = self.hash_bits_of_scalar(ctx, load.get_result(ctx), kind, dest)?;
+                    self.emit_bound_call(ctx, dest, &update, vec![hasher_ptr, bits])?;
+                }
+            }
+            let jump = BrOp::new(ctx, continuation, vec![]);
+            self.append(ctx, jump.get_operation(), Some(dest));
+            next = rest;
+        }
+        self.current = Some(next);
+        let jump = BrOp::new(ctx, continuation, vec![]);
+        self.append(ctx, jump.get_operation(), Some(dest));
+        self.current = Some(continuation);
+        self.erased.insert(dest.0);
+        Ok(())
+    }
+
+    /// The hasher lane for an already-loaded scalar: integers zero-extend to
+    /// i64, floats fold `-0.0` and take their IEEE bits, `Bool` widens.
+    fn hash_bits_of_scalar(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        kind: ScalarTy,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        Ok(match kind {
+            ScalarTy::Int => value,
+            ScalarTy::Bool => {
+                let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
+                self.append(ctx, cast.get_operation(), Some(dest));
+                cast.get_result(ctx)
+            }
+            ScalarTy::Float64 => self.folded_float_bits(ctx, value, ScalarTy::Float64, dest),
+            ScalarTy::Sized(Dtype::Float32) => {
+                self.folded_float_bits(ctx, value, ScalarTy::Sized(Dtype::Float32), dest)
+            }
+            ScalarTy::Sized(sized) => {
+                let (bits, _) =
+                    mojito_vm::runtime::integer_dtype_bits(sized).expect("sized integer lane");
+                if bits == 64 {
+                    value
+                } else {
+                    let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
+                    self.append(ctx, cast.get_operation(), Some(dest));
+                    cast.get_result(ctx)
+                }
+            }
+            ScalarTy::UInt | ScalarTy::Ptr => {
+                return Err(self.unsupported_reg("hashing a `UInt`/pointer leaf".into(), dest));
+            }
+        })
     }
 
     /// The IEEE bit pattern of a float leaf zero-extended to i64, with
@@ -446,6 +601,18 @@ impl<'a> FnLowering<'a> {
             self.write_literal_bytes(ctx, b"None", dest);
             return Ok(());
         }
+        // A slice descriptor writes as `Slice(start, end, step)` with `None`
+        // for an absent bound (upstream's `Slice.write_to`; the contiguous and
+        // strided kinds delegate to it).
+        if self
+            .func
+            .reg_types
+            .get(&arg.0)
+            .and_then(slice_struct_name)
+            .is_some()
+        {
+            return self.print_slice_descriptor(ctx, arg, dest);
+        }
         // A nominal struct displays through its `write_to` conformance over
         // the builtin-string accumulator — the VM's `format_value` dispatch.
         if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
@@ -597,6 +764,50 @@ impl<'a> FnLowering<'a> {
         );
         self.append(ctx, call.get_operation(), Some(dest));
         Ok((scratch, call.get_result(ctx)))
+    }
+
+    /// `Slice(start, end, step)`: each raw bound word prints as an Int when
+    /// its presence bit is set and as `None` otherwise (selected without
+    /// branching: the Int text is formatted into the scratch buffer either
+    /// way, then the `(data, len)` pair is chosen).
+    fn print_slice_descriptor(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let descriptor = self.reg_ptr(ctx, arg)?;
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let none_global = self.shared.intern_string(ctx, b"None");
+        self.write_literal_bytes(ctx, b"Slice(", dest);
+        for (index, (offset, bit)) in [(0u64, 1i64), (8, 2), (16, 4)].into_iter().enumerate() {
+            if index > 0 {
+                self.write_literal_bytes(ctx, b", ", dest);
+            }
+            let address = self.offset_address(ctx, descriptor, offset);
+            let word = LoadOp::new(ctx, address, i64_handle);
+            self.append(ctx, word.get_operation(), Some(dest));
+            let flags_address = self.offset_address(ctx, descriptor, 24);
+            let flags = LoadOp::new(ctx, flags_address, i64_handle);
+            self.append(ctx, flags.get_operation(), Some(dest));
+            let mask = self.int_constant(ctx, bit);
+            let masked = AndOp::new(ctx, flags.get_result(ctx), mask);
+            self.append(ctx, masked.get_operation(), Some(dest));
+            let zero = self.int_constant(ctx, 0);
+            let is_set = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
+            self.append(ctx, is_set.get_operation(), Some(dest));
+            let (int_data, int_len) =
+                self.format_scalar(ctx, ScalarTy::Int, word.get_result(ctx), dest)?;
+            let none_data = self.global_address(ctx, &none_global, dest);
+            let none_len = self.uint_constant(ctx, 4);
+            let data = SelectOp::new(ctx, is_set.get_result(ctx), int_data, none_data);
+            self.append(ctx, data.get_operation(), Some(dest));
+            let len = SelectOp::new(ctx, is_set.get_result(ctx), int_len, none_len);
+            self.append(ctx, len.get_operation(), Some(dest));
+            self.write_stdout(ctx, data.get_result(ctx), len.get_result(ctx), dest);
+        }
+        self.write_literal_bytes(ctx, b")", dest);
+        Ok(())
     }
 
     /// Intern `bytes` and write them to stdout.

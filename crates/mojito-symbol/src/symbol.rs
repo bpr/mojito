@@ -747,6 +747,22 @@ fn ast_raw(
             let width = param_arg_width(&args[1], comptimes).expect("guard established a width");
             simd_annotation_raw(dtype, width)
         }
+        // Mirror `ty_raw`: every pointer annotation (`UnsafePointer[T]`,
+        // `Pointer[T, origin]`) mangles as `UnsafePointer$<element>` — the
+        // origin argument erases from the runtime ABI, so a call site's
+        // `Ty::Pointer` key and the declaration agree.
+        Type::Named(name, args)
+            if (name == "Pointer" || name == "UnsafePointer")
+                && matches!(args.first(), Some(ParamArg::Type(_))) =>
+        {
+            let Some(ParamArg::Type(element)) = args.first() else {
+                unreachable!("guard established a type argument");
+            };
+            format!(
+                "UnsafePointer${}",
+                ast_raw(element, comptimes, type_bounds, self_spelling)
+            )
+        }
         Type::Named(name, args) => {
             let mut s = parameter_raw(name, type_bounds);
             for arg in args {

@@ -53,6 +53,8 @@ impl Decoder {
             "or" => InfixOp::Or,
             "in" => InfixOp::In,
             "not_in" => InfixOp::NotIn,
+            "is" => InfixOp::Is,
+            "is_not" => InfixOp::IsNot,
             other => {
                 self.error(value.span, format!("unknown binary operator `{other}`"));
                 return None;

@@ -604,7 +604,7 @@ fn self_hosted_string_grapheme_segmentation() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def main() raises:\n    var accent = String(\"e\\u0301\")\n    print(accent.codepoint_count(), accent.grapheme_count(), accent[grapheme=0])\n    var jamo = String(\"\\u1112\\u1161\\u11ab\")\n    print(jamo.codepoint_count(), jamo.grapheme_count(), jamo[grapheme=0])\n    var flags = String(\"\\U0001f1fa\\U0001f1f8\\U0001f1eb\\U0001f1f7\")\n    print(flags.grapheme_count(), flags[grapheme=1])\n    var family = String(\"\\U0001f468\\u200d\\U0001f469\\u200d\\U0001f467\")\n    print(family.grapheme_count(), family[grapheme=0])\n    var thumb = String(\"\\U0001f44d\\U0001f3fd\")\n    print(thumb.grapheme_count())\n    var crlf = String(\"a\\r\\nb\")\n    print(crlf.grapheme_count())\n    print(String(\"\").grapheme_count())\n",
+        "def main() raises:\n    var accent = String(\"e\\u0301\")\n    print(accent.count_codepoints(), accent.count_graphemes(), accent[grapheme=0])\n    var jamo = String(\"\\u1112\\u1161\\u11ab\")\n    print(jamo.count_codepoints(), jamo.count_graphemes(), jamo[grapheme=0])\n    var flags = String(\"\\U0001f1fa\\U0001f1f8\\U0001f1eb\\U0001f1f7\")\n    print(flags.count_graphemes(), flags[grapheme=1])\n    var family = String(\"\\U0001f468\\u200d\\U0001f469\\u200d\\U0001f467\")\n    print(family.count_graphemes(), family[grapheme=0])\n    var thumb = String(\"\\U0001f44d\\U0001f3fd\")\n    print(thumb.count_graphemes())\n    var crlf = String(\"a\\r\\nb\")\n    print(crlf.count_graphemes())\n    print(String(\"\").count_graphemes())\n",
     );
     assert_eq!(
         run_compiled(&main).unwrap(),

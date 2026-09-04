@@ -15,7 +15,7 @@ def main() raises:
     print(sub)
     var t = String("héllo🙂")
     var sp = StringSpan(t)
-    print(len(sp), sp.grapheme_count(), sp.codepoint_count())
+    print(len(sp), sp.count_graphemes(), sp.count_codepoints())
     var g = sp[grapheme=5:6]
     print(g, len(g))
     var head = sp[codepoint=:2]

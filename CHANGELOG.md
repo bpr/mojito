@@ -8,6 +8,153 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Repr vocabulary: the compile-time `_unqualified_type_name[T]()` intrinsic
+  (`std.reflection.type_info`; the checker folds each resolution to current
+  Mojo's unqualified spelling, `SIMD[DType.int, 1]`, `Optional[String]`, a
+  struct's bare name, and MIR carries it as a string constant),
+  `TypeNames[*Ts]()` in `std.format._utils`, and `write_repr_to` on `Tuple`
+  (`case:repr-type-names`, `case:repr-vocabulary`).
+
+### Changed
+
+- `repr` now writes upstream's texts: `Int(7)`/`UInt(7)`/`Float64(2.5)` for
+  scalars, single-quoted Strings with backslash escapes (`'it\\'s'`,
+  `'a\\nb'`), `Slice(start=1, end=4, step=None)` for slice descriptors, and
+  `Tuple[<element types>](<element reprs>)` for tuples; the native `repr`
+  of a String single-quotes as well.
+
+- String result APIs, batch 3: `as_bytes` (a borrowed `Span[Byte]`; `Span`
+  gained upstream's pointer-backed `Span(unsafe_ptr=, length=)` constructor,
+  which `StringSpan.__hash__` now uses instead of copying into a
+  `List[Byte]`), `unsafe_ptr`, `capacity_bytes`, `resize(length, fill_byte)`,
+  `append(codepoint)`, the raising `__int__`/`__float__` (so `Int(s)` /
+  `Float64(s)` are raising calls the checker gates), the prelude free
+  functions `atol(str, base=10)`/`atof(str)` with upstream's parsing rules and
+  error texts, and the `codepoints()`/`codepoint_slices()`/`graphemes()`
+  iterators (`case:string-bytes-span`, `case:string-parse`,
+  `case:string-parse-errors`, `case:string-codepoint-iter`).
+
+### Fixed
+
+- An operator dunder's `where` availability clause (`__eq__ ... where
+  conforms_to(Self.T, Equatable)`) is now judged in the operator path as a
+  method call judges it: `Optional[Opaque] == Optional[Opaque]` and the same
+  shape on a user struct reject as "operator '==' is not defined for …"
+  instead of failing at runtime.
+- A consuming-receiver copy (`bare.reverse()` on an implicitly copyable
+  public tuple bound as `var bare = 4, "four"`) takes the receiver place's
+  exact type; the binding keeps a literal element where the checked
+  expression type defaults it, and the verifier compares the two for
+  equality.
+- Native: a raising function's propagation block freed the heap buffers of
+  its *borrowed* heap-owning parameters (parameters arrive flagged as
+  initialized), so the caller's `String` was freed by the callee's raise and
+  again by the caller (`case:raise-borrowed-string-parameter`); only owned
+  parameters release there now.
+- Overload symbols: a `Pointer[T, origin]`/`UnsafePointer[T]` parameter
+  annotation now mangles like the call side's `Ty::Pointer` (origins erase),
+  so same-arity overloads that differ by a pointer parameter resolve.
+
+- String result APIs, batch 2 (pure library code): `upper`/`lower` over a
+  simple-case subset (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic;
+  `ß` uppercases to `SS`), `isupper`/`islower`, `isspace`, `is_ascii_digit`,
+  `is_ascii_printable`, byte-width `ascii_rjust`/`ascii_ljust`/`ascii_center`
+  (a multi-byte fill character aborts), and `Codepoint`'s
+  `is_ascii_digit`/`is_ascii_upper`/`is_ascii_lower`/`is_ascii_printable`/
+  `is_posix_space`/`is_python_space` (`case:string-case-predicates`,
+  `case:string-predicates`, `case:string-justify`,
+  `case:codepoint-predicates`). The native backend lowers a `String`
+  parameter's literal default (`fillchar: String = " "`): a borrowed slot
+  reads a global-backed descriptor, an owned slot receives a heap copy.
+
+### Changed
+
+- `codepoint_count()`/`grapheme_count()` are spelled `count_codepoints()`/
+  `count_graphemes()` on `String` and `StringSpan`, matching upstream; the
+  old spellings are gone.
+
+- String result APIs, batch 1 (upstream signatures, pure library code):
+  `find`/`rfind(substr, start=0)`, `count`, `startswith`/`endswith(affix,
+  start=0, end=-1)`, `replace`, `join[T: Copyable & Writable](elems: Span[T,
+  _])` (a `List[T]` argument now solves `T` — the checked analogue of Span's
+  implicit List constructor), `split(sep, maxsplit=-1)` (the empty separator
+  yields upstream's `['', <codepoints>..., '']` instead of raising),
+  whitespace `split(maxsplit=-1)`, `splitlines(keepends)`, `Boolable`,
+  `__mul__`, String as a `Writer` (`s.write(a, b, …)`), and the borrowed-view
+  strip family (`strip`/`lstrip`/`rstrip` with the POSIX-space default or a
+  codepoint set, `removeprefix`/`removesuffix`) on both `String` and
+  `StringSpan`. `StringSpan` is prelude-visible, `Boolable`, `Equatable`
+  against another view or an owned `String`, and supports `in`
+  (`case:string-replace-join-strip`, `case:string-join`,
+  `case:string-strip-views`, `case:string-search-extras`,
+  `case:string-split-forms`, `case:string-bool-mul`,
+  `case:string-span-equality`).
+- Operator dunders overloaded at the same arity (`StringSpan.__eq__(rhs:
+  Self)` beside `__eq__(rhs: String)`): the infix operator selects the
+  overload by the right operand's type (by value coercion, then through an
+  `@implicit` conversion of the operand, as a call argument would convert) and
+  records the exact lowered symbol, which the VM and the native backend
+  dispatch directly.
+
+### Fixed
+
+- A borrowing-view temporary returned by a method call and passed as a call
+  argument (`print(s.strip())` as the source's last use) kept its source alive
+  only for plain-function-call temporaries; method-call temporaries now anchor
+  the same hidden slot, so the source is no longer dropped before the
+  consuming call.
+
+- `Variant` gap-fill inside the intrinsic design: upstream's `init_with=`
+  placement constructor (a zero-parameter factory selects the alternative by
+  its result type; `Movable where False` alternatives construct), the
+  method-spelled projection `unsafe_get[T]()`, `is_type_supported[T]()` on the
+  parameterized type itself, and `repr(v)` in upstream's
+  `Variant[<alternatives>](<payload>)` frame with the alternatives spelled as
+  current Mojo's unqualified type names. Native parity: Variant `__hash__`
+  (discriminant, then a tag switch over each alternative's hash) and Variant
+  `==`/`!=` (tag, then the active payload's equality) now lower through
+  pliron, with monomorphization and reachability enqueuing every nominal
+  alternative's `__hash__`/`__eq__` instance, so Variants serve as native Dict
+  keys; the VM compares nominal payloads through their `__eq__` instead of
+  rejecting (`case:variant-init-with`, `case:variant-unsafe-get`,
+  `case:variant-hash-key`).
+- The `is` / `is not` comparison operators (current Mojo syntax): `is` is a
+  keyword token, `is not` is one two-word operator at comparison precedence
+  (`not x is None` reads as `not (x is None)`), and both dispatch to the left
+  operand's `__is__` / `__isnot__` like every other struct dunder — scalars
+  and structs without `__is__` reject. `Optional` gains upstream's
+  `__is__`/`__isnot__(self, other: NoneType)`, so `opt is None` works on
+  both backends (the native method-call path now skips the zero-sized
+  `NoneType` operand) (`case:optional-is-none`).
+- `Optional[T]` value protocols matching upstream: declared `Boolable` and
+  `Defaultable`, conditional `Equatable` (`__eq__`/`__ne__`), `Hashable`
+  (a `UInt8` presence tag then the payload, so Optionals serve as Dict keys),
+  and `Writable` (payload text or `None`); upstream's `@implicit` value
+  constructor (`var x: Optional[Int] = 5`); the consuming
+  `or_else(deinit self, var default)`; and `unsafe_value`, `unsafe_take`,
+  `bounds`. Compiler changes that surfaced with it: an `@implicit`
+  constructor may take its argument by `var`; a `deinit self` call whose
+  `ImplicitlyCopyable` receiver is implicitly copied now runs the copy
+  lifecycle into a temporary instead of sharing the original's storage;
+  an implicit conversion's result register carries the converted-to type
+  with its arguments (`Optional[Int]`, not bare `Optional`); `table[None]`
+  over a value base parses as a subscript rather than a parameter
+  application; and pliron skips zero-sized (`NoneType`) constructor
+  arguments and marks direct compiled-constructor results as owned
+  temporaries (`case:optional-value-protocols`, `case:optional-dict-keys`).
+- Slice descriptor protocols: `Slice` is `Equatable` (`==`/`!=` over the
+  three bounds; `ContiguousSlice`/`StridedSlice` stay non-comparable like
+  upstream), every descriptor kind prints as `Slice(start, end, step)` with
+  `None` for an omitted bound, `ContiguousSlice.indices(length)` returns
+  upstream's two-element `(start, end)`, and explicit `Slice(...)`/`slice(...)`
+  construction now lowers natively. List's normalizing slice overload is
+  spelled `StridedSlice`, which a `Slice`-typed descriptor value selects
+  through the new `Slice -> StridedSlice` widening (closing the recorded
+  normalizing-overload residue). `std.builtin.builtin_slice` gained a
+  docstring-only module home exporting the descriptor names, so upstream's
+  import spelling resolves — the `slice-implicit-conversion-rejected` case had
+  been rejecting only because the module failed to load
+  (`case:slice-descriptor-protocols`, `case:contiguous-slice-not-equatable`).
 - `Tuple` is `Hashable` when every element is (hasher-protocol `__hash__`
   feeding the elements in order, matching upstream) and declares `Sized`;
   tuples now serve as `Dict` keys and `Set` elements, `__contains__` takes

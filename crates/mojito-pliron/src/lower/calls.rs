@@ -47,6 +47,19 @@ impl<'a> FnLowering<'a> {
             if name == "Error" {
                 return self.lower_error_builtin(ctx, dest, args, kwargs);
             }
+            // Explicit `Slice(...)`/`slice(...)` descriptor construction (the
+            // VM's intrinsic constructor; literals arrive as `MakeSlice`).
+            if matches!(name, "Slice" | "slice")
+                && kwargs.is_empty()
+                && self
+                    .func
+                    .reg_types
+                    .get(&dest.0)
+                    .and_then(slice_struct_name)
+                    .is_some()
+            {
+                return self.lower_slice_constructor(ctx, dest, name, args);
+            }
             if self.struct_decls.contains_key(name) {
                 return self.lower_constructor(
                     ctx,
@@ -118,7 +131,7 @@ impl<'a> FnLowering<'a> {
             && let Some(struct_ty @ Ty::Struct(..)) = self.func.reg_types.get(&dest.0).cloned()
         {
             let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
-            let LowerTy::Aggregate { layout, .. } = lowered else {
+            let LowerTy::Aggregate { ty, layout } = lowered else {
                 return Err(self.unsupported_reg(format!("constructor result `{struct_ty}`"), dest));
             };
             let storage = self.entry_alloca(ctx, layout.size, layout.align);
@@ -140,6 +153,12 @@ impl<'a> FnLowering<'a> {
                 && !self.variadic_callee(name)
             {
                 for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
+                    // A zero-sized argument (the `NoneType` of the `@implicit`
+                    // `Optional.__init__(out self, value: NoneType)`) has no
+                    // physical operand: the compiled signature erased its slot.
+                    if matches!(expected, LowerTy::ZeroSized) {
+                        continue;
+                    }
                     let owned = rest_owned.get(i).copied().unwrap_or(false);
                     lowered.push(self.place_backed_arg_value(
                         ctx,
@@ -169,6 +188,19 @@ impl<'a> FnLowering<'a> {
             // storage its `out self` wrote through.
             self.erased.remove(&dest.0);
             self.reg_values.insert(dest.0, storage);
+            // As in the struct-name constructor path: the constructed value
+            // owns its heap, so consumers relocate it (a `var` parameter, a
+            // store) and a discarded result releases invisibly. Without the
+            // mark a consuming argument forks the value and both copies
+            // release the same buffers.
+            if self.owns_heap(&ty)
+                && self
+                    .last_uses
+                    .get(&dest.0)
+                    .is_none_or(|(block, _)| *block == self.position.0)
+            {
+                self.mark_owned_temp(dest, (*ty).clone())?;
+            }
             return Ok(());
         }
         let lowered_args =
@@ -463,18 +495,58 @@ impl<'a> FnLowering<'a> {
                             dest,
                         ));
                     };
-                    let LowerTy::Scalar(scalar) = expected else {
-                        return Err(self.unsupported_reg(
-                            format!("non-scalar default argument in call to `{name}`"),
-                            dest,
-                        ));
-                    };
-                    self.checked_const_value(ctx, default, scalar, dest)?
+                    match expected {
+                        LowerTy::Scalar(scalar) => {
+                            self.checked_const_value(ctx, default, scalar, dest)?
+                        }
+                        // A `String` parameter defaulting to a literal (the
+                        // checker records the literal constructor over the
+                        // text): a borrowed slot reads a global-backed
+                        // descriptor (the callee never frees a read
+                        // parameter), an owned slot receives a heap copy it
+                        // frees itself.
+                        LowerTy::Aggregate { ty, .. }
+                            if matches!(&*ty, Ty::Struct(struct_name, _)
+                                if mojito_symbol::symbol::is_stdlib_string_struct(struct_name))
+                                && let Some(text) = string_default_text(default) =>
+                        {
+                            self.string_default_argument(ctx, text, owned, dest)
+                        }
+                        _ => {
+                            return Err(self.unsupported_reg(
+                                format!("non-scalar default argument in call to `{name}`"),
+                                dest,
+                            ));
+                        }
+                    }
                 }
             };
             lowered.push(value);
         }
         Ok(lowered)
+    }
+
+    /// The omitted-argument value of a `String` parameter whose default is a
+    /// literal: the nominal 24-byte struct over the interned text (borrowed
+    /// slot) or over a fresh heap copy the callee owns (owned slot).
+    fn string_default_argument(
+        &mut self,
+        ctx: &mut Context,
+        text: &str,
+        owned: bool,
+        dest: Reg,
+    ) -> Value {
+        let global = self.shared.intern_string(ctx, text.as_bytes());
+        let mut data = self.global_address(ctx, &global, dest);
+        let len = self.uint_constant(ctx, text.len() as u64);
+        if owned {
+            let copy = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, copy, data, len, dest);
+            data = copy;
+        }
+        let storage = self.entry_alloca(ctx, 24, 8);
+        self.store_string_fields(ctx, storage, data, len, len, dest);
+        storage
     }
 
     /// Derive the physical indirect-call ABI from a checked `Ty::Func`
@@ -654,5 +726,22 @@ impl<'a> FnLowering<'a> {
             }
         }
         Ok(())
+    }
+}
+
+/// The literal text of a `String`-typed default: the bare string constant or
+/// the checker's literal-constructor conversion over it.
+fn string_default_text(default: &CheckedConst) -> Option<&str> {
+    match default {
+        CheckedConst::String(text) => Some(text.as_str()),
+        CheckedConst::Construct { target, arg }
+            if mojito_symbol::symbol::init_overload_struct(target).is_some() =>
+        {
+            match &**arg {
+                CheckedConst::String(text) => Some(text.as_str()),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }

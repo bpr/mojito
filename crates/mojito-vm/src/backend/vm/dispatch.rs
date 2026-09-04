@@ -508,8 +508,24 @@ impl VmBackend {
         value: Value,
         repr: bool,
     ) -> Result<String, RuntimeError> {
-        if let Value::Variant { value, .. } = value {
-            return self.format_value(prog, *value, repr);
+        // `write_to` forwards to the active payload; `write_repr_to` wraps it
+        // in upstream's `Variant[<alternatives>](<payload repr>)` text.
+        if let Value::Variant {
+            alternatives,
+            value,
+            ..
+        } = value
+        {
+            let payload = self.format_value(prog, *value, repr)?;
+            if !repr {
+                return Ok(payload);
+            }
+            let names = alternatives
+                .iter()
+                .map(mojito_types::types::unqualified_type_name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Ok(format!("Variant[{names}]({payload})"));
         }
         let Value::Struct {
             name,
@@ -517,6 +533,9 @@ impl VmBackend {
             value_params,
         } = value
         else {
+            if repr {
+                return Ok(scalar_repr(&value));
+            }
             return Ok(value.to_string());
         };
         let method = if repr { "write_repr_to" } else { "write_to" };
@@ -601,5 +620,51 @@ impl VmBackend {
             cursor += 1;
         }
         Ok(output)
+    }
+}
+
+/// Upstream's `repr` text for non-struct values: `Int(7)`, `UInt(7)`,
+/// `Float64(2.5)`, a single-quoted string with backslash escapes,
+/// `Slice(start=1, end=4, step=None)`; everything else prints its text.
+fn scalar_repr(value: &Value) -> String {
+    match value {
+        Value::Int(n) => format!("Int({n})"),
+        Value::UInt(n) => format!("UInt({n})"),
+        Value::Float64(_) => format!("Float64({value})"),
+        Value::FloatLiteral(literal) => format!(
+            "Float64({})",
+            Value::Float64(literal.to_f64().unwrap_or(f64::NAN))
+        ),
+        Value::IntLiteral(_) => format!("Int({value})"),
+        Value::Str(text) => {
+            let mut out = String::from("'");
+            for ch in text.chars() {
+                match ch {
+                    '\\' => out.push_str("\\\\"),
+                    '\'' => out.push_str("\\'"),
+                    '\n' => out.push_str("\\n"),
+                    '\t' => out.push_str("\\t"),
+                    '\r' => out.push_str("\\r"),
+                    other => out.push(other),
+                }
+            }
+            out.push('\'');
+            out
+        }
+        Value::Slice {
+            start, end, step, ..
+        } => {
+            let bound = |bound: &Option<i64>| match bound {
+                Some(value) => value.to_string(),
+                None => "None".to_string(),
+            };
+            format!(
+                "Slice(start={}, end={}, step={})",
+                bound(start),
+                bound(end),
+                bound(step)
+            )
+        }
+        other => other.to_string(),
     }
 }

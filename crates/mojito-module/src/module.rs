@@ -523,6 +523,8 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
     ];
     const HASHABLE: &[&str] = &["Hashable"];
     const HASHER: &[&str] = &["Hasher"];
+    const SLICE: &[&str] = &["Slice", "ContiguousSlice", "StridedSlice", "slice"];
+    const REFLECTION: &[&str] = &["_unqualified_type_name"];
     let normalized = canon.to_string_lossy().replace('\\', "/");
     if normalized.ends_with("std/traits.mojo") {
         Some(TRAITS)
@@ -532,6 +534,10 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
         Some(HASHABLE)
     } else if normalized.ends_with("std/hashlib/hasher.mojo") {
         Some(HASHER)
+    } else if normalized.ends_with("std/builtin/builtin_slice.mojo") {
+        Some(SLICE)
+    } else if normalized.ends_with("std/reflection/type_info.mojo") {
+        Some(REFLECTION)
     } else {
         None
     }
@@ -1272,10 +1278,13 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "Tuple",
     "range",
     "String",
+    "StringSpan",
     "Codepoint",
     "TString",
     "alloc",
     "hash",
+    "atol",
+    "atof",
 ];
 
 fn bundled_path(relative: &str) -> Option<PathBuf> {
