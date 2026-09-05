@@ -774,12 +774,24 @@ impl Checker {
         }))
     }
 
-    /// A `TypeList` receiver in a constraint position: the pack adapter
-    /// (`TypeList[Ts.values]()`) naming a symbolic pack parameter, or the
-    /// concrete constructor (`TypeList.of[Trait=..., T1, ..., Tn]()`) whose
-    /// element types resolve immediately.
+    /// A `TypeList` receiver in a constraint position: an enclosing pack
+    /// parameter itself (upstream's `Ts.all_conforms_to[..]()` / `Self.Ts`),
+    /// the pack adapter (`TypeList[Ts.values]()`) naming a symbolic pack
+    /// parameter, or the concrete constructor
+    /// (`TypeList.of[Trait=..., T1, ..., Tn]()`) whose element types resolve
+    /// immediately.
     fn typelist_receiver(&self, expr: &Expr) -> Result<Option<TypeListReceiver>, TypeError> {
+        let enclosing_pack = |name: &str| {
+            self.enclosing_type_params
+                .iter()
+                .any(|parameter| parameter.name.strip_prefix('*') == Some(name))
+                .then(|| TypeListReceiver::Pack(name.to_string()))
+        };
         match &expr.kind {
+            ExprKind::Identifier(name) => Ok(enclosing_pack(name)),
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+                Ok(enclosing_pack(field))
+            }
             ExprKind::Call {
                 name,
                 param_args,

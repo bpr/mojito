@@ -270,11 +270,6 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "owning replacement returning the previous payload",
     ),
     (
-        "variant.hash",
-        CapabilityStatus::Supported,
-        "`__hash__` feeds the discriminant to the hasher, then dispatches the active alternative's hash under a tag switch",
-    ),
-    (
         "simd.make",
         CapabilityStatus::Supported,
         "width-1 scalar aliases and multi-lane scalar aggregates with VM-exact lane conversion",

@@ -1,4 +1,4 @@
-# expect: 'Variant.deinit_with' handler
+# expect: call to 'deinit_with': no overload matches
 from std.utils import Variant
 
 def main():

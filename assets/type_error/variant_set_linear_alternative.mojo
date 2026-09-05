@@ -1,4 +1,4 @@
-# expect: in-place replacement destroys the previous payload
+# expect: 'set' is unavailable for Variant[Conn]
 from std.utils import Variant
 
 @explicit_destroy("close Conn")

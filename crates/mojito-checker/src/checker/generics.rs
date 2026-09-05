@@ -721,6 +721,28 @@ impl Checker {
         Ok(Some(selected))
     }
 
+    /// The name of the elaborator-minted clone of `method` for this
+    /// instantiation (`isa$y3:Int`), when the receiver struct already
+    /// declares it. The value list must agree with the elaborator's
+    /// `method_request_values`: type arguments and value arguments in
+    /// declaration order; callable-bounded parameters stay symbolic on the
+    /// clone and contribute nothing; packs and symbolic placeholders make the
+    /// call unspecializable.
+    pub(super) fn specialized_method_clone(
+        &self,
+        owner: &str,
+        method: &str,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Option<String> {
+        let values = specialized_method_values(decls, arguments)?;
+        let name = mojito_symbol::symbol::mangle(method, &values);
+        self.structs
+            .get(owner)
+            .is_some_and(|info| info.methods.contains_key(&name))
+            .then_some(name)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn instantiate_method_generics(
         &self,
@@ -860,4 +882,69 @@ impl Checker {
 /// module-qualified).
 fn is_span_struct_name(name: &str) -> bool {
     name == "Span" || name.ends_with("$Span")
+}
+
+/// The declaration-order compile-time arguments a generic method call
+/// resolved, when the signature declares any (the name-keyed map is the
+/// solver's shape; declaration order is the specialization identity).
+pub(super) fn method_instantiation_arguments(
+    signature: &MethodSig,
+    arguments: &HashMap<String, TyArg>,
+) -> Option<Vec<TyArg>> {
+    if signature.decls.is_empty() {
+        return None;
+    }
+    signature
+        .decls
+        .iter()
+        .map(|decl| {
+            arguments
+                .get(decl.name().trim_start_matches('*'))
+                .map(materialized_instantiation_argument)
+        })
+        .collect()
+}
+
+/// A method-level type argument as the clone spells it: literal types
+/// materialize (a string literal bound to `T: Movable` instantiates the
+/// `String` clone, which the call reaches through the ordinary literal
+/// conversion), so two calls differing only in literal-ness share one clone
+/// instead of minting two symbol-equivalent overloads.
+pub(super) fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
+    match argument {
+        TyArg::Ty(Ty::StringLiteral) => TyArg::Ty(Ty::Struct(
+            mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
+            Vec::new(),
+        )),
+        TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
+        other => other.clone(),
+    }
+}
+
+/// The specialization values of a method instantiation, or `None` when the
+/// instantiation cannot name a clone (see `specialized_method_clone`).
+pub(super) fn specialized_method_values(
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+) -> Option<Vec<CtValue>> {
+    let mut values = Vec::new();
+    for (decl, argument) in decls.iter().zip(arguments) {
+        match (decl, argument) {
+            (
+                ParamDecl::Type {
+                    callable_bound: Some(_),
+                    ..
+                },
+                _,
+            ) => continue,
+            (ParamDecl::Type { variadic: true, .. }, _) => return None,
+            (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
+                values.push(CtValue::Type(Box::new(ty.clone())));
+            }
+            (ParamDecl::Value { .. }, TyArg::Val(CtValue::Param(_))) => continue,
+            (ParamDecl::Value { .. }, TyArg::Val(value)) => values.push(value.clone()),
+            _ => return None,
+        }
+    }
+    Some(values)
 }

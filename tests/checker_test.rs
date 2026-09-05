@@ -6036,3 +6036,19 @@ fn rejected_overload_candidates_leave_no_place_copy_marks() {
     });
     assert!(!marked, "the rejected candidate's copy mark leaked");
 }
+
+#[test]
+fn variant_storage_is_compiler_private() {
+    // `__VariantStorage[*Ts]` is the self-hosted `Variant`'s storage field:
+    // reachable only from bundled standard-library sources, in both the
+    // construction and the annotation spelling.
+    for source in [
+        "def main():\n    var storage = __VariantStorage[Int, String](1)\n",
+        "def main():\n    var storage: __VariantStorage[Int, String] = __VariantStorage[Int, String](1)\n",
+    ] {
+        assert!(matches!(
+            err(source),
+            TypeError::Unsupported(message) if message.contains("compiler-private storage")
+        ));
+    }
+}

@@ -113,38 +113,6 @@ impl VmBackend {
             let sname = name.clone();
             let fname = prog.runtime_method_name(&sname, dunder, resolved, 1);
             return self.call_resolved_dunder(prog, &sname, dunder, vec![l, r], Some(&fname));
-        } else if matches!(op, InfixOp::Eq | InfixOp::Ne)
-            && let (
-                Value::Variant {
-                    index: left_index,
-                    value: left_payload,
-                    ..
-                },
-                Value::Variant {
-                    index: right_index,
-                    value: right_payload,
-                    ..
-                },
-            ) = (&l, &r)
-        {
-            // Variant equality: same tag, then the payloads' own equality —
-            // a nominal payload through its `__eq__`, a scalar structurally.
-            if left_index != right_index {
-                return Ok(Value::Bool(op == InfixOp::Ne));
-            }
-            let (left_payload, right_payload) =
-                ((**left_payload).clone(), (**right_payload).clone());
-            if let Value::Struct { name, .. } = &left_payload {
-                let sname = name.clone();
-                let dunder = if op == InfixOp::Eq {
-                    "__eq__"
-                } else {
-                    "__ne__"
-                };
-                return self.call_dunder(prog, &sname, dunder, vec![left_payload, right_payload]);
-            }
-            let equal = crate::runtime::values_equal(&left_payload, &right_payload)?;
-            return Ok(Value::Bool(if op == InfixOp::Eq { equal } else { !equal }));
         }
         apply_infix(op, l, r)
     }

@@ -474,7 +474,25 @@ impl Flatten<'_> {
                 p
             }
             ExprKind::Index { object, index } => {
+                // A type-keyed projection (`v[Int]` on the self-hosted
+                // `Variant`): the accessor call's reference result is the
+                // place.
+                if self.type_keyed_accessor_call(e).is_some()
+                    && let Some(place) = self.materialize_reference_result_place(e)
+                {
+                    return place;
+                }
                 let mut p = self.place(object);
+                // A checked Variant projection on any base place
+                // (`storage[T]` on a field): the tagged payload place.
+                if let Some(index) = self.variant_projection_index(e) {
+                    let ty = self
+                        .checked_place_ty(e)
+                        .or_else(|| self.checked_ty(e))
+                        .expect("checked Variant projection has a payload type");
+                    p.project(Proj::Variant(index), ty);
+                    return p;
+                }
                 // Compiler-private inline uninit storage: `storage[0]` is the
                 // payload place (`Proj::UninitPayload`), not a dynamic index.
                 let object_ty = self.checked_ty(object);
@@ -1691,6 +1709,13 @@ impl Flatten<'_> {
     pub(super) fn simple_place(&mut self, e: &Expr) -> Option<MirPlace> {
         match &e.kind {
             ExprKind::Identifier(name) => Some(self.expression_place_root(name, e)),
+            ExprKind::Index { object, .. } if self.variant_projection_index(e).is_some() => {
+                let index = self.variant_projection_index(e)?;
+                let mut p = self.simple_place(object)?;
+                let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
+                p.project(Proj::Variant(index), ty);
+                Some(p)
+            }
             ExprKind::Member { object, field } => {
                 if self.is_slice_descriptor(object) {
                     return None;
@@ -1704,16 +1729,7 @@ impl Flatten<'_> {
                 Some(p)
             }
             ExprKind::TypeApply { name, .. } => {
-                let index = self
-                    .checked_adjustments(e)
-                    .into_iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            index,
-                            ..
-                        } => Some(index),
-                        _ => None,
-                    })?;
+                let index = self.variant_projection_index(e)?;
                 let mut p = self.resolved_place(name);
                 let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
                 p.project(Proj::Variant(index), ty);
@@ -1771,6 +1787,11 @@ impl Flatten<'_> {
             }
             ExprKind::Index { object, index } => {
                 let mut p = self.try_place(object)?;
+                if let Some(index) = self.variant_projection_index(e) {
+                    let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
+                    p.project(Proj::Variant(index), ty);
+                    return Some(p);
+                }
                 // A literal index into compiler-private heterogeneous Tuple
                 // storage is part of the place's static identity. Keeping it
                 // out of a register lets ownership distinguish element 0 from
@@ -1790,16 +1811,7 @@ impl Flatten<'_> {
                 Some(p)
             }
             ExprKind::TypeApply { name, .. } => {
-                let index = self
-                    .checked_adjustments(e)
-                    .into_iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            index,
-                            ..
-                        } => Some(index),
-                        _ => None,
-                    })?;
+                let index = self.variant_projection_index(e)?;
                 let mut p = self.resolved_place(name);
                 let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
                 p.project(Proj::Variant(index), ty);
@@ -2627,5 +2639,20 @@ impl Flatten<'_> {
                 cleanup: Vec::new(),
             },
         }
+    }
+}
+
+impl Flatten<'_> {
+    /// The alternative index of a checked Variant projection recorded on `e`
+    /// (`v[T]`, `storage[T]`), if any.
+    pub(super) fn variant_projection_index(&self, e: &Expr) -> Option<usize> {
+        self.checked_adjustments(e)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::VariantProject { index, .. } => {
+                    Some(index)
+                }
+                _ => None,
+            })
     }
 }

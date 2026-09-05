@@ -170,6 +170,7 @@ impl Checker {
             else {
                 continue;
             };
+            let instantiation = method_instantiation_arguments(sig, &method_arguments);
             for (decl, argument) in info.decls.iter().zip(&tyargs) {
                 method_arguments.insert(
                     decl.name().trim_start_matches('*').to_string(),
@@ -243,6 +244,8 @@ impl Checker {
                     param_types: params,
                     param_decls: sig.decls.clone(),
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
+                    instantiation: instantiation.clone(),
+                    parameter_names: sig.names.clone(),
                 });
             }
         }
@@ -263,6 +266,39 @@ impl Checker {
                 }
                 .to_string(),
             })?;
+        if parameterized_syntax {
+            self.parameterized_method_calls
+                .borrow_mut()
+                .insert(span.clone(), selected.param_decls.clone());
+        }
+        if let Some(arguments) = &selected.instantiation {
+            self.method_instantiations.borrow_mut().insert(
+                span.clone(),
+                mojito_checked::checked::MethodInstantiation {
+                    owner: sname.to_string(),
+                    method: method.to_string(),
+                    parameter_names: selected.parameter_names.clone(),
+                    arguments: arguments.clone(),
+                },
+            );
+            if let Some(clone) =
+                self.specialized_method_clone(sname, method, &selected.param_decls, arguments)
+            {
+                return self.infer_struct_static_method(
+                    span,
+                    sname,
+                    struct_targs,
+                    &clone,
+                    MethodCallArguments {
+                        param_args: &[],
+                        args,
+                        kwargs,
+                        parameterized_syntax,
+                        preserves_receiver_interiors: false,
+                    },
+                );
+            }
+        }
         self.record_selected_method_conversions(method, &selected, args, kwargs)?;
         if let Some(target) = selected.lowered_name.clone() {
             self.overload_targets

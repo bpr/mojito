@@ -69,9 +69,6 @@ pub(super) fn has_equality_bound_or_concrete(checker: &Checker, ty: &Ty) -> bool
             .structs
             .get(name)
             .is_some_and(|s| s.conforms.iter().any(|c| c == "Equatable")),
-        Ty::Variant(alternatives) => alternatives
-            .iter()
-            .all(|alternative| has_equality_bound_or_concrete(checker, alternative)),
         _ => has_equality_bound(ty) || is_scalar(ty) || is_numeric_like(ty),
     }
 }
@@ -274,7 +271,6 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         | Ty::ComptimeList(_) => true,
         // A tuple prints if every element prints.
         Ty::Tuple(elems) => elems.iter().all(is_printable),
-        Ty::Variant(alternatives) => alternatives.iter().all(is_printable),
         _ => false,
     }
 }
@@ -373,6 +369,7 @@ impl Checker {
     pub(super) fn infer_print(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         for (i, arg) in args.iter().enumerate() {
             let ty = self.infer(arg)?;
+            self.borrow_reference_result_argument(arg);
             let runtime_ty = default_literal(&ty);
             if runtime_ty != ty {
                 self.record_literal_materializations(arg, &ty, &runtime_ty)?;
@@ -388,7 +385,7 @@ impl Checker {
             {
                 continue;
             }
-            if matches!(ty, Ty::Struct(..) | Ty::Variant(_)) {
+            if matches!(ty, Ty::Struct(..)) {
                 if self.conforms_to(&ty, "Writable") {
                     continue;
                 }
@@ -445,7 +442,24 @@ impl Checker {
                 got: args.len(),
             });
         }
-        args.iter().map(|a| self.infer(a)).collect()
+        args.iter()
+            .map(|a| {
+                let ty = self.infer(a)?;
+                self.borrow_reference_result_argument(a);
+                Ok(ty)
+            })
+            .collect()
+    }
+
+    /// A builtin reads its arguments; one that is a reference result
+    /// (`len(v[List[Int]])` on the self-hosted `Variant`'s projection) is
+    /// read through the retained handle, not copied out.
+    pub(super) fn borrow_reference_result_argument(&self, argument: &Expr) {
+        if self.infer_reference_value(argument).is_some() {
+            self.borrowed_read_call_places
+                .borrow_mut()
+                .insert(argument.source_span());
+        }
     }
 
     /// Type `String(x)`: stringify a numeric, `Bool`, or `String` value.

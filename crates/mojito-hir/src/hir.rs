@@ -853,12 +853,24 @@ impl Lower {
             }
             ExprKind::Index { .. } => {
                 let base = self.checked.expression(*node.children.first()?)?;
-                let index = *node.children.get(1)?;
                 let mut place = self.checked_place(base)?;
                 let ty = node.place_ty.clone()?;
                 let base_ty = place.ty.clone();
+                // A subscript-shaped Variant projection (`storage[T]` on a
+                // field, `v[String]`) is the tagged payload place.
+                let variant_index =
+                    node.adjustments
+                        .iter()
+                        .find_map(|adjustment| match adjustment {
+                            SemanticAdjustment::VariantProject { index, .. } => Some(*index),
+                            _ => None,
+                        });
+                let kind = match variant_index {
+                    Some(index) => HirPlaceProjectionKind::Variant(index),
+                    None => HirPlaceProjectionKind::Index(*node.children.get(1)?),
+                };
                 place.projections.push(HirPlaceProjection {
-                    kind: HirPlaceProjectionKind::Index(index),
+                    kind,
                     base_ty,
                     ty: ty.clone(),
                 });

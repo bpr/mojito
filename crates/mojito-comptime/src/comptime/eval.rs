@@ -463,7 +463,7 @@ impl<'a> Elab<'a> {
     /// Evaluate a member call on a compile-time TypeList value:
     /// `any`/`all` (per-element predicates: IsTrivially* or a one-parameter
     /// Bool-bodied comptime alias), `all_conforms_to`, and `contains`.
-    fn eval_typelist_method(
+    pub(super) fn eval_typelist_method(
         &self,
         receiver: &CtValue,
         field: &str,

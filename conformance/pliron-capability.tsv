@@ -48,7 +48,6 @@ instruction	variant.take	supported	checked and unchecked consuming payload extra
 instruction	variant.set_init_with	supported	indirect factory invocation followed by owning replacement
 instruction	variant.deinit_with	supported	tag-checked consuming handler invocation
 instruction	variant.replace	supported	owning replacement returning the previous payload
-instruction	variant.hash	supported	`__hash__` feeds the discriminant to the hasher, then dispatches the active alternative's hash under a tag switch
 instruction	simd.make	supported	width-1 scalar aliases and multi-lane scalar aggregates with VM-exact lane conversion
 instruction	simd.cast	partial	element-wise int rewrap, f64-mediated float conversion, and i128-saturating float-to-int; bool casts reject in the checker
 instruction	simd.shuffle	supported	compile-time lane gather over scalar-aggregate storage

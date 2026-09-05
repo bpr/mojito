@@ -137,16 +137,6 @@ impl Checker {
         {
             return Ok(Ty::Bool);
         }
-        if let (Ty::Variant(left), Ty::Variant(right)) = (&lt, &rt)
-            && left == right
-            && matches!(op, Eq | Ne)
-            && left
-                .iter()
-                .all(|alternative| has_equality_bound_or_concrete(self, alternative))
-        {
-            return Ok(Ty::Bool);
-        }
-
         // Two equal opaque type parameters bounded by an arithmetic, bitwise,
         // or shift operation trait dispatch after erasure
         // (`def f[T: Addable](a: T, b: T) -> T: return a + b`). Comparison,

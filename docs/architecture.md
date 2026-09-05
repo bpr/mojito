@@ -205,8 +205,9 @@ drop and cleanup instructions remain executable behavior. Errors and
 unwinding stays out until it has its own semantic, ABI, and portability
 specification.
 
-Variant lowering uses the shared native tag/payload layout and dispatches
-owning operations and destruction from the runtime tag. Multi-lane SIMD is a
+Variant storage lowering (the `__VariantStorage` primitive behind the
+self-hosted `std.utils.Variant`) uses the shared native tag/payload layout
+and dispatches owning operations and destruction from the runtime tag. Multi-lane SIMD is a
 contiguous scalar aggregate whose semantic operations are statically unrolled;
 native vector types are an optimization over that completed behavior, not a
 different semantic path. User `__moveinit__` and `__deinit__` bodies remain
@@ -445,10 +446,11 @@ signature.
 Inferred applications reach the same clones through the compiler's discovery
 fixpoint: `Compiler::compile_linked` iterates elaborate→check, deriving
 `DefSpecializationRequest`s from the checker's recorded generic
-instantiations (closed arguments only, keyed by occurrence span with the
-phase-local syntax id stripped) and re-elaborating the original linked
-program with the accumulated monotone request set until a round discovers
-nothing new; a hard round cap reports inferred polymorphic recursion as a
+instantiations and `MethodSpecializationRequest`s from its recorded generic
+*method* instantiations on specialized variadic structs (closed arguments
+only, keyed by occurrence span with the phase-local syntax id stripped) and
+re-elaborating the original linked program with the accumulated monotone
+request set until a round discovers nothing new; a hard round cap reports inferred polymorphic recursion as a
 dedicated divergence diagnostic. Request seeding records each occurrence's
 target without queuing work; the clone job queues lazily when the soft
 resolution path fails on source arguments and consults the request — so a
@@ -458,6 +460,24 @@ occurrence) leaves the call abstract. A retained bound-generic template is
 emitted before its specializations because a clone may still reference the
 template abstractly (an inferred recursive call) and the checker binds
 top-level names sequentially.
+
+Methods with their own compile-time parameters inside a *specialized
+variadic struct* (`def isa[T: AnyType](self)`, `def unwrap[T: Movable](deinit
+self) -> T`, a constructor `__init__[T: AnyType, //, F: def() -> T](out self,
+*, init_with: F)`) specialize per call through the same fixpoint. The
+checker's method paths record a `MethodInstantiation` (receiver struct,
+method, declaration-order arguments; an infer-only `T` also solves through a
+callable-bounded sibling's contract) and, once the variadic-struct
+specializer has minted the clone for that instantiation — `isa$y3:Int`, the
+method name mangled with the baked type/value arguments, callable-bounded
+parameters folded into concrete `capturing[_]` contracts — retarget the
+call to it by exact name (`specialized_method_clone`), or for constructors
+select it as a concrete same-name overload that wins over the generic
+template. The template itself survives as a declaration; a template body
+that only elaborates with its parameters bound (a `comptime if` on `T`)
+becomes an `_mojito_abort` stub that no specialized call reaches. A call
+whose arguments stay symbolic (inside an unspecialized generic body) keeps
+the erased path and therefore cannot use such a method.
 
 Under the production compiler, the erased-dispatch machinery
 (`__trait_dispatch.*`/`__iterator_dispatch.*` symbols, VM retargeting, and
@@ -732,11 +752,16 @@ Public collection types, including heterogeneous `Tuple[*Ts]`, cross the checked
 boundary as `Ty::Struct` with their concrete type arguments. `Ty::ComptimeList`
 exists only while materializing `CtValue::List`; `Ty::Tuple(Vec<Ty>)` is the
 compiler-private heterogeneous pack carrier and is never the type of a public
-tuple expression. `Ty::Variant(Vec<Ty>)` retains alternative order at the
-checked boundary. Variant construction and the
-parameterized `isa[T]`, projection, and `set[T]` operations record the selected
-alternative as a `SemanticAdjustment`; MIR therefore receives a numeric tag and
-never guesses one from source spelling. `Value::Variant` repeats the checked
+tuple expression. `Ty::Variant(Vec<Ty>)` is the compiler-private tagged-union
+storage of the bundled `__VariantStorage[*Ts]` field behind `std.utils.Variant`
+(gated on `bundled_stdlib_declaration`, never the type of a public expression);
+it retains alternative order at the checked boundary. Storage construction and
+the parameterized `isa[T]`, projection, and `set[T]` operations record the
+selected alternative as a `SemanticAdjustment`; MIR therefore receives a
+numeric tag and never guesses one from source spelling. The public `Variant`
+API, its conditional conformances, and its `__eq__`/`__hash__`/`write_to`/
+`write_repr_to` bodies are Mojo in `stdlib/std/utils/variant.mojo`, specialized
+per instantiation and per type-keyed call like any variadic struct. `Value::Variant` repeats the checked
 alternative list beside its active tag as a defensive runtime consistency check.
 
 Trait refinement is flattened during checking: inherited method and associated

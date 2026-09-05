@@ -101,8 +101,73 @@ impl Checker {
                 // Reuse the field-typing logic (validates the field exists).
                 self.infer_member(object, field)
             }
+            // A type-keyed projection target (`v[Int] = x`, `v[Int] += x`,
+            // `v[List[Int]][0] = x`): the accessor call's mutable reference
+            // result is the place; its contract and reference are recorded
+            // at this expression by the value-position inference.
+            ExprKind::Index { object, index } if self.type_keyed_projection(object, index) => {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    unreachable!("type-keyed projection roots at an identifier")
+                };
+                self.check_capture_access(name, true)?;
+                if !self.is_binding_mutable(name) {
+                    return Err(TypeError::ImmutableBinding(name.clone()));
+                }
+                let referent = self.infer(place)?;
+                let reference = self
+                    .selected_calls
+                    .borrow()
+                    .get(&place.source_span())
+                    .and_then(|contract| contract.reference_result.clone());
+                match reference {
+                    Some(reference)
+                        if reference.mutability != mojito_types::origin::Mutability::Immutable =>
+                    {
+                        // The place retains the accessor's handle; it is
+                        // written through, never read out as a value. Writing
+                        // the projected payload replaces it, so references
+                        // into the previous payload's interior expire (the
+                        // storage's own replacement rule).
+                        self.reference_value_uses
+                            .borrow_mut()
+                            .insert(place.source_span(), true);
+                        self.record_interior_invalidation(place.source_span(), object);
+                        Ok(referent)
+                    }
+                    Some(_) => Err(TypeError::ImmutableBinding(
+                        "immutable reference returned by '__getitem_param__'".to_string(),
+                    )),
+                    None => Err(TypeError::InvalidAssignTarget(format!(
+                        "'{name}[…]' is a value, not a place"
+                    ))),
+                }
+            }
             ExprKind::Index { object, index } => {
                 let obj_ty = self.check_place(object)?;
+                // A subscript-shaped Variant projection target (`storage[T] = x`
+                // on a Variant-typed field, `v[String] = x`).
+                if let Ty::Variant(alternatives) = &obj_ty
+                    && let Some(arg) = self.variant_projection_type_argument(index)
+                {
+                    let alternatives = alternatives.clone();
+                    let (index, alternative) =
+                        self.variant_alternative(&alternatives, std::slice::from_ref(&arg))?;
+                    self.operation_adjustments.borrow_mut().insert(
+                        place.source_span(),
+                        mojito_checked::checked::SemanticAdjustment::VariantProject {
+                            alternatives,
+                            index,
+                        },
+                    );
+                    if let ExprKind::Identifier(name) = &object.kind
+                        && let Some(owner) = self.lookup_owner(name)
+                    {
+                        self.expression_bindings
+                            .borrow_mut()
+                            .insert(place.source_span(), owner);
+                    }
+                    return Ok(alternative);
+                }
                 // The empty-subscript store `p[] = v` writes the pointee at
                 // offset 0; the provenance must carry mutable capability.
                 if matches!(index.kind, ExprKind::EmptySubscript) {
@@ -401,10 +466,23 @@ impl Checker {
         value: &Expr,
     ) -> Result<Option<Ty>, TypeError> {
         let (object, mut arguments, descriptors) = match &target.kind {
+            // A type-keyed projection target writes through the accessor's
+            // reference on the ordinary place path.
+            ExprKind::Index { object, index } if self.type_keyed_projection(object, index) => {
+                return Ok(None);
+            }
             ExprKind::Index { object, index } => {
                 let object_ty = self.infer(object)?;
                 if !matches!(&object_ty, Ty::Struct(name, _) if self.structs.contains_key(name)) {
                     return Ok(None);
+                }
+                // A base that is itself a reference result (`v[List[Int]][0]
+                // = x` on the self-hosted `Variant`) is borrowed for the
+                // setter like any method receiver.
+                if self.infer_reference_value(object).is_some() {
+                    self.borrowed_reference_receivers
+                        .borrow_mut()
+                        .insert(object.source_span());
                 }
                 self.prepare_index_argument(&object_ty, index, "__setitem__", 0)?;
                 self.infer(index)?;
@@ -1214,6 +1292,7 @@ impl Checker {
                         result_ty: result_ty.clone(),
                         result_adapter: None,
                         receiver_requires_place: false,
+                        receiver_elided: false,
                         receiver_convention: None,
                         arguments: Vec::new(),
                         captures: Vec::new(),
@@ -1248,6 +1327,7 @@ impl Checker {
                     result_ty: Ty::Ref(reference.clone()),
                     result_adapter: None,
                     receiver_requires_place: true,
+                    receiver_elided: false,
                     receiver_convention: Some(ArgConvention::Ref),
                     arguments: Vec::new(),
                     captures: Vec::new(),

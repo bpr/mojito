@@ -154,12 +154,6 @@ impl Checker {
                 .insert(args[0].source_span());
             return Ok(ty);
         }
-        if is_variant_name(name)
-            && (name != "Variant" || self.structs.contains_key(name))
-            && self.lookup(name).is_none()
-        {
-            return self.infer_variant_construction(span, param_args, args, kwargs);
-        }
         if param_args.is_empty() && args.is_empty() && kwargs.is_empty() {
             let type_parameter = self
                 .tparams
@@ -258,6 +252,18 @@ impl Checker {
                 }
                 "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
                     return self.infer_pointer_to(span, param_args, args, kwargs);
+                }
+                // Compiler-private tagged-union storage:
+                // `__VariantStorage[T0, ...](value^)` selects the alternative
+                // by the payload's type; `(init_with=factory)` by the
+                // factory's result type.
+                _ if name == mojito_types::types::VARIANT_STORAGE_TYPE_NAME => {
+                    if !self.bundled_stdlib_declaration {
+                        return Err(TypeError::Unsupported(format!(
+                            "'{name}' is compiler-private storage; use Variant from std.utils"
+                        )));
+                    }
+                    return self.infer_variant_construction(span, param_args, args, kwargs);
                 }
                 // Compiler-private inline uninit storage: `__UninitStorage[T]()`
                 // (uninitialized) or `__UninitStorage[T](value^)` (initialized),
@@ -463,6 +469,8 @@ impl Checker {
                 let saved_copy_place_value_uses = self.copy_place_value_uses.borrow().clone();
                 let saved_consuming_receivers =
                     self.implicitly_copied_consuming_receivers.borrow().clone();
+                let saved_moved_receivers =
+                    self.implicitly_moved_consuming_receivers.borrow().clone();
                 if let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
                     name,
                     param_args,
@@ -544,6 +552,7 @@ impl Checker {
                 *self.copy_place_value_uses.borrow_mut() = saved_copy_place_value_uses;
                 *self.implicitly_copied_consuming_receivers.borrow_mut() =
                     saved_consuming_receivers;
+                *self.implicitly_moved_consuming_receivers.borrow_mut() = saved_moved_receivers;
             }
             return match select_callable_overload(matches) {
                 Ok((ret, target, error)) => {

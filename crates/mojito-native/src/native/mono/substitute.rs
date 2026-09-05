@@ -96,7 +96,15 @@ pub(super) fn repair_storage_result_types(function: &mut MirFunction) {
                             && !retyped_iterator_slots.contains(&place.root) =>
                     {
                         if let Some(ty) = var_tys.get(&place.root) {
-                            reg_repairs.push((dest.0, ty.clone()));
+                            // A load through a reference-holding root
+                            // (`through`) reads the referent, not the handle.
+                            let ty = match ty {
+                                Ty::Ref(reference) if place.through.is_some() => {
+                                    (*reference.referent).clone()
+                                }
+                                other => other.clone(),
+                            };
+                            reg_repairs.push((dest.0, ty));
                         }
                     }
                     MirInstr::DefVar { var, src, .. } if !retyped_iterator_slots.contains(var) => {

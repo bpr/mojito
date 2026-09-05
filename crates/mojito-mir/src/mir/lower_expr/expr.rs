@@ -673,7 +673,6 @@ impl Flatten<'_> {
                             adjustment,
                             mojito_checked::checked::SemanticAdjustment::VariantIs { .. }
                                 | mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
-                                | mojito_checked::checked::SemanticAdjustment::VariantTypeSupported { .. }
                                 | mojito_checked::checked::SemanticAdjustment::VariantSet { .. }
                                 | mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { .. }
                                 | mojito_checked::checked::SemanticAdjustment::VariantTake { .. }
@@ -693,14 +692,6 @@ impl Flatten<'_> {
                                 dest,
                                 variant,
                                 index,
-                            });
-                            return dest;
-                        }
-                        mojito_checked::checked::SemanticAdjustment::VariantTypeSupported { supported } => {
-                            let dest = self.fresh(span(e), None);
-                            self.emit(MirInstr::Const {
-                                dest,
-                                k: Const::Bool(supported),
                             });
                             return dest;
                         }
@@ -849,10 +840,53 @@ impl Flatten<'_> {
                     let ExprKind::Member { object, field } = &callee.kind else {
                         unreachable!("checked parameterized method call has a member callee")
                     };
+                    // A parameterized **static** call (`Bag[Int, String].has[Bool]()`):
+                    // the receiver is a type, so this is a call on the
+                    // checker-selected symbol with the method's own
+                    // compile-time arguments, exactly like the unparameterized
+                    // static spelling.
+                    if let ExprKind::TypeApply { name, .. } = &object.kind {
+                        // A per-call clone declares no compile-time
+                        // parameters: the source type arguments are baked
+                        // into its symbol and occupy no slots.
+                        let param_arg_regs = if param_decls.is_empty() {
+                            Vec::new()
+                        } else {
+                            self.param_arg_regs(param_args, &span(e))
+                        };
+                        let saved_anchor_permission = self.allow_argument_anchors;
+                        self.allow_argument_anchors = self.call_anchors_arguments(e);
+                        let (regs, arg_places) = self.lower_call_arguments(args, false);
+                        self.allow_argument_anchors = saved_anchor_permission;
+                        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+                        let dest = self.fresh(span(e), None);
+                        let target = self
+                            .resolved_callable(e)
+                            .unwrap_or_else(|| format!("{name}.{field}"));
+                        self.emit_call_invalidations(e, args, kwargs);
+                        self.emit(MirInstr::Call {
+                            dest,
+                            func: FuncRef::named(&target),
+                            raises: self.checked_raises(e),
+                            args: regs,
+                            kwargs: kw,
+                            arg_places,
+                            kwarg_places,
+                            capture_accesses: self.checked_call_capture_accesses(e),
+                            param_arg_regs,
+                        });
+                        self.emit_nested_closure_argument_keepalives(args, kwargs);
+                        return dest;
+                    }
                     // Keep this as a direct method invocation. In particular,
                     // do not synthesize a bound-method value (which would make
                     // its receiver/environment escapable).
-                    let (recv, recv_place) = self.lower_call_receiver(object);
+                    if let Some(dest) =
+                        self.lower_elided_receiver_call(e, object, param_args, args, kwargs)
+                    {
+                        return dest;
+                    }
+                    let (recv, recv_place) = self.lower_consuming_or_call_receiver(e, object);
                     let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
                     let recv = if implicitly_copied_receiver {
                         self.copy_consuming_receiver(object, recv, recv_place.as_ref())
@@ -1342,6 +1376,9 @@ impl Flatten<'_> {
                     self.emit_nested_closure_argument_keepalives(args, kwargs);
                     return d;
                 }
+                if let Some(dest) = self.lower_elided_receiver_call(e, object, &[], args, kwargs) {
+                    return dest;
+                }
                 // If the receiver is a place, load it through that place (indices
                 // evaluated once) and keep the place for write-back; otherwise it is
                 // a temporary evaluated for its value only.
@@ -1353,7 +1390,7 @@ impl Flatten<'_> {
                 } else {
                     object.as_ref()
                 };
-                let (recv, recv_place) = self.lower_call_receiver(receiver_expr);
+                let (recv, recv_place) = self.lower_consuming_or_call_receiver(e, receiver_expr);
                 let recv = if implicitly_copied_receiver {
                     self.copy_consuming_receiver(receiver_expr, recv, recv_place.as_ref())
                 } else {
@@ -1561,17 +1598,13 @@ impl Flatten<'_> {
             // (`v[String]`) carries the same checked adjustment as the
             // type-token spelling below and lowers identically.
             ExprKind::Index { object, .. }
-                if matches!(&object.kind, ExprKind::Identifier(_))
-                    && self.checked_adjustments(e).iter().any(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
-                        )
-                    }) =>
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
+                    )
+                }) =>
             {
-                let ExprKind::Identifier(name) = &object.kind else {
-                    unreachable!("the guard established an identifier receiver");
-                };
                 let index = self
                     .checked_adjustments(e)
                     .into_iter()
@@ -1583,7 +1616,7 @@ impl Flatten<'_> {
                         _ => None,
                     })
                     .expect("checked Variant projection carries a tag");
-                let mut place = self.resolved_place(name);
+                let mut place = self.place(object);
                 if place.root_ty.is_none() {
                     place.root_ty = Some(Ty::Variant(
                         self.checked_adjustments(e)
@@ -1665,6 +1698,30 @@ impl Flatten<'_> {
                     let d = self.fresh(span(e), None);
                     self.emit(MirInstr::ReadRef { dest: d, reference });
                     return d;
+                }
+                if let Some(contract) = self.type_keyed_accessor_call(e) {
+                    let (recv, recv_place) = self.lower_call_receiver(object);
+                    let dest = self.fresh(span(e), None);
+                    self.emit_interior_invalidations(object, None);
+                    self.emit(MirInstr::MethodCall {
+                        dest,
+                        recv,
+                        method: "__getitem_param__".to_string(),
+                        resolved: Some(contract.target),
+                        raises: self.checked_raises(e),
+                        reference_result: contract.reference_result,
+                        result_adapter: contract.result_adapter,
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                        recv_place,
+                        recv_writes: self.receiver_writes(e),
+                        arg_places: Vec::new(),
+                        kwarg_places: Vec::new(),
+                        capture_accesses: self.checked_call_capture_accesses(e),
+                        param_arg_regs: Vec::new(),
+                        param_decls: contract.param_decls,
+                    });
+                    return dest;
                 }
                 let has_call = self.checked_call_contract(e).is_some();
                 let (base, base_place) = if has_call {

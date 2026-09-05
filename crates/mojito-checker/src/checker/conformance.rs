@@ -168,6 +168,7 @@ impl ConformanceOracle {
                 type_params,
                 fields,
                 associated,
+                methods,
                 ..
             } = &statement.kind
             else {
@@ -200,7 +201,10 @@ impl ConformanceOracle {
             let saved_self_ty = checker.self_ty.replace(self_ty);
             let saved_bundled = std::mem::replace(
                 &mut checker.bundled_stdlib_declaration,
-                is_bundled_stdlib_source(statement.module.as_deref()),
+                is_bundled_stdlib_source(bundled_struct_source(
+                    statement.module.as_deref(),
+                    methods,
+                )),
             );
             // Best-effort associated-member lowering BEFORE field resolution,
             // so a field type may apply the struct's own comptime alias

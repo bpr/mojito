@@ -1098,6 +1098,46 @@ impl Flatten<'_> {
         }
     }
 
+    /// The contract of the parameterized accessor call a type-keyed subscript
+    /// (`v[Int]` on the self-hosted `Variant`) stands for: the checker
+    /// selected the `__getitem_param__` clone at the subscript itself, so it
+    /// lowers as that clone's method call on the subscript base with no
+    /// runtime arguments. `None` for every other subscript.
+    fn type_keyed_accessor_call(
+        &self,
+        expression: &Expr,
+    ) -> Option<mojito_checked::checked::CheckedCallContract> {
+        let ExprKind::Index { index, .. } = &expression.kind else {
+            return None;
+        };
+        // The index names a type, never a runtime value (the Int-keyed
+        // dependent accessors of a variadic struct index by a checked Int).
+        let type_index = match &index.kind {
+            ExprKind::TypeValue(_) => true,
+            ExprKind::Identifier(_) => self.checked_ty(index).is_none(),
+            _ => false,
+        };
+        let contract = self.checked_call_contract(expression)?;
+        (type_index
+            && contract.arguments.is_empty()
+            && contract.target.contains(".__getitem_param__"))
+        .then_some(contract)
+    }
+
+    /// Whether a method call consumes its plain-local receiver by an implicit
+    /// last-use move (`value.unwrap[Int]()` with no `^`): the receiver is
+    /// lowered as a moving variable use so later uses are ownership errors.
+    fn implicitly_moves_consuming_receiver(&self, expression: &Expr) -> bool {
+        self.checked_adjustments(expression)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ImplicitlyMoveConsumingReceiver
+                )
+            })
+    }
+
     fn implicitly_copies_consuming_receiver(&self, expression: &Expr) -> bool {
         self.checked_adjustments(expression)
             .iter()

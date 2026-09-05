@@ -1181,7 +1181,7 @@ impl VmBackend {
                 index,
                 factory,
             } => {
-                let old = load_place(vars, regs, place)?;
+                let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
                 let Value::Variant { alternatives, .. } = &old else {
                     return Err(RuntimeError::TypeError(format!(
                         "Variant.set applied to {}",
@@ -1204,7 +1204,7 @@ impl VmBackend {
                     index: *index,
                     value: Box::new(payload),
                 };
-                self.store_at_place(prog, place, replacement, regs, vars)?;
+                self.store_at_call_place(prog, frame_id, place, replacement, regs, vars)?;
                 self.drop_value(prog, old)?;
                 regs[dest.0 as usize] = Value::None;
             }
@@ -1245,7 +1245,7 @@ impl VmBackend {
                 index,
                 value,
             } => {
-                let old = load_place(vars, regs, place)?;
+                let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
                 let Value::Variant { alternatives, .. } = &old else {
                     return Err(RuntimeError::TypeError(format!(
                         "Variant.set applied to {}",
@@ -1264,7 +1264,7 @@ impl VmBackend {
                     index: *index,
                     value: Box::new(payload),
                 };
-                self.store_at_place(prog, place, replacement, regs, vars)?;
+                self.store_at_call_place(prog, frame_id, place, replacement, regs, vars)?;
                 self.drop_value(prog, old)?;
                 regs[dest.0 as usize] = Value::None;
             }
@@ -1276,7 +1276,7 @@ impl VmBackend {
                 value,
                 checked,
             } => {
-                let old = load_place(vars, regs, place)?;
+                let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
                 let Value::Variant {
                     alternatives,
                     index: active,
@@ -1312,7 +1312,7 @@ impl VmBackend {
                     index: *input_index,
                     value: Box::new(payload),
                 };
-                self.store_at_place(prog, place, replacement, regs, vars)?;
+                self.store_at_call_place(prog, frame_id, place, replacement, regs, vars)?;
                 regs[dest.0 as usize] = *old_payload;
             }
             MirInstr::MakeSimd {
@@ -2106,5 +2106,24 @@ impl VmBackend {
                 projection,
             }
         }
+    }
+}
+
+impl VmBackend {
+    /// Read the value at `place` the way `LoadPlace` does: a reference-alias
+    /// root (a `mut`/`ref self` receiver, as in the self-hosted `Variant`'s
+    /// `self._storage`) reaches its referent through the handle; a plain
+    /// root reads raw storage.
+    fn load_place_through_reference(
+        &mut self,
+        place: &MirPlace,
+        regs: &[Value],
+        vars: &mut [Value],
+        frame_id: FrameId,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(reference) = self.extend_reference(&vars[place.root as usize], place, regs)? {
+            return self.read_reference(&reference, frame_id, vars);
+        }
+        load_place(vars, regs, place)
     }
 }

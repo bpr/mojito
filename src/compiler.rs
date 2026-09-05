@@ -4,9 +4,10 @@ use crate::ast::ExprKind;
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
 use crate::comptime::{
-    ComptimeError, DefSpecializationRequest, TStringSpecializationRequest,
-    TupleSpecializationRequest, TupleTransformRequest, bound_generic_template_names, elaborate,
-    elaborate_with_requests, tuple_materialized_callables,
+    ComptimeError, DefSpecializationRequest, MethodSpecializationRequest,
+    TStringSpecializationRequest, TupleSpecializationRequest, TupleTransformRequest,
+    bound_generic_template_names, elaborate, elaborate_with_requests, tuple_materialized_callables,
+    variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -216,9 +217,11 @@ impl Compiler {
         const SPECIALIZATION_ROUNDS: usize = 5;
         let templates = bound_generic_template_names(&linked);
         let range_templates = scalar_range_template_names(&linked);
+        let variadic_templates = variadic_struct_template_names(&linked);
         let mut tuple_requests: Vec<TupleSpecializationRequest> = Vec::new();
         let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
+        let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
         // Occurrences whose recordings conflicted across rounds; determinism
         // should preclude this, but a poisoned key must stay abstract rather
         // than oscillate.
@@ -276,6 +279,25 @@ impl Compiler {
                     Some(_) => {}
                 }
             }
+            for request in method_specialization_requests(&checked, &variadic_templates) {
+                if conflicted.contains(request.occurrence()) {
+                    continue;
+                }
+                match method_requests
+                    .iter()
+                    .position(|existing| existing.occurrence() == request.occurrence())
+                {
+                    None => {
+                        last_new_callee = format!("{}.{}", request.owner(), request.method());
+                        method_requests.push(request);
+                        grew = true;
+                    }
+                    Some(index) if method_requests[index] != request => {
+                        conflicted.insert(method_requests.remove(index).occurrence().clone());
+                    }
+                    Some(_) => {}
+                }
+            }
             drop(requests);
             timing::count("tuple_requests", tuple_requests.len() as u64);
             timing::count("tstring_requests", tstring_requests.len() as u64);
@@ -291,6 +313,7 @@ impl Compiler {
                     &tuple_requests,
                     &tstring_requests,
                     &def_requests,
+                    &method_requests,
                 )
                 .map_err(CompilerError::Comptime)?
             };
@@ -498,6 +521,64 @@ fn def_specialization_requests(
 /// keyed by the plain family name the checker's scalar-`range` inference
 /// records (the checker never sees the dropped comptime-class templates, so
 /// it cannot record the module-mangled spelling itself).
+/// The checker-recorded generic-method instantiations on specialized
+/// variadic structs that are closed and therefore replayable as per-call
+/// clones. Conflicting recordings for one occurrence drop it, as for defs.
+fn method_specialization_requests(
+    checked: &CheckedProgram,
+    variadic_templates: &std::collections::HashSet<String>,
+) -> Vec<MethodSpecializationRequest> {
+    use std::collections::hash_map::Entry;
+    let mut by_occurrence: std::collections::HashMap<
+        mojito_common::token::SourceSpan,
+        MethodSpecializationRequest,
+    > = std::collections::HashMap::new();
+    let mut conflicted = std::collections::HashSet::new();
+    for (span, instantiation) in checked.method_instantiations() {
+        let specialized_owner = variadic_templates
+            .iter()
+            .any(|template| instantiation.owner.starts_with(&format!("{template}$")));
+        if !specialized_owner || !instantiation.arguments.iter().all(closed_generic_argument) {
+            continue;
+        }
+        let request = MethodSpecializationRequest::new(
+            span.clone(),
+            instantiation.owner.clone(),
+            instantiation.method.clone(),
+            instantiation.parameter_names.clone(),
+            instantiation.arguments.clone(),
+        );
+        let key = request.occurrence().clone();
+        if conflicted.contains(&key) {
+            continue;
+        }
+        match by_occurrence.entry(key) {
+            Entry::Occupied(existing) if *existing.get() != request => {
+                let (key, _) = existing.remove_entry();
+                conflicted.insert(key);
+            }
+            Entry::Occupied(_) => {}
+            Entry::Vacant(slot) => {
+                slot.insert(request);
+            }
+        }
+    }
+    let mut requests: Vec<_> = by_occurrence.into_values().collect();
+    requests.sort_by(|a, b| {
+        let key = |request: &MethodSpecializationRequest| {
+            (
+                request.occurrence().source.clone(),
+                request.occurrence().span.0,
+                request.occurrence().span.1,
+                request.owner().to_string(),
+                request.method().to_string(),
+            )
+        };
+        key(a).cmp(&key(b))
+    });
+    requests
+}
+
 fn scalar_range_template_names(linked: &[Stmt]) -> std::collections::HashMap<&'static str, String> {
     let mut names = std::collections::HashMap::new();
     for statement in linked {

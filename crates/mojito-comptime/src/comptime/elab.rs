@@ -22,9 +22,33 @@ impl<'a> Elab<'a> {
         in_fn: bool,
     ) -> Result<Vec<Stmt>, ComptimeError> {
         let mut out = Vec::new();
+        // Type handles bound by `comptime T = ...` in this block have no
+        // runtime representation, so every later statement of the block
+        // materializes its uses of the alias — `isa[T]()`, `x: T`, `T()` —
+        // as the bound type (an unrolled `comptime for` body is its own block,
+        // so each iteration's `comptime T = Self.Ts[i]` binds separately).
+        let mut type_aliases: HashMap<String, CtValue> = HashMap::new();
+        let mut source_aliases: HashMap<String, Type> = HashMap::new();
         for stmt in stmts {
             let first_new = out.len();
             self.stmt(stmt, env, in_fn, &mut out)?;
+            if !type_aliases.is_empty() {
+                let subs: Subs = &|name| type_aliases.get(name).cloned();
+                for statement in &mut out[first_new..] {
+                    *statement = rewrite_stmt_cloned(statement, subs, true);
+                }
+                substitute_type_bindings_in_block(&mut out[first_new..], &source_aliases);
+            }
+            if let StmtKind::Comptime {
+                name, type_params, ..
+            } = &stmt.kind
+                && type_params.is_empty()
+                && let Some(value @ CtValue::Type(ty)) = env.get(name)
+                && let Some(source) = source_type_from_ty(ty)
+            {
+                type_aliases.insert(name.clone(), value.clone());
+                source_aliases.insert(name.clone(), source);
+            }
             if let Some(source) = stmt.module.as_deref() {
                 mojito_ast::ast::stamp_source(&mut out[first_new..], source);
             }

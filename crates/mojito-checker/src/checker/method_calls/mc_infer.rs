@@ -157,6 +157,8 @@ impl Checker {
                         param_types: params,
                         param_decls: sig.decls.clone(),
                         parametric_origin_writes: sig.parametric_origin_writes.clone(),
+                        instantiation: None,
+                        parameter_names: Vec::new(),
                     });
                 }
             }
@@ -194,11 +196,17 @@ impl Checker {
                 });
             }
         }
-        // Parameterless Variant intrinsics (`v^.deinit_with(handler)`) arrive
-        // as ordinary method calls rather than parameterized invokes.
-        if let Some(result) =
-            self.infer_variant_method(span.clone(), object, method, param_args, args, kwargs)
-        {
+        // Parameterless `__VariantStorage` operations
+        // (`self._storage.deinit_with(handler)`) arrive as ordinary method
+        // calls rather than parameterized invokes.
+        if let Some(result) = self.infer_variant_storage_method(
+            span.clone(),
+            object,
+            method,
+            param_args,
+            args,
+            kwargs,
+        ) {
             return result;
         }
         let obj_ty = self.infer(object)?;
@@ -541,7 +549,6 @@ impl Checker {
                 match info.methods.get(method) {
                     Some(sigs) => {
                         let overloaded = sigs.len() > 1;
-                        let single_candidate = sigs.len() == 1;
                         let mut matches = Vec::new();
                         for sig in sigs {
                             let receiver_params: Vec<Ty> = sig
@@ -576,6 +583,8 @@ impl Checker {
                             else {
                                 continue;
                             };
+                            let instantiation =
+                                method_instantiation_arguments(sig, &method_arguments);
                             for (decl, argument) in info.decls.iter().zip(targs) {
                                 method_arguments.insert(
                                     decl.name().trim_start_matches('*').to_string(),
@@ -585,8 +594,11 @@ impl Checker {
                             if let Err(message) =
                                 self.method_constraint_result(sig, &method_arguments)
                             {
-                                if single_candidate
-                                    && availability_failure.is_none()
+                                // A candidate the arguments would have
+                                // selected reports its failed availability
+                                // clause even among overloads (the
+                                // where-gated `set` pair of `Variant`).
+                                if availability_failure.is_none()
                                     && let Some(message) = message
                                     && self
                                         .score_method_call(
@@ -658,6 +670,8 @@ impl Checker {
                                     ref_params: sig.ref_params.clone(),
                                     ref_return: sig.ref_return.clone(),
                                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
+                                    instantiation: instantiation.clone(),
+                                    parameter_names: sig.names.clone(),
                                     param_types: params,
                                     param_decls: sig.decls.clone(),
                                 });
@@ -805,6 +819,8 @@ impl Checker {
                         param_types: params,
                         param_decls: sig.decls.clone(),
                         parametric_origin_writes: sig.parametric_origin_writes.clone(),
+                        instantiation: None,
+                        parameter_names: Vec::new(),
                     });
                 }
                 select_method_overload(
@@ -852,6 +868,8 @@ impl Checker {
                     param_types: vec![],
                     param_decls: vec![],
                     parametric_origin_writes: Vec::new(),
+                    instantiation: None,
+                    parameter_names: Vec::new(),
                 }))
             }
             // Hashable scalar leaves contribute their normalized bits to the
@@ -861,8 +879,7 @@ impl Checker {
                 && args.len() == 1
                 && kwargs.is_empty()
                 && param_args.is_empty()
-                && (builtin_hashable_ty(&obj_ty)
-                    || matches!(&obj_ty, Ty::Variant(alternatives) if alternatives.iter().all(|alternative| self.is_hashable(alternative)))) =>
+                && builtin_hashable_ty(&obj_ty) =>
             {
                 let hasher = self.infer(&args[0])?;
                 if !self.conforms_to(&hasher, "Hasher") {
@@ -895,6 +912,8 @@ impl Checker {
                     param_types: vec![hasher],
                     param_decls: vec![],
                     parametric_origin_writes: vec![],
+                    instantiation: None,
+                    parameter_names: Vec::new(),
                 }))
             }
             // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
@@ -944,6 +963,8 @@ impl Checker {
                     ref_return: None,
                     param_decls: vec![],
                     parametric_origin_writes: vec![],
+                    instantiation: None,
+                    parameter_names: Vec::new(),
                 }))
             }
             _ => Ok(None),
@@ -987,13 +1008,40 @@ impl Checker {
                 });
             }
         };
-        if parameterized_syntax {
-            self.operation_adjustments.borrow_mut().insert(
+        // A generic method's resolved compile-time arguments feed per-call
+        // specialization discovery; once the elaborator has minted the clone
+        // for this instantiation, the call retargets to it by exact name.
+        if let (Ty::Struct(sname, _), Some(arguments)) = (&obj_ty, &resolved.instantiation) {
+            self.method_instantiations.borrow_mut().insert(
                 span.clone(),
-                mojito_checked::checked::SemanticAdjustment::ParameterizedMethodCall {
-                    param_decls: resolved.param_decls.clone(),
+                mojito_checked::checked::MethodInstantiation {
+                    owner: sname.clone(),
+                    method: method.to_string(),
+                    parameter_names: resolved.parameter_names.clone(),
+                    arguments: arguments.clone(),
                 },
             );
+            if let Some(clone) =
+                self.specialized_method_clone(sname, method, &resolved.param_decls, arguments)
+            {
+                return self.infer_method_call(
+                    span,
+                    object,
+                    &clone,
+                    MethodCallArguments {
+                        param_args: &[],
+                        args,
+                        kwargs,
+                        parameterized_syntax,
+                        preserves_receiver_interiors,
+                    },
+                );
+            }
+        }
+        if parameterized_syntax {
+            self.parameterized_method_calls
+                .borrow_mut()
+                .insert(span.clone(), resolved.param_decls.clone());
         }
         let boundary_before = self.call_boundary_snapshot(&span, args, kwargs);
         self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
@@ -1198,7 +1246,12 @@ impl Checker {
         if resolved.consumes_receiver
             && (is_place_expr(object) || self.infer_reference_value(object).is_some())
         {
-            if !self.is_implicitly_copyable(&obj_ty) {
+            // A `deinit self` call on a plain local variable is that
+            // variable's last use: current Mojo moves it implicitly, and the
+            // ownership analysis rejects any later use.
+            let implicit_last_use = resolved.self_convention == Some(ArgConvention::Deinit)
+                && matches!(&object.kind, ExprKind::Identifier(name) if self.lookup_owner(name).is_some());
+            if !self.is_implicitly_copyable(&obj_ty) && !implicit_last_use {
                 let context = format!("consuming receiver of method '{method}'");
                 if !self.is_copyable(&obj_ty) {
                     return Err(TypeError::NonCopyable {
@@ -1216,9 +1269,15 @@ impl Checker {
                     copyable: true,
                 });
             }
-            self.implicitly_copied_consuming_receivers
-                .borrow_mut()
-                .insert(span.clone());
+            if !implicit_last_use || self.is_implicitly_copyable(&obj_ty) {
+                self.implicitly_copied_consuming_receivers
+                    .borrow_mut()
+                    .insert(span.clone());
+            } else {
+                self.implicitly_moved_consuming_receivers
+                    .borrow_mut()
+                    .insert(span.clone());
+            }
         }
         // A `var self` receiver takes ownership by move, so a declared
         // `Movable where False` opt-out rejects it; `deinit self` is
@@ -1422,6 +1481,25 @@ impl Checker {
         // descriptor and capture metadata at one source expression.
         if let Some(target) = selected_target {
             use mojito_checked::checked::{CheckedCallArgument, CheckedCallArgumentSource};
+            // A `@staticmethod` reached through an instance takes no
+            // receiver: the lowering evaluates the receiver for its effect
+            // and calls the static symbol with the arguments alone.
+            let receiver_elided = match &obj_ty {
+                Ty::Struct(name, _) => self.structs.get(name).is_some_and(|info| {
+                    info.methods.get(method).is_some_and(|signatures| {
+                        // The target spells the overload symbol only when
+                        // the name is overloaded (see `lowered_name` above).
+                        let self_ty = self.self_instance_ty(name);
+                        signatures.iter().any(|sig| {
+                            !sig.has_self
+                                && (signatures.len() == 1
+                                    || method_lowered_name(name, method, sig, self_ty.as_ref())
+                                        == target)
+                        })
+                    })
+                }),
+                _ => false,
+            };
             let mut arguments = resolved
                 .slots
                 .iter()
@@ -1557,6 +1635,7 @@ impl Checker {
                         resolved.self_convention,
                         Some(ArgConvention::Mut | ArgConvention::Ref)
                     ),
+                    receiver_elided,
                     receiver_convention: effective_receiver_convention,
                     arguments,
                     captures,

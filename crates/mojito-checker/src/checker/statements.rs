@@ -663,6 +663,11 @@ impl Checker {
                     self.check_capture_access(root, true)?;
                 }
                 let nominal_subscript = match &place.kind {
+                    ExprKind::Index { object, index }
+                        if self.type_keyed_projection(object, index) =>
+                    {
+                        false
+                    }
                     ExprKind::Index { object, .. }
                     | ExprKind::Slice { object, .. }
                     | ExprKind::MultiIndex { object, .. } => {

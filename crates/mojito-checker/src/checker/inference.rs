@@ -830,9 +830,13 @@ impl Checker {
                 args,
                 kwargs,
             } => {
-                if let Some(result) =
-                    self.infer_variant_invoke(expr.source_span(), callee, param_args, args, kwargs)
-                {
+                if let Some(result) = self.infer_variant_storage_invoke(
+                    expr.source_span(),
+                    callee,
+                    param_args,
+                    args,
+                    kwargs,
+                ) {
                     return result;
                 }
                 // Parameterized method syntax is parsed as `Invoke(Member)` so
@@ -1040,25 +1044,53 @@ impl Checker {
                 MethodCallArguments::ordinary(args, kwargs),
             ),
             ExprKind::Index { object, index } => {
+                // A subscript base that is itself a reference result
+                // (`v[List[Int]][0]` on the self-hosted `Variant`) is borrowed
+                // for the subscript, like a method receiver, rather than read
+                // out as an owned value.
+                if matches!(
+                    &object.kind,
+                    ExprKind::Index { .. } | ExprKind::Invoke { .. }
+                ) && self.infer(object).is_ok()
+                    && self.infer_reference_value(object).is_some()
+                {
+                    self.borrowed_reference_receivers
+                        .borrow_mut()
+                        .insert(object.source_span());
+                }
                 // A variant projection whose alternative is spelled with a
                 // struct name (`v[String]`): the name no longer parses as a
                 // type token, so it arrives as an ordinary index identifier;
                 // reinterpret it as the projection's type argument, mirroring
                 // the `TypeApply` arm below.
+                // `v[String]` on a struct declaring a type-keyed
+                // `__getitem_param__[T]` (the self-hosted `Variant`): the
+                // accessor call, whose reference result is the projected place.
                 if let ExprKind::Identifier(vname) = &object.kind
-                    && let ExprKind::Identifier(tname) = &index.kind
-                    && self.structs.contains_key(tname)
-                    && let Some(Ty::Variant(alternatives)) = self.lookup(vname).cloned()
+                    && let Some(arg) = self.variant_projection_type_argument(index)
+                    && self.type_keyed_accessor_receiver(vname)
                 {
-                    self.check_capture_access(vname, false)?;
-                    let arg = mojito_ast::ast::ParamArg::Value((**index).clone());
+                    return self.infer_method_call(
+                        expr.source_span(),
+                        object,
+                        "__getitem_param__",
+                        MethodCallArguments::parameterized(std::slice::from_ref(&arg), &[], &[]),
+                    );
+                }
+                if let Some(arg) = self.variant_projection_type_argument(index)
+                    && let Some(Ty::Variant(alternatives)) =
+                        self.variant_projection_receiver(object)?
+                {
+                    if let ExprKind::Identifier(vname) = &object.kind {
+                        self.check_capture_access(vname, false)?;
+                        if let Some(owner) = self.lookup_owner(vname) {
+                            self.expression_bindings
+                                .borrow_mut()
+                                .insert(expr.source_span(), owner);
+                        }
+                    }
                     let (index, result) =
                         self.variant_alternative(&alternatives, std::slice::from_ref(&arg))?;
-                    if let Some(owner) = self.lookup_owner(vname) {
-                        self.expression_bindings
-                            .borrow_mut()
-                            .insert(expr.source_span(), owner);
-                    }
                     self.operation_adjustments.borrow_mut().insert(
                         expr.source_span(),
                         mojito_checked::checked::SemanticAdjustment::VariantProject {
@@ -1282,10 +1314,68 @@ impl Checker {
         }
     }
 
-    /// Recognize compiler-known parameterized `Variant` operations. The parser
-    /// preserves their type arguments on the invoke; checked metadata records
-    /// every selected tag and whether the runtime operation is checked or unsafe.
-    pub(super) fn infer_variant_invoke(
+    /// The type argument a subscript-shaped Variant projection names: a
+    /// struct or scalar type name (`v[String]`), or a substituted type value
+    /// in a specialized method body (`self._storage[T]` with `T` baked).
+    pub(super) fn variant_projection_type_argument(
+        &self,
+        index: &Expr,
+    ) -> Option<mojito_ast::ast::ParamArg> {
+        match &index.kind {
+            ExprKind::Identifier(name)
+                if self.structs.contains_key(name)
+                    || (scalar_type_name(name).is_some() && self.lookup(name).is_none()) =>
+            {
+                Some(mojito_ast::ast::ParamArg::Value(index.clone()))
+            }
+            ExprKind::TypeValue(ty) => Some(mojito_ast::ast::ParamArg::Type(ty.clone())),
+            _ => None,
+        }
+    }
+
+    /// Whether `object[index]` is a type-keyed projection: a local whose
+    /// struct declares `__getitem_param__[T]` subscripted by a type (the
+    /// self-hosted `Variant`'s `v[Int]`). Such a subscript is the accessor
+    /// call's reference result in value and place positions alike, never a
+    /// nominal `__getitem__`/`__setitem__` subscript.
+    pub(super) fn type_keyed_projection(&self, object: &Expr, index: &Expr) -> bool {
+        matches!(&object.kind, ExprKind::Identifier(name) if self.type_keyed_accessor_receiver(name))
+            && self.variant_projection_type_argument(index).is_some()
+    }
+
+    /// Whether a variable's struct declares a type-keyed
+    /// `__getitem_param__[T]` accessor (the self-hosted `Variant`'s `v[T]`).
+    pub(super) fn type_keyed_accessor_receiver(&self, name: &str) -> bool {
+        let Some(Ty::Struct(sname, _)) = self.lookup(name) else {
+            return false;
+        };
+        self.structs.get(sname).is_some_and(|info| {
+            info.methods
+                .get("__getitem_param__")
+                .is_some_and(|sigs| sigs.iter().any(|sig| !sig.decls.is_empty()))
+        })
+    }
+
+    /// The receiver type of a subscript-shaped Variant projection when the
+    /// object is a Variant-typed place (a variable, or a field such as the
+    /// self-hosted `Variant`'s `self._storage`); `None` for any other object.
+    pub(super) fn variant_projection_receiver(
+        &self,
+        object: &Expr,
+    ) -> Result<Option<Ty>, TypeError> {
+        let ty = match &object.kind {
+            ExprKind::Identifier(name) => self.lookup(name).cloned(),
+            ExprKind::Member { .. } => Some(self.infer(object)?),
+            _ => None,
+        };
+        Ok(ty.filter(|ty| matches!(ty, Ty::Variant(_))))
+    }
+
+    /// Recognize the parameterized operations of the compiler-private
+    /// `__VariantStorage` primitive. The parser preserves their type
+    /// arguments on the invoke; checked metadata records every selected tag
+    /// and whether the runtime operation is checked or unsafe.
+    pub(super) fn infer_variant_storage_invoke(
         &self,
         span: SourceSpan,
         callee: &Expr,
@@ -1296,14 +1386,16 @@ impl Checker {
         let ExprKind::Member { object, field } = &callee.kind else {
             return None;
         };
-        self.infer_variant_method(span, object, field, param_args, args, kwargs)
+        self.infer_variant_storage_method(span, object, field, param_args, args, kwargs)
     }
 
-    /// The shared Variant-intrinsic dispatch, reachable both from the
-    /// parameterized `Invoke(Member)` spelling (`v.unwrap[T]()`) and the
-    /// ordinary method-call spelling for parameterless operations
-    /// (`v^.deinit_with(handler)`).
-    pub(super) fn infer_variant_method(
+    /// The `__VariantStorage` primitive's operation dispatch, reachable both
+    /// from the parameterized `Invoke(Member)` spelling
+    /// (`self._storage.unwrap[T]()`) and the ordinary method-call spelling
+    /// for parameterless operations (`self._storage.deinit_with(handler)`).
+    /// Only a `Ty::Variant`-typed receiver — the storage field of the
+    /// bundled `Variant` struct — reaches it; every other receiver is `None`.
+    pub(super) fn infer_variant_storage_method(
         &self,
         span: SourceSpan,
         object: &Expr,
@@ -1312,21 +1404,14 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Result<Ty, TypeError>> {
-        // `Variant[Int, String].is_type_supported[T]()` — upstream's static
-        // spelling: the receiver is the parameterized type itself.
-        let object_ty = if let ExprKind::TypeApply { name, args } = &object.kind
-            && super::traits_support::is_variant_name(name)
-            && self.lookup(name).is_none()
-        {
-            match self.variant_type(args) {
-                Ok(ty) => ty,
-                Err(error) => return Some(Err(error)),
-            }
-        } else {
-            match self.infer(object) {
-                Ok(ty) => ty,
-                Err(error) => return Some(Err(error)),
-            }
+        // A type application is a static method receiver for the ordinary
+        // method path.
+        if matches!(object.kind, ExprKind::TypeApply { .. }) {
+            return None;
+        }
+        let object_ty = match self.infer(object) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
         };
         let Ty::Variant(alternatives) = object_ty else {
             return None;
@@ -1334,7 +1419,6 @@ impl Checker {
         if !matches!(
             field,
             "isa"
-                | "is_type_supported"
                 | "set"
                 | "unwrap"
                 | "unsafe_unwrap"
@@ -1452,31 +1536,6 @@ impl Checker {
                         self.copy_place_value_uses.borrow_mut().insert(span);
                     }
                     Ok(alternative)
-                }
-                "is_type_supported" => {
-                    if param_args.len() != 1 {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: "Variant.is_type_supported".to_string(),
-                            expected: 1,
-                            got: param_args.len(),
-                        });
-                    }
-                    if !args.is_empty() {
-                        return Err(TypeError::ArityMismatch {
-                            name: "Variant.is_type_supported".to_string(),
-                            expected: 0,
-                            got: args.len(),
-                        });
-                    }
-                    let requested =
-                        self.type_param_argument(&param_args[0], "Variant.is_type_supported")?;
-                    self.operation_adjustments.borrow_mut().insert(
-                        span,
-                        mojito_checked::checked::SemanticAdjustment::VariantTypeSupported {
-                            supported: alternatives.contains(&requested),
-                        },
-                    );
-                    Ok(Ty::Bool)
                 }
                 "set" => {
                     let (index, alternative) =
@@ -2513,6 +2572,9 @@ impl Checker {
             .enumerate()
             .filter(|(_, alternative)| **alternative == materialized)
             .collect();
+        // The last tier also admits a user-defined implicit conversion
+        // (`StringLiteral` to the nominal `String` alternative), recorded on
+        // the payload below like a constructor argument's.
         let candidates: Vec<_> = if !exact.is_empty() {
             exact
         } else if !materialized_exact.is_empty() {
@@ -2521,7 +2583,14 @@ impl Checker {
             alternatives
                 .iter()
                 .enumerate()
-                .filter(|(_, alternative)| self.value_coerces(&actual, alternative))
+                .filter(|(_, alternative)| {
+                    self.value_coerces(&actual, alternative)
+                        || self
+                            .implicit_conversion_target(&actual, alternative)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                })
                 .collect()
         };
         let [(index, selected)] = candidates.as_slice() else {

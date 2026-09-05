@@ -136,23 +136,9 @@ recreates this section's checkbox with the fresh divergence list.
 
 - [ ] **Collection API parity** — grow the tuple, slice, optional/variant,
   and String result-API surfaces demand-first toward the audited head, one
-  session-sized slice each (`docs/features.md` records what lands):
-  - [ ] **Self-hosted `Variant`** — replace the intrinsic `Ty::Variant` (8
-    MIR instructions, 13 checker protocol arms,
-    `crates/mojito-pliron/src/lower/variants.rs`) with upstream's pure-Mojo
-    `struct Variant[*Ts: AnyType]` whose conformances are TypeList-conditional
-    (`Copyable where Ts.all_conforms_to[Copyable]()`, ...). Prerequisites, in
-    order: (1) a storage primitive the VM can execute and pliron can lay out
-    (a compiler-provided `_VariantStorage[*Ts]` with `isa[T]`,
-    `unsafe_set_active[T]`, `unsafe_ptr[T]`, `unwrap[T]`; the register VM has
-    no byte-addressed union); (2) `comptime T = Self.Ts[i]` type bindings
-    inside `comptime for` bodies (Tuple only unrolls element indices today);
-    (3) infer-only method type parameters resolved from a closure's return
-    type in ordinary struct methods; (4) pack-conditional
-    `__deinit__`/`__eq__`/`__hash__`/`write_to` bodies through the new
-    storage, then retiring the intrinsic arms, the `variant.*` capability
-    rows, and the `utils/__init__.mojo` name shim. Not session-sized; each
-    prerequisite is its own slice.
+  session-sized slice each (`docs/features.md` records what lands). The
+  remaining work is the residue lists below; the self-hosted `Variant`
+  landed 2026-09-04.
 
   String residues (2026-09; batch 1 landed the search/count/replace/join/
   split/splitlines/strip families, `Boolable`, `__mul__`, String as `Writer`,
@@ -235,16 +221,34 @@ recreates this section's checkbox with the fresh divergence list.
   `EmptyOptionalError`'s `TypeNames` text, and `copied`/`OptionalReg` need
   self-type-constrained methods / `TrivialRegisterPassable`.
 
-  Variant residues (2026-09; the Variant slice landed the `init_with=`
-  constructor, `unsafe_get`, static `is_type_supported`, the repr frame,
-  and native hashing/equality of Variants): native `print`/`String(v)`/
-  `repr(v)` of a Variant value (the VM forwards `write_to` to the payload;
-  pliron's print and repr paths have no Variant arm), the payload repr text
-  inside the frame now spells `Int(7)`/`'mojo'` like upstream), and
-  `ref r = v.unsafe_get[T]()` as a place (the projection `v[T]` is the
-  place form), and the projection tag-mismatch trap categories: the VM
-  raises a `TypeError` (`Variant holds 'Int', not 'String'`) where native
-  traps `UnhandledError`, so no error-differential fixture pins it.
+  Variant residues (2026-09-04; the self-hosted `Variant` landed:
+  `stdlib/std/utils/variant.mojo` over the bundled-private
+  `__VariantStorage[*Ts]` primitive, per-call specialization of type-keyed
+  methods, the intrinsic surface retired): variadic-struct pack forwarding
+  through a generic def — `Variant[*Ts]`/`Variant[T, String]` applied to an
+  enclosing `def f[*Ts]`/`def f[T]`'s own parameters — cannot check (the
+  erased template body resolves no variadic template application; user
+  variadic structs never could, the retired intrinsic could; pinned by
+  tests/compiler_test.rs `variant_pack_forwarding_through_a_generic_def_is_rejected`),
+  which needs variadic template applications over symbolic arguments to
+  resolve in erased template bodies and struct specialization requests to be
+  discovered from substituted generic signatures; per-call specialization of
+  method-level type parameters is limited to methods of specialized variadic
+  structs (elsewhere they stay erased); natively, `repr(v)` waits on the
+  general native repr path (no user struct's `write_repr_to` runs natively
+  yet) and a parameterized `@staticmethod` reached through an instance of a
+  non-variadic generic struct (`p.pick[Int]()`) fails monomorphization
+  (`cannot resolve parameter T`; the VM runs it); an unavailable where-gated
+  method reports Mojito's `'set' is unavailable for Variant[Conn]: its where
+  clause evaluated to False` rather than upstream's clause text; and the
+  projection tag-mismatch trap categories differ (the VM raises a `TypeError`
+  `Variant holds 'Int', not 'String'` where native traps `UnhandledError`),
+  so no error-differential fixture pins it. Observed while landing it, not
+  Variant-specific and unchanged from the committed baseline: `List[Int](1,
+  2)` (explicit parameter plus variadic elements) reports no matching
+  constructor, and a user `struct Box[T: Copyable & Movable](Copyable,
+  Movable)` instantiated as `Box[Int](1)` fails the specialization
+  conformance oracle (`unknown type 'T'`).
 
   Slice residues (2026-09; the Slice slice landed `Slice.__eq__`, the
   `Slice(start, end, step)` writer text, the two-element

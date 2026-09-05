@@ -310,6 +310,17 @@ impl Checker {
                 if name == "__RuntimeTuple" {
                     return self.tuple_element_types(args).map(Ty::Tuple);
                 }
+                // Compiler-private tagged-union storage (the self-hosted
+                // `Variant`'s field): the intrinsic union type, reachable only
+                // from bundled standard-library sources.
+                if name == mojito_types::types::VARIANT_STORAGE_TYPE_NAME {
+                    if !self.bundled_stdlib_declaration {
+                        return Err(TypeError::Unsupported(format!(
+                            "'{name}' is compiler-private storage; use Variant from std.utils"
+                        )));
+                    }
+                    return self.variant_type(args);
+                }
                 // Compiler-private inline uninit storage (`MaybeUninit`'s
                 // field), reachable only from the bundled crossing module.
                 if name == mojito_types::types::UNINIT_STORAGE_TYPE_NAME {
@@ -336,11 +347,6 @@ impl Checker {
                 }
                 if name == "Error" && args.is_empty() {
                     return Ok(Ty::Error);
-                }
-                // `Variant` is a compiler-provided tagged union even when its
-                // stdlib declaration has been module-qualified by the linker.
-                if is_variant_name(name) && (name != "Variant" || self.structs.contains_key(name)) {
-                    return self.variant_type(args);
                 }
                 // Literal families are lang items: direct `_` holes are solved
                 // from an initializer before ordinary generic-bound checking.
@@ -1531,6 +1537,27 @@ impl Checker {
                             );
                         }
                         ty
+                    }
+                    // A parameterized type argument (`Dict[Variant[Int, String],
+                    // Int]()`): the parser encodes it as a value expression;
+                    // specialization has already rewritten a variadic
+                    // instance to its concrete name. Like the bare-identifier
+                    // form, it resolves as a type and never as a runtime value.
+                    ParamArg::Value(
+                        expression @ Expr {
+                            kind:
+                                ExprKind::TypeApply {
+                                    name: applied,
+                                    args,
+                                },
+                            ..
+                        },
+                    ) => {
+                        self.operation_adjustments.borrow_mut().insert(
+                            expression.source_span(),
+                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
+                        );
+                        self.ty_from_anno(&SourceType::Named(applied.clone(), args.clone()))?
                     }
                     ParamArg::Value(_) => {
                         return Err(TypeError::TypeMismatch {

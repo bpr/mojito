@@ -508,25 +508,6 @@ impl VmBackend {
         value: Value,
         repr: bool,
     ) -> Result<String, RuntimeError> {
-        // `write_to` forwards to the active payload; `write_repr_to` wraps it
-        // in upstream's `Variant[<alternatives>](<payload repr>)` text.
-        if let Value::Variant {
-            alternatives,
-            value,
-            ..
-        } = value
-        {
-            let payload = self.format_value(prog, *value, repr)?;
-            if !repr {
-                return Ok(payload);
-            }
-            let names = alternatives
-                .iter()
-                .map(mojito_types::types::unqualified_type_name)
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Ok(format!("Variant[{names}]({payload})"));
-        }
         let Value::Struct {
             name,
             fields,

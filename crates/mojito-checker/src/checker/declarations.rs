@@ -6,12 +6,85 @@ pub(super) fn definitely_returns(body: &[Stmt]) -> bool {
     body.iter().any(stmt_returns)
 }
 
+/// Whether a constructor declares no compile-time parameter that a per-call
+/// clone would bake: only callable-bounded parameters (`F: def() -> Int`)
+/// may remain on a concrete clone.
+pub(super) fn constructor_is_concrete(decls: &[ParamDecl]) -> bool {
+    decls.iter().all(|decl| {
+        matches!(
+            decl,
+            ParamDecl::Type {
+                callable_bound: Some(_),
+                ..
+            }
+        )
+    })
+}
+
+/// Solve the type parameters a callable-bounded parameter's contract names
+/// from the callable actually bound to it: `[T: AnyType, //, F: def() -> T]`
+/// with `init_with: F` binds `F` to the argument's function type, and its
+/// declared contract `def() -> T` then unifies against that type to bind
+/// `T` (upstream's `Variant(init_with=factory)` inference).
+pub(super) fn unify_through_callable_bounds(
+    decls: &[ParamDecl],
+    subst: &mut HashMap<String, Ty>,
+) -> Result<(), TypeError> {
+    for decl in decls {
+        let ParamDecl::Type {
+            name,
+            callable_bound: Some(bound),
+            ..
+        } = decl
+        else {
+            continue;
+        };
+        let Some(actual) = subst.get(name).cloned() else {
+            continue;
+        };
+        // The contract's environment class is validated separately
+        // (`validate_callable_parameter_bounds`); solving reads only the
+        // parameter and result shapes.
+        if let (
+            Ty::Func {
+                params: bound_params,
+                ret: bound_ret,
+                error: bound_error,
+                ..
+            },
+            Ty::Func {
+                params: actual_params,
+                ret: actual_ret,
+                error: actual_error,
+                ..
+            },
+        ) = (bound.as_ref(), &actual)
+        {
+            for (pattern, actual) in bound_params.iter().zip(actual_params) {
+                unify(pattern, actual, subst)?;
+            }
+            unify(bound_ret, actual_ret, subst)?;
+            if let (Some(pattern), Some(actual)) = (bound_error, actual_error) {
+                unify(pattern, actual, subst)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) => true,
         // A `raise` diverges (it never falls through to the end), so for
         // reachability it behaves like a `return`.
         StmtKind::Raise(_) => true,
+        // The runtime trap never returns, so a body ending in it has no
+        // fall-through path either (the shape of an unspecialized generic
+        // template method's stub body).
+        StmtKind::Expr(Expr {
+            kind: ExprKind::Call { name, .. },
+            ..
+        }) if name == "_mojito_abort" => true,
         StmtKind::If { branches, orelse } => {
             orelse.as_ref().is_some_and(|e| definitely_returns(e))
                 && branches.iter().all(|(_, b)| definitely_returns(b))
@@ -1050,6 +1123,13 @@ impl Checker {
         let info = self.structs.get(sname).ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
         })?;
+        // A constructor whose body is the runtime trap (an unspecialized
+        // generic template's stub) never completes, so it initializes nothing.
+        if body.first().is_some_and(|statement| {
+            matches!(&statement.kind, StmtKind::Expr(Expr { kind: ExprKind::Call { name, .. }, .. }) if name == "_mojito_abort")
+        }) {
+            return Ok(());
+        }
         for (field, _) in &info.fields {
             if !definitely_initializes_self_field(body, field) {
                 return Err(TypeError::UninitializedField {
@@ -1303,6 +1383,49 @@ impl Checker {
         }
     }
 
+    /// Record a generic constructor's resolved compile-time arguments for
+    /// per-call specialization and, once its clone exists on the struct,
+    /// retarget the construction to it (`Variant$…​.__init__$y3:Int`).
+    fn record_constructor_instantiation(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        sig: &MethodSig,
+        subst: &HashMap<String, Ty>,
+    ) {
+        if sig.decls.is_empty() {
+            return;
+        }
+        let arguments: Option<Vec<TyArg>> = sig
+            .decls
+            .iter()
+            .map(|decl| match decl {
+                ParamDecl::Type { name, .. } => subst
+                    .get(name)
+                    .map(|ty| materialized_instantiation_argument(&TyArg::Ty(ty.clone()))),
+                ParamDecl::Value { .. } => None,
+            })
+            .collect();
+        let Some(arguments) = arguments else {
+            return;
+        };
+        self.method_instantiations.borrow_mut().insert(
+            span.clone(),
+            mojito_checked::checked::MethodInstantiation {
+                owner: name.to_string(),
+                method: "__init__".to_string(),
+                parameter_names: sig.names.clone(),
+                arguments: arguments.clone(),
+            },
+        );
+        if let Some(clone) = self.specialized_method_clone(name, "__init__", &sig.decls, &arguments)
+        {
+            self.overload_targets
+                .borrow_mut()
+                .insert(span.clone(), format!("{name}.{clone}"));
+        }
+    }
+
     pub(super) fn infer_construction(
         &self,
         span: SourceSpan,
@@ -1381,11 +1504,31 @@ impl Checker {
             if info.decls.is_empty() {
                 let mut matches = Vec::new();
                 for sig in sigs {
+                    // A constructor with its own compile-time parameters
+                    // (`__init__[T: Movable](out self, var value: T)`)
+                    // instantiates them from the arguments like any generic
+                    // method; the resolved arguments feed per-call
+                    // specialization.
+                    let Ok((params, variadic, kw_variadic, _, method_arguments)) = self
+                        .instantiate_method_generics(
+                            &format!("{name}.__init__"),
+                            sig,
+                            &sig.params,
+                            sig.variadic.as_deref(),
+                            sig.kw_variadic.as_deref(),
+                            param_args,
+                            args,
+                            kwargs,
+                        )
+                    else {
+                        continue;
+                    };
+                    let instantiation = method_instantiation_arguments(sig, &method_arguments);
                     if let Ok(scored) = self.score_method_call(
                         sig,
-                        &sig.params,
-                        sig.variadic.as_deref(),
-                        sig.kw_variadic.as_deref(),
+                        &params,
+                        variadic.as_ref(),
+                        kw_variadic.as_ref(),
                         args,
                         kwargs,
                     ) {
@@ -1394,8 +1537,8 @@ impl Checker {
                             slots: scored.slots,
                             positional_overflow: scored.positional_overflow,
                             keyword_overflow: scored.keyword_overflow,
-                            variadic_element: sig.variadic.as_deref().cloned(),
-                            keyword_element: sig.kw_variadic.as_deref().cloned(),
+                            variadic_element: variadic,
+                            keyword_element: kw_variadic,
                             conventions: sig.conventions.clone(),
                             self_convention: sig.self_convention,
                             return_type: self.struct_instance_type(name, Vec::new()),
@@ -1414,11 +1557,25 @@ impl Checker {
                             }),
                             ref_params: sig.ref_params.clone(),
                             ref_return: None,
-                            param_types: sig.params.clone(),
+                            param_types: params,
                             param_decls: sig.decls.clone(),
                             parametric_origin_writes: sig.parametric_origin_writes.clone(),
+                            instantiation,
+                            parameter_names: sig.names.clone(),
                         });
                     }
+                }
+                // A per-call clone of a generic constructor is a concrete
+                // same-name overload; it wins over the generic template it
+                // was minted from whenever it matches at all.
+                if matches
+                    .iter()
+                    .any(|m| constructor_is_concrete(&m.param_decls))
+                    && matches
+                        .iter()
+                        .any(|m| !constructor_is_concrete(&m.param_decls))
+                {
+                    matches.retain(|m| constructor_is_concrete(&m.param_decls));
                 }
                 let selected =
                     select_method_overload("__init__", matches, None).map_err(|kind| {
@@ -1439,6 +1596,17 @@ impl Checker {
                     self.overload_targets
                         .borrow_mut()
                         .insert(span.clone(), target.clone());
+                }
+                if let Some(arguments) = &selected.instantiation {
+                    self.method_instantiations.borrow_mut().insert(
+                        span.clone(),
+                        mojito_checked::checked::MethodInstantiation {
+                            owner: name.to_string(),
+                            method: "__init__".to_string(),
+                            parameter_names: selected.parameter_names.clone(),
+                            arguments: arguments.clone(),
+                        },
+                    );
                 }
                 self.record_selected_method_conversions("__init__", &selected, args, kwargs)?;
                 // Constructor calls use the same reference-parameter handles as
@@ -1493,8 +1661,10 @@ impl Checker {
                     .iter()
                     .map(|a| self.infer(a))
                     .collect::<Result<Vec<_>, _>>()?;
-                let (subst, tyargs) =
+                let (mut subst, tyargs) =
                     self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)?;
+                unify_through_callable_bounds(&sig.decls, &mut subst)?;
+                self.record_constructor_instantiation(&span, name, sig, &subst);
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
                     let expected = substitute(pty, &subst);
                     if !coerces(aty, &expected)
@@ -1592,11 +1762,11 @@ impl Checker {
                     .iter()
                     .map(|(_, pattern, _)| pattern.clone())
                     .collect();
-                if let Ok((subst, tyargs)) =
-                    self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys)
-                {
+                let resolved_use =
+                    self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys);
+                if let Ok((subst, tyargs)) = resolved_use {
                     let bindings = AssocBindings {
-                        types: subst,
+                        types: subst.clone(),
                         values: solved_value_bindings(&decls, &tyargs),
                         origins: HashMap::new(),
                     };
@@ -1631,12 +1801,27 @@ impl Checker {
                             conversions,
                             matched.slots,
                             matched.positional_overflow,
+                            subst,
                         ));
                     }
                 }
             }
             let best = matches.iter().map(|(rank, ..)| *rank).min();
             if let Some(best) = best {
+                // A per-call clone of a generic constructor is a concrete
+                // same-name overload; it wins over the generic template it
+                // was minted from whenever it matches at all.
+                let mut matches = matches;
+                if matches
+                    .iter()
+                    .any(|(_, sig, ..)| constructor_is_concrete(&sig.decls))
+                    && matches
+                        .iter()
+                        .any(|(_, sig, ..)| !constructor_is_concrete(&sig.decls))
+                {
+                    matches.retain(|(_, sig, ..)| constructor_is_concrete(&sig.decls));
+                }
+                let best = matches.iter().map(|(rank, ..)| *rank).min().unwrap_or(best);
                 let mut best_matches = matches
                     .into_iter()
                     .filter(|(rank, ..)| *rank == best)
@@ -1647,7 +1832,9 @@ impl Checker {
                         reason: "ambiguous overloaded constructor call".to_string(),
                     });
                 }
-                let (_, sig, tyargs, conversions, slots, overflow) = best_matches.remove(0);
+                let (_, sig, tyargs, conversions, slots, overflow, mut subst) =
+                    best_matches.remove(0);
+                unify_through_callable_bounds(&sig.decls, &mut subst)?;
                 // Rebuild the packed bound used during scoring: regular slots in
                 // slot order (skipping defaults), then variadic overflow. The
                 // `conversions` indices address into this same layout. Overflow
@@ -1701,6 +1888,7 @@ impl Checker {
                         .borrow_mut()
                         .insert(span.clone(), target);
                 }
+                self.record_constructor_instantiation(&span, name, &sig, &subst);
                 self.solve_call_origins(
                     &slots,
                     &sig.conventions,
@@ -1913,6 +2101,7 @@ impl Checker {
             for (pattern, actual) in patterns.iter().zip(actuals) {
                 unify(pattern, actual, &mut subst)?;
             }
+            unify_through_callable_bounds(decls, &mut subst)?;
             let mut tyargs = Vec::with_capacity(decls.len());
             let mut value_environment = HashMap::new();
             for (decl, arguments) in decls.iter().zip(bound) {
@@ -2045,6 +2234,7 @@ impl Checker {
                 unify(pat, act, &mut subst)?;
             }
         }
+        unify_through_callable_bounds(decls, &mut subst)?;
         let inferred_packs: HashMap<String, Vec<CtValue>> = patterns
             .iter()
             .zip(actuals)

@@ -1565,13 +1565,16 @@ fn union_return_through_runtime_reference_arguments_keeps_the_selected_owner_ali
 
 #[test]
 fn variant_projection_is_a_tag_checked_place() {
-    let src = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[Int, String](7)\n    value[Int] += 5\n    print(value[Int])\n";
-    assert_eq!(vm(src), "12\n");
+    // `value[Int]` is the self-hosted `Variant`'s type-keyed
+    // `__getitem_param__[Int]()` reference: a writable place in every
+    // position, backed by the storage primitive's tag-checked projection.
+    let src = "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    value[Int] += 5\n    print(value[Int])\n";
+    assert_eq!(run_compiled(src).expect("vm backend failed"), "12\n");
 
     // Mojito's executable local-ref extension exercises the same place as a
     // persistent frame/slot handle, rather than a cloned VariantGet payload.
-    let src = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[Int, String](7)\n    ref payload = value[Int]\n    payload += 5\n    print(value[Int])\n";
-    assert_eq!(vm(src), "12\n");
+    let src = "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    ref payload = value[Int]\n    payload += 5\n    print(value[Int])\n";
+    assert_eq!(run_compiled(src).expect("vm backend failed"), "12\n");
 }
 
 #[test]

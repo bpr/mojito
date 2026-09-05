@@ -173,6 +173,7 @@ pub fn check_program_with_materialized_callables(
         checker.overload_targets.into_inner(),
         checker.contextual_bases.into_inner(),
         checker.generic_instantiations.into_inner(),
+        checker.method_instantiations.into_inner(),
         checker.call_transfers.into_inner(),
         checker.implicit_conversions.into_inner(),
         checker.implicit_conversion_types.into_inner(),
@@ -192,6 +193,7 @@ pub fn check_program_with_materialized_callables(
         checker.iteration_protocols.into_inner(),
         checker.simd_constructions.into_inner(),
         checker.operation_adjustments.into_inner(),
+        checker.parameterized_method_calls.into_inner(),
         checker.tuple_unpack_plans.into_inner(),
         checker.interior_references.into_inner(),
         checker.interior_invalidations.into_inner(),
@@ -202,6 +204,7 @@ pub fn check_program_with_materialized_callables(
         checker.call_place_uses.into_inner(),
         checker.borrowed_read_call_places.into_inner(),
         checker.implicitly_copied_consuming_receivers.into_inner(),
+        checker.implicitly_moved_consuming_receivers.into_inner(),
         checker.declaration_effects.into_inner(),
     ))
 }
@@ -385,6 +388,11 @@ pub struct Checker {
     /// exact compile-time arguments), retained for instantiation discovery.
     generic_instantiations:
         RefCell<HashMap<SourceSpan, mojito_checked::checked::GenericInstantiation>>,
+    /// The resolved compile-time arguments per generic *method* call site
+    /// (receiver struct + method + declaration-order arguments), retained for
+    /// per-call method specialization discovery.
+    method_instantiations:
+        RefCell<HashMap<SourceSpan, mojito_checked::checked::MethodInstantiation>>,
     /// Per-body accumulation frames for inferred loan-transfer effects.
     transfer_frames: RefCell<Vec<TransferFrame>>,
     /// Inferred per-callable transfer effects, keyed by callable name
@@ -435,6 +443,11 @@ pub struct Checker {
     /// update and origin-bearing pointer construction — keyed by the source
     /// expression.  These cross the typed boundary so MIR never reinterprets
     /// syntax.
+    /// The declared compile-time parameters of the method a parameterized
+    /// invoke (`v.m[T](...)`) selected, keyed by the call. Separate from
+    /// `operation_adjustments` so a reference-yielding invoke keeps both its
+    /// `ReferenceResult` operation and this record.
+    parameterized_method_calls: RefCell<HashMap<SourceSpan, Vec<ParamDecl>>>,
     operation_adjustments:
         RefCell<HashMap<SourceSpan, mojito_checked::checked::SemanticAdjustment>>,
     /// Whether type resolution is inside a storage annotation (a struct field
@@ -530,6 +543,9 @@ pub struct Checker {
     /// separate from the single operation-adjustment slot so parameterized
     /// method metadata can coexist at the same expression.
     implicitly_copied_consuming_receivers: RefCell<HashSet<SourceSpan>>,
+    /// Call spans whose `deinit self` receiver is a plain local at its
+    /// implicit last use (see `SemanticAdjustment::ImplicitlyMoveConsumingReceiver`).
+    implicitly_moved_consuming_receivers: RefCell<HashSet<SourceSpan>>,
     return_ref_contracts: Vec<Option<ReturnRefContract>>,
     named_result_context: Vec<bool>,
     raising_context: Vec<Option<Ty>>,
@@ -597,6 +613,7 @@ impl Checker {
             overload_targets: RefCell::new(HashMap::new()),
             contextual_bases: RefCell::new(HashMap::new()),
             generic_instantiations: RefCell::new(HashMap::new()),
+            method_instantiations: RefCell::new(HashMap::new()),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects),
             call_transfers: RefCell::new(HashMap::new()),
@@ -610,6 +627,7 @@ impl Checker {
             conversion_source_borrows: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
+            parameterized_method_calls: RefCell::new(HashMap::new()),
             strict_storage_annotation: std::cell::Cell::new(StorageStrictness::Off),
             tuple_unpack_plans: RefCell::new(HashMap::new()),
             interior_references: RefCell::new(HashMap::new()),
@@ -639,6 +657,7 @@ impl Checker {
             call_place_uses: RefCell::new(HashSet::new()),
             borrowed_read_call_places: RefCell::new(HashSet::new()),
             implicitly_copied_consuming_receivers: RefCell::new(HashSet::new()),
+            implicitly_moved_consuming_receivers: RefCell::new(HashSet::new()),
             return_ref_contracts: Vec::new(),
             named_result_context: Vec::new(),
             raising_context: Vec::new(),
@@ -1779,6 +1798,11 @@ struct MethodCallResolution {
     param_decls: Vec<ParamDecl>,
     /// See [`MethodSig::parametric_origin_writes`].
     parametric_origin_writes: Vec<mojito_types::origin::OriginParamId>,
+    /// The method's own resolved compile-time arguments, in declaration
+    /// order, when the selected signature declares any.
+    instantiation: Option<Vec<TyArg>>,
+    /// The selected signature's runtime parameter names, in declaration order.
+    parameter_names: Vec<String>,
 }
 
 type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);

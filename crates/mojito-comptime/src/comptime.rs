@@ -178,6 +178,66 @@ impl DefSpecializationRequest {
     }
 }
 
+/// One checker-discovered application of a generic *method* of a specialized
+/// variadic struct (`bag.find[Int]()`, `v.set(3)` inferring `T`). The
+/// specializer mints one clone per distinct instantiation
+/// (`find$y3:Int`) inside the owner, and the checker retargets the call to
+/// it by exact name on the next discovery round. A request that names no
+/// method, or whose arguments do not align with the method's declaration,
+/// is skipped: the call keeps the template's erased path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MethodSpecializationRequest {
+    /// The call occurrence, stored without its phase-local syntax id.
+    occurrence: SourceSpan,
+    /// The specialized struct's name as the checker saw it (`Bag$t2[...]`).
+    owner: String,
+    method: String,
+    /// The selected overload's runtime parameter names, in declaration
+    /// order: same-named overloads (`set[T](value)` and `set(*, init_with)`)
+    /// mint separate clones.
+    parameter_names: Vec<String>,
+    /// The checker's declaration-order argument list from `resolve_use_params`.
+    arguments: Vec<TyArg>,
+}
+
+impl MethodSpecializationRequest {
+    pub fn new(
+        occurrence: SourceSpan,
+        owner: String,
+        method: String,
+        parameter_names: Vec<String>,
+        arguments: Vec<TyArg>,
+    ) -> Self {
+        Self {
+            occurrence: occurrence.without_syntax(),
+            owner,
+            method,
+            parameter_names,
+            arguments,
+        }
+    }
+
+    pub fn parameter_names(&self) -> &[String] {
+        &self.parameter_names
+    }
+
+    pub fn occurrence(&self) -> &SourceSpan {
+        &self.occurrence
+    }
+
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
+    pub fn arguments(&self) -> &[TyArg] {
+        &self.arguments
+    }
+}
+
 /// Exact callable types which a generated public-Tuple declaration references
 /// through opaque compiler-only AST ids. Source `def(...)` annotations cannot
 /// encode all of this metadata, so the compiler passes this map directly to the
@@ -280,14 +340,20 @@ impl CtValueExt for CtValue {
     /// The element types carried by a compile-time `TypeList` value, or
     /// `None` for any other value.
     fn typelist_elements(&self) -> Option<&[CtValue]> {
-        let CtValue::Struct { name, fields } = self else {
-            return None;
-        };
-        if name != "TypeList" {
-            return None;
-        }
-        match fields.as_slice() {
-            [(field, CtValue::Tuple(values))] if field == "values" => Some(values),
+        match self {
+            CtValue::Struct { name, fields } if name == "TypeList" => match fields.as_slice() {
+                [(field, CtValue::Tuple(values))] if field == "values" => Some(values),
+                _ => None,
+            },
+            // A bound type pack (`*Ts` specialized to concrete types) is
+            // upstream's `TypeList` in every compile-time position, so
+            // `Ts.length`, `Ts[i]`, `Ts.all_conforms_to[..]()`, and
+            // `Ts.contains[T]()` read it directly.
+            CtValue::Tuple(values)
+                if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
+            {
+                Some(values)
+            }
             _ => None,
         }
     }
@@ -402,7 +468,28 @@ impl std::fmt::Display for ComptimeError {
 
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    elaborate_with_requests(program, &[], &[], &[])
+    elaborate_with_requests(program, &[], &[], &[], &[])
+}
+
+/// The top-level variadic struct template names (`struct S[*Ts: Bound]`) of a
+/// linked program. A specialized instance is named `<template>$t<n>[...]`;
+/// the compiler's discovery loop filters checker-recorded method
+/// instantiations to receivers of that shape.
+pub fn variadic_struct_template_names(program: &[Stmt]) -> HashSet<String> {
+    program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct {
+                name, type_params, ..
+            } if type_params
+                .iter()
+                .any(|parameter| parameter.name.starts_with('*')) =>
+            {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The top-level bound-generic template names of a linked program, as the
@@ -421,7 +508,16 @@ pub fn elaborate_with_requests(
     tuple_requests: &[TupleSpecializationRequest],
     tstring_requests: &[TStringSpecializationRequest],
     def_requests: &[DefSpecializationRequest],
+    method_requests: &[MethodSpecializationRequest],
 ) -> Result<Vec<Stmt>, ComptimeError> {
+    let mut method_requests_by_owner: HashMap<String, Vec<MethodSpecializationRequest>> =
+        HashMap::new();
+    for request in method_requests {
+        method_requests_by_owner
+            .entry(request.owner().to_string())
+            .or_default()
+            .push(request.clone());
+    }
     synthesize_copyable_copy(&mut program);
     synthesize_hashable_hash(&mut program);
     let conformance =
@@ -461,8 +557,16 @@ pub fn elaborate_with_requests(
         program: &program,
         fns: collect_fns(&program),
         structs: collect_structs(&program),
+        struct_names: program
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Struct { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect(),
         specializable: collect_specializable(&program, &bound_generics),
         bound_generics,
+        method_requests: method_requests_by_owner,
         conformance,
         tuple_universe,
         tuple_transforms,
@@ -475,7 +579,7 @@ pub fn elaborate_with_requests(
     let elaborated = elab.block(&program, &mut env, false)?;
     // Materialize module-level comptime constants into runtime literals.
     let consts = elab.top_consts.borrow().clone();
-    let materialized = materialize_block(elaborated, &consts);
+    let materialized = materialize_block(elaborated, &consts, &elab.struct_names);
     // Monomorphize comptime-dependent generic templates against their call sites.
     let mut result =
         elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
@@ -973,6 +1077,8 @@ struct Elab<'a> {
     program: &'a [Stmt],
     fns: HashMap<String, CtFn<'a>>,
     structs: HashMap<String, CtStruct<'a>>,
+    /// Every declared struct name, for materialization's projection rewrite.
+    struct_names: HashSet<String>,
     /// Top-level generic `def`s whose value parameters feed a `comptime if`/`for`
     /// (so they must be monomorphized per call), by name → the template `Stmt`.
     specializable: HashMap<String, &'a Stmt>,
@@ -981,6 +1087,9 @@ struct Elab<'a> {
     /// application monomorphizes, every other reference stays on the template's
     /// abstract erased-dispatch path and retains the template.
     bound_generics: HashSet<String>,
+    /// Checker-discovered generic-method instantiations on specialized
+    /// variadic structs, by owner name: each becomes a per-call clone.
+    method_requests: HashMap<String, Vec<MethodSpecializationRequest>>,
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
@@ -1540,6 +1649,7 @@ mod tuple_request_tests {
             &[TupleSpecializationRequest::bare_call(elements, occurrence)],
             &[],
             &[],
+            &[],
         )
         .expect("materialize checked Tuple specialization");
 
@@ -1574,6 +1684,7 @@ mod tuple_request_tests {
             &[TupleSpecializationRequest::declaration(elements)],
             &[],
             &[],
+            &[],
         )
         .expect("materialize contextual Tuple declaration");
 
@@ -1599,6 +1710,7 @@ mod tuple_request_tests {
         let elaborated = elaborate_with_requests(
             parsed,
             &[TupleSpecializationRequest::declaration(outer_elements)],
+            &[],
             &[],
             &[],
         )
@@ -1703,7 +1815,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[])
             .expect("materialize the requested specialization");
 
         let defs = def_names(&elaborated);
@@ -1731,7 +1843,7 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[])
             .expect("a skipped request must not fail elaboration");
 
         let defs = def_names(&elaborated);
@@ -1755,7 +1867,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[])
             .expect("materialize the requested specialization");
 
         let defs = def_names(&elaborated);

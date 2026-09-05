@@ -277,6 +277,11 @@ pub const OPTIONAL_TYPE_NAME: &str = "Optional";
 /// standard-library sources, with every capability special-cased explicitly.
 pub const UNINIT_STORAGE_TYPE_NAME: &str = "__UninitStorage";
 
+/// Compiler-private tagged-union storage, the field type of the self-hosted
+/// `Variant`: the intrinsic `Ty::Variant` spelled from bundled
+/// standard-library sources only (`var _storage: __VariantStorage[*Ts]`).
+pub const VARIANT_STORAGE_TYPE_NAME: &str = "__VariantStorage";
+
 /// Construct a nominal standard-library type from ordinary type arguments.
 pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
     Ty::Struct(name.into(), arguments.into_iter().map(TyArg::Ty).collect())

@@ -361,6 +361,8 @@ assets/ok/user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/value_params.mojo	main	exe-differential	sanitized
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized
 assets/ok/variadic_args.mojo	main	exe-differential	sanitized
+assets/ok/variadic_method_type_params.mojo	main	exe-differential	sanitized
+assets/ok/variadic_pack_upstream_spellings.mojo	main	exe-differential	sanitized
 assets/ok/variant_deinit_with_linear_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_hash_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/variant_init_with_constructor.mojo	main	exe-differential	sanitized

@@ -427,58 +427,6 @@ impl VmBackend {
                             "vm: Hashable.__hash__ needs a mutable hasher place".into(),
                         )
                     })?;
-                    // A tagged union contributes its discriminant before the
-                    // active alternative (upstream `hasher.update(UInt8(i))`).
-                    if let Value::Variant { index, value, .. } = recv {
-                        let hasher = args[0].clone();
-                        let Value::Struct { name, .. } = &hasher else {
-                            return Err(RuntimeError::TypeError(format!(
-                                "Hashable.__hash__ expected a Hasher, got {}",
-                                crate::runtime::type_name(&hasher)
-                            )));
-                        };
-                        let fname = prog.runtime_method_name(name, "_update_with_simd", None, 1);
-                        let fidx = prog.index_of(&fname).ok_or_else(|| {
-                            RuntimeError::Unsupported(format!(
-                                "vm: Hasher implementation has no '{fname}'"
-                            ))
-                        })?;
-                        let tag = Value::Simd {
-                            dtype: mojito_ast::ast::Dtype::UInt64,
-                            lanes: crate::runtime::SimdLanes::Int(vec![index as i128]),
-                        };
-                        let (_, variables) = self.call_frame(prog, fidx, vec![hasher, tag], &[])?;
-                        let updated = variables.into_iter().next().unwrap_or(Value::None);
-                        self.store_at_call_place(
-                            prog,
-                            frame_id,
-                            place,
-                            updated.clone(),
-                            regs,
-                            vars,
-                        )?;
-                        return self.method_call(
-                            prog,
-                            MethodInvocation {
-                                receiver: *value,
-                                method,
-                                resolved_name: None,
-                                result_adapter,
-                                arguments: vec![updated],
-                                keyword_arguments: kwargs,
-                                receiver_place: recv_place,
-                                argument_places: arg_places,
-                                keyword_argument_places: kwarg_places,
-                                parameter_arguments: param_arg_regs,
-                                parameter_declarations: param_decls,
-                            },
-                            CallerFrame {
-                                id: frame_id,
-                                registers: regs,
-                                variables: vars,
-                            },
-                        );
-                    }
                     let hasher = args[0].clone();
                     let Value::Struct { name, .. } = &hasher else {
                         return Err(RuntimeError::TypeError(format!(

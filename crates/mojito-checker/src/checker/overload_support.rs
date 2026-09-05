@@ -403,15 +403,42 @@ pub(super) fn is_bundled_collection_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/memory.mojo")
 }
 
+/// The source a struct declaration belongs to for the bundled-crossing gate:
+/// its module, or — for a specialized variadic struct, whose top-level
+/// module is cleared so its per-accessor source tags survive — the stamped
+/// source of its first method body statement.
+pub(super) fn bundled_struct_source<'a>(
+    module: Option<&'a str>,
+    methods: &'a [mojito_ast::ast::Method],
+) -> Option<&'a str> {
+    module.or_else(|| {
+        methods.iter().find_map(|method| {
+            method
+                .body
+                .first()
+                .and_then(|statement| statement.module.as_deref())
+        })
+    })
+}
+
 /// Static `UnsafePointer[T].alloc[_aligned]` is the compiler's heap primitive,
 /// retired from source-language API by the current layout-based model (the
-/// audited head rejects it). `std/memory.mojo` is the single bundled crossing;
-/// every other module — stdlib included — allocates through `std.memory`.
+/// audited head rejects it). `std/memory.mojo` is the bundled allocation
+/// crossing; every other module — stdlib included — allocates through
+/// `std.memory`. `std/utils/variant.mojo` is the second crossing: the
+/// self-hosted `Variant` names the compiler-private `__VariantStorage`.
+/// A specialized variadic struct is re-stamped with its own source tag
+/// (`<module>$<instance>`), which still belongs to the crossing module.
 pub(super) fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
     let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
         return false;
     };
-    Path::new(source) == root.join("stdlib").join("std/memory.mojo")
+    let stdlib = root.join("stdlib");
+    if Path::new(source) == stdlib.join("std/memory.mojo") {
+        return true;
+    }
+    let variant = stdlib.join("std/utils/variant.mojo");
+    Path::new(source) == variant || source.starts_with(&format!("{}$", variant.display()))
 }
 
 /// Select the current Mojo parameter-index hook first, while retaining the

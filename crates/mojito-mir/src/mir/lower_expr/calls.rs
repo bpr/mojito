@@ -4,6 +4,75 @@
 use super::*;
 
 impl Flatten<'_> {
+    /// Lower a method receiver: an implicit last-use move of a plain local
+    /// (`value.unwrap[Int]()`, checker-marked) is the moving variable use
+    /// `value^` lowers to; every other receiver takes the ordinary
+    /// place-retaining path.
+    pub(super) fn lower_consuming_or_call_receiver(
+        &mut self,
+        call: &Expr,
+        receiver: &Expr,
+    ) -> (Reg, Option<MirPlace>) {
+        if self.implicitly_moves_consuming_receiver(call)
+            && let ExprKind::Identifier(name) = &receiver.kind
+        {
+            let var = self.expression_var(name, receiver);
+            let dest = self.fresh(receiver.source_span(), Some(var));
+            self.emit(MirInstr::UseVar {
+                dest,
+                var,
+                mode: UseMode::Move,
+            });
+            return (dest, None);
+        }
+        self.lower_call_receiver(receiver)
+    }
+
+    /// A `@staticmethod` reached through an instance (`value.static_method()`,
+    /// `v.is_type_supported[Int]()`): the checker selected a target without a
+    /// receiver, so evaluate the receiver for its effect only and call the
+    /// static symbol with the arguments alone — exactly the type-receiver
+    /// spelling's lowering. `None` when the call keeps its receiver.
+    pub(super) fn lower_elided_receiver_call(
+        &mut self,
+        e: &Expr,
+        object: &Expr,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Reg> {
+        let contract = self.checked_call_contract(e)?;
+        if !contract.receiver_elided {
+            return None;
+        }
+        let _ = self.lower_call_receiver(object);
+        let param_arg_regs = if contract.param_decls.is_empty() {
+            Vec::new()
+        } else {
+            self.param_arg_regs(param_args, &span(e))
+        };
+        let saved_anchor_permission = self.allow_argument_anchors;
+        self.allow_argument_anchors = self.call_anchors_arguments(e);
+        let (regs, arg_places) = self.lower_call_arguments(args, false);
+        self.allow_argument_anchors = saved_anchor_permission;
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let dest = self.fresh(span(e), None);
+        self.emit_call_invalidations(e, args, kwargs);
+        self.emit(MirInstr::Call {
+            dest,
+            func: FuncRef::named(&contract.target),
+            raises: self.checked_raises(e),
+            args: regs,
+            kwargs: kw,
+            arg_places,
+            kwarg_places,
+            capture_accesses: self.checked_call_capture_accesses(e),
+            param_arg_regs,
+        });
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        Some(dest)
+    }
+
     /// Emit the shared indirect-call tail: argument lowering, call-boundary
     /// invalidations, and the `CallIndirect` with its transfer replay. The
     /// callee register/place and the dispatch metadata are the caller's; when

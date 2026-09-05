@@ -15,8 +15,19 @@ use mojito_ast::ast::{FnParam, ImportNames, Method};
 pub(super) type Subs<'a> = &'a dyn Fn(&str) -> Option<CtValue>;
 
 /// Materialize module-level comptime constants throughout a program.
-pub(super) fn materialize_block(stmts: Vec<Stmt>, consts: &HashMap<String, CtValue>) -> Vec<Stmt> {
-    let subs: Subs = &|n| consts.get(n).cloned();
+pub(super) fn materialize_block(
+    stmts: Vec<Stmt>,
+    consts: &HashMap<String, CtValue>,
+    type_names: &HashSet<String>,
+) -> Vec<Stmt> {
+    // Declared struct names are marked so a subscript-shaped projection on a
+    // runtime local (`v[String]`) can be told from ordinary indexing.
+    let subs: Subs = &|n| {
+        consts
+            .get(n)
+            .cloned()
+            .or_else(|| type_names.contains(n).then(type_name_marker))
+    };
     stmts
         .into_iter()
         .map(|s| rewrite_stmt_cloned(&s, subs, true))
@@ -97,6 +108,17 @@ pub(super) fn substitute_type_bindings_in_expr(expr: &mut Expr, subs: TypeSubs) 
 }
 
 fn rewrite_expr(e: &mut Expr, subs: Subs) {
+    if let Some(folded) = fold_pack_typelist_use(e, subs) {
+        *e = folded;
+        return;
+    }
+    // A type application on a runtime local (`v[Int]`) is a subscript whose
+    // index names a type — the checker's type-keyed `__getitem_param__[T]`
+    // projection (the self-hosted `Variant`'s `v[T]`), in value and place
+    // positions alike; `v[String]` already parses as that subscript.
+    if projection_to_subscript(e, subs) {
+        return;
+    }
     match &mut e.kind {
         ExprKind::Identifier(name) => {
             if let Some(value) = subs(name) {
@@ -253,6 +275,129 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
     }
 }
 
+/// Fold upstream's `TypeList` uses of a bound type pack in a runtime
+/// position — `Ts.length` / `Self.Ts.length` to the pack's length and
+/// `Ts.contains[X]()` to whether `X` names an element — so a specialized
+/// variadic struct's methods (`is_type_supported`, `__len__`) see literals.
+/// The conformance-dependent members (`all_conforms_to`, `all`, `any`) need
+/// the elaborator's oracle and fold only in compile-time positions.
+fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
+    fn pack_elements(object: &Expr, subs: Subs) -> Option<Vec<Type>> {
+        let name = match &object.kind {
+            ExprKind::Identifier(name) => name,
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => {
+                field
+            }
+            _ => return None,
+        };
+        let CtValue::Tuple(values) = subs(name)? else {
+            return None;
+        };
+        values
+            .iter()
+            .map(|value| match value {
+                CtValue::Type(ty) => source_type_from_ty(ty),
+                _ => None,
+            })
+            .collect()
+    }
+    match &e.kind {
+        ExprKind::Member { object, field } if field == "length" => {
+            let elements = pack_elements(object, subs)?;
+            CtValue::Int(elements.len() as i64).materialize(e.span)
+        }
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } if args.is_empty() && kwargs.is_empty() => {
+            let ExprKind::Member { object, field } = &callee.kind else {
+                return None;
+            };
+            if field != "contains" {
+                return None;
+            }
+            let elements = pack_elements(object, subs)?;
+            let [needle] = param_args.as_slice() else {
+                return None;
+            };
+            let needle = match needle {
+                mojito_ast::ast::ParamArg::Type(ty) => ty.clone(),
+                mojito_ast::ast::ParamArg::Value(Expr {
+                    kind: ExprKind::Identifier(name),
+                    ..
+                }) => match subs(name) {
+                    Some(CtValue::Type(ty)) => source_type_from_ty(&ty)?,
+                    Some(_) => return None,
+                    None => Type::Named(name.clone(), Vec::new()),
+                },
+                mojito_ast::ast::ParamArg::Value(Expr {
+                    kind: ExprKind::TypeValue(ty),
+                    ..
+                }) => ty.clone(),
+                _ => return None,
+            };
+            CtValue::Bool(elements.contains(&needle)).materialize(e.span)
+        }
+        _ => None,
+    }
+}
+
+/// The `Subs` marker for a name bound as a runtime local (a parameter or a
+/// declared variable) rather than a compile-time constant: it materializes
+/// as nothing, and a type application on it is a type-keyed accessor call.
+const RUNTIME_LOCAL: &str = "$local";
+
+pub(super) fn runtime_local_marker() -> CtValue {
+    CtValue::Param(RUNTIME_LOCAL.to_string())
+}
+
+/// The `Subs` marker for a declared struct name (see `materialize_block`).
+const TYPE_NAME: &str = "$type";
+
+fn type_name_marker() -> CtValue {
+    CtValue::Param(TYPE_NAME.to_string())
+}
+
+fn is_runtime_local(subs: Subs, name: &str) -> bool {
+    matches!(subs(name), Some(CtValue::Param(marker)) if marker == RUNTIME_LOCAL)
+}
+
+/// Rewrite a single-argument type application on a runtime local (`v[Int]`)
+/// into the subscript `v[<type>]` the checker projects through the struct's
+/// type-keyed `__getitem_param__[T]`.
+fn projection_to_subscript(e: &mut Expr, subs: Subs) -> bool {
+    let (name, mut param_args) = match &mut e.kind {
+        ExprKind::TypeApply { name, args } if is_runtime_local(subs, name) && args.len() == 1 => {
+            (name.clone(), std::mem::take(args))
+        }
+        _ => return false,
+    };
+    rewrite_param_args(&mut param_args, subs);
+    let index = match param_args.pop().expect("one argument") {
+        mojito_ast::ast::ParamArg::Type(ty) => Expr::new(ExprKind::TypeValue(ty), e.span),
+        mojito_ast::ast::ParamArg::Value(value) => value,
+        mojito_ast::ast::ParamArg::Named { value, .. } => match *value {
+            mojito_ast::ast::ParamArg::Type(ty) => Expr::new(ExprKind::TypeValue(ty), e.span),
+            mojito_ast::ast::ParamArg::Value(value) => value,
+            mojito_ast::ast::ParamArg::Named { .. } => return false,
+        },
+    };
+    // The synthesized nodes share the projection's span and source (the
+    // checker re-keys duplicate syntax ids before recording facts), so
+    // their checked facts stay addressable.
+    let mut receiver = e.clone();
+    receiver.kind = ExprKind::Identifier(name);
+    let mut index = index;
+    index.source = e.source.clone();
+    e.kind = ExprKind::Index {
+        object: Box::new(receiver),
+        index: Box::new(index),
+    };
+    true
+}
+
 fn rewrite_block(body: &mut [Stmt], subs: Subs, into_defs: bool) {
     if !into_defs {
         // Loop-variable substitution keeps the flat walk: the unrolled
@@ -275,7 +420,7 @@ fn rewrite_block(body: &mut [Stmt], subs: Subs, into_defs: bool) {
         {
             let inner: Subs = &|name| {
                 if shadowed.contains(name) {
-                    None
+                    Some(runtime_local_marker())
                 } else {
                     subs(name)
                 }
@@ -1463,17 +1608,18 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             ..
         } => {
             if into_defs {
-                let mut shadowed: HashSet<String> = params
+                let locals: HashSet<String> = params
                     .iter()
                     .map(|parameter| parameter.name.clone())
                     .collect();
-                shadowed.extend(
-                    type_params
-                        .iter()
-                        .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
-                );
+                let shadowed: HashSet<String> = type_params
+                    .iter()
+                    .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                    .collect();
                 let inner: Subs = &|name| {
-                    if shadowed.contains(name) {
+                    if locals.contains(name) {
+                        Some(runtime_local_marker())
+                    } else if shadowed.contains(name) {
                         None
                     } else {
                         subs(name)
@@ -1562,20 +1708,21 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                     rewrite_expr(&mut member.value, member_subs);
                 }
                 for method in methods {
-                    let mut method_shadowed: HashSet<String> = method
+                    let mut method_locals: HashSet<String> = method
                         .params
                         .iter()
                         .map(|parameter| parameter.name.clone())
                         .collect();
-                    method_shadowed.extend(
-                        method
-                            .type_params
-                            .iter()
-                            .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
-                    );
-                    method_shadowed.insert("self".to_string());
+                    method_locals.insert("self".to_string());
+                    let method_shadowed: HashSet<String> = method
+                        .type_params
+                        .iter()
+                        .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                        .collect();
                     let method_subs: Subs = &|name| {
-                        if method_shadowed.contains(name) {
+                        if method_locals.contains(name) {
+                            Some(runtime_local_marker())
+                        } else if method_shadowed.contains(name) {
                             None
                         } else {
                             inner(name)

@@ -139,6 +139,148 @@ gitignored); `scripts/sample-stacks` (gdb-based sampler, no sudo; `samply`
 is installed but needs `kernel.perf_event_paranoid=1`); the `profiling`
 Cargo profile (release + debug info).
 
+## Redundant-work audit after the HIR fix
+
+The program-wide checked-table clone was the dominant problem and is now fixed.
+A subsequent source audit found the following remaining repeated work. These
+items are ordered by expected value given the post-fix profile. Only the first
+bucket is already supported by timings; the rest are candidates to measure,
+not claims about current wall-clock impact.
+
+### 1. Discovery produces complete programs that are discarded
+
+`Compiler::compile_linked` performs an initial elaboration and check, extracts
+specialization requests, then repeats full elaboration and checking whenever
+the request set grows. Every temporary check also performs work needed only for
+the final program:
+
+- trait-default expansion and syntax rekeying;
+- the complete transfer-effect fixpoint and reference-result validation;
+- explicit-destroy analysis;
+- construction of all `CheckedProgram` fact tables; and
+- reconstruction of checked expressions and declarations by walking the AST.
+
+The post-fix Hello World profile attributes about 0.55 s of its 0.82 s release
+time to the nested discovery/checker rounds. The first experiment should be a
+dedicated discovery result or checker mode that produces only the facts needed
+to request specializations. Final-only validation and complete
+`CheckedProgram` assembly should run once after specialization converges.
+
+### 2. Transfer effects recheck every declaration and body
+
+Within each outer discovery check, transfer and call-through effects start with
+an incomplete seed. If a call site observed an effect summary that later grew,
+the checker constructs a fresh `Checker` and checks the entire expanded program
+again. Hello World currently takes two such rounds for every outer check.
+
+Investigate registering callable signatures once and propagating effect
+summaries through a call-graph SCC/worklist. Only callers whose callee summary
+changed should need reconsideration. Whether expression checking can wait for
+stable summaries, or must be updated incrementally with them, is a semantic
+design question to resolve before implementation.
+
+### 3. Comptime elaboration rebuilds invariant indexes each round
+
+Every `elaborate_with_requests` invocation starts again from a clone of the
+linked program. It resynthesizes lifecycle methods, rebuilds a
+`ConformanceOracle`, recollects bound-generic templates, and separately indexes
+functions, structs, and specializable declarations before re-elaborating the
+whole program and restamping provenance. The compiler has already scanned the
+linked program for bound-generic template names before entering this loop.
+
+A persistent elaboration session could own the synthesized base AST,
+declaration indexes, conformance information, and template catalog, then apply
+only newly discovered requests in later rounds.
+
+### 4. Request discovery makes overlapping full-program scans
+
+Each discovery round separately walks checked expressions/declarations for
+Tuple requests, checked expressions for template strings, and the generic
+instantiation map for both ordinary generics and scalar ranges. Recursive Tuple
+type collection may revisit the same types, while request accumulation uses
+linear `Vec::contains`/`Vec::position` deduplication.
+
+Prefer one checker-produced request index, or at least one combined collection
+pass, with canonical request keys in sets/maps. This is currently a scaling
+concern rather than a measured Hello World bottleneck.
+
+### 5. Checked facts still contain duplicate compatibility indexes
+
+`CheckedTables` now owns `expressions_by_span`, but `CheckedProgram` separately
+owns an `expression_index` of the same shape, and constructs both. The program
+also retains compatibility overload-target and implicit-conversion maps while
+the newer checked-expression/call representations carry much of the same
+semantic information. MIR still reads some compatibility data, so this is an
+incomplete migration rather than dead state. Finish that migration and keep one
+authoritative occurrence index.
+
+### 6. Ownership facts are discarded and partly recomputed for drops
+
+The pre-drop ownership gate runs move, interior-origin, and loan analyses over
+every MIR function but returns only success or failure. Drop elaboration later
+recomputes related loan-generation destinations and entries, register-loan
+states and uses, definition/move sets, CFG relationships, liveness, and
+per-instruction state sequences.
+
+The analyses are not interchangeable, so do not merely delete the second set.
+Instead, determine which successful ownership facts can form a reusable
+analysis artifact consumed by drop elaboration. Current timings make this a
+scaling improvement, not the next latency fix.
+
+### 7. MIR and VM ownership APIs force whole-program copies
+
+Drop elaboration clones the complete pre-drop MIR so `CompiledProgram` can
+retain both representations. VM execution then clones the cached elaborated MIR
+again because `run_elaborated` consumes it. The first copy may be justified by
+the public pre-drop view; the second is primarily an API ownership cost.
+
+Candidate designs are a borrowing VM, shared post-drop MIR, a consuming
+execution path, or retaining pre-drop MIR only when explicitly requested. VM
+startup also clones declaration metadata into separate struct and signature
+registries while retaining the original declarations. A single indexed program
+representation could keep the metadata once.
+
+One concrete runtime case should be fixed independently: every executed
+`SizeOf` instruction rebuilds the struct-field index for the entire MIR program.
+Build that index once in `Prog`, or resolve the size during compilation.
+
+### 8. Native layout and type lowering are uncached
+
+`LayoutCx::layout_of` recursively recomputes layouts for structs, tuples,
+variants, and their fields. The Pliron backend calls it, aggregate layout, and
+`lower_ty` repeatedly during declaration and instruction lowering. Cache layout
+by target and canonical type; consider caching lowered backend types in the
+per-module lowering context as well. Measure this on native fixtures before
+choosing the cache representation.
+
+### 9. Pliron eagerly constructs optional artifacts
+
+Every Pliron compilation renders and stores canonical text for the complete
+module and collects its complete debug correlation table, including callers
+that proceed directly to LLVM/JIT and never request the text. Canonical text
+rendering should be lazy if native phase timings show it matters.
+
+Target stamping currently requires LLVM conversion, verification, printing,
+reparsing, and another verification because the pinned Pliron LLVM layer does
+not expose the raw module needed to set target metadata. This repeated work is
+documented and intentional today, but should disappear if the backend API makes
+in-place target stamping possible.
+
+### 10. Native specialization and Pliron repeat reachability work
+
+Backend monomorphization starts at the requested entries and produces an
+entry-rooted concrete graph. Pliron then performs another reachability walk,
+including lifecycle dependencies, before lowering. These policies are not
+proven equivalent, so neither walk should be removed blindly. Investigate
+having specialization return the authoritative reachable functions and
+lifecycle edges so Pliron can consume that result rather than rediscover it.
+
+The implementation order is therefore: eliminate final-only work in discarded
+discovery checks; replace global transfer-effect replay; retain elaboration
+indexes across rounds; combine request scans; then address duplicate checked
+indexes, reusable ownership results, MIR/VM copies, and native-only caches or
+lazy artifacts according to their measured phase costs.
+
 ## Where to look first
 
 These were the investigation priorities before the measurement above; the

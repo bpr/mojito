@@ -327,13 +327,3 @@ pub(super) const BUILTIN_TRAITS: &[&str] = &[
     "Xorable",
     "Negatable",
 ];
-
-/// The linker qualifies `from std.utils import Variant` declarations.  Keep the
-/// intrinsic recognition narrow so an unrelated user type ending in `Variant`
-/// does not silently acquire built-in semantics.
-pub(super) fn is_variant_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Variant" | "__module$std$utilsVariant" | "__module$std$utils$Variant"
-    )
-}

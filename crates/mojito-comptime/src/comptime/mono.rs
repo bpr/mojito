@@ -683,6 +683,19 @@ impl<'a> Elab<'a> {
                 for k in kwargs.iter_mut() {
                     self.mono_expr(&mut k.value, consts, mono)?;
                 }
+                // A plain generic struct's or function's compile-time
+                // arguments may name specializable instances
+                // (`Dict[Variant[Int, String], Int]()`); rewrite those to
+                // their concrete names. Template applications resolve their
+                // own arguments below.
+                if !self.specializable.contains_key(name.as_str())
+                    && !self.bound_generics.contains(name.as_str())
+                    && !self.struct_template(name)
+                {
+                    for argument in param_args.iter_mut() {
+                        self.mono_param_arg(argument, consts, mono)?;
+                    }
+                }
                 // A checker-selected scalar-range occurrence: rewrite the
                 // `range(...)` call into the concrete generated range-family
                 // struct's constructor and queue its specialization.

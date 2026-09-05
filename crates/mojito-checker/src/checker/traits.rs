@@ -411,7 +411,10 @@ impl Checker {
             self_ty: self.self_ty.replace(self_ty.clone()),
             bundled_stdlib: std::mem::replace(
                 &mut self.bundled_stdlib_declaration,
-                super::is_bundled_stdlib_source(declaration.module.as_deref()),
+                super::is_bundled_stdlib_source(super::bundled_struct_source(
+                    declaration.module.as_deref(),
+                    declaration.methods,
+                )),
             ),
         };
         Ok((self_ty, saved))
@@ -1596,9 +1599,6 @@ impl Checker {
                             true
                         }
                         Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                        Ty::Variant(alternatives) => alternatives
-                            .iter()
-                            .all(|alternative| self.conforms_to(alternative, tr)),
                         Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
                         Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => false,
                         _ => true,
@@ -2283,9 +2283,6 @@ impl Checker {
                 .all(|element| self.is_hashable(element));
         }
         match ty {
-            Ty::Variant(alternatives) => alternatives
-                .iter()
-                .all(|alternative| self.is_hashable(alternative)),
             Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Hashable"),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Hashable"),
             _ => builtin_hashable_ty(ty),

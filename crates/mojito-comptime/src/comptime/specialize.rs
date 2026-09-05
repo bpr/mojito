@@ -3,6 +3,7 @@
 //! Extracted from `comptime.rs`; see `docs/symbol-map.md`.
 
 use super::*;
+use mojito_ast::ast::Method;
 use mojito_types::types::tuple_elements;
 
 /// Read the concrete truth value from a folded declaration constraint while
@@ -552,7 +553,7 @@ impl<'a> Elab<'a> {
         // Elaborate the body with the parameters bound, so its comptime constructs
         // select/unroll against the concrete arguments.
         let elaborated = self.block(body, &mut env, true)?;
-        let mut final_body = materialize_block(elaborated, &subs);
+        let mut final_body = materialize_block(elaborated, &subs, &self.struct_names);
         for parameter in &mut specialized_params {
             if let Some(default) = &mut parameter.default {
                 *default = materialize_expression(default, &subs);
@@ -868,7 +869,7 @@ impl<'a> Elab<'a> {
                         method.name
                     ))
                 })?;
-            method.body = materialize_block(elaborated, &method_subs);
+            method.body = materialize_block(elaborated, &method_subs, &self.struct_names);
             let method_value_subs: Subs = &|name| method_subs.get(name).cloned();
             for parameter in &mut method.params {
                 rewrite_type(&mut parameter.ty, method_value_subs);
@@ -1086,12 +1087,22 @@ impl<'a> Elab<'a> {
         let mut elaborated_methods = Vec::with_capacity(methods.len());
         for method in methods {
             let mut method = method.clone();
+            // An Int-indexed accessor unrolls per element below; a
+            // type-keyed one (`__getitem_param__[T: AnyType]`) is an ordinary
+            // generic method specialized per call like any other.
             let dependent_index_accessor =
                 matches!(method.name.as_str(), "__getitem__" | "__getitem_param__")
-                    && !method.type_params.is_empty();
+                    && !method.type_params.is_empty()
+                    && matches!(
+                        classify_ct_params(&method.type_params).as_slice(),
+                        [ParamDecl::Value { .. }]
+                    );
             let mut env = self.top_consts.borrow().clone();
             env.insert(binding.clone(), CtValue::Tuple(types.clone()));
             let mut subs = self.top_consts.borrow().clone();
+            // The bound pack folds its runtime-position `TypeList` uses
+            // (`Ts.length`, `Ts.contains[X]()`) during materialization.
+            subs.insert(binding.clone(), CtValue::Tuple(types.clone()));
             subs.remove("self");
             for parameter in &method.params {
                 subs.remove(&parameter.name);
@@ -1144,6 +1155,13 @@ impl<'a> Elab<'a> {
                 }
             }
             if method_unavailable {
+                // An unavailable method stays declared as a trap stub behind
+                // a diagnostic clause: a call reports the failed availability
+                // (`constraint failed: …`, upstream's shape) rather than a
+                // missing member, and the stub body never runs.
+                method.where_clauses = vec![unavailable_method_clause(&method, orig, types)];
+                method.body = vec![unspecialized_method_stub(orig, &method)];
+                elaborated_methods.push(method);
                 continue;
             }
             method.where_clauses = residual_clauses;
@@ -1222,7 +1240,7 @@ impl<'a> Elab<'a> {
                                 overload.name
                             ))
                         })?;
-                    overload.body = materialize_block(elaborated, &subs);
+                    overload.body = materialize_block(elaborated, &subs, &self.struct_names);
                     elaborated_methods.push(overload);
                 }
                 continue;
@@ -1276,7 +1294,7 @@ impl<'a> Elab<'a> {
                                     unrolled.name
                                 ))
                             })?;
-                    unrolled.body = materialize_block(elaborated, &subs_k);
+                    unrolled.body = materialize_block(elaborated, &subs_k, &self.struct_names);
                     if let Some(ret) = &mut unrolled.ret {
                         self.fold_pack_index_annotation(ret, &binding, &source_types, &env_k)?;
                     }
@@ -1331,13 +1349,80 @@ impl<'a> Elab<'a> {
                 }
                 continue;
             }
+            // A method with its own compile-time parameters: every
+            // checker-discovered instantiation on this specialization mints
+            // a clone with those parameters baked (`find$y3:Int`); the
+            // template survives for signature resolution and the erased
+            // path. A template body that only elaborates once its own
+            // parameters are bound (a `comptime if` on `T`) becomes a trap
+            // stub — every concrete call retargets to a clone.
+            let specializable_method = method
+                .type_params
+                .iter()
+                .any(|parameter| method_parameter_is_baked(parameter, &method.type_params));
+            if specializable_method {
+                let owner = mangle(orig, vals);
+                let mut minted = HashSet::new();
+                for request in self
+                    .method_requests
+                    .get(&owner)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|request| {
+                        request.method() == method.name
+                            && request.parameter_names().len() == method.params.len()
+                            && request
+                                .parameter_names()
+                                .iter()
+                                .zip(&method.params)
+                                .all(|(name, parameter)| *name == parameter.name)
+                    })
+                {
+                    let Some((values, bindings)) =
+                        self.method_request_values(&method.type_params, request.arguments())
+                    else {
+                        continue;
+                    };
+                    let instance = mangle(&method.name, &values);
+                    if !minted.insert(instance.clone()) {
+                        continue;
+                    }
+                    // Constructor semantics key on the exact name `__init__`,
+                    // so a constructor clone is a same-name overload selected
+                    // by its concrete argument types; every other clone is
+                    // retargeted by its mangled name.
+                    let clone_name = if method.name == "__init__" {
+                        method.name.clone()
+                    } else {
+                        instance
+                    };
+                    let clone = self
+                        .specialize_method_clone(&method, clone_name, &bindings, &env, &subs)
+                        .map_err(|error| {
+                            ComptimeError::NotComptime(format!(
+                                "while specializing {orig}.{}: {error}",
+                                method.name
+                            ))
+                        })?;
+                    elaborated_methods.push(clone);
+                }
+                match self.block(&method.body, &mut env, true) {
+                    Ok(elaborated) => {
+                        method.body = materialize_block(elaborated, &subs, &self.struct_names)
+                    }
+                    Err(_) => method.body = vec![unspecialized_method_stub(orig, &method)],
+                }
+                elaborated_methods.push(method);
+                continue;
+            }
             let elaborated = self.block(&method.body, &mut env, true).map_err(|error| {
                 ComptimeError::NotComptime(format!(
                     "while specializing {orig}.{}: {error}",
                     method.name
                 ))
             })?;
-            method.body = materialize_block(elaborated, &subs);
+            method.body = materialize_block(elaborated, &subs, &self.struct_names);
             elaborated_methods.push(method);
         }
         if orig == "Tuple" {
@@ -1483,6 +1568,171 @@ impl<'a> Elab<'a> {
     /// Fold the pack-valued `conforms_to(Ts.values, Trait)` atoms used by
     /// conditional conformances and method availability. Boolean structure is
     /// simplified while unrelated method-generic propositions are retained.
+    /// The specialization values and type bindings a checker-recorded
+    /// method instantiation selects, aligned with the checker's
+    /// `specialized_method_values`: one value per baked parameter in
+    /// declaration order (type arguments as `CtValue::Type`, value
+    /// arguments as themselves); callable-bounded and retained
+    /// callable-value parameters stay symbolic; Origin binders have no
+    /// checker slot. `None` skips the request.
+    pub(super) fn method_request_values(
+        &self,
+        type_params: &[TypeParam],
+        arguments: &[TyArg],
+    ) -> Option<(Vec<CtValue>, Vec<MethodBinding>)> {
+        let mut values = Vec::new();
+        let mut bindings = Vec::new();
+        let mut cursor = arguments.iter();
+        for parameter in type_params {
+            if matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+                || parameter.is_origin_mutability_binder(type_params)
+            {
+                continue;
+            }
+            let argument = cursor.next()?;
+            if !method_parameter_is_baked(parameter, type_params) {
+                continue;
+            }
+            let name = parameter.name.trim_start_matches('*').to_string();
+            let decl = classify_ct_param(parameter, type_params)?;
+            match (&decl, argument) {
+                (
+                    ParamDecl::Type {
+                        variadic: false,
+                        bounds,
+                        ..
+                    },
+                    TyArg::Ty(ty),
+                ) => {
+                    if bounds
+                        .iter()
+                        .any(|bound| self.conformance.require(ty, bound).is_err())
+                    {
+                        return None;
+                    }
+                    let source = source_type_from_ty(ty)?;
+                    values.push(CtValue::Type(Box::new(ty.clone())));
+                    bindings.push(MethodBinding {
+                        name,
+                        value: CtValue::Type(Box::new(ty.clone())),
+                        source: Some(source),
+                    });
+                }
+                (
+                    ParamDecl::Value {
+                        variadic: false,
+                        ty,
+                        ..
+                    },
+                    TyArg::Val(value),
+                ) => {
+                    if matches!(value, CtValue::Param(_)) || !ct_value_has_type(value, ty) {
+                        return None;
+                    }
+                    values.push(value.clone());
+                    bindings.push(MethodBinding {
+                        name,
+                        value: value.clone(),
+                        source: None,
+                    });
+                }
+                _ => return None,
+            }
+        }
+        if cursor.next().is_some() {
+            return None;
+        }
+        Some((values, bindings))
+    }
+
+    /// Clone `method` with `bindings` baked: the bound parameters leave the
+    /// declaration, their names are substituted in every type position, and
+    /// the body elaborates with them bound so its comptime constructs fold.
+    fn specialize_method_clone(
+        &self,
+        method: &Method,
+        clone_name: String,
+        bindings: &[MethodBinding],
+        env: &HashMap<String, CtValue>,
+        subs: &HashMap<String, CtValue>,
+    ) -> Result<Method, ComptimeError> {
+        let mut clone = method.clone();
+        clone.name = clone_name;
+        let baked: HashSet<&str> = bindings
+            .iter()
+            .map(|binding| binding.name.as_str())
+            .collect();
+        let type_bindings: HashMap<String, Type> = bindings
+            .iter()
+            .filter_map(|binding| Some((binding.name.clone(), binding.source.clone()?)))
+            .collect();
+        clone
+            .type_params
+            .retain(|parameter| !baked.contains(parameter.name.trim_start_matches('*')));
+        for parameter in &mut clone.type_params {
+            if let Some(bound) = &mut parameter.callable_bound {
+                substitute_type_bindings_in_type(bound, &type_bindings);
+            }
+            if let Some(value_type) = &mut parameter.value_type {
+                substitute_type_bindings_in_type(value_type, &type_bindings);
+            }
+        }
+        // A callable-bounded type parameter whose contract is now concrete
+        // (`F: def() -> Int`) leaves the declaration too: the parameter it
+        // types is spelled with the contract itself, so the clone is fully
+        // concrete and its overload symbol carries the contract.
+        let mut type_bindings = type_bindings;
+        let siblings = clone.type_params.clone();
+        clone.type_params.retain(|parameter| {
+            match &parameter.callable_bound {
+                Some(bound) if !retained_specialization_param(parameter, &siblings) => {
+                    // A bound names a contract, not an environment class:
+                    // the parameter accepts any callable of that shape, so
+                    // the folded spelling is the capturing-agnostic
+                    // `def(...) capturing[_] -> R`.
+                    let mut contract = bound.clone();
+                    if let Type::Func {
+                        thin: false,
+                        capturing: capturing @ None,
+                        ..
+                    } = &mut contract
+                    {
+                        *capturing = Some(vec![Expr::new(
+                            ExprKind::Identifier("_".to_string()),
+                            mojito_common::token::DUMMY_SPAN,
+                        )]);
+                    }
+                    type_bindings
+                        .insert(parameter.name.trim_start_matches('*').to_string(), contract);
+                    false
+                }
+                _ => true,
+            }
+        });
+        for parameter in &mut clone.params {
+            substitute_type_bindings_in_type(&mut parameter.ty, &type_bindings);
+        }
+        if let Some(ret) = &mut clone.ret {
+            substitute_type_bindings_in_type(ret, &type_bindings);
+        }
+        if let Some(error) = &mut clone.raises_type {
+            substitute_type_bindings_in_type(error, &type_bindings);
+        }
+        for predicate in &mut clone.where_clauses {
+            substitute_type_bindings_in_expr(predicate, &type_bindings);
+        }
+        let mut clone_env = env.clone();
+        let mut clone_subs = subs.clone();
+        for binding in bindings {
+            clone_env.insert(binding.name.clone(), binding.value.clone());
+            clone_subs.insert(binding.name.clone(), binding.value.clone());
+        }
+        let elaborated = self.block(&clone.body, &mut clone_env, true)?;
+        clone.body = materialize_block(elaborated, &clone_subs, &self.struct_names);
+        substitute_type_bindings_in_block(&mut clone.body, &type_bindings);
+        Ok(clone)
+    }
+
     pub(super) fn fold_pack_conformance_predicate(
         &self,
         expression: &Expr,
@@ -1524,6 +1774,44 @@ impl<'a> Elab<'a> {
                     _ => false,
                 });
                 Ok(with_kind(ExprKind::Bool(satisfied)))
+            }
+            // Upstream's TypeList spelling on the pack itself:
+            // `Ts.all_conforms_to[Trait]()`, `Ts.contains[T]()`,
+            // `Ts.all[Pred]()` / `Ts.any[Pred]()`, with `Self.Ts` accepted.
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } if args.is_empty() && kwargs.is_empty() => {
+                let ExprKind::Member { object, field } = &callee.kind else {
+                    return Ok(expression.clone());
+                };
+                let names_pack = match &object.kind {
+                    ExprKind::Identifier(name) => name == binding,
+                    ExprKind::Member {
+                        object: base,
+                        field: name,
+                    } => {
+                        name == binding
+                            && matches!(&base.kind, ExprKind::Identifier(base) if base == "Self")
+                    }
+                    _ => false,
+                };
+                if !names_pack
+                    || !matches!(
+                        field.as_str(),
+                        "all_conforms_to" | "contains" | "all" | "any"
+                    )
+                {
+                    return Ok(expression.clone());
+                }
+                let receiver = CtValue::Tuple(elements.to_vec());
+                let value =
+                    self.eval_typelist_method(&receiver, field, param_args, &HashMap::new())?;
+                Ok(with_kind(ExprKind::Bool(
+                    value.as_bool("pack conformance predicate")?,
+                )))
             }
             ExprKind::Prefix(PrefixOp::Not, operand) => {
                 let operand = self.fold_pack_conformance_predicate(operand, binding, elements)?;
@@ -1662,4 +1950,85 @@ impl<'a> Elab<'a> {
         }
         self.conformance.require(ty, "ImplicitlyCopyable").is_ok()
     }
+}
+
+/// One baked compile-time parameter of a per-call method clone: its name,
+/// the compile-time value bound in the clone's elaboration environment, and
+/// (for a type parameter) the source type substituted into the signature.
+pub(super) struct MethodBinding {
+    name: String,
+    value: CtValue,
+    source: Option<Type>,
+}
+
+/// Whether a method compile-time parameter is baked into per-call clones: a
+/// plain type or value parameter. Callable-bounded parameters
+/// (`F: def() -> T`) and retained callable-value parameters stay on the
+/// clone's signature, and Origin binders have no argument at all.
+fn method_parameter_is_baked(parameter: &TypeParam, siblings: &[TypeParam]) -> bool {
+    parameter.callable_bound.is_none()
+        && !retained_specialization_param(parameter, siblings)
+        && !parameter.name.starts_with('*')
+        && classify_ct_param(parameter, siblings).is_some()
+}
+
+/// The body of a generic template method that cannot elaborate until its
+/// own parameters are bound: a runtime trap. Every concrete call retargets
+/// to a per-call clone, so the stub only runs through the erased path.
+/// The diagnostic `where (False, "…")` clause carried by a method whose
+/// pack-dependent availability clause folded to `False` for this
+/// specialization (see the unavailable-method branch of the struct
+/// specializer).
+fn unavailable_method_clause(method: &Method, owner: &str, types: &[CtValue]) -> Expr {
+    let span = method
+        .where_clauses
+        .first()
+        .map(|clause| clause.span)
+        .unwrap_or(mojito_common::token::DUMMY_SPAN);
+    let arguments = types
+        .iter()
+        .map(|value| match value {
+            CtValue::Type(ty) => mojito_types::types::unqualified_type_name(ty),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let message = format!(
+        "'{}' is unavailable for {}[{arguments}]: its where clause evaluated to False",
+        method.name,
+        owner.rsplit('$').next().unwrap_or(owner),
+    );
+    Expr::new(
+        ExprKind::TupleLit(vec![
+            Expr::new(ExprKind::Bool(false), span),
+            Expr::new(ExprKind::Str(message), span),
+        ]),
+        span,
+    )
+}
+
+fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
+    let span = method
+        .body
+        .first()
+        .map(|statement| statement.span)
+        .unwrap_or(mojito_common::token::DUMMY_SPAN);
+    mk(
+        StmtKind::Expr(Expr::new(
+            ExprKind::Call {
+                name: "_mojito_abort".to_string(),
+                param_args: Vec::new(),
+                args: vec![Expr::new(
+                    ExprKind::Str(format!(
+                        "{owner}.{}: unspecialized type-keyed method",
+                        method.name
+                    )),
+                    span,
+                )],
+                kwargs: Vec::new(),
+            },
+            span,
+        )),
+        span,
+    )
 }

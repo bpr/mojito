@@ -159,26 +159,22 @@ fn linked_std_utils_variant_constructs_tests_projects_and_sets() {
 }
 
 #[test]
-fn explicit_type_pack_specializes_variant_annotation_and_construction() {
+fn variant_pack_forwarding_through_a_generic_def_is_rejected() {
+    // `Variant` is an ordinary variadic struct: applying it to an enclosing
+    // generic's pack (`Variant[*Ts]` inside `def first_variant[*Ts]`) is the
+    // general variadic-struct pack-forwarding gap (`docs/roadmap.md`), which
+    // the erased template check reports rather than silently accepting.
     let compiler = Compiler::default();
-    let program = compiler
+    let forwarded = compiler
         .compile_source(
-            "from std.utils import Variant\n\ndef first_variant[*Ts: Movable]() -> Variant[*Ts]:\n    return Variant[*Ts](3)\n\ndef main():\n    var value = first_variant[Int, String]()\n    print(value.isa[Int]())\n    print(value[Int])\n",
+            "from std.utils import Variant\n\ndef first_variant[*Ts: Movable]() -> Variant[*Ts]:\n    return Variant[*Ts](3)\n\ndef main():\n    var value = first_variant[Int, String]()\n    print(value.isa[Int]())\n",
             std::path::Path::new("/tmp/mojito_variant_type_pack.mojo"),
         )
-        .expect("specialize a Variant type pack");
-    let execution = compiler
-        .execute(&program)
-        .expect("execute specialized Variant construction");
-    assert_eq!(execution.output, "True\n3\n");
-
-    let unsupported_alternative = compiler
-        .compile_source(
-            "from std.utils import Variant\n\ndef first_variant[*Ts: Movable]() -> Variant[*Ts]:\n    return Variant[*Ts](True)\n\ndef main():\n    _ = first_variant[Int, String]()\n",
-            std::path::Path::new("/tmp/mojito_variant_type_pack_bad_arm.mojo"),
-        )
-        .expect_err("the specialized constructor value must match an alternative");
-    assert!(matches!(unsupported_alternative, CompilerError::Type(_)));
+        .expect_err("variadic-struct pack forwarding is not supported");
+    assert!(matches!(
+        forwarded,
+        CompilerError::Type(mojito::TypeError::UnknownType(name)) if name.ends_with("Variant")
+    ));
 }
 
 #[test]
@@ -230,13 +226,27 @@ fn variant_type_queries_take_and_replace_have_checked_ownership_semantics() {
         .expect_err("unsupported Variant operation arm must be rejected statically");
     assert!(matches!(unsupported, CompilerError::Type(_)));
 
+    // `unwrap` takes `deinit self`: on a plain local it is that local's
+    // implicit last use, so a later use is an ownership error — unless the
+    // Variant is `ImplicitlyCopyable` (every alternative is), in which case
+    // the receiver is copied and the local stays usable, as upstream does.
     let moved = compiler
         .compile_source(
-            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    _ = value.unwrap[Int]()\n    print(value.isa[Int]())\n",
+            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, List[Int]](7)\n    _ = value.unwrap[Int]()\n    print(value.isa[Int]())\n",
             std::path::Path::new("/tmp/mojito_variant_use_after_take.mojo"),
         )
-        .expect_err("Variant.take consumes its receiver");
+        .expect_err("Variant.unwrap consumes its receiver");
     assert!(matches!(moved, CompilerError::Ownership(_)));
+    let copied = compiler
+        .compile_source(
+            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    print(value.unwrap[Int](), value.isa[Int]())\n",
+            std::path::Path::new("/tmp/mojito_variant_copy_before_take.mojo"),
+        )
+        .expect("an ImplicitlyCopyable Variant copies its consumed receiver");
+    assert_eq!(
+        compiler.execute(&copied).expect("execute").output,
+        "7 True\n"
+    );
 
     let wrong_tag = compiler
         .compile_source(

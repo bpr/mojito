@@ -87,12 +87,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
   list/tuple/variant construction, and t-string typing (the lazy `TString`
-  element list and its snapshot capture policy). `infer_variant_method` is the
-  shared Variant-intrinsic dispatch (`isa`/`is_type_supported`/`set` — both
+  element list and its snapshot capture policy). `infer_variant_storage_method`
+  is the `__VariantStorage` primitive's operation dispatch (`isa`/`set` — both
   value and `init_with=` placement forms — `unwrap`/`unsafe_unwrap`,
-  `replace`/`unsafe_replace`, and the consuming `deinit_with`), reached from
-  the parameterized `Invoke(Member)` spelling via `infer_variant_invoke` and
-  from ordinary method calls via `infer_method_call`. `check_lambda` runs a lambda
+  `replace`/`unsafe_replace`, and the consuming `deinit_with`), reachable only
+  on a `Ty::Variant` receiver (the bundled `Variant`'s `_storage` field) from
+  the parameterized `Invoke(Member)` spelling via `infer_variant_storage_invoke`
+  and from ordinary method calls via `infer_method_call`; the public API is
+  `stdlib/std/utils/variant.mojo`, whose type-keyed methods specialize per
+  call, and `type_keyed_projection` routes a `v[T]` subscript to the struct's
+  `__getitem_param__[T]` clone in value and place positions (the
+  `type_keyed_accessor_call` lowering in MIR). `check_lambda` runs a lambda
   expression's hidden definition through `check_def` during statement-root
   registration and caches the finalized function-value type under the
   expression span (the comprehension pattern); `ast::lambdas_in_expr`/
@@ -110,7 +115,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   transfer), and static/pointer/uninit-storage/List/Tuple method inference
   (`infer_struct_static_method` dispatches statics on parameterized structs —
   explicit `TypeApply`/subscript-parsed receivers and bare receivers with
-  struct parameters inferred from argument types via `resolve_use_params`)
+  struct parameters inferred from argument types via `resolve_use_params`;
+  both method paths and the constructor paths record
+  `checked::MethodInstantiation`s and retarget to an existing per-call
+  clone through `specialized_method_clone`, whose value list must agree with
+  the specializer's `method_request_values`; `unify_through_callable_bounds`
+  solves an infer-only type parameter through a callable-bounded sibling)
   (`infer_uninit_storage_method` types the compiler-private
   `__UninitStorage[T]` write/take/destroy crossings behind
   `MaybeUninit`).

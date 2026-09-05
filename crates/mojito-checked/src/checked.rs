@@ -131,6 +131,10 @@ pub struct CheckedCallContract {
     /// concrete implementation. Concrete calls never carry an adapter.
     pub result_adapter: Option<CheckedResultAdapter>,
     pub receiver_requires_place: bool,
+    /// The selected target declares no receiver: a `@staticmethod` reached
+    /// through an instance (`value.static_method()`). The receiver is
+    /// evaluated and discarded; the call passes only the arguments.
+    pub receiver_elided: bool,
     /// Effective receiver access; `receiver_requires_place` independently
     /// retains the declared ABI handle requirement.
     pub receiver_convention: Option<mojito_ast::ast::ArgConvention>,
@@ -248,6 +252,21 @@ pub struct CheckedIteratorCall {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericInstantiation {
     pub callee: String,
+    pub arguments: Vec<mojito_types::types::TyArg>,
+}
+
+/// One resolved application of a struct method that declares its own
+/// compile-time parameters (`v.isa[Int]()`, `v.set(3)` inferring `T`): the
+/// receiver struct as checked, the source method name, and the method's
+/// declaration-order arguments from `resolve_use_params`. The compiler's
+/// discovery loop replays closed recordings on specialized variadic structs
+/// as per-call method clones.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodInstantiation {
+    pub owner: String,
+    pub method: String,
+    /// The selected overload's runtime parameter names, in declaration order.
+    pub parameter_names: Vec<String>,
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 
@@ -457,6 +476,11 @@ pub enum SemanticAdjustment {
     /// tombstoning the caller's place. This coexists with parameterized-method
     /// metadata and is consumed directly by MIR lowering.
     ImplicitlyCopyConsumingReceiver,
+    /// A `deinit self` call on a plain local variable that is not
+    /// `ImplicitlyCopyable`: current Mojo moves the variable at this, its
+    /// last use, so the call consumes the variable's value and any later
+    /// use is an ownership error.
+    ImplicitlyMoveConsumingReceiver,
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),
@@ -519,10 +543,6 @@ pub enum SemanticAdjustment {
     VariantIs {
         alternatives: Vec<Ty>,
         index: usize,
-    },
-    /// Compile-time membership query (`value.is_type_supported[T]()`).
-    VariantTypeSupported {
-        supported: bool,
     },
     /// Checked typed projection (`value[T]`).
     VariantProject {
@@ -807,6 +827,7 @@ pub struct CheckedProgram {
     statements: Vec<Stmt>,
     compatibility_overload_targets: HashMap<SourceSpan, String>,
     generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
+    method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
     /// Caller-substituted loan transfers per call occurrence, keyed by the
     /// call expression's span; MIR lowering installs the implied loans.
     call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
@@ -1012,6 +1033,7 @@ impl CheckedProgram {
         overload_targets: HashMap<SourceSpan, String>,
         contextual_bases: HashMap<SourceSpan, String>,
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
+        method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
         call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
         implicit_conversion_types: HashMap<SourceSpan, Ty>,
@@ -1034,6 +1056,7 @@ impl CheckedProgram {
         iteration_protocols: HashMap<SourceSpan, IterationProtocol>,
         simd_constructions: HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
         operation_adjustments: HashMap<SourceSpan, SemanticAdjustment>,
+        parameterized_method_calls: HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
         tuple_unpack_plans: HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
         interior_references: HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
         interior_invalidations: HashMap<SourceSpan, Vec<InteriorInvalidation>>,
@@ -1044,6 +1067,7 @@ impl CheckedProgram {
         call_place_uses: HashSet<SourceSpan>,
         borrowed_read_call_places: HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: HashSet<SourceSpan>,
+        implicitly_moved_consuming_receivers: HashSet<SourceSpan>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
         let (expressions, expression_index) = build_checked_expressions(
@@ -1060,6 +1084,7 @@ impl CheckedProgram {
             &iteration_protocols,
             &simd_constructions,
             &operation_adjustments,
+            &parameterized_method_calls,
             &tuple_unpack_plans,
             &interior_references,
             &interior_invalidations,
@@ -1073,6 +1098,7 @@ impl CheckedProgram {
             &call_place_uses,
             &borrowed_read_call_places,
             &implicitly_copied_consuming_receivers,
+            &implicitly_moved_consuming_receivers,
         );
         let declarations = build_checked_declarations(
             &statements,
@@ -1085,6 +1111,7 @@ impl CheckedProgram {
             statements,
             compatibility_overload_targets: overload_targets,
             generic_instantiations,
+            method_instantiations,
             call_transfers,
             compatibility_implicit_conversions: implicit_conversions,
             implicit_conversion_types,
@@ -1114,6 +1141,12 @@ impl CheckedProgram {
     /// elaborator cannot re-infer on its own.
     pub fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
         &self.generic_instantiations
+    }
+
+    /// The resolved compile-time arguments per generic method call site,
+    /// retained for per-call method specialization discovery.
+    pub fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
+        &self.method_instantiations
     }
 
     /// The caller-substituted loan transfers per call occurrence.
@@ -1212,6 +1245,7 @@ fn build_checked_expressions(
     iteration_protocols: &HashMap<SourceSpan, IterationProtocol>,
     simd_constructions: &HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
     operation_adjustments: &HashMap<SourceSpan, SemanticAdjustment>,
+    parameterized_method_calls: &HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
     tuple_unpack_plans: &HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
     interior_references: &HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
     interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
@@ -1225,6 +1259,7 @@ fn build_checked_expressions(
     call_place_uses: &HashSet<SourceSpan>,
     borrowed_read_call_places: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
+    implicitly_moved_consuming_receivers: &HashSet<SourceSpan>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
     struct Builder<'a> {
         nodes: Vec<CheckedExpr>,
@@ -1242,6 +1277,7 @@ fn build_checked_expressions(
         iteration_protocols: &'a HashMap<SourceSpan, IterationProtocol>,
         simd_constructions: &'a HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
         operation_adjustments: &'a HashMap<SourceSpan, SemanticAdjustment>,
+        parameterized_method_calls: &'a HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
         tuple_unpack_plans: &'a HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
         interior_references: &'a HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
         interior_invalidations: &'a HashMap<SourceSpan, Vec<InteriorInvalidation>>,
@@ -1255,6 +1291,7 @@ fn build_checked_expressions(
         call_place_uses: &'a HashSet<SourceSpan>,
         borrowed_read_call_places: &'a HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
+        implicitly_moved_consuming_receivers: &'a HashSet<SourceSpan>,
     }
     impl Builder<'_> {
         fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
@@ -1511,6 +1548,9 @@ fn build_checked_expressions(
             if self.implicitly_copied_consuming_receivers.contains(&span) {
                 adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
             }
+            if self.implicitly_moved_consuming_receivers.contains(&span) {
+                adjustments.push(SemanticAdjustment::ImplicitlyMoveConsumingReceiver);
+            }
             if let Some((dtype, width)) = self.simd_constructions.get(&span) {
                 adjustments.push(SemanticAdjustment::ConstructSimd {
                     dtype: *dtype,
@@ -1519,6 +1559,14 @@ fn build_checked_expressions(
             }
             if let Some(operation) = self.operation_adjustments.get(&span) {
                 adjustments.push(operation.clone());
+            }
+            // Kept apart from the single per-span operation record: a
+            // parameterized method invoke that yields a reference carries
+            // both this and the `ReferenceResult` operation.
+            if let Some(param_decls) = self.parameterized_method_calls.get(&span) {
+                adjustments.push(SemanticAdjustment::ParameterizedMethodCall {
+                    param_decls: param_decls.clone(),
+                });
             }
             if let Some(elements) = self.tuple_unpack_plans.get(&span) {
                 adjustments.push(SemanticAdjustment::TupleUnpack {
@@ -1763,6 +1811,7 @@ fn build_checked_expressions(
         iteration_protocols,
         simd_constructions,
         operation_adjustments,
+        parameterized_method_calls,
         tuple_unpack_plans,
         interior_references,
         interior_invalidations,
@@ -1776,6 +1825,7 @@ fn build_checked_expressions(
         call_place_uses,
         borrowed_read_call_places,
         implicitly_copied_consuming_receivers,
+        implicitly_moved_consuming_receivers,
     };
     builder.block(statements);
     (builder.nodes, builder.index)

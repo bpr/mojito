@@ -8,7 +8,7 @@
 //! run per-file in `tests/corpus_test.rs` (`ownership_error::*` /
 //! `ownership_ok::*`).
 
-use mojito::{OwnershipError, check, check_ownership, elaborate, parse};
+use mojito::{Compiler, CompilerError, OwnershipError, check, check_ownership, elaborate, parse};
 
 /// Elaborate and type-check `src` (the production stage order), then run the
 /// ownership analysis.
@@ -17,6 +17,18 @@ fn own(src: &str) -> Result<(), OwnershipError> {
     let program = elaborate(program).expect("comptime error");
     check(&program).expect("type error");
     check_ownership(&program)
+}
+
+/// The ownership verdict of the whole linked pipeline (`Compiler`), for
+/// programs that import the bundled standard library.
+fn own_linked(src: &str) -> Result<(), OwnershipError> {
+    match Compiler::default()
+        .compile_source(src, std::path::Path::new("/tmp/mojito_own_linked.mojo"))
+    {
+        Ok(_) => Ok(()),
+        Err(CompilerError::Ownership(error)) => Err(error),
+        Err(other) => panic!("expected an ownership verdict, got {other}"),
+    }
 }
 
 #[test]
@@ -141,13 +153,13 @@ fn ref_field_ctor_argument_from_owned_place_loans_the_source() {
 
 #[test]
 fn variant_payload_reference_is_invalidated_when_the_tag_changes() {
-    // The ownership unit runs the unlinked checker, so a local declaration makes
-    // the compiler-provided Variant name visible without involving module I/O.
-    let src = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[Int, StringLiteral](7)\n    ref payload = value[Int]\n    value.set[StringLiteral](\"changed\")\n    print(payload)\n";
+    // `set` is a `mut self` method of the self-hosted `Variant`: while the
+    // projected payload is borrowed, the mutating call conflicts with it.
+    let src = "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    ref payload = value[Int]\n    value.set[String](\"changed\")\n    print(payload)\n";
     assert!(matches!(
-        own(src),
-        Err(OwnershipError::InvalidatedInteriorReference { origin, .. })
-            if origin == "value[\"value\"]"
+        own_linked(src),
+        Err(OwnershipError::LoanConflict { place, loan, .. })
+            if place == "value" && loan == "payload"
     ));
 }
 
@@ -239,9 +251,11 @@ fn indexed_and_variant_payload_replacement_invalidate_nested_interiors() {
         Err(OwnershipError::InvalidatedInteriorReference { .. })
     ));
 
-    let variant = "struct Variant:\n    pass\n\ndef main():\n    var value = Variant[List[Int], StringLiteral](List[Int](1, 2))\n    ref first = value[List[Int]][0]\n    value[List[Int]] = [3, 4]\n    print(first)\n";
+    // Writing a `Variant` payload through its type-keyed projection replaces
+    // the payload, so references into the previous payload's interior expire.
+    let variant = "from std.utils import Variant\n\ndef main():\n    var items: List[Int] = [1, 2]\n    var value = Variant[List[Int], String](items^)\n    ref first = value[List[Int]][0]\n    value[List[Int]] = [3, 4]\n    print(first)\n";
     assert!(matches!(
-        own(variant),
+        own_linked(variant),
         Err(OwnershipError::InvalidatedInteriorReference { .. })
     ));
 }
