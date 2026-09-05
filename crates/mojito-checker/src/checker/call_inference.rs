@@ -469,8 +469,6 @@ impl Checker {
                 let saved_copy_place_value_uses = self.copy_place_value_uses.borrow().clone();
                 let saved_consuming_receivers =
                     self.implicitly_copied_consuming_receivers.borrow().clone();
-                let saved_moved_receivers =
-                    self.implicitly_moved_consuming_receivers.borrow().clone();
                 if let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
                     name,
                     param_args,
@@ -552,7 +550,6 @@ impl Checker {
                 *self.copy_place_value_uses.borrow_mut() = saved_copy_place_value_uses;
                 *self.implicitly_copied_consuming_receivers.borrow_mut() =
                     saved_consuming_receivers;
-                *self.implicitly_moved_consuming_receivers.borrow_mut() = saved_moved_receivers;
             }
             return match select_callable_overload(matches) {
                 Ok((ret, target, error)) => {

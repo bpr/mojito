@@ -1124,20 +1124,6 @@ impl Flatten<'_> {
         .then_some(contract)
     }
 
-    /// Whether a method call consumes its plain-local receiver by an implicit
-    /// last-use move (`value.unwrap[Int]()` with no `^`): the receiver is
-    /// lowered as a moving variable use so later uses are ownership errors.
-    fn implicitly_moves_consuming_receiver(&self, expression: &Expr) -> bool {
-        self.checked_adjustments(expression)
-            .iter()
-            .any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ImplicitlyMoveConsumingReceiver
-                )
-            })
-    }
-
     fn implicitly_copies_consuming_receiver(&self, expression: &Expr) -> bool {
         self.checked_adjustments(expression)
             .iter()

@@ -215,13 +215,40 @@ impl Flatten<'_> {
             ExprKind::Infix(op, a, b) => {
                 let ra = self.expr(a); // operands left-to-right (evaluation order is explicit)
                 let rb = self.expr(b);
+                let resolved = self.resolved_callable(e);
+                // Equatable's default `__ne__` (checker-marked): dispatch
+                // `__eq__` and negate its result.
+                if *op == InfixOp::Ne
+                    && self.checked_adjustments(e).iter().any(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::NegatedEquality
+                        )
+                    })
+                {
+                    let equal = self.fresh_typed(span(e), None, Ty::Bool);
+                    self.emit(MirInstr::BinOp {
+                        op: InfixOp::Eq,
+                        dest: equal,
+                        a: ra,
+                        b: rb,
+                        resolved,
+                    });
+                    let dest = self.fresh_typed(span(e), None, Ty::Bool);
+                    self.emit(MirInstr::UnOp {
+                        op: PrefixOp::Not,
+                        dest,
+                        a: equal,
+                    });
+                    return dest;
+                }
                 let d = self.fresh(span(e), None);
                 self.emit(MirInstr::BinOp {
                     op: *op,
                     dest: d,
                     a: ra,
                     b: rb,
-                    resolved: self.resolved_callable(e),
+                    resolved,
                 });
                 d
             }
@@ -886,7 +913,7 @@ impl Flatten<'_> {
                     {
                         return dest;
                     }
-                    let (recv, recv_place) = self.lower_consuming_or_call_receiver(e, object);
+                    let (recv, recv_place) = self.lower_call_receiver(object);
                     let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
                     let recv = if implicitly_copied_receiver {
                         self.copy_consuming_receiver(object, recv, recv_place.as_ref())
@@ -1390,7 +1417,7 @@ impl Flatten<'_> {
                 } else {
                     object.as_ref()
                 };
-                let (recv, recv_place) = self.lower_consuming_or_call_receiver(e, receiver_expr);
+                let (recv, recv_place) = self.lower_call_receiver(receiver_expr);
                 let recv = if implicitly_copied_receiver {
                     self.copy_consuming_receiver(receiver_expr, recv, recv_place.as_ref())
                 } else {

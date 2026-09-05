@@ -205,8 +205,17 @@ recreates this section's checkbox with the fresh divergence list.
   Tuple residues (2026-09; the Tuple slice landed `Hashable`/`Sized` and
   upstream's `__contains__[T: Equatable]` bound): `Defaultable` needs
   `Ts[i]()` element default construction (the `Self.T()` blocker shared with
-  Array), and the static `__len__()` overload cannot coexist with the
-  instance one under arity-keyed dunder selection.
+  Array), the static `__len__()` overload cannot coexist with the
+  instance one under arity-keyed dunder selection, and a Tuple whose
+  elements are user structs compares neither structurally nor nominally
+  (`(1, Opaque(2)) == (1, Opaque(3))` rejects and `t.__ne__(u)` finds no
+  method): the structural `Ty::Tuple` path accepts scalar elements only
+  and does not route to the specialized `Tuple.__eq__`/`__ne__` bodies,
+  which check (the pinned Mojo accepts both spellings). Natively,
+  conformance/fixtures/tuple_consume_elements.mojo (`values^.consume_elements[
+  print_length]()` over `Array` elements) prints correctly and then traps
+  `use after Pointer deallocation` at teardown on both the current tree and
+  the da4d129 baseline — a pre-existing native drop gap, not a manifest row.
 
   Optional residues (2026-09; the Optional slice landed declared
   `Boolable`/`Defaultable`, conditional `Equatable`/`Hashable`/`Writable`,
@@ -238,7 +247,10 @@ recreates this section's checkbox with the fresh divergence list.
   general native repr path (no user struct's `write_repr_to` runs natively
   yet) and a parameterized `@staticmethod` reached through an instance of a
   non-variadic generic struct (`p.pick[Int]()`) fails monomorphization
-  (`cannot resolve parameter T`; the VM runs it); an unavailable where-gated
+  (`cannot resolve parameter T`; the VM runs it), as does an instance
+  method whose only parameter is callable-bounded (`__getitem__[F: def()
+  -> Int](self, callback: F)` in conformance/fixtures/subscript_call_contracts.mojo:
+  `cannot resolve parameter F`); an unavailable where-gated
   method reports Mojito's `'set' is unavailable for Variant[Conn]: its where
   clause evaluated to False` rather than upstream's clause text; and the
   projection tag-mismatch trap categories differ (the VM raises a `TypeError`

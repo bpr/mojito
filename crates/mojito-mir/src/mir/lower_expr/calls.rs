@@ -4,30 +4,6 @@
 use super::*;
 
 impl Flatten<'_> {
-    /// Lower a method receiver: an implicit last-use move of a plain local
-    /// (`value.unwrap[Int]()`, checker-marked) is the moving variable use
-    /// `value^` lowers to; every other receiver takes the ordinary
-    /// place-retaining path.
-    pub(super) fn lower_consuming_or_call_receiver(
-        &mut self,
-        call: &Expr,
-        receiver: &Expr,
-    ) -> (Reg, Option<MirPlace>) {
-        if self.implicitly_moves_consuming_receiver(call)
-            && let ExprKind::Identifier(name) = &receiver.kind
-        {
-            let var = self.expression_var(name, receiver);
-            let dest = self.fresh(receiver.source_span(), Some(var));
-            self.emit(MirInstr::UseVar {
-                dest,
-                var,
-                mode: UseMode::Move,
-            });
-            return (dest, None);
-        }
-        self.lower_call_receiver(receiver)
-    }
-
     /// A `@staticmethod` reached through an instance (`value.static_method()`,
     /// `v.is_type_supported[Int]()`): the checker selected a target without a
     /// receiver, so evaluate the receiver for its effect only and call the

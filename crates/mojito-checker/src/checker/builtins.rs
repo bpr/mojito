@@ -65,10 +65,9 @@ pub(super) fn has_equality_bound_or_concrete(checker: &Checker, ty: &Ty) -> bool
             .all(|element| has_equality_bound_or_concrete(checker, element));
     }
     match ty {
-        Ty::Struct(name, _) => checker
-            .structs
-            .get(name)
-            .is_some_and(|s| s.conforms.iter().any(|c| c == "Equatable")),
+        // A conditional conformance (`Equatable where conforms_to(T,
+        // Equatable)`) is judged against the struct's arguments.
+        Ty::Struct(name, args) => checker.struct_conformance_applies(name, args, "Equatable"),
         _ => has_equality_bound(ty) || is_scalar(ty) || is_numeric_like(ty),
     }
 }

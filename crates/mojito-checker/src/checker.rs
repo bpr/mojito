@@ -204,7 +204,6 @@ pub fn check_program_with_materialized_callables(
         checker.call_place_uses.into_inner(),
         checker.borrowed_read_call_places.into_inner(),
         checker.implicitly_copied_consuming_receivers.into_inner(),
-        checker.implicitly_moved_consuming_receivers.into_inner(),
         checker.declaration_effects.into_inner(),
     ))
 }
@@ -543,9 +542,6 @@ pub struct Checker {
     /// separate from the single operation-adjustment slot so parameterized
     /// method metadata can coexist at the same expression.
     implicitly_copied_consuming_receivers: RefCell<HashSet<SourceSpan>>,
-    /// Call spans whose `deinit self` receiver is a plain local at its
-    /// implicit last use (see `SemanticAdjustment::ImplicitlyMoveConsumingReceiver`).
-    implicitly_moved_consuming_receivers: RefCell<HashSet<SourceSpan>>,
     return_ref_contracts: Vec<Option<ReturnRefContract>>,
     named_result_context: Vec<bool>,
     raising_context: Vec<Option<Ty>>,
@@ -657,7 +653,6 @@ impl Checker {
             call_place_uses: RefCell::new(HashSet::new()),
             borrowed_read_call_places: RefCell::new(HashSet::new()),
             implicitly_copied_consuming_receivers: RefCell::new(HashSet::new()),
-            implicitly_moved_consuming_receivers: RefCell::new(HashSet::new()),
             return_ref_contracts: Vec::new(),
             named_result_context: Vec::new(),
             raising_context: Vec::new(),

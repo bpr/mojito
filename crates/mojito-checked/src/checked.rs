@@ -476,11 +476,10 @@ pub enum SemanticAdjustment {
     /// tombstoning the caller's place. This coexists with parameterized-method
     /// metadata and is consumed directly by MIR lowering.
     ImplicitlyCopyConsumingReceiver,
-    /// A `deinit self` call on a plain local variable that is not
-    /// `ImplicitlyCopyable`: current Mojo moves the variable at this, its
-    /// last use, so the call consumes the variable's value and any later
-    /// use is an ownership error.
-    ImplicitlyMoveConsumingReceiver,
+    /// `a != b` on a struct that declares `__eq__` but no `__ne__`:
+    /// Equatable's default `__ne__` is `not (a == b)`, so MIR dispatches
+    /// `__eq__` and negates the result.
+    NegatedEquality,
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),
@@ -1067,7 +1066,6 @@ impl CheckedProgram {
         call_place_uses: HashSet<SourceSpan>,
         borrowed_read_call_places: HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: HashSet<SourceSpan>,
-        implicitly_moved_consuming_receivers: HashSet<SourceSpan>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
         let (expressions, expression_index) = build_checked_expressions(
@@ -1098,7 +1096,6 @@ impl CheckedProgram {
             &call_place_uses,
             &borrowed_read_call_places,
             &implicitly_copied_consuming_receivers,
-            &implicitly_moved_consuming_receivers,
         );
         let declarations = build_checked_declarations(
             &statements,
@@ -1259,7 +1256,6 @@ fn build_checked_expressions(
     call_place_uses: &HashSet<SourceSpan>,
     borrowed_read_call_places: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
-    implicitly_moved_consuming_receivers: &HashSet<SourceSpan>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
     struct Builder<'a> {
         nodes: Vec<CheckedExpr>,
@@ -1291,7 +1287,6 @@ fn build_checked_expressions(
         call_place_uses: &'a HashSet<SourceSpan>,
         borrowed_read_call_places: &'a HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
-        implicitly_moved_consuming_receivers: &'a HashSet<SourceSpan>,
     }
     impl Builder<'_> {
         fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
@@ -1547,9 +1542,6 @@ fn build_checked_expressions(
             }
             if self.implicitly_copied_consuming_receivers.contains(&span) {
                 adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
-            }
-            if self.implicitly_moved_consuming_receivers.contains(&span) {
-                adjustments.push(SemanticAdjustment::ImplicitlyMoveConsumingReceiver);
             }
             if let Some((dtype, width)) = self.simd_constructions.get(&span) {
                 adjustments.push(SemanticAdjustment::ConstructSimd {
@@ -1825,7 +1817,6 @@ fn build_checked_expressions(
         call_place_uses,
         borrowed_read_call_places,
         implicitly_copied_consuming_receivers,
-        implicitly_moved_consuming_receivers,
     };
     builder.block(statements);
     (builder.nodes, builder.index)

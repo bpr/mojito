@@ -1642,6 +1642,11 @@ impl<'a> Elab<'a> {
         if cursor.next().is_some() {
             return None;
         }
+        // Nothing baked (only callable-bounded parameters) would mangle to
+        // the template's own name: no clone to mint.
+        if values.is_empty() {
+            return None;
+        }
         Some((values, bindings))
     }
 

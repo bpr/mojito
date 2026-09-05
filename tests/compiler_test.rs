@@ -226,16 +226,26 @@ fn variant_type_queries_take_and_replace_have_checked_ownership_semantics() {
         .expect_err("unsupported Variant operation arm must be rejected statically");
     assert!(matches!(unsupported, CompilerError::Type(_)));
 
-    // `unwrap` takes `deinit self`: on a plain local it is that local's
-    // implicit last use, so a later use is an ownership error — unless the
-    // Variant is `ImplicitlyCopyable` (every alternative is), in which case
-    // the receiver is copied and the local stays usable, as upstream does.
+    // `unwrap` takes `deinit self`: a plain-local receiver without `^` is an
+    // implicit copy, legal only when the Variant is `ImplicitlyCopyable`
+    // (every alternative is) — there is no last-use move, as upstream. A
+    // transferred (`^`) receiver makes any later use an ownership error.
+    let implicit_copy = compiler
+        .compile_source(
+            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, List[Int]](7)\n    _ = value.unwrap[Int]()\n",
+            std::path::Path::new("/tmp/mojito_variant_implicit_copy_take.mojo"),
+        )
+        .expect_err("a non-ImplicitlyCopyable Variant receiver must be transferred");
+    assert!(matches!(
+        implicit_copy,
+        CompilerError::Type(mojito::TypeError::ImplicitCopy { .. })
+    ));
     let moved = compiler
         .compile_source(
-            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, List[Int]](7)\n    _ = value.unwrap[Int]()\n    print(value.isa[Int]())\n",
+            "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, List[Int]](7)\n    _ = value^.unwrap[Int]()\n    print(value.isa[Int]())\n",
             std::path::Path::new("/tmp/mojito_variant_use_after_take.mojo"),
         )
-        .expect_err("Variant.unwrap consumes its receiver");
+        .expect_err("Variant.unwrap consumes its transferred receiver");
     assert!(matches!(moved, CompilerError::Ownership(_)));
     let copied = compiler
         .compile_source(

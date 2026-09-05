@@ -1246,12 +1246,7 @@ impl Checker {
         if resolved.consumes_receiver
             && (is_place_expr(object) || self.infer_reference_value(object).is_some())
         {
-            // A `deinit self` call on a plain local variable is that
-            // variable's last use: current Mojo moves it implicitly, and the
-            // ownership analysis rejects any later use.
-            let implicit_last_use = resolved.self_convention == Some(ArgConvention::Deinit)
-                && matches!(&object.kind, ExprKind::Identifier(name) if self.lookup_owner(name).is_some());
-            if !self.is_implicitly_copyable(&obj_ty) && !implicit_last_use {
+            if !self.is_implicitly_copyable(&obj_ty) {
                 let context = format!("consuming receiver of method '{method}'");
                 if !self.is_copyable(&obj_ty) {
                     return Err(TypeError::NonCopyable {
@@ -1269,15 +1264,9 @@ impl Checker {
                     copyable: true,
                 });
             }
-            if !implicit_last_use || self.is_implicitly_copyable(&obj_ty) {
-                self.implicitly_copied_consuming_receivers
-                    .borrow_mut()
-                    .insert(span.clone());
-            } else {
-                self.implicitly_moved_consuming_receivers
-                    .borrow_mut()
-                    .insert(span.clone());
-            }
+            self.implicitly_copied_consuming_receivers
+                .borrow_mut()
+                .insert(span.clone());
         }
         // A `var self` receiver takes ownership by move, so a declared
         // `Movable where False` opt-out rejects it; `deinit self` is

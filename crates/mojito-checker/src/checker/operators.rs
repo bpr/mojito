@@ -269,9 +269,30 @@ impl Checker {
         // coercion, then through an `@implicit` conversion of the right
         // operand, as a call argument would convert); an overloaded dunder
         // records the exact lowered symbol so `BinOp.resolved` names it.
-        if let Some(dunder) = op.dunder()
+        // `a != b` on a struct declaring `__eq__` without `__ne__` is
+        // Equatable's default `__ne__` (`not (a == b)`): the operator
+        // dispatches `__eq__` and MIR negates the result.
+        let negated_equality = op == Ne
+            && self
+                .struct_dunder_signature_for(&lt, "__ne__", &[&rt])
+                .is_none()
+            && self
+                .struct_dunder_signature_for(&lt, "__eq__", &[&rt])
+                .is_some();
+        let dunder = if negated_equality {
+            Some("__eq__")
+        } else {
+            op.dunder()
+        };
+        if let Some(dunder) = dunder
             && let Some((info, sig, targs)) = self.struct_dunder_signature_for(&lt, dunder, &[&rt])
         {
+            if negated_equality && let Some(span) = span.clone() {
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::NegatedEquality,
+                );
+            }
             let Ty::Struct(sname, _) = &lt else {
                 unreachable!("dunder signatures resolve on struct receivers")
             };

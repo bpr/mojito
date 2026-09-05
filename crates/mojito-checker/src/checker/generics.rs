@@ -736,6 +736,11 @@ impl Checker {
         arguments: &[TyArg],
     ) -> Option<String> {
         let values = specialized_method_values(decls, arguments)?;
+        // Nothing baked (only callable-bounded parameters) mangles to the
+        // method's own name: there is no clone, and retargeting would loop.
+        if values.is_empty() {
+            return None;
+        }
         let name = mojito_symbol::symbol::mangle(method, &values);
         self.structs
             .get(owner)

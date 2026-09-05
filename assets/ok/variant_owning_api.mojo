@@ -38,5 +38,5 @@ def main():
 
     # deinit_with with a Res payload through a monomorphic handler
     var y: Variant[Res] = Variant[Res](Res(9))
-    y.deinit_with(lambda (var element: Res): element^.__deinit__())
+    y^.deinit_with(lambda (var element: Res): element^.__deinit__())
     print("done")
