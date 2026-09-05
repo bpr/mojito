@@ -482,10 +482,20 @@ impl VmBackend {
                     RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
                 })?;
                 let mut text = current.clone();
-                for (index, argument) in args.into_iter().enumerate() {
-                    let static_ty = arg_types.get(index).and_then(Option::as_ref);
-                    text.push_str(&self.format_value(prog, argument, false, static_ty)?);
-                }
+                // A formatted argument's `write_to` runs in a nested frame
+                // that may read references into this caller (a temporary
+                // holding `Pointer(to=local)`): keep the caller reachable as
+                // a synchronous call does.
+                let stack_base = self.push_caller_mirror(frame_id, regs, vars);
+                let formatted = (|| {
+                    for (index, argument) in args.into_iter().enumerate() {
+                        let static_ty = arg_types.get(index).and_then(Option::as_ref);
+                        text.push_str(&self.format_value(prog, argument, false, static_ty)?);
+                    }
+                    Ok::<_, RuntimeError>(())
+                })();
+                self.restore_caller_mirror(stack_base, vars)?;
+                formatted?;
                 self.store_at_call_place(prog, frame_id, place, Value::Str(text), regs, vars)?;
                 Ok(Value::None)
             }
@@ -552,18 +562,26 @@ impl VmBackend {
                         matches!(ty, Ty::Struct(payload, args)
                         if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(payload))
                     });
-                for (position, argument) in args.into_iter().enumerate() {
-                    let static_ty = arg_types.get(position).and_then(Option::as_ref);
-                    let text = self.format_value(prog, argument, false, static_ty)?;
-                    let payload = if nominal_payload {
-                        self.nominal_string_value(prog, &text)?
-                    } else {
-                        Value::Str(text)
-                    };
-                    let (_, variables) =
-                        self.call_frame(prog, index, vec![writer, payload], &[])?;
-                    writer = variables.into_iter().next().unwrap_or(Value::None);
-                }
+                // The formatted arguments' `write_to` frames may read
+                // references into this caller (see the builtin-string arm).
+                let stack_base = self.push_caller_mirror(frame_id, regs, vars);
+                let written = (|| {
+                    for (position, argument) in args.into_iter().enumerate() {
+                        let static_ty = arg_types.get(position).and_then(Option::as_ref);
+                        let text = self.format_value(prog, argument, false, static_ty)?;
+                        let payload = if nominal_payload {
+                            self.nominal_string_value(prog, &text)?
+                        } else {
+                            Value::Str(text)
+                        };
+                        let (_, variables) =
+                            self.call_frame(prog, index, vec![writer.clone(), payload], &[])?;
+                        writer = variables.into_iter().next().unwrap_or(Value::None);
+                    }
+                    Ok::<_, RuntimeError>(())
+                })();
+                self.restore_caller_mirror(stack_base, vars)?;
+                written?;
                 self.store_at_call_place(prog, frame_id, place, writer, regs, vars)?;
                 Ok(Value::None)
             }

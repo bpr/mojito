@@ -1441,7 +1441,12 @@ impl Checker {
                     ArgSlot::Default => None,
                 })
                 .collect();
-            let self_reference = self.reference_actual(object)?;
+            // A temporary receiver of a `ref[self]`-returning method
+            // (`FormatStruct(writer, "P").params(...)`) materializes as an
+            // anonymous owned binding, as a temporary bound to a `ref`
+            // parameter does: the result borrows that frame-local slot and
+            // the temporary lives as long as the statement that chains on it.
+            let self_reference = self.materialized_reference_actual(object)?;
             let origin = substitute_sig_origin_with_self(
                 &signature.origin,
                 &actual,

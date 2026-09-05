@@ -1,14 +1,11 @@
 # Mojito's subset of upstream `std/format/_utils.mojo`: the repr vocabulary
 # `write_repr_to` bodies build on. `TypeNames` writes a type pack's
-# unqualified names and `FormatStruct` writes `Name[params](fields)`.
-# Divergences from upstream: `FormatStruct.params`/`fields` take `mut self`
-# and `params` returns nothing, so the builder is bound to a local and
-# called step by step (`var f = FormatStruct(writer, "Name")`;
-# `f.params(...)`; `f.fields(...)`) rather than chained on a temporary; the
-# `fields[FieldsFn]` callback overload, `Named`, `Repr`, and the free
-# `write_to`/`write_repr_to` are not ported (a `Named` temporary holding a
-# pointer to a caller local reads a stale frame on the VM). The bundled
-# collections' `write_repr_to` bodies write their text directly through
+# unqualified names, `FormatStruct` writes `Name[params](fields)` through
+# upstream's fluent chain (`FormatStruct(writer, "Name").params(...)
+# .fields(...)`), and `Named` writes `name=value`. Not ported: the
+# `fields[FieldsFn]` callback overload (nested `@parameter def`), `Repr`, and
+# the free `write_to`/`write_repr_to`. The bundled collections'
+# `write_repr_to` bodies write their text directly through
 # `_unqualified_type_name` rather than the builder, so an instance mints no
 # builder or `TypeNames` specialization of its own.
 
@@ -35,7 +32,8 @@ struct TypeNames[*Ts: Movable](ImplicitlyCopyable, Movable, Writable):
 
 # Upstream's builder for `Name[param, ...](field, ...)` representations. The
 # constructor writes the name; `params` writes the bracketed parameter list
-# and `fields` the parenthesized field list, each element through `Writer.write`.
+# and returns the builder for chaining; `fields` writes the parenthesized
+# field list. Each element is written through `Writer.write`.
 struct FormatStruct[T: Writer, o: Origin[mut=True]](Movable):
     var _writer: Pointer[Self.T, Self.o]
 
@@ -43,18 +41,32 @@ struct FormatStruct[T: Writer, o: Origin[mut=True]](Movable):
         writer.write(name)
         self._writer = Pointer(to=writer)
 
-    def params[*Ts: Writable](mut self, *args: *Ts):
+    def params[*Ts: Writable](self, *args: *Ts) -> ref[self] Self:
         self._writer[].write("[")
         comptime for i in range(Ts.length):
             if i > 0:
                 self._writer[].write(", ")
             self._writer[].write(args[i])
         self._writer[].write("]")
+        return self
 
-    def fields[*Ts: Writable](mut self, *args: *Ts):
+    def fields[*Ts: Writable](self, *args: *Ts):
         self._writer[].write("(")
         comptime for i in range(Ts.length):
             if i > 0:
                 self._writer[].write(", ")
             self._writer[].write(args[i])
         self._writer[].write(")")
+
+
+# Upstream's `name=value` wrapper: a reference to the value, not a copy.
+struct Named[T: Writable, o: Origin[mut=False]](Copyable, Movable, Writable):
+    var _name: String
+    var _value: Pointer[Self.T, Self.o]
+
+    def __init__(out self, var name: String, ref[Self.o] value: Self.T):
+        self._name = name^
+        self._value = Pointer(to=value)
+
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write(self._name, "=", self._value[])

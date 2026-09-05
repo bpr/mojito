@@ -67,48 +67,8 @@ impl Flatten<'_> {
         // hand the call that slot's place — the VM/native ref binding then
         // borrows real frame storage, and the slot's loans give the temporary
         // its borrower's lifetime.
-        if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
-            owner,
-        }) = adjustments.iter().find(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { .. }
-            )
-        }) {
-            let owner = *owner;
-            let value = self.expr(expression);
-            // The expression lowering may already have materialized the slot
-            // (reference-context paths route through `reference_handle`);
-            // reuse it rather than storing a second copy.
-            let variable = match self.owner_vars.get(&owner).copied() {
-                Some(variable) => variable,
-                None => {
-                    let ty = self
-                        .f
-                        .reg_types
-                        .get(&value.0)
-                        .cloned()
-                        .or_else(|| self.checked_ty(expression));
-                    let variable = self.var(&format!("$mat_r{}", value.0));
-                    if let Some(ty) = ty.clone() {
-                        self.var_types.insert(variable, ty);
-                    }
-                    self.emit(MirInstr::DefVar {
-                        var: variable,
-                        src: value,
-                        binding_ty: ty,
-                    });
-                    self.owner_vars.insert(owner, variable);
-                    variable
-                }
-            };
-            return (
-                value,
-                Some(MirPlace::root(
-                    variable,
-                    self.var_types.get(&variable).cloned(),
-                )),
-            );
+        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(&adjustments) {
+            return self.materialize_borrow_source(expression, owner);
         }
         let retains_place = adjustments.iter().any(|adjustment| {
             matches!(
@@ -153,11 +113,23 @@ impl Flatten<'_> {
             // (see `allow_argument_anchors`) — every other consumer carries
             // the temporary's loans through its own channel, and an extra
             // anchor is a conflicting duplicate borrow.
-            if self.allow_argument_anchors
+            // A subscript view temporary (`s[byte=a:b]`, a `Span` slice)
+            // borrows its source through the subscript's own borrow fact and
+            // no consumer channel retains it — a plain call, a method call,
+            // and a construction alike would drop the source before the call
+            // runs when the argument is the source's last use — so it anchors
+            // in every argument list: one loan on the source, never a
+            // duplicate of a channel that does not exist.
+            let subscript_view = matches!(
+                expression.kind,
+                ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::Slice { .. }
+            );
+            let call_temporary = self.allow_argument_anchors
                 && matches!(
                     expression.kind,
                     ExprKind::Call { .. } | ExprKind::MethodCall { .. }
-                )
+                );
+            if (call_temporary || subscript_view)
                 && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
             {
                 let loans = self.aggregate_borrows(expression);
@@ -693,6 +665,13 @@ impl Flatten<'_> {
     /// become hidden reference locals; value-returning accessors remain values
     /// and are never reconstructed as raw index projections.
     pub(super) fn lower_call_receiver(&mut self, expression: &Expr) -> (Reg, Option<MirPlace>) {
+        // A temporary receiver the checker materialized (the result borrows
+        // it: `ref[self]`) lives in its hidden slot for the statement.
+        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(
+            &self.checked_adjustments(expression),
+        ) {
+            return self.materialize_borrow_source(expression, owner);
+        }
         if let Some(place) = self.materialize_reference_result_place(expression) {
             let value = self.fresh_typed(
                 expression.source_span(),
@@ -746,6 +725,51 @@ impl Flatten<'_> {
             }
             None => (self.expr(expression), None),
         }
+    }
+
+    /// Store a materialized borrow-source temporary in its hidden slot
+    /// (`$mat_r`, registered under the checker-minted owner) and return the
+    /// value plus the slot's place: a temporary bound to a `ref [origin]`
+    /// parameter, or the temporary receiver of a `ref[self]`-returning method
+    /// (`FormatStruct(writer, "P").params(...)`), borrows real frame storage
+    /// this way. The expression lowering may already have materialized the
+    /// slot (reference-context paths route through `reference_handle`); reuse
+    /// it rather than storing a second copy.
+    fn materialize_borrow_source(
+        &mut self,
+        expression: &Expr,
+        owner: mojito_types::origin::OwnerId,
+    ) -> (Reg, Option<MirPlace>) {
+        let value = self.expr(expression);
+        let variable = match self.owner_vars.get(&owner).copied() {
+            Some(variable) => variable,
+            None => {
+                let ty = self
+                    .f
+                    .reg_types
+                    .get(&value.0)
+                    .cloned()
+                    .or_else(|| self.checked_ty(expression));
+                let variable = self.var(&format!("$mat_r{}", value.0));
+                if let Some(ty) = ty.clone() {
+                    self.var_types.insert(variable, ty);
+                }
+                self.emit(MirInstr::DefVar {
+                    var: variable,
+                    src: value,
+                    binding_ty: ty,
+                });
+                self.owner_vars.insert(owner, variable);
+                variable
+            }
+        };
+        (
+            value,
+            Some(MirPlace::root(
+                variable,
+                self.var_types.get(&variable).cloned(),
+            )),
+        )
     }
 
     /// Anchor a loan-carrying temporary *argument* in a hidden retained slot

@@ -90,31 +90,16 @@ exempt from the ordering.
   payoff and sorted so that every dependency precedes what needs it. A task
   closes when its bullets are done; a residue discovered inside a task moves
   to the task that owns its fix (or to task 9, the deliberate deferrals),
-  never back to a finished one. Plan first: task 1 (half a page naming the
-  anchor each case extends) and task 8 (ordering); the rest are direct.
+  never back to a finished one. Plan first: task 7 (ordering); the rest
+  are direct.
 
-  1. **View temporaries as receivers and arguments.** The one ownership
-     gap the later tasks depend on (`$mat_r`/`$arg_loan_r` anchors exist;
-     ownership changes have regressed before, so plan the fixture matrix).
-     - A view-returning call on a temporary receiver (`String("x").strip()`)
-       rejects ("reference binding to a non-place expression"): the receiver
-       anchor handles bound places only.
-     - A subscript view temporary as a call argument at its source's last
-       use (`writer.write(s[byte=a:b])`) frees the source first:
-       `$arg_loan_r` covers call/method-call temporaries only.
-     - Unblocks upstream's fluent `FormatStruct(writer, "P").params(...)
-       .fields(...)` (then `params` returns `ref[self] Self` again and the
-       receivers go back to `self`, which needs a `Pointer[T, mutable
-       origin]` deref write through a read-only `self`), and `_utils.Named`
-       (a pointer-holding temporary passed as an argument reads a stale VM
-       frame).
-  2. **`StringSpan` parameters in upstream's shape.** Retarget the String
+  1. **`StringSpan` parameters in upstream's shape.** Retarget the String
      API signatures from `String` to `StringSpan` (mechanical, wide): fixes
      `StringSpan` arguments not converting (today `to_string()`) and moves
      the batch-2 members (case, predicates, justification) off `String`
      only. Ride-alongs: `split(sep, maxsplit=-1)` as upstream's two
      overloads; `isspace`'s `single_character` parameter.
-  3. **Hashing parity.** Decide up front whether to move the `UInt64` leaf
+  2. **Hashing parity.** Decide up front whether to move the `UInt64` leaf
      to upstream's `to_bits` shape.
      - Container `Hashable` on the hasher protocol
        (`List`/`Optional`/`Array`/`Set`/`Dict.__hash__`; upstream tags
@@ -128,7 +113,7 @@ exempt from the ordering.
      - CTFE `hash`/`default_comp_time_hasher` for compile-time dictionaries.
      - Raw seam only: a generic body forwarding its own `H` into `hash[H](x)`
        with no caller binding falls back to the declaration default.
-  4. **Optional, Tuple, and Slice odds and ends.** Self-contained.
+  3. **Optional, Tuple, and Slice odds and ends.** Self-contained.
      - The raising `opt[]` subscript: empty-subscript form on nominal
        receivers plus `EmptyOptionalError`'s `TypeNames` text.
      - `Tuple`/`Array` `Defaultable`: needs `Ts[i]()`/`Self.T()` element
@@ -142,7 +127,7 @@ exempt from the ordering.
      - `Slice(...)` reads only `Int`/`None` argument expressions; an
        `Optional[Int]` variable needs the nominal slot read.
      - Explicit `.write_to(writer)` on a slice descriptor is not wired.
-  5. **String Unicode, iterator, and parsing extras.** Port on demand.
+  4. **String Unicode, iterator, and parsing extras.** Port on demand.
      - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
        simple and special casing tables.
@@ -153,7 +138,7 @@ exempt from the ordering.
        `__reversed__`, `bytes()`, `split_at_grapheme`, `peek_next`.
      - `atof` is correctly rounded only while the significand (≤19 digits)
        and power of ten (≤22) stay exact; NaN prints `NaN` (upstream `nan`).
-  6. **Origin-bearing `Span`/`Pointer` construction.**
+  5. **Origin-bearing `Span`/`Pointer` construction.**
      - `Span(unsafe_ptr=, length=)` takes `Pointer[T, MutUntrackedOrigin]`:
        a `Pointer[T, origin]` parameter cannot bind through a constructor
        type application (`Span[Byte, origin_of(self)](...)` rejects with a
@@ -167,16 +152,22 @@ exempt from the ordering.
      - `var it = xs.__iter__()` cannot infer the local's origin parameter
        (`failed to infer parameter 'iterable_origin'`); construct from a
        `ref` explicitly.
-  7. **Storage-shape items with a known blocker.** Short plan (ordering).
+     - An origin-bearing struct temporary as a pack element
+       (`format.params(Named("k", v))`, upstream's `Set` repr spelling)
+       cannot infer its origin binder (`'Named' failed to infer parameter
+       'o'`; a free pack def reports `cannot infer type parameter 'T'`);
+       `Named` works bound to a local, as a plain argument, and over a
+       `self` field.
+  6. **Storage-shape items with a known blocker.** Short plan (ordering).
      - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
        (a per-API `where` pass, as `List[T: AnyType]`).
      - `(*, unsafe_uninit_length)` construction and resize: blocked on an
        uninit-element storage story for List (MaybeUninit-adjacent).
-  8. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
+  7. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
      and native-drop bug fixes.
      - `repr` lowers natively only for Strings, without escapes; no user
-       `write_repr_to` runs natively, so the repr family (task 1's texts,
-       `FormatStruct`) is pinned by conformance fixtures only.
+       `write_repr_to` runs natively, so the collection repr texts are
+       pinned by conformance fixtures only.
      - Monomorphization cannot resolve a method-level parameter for a
        parameterized `@staticmethod` through a non-variadic generic instance
        (`p.pick[Int]()`) or for a method whose only parameter is
@@ -194,10 +185,15 @@ exempt from the ordering.
        `AHasher` while the VM honors `SumHasher`. Fixture outputs agree
        because each lane is self-consistent; a probe printing from the hasher
        diverges.
+     - `Writer.write` of a `StringSpan` or struct argument
+       (`out.write(s[byte=1:3])`, `text.write(Named("n", w))`, bound or
+       temporary) fails natively with `unsupported type`, while `print` of
+       the same values lowers; pinned by
+       conformance/fixtures/view_temporary_write.mojo on the VM only.
      - The generic `next[T: Iterator](mut it: T)` body fails natively
        (`unsupported reference-result method adapter`); `next` is pinned by
        conformance/fixtures/next_builtin.mojo only.
-  9. **Deliberate deferrals from the generic-clone arc.** Nothing depends
+  8. **Deliberate deferrals from the generic-clone arc.** Nothing depends
      on these; each is a conscious limit, listed here so it is not mistaken
      for unfinished task work.
      - Clones are minted per whole instance (no reachability pruning) and
@@ -217,7 +213,7 @@ exempt from the ordering.
      - An instance clone whose walk cannot resolve an application (a
        variadic template over a nested public `Tuple` argument) is dropped
        to the erased path rather than failing the program.
-  10. **Diagnostic wording and strictness.**
+  9. **Diagnostic wording and strictness.**
       - An unavailable where-gated method reports `'set' is unavailable for
         Variant[Conn]: its where clause evaluated to False` rather than
         upstream's clause text.

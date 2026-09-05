@@ -1376,9 +1376,22 @@ impl Checker {
             ));
         }
         if !arguments.is_empty() {
-            self.operation_adjustments.borrow_mut().insert(
+            // A re-inference of the same construction keeps the owner a
+            // temporary-receiver materialization already minted on it.
+            let mut adjustments = self.operation_adjustments.borrow_mut();
+            let materialized = match adjustments.get(span) {
+                Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                    materialized,
+                    ..
+                }) => *materialized,
+                _ => None,
+            };
+            adjustments.insert(
                 span.clone(),
-                mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { arguments },
+                mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                    arguments,
+                    materialized,
+                },
             );
         }
     }

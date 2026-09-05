@@ -260,6 +260,25 @@ fn variant_pack_forwarding_through_a_generic_def_runs() {
 }
 
 #[test]
+fn view_temporaries_live_for_their_statement() {
+    // A `ref[self]`-returning call chains on a temporary receiver (the
+    // temporary is materialized for the statement), a discarded reference
+    // result needs no copy, and a subscript view passed straight to a method
+    // at its source's last use keeps the source alive through the call.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "from std.format._utils import FormatStruct\n\n@fieldwise_init\nstruct P(Writable, Movable):\n    var x: Int\n    def write_to(self, mut writer: Some[Writer]):\n        FormatStruct(writer, \"P\").params(1).fields(self.x)\n\ndef main():\n    print(P(3))\n    var s = String(\"hello\")\n    var out = String()\n    out.write(s[byte=1:3])\n    print(out)\n",
+            std::path::Path::new("/tmp/mojito_view_temporaries.mojo"),
+        )
+        .expect("view temporaries");
+    let output = compiler
+        .execute(&program)
+        .expect("run the view temporaries");
+    assert_eq!(output.output, "P[1](3)\nel\n");
+}
+
+#[test]
 fn generic_methods_specialize_per_call_on_every_struct() {
     // A method-level type parameter on an ordinary generic instance folds
     // its `comptime if` per call (the clone bakes the instance's argument

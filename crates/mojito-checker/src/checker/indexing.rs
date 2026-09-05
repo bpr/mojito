@@ -143,6 +143,24 @@ impl Checker {
                 }
             }
             ExprKind::Index { object, index } => {
+                // The empty-subscript store `p[] = v` writes the pointee at
+                // offset 0. The pointer itself is only read — a plain `self`
+                // method may write through `self.p[]` — so the provenance,
+                // not the pointer's own place, must carry mutable capability
+                // (as upstream: a `Pointer[T, MutOrigin]` field is writable
+                // from any receiver).
+                if matches!(index.kind, ExprKind::EmptySubscript) {
+                    return match self.infer(object)? {
+                        Ty::Pointer { element, origin } => {
+                            self.check_pointer_write(&origin)?;
+                            Ok(*element)
+                        }
+                        other => Err(TypeError::Unsupported(format!(
+                            "an empty subscript ('value[]') is the pointer dereference; \
+                             '{other}' is not a pointer"
+                        ))),
+                    };
+                }
                 let obj_ty = self.check_place(object)?;
                 // A subscript-shaped Variant projection target (`storage[T] = x`
                 // on a Variant-typed field, `v[String] = x`).
@@ -167,20 +185,6 @@ impl Checker {
                             .insert(place.source_span(), owner);
                     }
                     return Ok(alternative);
-                }
-                // The empty-subscript store `p[] = v` writes the pointee at
-                // offset 0; the provenance must carry mutable capability.
-                if matches!(index.kind, ExprKind::EmptySubscript) {
-                    return match &obj_ty {
-                        Ty::Pointer { element, origin } => {
-                            self.check_pointer_write(origin)?;
-                            Ok((**element).clone())
-                        }
-                        other => Err(TypeError::Unsupported(format!(
-                            "an empty subscript ('value[]') is the pointer dereference; \
-                             '{other}' is not a pointer"
-                        ))),
-                    };
                 }
                 self.prepare_index_argument(&obj_ty, index, "__setitem__", 0)?;
                 if let Ty::Struct(name, _) = &obj_ty

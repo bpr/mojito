@@ -1232,18 +1232,9 @@ impl Flatten<'_> {
         // slot (registered under the checker-minted owner) and hand back a
         // fresh handle to that slot — the auto-borrow a `ref` binding of the
         // temporary would produce.
-        if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
-            owner,
-        }) = self
-            .checked_adjustments(expression)
-            .into_iter()
-            .find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { .. }
-                )
-            })
-        {
+        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(
+            &self.checked_adjustments(expression),
+        ) {
             let variable = match self.owner_vars.get(&owner).copied() {
                 Some(variable) => variable,
                 None => {

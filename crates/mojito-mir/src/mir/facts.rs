@@ -104,16 +104,9 @@ impl Flatten<'_> {
         // A materialized borrow-source temporary loans its hidden owned slot:
         // the consuming aggregate's binding keeps the temporary alive exactly
         // as long as the borrower, upstream's temporary-lifetime rule.
-        if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { owner }) =
-            self.checked_adjustments(expression)
-                .into_iter()
-                .find(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { .. }
-                    )
-                })
-            && let Some(var) = self.owner_vars.get(&owner).copied()
+        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(
+            &self.checked_adjustments(expression),
+        ) && let Some(var) = self.owner_vars.get(&owner).copied()
         {
             return vec![MirLoan {
                 place: MirPlace::root(var, self.var_types.get(&var).cloned()),
@@ -213,6 +206,7 @@ impl Flatten<'_> {
                 // indexes), so the stored aggregate keeps its source alive.
                 if let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
                     arguments,
+                    ..
                 }) = self
                     .checked_adjustments(expression)
                     .into_iter()

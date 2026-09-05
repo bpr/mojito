@@ -527,6 +527,10 @@ pub struct Checker {
     /// constraint environment. Final validation runs after those method scopes
     /// have been popped, so it must retain rather than recompute this fact.
     copyable_reference_result_reads: RefCell<HashSet<SourceSpan>>,
+    /// Reference results a statement discards (`f.params(1)` as a
+    /// statement, `_ = f.params(1)`): no value is read, so no copy is
+    /// required (upstream only warns that the value is unused).
+    discarded_reference_results: RefCell<HashSet<SourceSpan>>,
     /// Reference-result expressions used as method-call receivers. The call
     /// borrows the referent for its `self` convention (consuming receivers
     /// are gated separately), so the result is never read out as a value.
@@ -659,6 +663,7 @@ impl Checker {
             explicit_destroy_calls: RefCell::new(std::collections::HashSet::new()),
             reference_value_uses: RefCell::new(HashMap::new()),
             copyable_reference_result_reads: RefCell::new(HashSet::new()),
+            discarded_reference_results: RefCell::new(HashSet::new()),
             borrowed_reference_receivers: RefCell::new(HashSet::new()),
             copy_place_value_uses: RefCell::new(HashSet::new()),
             call_place_uses: RefCell::new(HashSet::new()),
@@ -1484,6 +1489,7 @@ impl Checker {
         let operations = self.operation_adjustments.borrow();
         let retained_handles = self.reference_value_uses.borrow();
         let copyable_reads = self.copyable_reference_result_reads.borrow();
+        let discarded = self.discarded_reference_results.borrow();
         let borrowed_call_reads = self.borrowed_read_call_places.borrow();
         let borrowed_receivers = self.borrowed_reference_receivers.borrow();
         for (span, adjustment) in operations.iter() {
@@ -1494,6 +1500,7 @@ impl Checker {
             };
             if retained_handles.contains_key(span)
                 || copyable_reads.contains(span)
+                || discarded.contains(span)
                 || borrowed_call_reads.contains(span)
                 || borrowed_receivers.contains(span)
                 || self.is_implicitly_copyable(&reference.referent)

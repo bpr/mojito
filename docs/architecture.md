@@ -459,6 +459,24 @@ against its own element, and the call retargets through
 `instance_call_method_clone` / `specialized_method_clone` by the composed
 name.
 
+Temporaries borrow for their statement through three anchors. A temporary
+receiver of a `ref[self]`-returning method is materialized like a temporary
+bound to a `ref` parameter (`materialized_reference_actual`; when the
+construction already carries `BorrowRefArguments`, the owner rides on that
+adjustment's `materialized` slot, and `materialized_borrow_owner` is the one
+reader), and `lower_call_receiver` stores it in its `$mat_r` slot so the
+result handle roots at real frame storage. A subscript view temporary
+(`MultiIndex`/`Slice`/`Index` with a `BorrowViewResult`) in any argument
+list anchors in `$arg_loan_r` like a loan-carrying call temporary in a plain
+call — no consumer channel retains it, so the anchor never duplicates a
+loan. A discarded reference result (an expression statement, `_ = e`) is
+recorded in `discarded_reference_results` and is not a value read. On the
+VM, `Writer.write` formats its arguments with the caller frame mirrored so a
+nested `write_to` can read a pointer into the caller. The empty-subscript
+store `p[] = v` types the pointer as a value read and gates on the pointer
+origin's mutability alone, so a plain `self` method writes through a
+`Pointer[T, Origin[mut=True]]` field as upstream does.
+
 A variadic struct applied over an enclosing declaration's own type parameters
 (`Variant[T, String]` in `def wrap[T]`, `Variant[*Ts]` in `def f[*Ts]`, a
 `Variant[*Self.Ts]` field of `struct Outer[*Ts]`) cannot specialize eagerly.

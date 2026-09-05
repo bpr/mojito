@@ -451,13 +451,8 @@ impl Flatten<'_> {
     pub(super) fn place(&mut self, e: &Expr) -> MirPlace {
         // A materialized borrow-source temporary's place is its hidden slot,
         // registered under the checker-minted owner when the argument lowered.
-        if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { owner }) =
-            self.checked_adjustments(e).into_iter().find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { .. }
-                )
-            })
+        if let Some(owner) =
+            mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(e))
             && let Some(var) = self.owner_vars.get(&owner).copied()
         {
             return MirPlace::root(var, self.var_types.get(&var).cloned());
@@ -1870,17 +1865,9 @@ impl Flatten<'_> {
                 // owner; the binding then aliases that slot exactly like an
                 // owned place (the place branch below resolves the expression
                 // to the slot's root).
-                let materialized =
-                    self.checked_adjustments(value)
-                        .into_iter()
-                        .find_map(|adjustment| {
-                            match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
-                            owner,
-                        } => Some(owner),
-                        _ => None,
-                    }
-                        });
+                let materialized = mojito_checked::checked::materialized_borrow_owner(
+                    &self.checked_adjustments(value),
+                );
                 if let Some(owner) = materialized {
                     let source = self.expr(value);
                     // Reference-context expression lowering may already have

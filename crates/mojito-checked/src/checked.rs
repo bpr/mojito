@@ -425,6 +425,11 @@ pub enum SemanticAdjustment {
     /// contract). Entries are (positional argument index, loan mutability).
     BorrowRefArguments {
         arguments: Vec<(usize, bool)>,
+        /// The same call as a temporary receiver of a `ref[self]`-returning
+        /// method (`FormatStruct(writer, "P").params(...)`): it is also a
+        /// materialized borrow source (see `MaterializeBorrowSource`), and
+        /// one span carries one adjustment.
+        materialized: Option<mojito_types::origin::OwnerId>,
     },
     /// A temporary (non-place) expression bound to a `ref [origin]` parameter
     /// or `ref` binding: the checker materializes it as an anonymous owned
@@ -2119,4 +2124,20 @@ mod transfer_set_tests {
         };
         assert_eq!(TransferSet(vec![effect]), TransferSet(Vec::new()));
     }
+}
+
+/// The anonymous owner a temporary expression materializes as (a
+/// `MaterializeBorrowSource`, or a `BorrowRefArguments` construction that is
+/// also a borrow source), or `None` when the expression is not materialized.
+pub fn materialized_borrow_owner(
+    adjustments: &[SemanticAdjustment],
+) -> Option<mojito_types::origin::OwnerId> {
+    adjustments.iter().find_map(|adjustment| match adjustment {
+        SemanticAdjustment::MaterializeBorrowSource { owner } => Some(*owner),
+        SemanticAdjustment::BorrowRefArguments {
+            materialized: Some(owner),
+            ..
+        } => Some(*owner),
+        _ => None,
+    })
 }

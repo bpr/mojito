@@ -152,12 +152,26 @@ impl Checker {
             {
                 let referent = self.infer(expr)?;
                 let mut adjustments = self.operation_adjustments.borrow_mut();
-                let owner = match adjustments.get(&expr.source_span()) {
+                let owner = match adjustments.get_mut(&expr.source_span()) {
                     Some(
                         mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                             owner,
                         },
                     ) => *owner,
+                    // A view construction (`BorrowRefArguments`) used as a
+                    // temporary receiver is also a borrow source: the owner
+                    // rides on the construction's own adjustment.
+                    Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                        materialized,
+                        ..
+                    }) => match materialized {
+                        Some(owner) => *owner,
+                        None => {
+                            let owner = self.fresh_owner()?;
+                            *materialized = Some(owner);
+                            owner
+                        }
+                    },
                     // Another adjustment already owns this span's lowering
                     // contract; keep the plain rejection rather than fight it.
                     Some(_) => {
