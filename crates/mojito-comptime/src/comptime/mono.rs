@@ -281,37 +281,7 @@ impl<'a> Elab<'a> {
                     self.mono_expr(&mut member.value, &member_consts, mono)?;
                 }
                 for m in methods.iter_mut() {
-                    let method_consts = consts_without_type_params(&struct_consts, &m.type_params);
-                    for parameter in &mut m.type_params {
-                        self.mono_type_parameter(parameter, &method_consts, mono)?;
-                    }
-                    if let Some(origins) = &mut m.self_origin {
-                        for origin in origins {
-                            self.mono_expr(origin, &method_consts, mono)?;
-                        }
-                    }
-                    for parameter in m.params.iter_mut() {
-                        self.mono_fn_parameter(parameter, &method_consts, mono)?;
-                    }
-                    if let Some(error) = &mut m.raises_type {
-                        self.mono_type(error, &method_consts, mono)?;
-                    }
-                    if let Some(ret) = &mut m.ret {
-                        self.mono_type(ret, &method_consts, mono)?;
-                    }
-                    for condition in &mut m.where_clauses {
-                        self.mono_expr(condition, &method_consts, mono)?;
-                    }
-                    mono.push_function_scope();
-                    if m.has_self {
-                        mono.bind_value("self", false);
-                    }
-                    for parameter in &m.params {
-                        mono.bind_parameter(parameter);
-                    }
-                    let result = self.mono_block_contents(&mut m.body, &method_consts, mono);
-                    mono.pop_function_scope();
-                    result?;
+                    self.mono_method(m, &struct_consts, mono)?;
                 }
                 Ok(())
             }
@@ -403,6 +373,124 @@ impl<'a> Elab<'a> {
         Ok(())
     }
 
+    /// Rewrite one struct method's signature and body (`mono_stmt`'s struct
+    /// arm), also used for per-instantiation method clones appended after
+    /// the main walk.
+    pub(super) fn mono_method(
+        &self,
+        m: &mut mojito_ast::ast::Method,
+        struct_consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
+    ) -> Result<(), ComptimeError> {
+        let method_consts = consts_without_type_params(struct_consts, &m.type_params);
+        for parameter in &mut m.type_params {
+            self.mono_type_parameter(parameter, &method_consts, mono)?;
+        }
+        if let Some(origins) = &mut m.self_origin {
+            for origin in origins {
+                self.mono_expr(origin, &method_consts, mono)?;
+            }
+        }
+        for parameter in m.params.iter_mut() {
+            self.mono_fn_parameter(parameter, &method_consts, mono)?;
+        }
+        if let Some(error) = &mut m.raises_type {
+            self.mono_type(error, &method_consts, mono)?;
+        }
+        if let Some(ret) = &mut m.ret {
+            self.mono_type(ret, &method_consts, mono)?;
+        }
+        for condition in &mut m.where_clauses {
+            self.mono_expr(condition, &method_consts, mono)?;
+        }
+        mono.push_function_scope();
+        if m.has_self {
+            mono.bind_value("self", false);
+        }
+        for parameter in &m.params {
+            mono.bind_parameter(parameter);
+        }
+        let result = self.mono_block_contents(&mut m.body, &method_consts, mono);
+        mono.pop_function_scope();
+        result
+    }
+
+    /// Whether `name` is an ordinary generic struct whose closed applications
+    /// get per-instantiation method clones: every parameter is a plain type
+    /// parameter (no pack, value, or callable-bounded parameter and no
+    /// retained origin binder), and the struct is not a specialization
+    /// template of its own.
+    pub(super) fn instance_template(&self, name: &str) -> bool {
+        if self.specializable.contains_key(name) {
+            return false;
+        }
+        let Some(info) = self.structs.get(name) else {
+            return false;
+        };
+        let type_params = info.source_params;
+        !type_params.is_empty()
+            && classify_ct_params(type_params).iter().all(|decl| {
+                matches!(
+                    decl,
+                    ParamDecl::Type {
+                        variadic: false,
+                        callable_bound: None,
+                        ..
+                    }
+                )
+            })
+            && type_params.iter().all(|parameter| {
+                super::specialize::method_parameter_is_baked(parameter, type_params)
+            })
+    }
+
+    /// Queue a closed application of an instance template for clone minting;
+    /// a symbolic application (inside a template body) is left alone.
+    pub(super) fn request_instance(
+        &self,
+        name: &str,
+        param_args: &[ParamArg],
+        consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
+    ) {
+        if mono.in_bundled {
+            return;
+        }
+        let Some(info) = self.structs.get(name) else {
+            return;
+        };
+        if param_args.len() > info.source_params.len() {
+            return;
+        }
+        let mut values = Vec::with_capacity(info.source_params.len());
+        for argument in param_args {
+            let Ok(ty) = self.param_arg_type(argument, consts) else {
+                return;
+            };
+            if !closed_instance_argument(&ty) {
+                return;
+            }
+            values.push(CtValue::Type(Box::new(ty)));
+        }
+        // Trailing defaulted parameters (`H: Hasher = default_hasher`) fill
+        // from their declared defaults.
+        for parameter in &info.source_params[param_args.len()..] {
+            let Some(default) = &parameter.default else {
+                return;
+            };
+            let Ok(CtValue::Type(ty)) = self.eval(default, consts) else {
+                return;
+            };
+            if !closed_instance_argument(&ty) {
+                return;
+            }
+            values.push(CtValue::Type(ty));
+        }
+        if mono.instances_done.insert(mangle(name, &values)) {
+            mono.instance_jobs.push_back((name.to_string(), values));
+        }
+    }
+
     /// Rewrite variadic-struct template names inside a type annotation to their
     /// specialized (mangled) names, enqueueing the needed instantiations.
     pub(super) fn mono_type(
@@ -444,6 +532,8 @@ impl<'a> Elab<'a> {
                     }
                     *name = mangled;
                     arguments.clear();
+                } else if self.instance_template(name) {
+                    self.request_instance(name, arguments, consts, mono);
                 }
                 Ok(())
             }
@@ -654,6 +744,10 @@ impl<'a> Elab<'a> {
                     }
                     *name = mangled;
                     args.clear();
+                } else if self.instance_template(name) {
+                    // A static call through an explicit instance
+                    // (`Box[Int].filled(7)`) mints that instance's clones.
+                    self.request_instance(name, args, consts, mono);
                 }
                 Ok(())
             }
@@ -694,6 +788,12 @@ impl<'a> Elab<'a> {
                 {
                     for argument in param_args.iter_mut() {
                         self.mono_param_arg(argument, consts, mono)?;
+                    }
+                    // A closed constructor application of an ordinary generic
+                    // struct (`Optional[Int](5)`) mints that instance's
+                    // method clones in this elaboration.
+                    if self.instance_template(name) {
+                        self.request_instance(name, param_args, consts, mono);
                     }
                 }
                 // A checker-selected scalar-range occurrence: rewrite the
@@ -1534,4 +1634,26 @@ fn bind_spec_param_args<'t>(
         )));
     }
     Ok(bound)
+}
+
+/// Whether a type is a closed instance argument: a scalar, or a struct
+/// application whose type arguments are closed. Anything else — a type
+/// parameter, an associated or dependent type, an origin-carrying view — keeps
+/// the erased path (conservative: no clone is minted for it).
+fn closed_instance_argument(ty: &Ty) -> bool {
+    match ty {
+        Ty::Int
+        | Ty::UInt
+        | Ty::Bool
+        | Ty::Float64
+        | Ty::StringLiteral
+        | Ty::None
+        | Ty::Simd { .. } => true,
+        Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
+            TyArg::Ty(ty) => closed_instance_argument(ty),
+            TyArg::Val(value) => !matches!(value, CtValue::Param(_)),
+            TyArg::Origin(_) => false,
+        }),
+        _ => false,
+    }
 }

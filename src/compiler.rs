@@ -4,10 +4,10 @@ use crate::ast::ExprKind;
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
 use crate::comptime::{
-    ComptimeError, DefSpecializationRequest, MethodSpecializationRequest,
-    TStringSpecializationRequest, TupleSpecializationRequest, TupleTransformRequest,
-    bound_generic_template_names, elaborate, elaborate_with_requests, tuple_materialized_callables,
-    variadic_struct_template_names,
+    ComptimeError, DefSpecializationRequest, Elaborated, MethodSpecializationRequest,
+    StructInstanceRequest, TStringSpecializationRequest, TupleSpecializationRequest,
+    TupleTransformRequest, bound_generic_template_names, elaborate_with_requests,
+    tuple_materialized_callables, variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -222,6 +222,7 @@ impl Compiler {
         let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
         let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
+        let mut struct_requests: Vec<StructInstanceRequest> = Vec::new();
         // Occurrences whose recordings conflicted across rounds; determinism
         // should preclude this, but a poisoned key must stay abstract rather
         // than oscillate.
@@ -229,10 +230,15 @@ impl Compiler {
         let mut last_new_callee = String::from("Tuple");
         let _compile = timing::span("compile");
         let mut checked = {
-            let discovery = {
+            let Elaborated {
+                program: discovery,
+                instances: minted,
+            } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate(linked.clone()).map_err(CompilerError::Comptime)?
+                elaborate_with_requests(linked.clone(), &[], &[], &[], &[], &[])
+                    .map_err(CompilerError::Comptime)?
             };
+            struct_requests.extend(minted);
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
@@ -298,15 +304,35 @@ impl Compiler {
                     Some(_) => {}
                 }
             }
+            let mut instances_grew = false;
+            for request in struct_instance_requests(&checked) {
+                if !struct_requests.contains(&request) {
+                    last_new_callee = request.template().to_string();
+                    struct_requests.push(request);
+                    instances_grew = true;
+                }
+            }
             drop(requests);
             timing::count("tuple_requests", tuple_requests.len() as u64);
             timing::count("tstring_requests", tstring_requests.len() as u64);
             timing::count("def_requests", def_requests.len() as u64);
-            if !grew {
+            timing::count("method_requests", method_requests.len() as u64);
+            timing::count("struct_requests", struct_requests.len() as u64);
+            if !grew && !instances_grew {
                 converged = true;
                 break;
             }
-            let elaborated = {
+            // Instance clones only upgrade calls from the erased template, so
+            // an instance discovered at the round cap keeps that path rather
+            // than reporting divergence.
+            if !grew && round == SPECIALIZATION_ROUNDS {
+                converged = true;
+                break;
+            }
+            let Elaborated {
+                program: elaborated,
+                instances: minted,
+            } = {
                 let _elaborate = timing::span("elaborate");
                 elaborate_with_requests(
                     linked.clone(),
@@ -314,9 +340,18 @@ impl Compiler {
                     &tstring_requests,
                     &def_requests,
                     &method_requests,
+                    &struct_requests,
                 )
                 .map_err(CompilerError::Comptime)?
             };
+            // Instances the specializer minted on its own (closed applications
+            // reached from user code and from other clones) are already
+            // served; the checker's recordings of them are not new work.
+            for instance in minted {
+                if !struct_requests.contains(&instance) {
+                    struct_requests.push(instance);
+                }
+            }
             if !self.allow_executable_module_scope {
                 validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
             }
@@ -633,6 +668,28 @@ fn scalar_range_requests(
 }
 
 /// Whether a recorded instantiation argument is concrete enough to replay.
+/// The checker-recorded generic-struct applications that are closed and
+/// therefore replayable as per-instantiation method clones. A symbolic value
+/// argument (`Array[Int, n]` inside a generic body) is not an instance.
+fn struct_instance_requests(checked: &CheckedProgram) -> Vec<StructInstanceRequest> {
+    checked
+        .struct_instantiations()
+        .iter()
+        .filter(|instantiation| {
+            instantiation.arguments.iter().all(|argument| {
+                closed_generic_argument(argument)
+                    && !matches!(argument, TyArg::Val(CtValue::Param(_)))
+            })
+        })
+        .map(|instantiation| {
+            StructInstanceRequest::new(
+                instantiation.template.clone(),
+                instantiation.arguments.clone(),
+            )
+        })
+        .collect()
+}
+
 /// A top-level bare `CtValue::Param` is admitted: it is the checker's
 /// callable-value placeholder, which the elaborator's alignment walk consumes
 /// and drops (or rejects) — rejecting it here would wrongly exclude every

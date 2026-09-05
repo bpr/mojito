@@ -1665,11 +1665,16 @@ impl Checker {
                     self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)?;
                 unify_through_callable_bounds(&sig.decls, &mut subst)?;
                 self.record_constructor_instantiation(&span, name, sig, &subst);
+                self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
                     let expected = substitute(pty, &subst);
-                    if !coerces(aty, &expected)
-                        && !self.record_constructor_conversion(&args[i], aty, &expected)?
-                    {
+                    if coerces(aty, &expected) {
+                        // A literal argument materializes to the solved
+                        // parameter type exactly as it does for a non-generic
+                        // constructor (`Box[Float64](2.5)` stores a Float64,
+                        // not the exact literal).
+                        self.record_literal_materializations(&args[i], aty, &expected)?;
+                    } else if !self.record_constructor_conversion(&args[i], aty, &expected)? {
                         return Err(TypeError::TypeMismatch {
                             expected: expected.to_string(),
                             found: aty.to_string(),
@@ -1773,11 +1778,16 @@ impl Checker {
                     let mut score = 0;
                     let mut ok = true;
                     let mut conversions = Vec::new();
+                    let mut materializations = Vec::new();
                     for (index, (aty, pty)) in arg_tys.iter().zip(&patterns).enumerate() {
                         let expected = substitute_assoc(pty, &bindings);
                         if coerces(aty, &expected) {
                             if *aty != expected {
                                 score += 1;
+                                // A literal argument materializes to the
+                                // solved parameter type once this candidate
+                                // wins (`Many(7.5, True)` stores a Float64).
+                                materializations.push((index, expected));
                             }
                         } else if self.implicit_conversion_target(aty, &expected)?.is_some() {
                             // An implicit conversion ranks below any direct
@@ -1799,6 +1809,7 @@ impl Checker {
                             sig.clone(),
                             tyargs,
                             conversions,
+                            materializations,
                             matched.slots,
                             matched.positional_overflow,
                             subst,
@@ -1832,9 +1843,10 @@ impl Checker {
                         reason: "ambiguous overloaded constructor call".to_string(),
                     });
                 }
-                let (_, sig, tyargs, conversions, slots, overflow, mut subst) =
+                let (_, sig, tyargs, conversions, materializations, slots, overflow, mut subst) =
                     best_matches.remove(0);
                 unify_through_callable_bounds(&sig.decls, &mut subst)?;
+                self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 // Rebuild the packed bound used during scoring: regular slots in
                 // slot order (skipping defaults), then variadic overflow. The
                 // `conversions` indices address into this same layout. Overflow
@@ -1858,6 +1870,11 @@ impl Checker {
                     let (expression, _) = bound[*index];
                     let actual = self.infer(expression)?;
                     self.record_implicit_conversion(expression, &actual, expected)?;
+                }
+                for (index, expected) in &materializations {
+                    let (expression, _) = bound[*index];
+                    let actual = self.infer(expression)?;
+                    self.record_literal_materializations(expression, &actual, expected)?;
                 }
                 for (i, (expression, convention)) in bound.iter().enumerate() {
                     if let Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) =
@@ -1961,9 +1978,9 @@ impl Checker {
         )?;
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
             let expected = substitute(fty, &subst);
-            if !Self::storage_value_coerces(aty, &expected)
-                && !self.record_constructor_conversion(&args[i], aty, &expected)?
-            {
+            if Self::storage_value_coerces(aty, &expected) {
+                self.record_literal_materializations(&args[i], aty, &expected)?;
+            } else if !self.record_constructor_conversion(&args[i], aty, &expected)? {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
                     found: aty.to_string(),

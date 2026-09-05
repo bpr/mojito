@@ -194,6 +194,7 @@ fn parses_struct_with_field_and_method() {
                 raises: false,
                 raises_type: None,
                 ret: Some(Type::Int),
+                self_ty: None,
                 body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                     ExprKind::Member {
                         object: ident("self"),

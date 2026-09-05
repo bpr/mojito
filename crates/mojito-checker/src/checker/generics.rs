@@ -16,6 +16,12 @@ pub(super) fn unify(
                     subst.insert(name.clone(), solved);
                 }
                 Some(existing) if *existing == solved => {}
+                // A literal argument against an already-bound parameter
+                // (`Pair[Float64](0.5, 1)`) materializes to the binding, as
+                // it does against a concrete parameter type.
+                Some(existing)
+                    if matches!(actual, Ty::IntLiteral | Ty::FloatLiteral)
+                        && coerces(actual, existing) => {}
                 Some(existing) => {
                     return Err(TypeError::TypeMismatch {
                         expected: existing.to_string(),
@@ -746,6 +752,91 @@ impl Checker {
             .get(owner)
             .is_some_and(|info| info.methods.contains_key(&name))
             .then_some(name)
+    }
+
+    /// Record a generic-struct application reached as a constructor target or
+    /// method-call receiver, for per-instantiation method-clone discovery.
+    pub(super) fn record_struct_instantiation(
+        &self,
+        template: &str,
+        arguments: &[TyArg],
+        source: Option<&str>,
+    ) {
+        // Unstamped bundled code is checked for every program, and a
+        // synthesized node has no source at all: neither is user-reachable
+        // code, so instances seen only there keep the erased path.
+        if source.is_none() || super::overload_support::is_bundled_module_source(source) {
+            return;
+        }
+        // Only a struct whose parameters are all plain type parameters gets
+        // clones (the elaborator's `instance_template`); value parameters,
+        // callable-bounded parameters, and origin binders keep the erased
+        // path, so their applications are not requests.
+        let bakeable = self.structs.get(template).is_some_and(|info| {
+            !info.decls.is_empty()
+                && info.decls.iter().all(|decl| {
+                    matches!(
+                        decl,
+                        ParamDecl::Type {
+                            variadic: false,
+                            callable_bound: None,
+                            ..
+                        }
+                    )
+                })
+                && info.decls.len() == arguments.len()
+                && !info.source_params.iter().any(|parameter| {
+                    matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+                        || parameter.is_origin_mutability_binder(&info.source_params)
+                })
+        });
+        if !bakeable
+            || !arguments
+                .iter()
+                .all(|argument| matches!(argument, TyArg::Ty(_)))
+        {
+            return;
+        }
+        let arguments: Vec<TyArg> = arguments
+            .iter()
+            .map(materialized_instantiation_argument)
+            .collect();
+        let mut recorded = self.struct_instantiations.borrow_mut();
+        if !recorded
+            .iter()
+            .any(|existing| existing.template == template && existing.arguments == arguments)
+        {
+            recorded.push(mojito_checked::checked::StructInstantiation {
+                template: template.to_string(),
+                arguments,
+            });
+        }
+    }
+
+    /// The per-instantiation clone of `method` on the struct instance
+    /// `owner[arguments]` (`get$y3:Int`), once the elaborator has appended it
+    /// to the template's method list. The value list agrees with the
+    /// elaborator's `method_request_values` over the struct's parameters.
+    pub(super) fn instance_method_clone(
+        &self,
+        owner: &str,
+        method: &str,
+        arguments: &[TyArg],
+    ) -> Option<String> {
+        let info = self.structs.get(owner)?;
+        if info.decls.is_empty() || arguments.is_empty() {
+            return None;
+        }
+        let arguments: Vec<TyArg> = arguments
+            .iter()
+            .map(materialized_instantiation_argument)
+            .collect();
+        let values = specialized_method_values(&info.decls, &arguments)?;
+        if values.is_empty() {
+            return None;
+        }
+        let name = mojito_symbol::symbol::mangle(method, &values);
+        info.methods.contains_key(&name).then_some(name)
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -147,37 +147,45 @@ recreates this section's checkbox with the fresh divergence list.
   the one choice named in their note. Tasks closed 2026-09-05 (everyday
   spellings; same-arity dunder overloads) are deleted, not listed.
 
-  1. **Per-specialization checking of non-variadic generic struct bodies.**
-     Today a generic struct such as `Optional[T]` runs one erased body: the
-     VM has no reified `T`, and per-call specialization of method-level type
-     parameters works only inside specialized variadic structs. Either
-     check each specialization's body or carry runtime type bindings. Plan
-     first, together with task 5: this is a real design choice between
-     those two branches, it touches the discovery loop, the elaborator, the
-     checker, and both backends, and the branch chosen decides how repr,
-     FormatStruct, and per-call specialization all land. This is the
-     largest task here and unlocks a whole family:
-     - `write_repr_to` on `Optional` and other non-variadic generics
-       (`_unqualified_type_name[Self]` currently spells `Optional[T]`).
-     - Upstream's `FormatStruct(writer, "Name").params(...).fields(...)`
-       builder, which also needs variadic-pack methods on a struct (`def
-       fields[*Ts: Writable](self, *args: *Ts)` — the elaborator reports
-       "'Ts' is not a compile-time type" for a method-level pack while the
-       same shape on a free def specializes) and a `ref` field to the writer.
-     - `List`/`Dict`/`Set` repr in upstream's text
-       (`List[SIMD[DType.int, 1]]([Int(1), Int(2)])`) instead of the
-       field-wise `Name(field=value)` fallback.
+  1. **Per-instantiation generic struct bodies: the remaining family.**
+     Ordinary generic structs now get per-instantiation method clones
+     (landed 2026-09-04: `docs/features.md` Generics row; design in
+     `docs/architecture.md`), which fixes `_unqualified_type_name[Self]` and
+     `comptime if Self.T` inside clones. What is still open, in order:
+     - Display and repr dispatch: `print`/`repr`/`String(x)`/`Writer.write`
+       reach the template body by runtime struct name (`repr(box)` prints
+       `Box[T](...)`); the checker must record the resolved `write_to`/
+       `write_repr_to` symbol and the VM prefer it. Operators, subscripts,
+       iteration, and the Equatable/Hashable dunders likewise still resolve
+       the template symbol; extend the retarget funnel to each.
      - Per-call specialization of method-level type parameters on every
-       generic struct, not only variadic ones.
-     - `Optional.copied` and `OptionalReg`, which need self-type-constrained
-       methods and `TrivialRegisterPassable`.
-     - `Box[Float64](2.5)` and `Box(2.5)` on a generic struct store the
-       unmaterialized `FloatLiteral` and print `5/2`: a specialized
-       constructor's literal argument is never materialized to the solved
-       field type (a non-generic `Float64` field prints `2.5`). Recording
-       `MaterializeLiteral` on the generic-inference constructor path did
-       not reach it; the explicit `Box[Float64]` spelling and the
-       final-round specialized path need the same treatment.
+       generic struct (`Optional.map[U]`, `__hash__[H]`): the discovery gate
+       in `src/compiler.rs` still admits variadic owners only, and a clone
+       inside an instance must compose the instance key with the call's.
+     - Upstream's `FormatStruct(writer, "Name").params(...).fields(...)`
+       builder needs variadic-pack methods on a struct (`def fields[*Ts:
+       Writable](self, *args: *Ts)`: the elaborator reports "'Ts' is not a
+       compile-time type" for a method-level pack while the same shape on a
+       free def specializes) and a `ref` field to the writer.
+     - `write_repr_to` on `Optional` and `List`/`Dict`/`Set` repr in
+       upstream's text (`List[SIMD[DType.int, 1]]([Int(1), Int(2)])`) instead
+       of the field-wise `Name(field=value)` fallback; `List`/`Set` bodies
+       spell `TypeNames[Self.T]()`, a variadic struct over a symbolic
+       argument inside the retained template body, which task 5 must first
+       tolerate.
+     - `OptionalReg` in subset shape (`Boolable`/`Defaultable`/
+       `TrivialRegisterPassable`, no device members). `Optional.copied` is
+       not ported: upstream spells it with a legacy custom self type
+       (`@__allow_legacy_custom_self_type`).
+     - Cost: clones are minted per whole instance (every available method,
+       no reachability pruning) and each discovery round re-checks them;
+       `benchmarks/compile/stdlib_heavy` costs 2.2x its baseline
+       (`docs/performance.md`), one extra round of which comes from inferred
+       generic-def calls inside clone bodies whose def clone already exists
+       (a checker-side retarget by name, as `instance_method_clone` does for
+       methods, would remove that round). Structs with value parameters
+       (`Array[T, length]`), origin binders (`Span`, the iterator structs),
+       or callable-bounded parameters keep the erased path.
      Related but separate: the bundled `Writable` trait declares only
      `write_to`, so a bounded `T: Writable` cannot call `write_repr_to`
      (spell `repr(x)`); and upstream spells

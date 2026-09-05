@@ -119,7 +119,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   both method paths and the constructor paths record
   `checked::MethodInstantiation`s and retarget to an existing per-call
   clone through `specialized_method_clone`, whose value list must agree with
-  the specializer's `method_request_values`; `unify_through_callable_bounds`
+  the specializer's `method_request_values`; the method-call, static, and
+  constructor paths also record every closed generic-struct application
+  reached from a non-bundled source (`record_struct_instantiation` →
+  `checked::StructInstantiation`) and retarget a closed receiver's call to
+  its per-instantiation clone by exact name (`instance_method_clone`,
+  `generics.rs`, the same value list); `unify_through_callable_bounds`
   solves an infer-only type parameter through a callable-bounded sibling)
   (`infer_uninit_storage_method` types the compiler-private
   `__UninitStorage[T]` write/take/destroy crossings behind
@@ -326,7 +331,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   VM-CTFE program rewrite and safety analysis.
 - `comptime/specialize.rs` owns monomorphization and `def`/`struct`
   specialization synthesis (`generate_struct_spec`, tuple-spec ordering, and
-  Tuple/TString request seeding).
+  Tuple/TString request seeding), and the per-instantiation method clones of
+  ordinary generic structs (`generate_instance_clones`, driven by
+  `StructInstanceRequest`s and by the in-elaboration instance worklist
+  `mono.rs` feeds through `instance_template`/`request_instance`; the clone
+  carries `ast::Method::self_ty`, which the checker binds `self`/`Self` to
+  and records as `AnnotationSite::MethodSelf` for MIR).
 - `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
   friends), struct-specialization argument resolution, and the t-string
   desugar into its `TString` specialization's construction.

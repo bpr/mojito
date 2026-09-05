@@ -362,6 +362,7 @@ pub(super) fn tuple_transform_method(
         raises_type: None,
         ret: Some(Type::Named(target, Vec::new())),
         where_clauses: Vec::new(),
+        self_ty: None,
         body: vec![mk(StmtKind::Return(Some(result)), span)],
     }
 }

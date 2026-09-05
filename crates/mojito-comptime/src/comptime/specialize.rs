@@ -41,10 +41,13 @@ impl<'a> Elab<'a> {
         tuple_requests: &[TupleSpecializationRequest],
         tstring_requests: &[TStringSpecializationRequest],
         def_requests: &[DefSpecializationRequest],
-    ) -> Result<Vec<Stmt>, ComptimeError> {
-        if self.specializable.is_empty() && tuple_requests.is_empty() && tstring_requests.is_empty()
+    ) -> Result<(Vec<Stmt>, Vec<StructInstanceRequest>), ComptimeError> {
+        if self.specializable.is_empty()
+            && tuple_requests.is_empty()
+            && tstring_requests.is_empty()
+            && self.instance_requests.is_empty()
         {
-            return Ok(program);
+            return Ok((program, Vec::new()));
         }
         if !tuple_requests.is_empty() && !self.struct_template("Tuple") {
             return Err(ComptimeError::NotComptime(
@@ -209,6 +212,28 @@ impl<'a> Elab<'a> {
         // template is retained or dropped, so it is scanned like any other
         // statement (its own symbolic-argument calls soft-retain their
         // callees); comptime-class templates are replaced wholesale below.
+        // Checker-discovered instances of ordinary generic structs seed the
+        // instance worklist; the walk below and every generated clone can add
+        // more (a closed application in an annotation or constructor call).
+        let mut instance_templates: Vec<&String> = self.instance_requests.keys().collect();
+        instance_templates.sort();
+        for template in instance_templates {
+            if !self.instance_template(template) {
+                continue;
+            }
+            let Some(info) = self.structs.get(template.as_str()) else {
+                continue;
+            };
+            for arguments in &self.instance_requests[template] {
+                let Some((values, _)) = self.method_request_values(info.source_params, arguments)
+                else {
+                    continue;
+                };
+                if mono.instances_done.insert(mangle(template, &values)) {
+                    mono.instance_jobs.push_back((template.clone(), values));
+                }
+            }
+        }
         for stmt in program.iter_mut() {
             if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &stmt.kind
                 && self.specializable.contains_key(name)
@@ -216,59 +241,47 @@ impl<'a> Elab<'a> {
             {
                 continue;
             }
+            mono.in_bundled =
+                mojito_checker::checker::is_bundled_module_source(stmt.module.as_deref());
             self.mono_stmt(stmt, &consts, &mut mono)?;
         }
-        // Drain the worklist, generating each requested specialization and scanning
-        // its body for further (e.g. recursive) instantiations.
-        while let Some(job) = mono.queue.pop_front() {
-            self.burn().map_err(|_| {
-                ComptimeError::NotComptime(format!(
-                    "specialization quota exceeded while instantiating '{}' requested at {}; possible unbounded generic recursion",
-                    mangle(&job.orig, &job.vals), job.site
-                ))
-            })?;
-            let mut spec = match &self.specializable[&job.orig].kind {
-                StmtKind::Struct { type_params, .. }
-                    if !classify_ct_params(type_params)
-                        .iter()
-                        .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. })) =>
-                {
-                    self.generate_value_struct_spec(&job.orig, &job.vals)?
-                }
-                StmtKind::Struct { .. } => self.generate_struct_spec(&job.orig, &job.vals)?,
-                _ => self.generate_def_spec(
-                    self.specializable[&job.orig],
-                    &job.orig,
-                    job.output_name.clone(),
-                    &job.vals,
-                )?,
+        mono.in_bundled = false;
+        // Drain the worklists: specializations, then the per-instantiation
+        // method clones (whose bodies may request further specializations
+        // and instances), until both are empty.
+        loop {
+            self.drain_specialization_jobs(&mut mono, &consts)?;
+            let Some((template, values)) = mono.instance_jobs.pop_front() else {
+                break;
             };
-            // TString's public specialization identity describes its source
-            // segments, while its concrete storage pack upgrades textual
-            // elements to owning nominal String. Preserve the checker-picked
-            // public symbol instead of remangling from that private ABI pack.
-            if job.orig == "TString"
-                && let StmtKind::Struct { name, .. } = &mut spec.kind
-            {
-                *name = job.output_name.clone();
+            let Some(StmtKind::Struct { methods, .. }) = program
+                .iter_mut()
+                .find(|statement| {
+                    matches!(&statement.kind, StmtKind::Struct { name, .. } if *name == template)
+                })
+                .map(|statement| &mut statement.kind)
+            else {
+                continue;
+            };
+            let (mut clones, mut field_types) =
+                self.generate_instance_clones(&template, &values)?;
+            mono.minted_instances.push(StructInstanceRequest::new(
+                template.clone(),
+                values
+                    .iter()
+                    .map(|value| match value {
+                        CtValue::Type(ty) => TyArg::Ty((**ty).clone()),
+                        other => TyArg::Val(other.clone()),
+                    })
+                    .collect(),
+            ));
+            for ty in &mut field_types {
+                self.mono_type(ty, &consts, &mut mono)?;
             }
-            match &mut spec.kind {
-                StmtKind::Def { params, body, .. } => {
-                    self.mono_function_body(body, params, &consts, &mut mono)?
-                }
-                // A struct specialization is fully concrete; walk its members for
-                // further template uses (nested instantiations, recursive packs).
-                StmtKind::Struct { .. } => self.mono_stmt(&mut spec, &consts, &mut mono)?,
-                _ => {}
+            for clone in &mut clones {
+                self.mono_method(clone, &consts, &mut mono)?;
             }
-            // Scan while the parameter still carries its `$pack[T0, ...]`
-            // identity: a whole-pack specialization may forward the collector
-            // through another generic call. Select the regular Tuple ABI only
-            // after all such calls have been rewritten.
-            if job.whole_pack_abi {
-                select_top_level_whole_pack_abi(&mut spec)?;
-            }
-            mono.generated.entry(job.orig).or_default().push(spec);
+            methods.extend(clones);
         }
         // Rebuild the program, replacing each template with its specializations at
         // the template's original position. Specializations are emitted in reverse
@@ -310,7 +323,74 @@ impl<'a> Elab<'a> {
                 out.extend(specs);
             }
         }
-        Ok(out)
+        Ok((out, mono.minted_instances))
+    }
+
+    /// Generate each requested specialization, scanning its body for further
+    /// (e.g. recursive) instantiations, until the specialization worklist is
+    /// empty.
+    fn drain_specialization_jobs(
+        &self,
+        mono: &mut Mono,
+        consts: &HashMap<String, CtValue>,
+    ) -> Result<(), ComptimeError> {
+        while let Some(job) = mono.queue.pop_front() {
+            self.burn().map_err(|_| {
+                ComptimeError::NotComptime(format!(
+                    "specialization quota exceeded while instantiating '{}' requested at {}; possible unbounded generic recursion",
+                    mangle(&job.orig, &job.vals), job.site
+                ))
+            })?;
+            let mut spec = match &self.specializable[&job.orig].kind {
+                StmtKind::Struct { type_params, .. }
+                    if !classify_ct_params(type_params)
+                        .iter()
+                        .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. })) =>
+                {
+                    self.generate_value_struct_spec(&job.orig, &job.vals)?
+                }
+                StmtKind::Struct { .. } => self.generate_struct_spec(&job.orig, &job.vals)?,
+                _ => self.generate_def_spec(
+                    self.specializable[&job.orig],
+                    &job.orig,
+                    job.output_name.clone(),
+                    &job.vals,
+                )?,
+            };
+            // TString's public specialization identity describes its source
+            // segments, while its concrete storage pack upgrades textual
+            // elements to owning nominal String. Preserve the checker-picked
+            // public symbol instead of remangling from that private ABI pack.
+            if job.orig == "TString"
+                && let StmtKind::Struct { name, .. } = &mut spec.kind
+            {
+                *name = job.output_name.clone();
+            }
+            // A specialization of a bundled template is walked as bundled
+            // code: the instances it reaches keep the erased path.
+            mono.in_bundled = mojito_checker::checker::is_bundled_module_source(
+                self.specializable[&job.orig].module.as_deref(),
+            );
+            match &mut spec.kind {
+                StmtKind::Def { params, body, .. } => {
+                    self.mono_function_body(body, params, consts, mono)?
+                }
+                // A struct specialization is fully concrete; walk its members for
+                // further template uses (nested instantiations, recursive packs).
+                StmtKind::Struct { .. } => self.mono_stmt(&mut spec, consts, mono)?,
+                _ => {}
+            }
+            mono.in_bundled = false;
+            // Scan while the parameter still carries its `$pack[T0, ...]`
+            // identity: a whole-pack specialization may forward the collector
+            // through another generic call. Select the regular Tuple ABI only
+            // after all such calls have been rewritten.
+            if job.whole_pack_abi {
+                select_top_level_whole_pack_abi(&mut spec)?;
+            }
+            mono.generated.entry(job.orig).or_default().push(spec);
+        }
+        Ok(())
     }
 
     /// Order concrete Tuple declarations by the ordinary method-signature and
@@ -1650,6 +1730,150 @@ impl<'a> Elab<'a> {
         Some((values, bindings))
     }
 
+    /// Per-instantiation method clones of an ordinary generic struct: for
+    /// each checker-discovered closed application (`Optional[Int]`), every
+    /// non-lifecycle method whose `where` clause holds for the instance is
+    /// cloned from the original template with the struct's parameters baked
+    /// (`get$y3:Int`) and an explicit receiver type, so the checker binds
+    /// `self`/`Self` to the instance. Constructors and the lifecycle methods
+    /// stay on the template: they carry the value-parameter reification the
+    /// erased path relies on. Only a template whose parameters are all plain
+    /// type parameters specializes here; value parameters, retained origin
+    /// binders, and callable-bounded parameters keep the erased path.
+    fn generate_instance_clones(
+        &self,
+        name: &str,
+        values: &[CtValue],
+    ) -> Result<(Vec<Method>, Vec<Type>), ComptimeError> {
+        let Some(template) = self.program.iter().find(|statement| {
+            matches!(&statement.kind, StmtKind::Struct { name: template, .. } if template == name)
+        }) else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+        let StmtKind::Struct {
+            type_params,
+            fields,
+            methods,
+            ..
+        } = &template.kind
+        else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+        // Bind each parameter; an instance whose argument violates a declared
+        // bound, or does not round-trip to source syntax, keeps the erased path.
+        let mut bindings = Vec::new();
+        for (parameter, value) in type_params.iter().zip(values) {
+            let CtValue::Type(ty) = value else {
+                return Ok((Vec::new(), Vec::new()));
+            };
+            if parameter
+                .bounds
+                .iter()
+                .any(|bound| self.conformance.require(ty, bound).is_err())
+            {
+                return Ok((Vec::new(), Vec::new()));
+            }
+            let Some(source) = source_type_from_ty(ty) else {
+                return Ok((Vec::new(), Vec::new()));
+            };
+            bindings.push(MethodBinding {
+                name: parameter.name.clone(),
+                value: value.clone(),
+                source: Some(source),
+            });
+        }
+        if bindings.len() != type_params.len() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        // The instance's storage types, with the parameters baked: closed
+        // applications there (`List[DictEntry[String, Int]]`) are instances
+        // the clones reach through `self`, minted in this elaboration too.
+        let type_bindings: HashMap<String, Type> = bindings
+            .iter()
+            .filter_map(|binding| Some((binding.name.clone(), binding.source.clone()?)))
+            .collect();
+        let field_types = fields
+            .iter()
+            .map(|field| {
+                let mut ty = field.ty.clone();
+                substitute_type_bindings_in_type(&mut ty, &type_bindings);
+                ty
+            })
+            .collect();
+        let receiver = Type::Named(
+            name.to_string(),
+            bindings
+                .iter()
+                .filter_map(|binding| binding.source.clone().map(ParamArg::Type))
+                .collect(),
+        );
+        let consts = self.top_consts.borrow().clone();
+        let mut env = consts.clone();
+        for binding in &bindings {
+            env.insert(binding.name.clone(), binding.value.clone());
+        }
+        let mut clones = Vec::new();
+        for method in methods {
+            if matches!(
+                mojito_symbol::symbol::lifecycle_method_name(method),
+                "__init__" | "__del__" | "__copyinit__" | "__moveinit__"
+            ) {
+                continue;
+            }
+            // Same-name overloads all clone: they share the mangled name and
+            // stay an overload set on the clone side.
+            let clone_name = mangle(&method.name, values);
+            // A `where` clause that is false (or cannot be evaluated) for this
+            // instance leaves the method uncloned: the call reports the
+            // template's availability failure as today.
+            let available = method
+                .where_clauses
+                .iter()
+                .all(|predicate| matches!(self.eval(predicate, &env), Ok(CtValue::Bool(true))));
+            if !available {
+                continue;
+            }
+            let Ok(mut clone) =
+                self.specialize_method_clone(method, clone_name, &bindings, &consts, &consts)
+            else {
+                continue;
+            };
+            clone.where_clauses.clear();
+            clone.self_ty = Some(receiver.clone());
+            clones.push(clone);
+        }
+        // Overloads that differ only through the struct's parameters
+        // (`pick(item: Self.T)` and `pick(count: Int)` on `Box[Int]`) collapse
+        // to one shape on the instance; such a family keeps the erased path
+        // rather than registering a redeclaration.
+        let shape = |method: &Method| {
+            (
+                method.name.clone(),
+                method.has_self,
+                method.self_convention,
+                method
+                    .params
+                    .iter()
+                    .map(|parameter| {
+                        (
+                            parameter.kind,
+                            mojito_symbol::symbol::TypeKey::from_ast(&parameter.ty),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let mut collapsed = HashSet::new();
+        for (index, clone) in clones.iter().enumerate() {
+            let this = shape(clone);
+            if clones[..index].iter().any(|earlier| shape(earlier) == this) {
+                collapsed.insert(clone.name.clone());
+            }
+        }
+        clones.retain(|clone| !collapsed.contains(&clone.name));
+        Ok((clones, field_types))
+    }
+
     /// Clone `method` with `bindings` baked: the bound parameters leave the
     /// declaration, their names are substituted in every type position, and
     /// the body elaborates with them bound so its comptime constructs fold.
@@ -1970,7 +2194,7 @@ pub(super) struct MethodBinding {
 /// plain type or value parameter. Callable-bounded parameters
 /// (`F: def() -> T`) and retained callable-value parameters stay on the
 /// clone's signature, and Origin binders have no argument at all.
-fn method_parameter_is_baked(parameter: &TypeParam, siblings: &[TypeParam]) -> bool {
+pub(super) fn method_parameter_is_baked(parameter: &TypeParam, siblings: &[TypeParam]) -> bool {
     parameter.callable_bound.is_none()
         && !retained_specialization_param(parameter, siblings)
         && !parameter.name.starts_with('*')
@@ -2012,7 +2236,7 @@ fn unavailable_method_clause(method: &Method, owner: &str, types: &[CtValue]) ->
     )
 }
 
-fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
+pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
     let span = method
         .body
         .first()

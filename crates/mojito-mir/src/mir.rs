@@ -604,7 +604,19 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     let mut refp: Vec<bool> = Vec::new();
                     if m.has_self {
                         names.push("self".to_string());
-                        ptys.push(Ty::Struct(name.clone(), Vec::new()));
+                        // A per-instantiation clone declares its receiver
+                        // type (`self: Optional[Int]`); an ordinary method's
+                        // receiver is the declaring struct.
+                        ptys.push(
+                            checked
+                                .checked_type_at(&AnnotationSite::MethodSelf {
+                                    module: s.module.clone(),
+                                    declaration: name.clone(),
+                                    method: method_index,
+                                })
+                                .cloned()
+                                .unwrap_or_else(|| Ty::Struct(name.clone(), Vec::new())),
+                        );
                         owned.push(is_owned(&m.self_convention));
                         deinit.push(is_deinit(&m.self_convention));
                         refp.push(is_ref(&m.self_convention));

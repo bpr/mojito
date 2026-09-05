@@ -282,3 +282,5 @@ next-builtin	run	conformance/fixtures/next_builtin.mojo
 list-explicit-params-with-elements	reject	assets/type_error/list_explicit_params_with_elements.mojo
 string-view-equality	run	assets/ok/string_view_equality.mojo
 generic-equatable-dispatch	run	assets/ok/generic_equatable_dispatch.mojo
+generic-ctor-literal-materialization	run	assets/ok/generic_ctor_literal_materialization.mojo
+generic-struct-instance-bodies	run	assets/ok/generic_struct_instance_bodies.mojo

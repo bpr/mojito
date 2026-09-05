@@ -479,6 +479,39 @@ becomes an `_mojito_abort` stub that no specialized call reaches. A call
 whose arguments stay symbolic (inside an unspecialized generic body) keeps
 the erased path and therefore cannot use such a method.
 
+An *ordinary* generic struct (`struct Optional[T: AnyType]`, every parameter
+a plain type parameter) keeps its template in the program — checked once
+with `T` as `Ty::Param` (Mojo's generic pre-check) and still the fallback for
+symbolic receivers — and gains **per-instantiation method clones** appended
+to its own method list. The checker records every closed application it
+reaches from a non-bundled source as a constructor target or method-call
+receiver (`StructInstantiation`; instances seen only inside unstamped
+bundled stdlib bodies keep the erased path, so a program without its own
+instantiations mints nothing); the driver replays them as
+`StructInstanceRequest`s, and the specializer also mints, within one
+elaboration, every closed application it meets while walking user code and
+the clones themselves (annotations, constructor calls, static receivers, and
+the instance's substituted field types), reporting that minted set back so
+the checker's recordings of it are not new discoveries. A clone
+(`get$y3:Int`, the method name mangled with the baked struct arguments, one
+per same-name overload) has every `T`/`Self.T` respelled concretely, its
+`comptime if` folded, and an explicit receiver type (`Method::self_ty`,
+`self: Optional[Int]`) the checker binds `self`/`Self` to instead of the
+struct scope's parametric `Self` (`AnnotationSite::MethodSelf` types the MIR
+receiver); a method whose `where` clause is false — or unevaluable — for the
+instance, a constructor or lifecycle method (they carry the value-parameter
+reification the erased path relies on), and an overload family that
+collapses to one shape on the instance stay uncloned. Type identity is
+unchanged (`Optional[Int]` is still `Ty::Struct("Optional", [Int])` and the
+runtime struct name stays `Optional`), so a call whose receiver instance has
+no clone simply keeps today's erased path; a call on a closed receiver
+retargets to the clone by exact name through the `specialized_method_clone`
+funnel (`instance_method_clone`). A clone that fails to check reports
+`TypeError::PostInstantiation` naming the instance and the source method. A
+template method whose body only elaborates with the struct's parameters
+bound becomes an `_mojito_abort` stub, exactly as in a variadic
+specialization.
+
 Under the production compiler, the erased-dispatch machinery
 (`__trait_dispatch.*`/`__iterator_dispatch.*` symbols, VM retargeting, and
 the `CopyIteratorReference` result adapter) is therefore reachable only

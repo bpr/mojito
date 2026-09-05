@@ -77,7 +77,9 @@ assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo	-	ineligible	no-scalar-
 assets/ok/generic_copyable_iterator_refinement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_associated_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_value_param.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_ctor_literal_materialization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_equatable_dispatch.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_struct_instance_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_bucketing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_hasher_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hasher_user_conformer.mojo	-	ineligible	no-scalar-entry-shape

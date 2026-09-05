@@ -1038,6 +1038,30 @@ impl Checker {
                 );
             }
         }
+        // A concrete generic-struct receiver records its instantiation for
+        // per-instantiation method-clone discovery and, once the elaborator
+        // has appended the clone to the template, retargets to it by exact
+        // name (the clone keeps the method's own parameters, so explicit
+        // arguments pass through).
+        if let Ty::Struct(sname, targs) = &obj_ty
+            && !targs.is_empty()
+        {
+            self.record_struct_instantiation(sname, targs, span.source.as_deref());
+            if let Some(clone) = self.instance_method_clone(sname, method, targs) {
+                return self.infer_method_call(
+                    span,
+                    object,
+                    &clone,
+                    MethodCallArguments {
+                        param_args,
+                        args,
+                        kwargs,
+                        parameterized_syntax,
+                        preserves_receiver_interiors,
+                    },
+                );
+            }
+        }
         if parameterized_syntax {
             self.parameterized_method_calls
                 .borrow_mut()

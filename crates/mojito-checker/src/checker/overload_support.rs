@@ -392,7 +392,7 @@ pub(super) fn is_bundled_collection_source(source: Option<&str>) -> bool {
         return false;
     };
     let stdlib = root.join("stdlib");
-    let source = Path::new(source);
+    let source = Path::new(stamped_source_module(source));
     source == stdlib.join("std/collections/list.mojo")
         || source == stdlib.join("list.mojo")
         || source == stdlib.join("std/collections/dict.mojo")
@@ -427,18 +427,35 @@ pub(super) fn bundled_struct_source<'a>(
 /// crossing; every other module — stdlib included — allocates through
 /// `std.memory`. `std/utils/variant.mojo` is the second crossing: the
 /// self-hosted `Variant` names the compiler-private `__VariantStorage`.
-/// A specialized variadic struct is re-stamped with its own source tag
-/// (`<module>$<instance>`), which still belongs to the crossing module.
+/// A specialization's source tag still belongs to its crossing module.
 pub(super) fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
     let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
         return false;
     };
     let stdlib = root.join("stdlib");
-    if Path::new(source) == stdlib.join("std/memory.mojo") {
-        return true;
-    }
-    let variant = stdlib.join("std/utils/variant.mojo");
-    Path::new(source) == variant || source.starts_with(&format!("{}$", variant.display()))
+    let source = Path::new(stamped_source_module(source));
+    source == stdlib.join("std/memory.mojo") || source == stdlib.join("std/utils/variant.mojo")
+}
+
+/// Whether a source belongs to a bundled standard-library module, directly
+/// or through a specialization tag layered on its path. Generic-struct
+/// instances reached only from there keep the erased path (always correct):
+/// a program without its own instantiations mints no clones, and the
+/// instances a user-reachable clone reaches through its storage and
+/// signatures are minted by the specializer itself.
+pub fn is_bundled_module_source(source: Option<&str>) -> bool {
+    let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
+        return false;
+    };
+    Path::new(stamped_source_module(source)).starts_with(root.join("stdlib"))
+}
+
+/// The module path beneath a specialization source tag: a specialized
+/// variadic struct, its unrolled accessors, and a per-instantiation method
+/// clone are stamped `<module>$<instance>…`, and keep the module's
+/// privileges.
+fn stamped_source_module(source: &str) -> &str {
+    source.split('$').next().unwrap_or(source)
 }
 
 /// Select the current Mojo parameter-index hook first, while retaining the

@@ -57,6 +57,7 @@ pub(super) fn expand_trait_defaults(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeErr
                     raises: method.raises,
                     raises_type: method.raises_type.clone(),
                     ret: method.ret.clone(),
+                    self_ty: None,
                     body: body.clone(),
                     where_clauses: method.where_clauses.clone(),
                 },

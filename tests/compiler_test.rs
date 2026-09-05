@@ -132,6 +132,45 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
 }
 
 #[test]
+fn generic_struct_instances_get_per_instantiation_method_clones() {
+    // A closed application of an ordinary generic struct reached from user
+    // code mints one clone per available method on the template, checked
+    // with `self` bound to the instance: `_unqualified_type_name[Self]`
+    // spells the instantiation and a `comptime if` on `Self.T` folds, while
+    // the template keeps its erased pre-check and the runtime name stays the
+    // template's. Calls on the instance retarget to the clone by exact name.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "from std.reflection.type_info import _unqualified_type_name\n\nstruct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def type_name(self) -> String:\n        return String(_unqualified_type_name[Self]())\n\n    def kind(self) -> String:\n        comptime if Self.T == Int:\n            return String(\"int box\")\n        else:\n            return String(\"other box\")\n\ndef main():\n    var a = Box[Int](7)\n    var b = Box(String(\"seven\"))\n    print(a.type_name(), b.type_name())\n    print(a.kind(), b.kind())\n",
+            std::path::Path::new("/tmp/mojito_generic_struct_instances.mojo"),
+        )
+        .expect("compile the instance clones");
+    let targets = program.checked().overload_targets();
+    assert!(
+        targets
+            .values()
+            .any(|target| target == "Box.type_name$y3:Int"),
+        "the Int instance's call retargets to its clone: {targets:?}"
+    );
+    assert!(
+        targets
+            .values()
+            .any(|target| target.starts_with("Box.kind$y") && target.contains("String")),
+        "the String instance's call retargets to its clone: {targets:?}"
+    );
+    let mir = mojito::mir::lower_checked_program(program.checked());
+    let names: Vec<&String> = mir.functions.iter().map(|(name, _)| name).collect();
+    assert!(names.iter().any(|name| *name == "Box.type_name$y3:Int"));
+    assert!(names.iter().any(|name| *name == "Box.type_name"));
+    let output = compiler.execute(&program).expect("run the instance clones");
+    assert_eq!(
+        output.output,
+        "Box[SIMD[DType.int, 1]] Box[String]\nint box other box\n"
+    );
+}
+
+#[test]
 fn linked_std_utils_variant_constructs_tests_projects_and_sets() {
     let compiler = Compiler::default();
     let program = compiler

@@ -314,9 +314,13 @@ pub fn method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -> Strin
 /// Methods whose callable identity includes the receiver convention: current
 /// Mojo overloads them purely on the receiver (borrowed vs owned `__iter__`,
 /// `ref` vs `deinit` `unsafe_assume_init`) with identical explicit parameters,
-/// so the convention participates in registration and symbol mangling.
+/// so the convention participates in registration and symbol mangling. A
+/// specialization clone (`__iter__$y3:Int`) keeps its source method's rule.
 pub fn receiver_overloaded_method(method: &str) -> bool {
-    matches!(method, "__iter__" | "unsafe_assume_init")
+    matches!(
+        method.split('$').next().unwrap_or(method),
+        "__iter__" | "unsafe_assume_init"
+    )
 }
 
 /// Convention-qualified symbol for a receiver-overloaded method (see

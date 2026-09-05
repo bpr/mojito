@@ -299,6 +299,30 @@ impl Checker {
                 );
             }
         }
+        // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)
+        // records its instantiation and retargets to the per-instantiation
+        // clone once minted; an inferred receiver keeps the erased path.
+        if !struct_targs.is_empty()
+            && let Ok((_, tyargs)) =
+                self.resolve_use_params(sname, &info.decls, struct_targs, &[], &[])
+        {
+            self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
+            if let Some(clone) = self.instance_method_clone(sname, method, &tyargs) {
+                return self.infer_struct_static_method(
+                    span,
+                    sname,
+                    struct_targs,
+                    &clone,
+                    MethodCallArguments {
+                        param_args,
+                        args,
+                        kwargs,
+                        parameterized_syntax,
+                        preserves_receiver_interiors: false,
+                    },
+                );
+            }
+        }
         self.record_selected_method_conversions(method, &selected, args, kwargs)?;
         if let Some(target) = selected.lowered_name.clone() {
             self.overload_targets

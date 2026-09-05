@@ -329,7 +329,19 @@ impl<'a> Elab<'a> {
                     .iter()
                     .map(|m| {
                         let mut m = m.clone();
-                        m.body = self.block(&m.body, env, true)?;
+                        m.body = match self.block(&m.body, env, true) {
+                            Ok(body) => body,
+                            // A generic struct's method whose body only
+                            // elaborates with the struct's parameters bound
+                            // (a `comptime if` on `Self.T`) becomes a trap
+                            // stub on the template; every concrete call
+                            // retargets to a per-instantiation clone, which
+                            // folds it with the parameters bound.
+                            Err(error) if names_struct_parameter(&error, type_params) => {
+                                vec![super::specialize::unspecialized_method_stub(name, &m)]
+                            }
+                            Err(error) => return Err(error),
+                        };
                         Ok(m)
                     })
                     .collect::<Result<Vec<_>, ComptimeError>>()?;
@@ -723,4 +735,17 @@ impl<'a> Elab<'a> {
         }
         self.eval(&assoc.value, &env)
     }
+}
+
+/// Whether an elaboration error names the enclosing struct's `Self` or one
+/// of its compile-time parameters — a body that needs the parameters bound.
+fn names_struct_parameter(error: &ComptimeError, type_params: &[TypeParam]) -> bool {
+    if type_params.is_empty() {
+        return false;
+    }
+    let text = error.to_string();
+    text.contains("'Self'")
+        || type_params.iter().any(|parameter| {
+            text.contains(&format!("'{}'", parameter.name.trim_start_matches('*')))
+        })
 }

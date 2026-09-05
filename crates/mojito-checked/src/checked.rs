@@ -270,6 +270,17 @@ pub struct MethodInstantiation {
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 
+/// One closed application of an ordinary generic struct the checker reached
+/// as a constructor target or method-call receiver (`Optional[Int]`): the
+/// template name and its declaration-order arguments. The compiler's
+/// discovery loop replays closed recordings as per-instantiation method
+/// clones appended to the template.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructInstantiation {
+    pub template: String,
+    pub arguments: Vec<mojito_types::types::TyArg>,
+}
+
 /// Fully resolved iterator protocol retained across the checked boundary.
 /// `prepare` contains the exact `__iter__` symbols needed to normalize a user
 /// iterable; builtin ranges/collections leave it empty.  User iterators carry
@@ -835,6 +846,7 @@ pub struct CheckedProgram {
     compatibility_overload_targets: HashMap<SourceSpan, String>,
     generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
+    struct_instantiations: Vec<StructInstantiation>,
     /// Caller-substituted loan transfers per call occurrence, keyed by the
     /// call expression's span; MIR lowering installs the implied loans.
     call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
@@ -898,6 +910,14 @@ pub enum AnnotationSite {
     },
     /// The checked return type of a struct method declaration.
     MethodReturn {
+        module: Option<String>,
+        declaration: String,
+        method: usize,
+    },
+    /// The checked receiver type of a struct method that declares an explicit
+    /// `self` type (a per-instantiation clone, `self: Optional[Int]`); absent
+    /// for an ordinary method, whose receiver is the declaring struct.
+    MethodSelf {
         module: Option<String>,
         declaration: String,
         method: usize,
@@ -1041,6 +1061,7 @@ impl CheckedProgram {
         contextual_bases: HashMap<SourceSpan, String>,
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
         method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
+        struct_instantiations: Vec<StructInstantiation>,
         call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
         implicit_conversion_types: HashMap<SourceSpan, Ty>,
@@ -1119,6 +1140,7 @@ impl CheckedProgram {
             compatibility_overload_targets: overload_targets,
             generic_instantiations,
             method_instantiations,
+            struct_instantiations,
             call_transfers,
             compatibility_implicit_conversions: implicit_conversions,
             implicit_conversion_types,
@@ -1154,6 +1176,13 @@ impl CheckedProgram {
     /// retained for per-call method specialization discovery.
     pub fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
         &self.method_instantiations
+    }
+
+    /// Every generic-struct application reached as a constructor target or
+    /// method-call receiver, retained for per-instantiation method-clone
+    /// discovery (the driver keeps the closed ones).
+    pub fn struct_instantiations(&self) -> &[StructInstantiation] {
+        &self.struct_instantiations
     }
 
     /// The caller-substituted loan transfers per call occurrence.

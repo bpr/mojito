@@ -482,6 +482,12 @@ pub struct Method {
     pub raises_type: Option<Type>,
     pub ret: Option<Type>,
     pub where_clauses: Vec<Expr>,
+    /// An explicit receiver type for a per-instantiation method clone
+    /// (`self: Optional[Int]`): the elaborator writes it when it bakes a
+    /// generic struct's parameters into a clone appended to the template's
+    /// method list, and the checker binds `self`/`Self` to it instead of the
+    /// struct scope's parametric `Self`. The parser never sets it.
+    pub self_ty: Option<Type>,
     pub body: Vec<Stmt>,
 }
 

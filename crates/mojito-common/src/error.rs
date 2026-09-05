@@ -324,6 +324,14 @@ pub enum TypeError {
     /// Carries a message describing the feature. The runtime analogue is
     /// `RuntimeError::Unsupported`.
     Unsupported(String),
+    /// A per-instantiation method clone of a generic struct failed to check
+    /// with the parameters bound (Mojo's post-instantiation diagnostic): the
+    /// instance, the source method, and the concrete error.
+    PostInstantiation {
+        receiver: String,
+        method: String,
+        error: Box<TypeError>,
+    },
     /// A compiler phase received state that violates a contract established by
     /// an earlier phase. This is a Mojito bug, not an error in the source file.
     InvariantViolation(String),
@@ -478,6 +486,13 @@ impl fmt::Display for TypeError {
                     f,
                     "returned reference escapes storage outside its declared origin"
                 )
+            }
+            TypeError::PostInstantiation {
+                receiver,
+                method,
+                error,
+            } => {
+                write!(f, "in '{method}' instantiated for '{receiver}': {error}")
             }
             TypeError::TransferEffectDivergence { rounds, callable } => {
                 write!(

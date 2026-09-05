@@ -419,6 +419,20 @@ impl Checker {
             // `Self.T` — one of the enclosing struct's *type* parameters (a value
             // parameter is not a type, so `Self.n` in type position is an error).
             SourceType::SelfParam(name) => {
+                // A per-instantiation clone's explicit receiver type binds the
+                // struct's parameters concretely: `Self.T` is `Int` while
+                // checking `Optional[Int]`'s clones.
+                if let Some(Ty::Struct(_, arguments)) = &self.self_ty
+                    && arguments.len() == self.self_decls.len()
+                    && let Some(index) = self
+                        .self_decls
+                        .iter()
+                        .position(|d| d.name() == name && matches!(d, ParamDecl::Type { .. }))
+                    && let Some(TyArg::Ty(bound)) = arguments.get(index)
+                    && !matches!(bound, Ty::Param { .. })
+                {
+                    return Ok(bound.clone());
+                }
                 match self.self_decls.iter().find(|d| d.name() == name) {
                     Some(ParamDecl::Type {
                         bounds,

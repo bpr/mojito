@@ -730,6 +730,16 @@ fn generic_struct_preserves_element_runtime_type() {
 }
 
 #[test]
+fn generic_constructor_materializes_literal_arguments() {
+    // A literal argument to a generic constructor materializes to the solved
+    // parameter type on every constructor path — the explicit application,
+    // the inferred one, a fieldwise constructor, and an overloaded one — so
+    // a `Float64` field never stores the exact literal (`5/2`).
+    let src = "struct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n@fieldwise_init\nstruct Pair[T: Copyable & Deinitable](Copyable, Movable):\n    var left: Self.T\n    var right: Self.T\n\nstruct Many[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def __init__(out self, var value: Self.T, twice: Bool):\n        self.value = value^\n\ndef main():\n    var a = Box[Float64](2.5)\n    var b = Box(2.5)\n    print(a.value, b.value)\n    var p = Pair(1.5, 2.5)\n    var q = Pair[Float64](0.5, 1)\n    print(p.left, p.right, q.left, q.right)\n    var m = Many(7.5, True)\n    var n = Many[Float64](8.5)\n    print(m.value, n.value)\n";
+    assert_eq!(output(src), "2.5 2.5\n1.5 2.5 0.5 1.0\n7.5 8.5\n");
+}
+
+#[test]
 fn inferred_generic_methods_run_type_erased() {
     let src = "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value.copy()\n    def echo[T: Copyable](self, value: T) -> T:\n        return value.copy()\n\ndef main():\n    var factory = Factory(0)\n    print(Factory.make(7), factory.echo(\"ok\"))\n";
     assert_eq!(output(src), "7 ok\n");

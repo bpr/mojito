@@ -174,6 +174,7 @@ pub fn check_program_with_materialized_callables(
         checker.contextual_bases.into_inner(),
         checker.generic_instantiations.into_inner(),
         checker.method_instantiations.into_inner(),
+        checker.struct_instantiations.into_inner(),
         checker.call_transfers.into_inner(),
         checker.implicit_conversions.into_inner(),
         checker.implicit_conversion_types.into_inner(),
@@ -230,6 +231,7 @@ pub struct ConformanceFailure {
 
 mod conformance;
 mod overload_support;
+pub use overload_support::is_bundled_module_source;
 mod traits_support;
 
 use overload_support::*;
@@ -393,6 +395,10 @@ pub struct Checker {
     /// per-call method specialization discovery.
     method_instantiations:
         RefCell<HashMap<SourceSpan, mojito_checked::checked::MethodInstantiation>>,
+    /// Every generic-struct application reached as a constructor target or
+    /// method-call receiver, retained for per-instantiation method-clone
+    /// discovery (the driver keeps the closed ones).
+    struct_instantiations: RefCell<Vec<mojito_checked::checked::StructInstantiation>>,
     /// Per-body accumulation frames for inferred loan-transfer effects.
     transfer_frames: RefCell<Vec<TransferFrame>>,
     /// Inferred per-callable transfer effects, keyed by callable name
@@ -614,6 +620,7 @@ impl Checker {
             contextual_bases: RefCell::new(HashMap::new()),
             generic_instantiations: RefCell::new(HashMap::new()),
             method_instantiations: RefCell::new(HashMap::new()),
+            struct_instantiations: RefCell::new(Vec::new()),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects),
             call_transfers: RefCell::new(HashMap::new()),

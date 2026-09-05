@@ -238,6 +238,35 @@ impl MethodSpecializationRequest {
     }
 }
 
+/// One checker-discovered closed application of an ordinary generic struct
+/// (`Optional[Int]`): the template name and its declaration-order arguments.
+/// The specializer appends one clone per available method to the live
+/// template with the struct's parameters baked (`get$y3:Int`), and the
+/// checker retargets calls on that instance to the clones by exact name on
+/// the next discovery round.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructInstanceRequest {
+    template: String,
+    arguments: Vec<TyArg>,
+}
+
+impl StructInstanceRequest {
+    pub fn new(template: String, arguments: Vec<TyArg>) -> Self {
+        Self {
+            template,
+            arguments,
+        }
+    }
+
+    pub fn template(&self) -> &str {
+        &self.template
+    }
+
+    pub fn arguments(&self) -> &[TyArg] {
+        &self.arguments
+    }
+}
+
 /// Exact callable types which a generated public-Tuple declaration references
 /// through opaque compiler-only AST ids. Source `def(...)` annotations cannot
 /// encode all of this metadata, so the compiler passes this map directly to the
@@ -468,7 +497,16 @@ impl std::fmt::Display for ComptimeError {
 
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    elaborate_with_requests(program, &[], &[], &[], &[])
+    elaborate_with_requests(program, &[], &[], &[], &[], &[]).map(|elaborated| elaborated.program)
+}
+
+/// An elaborated program plus the generic-struct instances the specializer
+/// minted method clones for along the way (closed applications reached from
+/// user code and from other clones), so the driver's discovery loop does not
+/// treat the checker's recordings of those instances as new work.
+pub struct Elaborated {
+    pub program: Vec<Stmt>,
+    pub instances: Vec<StructInstanceRequest>,
 }
 
 /// The top-level variadic struct template names (`struct S[*Ts: Bound]`) of a
@@ -509,7 +547,8 @@ pub fn elaborate_with_requests(
     tstring_requests: &[TStringSpecializationRequest],
     def_requests: &[DefSpecializationRequest],
     method_requests: &[MethodSpecializationRequest],
-) -> Result<Vec<Stmt>, ComptimeError> {
+    struct_requests: &[StructInstanceRequest],
+) -> Result<Elaborated, ComptimeError> {
     let mut method_requests_by_owner: HashMap<String, Vec<MethodSpecializationRequest>> =
         HashMap::new();
     for request in method_requests {
@@ -517,6 +556,13 @@ pub fn elaborate_with_requests(
             .entry(request.owner().to_string())
             .or_default()
             .push(request.clone());
+    }
+    let mut instance_requests: HashMap<String, Vec<Vec<TyArg>>> = HashMap::new();
+    for request in struct_requests {
+        instance_requests
+            .entry(request.template().to_string())
+            .or_default()
+            .push(request.arguments().to_vec());
     }
     synthesize_copyable_copy(&mut program);
     synthesize_hashable_hash(&mut program);
@@ -567,6 +613,7 @@ pub fn elaborate_with_requests(
         specializable: collect_specializable(&program, &bound_generics),
         bound_generics,
         method_requests: method_requests_by_owner,
+        instance_requests,
         conformance,
         tuple_universe,
         tuple_transforms,
@@ -581,11 +628,29 @@ pub fn elaborate_with_requests(
     let consts = elab.top_consts.borrow().clone();
     let materialized = materialize_block(elaborated, &consts, &elab.struct_names);
     // Monomorphize comptime-dependent generic templates against their call sites.
-    let mut result =
+    let (mut result, instances) =
         elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
+        }
+    }
+    // Per-instantiation method clones reuse their template's spans; each
+    // clone's body gets its own source tag after the uniform module stamp
+    // above (the discipline struct specializations follow), keeping
+    // span-keyed checked facts separate across instantiations.
+    for statement in &mut result {
+        let module = statement.module.clone();
+        if let StmtKind::Struct { name, methods, .. } = &mut statement.kind {
+            for method in methods.iter_mut() {
+                if method.self_ty.is_some() {
+                    let tag = match &module {
+                        Some(module) => format!("{module}${name}${}", method.name),
+                        None => format!("{name}${}", method.name),
+                    };
+                    mojito_ast::ast::stamp_source(&mut method.body, &tag);
+                }
+            }
         }
     }
     // Nested templates are specialized only after enclosing top-level
@@ -593,7 +658,10 @@ pub fn elaborate_with_requests(
     // concrete outer substitutions, and per-instance source tags will not be
     // overwritten by the uniform module stamp above.
     elab.monomorphize_nested_program(&mut result)?;
-    Ok(result)
+    Ok(Elaborated {
+        program: result,
+        instances,
+    })
 }
 
 mod ctfe_calls;
@@ -710,6 +778,16 @@ fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Ty
             for argument in arguments {
                 substitute_source_param_arg_binding(argument, binding, replacement);
             }
+        }
+        // `Self.T` — the enclosing struct's own parameter spelled through
+        // `Self`, the dominant spelling inside struct bodies.
+        Type::SelfParam(name) if name == binding => {
+            *ty = replacement.clone();
+        }
+        Type::Assoc { base, name, args }
+            if args.is_empty() && name == binding && matches!(base.as_ref(), Type::SelfType) =>
+        {
+            *ty = replacement.clone();
         }
         Type::Assoc { base, args, .. } => {
             substitute_source_type_binding(base, binding, replacement);
@@ -1090,6 +1168,10 @@ struct Elab<'a> {
     /// Checker-discovered generic-method instantiations on specialized
     /// variadic structs, by owner name: each becomes a per-call clone.
     method_requests: HashMap<String, Vec<MethodSpecializationRequest>>,
+    /// Checker-discovered closed applications of ordinary generic structs, by
+    /// template name: each mints per-instantiation method clones on the
+    /// template.
+    instance_requests: HashMap<String, Vec<Vec<TyArg>>>,
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
@@ -1195,6 +1277,19 @@ struct Mono {
     /// generated specialization bakes. `mono_expr` rewrites the call into
     /// that concrete constructor.
     range_call_targets: HashMap<SourceSpan, (String, Vec<CtValue>)>,
+    /// Closed applications of ordinary generic structs found while walking
+    /// (annotations, constructor calls, and generated clones themselves):
+    /// template → baked type values, minted as per-instantiation method
+    /// clones within this elaboration. `instances_done` dedups by the
+    /// mangled instance key.
+    instance_jobs: VecDeque<(String, Vec<CtValue>)>,
+    instances_done: HashSet<String>,
+    /// Instances minted in this elaboration, reported to the driver so the
+    /// checker's recordings of them do not count as new discoveries.
+    minted_instances: Vec<StructInstanceRequest>,
+    /// Whether the walk is inside an unstamped bundled stdlib declaration:
+    /// instances reached only from there keep the erased path.
+    in_bundled: bool,
 }
 
 impl Mono {
@@ -1650,8 +1745,10 @@ mod tuple_request_tests {
             &[],
             &[],
             &[],
+            &[],
         )
-        .expect("materialize checked Tuple specialization");
+        .expect("materialize checked Tuple specialization")
+        .program;
 
         assert!(struct_names(&elaborated).contains(&expected.as_str()));
         let rewritten = elaborated
@@ -1685,8 +1782,10 @@ mod tuple_request_tests {
             &[],
             &[],
             &[],
+            &[],
         )
-        .expect("materialize contextual Tuple declaration");
+        .expect("materialize contextual Tuple declaration")
+        .program;
 
         assert!(struct_names(&elaborated).contains(&expected.as_str()));
         assert_eq!(
@@ -1713,8 +1812,10 @@ mod tuple_request_tests {
             &[],
             &[],
             &[],
+            &[],
         )
-        .expect("materialize nested Tuple specializations");
+        .expect("materialize nested Tuple specializations")
+        .program;
         let names = struct_names(&elaborated);
 
         assert!(names.contains(&inner_symbol.as_str()), "{names:?}");
@@ -1815,8 +1916,9 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[])
-            .expect("materialize the requested specialization");
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+            .expect("materialize the requested specialization")
+            .program;
 
         let defs = def_names(&elaborated);
         assert!(
@@ -1843,8 +1945,9 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[])
-            .expect("a skipped request must not fail elaboration");
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+            .expect("a skipped request must not fail elaboration")
+            .program;
 
         let defs = def_names(&elaborated);
         assert!(defs.contains(&"ident"), "{defs:?}");
@@ -1867,8 +1970,9 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[])
-            .expect("materialize the requested specialization");
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+            .expect("materialize the requested specialization")
+            .program;
 
         let defs = def_names(&elaborated);
         assert_eq!(
