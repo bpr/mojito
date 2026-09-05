@@ -372,6 +372,7 @@ assets/ok/value_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variable_scoping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_method_type_params.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/variadic_pack_forwarding_generic_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_upstream_spellings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_deinit_with_linear_payload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_hash_dict_key.mojo	-	ineligible	no-scalar-entry-shape

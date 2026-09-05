@@ -288,6 +288,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             associated,
             methods,
             fieldwise_init,
+            template_shell: false,
         })
     }
 

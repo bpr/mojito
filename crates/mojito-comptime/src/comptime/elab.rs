@@ -317,6 +317,7 @@ impl<'a> Elab<'a> {
                 associated,
                 methods,
                 fieldwise_init,
+                template_shell,
             } => {
                 // A variadic struct template's members reference the unbound pack;
                 // keep it verbatim for monomorphization (mirrors def templates).
@@ -358,6 +359,7 @@ impl<'a> Elab<'a> {
                         associated: associated.clone(),
                         methods,
                         fieldwise_init: *fieldwise_init,
+                        template_shell: *template_shell,
                     },
                     span,
                 ));

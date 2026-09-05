@@ -1266,9 +1266,15 @@ struct Mono {
     /// a `String(...)` conversion — the snapshot for non-Copyable places).
     tstring_call_targets: HashMap<SourceSpan, TStringTarget>,
     /// Bound-generic templates with at least one reference left on the
-    /// abstract path (an unresolvable call or a function-value use). The
-    /// program rebuild keeps these templates alongside their specializations.
+    /// abstract path (an unresolvable call or a function-value use), and
+    /// variadic struct templates applied over such a body's own symbolic
+    /// parameters. The program rebuild keeps these templates alongside
+    /// their specializations (a variadic template as a shell).
     retained: HashSet<String>,
+    /// The type-parameter names of the declarations enclosing the walk
+    /// (outermost first): a variadic template applied over one of them
+    /// stays symbolic instead of failing eager specialization.
+    symbolic_type_params: Vec<String>,
     /// Checker-discovered inferred bound-generic applications: call occurrence
     /// (without its syntax id) → the concrete clone that call selects.
     def_call_targets: HashMap<SourceSpan, DefCallTarget>,
@@ -1293,6 +1299,19 @@ struct Mono {
 }
 
 impl Mono {
+    /// Bring a declaration's type parameters into the symbolic set for the
+    /// walk of its signature and body; returns the length to truncate back
+    /// to afterwards.
+    fn push_symbolic_type_params(&mut self, type_params: &[TypeParam]) -> usize {
+        let base = self.symbolic_type_params.len();
+        self.symbolic_type_params.extend(
+            type_params
+                .iter()
+                .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
+        );
+        base
+    }
+
     fn push_value_scope(&mut self) {
         self.value_scopes.push(HashMap::new());
         self.runtime_pack_scopes.push(HashMap::new());

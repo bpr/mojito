@@ -286,3 +286,4 @@ generic-ctor-literal-materialization	run	assets/ok/generic_ctor_literal_material
 generic-struct-instance-bodies	run	assets/ok/generic_struct_instance_bodies.mojo
 generic-struct-instance-dispatch	run	assets/ok/generic_struct_instance_dispatch.mojo
 generic-instance-repr	run	conformance/fixtures/generic_instance_repr.mojo
+variadic-pack-forwarding-generic-def	run	assets/ok/variadic_pack_forwarding_generic_def.mojo

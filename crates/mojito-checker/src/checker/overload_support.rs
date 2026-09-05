@@ -492,6 +492,7 @@ pub(super) fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         associated,
         methods,
         fieldwise_init,
+        template_shell,
         decorators,
     } = &stmt.kind
     else {
@@ -509,6 +510,7 @@ pub(super) fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         associated,
         methods,
         fieldwise_init: *fieldwise_init,
+        template_shell: *template_shell,
         decorators,
     })
 }

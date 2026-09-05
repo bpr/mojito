@@ -793,7 +793,7 @@ impl Checker {
                         || parameter.is_origin_mutability_binder(&info.source_params)
                 })
         });
-        // A `StringLiteral` argument names no clone (`specialized_method_values`):
+        // A `StringLiteral` argument names no clone (`instance_method_clone_name`):
         // the instance keeps the erased path, so there is nothing to mint.
         if !bakeable
             || !arguments.iter().all(|argument| {

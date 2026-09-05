@@ -8,9 +8,15 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// (`Pair[Int]`).
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
         let ty = match self.next_token()? {
-            // A variadic type-pack reference in `*args: *ArgTypes`.
+            // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
+            // struct, current Mojo spells the struct's own pack `*Self.Ts`;
+            // both spellings name the same pack.
             Token::Star => {
-                let name = self.expect_identifier("Expected a type-pack name after '*'")?;
+                let mut name = self.expect_identifier("Expected a type-pack name after '*'")?;
+                if name == "Self" && matches!(self.peek_token()?, Some(Token::Dot)) {
+                    self.next_token()?; // consume '.'
+                    name = self.expect_identifier("Expected a type-pack name after '*Self.'")?;
+                }
                 Ok(Type::Named(format!("*{name}"), Vec::new()))
             }
             // A function type: `def(types) [effects] -> ret`.

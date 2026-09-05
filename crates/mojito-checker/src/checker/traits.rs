@@ -291,13 +291,18 @@ impl Checker {
         );
         // A variadic struct template is compiled by compile-time specialization
         // (each instantiation is a concrete struct); the unspecialized template
-        // has pack-dependent members and cannot be checked erased.
-        if decls.iter().any(|decl| {
-            matches!(
-                decl,
-                ParamDecl::Type { variadic: true, .. } | ParamDecl::Value { variadic: true, .. }
-            )
-        }) {
+        // has pack-dependent members and cannot be checked erased. The
+        // elaborator's template shell is the one symbolic registration: a
+        // retained generic body applies the template over its own parameters.
+        if !declaration.template_shell
+            && decls.iter().any(|decl| {
+                matches!(
+                    decl,
+                    ParamDecl::Type { variadic: true, .. }
+                        | ParamDecl::Value { variadic: true, .. }
+                )
+            })
+        {
             return Err(TypeError::Unsupported(format!(
                 "variadic struct '{name}' is compiled by compile-time specialization; instantiate it with explicit compile-time arguments (e.g. `{name}[Int, Bool](...)`) instead of checking the template"
             )));
@@ -479,6 +484,11 @@ impl Checker {
                 updated_decls,
             );
         }
+        // A template shell has no members to resolve: its fields depend on the
+        // pack, and it exists only to type symbolic applications.
+        if declaration.template_shell {
+            return Ok(());
+        }
         let (_, saved) = self.enter_struct_scope(declaration)?;
         let resolved = self.resolve_struct_member_types(declaration);
         self.exit_struct_scope(saved);
@@ -631,7 +641,14 @@ impl Checker {
         let name = declaration.name;
         for (method_index, m) in declaration.methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m);
-            let method_decls = self.classify_params(&m.type_params)?;
+            // A template shell registers the signatures that resolve
+            // symbolically and skips the rest (pack-dependent shapes): the
+            // concrete specialization checks every method.
+            let method_decls = match self.classify_params(&m.type_params) {
+                Ok(decls) => decls,
+                Err(_) if declaration.template_shell => continue,
+                Err(error) => return Err(error),
+            };
             self.generic_parameters.borrow_mut().insert(
                 mojito_checked::checked::GenericSite::Method {
                     module: declaration.module.clone(),
@@ -677,7 +694,11 @@ impl Checker {
             self.enclosing_type_params = saved_method_type_params;
             self.enclosing_struct_type_params.set(saved_struct_count);
             self.tparams.pop();
-            let (all_types, mut sig) = signature?;
+            let (all_types, mut sig) = match signature {
+                Ok(signature) => signature,
+                Err(_) if declaration.template_shell => continue,
+                Err(error) => return Err(error),
+            };
             if let Some(info) = self.structs.get(name) {
                 sig.parametric_origin_writes =
                     parametric_origin_writes_in_body(&m.body, &info.fields);
@@ -722,6 +743,9 @@ impl Checker {
                     && (!mojito_symbol::symbol::receiver_overloaded_method(method_name)
                         || existing.self_convention == sig.self_convention)
             }) {
+                if declaration.template_shell {
+                    continue;
+                }
                 return Err(TypeError::Redeclaration(method_name.to_string()));
             }
             if method_name == "__setitem__"
@@ -750,6 +774,11 @@ impl Checker {
     ) -> Result<(), TypeError> {
         for tr in declaration.conforms {
             self.check_trait_name(tr)?;
+        }
+        // A template shell has no bodies and verifies no conformance: the
+        // concrete specialization does both.
+        if declaration.template_shell {
+            return Ok(());
         }
         self.reject_value_field_self_containment(declaration.name)?;
         let (self_ty, saved) = self.enter_struct_scope(declaration)?;

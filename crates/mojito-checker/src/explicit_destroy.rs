@@ -58,6 +58,11 @@ pub fn check(
                     types,
                 )?;
             }
+            // A template shell carries signatures only.
+            StmtKind::Struct {
+                template_shell: true,
+                ..
+            } => {}
             StmtKind::Struct { name, methods, .. } => {
                 for (method_index, method) in methods.iter().enumerate() {
                     let mut params = method

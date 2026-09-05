@@ -441,7 +441,26 @@ Because the checker never re-validates a dropped argument, the resolver
 enforces each dropped parameter's declared trait bounds at the requesting call
 through the conformance oracle. Type packs, callable-value bindings, and
 types that do not round-trip to source syntax remain symbolic on the residual
-signature.
+signature. A specialization is walked whole — signature and body — for further
+template uses, so a clone's expanded `-> Variant[Int, String]` requests that
+concrete struct exactly as its body's calls do.
+
+A variadic struct applied over an enclosing declaration's own type parameters
+(`Variant[T, String]` in `def wrap[T]`, `Variant[*Ts]` in `def f[*Ts]`, a
+`Variant[*Self.Ts]` field of `struct Outer[*Ts]`) cannot specialize eagerly.
+`Mono::symbolic_type_params` tracks the parameters of the declarations being
+walked; `resolve_struct_spec_args_if_ready` leaves such an application
+symbolic (as the public `Tuple` always was) and retains the template. The
+program rebuild then emits the template as a **shell**
+(`StmtKind::Struct::template_shell`): its parameters, declared conformances
+(taken unconditionally — the concrete specialization re-verifies them), and
+the method signatures that resolve symbolically register in the checker
+(`check_struct_shell` skips the variadic-template rejection,
+`register_struct_method_signatures` skips a signature that fails, and the
+member-type and completion phases are skipped), so the retained abstract
+body checks against it; `explicit_destroy` and MIR skip a shell entirely. A
+concrete application that fails to resolve keeps its eager diagnostic, and the
+raw seam still rejects an unmarked variadic template.
 
 Inferred applications reach the same clones through the compiler's discovery
 fixpoint: `Compiler::compile_linked` iterates elaborate→check, deriving
@@ -506,7 +525,9 @@ the conformance), a constructor or lifecycle method (they carry the
 value-parameter reification the erased path relies on), and an overload
 family that collapses to one shape on the instance stay uncloned. An
 instantiation whose argument mentions `StringLiteral` mints no clones and
-names none (`specialized_method_values`): its values keep the literal runtime
+names none (`instance_method_clone_name`; a method-level type argument
+inferred from a string literal still materializes `String`, as the call
+argument does): its values keep the literal runtime
 representation while an un-annotated binding of the type materializes
 `String`, so a clone body would neither type against its own `Self.T` nor
 share values with the nominal-`String` instance. Type identity is

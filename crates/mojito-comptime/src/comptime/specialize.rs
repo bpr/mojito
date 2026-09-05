@@ -302,6 +302,14 @@ impl<'a> Elab<'a> {
             };
             let generated = mono.generated.remove(&template_name);
             let monomorphized = generated.is_some();
+            // A variadic struct template applied over a retained generic
+            // body's own parameters survives as a shell: its parameters,
+            // conformances (taken unconditionally — the concrete
+            // specialization re-verifies them), and method signatures, with
+            // no fields, bodies, or lowering.
+            if self.struct_template(&template_name) && mono.retained.contains(&template_name) {
+                out.push(template_shell(&stmt));
+            }
             // A comptime-class template either specialized or is a dead
             // generic, dropped either way. A bound-generic template survives
             // while any reference stays on its abstract path — and when it has
@@ -371,15 +379,11 @@ impl<'a> Elab<'a> {
             mono.in_bundled = mojito_checker::checker::is_bundled_module_source(
                 self.specializable[&job.orig].module.as_deref(),
             );
-            match &mut spec.kind {
-                StmtKind::Def { params, body, .. } => {
-                    self.mono_function_body(body, params, consts, mono)?
-                }
-                // A struct specialization is fully concrete; walk its members for
-                // further template uses (nested instantiations, recursive packs).
-                StmtKind::Struct { .. } => self.mono_stmt(&mut spec, consts, mono)?,
-                _ => {}
-            }
+            // A specialization is walked whole — signature and body — for
+            // further template uses (nested instantiations, recursive packs):
+            // a def clone's expanded `-> Variant[Int, String]` requests that
+            // concrete struct exactly as its body's calls do.
+            self.mono_stmt(&mut spec, consts, mono)?;
             mono.in_bundled = false;
             // Scan while the parameter still carries its `$pack[T0, ...]`
             // identity: a whole-pack specialization may forward the collector
@@ -839,6 +843,7 @@ impl<'a> Elab<'a> {
             associated,
             methods,
             fieldwise_init,
+            template_shell: _,
         } = &template.kind
         else {
             return Err(ComptimeError::NotComptime(format!(
@@ -982,6 +987,7 @@ impl<'a> Elab<'a> {
                 associated: specialized_associated,
                 methods: specialized_methods,
                 fieldwise_init: *fieldwise_init,
+                template_shell: false,
             },
             template.span,
         );
@@ -1529,6 +1535,7 @@ impl<'a> Elab<'a> {
                 associated: specialized_associated,
                 methods: elaborated_methods,
                 fieldwise_init: *fieldwise_init,
+                template_shell: false,
             },
             template.span,
         );
@@ -2331,4 +2338,30 @@ pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
         )),
         span,
     )
+}
+
+/// The shell of a variadic struct template (see
+/// `StmtKind::Struct::template_shell`).
+fn template_shell(template: &Stmt) -> Stmt {
+    let mut shell = template.clone();
+    if let StmtKind::Struct {
+        conformance_conditions,
+        where_clauses,
+        fields,
+        associated,
+        methods,
+        template_shell,
+        ..
+    } = &mut shell.kind
+    {
+        conformance_conditions.clear();
+        where_clauses.clear();
+        fields.clear();
+        associated.clear();
+        for method in methods.iter_mut() {
+            method.body.clear();
+        }
+        *template_shell = true;
+    }
+    shell
 }

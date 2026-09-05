@@ -17,22 +17,6 @@ impl<'a> Elab<'a> {
         result
     }
 
-    pub(super) fn mono_function_body(
-        &self,
-        stmts: &mut [Stmt],
-        parameters: &[FnParam],
-        consts: &HashMap<String, CtValue>,
-        mono: &mut Mono,
-    ) -> Result<(), ComptimeError> {
-        mono.push_function_scope();
-        for parameter in parameters {
-            mono.bind_parameter(parameter);
-        }
-        let result = self.mono_block_contents(stmts, consts, mono);
-        mono.pop_function_scope();
-        result
-    }
-
     pub(super) fn mono_block_contents(
         &self,
         stmts: &mut [Stmt],
@@ -201,27 +185,32 @@ impl<'a> Elab<'a> {
                 ..
             } => {
                 let inner_consts = consts_without_type_params(consts, type_params);
-                for parameter in type_params {
-                    self.mono_type_parameter(parameter, &inner_consts, mono)?;
-                }
-                for parameter in params.iter_mut() {
-                    self.mono_fn_parameter(parameter, &inner_consts, mono)?;
-                }
-                if let Some(error) = raises_type {
-                    self.mono_type(error, &inner_consts, mono)?;
-                }
-                if let Some(ret) = ret {
-                    self.mono_type(ret, &inner_consts, mono)?;
-                }
-                for condition in where_clauses {
-                    self.mono_expr(condition, &inner_consts, mono)?;
-                }
-                mono.push_function_scope();
-                for parameter in params {
-                    mono.bind_parameter(parameter);
-                }
-                let result = self.mono_block_contents(body, &inner_consts, mono);
-                mono.pop_function_scope();
+                let symbolic_base = mono.push_symbolic_type_params(type_params);
+                let result = (|| {
+                    for parameter in type_params {
+                        self.mono_type_parameter(parameter, &inner_consts, mono)?;
+                    }
+                    for parameter in params.iter_mut() {
+                        self.mono_fn_parameter(parameter, &inner_consts, mono)?;
+                    }
+                    if let Some(error) = raises_type {
+                        self.mono_type(error, &inner_consts, mono)?;
+                    }
+                    if let Some(ret) = ret {
+                        self.mono_type(ret, &inner_consts, mono)?;
+                    }
+                    for condition in where_clauses {
+                        self.mono_expr(condition, &inner_consts, mono)?;
+                    }
+                    mono.push_function_scope();
+                    for parameter in params {
+                        mono.bind_parameter(parameter);
+                    }
+                    let result = self.mono_block_contents(body, &inner_consts, mono);
+                    mono.pop_function_scope();
+                    result
+                })();
+                mono.symbolic_type_params.truncate(symbolic_base);
                 result
             }
             StmtKind::Struct {
@@ -234,56 +223,65 @@ impl<'a> Elab<'a> {
                 methods,
                 ..
             } => {
-                let mut struct_consts = consts.clone();
-                for (index, parameter) in type_params.iter().enumerate() {
-                    if parameter.bounds.as_slice() != ["Origin"] {
-                        continue;
+                let symbolic_base = mono.push_symbolic_type_params(type_params);
+                let result = (|| {
+                    let mut struct_consts = consts.clone();
+                    for (index, parameter) in type_params.iter().enumerate() {
+                        if parameter.bounds.as_slice() != ["Origin"] {
+                            continue;
+                        }
+                        let id = mojito_types::origin::OriginParamId(index as u32);
+                        let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind)
+                        {
+                            Some(ExprKind::Bool(true)) => mojito_types::origin::Mutability::Mutable,
+                            Some(ExprKind::Bool(false)) => {
+                                mojito_types::origin::Mutability::Immutable
+                            }
+                            _ => mojito_types::origin::Mutability::Param(id),
+                        };
+                        struct_consts
+                            .insert(parameter.name.clone(), ct_origin_marker(index, mutability));
                     }
-                    let id = mojito_types::origin::OriginParamId(index as u32);
-                    let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
-                        Some(ExprKind::Bool(true)) => mojito_types::origin::Mutability::Mutable,
-                        Some(ExprKind::Bool(false)) => mojito_types::origin::Mutability::Immutable,
-                        _ => mojito_types::origin::Mutability::Param(id),
-                    };
-                    struct_consts
-                        .insert(parameter.name.clone(), ct_origin_marker(index, mutability));
-                }
-                for parameter in type_params.iter_mut() {
-                    self.mono_type_parameter(parameter, &struct_consts, mono)?;
-                }
-                if let Some(callable) = callable_conformance {
-                    self.mono_type(callable, &struct_consts, mono)?;
-                }
-                for (_, condition) in conformance_conditions {
-                    self.mono_expr(condition, &struct_consts, mono)?;
-                }
-                for condition in where_clauses {
-                    self.mono_expr(condition, &struct_consts, mono)?;
-                }
-                for field in fields.iter_mut() {
-                    self.mono_type(&mut field.ty, &struct_consts, mono)?;
-                }
-                // Associated facts may themselves be type-valued.  A variadic
-                // struct mentioned only here still needs a concrete request
-                // before its template is removed (for example an Iterable's
-                // associated iterator family).
-                for member in associated.iter_mut() {
-                    let member_consts = consts_without_type_params(&struct_consts, &member.params);
-                    for parameter in &mut member.params {
-                        self.mono_type_parameter(parameter, &member_consts, mono)?;
+                    for parameter in type_params.iter_mut() {
+                        self.mono_type_parameter(parameter, &struct_consts, mono)?;
                     }
-                    if let Some(ty) = &mut member.ty {
-                        self.mono_type(ty, &member_consts, mono)?;
+                    if let Some(callable) = callable_conformance {
+                        self.mono_type(callable, &struct_consts, mono)?;
                     }
-                    for condition in &mut member.where_clauses {
-                        self.mono_expr(condition, &member_consts, mono)?;
+                    for (_, condition) in conformance_conditions {
+                        self.mono_expr(condition, &struct_consts, mono)?;
                     }
-                    self.mono_expr(&mut member.value, &member_consts, mono)?;
-                }
-                for m in methods.iter_mut() {
-                    self.mono_method(m, &struct_consts, mono)?;
-                }
-                Ok(())
+                    for condition in where_clauses {
+                        self.mono_expr(condition, &struct_consts, mono)?;
+                    }
+                    for field in fields.iter_mut() {
+                        self.mono_type(&mut field.ty, &struct_consts, mono)?;
+                    }
+                    // Associated facts may themselves be type-valued.  A variadic
+                    // struct mentioned only here still needs a concrete request
+                    // before its template is removed (for example an Iterable's
+                    // associated iterator family).
+                    for member in associated.iter_mut() {
+                        let member_consts =
+                            consts_without_type_params(&struct_consts, &member.params);
+                        for parameter in &mut member.params {
+                            self.mono_type_parameter(parameter, &member_consts, mono)?;
+                        }
+                        if let Some(ty) = &mut member.ty {
+                            self.mono_type(ty, &member_consts, mono)?;
+                        }
+                        for condition in &mut member.where_clauses {
+                            self.mono_expr(condition, &member_consts, mono)?;
+                        }
+                        self.mono_expr(&mut member.value, &member_consts, mono)?;
+                    }
+                    for m in methods.iter_mut() {
+                        self.mono_method(m, &struct_consts, mono)?;
+                    }
+                    Ok(())
+                })();
+                mono.symbolic_type_params.truncate(symbolic_base);
+                result
             }
             StmtKind::Trait {
                 methods,
@@ -383,25 +381,37 @@ impl<'a> Elab<'a> {
         mono: &mut Mono,
     ) -> Result<(), ComptimeError> {
         let method_consts = consts_without_type_params(struct_consts, &m.type_params);
+        let symbolic_base = mono.push_symbolic_type_params(&m.type_params);
+        let result = self.mono_method_members(m, &method_consts, mono);
+        mono.symbolic_type_params.truncate(symbolic_base);
+        result
+    }
+
+    fn mono_method_members(
+        &self,
+        m: &mut mojito_ast::ast::Method,
+        method_consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
+    ) -> Result<(), ComptimeError> {
         for parameter in &mut m.type_params {
-            self.mono_type_parameter(parameter, &method_consts, mono)?;
+            self.mono_type_parameter(parameter, method_consts, mono)?;
         }
         if let Some(origins) = &mut m.self_origin {
             for origin in origins {
-                self.mono_expr(origin, &method_consts, mono)?;
+                self.mono_expr(origin, method_consts, mono)?;
             }
         }
         for parameter in m.params.iter_mut() {
-            self.mono_fn_parameter(parameter, &method_consts, mono)?;
+            self.mono_fn_parameter(parameter, method_consts, mono)?;
         }
         if let Some(error) = &mut m.raises_type {
-            self.mono_type(error, &method_consts, mono)?;
+            self.mono_type(error, method_consts, mono)?;
         }
         if let Some(ret) = &mut m.ret {
-            self.mono_type(ret, &method_consts, mono)?;
+            self.mono_type(ret, method_consts, mono)?;
         }
         for condition in &mut m.where_clauses {
-            self.mono_expr(condition, &method_consts, mono)?;
+            self.mono_expr(condition, method_consts, mono)?;
         }
         mono.push_function_scope();
         if m.has_self {
@@ -410,7 +420,7 @@ impl<'a> Elab<'a> {
         for parameter in &m.params {
             mono.bind_parameter(parameter);
         }
-        let result = self.mono_block_contents(&mut m.body, &method_consts, mono);
+        let result = self.mono_block_contents(&mut m.body, method_consts, mono);
         mono.pop_function_scope();
         result
     }
@@ -511,7 +521,7 @@ impl<'a> Elab<'a> {
                     )
                 {
                     let Some(vals) =
-                        self.resolve_struct_spec_args_if_ready(name, arguments, consts)?
+                        self.resolve_struct_spec_args_if_ready(name, arguments, consts, mono)?
                     else {
                         // Public Tuple applications in an ordinary generic
                         // declaration remain symbolic until the checker has
@@ -728,7 +738,8 @@ impl<'a> Elab<'a> {
             }
             ExprKind::TypeApply { name, args } => {
                 if mono.resolves_top_template(name) && self.struct_template(name) {
-                    let Some(vals) = self.resolve_struct_spec_args_if_ready(name, args, consts)?
+                    let Some(vals) =
+                        self.resolve_struct_spec_args_if_ready(name, args, consts, mono)?
                     else {
                         return Ok(());
                     };
@@ -842,7 +853,7 @@ impl<'a> Elab<'a> {
                         // A struct specialization is fully concrete: every
                         // compile-time argument is baked into the mangled name.
                         let Some(values) =
-                            self.resolve_struct_spec_args_if_ready(name, param_args, consts)?
+                            self.resolve_struct_spec_args_if_ready(name, param_args, consts, mono)?
                         else {
                             return Ok(());
                         };
@@ -1219,10 +1230,21 @@ impl<'a> Elab<'a> {
         name: &str,
         param_args: &[ParamArg],
         consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
     ) -> Result<Option<Vec<CtValue>>, ComptimeError> {
         match self.resolve_struct_spec_args(name, param_args, consts) {
             Ok(values) => Ok(Some(values)),
             Err(_) if name == "Tuple" => Ok(None),
+            // Any variadic template applied over an enclosing declaration's
+            // own type parameter (`Variant[T, String]` inside `def f[T]`,
+            // `Variant[*Ts]` inside `def f[*Ts]`) stays symbolic for the
+            // retained body's abstract check; the template is retained as a
+            // shell so the checker can name it. A concrete application that
+            // fails keeps its eager diagnostic.
+            Err(_) if param_args_mention_any(param_args, &mono.symbolic_type_params) => {
+                mono.retained.insert(name.to_string());
+                Ok(None)
+            }
             Err(error) => Err(error),
         }
     }
@@ -1654,6 +1676,59 @@ fn closed_instance_argument(ty: &Ty) -> bool {
             TyArg::Val(value) => !matches!(value, CtValue::Param(_)),
             TyArg::Origin(_) => false,
         }),
+        _ => false,
+    }
+}
+
+/// Whether any compile-time argument spells one of `names` (an enclosing
+/// declaration's type parameters, packs included) anywhere in a type or
+/// type-valued expression position.
+fn param_args_mention_any(param_args: &[ParamArg], names: &[String]) -> bool {
+    param_args
+        .iter()
+        .any(|argument| param_arg_mentions_any(argument, names))
+}
+
+fn param_arg_mentions_any(argument: &ParamArg, names: &[String]) -> bool {
+    match argument {
+        ParamArg::Type(ty) => type_mentions_any(ty, names),
+        ParamArg::Value(expression) => expr_mentions_any(expression, names),
+        ParamArg::Named { value, .. } => param_arg_mentions_any(value, names),
+    }
+}
+
+fn type_mentions_any(ty: &Type, names: &[String]) -> bool {
+    match ty {
+        Type::Named(name, arguments) => {
+            names
+                .iter()
+                .any(|candidate| candidate == name.trim_start_matches('*'))
+                || arguments
+                    .iter()
+                    .any(|argument| param_arg_mentions_any(argument, names))
+        }
+        Type::Func { params, ret, .. } => {
+            params
+                .iter()
+                .any(|param| type_mentions_any(&param.ty, names))
+                || type_mentions_any(ret, names)
+        }
+        _ => false,
+    }
+}
+
+fn expr_mentions_any(expression: &Expr, names: &[String]) -> bool {
+    match &expression.kind {
+        ExprKind::Identifier(name) => names
+            .iter()
+            .any(|candidate| candidate == name.trim_start_matches('*')),
+        ExprKind::TypeValue(ty) => type_mentions_any(ty, names),
+        ExprKind::TypeApply { name, args } => {
+            names.iter().any(|candidate| candidate == name)
+                || args
+                    .iter()
+                    .any(|argument| param_arg_mentions_any(argument, names))
+        }
         _ => false,
     }
 }

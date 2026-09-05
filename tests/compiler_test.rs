@@ -242,22 +242,21 @@ fn linked_std_utils_variant_constructs_tests_projects_and_sets() {
 }
 
 #[test]
-fn variant_pack_forwarding_through_a_generic_def_is_rejected() {
-    // `Variant` is an ordinary variadic struct: applying it to an enclosing
-    // generic's pack (`Variant[*Ts]` inside `def first_variant[*Ts]`) is the
-    // general variadic-struct pack-forwarding gap (`docs/roadmap.md`), which
-    // the erased template check reports rather than silently accepting.
+fn variant_pack_forwarding_through_a_generic_def_runs() {
+    // `Variant` is an ordinary variadic struct applied over an enclosing
+    // generic's own parameters: the pack-forwarding clone's expanded
+    // signature (`-> Variant[Int, String]`) requests the concrete
+    // specialization, and the retained bound-generic template checks
+    // `Variant[T, String]` against the template's shell.
     let compiler = Compiler::default();
-    let forwarded = compiler
+    let program = compiler
         .compile_source(
-            "from std.utils import Variant\n\ndef first_variant[*Ts: Movable]() -> Variant[*Ts]:\n    return Variant[*Ts](3)\n\ndef main():\n    var value = first_variant[Int, String]()\n    print(value.isa[Int]())\n",
+            "from std.utils import Variant\n\ndef first_variant[*Ts: Movable]() -> Variant[*Ts]:\n    return Variant[*Ts](3)\n\ndef wrap[T: Movable](var x: T) -> Variant[T, String]:\n    return Variant[T, String](x^)\n\ndef main():\n    var value = first_variant[Int, String]()\n    print(value.isa[Int]())\n    var wrapped = wrap(True)\n    print(wrapped.isa[Bool](), wrapped.isa[String]())\n",
             std::path::Path::new("/tmp/mojito_variant_type_pack.mojo"),
         )
-        .expect_err("variadic-struct pack forwarding is not supported");
-    assert!(matches!(
-        forwarded,
-        CompilerError::Type(mojito::TypeError::UnknownType(name)) if name.ends_with("Variant")
-    ));
+        .expect("variadic-struct pack forwarding through generic defs");
+    let output = compiler.execute(&program).expect("run the forwarded packs");
+    assert_eq!(output.output, "True\nTrue False\n");
 }
 
 #[test]

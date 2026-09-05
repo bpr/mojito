@@ -734,6 +734,14 @@ pub enum StmtKind {
         methods: Vec<Method>,
         /// Whether `@fieldwise_init` was present (so `Name(...)` constructs).
         fieldwise_init: bool,
+        /// An elaborator-emitted shell of a variadic struct template that a
+        /// retained generic body applies over its own symbolic parameters
+        /// (`Variant[T, String]` inside `def f[T]`): parameters, declared
+        /// conformances, and the method signatures that resolve symbolically
+        /// register for the abstract check; fields, bodies, conformance
+        /// verification, and MIR emission are skipped. The parser never sets
+        /// it.
+        template_shell: bool,
     },
     /// `trait Name[(Super, …)]: <members>` — declares method (and `comptime`
     /// member) requirements that a conforming struct must implement. `refines` is

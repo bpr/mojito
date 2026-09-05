@@ -366,10 +366,15 @@ current Mojo). On a `def`, a type pack pairs with a `*args: *Ts` runtime
 parameter (heterogeneous variadic; see **def_stmt**). On a `struct`, a type pack
 makes the struct **variadic-generic**: compile-time elaboration specializes the
 struct per instantiation, expanding pack-typed member annotations such as
-`Tuple[*Ts]` to the concrete element list. A variadic struct currently supports
-exactly one type-parameter pack and no other compile-time parameters, and must
-be instantiated with explicit bracket arguments (`Pair[Int, Bool](...)`; the
-elaborator does not infer struct packs).
+`Tuple[*Ts]` to the concrete element list; a member may spell the struct's own
+pack `*Self.Ts` (current Mojo's spelling) or `*Ts` — both name the same pack.
+A variadic struct currently supports exactly one type-parameter pack and no
+other compile-time parameters, and must be instantiated with explicit bracket
+arguments (`Pair[Int, Bool](...)`; the elaborator does not infer struct
+packs). A variadic struct may also be applied over an enclosing generic
+declaration's own parameters (`Variant[*Ts]` in `def f[*Ts]`, `Variant[T,
+String]` in `def g[T]`): the application stays symbolic in the retained
+template and each specialization spells the concrete struct.
 
 **Supplying parameters.** Parameters are supplied with a bracketed argument list before
 the call/construction parentheses, or as type arguments in an annotation:

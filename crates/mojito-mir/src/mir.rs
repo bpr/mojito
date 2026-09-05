@@ -159,6 +159,15 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     };
 
     for s in program {
+        // A variadic template shell types symbolic applications in retained
+        // generic bodies only; it has no members to lower.
+        if let StmtKind::Struct {
+            template_shell: true,
+            ..
+        } = &s.kind
+        {
+            continue;
+        }
         let _stmt = timing::span(match &s.kind {
             StmtKind::Def { .. } => "def",
             StmtKind::Struct { .. } => "struct",

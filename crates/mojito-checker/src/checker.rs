@@ -1955,6 +1955,8 @@ struct StructDeclaration<'a> {
     associated: &'a [StructComptime],
     methods: &'a [Method],
     fieldwise_init: bool,
+    /// See `StmtKind::Struct::template_shell`.
+    template_shell: bool,
     decorators: &'a [mojito_ast::ast::Decorator],
 }
 
