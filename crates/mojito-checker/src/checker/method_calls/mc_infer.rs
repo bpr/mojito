@@ -1011,19 +1011,37 @@ impl Checker {
         // A generic method's resolved compile-time arguments feed per-call
         // specialization discovery; once the elaborator has minted the clone
         // for this instantiation, the call retargets to it by exact name.
-        if let (Ty::Struct(sname, _), Some(arguments)) = (&obj_ty, &resolved.instantiation) {
+        if let (Ty::Struct(sname, targs), Some(arguments)) = (&obj_ty, &resolved.instantiation) {
+            // On a closed instance of an ordinary generic struct the request
+            // (and the clone) is keyed by the instance: its arguments bake
+            // before the call's.
+            let owner_arguments = self.instance_arguments(sname, targs).unwrap_or_default();
+            // A call already retargeted to the per-instantiation clone
+            // (`name$y3:Int`) requests the clone of the source method: the
+            // elaborator selects by source name and mints from the template.
+            let source_method = method.split('$').next().unwrap_or(method);
             self.method_instantiations.borrow_mut().insert(
                 span.clone(),
                 mojito_checked::checked::MethodInstantiation {
                     owner: sname.clone(),
-                    method: method.to_string(),
+                    owner_arguments: owner_arguments.clone(),
+                    method: source_method.to_string(),
                     parameter_names: resolved.parameter_names.clone(),
                     arguments: arguments.clone(),
                 },
             );
-            if let Some(clone) =
+            let clone = if owner_arguments.is_empty() {
                 self.specialized_method_clone(sname, method, &resolved.param_decls, arguments)
-            {
+            } else {
+                self.instance_call_method_clone(
+                    sname,
+                    targs,
+                    source_method,
+                    &resolved.param_decls,
+                    arguments,
+                )
+            };
+            if let Some(clone) = clone {
                 return self.infer_method_call(
                     span,
                     object,

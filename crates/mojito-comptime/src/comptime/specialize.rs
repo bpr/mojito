@@ -263,8 +263,7 @@ impl<'a> Elab<'a> {
             else {
                 continue;
             };
-            let (mut clones, mut field_types) =
-                self.generate_instance_clones(&template, &values)?;
+            let (clones, mut field_types) = self.generate_instance_clones(&template, &values)?;
             mono.minted_instances.push(StructInstanceRequest::new(
                 template.clone(),
                 values
@@ -278,10 +277,17 @@ impl<'a> Elab<'a> {
             for ty in &mut field_types {
                 self.mono_type(ty, &consts, &mut mono)?;
             }
-            for clone in &mut clones {
-                self.mono_method(clone, &consts, &mut mono)?;
+            // A clone whose walk cannot resolve one of its applications (a
+            // variadic template over a nested public `Tuple` argument) is
+            // dropped: the call keeps the erased template rather than
+            // failing the program.
+            let mut kept = Vec::with_capacity(clones.len());
+            for mut clone in clones {
+                if self.mono_method(&mut clone, &consts, &mut mono).is_ok() {
+                    kept.push(clone);
+                }
             }
-            methods.extend(clones);
+            methods.extend(kept);
         }
         // Rebuild the program, replacing each template with its specializations at
         // the template's original position. Specializations are emitted in reverse
@@ -1449,6 +1455,13 @@ impl<'a> Elab<'a> {
             if specializable_method {
                 let owner = mangle(orig, vals);
                 let mut minted = HashSet::new();
+                // The request names the selected overload's regular
+                // parameters (a `*args` collector is not among them).
+                let regular: Vec<&FnParam> = method
+                    .params
+                    .iter()
+                    .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
+                    .collect();
                 for request in self
                     .method_requests
                     .get(&owner)
@@ -1457,11 +1470,11 @@ impl<'a> Elab<'a> {
                     .iter()
                     .filter(|request| {
                         request.method() == method.name
-                            && request.parameter_names().len() == method.params.len()
+                            && request.parameter_names().len() == regular.len()
                             && request
                                 .parameter_names()
                                 .iter()
-                                .zip(&method.params)
+                                .zip(&regular)
                                 .all(|(name, parameter)| *name == parameter.name)
                     })
                 {
@@ -1723,6 +1736,43 @@ impl<'a> Elab<'a> {
                         source: None,
                     });
                 }
+                // A method-level type pack inferred from the call's overflow
+                // arguments: every element must be a type meeting the bound;
+                // the clone expands `*args: *Ts` to the element list.
+                (
+                    ParamDecl::Type {
+                        variadic: true,
+                        bounds,
+                        ..
+                    },
+                    TyArg::Val(value @ CtValue::Tuple(elements)),
+                ) => {
+                    for element in elements {
+                        let CtValue::Type(ty) = element else {
+                            return None;
+                        };
+                        // A generated specialization (`TypeNames[Int]`) is not
+                        // in the elaboration-start oracle; the checker proved
+                        // its bound at the requesting call.
+                        let known = match ty.as_ref() {
+                            Ty::Struct(name, _) => self.struct_names.contains(name),
+                            _ => true,
+                        };
+                        if known
+                            && bounds
+                                .iter()
+                                .any(|bound| self.conformance.require(ty, bound).is_err())
+                        {
+                            return None;
+                        }
+                    }
+                    values.push(value.clone());
+                    bindings.push(MethodBinding {
+                        name,
+                        value: value.clone(),
+                        source: None,
+                    });
+                }
                 _ => return None,
             }
         }
@@ -1840,6 +1890,16 @@ impl<'a> Elab<'a> {
                 unavailable.extend(self.trait_requirement_names(trait_name));
             }
         }
+        // Checker-discovered instantiations of this instance's generic
+        // methods (`b.kind[Bool]()` on `Box[Int]`) mint per-call clones with
+        // the instance's values baked before the call's
+        // (`kind$y3:Int$y4:Bool`); the request owner is the instance key.
+        let instance_key = mangle(name, values);
+        let per_call_requests = self
+            .method_requests
+            .get(&instance_key)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let mut clones = Vec::new();
         for method in methods {
             if unavailable.contains(&method.name) {
@@ -1851,6 +1911,14 @@ impl<'a> Elab<'a> {
             ) {
                 continue;
             }
+            clones.extend(self.per_call_method_clones(
+                method,
+                per_call_requests,
+                values,
+                &bindings,
+                Some(&receiver),
+                &consts,
+            ));
             // A synthesized trait-default body (Copyable's `copy`, Hashable's
             // `__hash__`; no source provenance) has no instance-specific
             // behavior: the template's serves every instance.
@@ -1913,6 +1981,85 @@ impl<'a> Elab<'a> {
         }
         clones.retain(|clone| !collapsed.contains(&clone.name));
         Ok((clones, field_types))
+    }
+
+    /// Per-call clones of one generic method (`kind[U]`) for every
+    /// checker-discovered instantiation in `requests` that selects it: the
+    /// owner's values (`base_values`, an instance's baked arguments; empty
+    /// for a non-generic struct) precede the call's in the clone name
+    /// (`kind$y3:Int$y4:Bool`), `base_bindings` bind them for elaboration,
+    /// and `receiver` is the instance clone's explicit receiver type. A
+    /// method with no baked parameter, a request whose arguments do not
+    /// align, a `where` clause false for the instantiation, or a body that
+    /// fails to elaborate mints nothing: the call keeps the erased path.
+    pub(super) fn per_call_method_clones(
+        &self,
+        method: &Method,
+        requests: &[MethodSpecializationRequest],
+        base_values: &[CtValue],
+        base_bindings: &[MethodBinding],
+        receiver: Option<&Type>,
+        consts: &HashMap<String, CtValue>,
+    ) -> Vec<Method> {
+        let specializable = method
+            .type_params
+            .iter()
+            .any(|parameter| method_parameter_is_baked(parameter, &method.type_params));
+        if !specializable || method.name == "__init__" {
+            return Vec::new();
+        }
+        let mut clones = Vec::new();
+        let mut minted = HashSet::new();
+        // The request names the selected overload's regular parameters (a
+        // `*args` collector is not among them).
+        let regular: Vec<&FnParam> = method
+            .params
+            .iter()
+            .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
+            .collect();
+        for request in requests.iter().filter(|request| {
+            request.method() == method.name
+                && request.parameter_names().len() == regular.len()
+                && request
+                    .parameter_names()
+                    .iter()
+                    .zip(&regular)
+                    .all(|(name, parameter)| *name == parameter.name)
+        }) {
+            let Some((call_values, call_bindings)) =
+                self.method_request_values(&method.type_params, request.arguments())
+            else {
+                continue;
+            };
+            let mut values = base_values.to_vec();
+            values.extend(call_values);
+            let clone_name = mangle(&method.name, &values);
+            if !minted.insert(clone_name.clone()) {
+                continue;
+            }
+            let mut bindings = base_bindings.to_vec();
+            bindings.extend(call_bindings);
+            let mut env = consts.clone();
+            for binding in &bindings {
+                env.insert(binding.name.clone(), binding.value.clone());
+            }
+            let available = method
+                .where_clauses
+                .iter()
+                .all(|predicate| matches!(self.eval(predicate, &env), Ok(CtValue::Bool(true))));
+            if !available {
+                continue;
+            }
+            let Ok(mut clone) =
+                self.specialize_method_clone(method, clone_name, &bindings, consts, consts)
+            else {
+                continue;
+            };
+            clone.where_clauses.clear();
+            clone.self_ty = receiver.cloned();
+            clones.push(clone);
+        }
+        clones
     }
 
     /// The method names a trait requires, including those of the traits it
@@ -2028,14 +2175,69 @@ impl<'a> Elab<'a> {
         for predicate in &mut clone.where_clauses {
             substitute_type_bindings_in_expr(predicate, &type_bindings);
         }
+        // A type pack bound to a closed tuple of types expands as a def
+        // specialization's does: `*args: *Ts` becomes the `$pack[...]`
+        // element list, pack spellings in the signature expand, and the
+        // body elaborates with `Ts` and `args` bound so `Ts.length`,
+        // `Ts[i]`, and `len(args)` fold.
+        let mut type_pack_expansions: HashMap<String, Vec<Type>> = HashMap::new();
         let mut clone_env = env.clone();
         let mut clone_subs = subs.clone();
         for binding in bindings {
             clone_env.insert(binding.name.clone(), binding.value.clone());
             clone_subs.insert(binding.name.clone(), binding.value.clone());
+            let CtValue::Tuple(elements) = &binding.value else {
+                continue;
+            };
+            if !method
+                .type_params
+                .iter()
+                .any(|parameter| parameter.name.trim_start_matches('*') == binding.name)
+            {
+                continue;
+            }
+            let source_types = elements
+                .iter()
+                .map(|element| match element {
+                    CtValue::Type(ty) => source_type_from_ty(ty),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    ComptimeError::NotComptime(format!(
+                        "type pack '{}' contains a type that cannot be spelled in a clone",
+                        binding.name
+                    ))
+                })?;
+            for parameter in &mut clone.params {
+                if matches!(&parameter.ty, Type::Named(name, _) if name.trim_start_matches('*') == binding.name)
+                {
+                    parameter.ty = Type::Named(
+                        "$pack".to_string(),
+                        source_types.iter().cloned().map(ParamArg::Type).collect(),
+                    );
+                    clone_env.insert(parameter.name.clone(), binding.value.clone());
+                }
+            }
+            type_pack_expansions.insert(binding.name.clone(), source_types);
+        }
+        if !type_pack_expansions.is_empty() {
+            if let Some(ret) = &mut clone.ret {
+                expand_type_packs(ret, &type_pack_expansions);
+            }
+            for parameter in &mut clone.params {
+                expand_type_packs(&mut parameter.ty, &type_pack_expansions);
+            }
         }
         let elaborated = self.block(&clone.body, &mut clone_env, true)?;
         clone.body = materialize_block(elaborated, &clone_subs, &self.struct_names);
+        if !type_pack_expansions.is_empty() {
+            expand_pack_spreads_in_function_body(
+                &mut clone.body,
+                &clone.params,
+                &type_pack_expansions,
+            );
+        }
         substitute_type_bindings_in_block(&mut clone.body, &type_bindings);
         Ok(clone)
     }
@@ -2262,6 +2464,7 @@ impl<'a> Elab<'a> {
 /// One baked compile-time parameter of a per-call method clone: its name,
 /// the compile-time value bound in the clone's elaboration environment, and
 /// (for a type parameter) the source type substituted into the signature.
+#[derive(Clone)]
 pub(super) struct MethodBinding {
     name: String,
     value: CtValue,
@@ -2275,7 +2478,6 @@ pub(super) struct MethodBinding {
 pub(super) fn method_parameter_is_baked(parameter: &TypeParam, siblings: &[TypeParam]) -> bool {
     parameter.callable_bound.is_none()
         && !retained_specialization_param(parameter, siblings)
-        && !parameter.name.starts_with('*')
         && classify_ct_param(parameter, siblings).is_some()
 }
 
@@ -2342,7 +2544,7 @@ pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
 
 /// The shell of a variadic struct template (see
 /// `StmtKind::Struct::template_shell`).
-fn template_shell(template: &Stmt) -> Stmt {
+pub(super) fn template_shell(template: &Stmt) -> Stmt {
     let mut shell = template.clone();
     if let StmtKind::Struct {
         conformance_conditions,

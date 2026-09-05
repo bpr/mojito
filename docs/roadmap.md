@@ -82,87 +82,53 @@ exempt from the ordering.
   complete (`docs/mojo-nightly.md`); the next re-pin recreates this
   section's checkbox.
 
-### 3. Grow The CPU Standard Library *(demand-first — any order)*
+### 3. Grow The CPU Standard Library *(demand-first)*
 
 - [ ] **Collection API parity** — grow the tuple, slice, optional/variant,
-  and String surfaces toward the audited head, one slice at a time
-  (`docs/features.md` records what lands). Tasks below are ordered by
-  payoff; finishing one deletes it. Plan first: tasks 1 and 8 (design
-  decisions); tasks 2, 3, and 4 need only a half-page site list.
+  and String surfaces toward the audited head (`docs/features.md` records
+  what lands). The tasks below are in implementation order: prioritized by
+  payoff and sorted so that every dependency precedes what needs it. A task
+  closes when its bullets are done; a residue discovered inside a task moves
+  to the task that owns its fix (or to task 9, the deliberate deferrals),
+  never back to a finished one. Plan first: task 1 (half a page naming the
+  anchor each case extends) and task 8 (ordering); the rest are direct.
 
-  1. **Per-instantiation generic struct bodies: the remaining family.**
-     Clones landed 2026-09-04 (`docs/features.md` Generics row). Open, in
-     order:
-     - Per-call specialization of method-level type parameters on every
-       generic struct (`Optional.map[U]`, `__hash__[H]`): the discovery gate
-       (`method_specialization_requests` in `src/compiler.rs`) admits
-       variadic owners only; a clone inside an instance must compose the
-       instance key with the call's.
-     - Upstream's `FormatStruct(writer, "Name").params(...).fields(...)`
-       builder: needs variadic-pack methods on a struct (`def fields[*Ts:
-       Writable](self, *args: *Ts)` — the elaborator reports "'Ts' is not a
-       compile-time type" for a method-level pack) and a `ref` field to the
-       writer.
-     - `write_repr_to` on `Optional` and `List`/`Dict`/`Set` repr in
-       upstream's text (`List[SIMD[DType.int, 1]]([Int(1), Int(2)])`)
-       instead of the field-wise `Name(field=value)` fallback. The bodies'
-       `TypeNames[Self.T]()` now checks against a template shell; the port
-       itself remains.
-     - `OptionalReg` in subset shape (`Boolable`/`Defaultable`/
-       `TrivialRegisterPassable`, no device members). `Optional.copied` is
-       not ported (upstream: `@__allow_legacy_custom_self_type`).
-     - Cost: clones are minted per whole instance (no reachability pruning)
-       and re-checked each discovery round; `benchmarks/compile/stdlib_heavy`
-       is 2.2x baseline (`docs/performance.md`), one extra round from a new
-       `hash[String, AHasher]` instantiation inside the `Dict` clone.
-     - Erased path kept for: value parameters (`Array[T, length]`), origin
-       binders (`Span`, iterators), callable-bounded parameters, and any
-       argument mentioning `StringLiteral` (`{"a": 1}` is
-       `Dict[StringLiteral, Int]`; its values keep the literal runtime
-       representation while an un-annotated binding materializes `String`).
-       Lifting the last needs one runtime representation for `StringLiteral`
-       and `String`, or typing the display as `Dict[String, Int]` as Mojo
-       does.
-     - Related: the bundled `Writable` trait declares only `write_to`, so a
-       bounded `T: Writable` cannot call `write_repr_to` (spell `repr(x)`);
-       upstream prints `_unqualified_type_name[Tuple[Int, Bool]]()` as
-       `Tuple[<unprintable>, {}]`, so shared fixtures avoid tuple type
-       names.
-
-  2. **View temporaries as receivers and arguments.** Half-page plan
-     naming the anchor each case extends (`$mat_r`, `$arg_loan_r`) and the
-     fixture matrix.
-     - `String("x").strip()` rejects ("reference binding to a non-place
-       expression"): the receiver anchor handles bound places only.
-       Workaround: bind the receiver.
-     - `writer.write(s[byte=a:b])` at the source's last use frees the source
-       first: `$arg_loan_r` covers call/method-call temporaries only.
-       Workaround: bind the view.
-
-  3. **`StringSpan` parameters in upstream's shape.** Retarget the String
+  1. **View temporaries as receivers and arguments.** The one ownership
+     gap the later tasks depend on (`$mat_r`/`$arg_loan_r` anchors exist;
+     ownership changes have regressed before, so plan the fixture matrix).
+     - A view-returning call on a temporary receiver (`String("x").strip()`)
+       rejects ("reference binding to a non-place expression"): the receiver
+       anchor handles bound places only.
+     - A subscript view temporary as a call argument at its source's last
+       use (`writer.write(s[byte=a:b])`) frees the source first:
+       `$arg_loan_r` covers call/method-call temporaries only.
+     - Unblocks upstream's fluent `FormatStruct(writer, "P").params(...)
+       .fields(...)` (then `params` returns `ref[self] Self` again and the
+       receivers go back to `self`, which needs a `Pointer[T, mutable
+       origin]` deref write through a read-only `self`), and `_utils.Named`
+       (a pointer-holding temporary passed as an argument reads a stale VM
+       frame).
+  2. **`StringSpan` parameters in upstream's shape.** Retarget the String
      API signatures from `String` to `StringSpan` (mechanical, wide): fixes
      `StringSpan` arguments not converting (today `to_string()`) and moves
      the batch-2 members (case, predicates, justification) off `String`
      only. Ride-alongs: `split(sep, maxsplit=-1)` as upstream's two
      overloads; `isspace`'s `single_character` parameter.
-
-  4. **Hashing parity.** One slice; decide up front whether to move the
-     `UInt64` leaf to upstream's `to_bits` shape.
+  3. **Hashing parity.** Decide up front whether to move the `UInt64` leaf
+     to upstream's `to_bits` shape.
      - Container `Hashable` on the hasher protocol
        (`List`/`Optional`/`Array`/`Set`/`Dict.__hash__`; upstream tags
        `Optional`/`Variant` alternatives with a `UInt8` before delegating).
      - Upstream-exact `Hasher` spellings: `_update_with_simd(mut self,
-       value: SIMD[_, _])` with `to_bits()` (Mojito narrows the leaf to one
-       `UInt64`; both bundled hashers mix it identically), the keyed
-       `AHasher[key: U256]`, the bytes `hash(bytes: ImmPointer[UInt8, _],
-       n)` overload and `hash_seeded_bytes`.
+       value: SIMD[_, _])` with `to_bits()`, the keyed `AHasher[key: U256]`
+       (this also makes `repr(set)` byte-identical: Set prints
+       `Hasher=AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]` upstream),
+       the bytes `hash(bytes: ImmPointer[UInt8, _], n)` overload and
+       `hash_seeded_bytes`.
      - CTFE `hash`/`default_comp_time_hasher` for compile-time dictionaries.
      - Raw seam only: a generic body forwarding its own `H` into `hash[H](x)`
-       without specialization resolves the binder spelling through the
-       caller frame; with no caller binding at all the VM falls back to the
-       declaration default. The compiled path specializes the clone.
-
-  5. **Optional, Tuple, and Slice odds and ends.** Self-contained; no plan.
+       with no caller binding falls back to the declaration default.
+  4. **Optional, Tuple, and Slice odds and ends.** Self-contained.
      - The raising `opt[]` subscript: empty-subscript form on nominal
        receivers plus `EmptyOptionalError`'s `TypeNames` text.
      - `Tuple`/`Array` `Defaultable`: needs `Ts[i]()`/`Self.T()` element
@@ -176,8 +142,7 @@ exempt from the ordering.
      - `Slice(...)` reads only `Int`/`None` argument expressions; an
        `Optional[Int]` variable needs the nominal slot read.
      - Explicit `.write_to(writer)` on a slice descriptor is not wired.
-
-  6. **String Unicode, iterator, and parsing extras.** Port on demand.
+  5. **String Unicode, iterator, and parsing extras.** Port on demand.
      - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
        simple and special casing tables.
@@ -188,8 +153,7 @@ exempt from the ordering.
        `__reversed__`, `bytes()`, `split_at_grapheme`, `peek_next`.
      - `atof` is correctly rounded only while the significand (≤19 digits)
        and power of ten (≤22) stay exact; NaN prints `NaN` (upstream `nan`).
-
-  7. **Origin-bearing `Span`/`Pointer` construction.** No plan.
+  6. **Origin-bearing `Span`/`Pointer` construction.**
      - `Span(unsafe_ptr=, length=)` takes `Pointer[T, MutUntrackedOrigin]`:
        a `Pointer[T, origin]` parameter cannot bind through a constructor
        type application (`Span[Byte, origin_of(self)](...)` rejects with a
@@ -203,17 +167,16 @@ exempt from the ordering.
      - `var it = xs.__iter__()` cannot infer the local's origin parameter
        (`failed to infer parameter 'iterable_origin'`); construct from a
        `ref` explicitly.
-
-  8. **Storage-shape items with a known blocker.** Short plan (ordering).
+  7. **Storage-shape items with a known blocker.** Short plan (ordering).
      - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
        (a per-API `where` pass, as `List[T: AnyType]`).
      - `(*, unsafe_uninit_length)` construction and resize: blocked on an
        uninit-element storage story for List (MaybeUninit-adjacent).
-
-  9. **Native-lane follow-ups.** The VM runs all of these; no plan
-     (monomorphizer and native-drop bug fixes).
+  8. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
+     and native-drop bug fixes.
      - `repr` lowers natively only for Strings, without escapes; no user
-       `write_repr_to` runs natively.
+       `write_repr_to` runs natively, so the repr family (task 1's texts,
+       `FormatStruct`) is pinned by conformance fixtures only.
      - Monomorphization cannot resolve a method-level parameter for a
        parameterized `@staticmethod` through a non-variadic generic instance
        (`p.pick[Int]()`) or for a method whose only parameter is
@@ -228,15 +191,33 @@ exempt from the ordering.
      - An erased body forwarding its own constructible binder
        (`hash[Self.H](key)` in `DictEntry.__init__`) monomorphizes with the
        callee's default: native `Dict[K, V, SumHasher]` entries hash under
-       `AHasher` while the VM honors `SumHasher` (the reified binder spelling
-       `Const::Str("H")` resolves only on the VM). Fixture outputs agree
+       `AHasher` while the VM honors `SumHasher`. Fixture outputs agree
        because each lane is self-consistent; a probe printing from the hasher
        diverges.
      - The generic `next[T: Iterator](mut it: T)` body fails natively
        (`unsupported reference-result method adapter`); `next` is pinned by
        conformance/fixtures/next_builtin.mojo only.
-
-  10. **Diagnostic wording and strictness.** No plan.
+  9. **Deliberate deferrals from the generic-clone arc.** Nothing depends
+     on these; each is a conscious limit, listed here so it is not mistaken
+     for unfinished task work.
+     - Clones are minted per whole instance (no reachability pruning) and
+       re-checked each discovery round: `benchmarks/compile/stdlib_heavy` is
+       about 2.2x its pre-clone baseline in release (`docs/performance.md`);
+       the repr methods added 2026-09-05 cost about 5% in debug across the
+       compile benchmarks. Lever: reachability-pruned minting.
+     - An instantiation whose argument mentions `StringLiteral` (`{"a": 1}`
+       is `Dict[StringLiteral, Int]`) keeps the erased path: its values keep
+       the literal runtime representation while an un-annotated binding
+       materializes `String`. Lifting it needs one runtime representation
+       for `StringLiteral` and `String`, or typing the display as
+       `Dict[String, Int]` as Mojo does.
+     - A call inside an unstamped bundled body on a bundled struct's generic
+       method keeps the erased path (requests are admitted from user code,
+       clone bodies, variadic specs, instances, and user structs).
+     - An instance clone whose walk cannot resolve an application (a
+       variadic template over a nested public `Tuple` argument) is dropped
+       to the erased path rather than failing the program.
+  10. **Diagnostic wording and strictness.**
       - An unavailable where-gated method reports `'set' is unavailable for
         Variant[Conn]: its where clause evaluated to False` rather than
         upstream's clause text.

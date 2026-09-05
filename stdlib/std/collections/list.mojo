@@ -8,6 +8,7 @@ from std.string import check_slice_bounds
 
 from std.memory import unsafe_alloc
 
+from std.reflection.type_info import _unqualified_type_name
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.optional import Optional
@@ -552,3 +553,16 @@ struct List[T: AnyType](
             writer.write(self.data[i])
             i += 1
         writer.write("]")
+
+    # Upstream's text: `List[SIMD[DType.int, 1]]([Int(1), Int(2)])`.
+    def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
+        Self.T, Writable
+    ):
+        writer.write("List[", _unqualified_type_name[Self.T](), "]([")
+        var i = 0
+        while i < self.size:
+            if i > 0:
+                writer.write(", ")
+            writer.write(repr(self.data[i]))
+            i += 1
+        writer.write("])")

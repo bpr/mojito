@@ -858,7 +858,18 @@ impl Elab<'_> {
                 // cross the ordinary checked boundary. Concrete CTFE uses have
                 // already been specialized; an unused public `Tuple[*Ts]`
                 // template must not invalidate an otherwise scalar subprogram.
-                StmtKind::Struct { .. } => !self.is_specializable(stmt),
+                StmtKind::Struct {
+                    name, type_params, ..
+                } => {
+                    !self.is_specializable(stmt)
+                        || (type_params
+                            .iter()
+                            .any(|parameter| parameter.name.starts_with('*'))
+                            && !matches!(
+                                name.rsplit('$').next().unwrap_or(name),
+                                "Tuple" | "TString"
+                            ))
+                }
                 StmtKind::Trait { .. } => true,
                 // Module-scope literal constants are part of the declaration
                 // environment elaboration would otherwise fold into the
@@ -880,7 +891,39 @@ impl Elab<'_> {
                 _ => false,
             })
             .cloned()
+            .map(|stmt| {
+                // A variadic template a retained body applies over its own
+                // parameters (`TypeNames[Self.T]()` in `List.write_repr_to`)
+                // crosses as the shell the pre-check elaboration emits; the
+                // public `Tuple`/`TString` keep their own machinery.
+                if let StmtKind::Struct {
+                    name, type_params, ..
+                } = &stmt.kind
+                    && type_params
+                        .iter()
+                        .any(|parameter| parameter.name.starts_with('*'))
+                    && !matches!(name.rsplit('$').next().unwrap_or(name), "Tuple" | "TString")
+                {
+                    return super::specialize::template_shell(&stmt);
+                }
+                stmt
+            })
             .collect::<Vec<_>>();
+        // A retained struct's method that only elaborates with its own
+        // compile-time parameters bound (a `comptime for` over a method pack,
+        // `FormatStruct.params`) crosses the boundary as the trap stub the
+        // pre-check elaboration installs; no compile-time program calls it
+        // unspecialized.
+        for statement in &mut program {
+            let StmtKind::Struct { name, methods, .. } = &mut statement.kind else {
+                continue;
+            };
+            for method in methods.iter_mut() {
+                if !method.type_params.is_empty() && super::block_has_comptime(&method.body) {
+                    method.body = vec![super::specialize::unspecialized_method_stub(name, method)];
+                }
+            }
+        }
         let type_aliases = self.vm_ctfe_type_aliases();
         if !type_aliases.is_empty() {
             let subs = |alias: &str| type_aliases.get(alias).cloned();

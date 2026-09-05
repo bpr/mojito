@@ -12,6 +12,7 @@
 # references).
 
 from std.collections.list import List
+from std.reflection.type_info import _unqualified_type_name
 from std.hashlib import Hasher, default_hasher, hash
 from std.iterable import Iterable, Iterator, StopIteration
 from std.optional import Optional
@@ -474,6 +475,29 @@ struct Dict[
             )
             i += 1
         writer.write("}")
+
+    # Upstream's text: `Dict[String, SIMD[DType.int, 1]]({'a': Int(1)})`.
+    def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
+        Self.K, Writable
+    ) and conforms_to(Self.V, Writable):
+        writer.write(
+            "Dict[",
+            _unqualified_type_name[Self.K](),
+            ", ",
+            _unqualified_type_name[Self.V](),
+            "]({",
+        )
+        var i = 0
+        while i < len(self.entries):
+            if i > 0:
+                writer.write(", ")
+            writer.write(
+                repr(self.entries._get_copy(i).key),
+                ": ",
+                repr(self.entries._get_copy(i).value),
+            )
+            i += 1
+        writer.write("})")
 
     # Append an entry known not to be present, growing the index at load
     # factor one.

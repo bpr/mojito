@@ -326,19 +326,23 @@ impl<'a> Elab<'a> {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                let methods = methods
+                let mut methods = methods
                     .iter()
                     .map(|m| {
                         let mut m = m.clone();
                         m.body = match self.block(&m.body, env, true) {
                             Ok(body) => body,
-                            // A generic struct's method whose body only
-                            // elaborates with the struct's parameters bound
-                            // (a `comptime if` on `Self.T`) becomes a trap
-                            // stub on the template; every concrete call
-                            // retargets to a per-instantiation clone, which
-                            // folds it with the parameters bound.
-                            Err(error) if names_struct_parameter(&error, type_params) => {
+                            // A method whose body only elaborates with the
+                            // struct's parameters (a `comptime if` on
+                            // `Self.T`) or its own (`comptime if U == Int`,
+                            // a `comptime for` over a method pack) bound
+                            // becomes a trap stub on the template; every
+                            // concrete call retargets to a per-instantiation
+                            // or per-call clone, which folds it bound.
+                            Err(error)
+                                if names_struct_parameter(&error, type_params)
+                                    || names_struct_parameter(&error, &m.type_params) =>
+                            {
                                 vec![super::specialize::unspecialized_method_stub(name, &m)]
                             }
                             Err(error) => return Err(error),
@@ -346,6 +350,24 @@ impl<'a> Elab<'a> {
                         Ok(m)
                     })
                     .collect::<Result<Vec<_>, ComptimeError>>()?;
+                // Checker-discovered instantiations of the struct's own
+                // generic methods (`f.fields(1, "a")`, `b.kind[Int]()` on a
+                // non-generic struct) mint per-call clones with the method's
+                // parameters baked; a closed instance of a generic struct
+                // mints its clones in `generate_instance_clones` instead.
+                if !self.is_specializable(stmt) {
+                    let requests = self.method_requests.get(name.as_str());
+                    for method in &stmt_methods(stmt) {
+                        methods.extend(self.per_call_method_clones(
+                            method,
+                            requests.map(Vec::as_slice).unwrap_or(&[]),
+                            &[],
+                            &[],
+                            None,
+                            env,
+                        ));
+                    }
+                }
                 out.push(mk(
                     StmtKind::Struct {
                         name: name.clone(),
@@ -750,4 +772,12 @@ fn names_struct_parameter(error: &ComptimeError, type_params: &[TypeParam]) -> b
         || type_params.iter().any(|parameter| {
             text.contains(&format!("'{}'", parameter.name.trim_start_matches('*')))
         })
+}
+
+/// The source methods of a struct statement (empty for any other statement).
+fn stmt_methods(stmt: &Stmt) -> Vec<mojito_ast::ast::Method> {
+    match &stmt.kind {
+        StmtKind::Struct { methods, .. } => methods.clone(),
+        _ => Vec::new(),
+    }
 }

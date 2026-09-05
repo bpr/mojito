@@ -287,3 +287,5 @@ generic-struct-instance-bodies	run	assets/ok/generic_struct_instance_bodies.mojo
 generic-struct-instance-dispatch	run	assets/ok/generic_struct_instance_dispatch.mojo
 generic-instance-repr	run	conformance/fixtures/generic_instance_repr.mojo
 variadic-pack-forwarding-generic-def	run	assets/ok/variadic_pack_forwarding_generic_def.mojo
+generic-method-per-call-clones	run	assets/ok/generic_method_per_call_clones.mojo
+generic-repr-texts	run	conformance/fixtures/generic_repr_texts.mojo

@@ -1413,6 +1413,7 @@ impl Checker {
             span.clone(),
             mojito_checked::checked::MethodInstantiation {
                 owner: name.to_string(),
+                owner_arguments: Vec::new(),
                 method: "__init__".to_string(),
                 parameter_names: sig.names.clone(),
                 arguments: arguments.clone(),
@@ -1602,6 +1603,7 @@ impl Checker {
                         span.clone(),
                         mojito_checked::checked::MethodInstantiation {
                             owner: name.to_string(),
+                            owner_arguments: Vec::new(),
                             method: "__init__".to_string(),
                             parameter_names: selected.parameter_names.clone(),
                             arguments: arguments.clone(),
@@ -2262,10 +2264,16 @@ impl Checker {
                 _ => None,
             })
             .fold(HashMap::new(), |mut packs, (name, ty)| {
+                // A pack element materializes like any other inferred
+                // instantiation argument (a literal binds `Int`/`String`).
+                let element = match materialized_instantiation_argument(&TyArg::Ty(ty)) {
+                    TyArg::Ty(ty) => ty,
+                    _ => unreachable!("a type argument materializes to a type"),
+                };
                 packs
                     .entry(name)
                     .or_insert_with(Vec::new)
-                    .push(CtValue::Type(Box::new(ty)));
+                    .push(CtValue::Type(Box::new(element)));
                 packs
             });
         let mut tyargs = Vec::with_capacity(decls.len());

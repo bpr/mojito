@@ -150,6 +150,12 @@ pub fn specialized_method_values(decls: &[ParamDecl], arguments: &[TyArg]) -> Op
                 },
                 _,
             ) => continue,
+            // A method-level pack bound to a closed tuple of types
+            // (`fields(1, "a")` infers `Ts = (Int, String)`) bakes like any
+            // other parameter; a pack bound any other way is unspecializable.
+            (ParamDecl::Type { variadic: true, .. }, TyArg::Val(value @ CtValue::Tuple(_))) => {
+                values.push(value.clone());
+            }
             (ParamDecl::Type { variadic: true, .. }, _) => return None,
             (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
                 values.push(CtValue::Type(Box::new(ty.clone())));

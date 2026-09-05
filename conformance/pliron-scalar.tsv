@@ -78,6 +78,7 @@ assets/ok/generic_copyable_iterator_refinement.mojo	-	ineligible	no-scalar-entry
 assets/ok/generic_ctfe_associated_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctor_literal_materialization.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_method_per_call_clones.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_equatable_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_instance_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_instance_dispatch.mojo	-	ineligible	no-scalar-entry-shape

@@ -1,4 +1,5 @@
 from std.collections.list import List, _ListOwnedIter
+from std.reflection.type_info import _unqualified_type_name
 from std.hashlib import Hasher, default_hasher
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 from std.memory import unsafe_alloc
@@ -281,6 +282,27 @@ struct Set[
             writer.write(self.items[i])
             i += 1
         writer.write("}")
+
+    # Upstream's text shape, `Set[SIMD[DType.int, 1], Hasher=...]({Int(3)})`;
+    # the hasher parameter spells Mojito's key-less `AHasher` where upstream
+    # prints its keyed `AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]`.
+    def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
+        Self.T, Copyable
+    ) and conforms_to(Self.T, Writable):
+        writer.write(
+            "Set[",
+            _unqualified_type_name[Self.T](),
+            ", Hasher=",
+            _unqualified_type_name[Self.H](),
+            "]({",
+        )
+        var i = 0
+        while i < len(self.items):
+            if i > 0:
+                writer.write(", ")
+            writer.write(repr(self.items[i]))
+            i += 1
+        writer.write("})")
 
     # Library-private membership index (Set owns its equality scan rather
     # than leaning on List.index's raising contract).

@@ -8,6 +8,7 @@
 # `_size == 1`, and `unsafe_take_pointee`/`unsafe_deinit_pointee` are the raw
 # vocabulary over that storage, as in List and Array.
 
+from std.reflection.type_info import _unqualified_type_name
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.memory import unsafe_alloc
@@ -178,6 +179,15 @@ struct Optional[T: AnyType](
         else:
             writer.write("None")
 
+    # Upstream's text: `Optional[SIMD[DType.int, 1]](Int(5))` / `(None)`.
+    def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(Self.T, Writable):
+        writer.write("Optional[", _unqualified_type_name[Self.T](), "](")
+        if self._size == 1:
+            writer.write(repr(self.data[0]))
+        else:
+            writer.write("None")
+        writer.write(")")
+
     # Consuming, like upstream: the payload (or `default`) moves out and the
     # slot is released either way.
     def or_else(deinit self, var default: Self.T) -> Self.T where conforms_to(
@@ -257,3 +267,44 @@ struct Optional[T: AnyType](
         self.data = unsafe_alloc[Self.T](0)
         self._size = 0
         return result^
+
+
+# Upstream's register-passable optional in subset shape: `Boolable`,
+# `Defaultable`, `TrivialRegisterPassable` (no `DevicePassable` /
+# `_to_device_type`/`get_type_name`); the payload lives in an `Optional` rather than an
+# MLIR register variant, so the register-passing guarantee is nominal.
+struct OptionalReg[T: TrivialRegisterPassable](
+    Boolable, Defaultable, TrivialRegisterPassable
+):
+    var _value: Optional[Self.T]
+
+    def __init__(out self):
+        self._value = Optional[Self.T]()
+
+    @implicit
+    def __init__(out self, value: Self.T):
+        self._value = Optional[Self.T](value)
+
+    @implicit
+    def __init__(out self, value: NoneType):
+        self._value = Optional[Self.T]()
+
+    def __is__(self, other: NoneType) -> Bool:
+        return not self._value
+
+    def __isnot__(self, other: NoneType) -> Bool:
+        return Bool(self._value)
+
+    def __bool__(self) -> Bool:
+        return Bool(self._value)
+
+    def value(self) -> Self.T:
+        return self._value.value()
+
+    def unsafe_value(self) -> Self.T:
+        return self._value.unsafe_value()
+
+    def or_else(var self, var default: Self.T) -> Self.T:
+        if self._value:
+            return self._value.value()
+        return default

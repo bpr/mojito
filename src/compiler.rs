@@ -218,6 +218,7 @@ impl Compiler {
         let templates = bound_generic_template_names(&linked);
         let range_templates = scalar_range_template_names(&linked);
         let variadic_templates = variadic_struct_template_names(&linked);
+        let user_structs = user_struct_names(&linked);
         let mut tuple_requests: Vec<TupleSpecializationRequest> = Vec::new();
         let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
@@ -285,7 +286,9 @@ impl Compiler {
                     Some(_) => {}
                 }
             }
-            for request in method_specialization_requests(&checked, &variadic_templates) {
+            for request in
+                method_specialization_requests(&checked, &variadic_templates, &user_structs)
+            {
                 if conflicted.contains(request.occurrence()) {
                     continue;
                 }
@@ -556,12 +559,21 @@ fn def_specialization_requests(
 /// keyed by the plain family name the checker's scalar-`range` inference
 /// records (the checker never sees the dropped comptime-class templates, so
 /// it cannot record the module-mangled spelling itself).
-/// The checker-recorded generic-method instantiations on specialized
-/// variadic structs that are closed and therefore replayable as per-call
-/// clones. Conflicting recordings for one occurrence drop it, as for defs.
+/// The checker-recorded generic-method instantiations that are closed and
+/// therefore replayable as per-call clones: on a specialized variadic
+/// struct, on a closed instance of an ordinary generic struct (the request
+/// owner is the instance key `mangle(template, arguments)`, the key
+/// `generate_instance_clones` consults), on a user-declared struct, or from
+/// a call site outside the unstamped bundled stdlib (user code, and
+/// per-instantiation clone bodies by their `$`-tagged source:
+/// `List[Int].write_repr_to`'s `FormatStruct.params(...)`). A call inside an unstamped bundled body on a
+/// bundled struct keeps the erased path, so a program that never reaches
+/// such a method pays no discovery round. Conflicting recordings for one
+/// occurrence drop it, as for defs.
 fn method_specialization_requests(
     checked: &CheckedProgram,
     variadic_templates: &std::collections::HashSet<String>,
+    user_structs: &std::collections::HashSet<String>,
 ) -> Vec<MethodSpecializationRequest> {
     use std::collections::hash_map::Entry;
     let mut by_occurrence: std::collections::HashMap<
@@ -573,12 +585,47 @@ fn method_specialization_requests(
         let specialized_owner = variadic_templates
             .iter()
             .any(|template| instantiation.owner.starts_with(&format!("{template}$")));
-        if !specialized_owner || !instantiation.arguments.iter().all(closed_generic_argument) {
+        let instance_owner = !instantiation.owner_arguments.is_empty();
+        // A per-instantiation clone body carries a `$`-tagged source
+        // (`list.mojo$List$write_repr_to$y3:Int`): it exists only for an
+        // instance user code reached, so its calls count as user sites.
+        let user_site = span.source.as_deref().is_none_or(|source| {
+            source.contains('$') || !crate::checker::is_bundled_module_source(Some(source))
+        });
+        // A variadic template's own name is its shell: a recording on the
+        // abstract type (before the call's clone returns the concrete
+        // specialization) can mint nothing and would only conflict with the
+        // later recording on the specialization.
+        if variadic_templates.contains(&instantiation.owner)
+            || !(specialized_owner
+                || instance_owner
+                || user_site
+                || user_structs.contains(&instantiation.owner))
+            || !instantiation.arguments.iter().all(closed_generic_argument)
+            || !instantiation
+                .owner_arguments
+                .iter()
+                .all(closed_generic_argument)
+        {
             continue;
         }
+        let owner = if instance_owner {
+            let values: Vec<CtValue> = instantiation
+                .owner_arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => CtValue::Type(Box::new(ty.clone())),
+                    TyArg::Val(value) => value.clone(),
+                    TyArg::Origin(_) => CtValue::Param("origin".to_string()),
+                })
+                .collect();
+            crate::symbol::mangle(&instantiation.owner, &values)
+        } else {
+            instantiation.owner.clone()
+        };
         let request = MethodSpecializationRequest::new(
             span.clone(),
-            instantiation.owner.clone(),
+            owner,
             instantiation.method.clone(),
             instantiation.parameter_names.clone(),
             instantiation.arguments.clone(),
@@ -612,6 +659,19 @@ fn method_specialization_requests(
         key(a).cmp(&key(b))
     });
     requests
+}
+
+/// The structs a program declares outside the bundled stdlib: their generic
+/// methods get per-call clones on request.
+fn user_struct_names(linked: &[Stmt]) -> std::collections::HashSet<String> {
+    linked
+        .iter()
+        .filter(|statement| !crate::checker::is_bundled_module_source(statement.module.as_deref()))
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn scalar_range_template_names(linked: &[Stmt]) -> std::collections::HashMap<&'static str, String> {

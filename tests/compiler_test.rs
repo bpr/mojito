@@ -260,6 +260,23 @@ fn variant_pack_forwarding_through_a_generic_def_runs() {
 }
 
 #[test]
+fn generic_methods_specialize_per_call_on_every_struct() {
+    // A method-level type parameter on an ordinary generic instance folds
+    // its `comptime if` per call (the clone bakes the instance's argument
+    // before the call's), and a method-level pack on a non-generic struct
+    // is inferred from the overflow arguments and expanded in its clone.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "struct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def kind[U: AnyType](self) -> Int:\n        comptime if U == Self.T:\n            return 2\n        comptime if U == Int:\n            return 1\n        return 0\n\nstruct Plain(Movable):\n    var n: Int\n\n    def __init__(out self):\n        self.n = 0\n\n    def fields[*Ts: Writable](mut self, *args: *Ts):\n        comptime for i in range(Ts.length):\n            self.n += 1\n\ndef main():\n    var b = Box[Bool](True)\n    print(b.kind[Int](), b.kind[Bool](), b.kind[String]())\n    var p = Plain()\n    p.fields(1, \"a\", True)\n    print(p.n)\n",
+            std::path::Path::new("/tmp/mojito_per_call_clones.mojo"),
+        )
+        .expect("per-call method clones");
+    let output = compiler.execute(&program).expect("run the per-call clones");
+    assert_eq!(output.output, "1 2 0\n3\n");
+}
+
+#[test]
 fn variant_requires_import_and_checks_projection_tags() {
     let compiler = Compiler::default();
     let unimported = compiler

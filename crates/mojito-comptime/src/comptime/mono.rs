@@ -1699,6 +1699,7 @@ fn param_arg_mentions_any(argument: &ParamArg, names: &[String]) -> bool {
 
 fn type_mentions_any(ty: &Type, names: &[String]) -> bool {
     match ty {
+        Type::SelfParam(name) => names.iter().any(|candidate| candidate == name),
         Type::Named(name, arguments) => {
             names
                 .iter()

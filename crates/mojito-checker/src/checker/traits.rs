@@ -2070,10 +2070,12 @@ impl Checker {
                 .get(name)
                 .map(|s| {
                     s.conforms.iter().any(|c| {
-                        matches!(c.as_str(), "Copyable" | "ImplicitlyCopyable")
-                            && s.conformance_conditions.get(c).is_none_or(|condition| {
-                                self.eval_conformance_condition(s, args, condition)
-                            })
+                        matches!(
+                            c.as_str(),
+                            "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
+                        ) && s.conformance_conditions.get(c).is_none_or(|condition| {
+                            self.eval_conformance_condition(s, args, condition)
+                        })
                     }) || s.methods.contains_key("__copyinit__")
                 })
                 .unwrap_or(true),
@@ -2131,7 +2133,7 @@ impl Checker {
                 },
                 |s| {
                     s.conforms.iter().any(|c| {
-                        c == "ImplicitlyCopyable"
+                        matches!(c.as_str(), "ImplicitlyCopyable" | "TrivialRegisterPassable")
                             && s.conformance_conditions.get(c).is_none_or(|condition| {
                                 self.eval_conformance_condition(s, args, condition)
                             })

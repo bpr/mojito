@@ -771,42 +771,9 @@ impl Checker {
         if source.is_none() || super::overload_support::is_bundled_module_source(source) {
             return;
         }
-        // Only a struct whose parameters are all plain type parameters gets
-        // clones (the elaborator's `instance_template`); value parameters,
-        // callable-bounded parameters, and origin binders keep the erased
-        // path, so their applications are not requests.
-        let bakeable = self.structs.get(template).is_some_and(|info| {
-            !info.decls.is_empty()
-                && info.decls.iter().all(|decl| {
-                    matches!(
-                        decl,
-                        ParamDecl::Type {
-                            variadic: false,
-                            callable_bound: None,
-                            ..
-                        }
-                    )
-                })
-                && info.decls.len() == arguments.len()
-                && !info.source_params.iter().any(|parameter| {
-                    matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-                        || parameter.is_origin_mutability_binder(&info.source_params)
-                })
-        });
-        // A `StringLiteral` argument names no clone (`instance_method_clone_name`):
-        // the instance keeps the erased path, so there is nothing to mint.
-        if !bakeable
-            || !arguments.iter().all(|argument| {
-                matches!(argument, TyArg::Ty(ty)
-                    if !mojito_types::types::contains_string_literal(ty))
-            })
-        {
+        let Some(arguments) = self.instance_arguments(template, arguments) else {
             return;
-        }
-        let arguments: Vec<TyArg> = arguments
-            .iter()
-            .map(materialized_instantiation_argument)
-            .collect();
+        };
         let mut recorded = self.struct_instantiations.borrow_mut();
         if !recorded
             .iter()
@@ -817,6 +784,72 @@ impl Checker {
                 arguments,
             });
         }
+    }
+
+    /// The materialized declaration-order arguments of a closed instance of
+    /// an ordinary generic struct that gets per-instantiation clones, or
+    /// `None` when the application keeps the erased path. Only a struct whose
+    /// parameters are all plain type parameters qualifies (the elaborator's
+    /// `instance_template`): value parameters, callable-bounded parameters,
+    /// and origin binders keep the erased path, as does a `StringLiteral`
+    /// argument (`instance_method_clone_name` names it no clone).
+    pub(super) fn instance_arguments(
+        &self,
+        template: &str,
+        arguments: &[TyArg],
+    ) -> Option<Vec<TyArg>> {
+        let info = self.structs.get(template)?;
+        let bakeable = !info.decls.is_empty()
+            && info.decls.iter().all(|decl| {
+                matches!(
+                    decl,
+                    ParamDecl::Type {
+                        variadic: false,
+                        callable_bound: None,
+                        ..
+                    }
+                )
+            })
+            && info.decls.len() == arguments.len()
+            && !info.source_params.iter().any(|parameter| {
+                matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+                    || parameter.is_origin_mutability_binder(&info.source_params)
+            })
+            && arguments.iter().all(|argument| {
+                matches!(argument, TyArg::Ty(ty)
+                    if !mojito_types::types::contains_string_literal(ty))
+            });
+        bakeable.then(|| {
+            arguments
+                .iter()
+                .map(materialized_instantiation_argument)
+                .collect()
+        })
+    }
+
+    /// The per-call clone of a generic method (`kind[U]`) on the struct
+    /// instance `owner[owner_arguments]`, once the elaborator has appended it
+    /// to the template: the instance's values are baked before the call's
+    /// (`kind$y3:Int$y4:Bool` on `Box[Int]`), the order
+    /// `generate_instance_clones` mints.
+    pub(super) fn instance_call_method_clone(
+        &self,
+        owner: &str,
+        owner_arguments: &[TyArg],
+        method: &str,
+        method_decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Option<String> {
+        let info = self.structs.get(owner)?;
+        let instance = self.instance_arguments(owner, owner_arguments)?;
+        let mut values = specialized_method_values(&info.decls, &instance)?;
+        let call = specialized_method_values(method_decls, arguments)?;
+        if values.is_empty() || call.is_empty() {
+            return None;
+        }
+        values.extend(call);
+        let name = mojito_symbol::symbol::mangle(method, &values);
+        info.methods.contains_key(&name).then_some(name)
     }
 
     /// The per-instantiation clone of `method` on the struct instance
@@ -922,15 +955,40 @@ impl Checker {
             let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
-        let arguments = signature
+        let arguments: HashMap<String, TyArg> = signature
             .decls
             .iter()
             .zip(tyargs.iter().cloned())
             .map(|(decl, argument)| (decl.name().trim_start_matches('*').to_string(), argument))
             .collect();
+        // A method-level type pack (`*args: *Ts`) inferred from the overflow
+        // arguments resolves to the heterogeneous element list, so each
+        // overflow argument scores and converts against its own element
+        // (the specialized-pack shape the selection pass already handles).
+        let resolved_variadic = match variadic {
+            Some(Ty::Param { name, .. }) if name.starts_with('*') => {
+                match arguments.get(name.trim_start_matches('*')) {
+                    Some(TyArg::Val(CtValue::Tuple(values)))
+                        if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
+                    {
+                        Some(Ty::RuntimePack(
+                            values
+                                .iter()
+                                .map(|value| match value {
+                                    CtValue::Type(ty) => (**ty).clone(),
+                                    _ => unreachable!("checked above"),
+                                })
+                                .collect(),
+                        ))
+                    }
+                    _ => variadic.map(resolve).transpose()?,
+                }
+            }
+            other => other.map(resolve).transpose()?,
+        };
         Ok((
             params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
-            variadic.map(resolve).transpose()?,
+            resolved_variadic,
             kw_variadic.map(resolve).transpose()?,
             subst,
             arguments,

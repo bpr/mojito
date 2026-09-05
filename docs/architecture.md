@@ -445,6 +445,20 @@ signature. A specialization is walked whole — signature and body — for furth
 template uses, so a clone's expanded `-> Variant[Int, String]` requests that
 concrete struct exactly as its body's calls do.
 
+Per-call clones of a method with its own compile-time parameters share one
+minting path (`per_call_method_clones`): the elaborator's struct walk mints
+them for a named owner and `generate_instance_clones` for an instance
+(instance values first, then the call's), a pack binding expands `*args:
+*Ts` to the `$pack[...]` element list inside `specialize_method_clone`
+exactly as a def specialization does, and the template's method body
+becomes the `unspecialized_method_stub` trap when it only elaborates with
+the struct's or its own parameters bound. In the checker,
+`instantiate_method_generics` resolves an inferred pack's variadic element to
+the heterogeneous `RuntimePack` so each overflow argument scores and converts
+against its own element, and the call retargets through
+`instance_call_method_clone` / `specialized_method_clone` by the composed
+name.
+
 A variadic struct applied over an enclosing declaration's own type parameters
 (`Variant[T, String]` in `def wrap[T]`, `Variant[*Ts]` in `def f[*Ts]`, a
 `Variant[*Self.Ts]` field of `struct Outer[*Ts]`) cannot specialize eagerly.
@@ -466,8 +480,17 @@ Inferred applications reach the same clones through the compiler's discovery
 fixpoint: `Compiler::compile_linked` iterates elaborate→check, deriving
 `DefSpecializationRequest`s from the checker's recorded generic
 instantiations and `MethodSpecializationRequest`s from its recorded generic
-*method* instantiations on specialized variadic structs (closed arguments
-only, keyed by occurrence span with the phase-local syntax id stripped) and
+*method* instantiations — on a specialized variadic struct, on a closed
+instance of an ordinary generic struct (the request owner is the instance
+key `mangle(template, arguments)` and the instance's arguments bake before
+the call's: `kind$y3:Int$y4:Bool`), on a user-declared struct, or from any
+call site outside the unstamped bundled stdlib (user code and `$`-stamped
+clone bodies: `List[Int].write_repr_to` reaching `FormatStruct.params`),
+never for a variadic template's own shell name (its round-1 recording would
+only conflict with the specialization's); a method-level pack inferred from
+the overflow arguments is a closed `CtValue::Tuple` of materialized element
+types (closed arguments only, keyed by occurrence span with the phase-local
+syntax id stripped) and
 re-elaborating the original linked program with the accumulated monotone
 request set until a round discovers nothing new; a hard round cap reports inferred polymorphic recursion as a
 dedicated divergence diagnostic. Request seeding records each occurrence's
@@ -745,7 +768,11 @@ Specialization value forms include compile-time struct instances and dtypes:
 `CtValue::Dtype` binds a `[dtype: DType]` parameter, and `CtValue::Struct`
 freezes a fieldwise-constructible, recursively pointer-free struct instance
 produced by VM-backed CTFE (a constructor or static-method call runs through a
-synthesized entry against the checked CTFE subprogram). Both monomorphize
+synthesized entry against the checked CTFE subprogram; that subprogram
+carries variadic templates other than the public `Tuple`/`TString` as the
+shells pre-check elaboration emits, so a retained body's symbolic
+application checks, and stubs a struct method whose comptime body only
+elaborates with its own parameters bound, as the pre-check does). Both monomorphize
 their declarations before checking — the checker never sees a symbolic dtype
 or struct value, no MIR schema is affected, and a frozen instance materializes
 back as its ordinary fieldwise construction wherever the specialized body

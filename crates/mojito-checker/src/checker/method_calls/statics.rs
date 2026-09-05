@@ -272,18 +272,44 @@ impl Checker {
                 .insert(span.clone(), selected.param_decls.clone());
         }
         if let Some(arguments) = &selected.instantiation {
+            // An explicit receiver instance (`Box[Int].has[Bool]()`) keys the
+            // request by the instance, like a method call on one.
+            let receiver_targs = (!struct_targs.is_empty())
+                .then(|| {
+                    self.structs.get(sname).and_then(|info| {
+                        self.resolve_use_params(sname, &info.decls, struct_targs, &[], &[])
+                            .ok()
+                            .map(|(_, tyargs)| tyargs)
+                    })
+                })
+                .flatten()
+                .unwrap_or_default();
+            let owner_arguments = self
+                .instance_arguments(sname, &receiver_targs)
+                .unwrap_or_default();
+            let source_method = method.split('$').next().unwrap_or(method);
             self.method_instantiations.borrow_mut().insert(
                 span.clone(),
                 mojito_checked::checked::MethodInstantiation {
                     owner: sname.to_string(),
-                    method: method.to_string(),
+                    owner_arguments: owner_arguments.clone(),
+                    method: source_method.to_string(),
                     parameter_names: selected.parameter_names.clone(),
                     arguments: arguments.clone(),
                 },
             );
-            if let Some(clone) =
+            let clone = if owner_arguments.is_empty() {
                 self.specialized_method_clone(sname, method, &selected.param_decls, arguments)
-            {
+            } else {
+                self.instance_call_method_clone(
+                    sname,
+                    &receiver_targs,
+                    source_method,
+                    &selected.param_decls,
+                    arguments,
+                )
+            };
+            if let Some(clone) = clone {
                 return self.infer_struct_static_method(
                     span,
                     sname,

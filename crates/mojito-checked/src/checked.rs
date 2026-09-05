@@ -264,6 +264,12 @@ pub struct GenericInstantiation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodInstantiation {
     pub owner: String,
+    /// The receiver instance's declaration-order type arguments when `owner`
+    /// is an ordinary generic struct reached at a closed instance
+    /// (`Optional[Int]`): the per-call clone then lives on the template with
+    /// the instance's arguments baked before the call's. Empty for a
+    /// specialized variadic struct or a non-generic struct.
+    pub owner_arguments: Vec<mojito_types::types::TyArg>,
     pub method: String,
     /// The selected overload's runtime parameter names, in declaration order.
     pub parameter_names: Vec<String>,

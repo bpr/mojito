@@ -78,6 +78,7 @@ assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	saniti
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctor_literal_materialization.mojo	main	exe-differential	sanitized
+assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_equatable_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
