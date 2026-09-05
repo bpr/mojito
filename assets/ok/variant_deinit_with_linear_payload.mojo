@@ -14,5 +14,5 @@ struct Conn(Movable, Deinitable where False):
 
 def main():
     var v: Variant[Conn] = Variant[Conn](Conn(3))
-    v.deinit_with(lambda (var element: Conn): element^.close())
+    v^.deinit_with(lambda (var element: Conn): element^.close())
     print("done")

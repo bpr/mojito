@@ -25,6 +25,7 @@ impl VmBackend {
         } = call;
         let CallerFrame {
             id: frame_id,
+            function: caller_function,
             registers: regs,
             variables: vars,
         } = frame;
@@ -90,6 +91,7 @@ impl VmBackend {
             },
             CallerFrame {
                 id: frame_id,
+                function: caller_function,
                 registers: regs,
                 variables: vars,
             },
@@ -118,6 +120,7 @@ impl VmBackend {
         } = call;
         let CallerFrame {
             id: caller_id,
+            function: _,
             registers: caller_registers,
             variables: caller_variables,
         } = caller;
@@ -351,6 +354,7 @@ impl VmBackend {
         } = invocation;
         let CallerFrame {
             id: frame_id,
+            function: caller_function,
             registers: regs,
             variables: vars,
         } = frame;
@@ -423,6 +427,7 @@ impl VmBackend {
                                 },
                                 CallerFrame {
                                     id: frame_id,
+                                    function: caller_function,
                                     registers: regs,
                                     variables: vars,
                                 },
@@ -651,7 +656,16 @@ impl VmBackend {
                         } else {
                             param_decls
                         };
-                        let supplied = runtime_parameter_arguments(contract, param_arg_regs, regs);
+                        let supplied = runtime_parameter_arguments(
+                            prog,
+                            CallerBindings {
+                                function: caller_function,
+                                registers: regs,
+                                variables: vars,
+                            },
+                            contract,
+                            param_arg_regs,
+                        );
                         let supplied = resolve_value_parameter_slots(contract, &supplied);
                         reify_value_parameters(&signature.param_decls, &supplied)
                     })
@@ -667,6 +681,7 @@ impl VmBackend {
                         },
                         CallerFrame {
                             id: frame_id,
+                            function: caller_function,
                             registers: regs,
                             variables: vars,
                         },

@@ -825,10 +825,11 @@ fn rejects_wrong_struct_type_argument() {
 
 #[test]
 fn rejects_conflicting_type_parameter_solutions() {
-    // A concrete Float64 parameter and an Int-literal argument do not unify:
-    // the literal is defaulted to Int, so `Pair(1.0, 2)` is a conflict, not
-    // `Pair[Float64]` (keeps generic specialization and VM storage consistent).
-    let e = err(&format!("{PAIR}var p: Pair[Float64] = Pair(1.0, 2)\n"));
+    // A literal argument coerces to the parameter an earlier argument bound
+    // (`Pair(1.0, 2)` is `Pair[Float64]`, as upstream widens); an argument
+    // that cannot coerce is a conflict, not a fresh solution.
+    ok(&format!("{PAIR}var p: Pair[Float64] = Pair(1.0, 2)\n"));
+    let e = err(&format!("{PAIR}var p = Pair(1.0, \"x\")\n"));
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
 }
 

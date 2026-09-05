@@ -18,6 +18,8 @@ impl VmBackend {
         regs: &mut [Value],
         vars: &mut Vec<Value>,
     ) -> Result<Flow, RuntimeError> {
+        // The executing frame's function, before any callee shadows the name.
+        let caller_function = function;
         self.burn_ctfe()?;
         match i {
             MirInstr::EstablishLoans { .. } | MirInstr::InvalidateInteriors { .. } => {}
@@ -109,23 +111,8 @@ impl VmBackend {
             MirInstr::Const { dest, k } => regs[dest.0 as usize] = const_value(k),
             MirInstr::ConstructTypeParam { dest, param } => {
                 // A constructible type parameter is reified at runtime as the
-                // bound struct's name: a def binds it into the frame local of
-                // the same name; a struct method reads it from `self`'s
-                // reified parameters.
-                let definition = &prog.mir.functions[function].1;
-                let bound = definition
-                    .var_names
-                    .iter()
-                    .position(|candidate| candidate == param)
-                    .map(|slot| vars[slot].clone())
-                    .filter(|value| !matches!(value, Value::None))
-                    .or_else(|| match vars.first() {
-                        Some(Value::Struct { value_params, .. }) => value_params
-                            .iter()
-                            .find(|(candidate, _)| candidate == param)
-                            .map(|(_, value)| value.clone()),
-                        _ => None,
-                    });
+                // bound struct's name.
+                let bound = bound_type_parameter(prog, function, vars, param);
                 let Some(Value::Str(type_name)) = bound else {
                     return Err(RuntimeError::Unsupported(format!(
                         "vm: constructing type parameter '{param}' requires a reified type argument"
@@ -291,11 +278,21 @@ impl VmBackend {
                 // The supplied compile-time value-parameter arguments (a type
                 // parameter is `None`), used to reify a constructed struct's
                 // `value_params`.
+                let caller = CallerBindings {
+                    function: caller_function,
+                    registers: regs,
+                    variables: vars,
+                };
                 let pvals = prog
                     .sigs
                     .get(&func.0)
                     .map(|signature| {
-                        runtime_parameter_arguments(&signature.param_decls, param_arg_regs, regs)
+                        runtime_parameter_arguments(
+                            prog,
+                            caller,
+                            &signature.param_decls,
+                            param_arg_regs,
+                        )
                     })
                     .unwrap_or_else(|| {
                         param_arg_regs
@@ -413,6 +410,7 @@ impl VmBackend {
                         },
                         CallerFrame {
                             id: frame_id,
+                            function: caller_function,
                             registers: regs,
                             variables: vars,
                         },
@@ -527,7 +525,16 @@ impl VmBackend {
                         } else {
                             param_decls
                         };
-                        let supplied = runtime_parameter_arguments(contract, param_arg_regs, regs);
+                        let supplied = runtime_parameter_arguments(
+                            prog,
+                            CallerBindings {
+                                function: caller_function,
+                                registers: regs,
+                                variables: vars,
+                            },
+                            contract,
+                            param_arg_regs,
+                        );
                         let supplied = resolve_value_parameter_slots(contract, &supplied);
                         reify_value_parameters(&signature.param_decls, &supplied)
                     })
@@ -620,6 +627,7 @@ impl VmBackend {
                     },
                     CallerFrame {
                         id: frame_id,
+                        function: caller_function,
                         registers: regs,
                         variables: vars,
                     },
@@ -674,6 +682,7 @@ impl VmBackend {
                     },
                     CallerFrame {
                         id: frame_id,
+                        function: caller_function,
                         registers: regs,
                         variables: vars,
                     },
@@ -817,6 +826,7 @@ impl VmBackend {
                         },
                         CallerFrame {
                             id: frame_id,
+                            function: caller_function,
                             registers: regs,
                             variables: vars,
                         },
@@ -915,6 +925,7 @@ impl VmBackend {
                         },
                         CallerFrame {
                             id: frame_id,
+                            function: caller_function,
                             registers: regs,
                             variables: vars,
                         },
@@ -998,6 +1009,7 @@ impl VmBackend {
                     },
                     CallerFrame {
                         id: frame_id,
+                        function: caller_function,
                         registers: regs,
                         variables: vars,
                     },
@@ -1068,6 +1080,7 @@ impl VmBackend {
                     },
                     CallerFrame {
                         id: frame_id,
+                        function: caller_function,
                         registers: regs,
                         variables: vars,
                     },
@@ -1886,6 +1899,7 @@ impl VmBackend {
                     },
                     CallerFrame {
                         id: frame_id,
+                        function: caller_function,
                         registers: regs,
                         variables: vars,
                     },
@@ -1921,6 +1935,7 @@ impl VmBackend {
         } = regions;
         let CallerFrame {
             id: _,
+            function: _,
             registers: regs,
             variables: vars,
         } = frame;

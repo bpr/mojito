@@ -292,9 +292,11 @@ impl Checker {
         // coercion, then through an `@implicit` conversion of the right
         // operand, as a call argument would convert); an overloaded dunder
         // records the exact lowered symbol so `BinOp.resolved` names it.
-        // `a != b` on a struct declaring `__eq__` without `__ne__` is
-        // Equatable's default `__ne__` (`not (a == b)`): the operator
-        // dispatches `__eq__` and MIR negates the result.
+        // `a != b` on an Equatable struct declaring `__eq__` without `__ne__`
+        // is Equatable's default `__ne__` (`not (a == b)`): the operator
+        // dispatches `__eq__` and MIR negates the result. The default is the
+        // trait's, so a struct that does not conform to `Equatable` has no
+        // `__ne__` (Mojo: "does not implement the '__ne__' method").
         // (`struct_dunder_signature_for` falls back to the first same-arity
         // declaration for diagnostics, so acceptance is re-checked here: a
         // `__ne__` overload set that accepts no operand of this type still
@@ -305,7 +307,10 @@ impl Checker {
                     self.value_coerces(&rt, &substitute_at(&sig.params[0], &info.decls, targs))
                 })
         };
-        let negated_equality = op == Ne && !dunder_accepts("__ne__") && dunder_accepts("__eq__");
+        let negated_equality = op == Ne
+            && !dunder_accepts("__ne__")
+            && dunder_accepts("__eq__")
+            && self.conforms_to(&lt, "Equatable");
         let dunder = if negated_equality {
             Some("__eq__")
         } else {

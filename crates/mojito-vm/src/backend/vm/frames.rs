@@ -371,7 +371,7 @@ impl VmBackend {
                         param_decls
                     };
                     let supplied =
-                        runtime_parameter_arguments(contract, param_arg_regs, &caller.registers);
+                        runtime_parameter_arguments(prog, caller.into(), contract, param_arg_regs);
                     let supplied = resolve_value_parameter_slots(contract, &supplied);
                     reify_value_parameters(&signature.param_decls, &supplied)
                 })
@@ -573,7 +573,7 @@ impl VmBackend {
                         param_decls
                     };
                     let supplied =
-                        runtime_parameter_arguments(contract, param_arg_regs, &caller.registers);
+                        runtime_parameter_arguments(prog, caller.into(), contract, param_arg_regs);
                     let supplied = resolve_value_parameter_slots(contract, &supplied);
                     reify_value_parameters(&signature.param_decls, &supplied)
                 })
@@ -633,9 +633,10 @@ impl VmBackend {
             .get(&func.0)
             .map(|signature| {
                 let supplied = runtime_parameter_arguments(
+                    prog,
+                    caller.into(),
                     &signature.param_decls,
                     param_arg_regs,
-                    &caller.registers,
                 );
                 reify_value_parameters(&signature.param_decls, &supplied)
             })

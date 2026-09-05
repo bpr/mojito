@@ -566,6 +566,8 @@ fn vm_type_is_symbolic(ty: &Ty) -> bool {
 
 struct CallerFrame<'a> {
     id: FrameId,
+    /// The caller's function (its compile-time bindings resolve by name).
+    function: usize,
     registers: &'a mut [Value],
     variables: &'a mut Vec<Value>,
 }
@@ -1000,25 +1002,80 @@ fn align_parameter_arguments<T>(
     aligned
 }
 
+/// The supplied compile-time arguments of a call, aligned to the callee's
+/// declarations. A reified type argument spelled as the caller's own binder
+/// (`hash[Self.H](key)` in an erased struct body, `Const::Str("H")`)
+/// resolves through the caller frame's reified parameters; a spelling bound
+/// nowhere passes through for the callee's declaration default.
 fn runtime_parameter_arguments(
+    prog: &Prog,
+    caller: CallerBindings<'_>,
     declarations: &[ParamDecl],
     arguments: &[mojito_mir::mir::MirParamArg],
-    registers: &[Value],
 ) -> Vec<Option<Value>> {
     align_parameter_arguments(
         declarations,
         arguments
             .iter()
             .map(|argument| {
-                (
-                    argument.name.clone(),
-                    argument
-                        .value
-                        .map(|register| registers[register.0 as usize].clone()),
-                )
+                let value = argument
+                    .value
+                    .map(|register| caller.registers[register.0 as usize].clone())
+                    .map(|value| match value {
+                        Value::Str(spelling) if !prog.structs.contains_key(&spelling) => {
+                            bound_type_parameter(prog, caller.function, caller.variables, &spelling)
+                                .unwrap_or(Value::Str(spelling))
+                        }
+                        other => other,
+                    });
+                (argument.name.clone(), value)
             })
             .collect(),
     )
+}
+
+/// The runtime binding of the compile-time type parameter `param` in the
+/// frame of `function`, reified as the bound struct's name: a def binds its
+/// reified parameters into the frame local of the same name; a struct method
+/// reads them from `self`'s reified parameters.
+fn bound_type_parameter(
+    prog: &Prog,
+    function: usize,
+    variables: &[Value],
+    param: &str,
+) -> Option<Value> {
+    let definition = &prog.mir.functions[function].1;
+    definition
+        .var_names
+        .iter()
+        .position(|candidate| candidate == param)
+        .map(|slot| variables[slot].clone())
+        .filter(|value| !matches!(value, Value::None))
+        .or_else(|| match variables.first() {
+            Some(Value::Struct { value_params, .. }) => value_params
+                .iter()
+                .find(|(candidate, _)| candidate == param)
+                .map(|(_, value)| value.clone()),
+            _ => None,
+        })
+}
+
+/// The caller frame's state a call's compile-time arguments resolve against.
+#[derive(Clone, Copy)]
+struct CallerBindings<'a> {
+    function: usize,
+    registers: &'a [Value],
+    variables: &'a [Value],
+}
+
+impl<'a> From<&'a Frame> for CallerBindings<'a> {
+    fn from(frame: &'a Frame) -> Self {
+        CallerBindings {
+            function: frame.function,
+            registers: &frame.registers,
+            variables: &frame.variables,
+        }
+    }
 }
 
 struct ReturnContinuation {

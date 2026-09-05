@@ -1754,11 +1754,22 @@ impl<'a> Elab<'a> {
             type_params,
             fields,
             methods,
+            conformance_conditions,
             ..
         } = &template.kind
         else {
             return Ok((Vec::new(), Vec::new()));
         };
+        // The compile-time string keeps the literal runtime representation and
+        // materializes `String` at `var` bindings, so a clone body would not
+        // type against its own `Self.T`: such an instance keeps the erased
+        // path (`symbol::specialized_method_values` names it no clone either).
+        if values.iter().any(|value| {
+            matches!(value, CtValue::Type(ty)
+                if mojito_types::types::contains_string_literal(ty))
+        }) {
+            return Ok((Vec::new(), Vec::new()));
+        }
         // Bind each parameter; an instance whose argument violates a declared
         // bound, or does not round-trip to source syntax, keeps the erased path.
         let mut bindings = Vec::new();
@@ -1812,8 +1823,21 @@ impl<'a> Elab<'a> {
         for binding in &bindings {
             env.insert(binding.name.clone(), binding.value.clone());
         }
+        // A conditional conformance that is false for this instance
+        // (`Iterator where conforms_to(T, Movable)` on a pinned element type)
+        // withholds the trait's requirements: their bodies rely on the
+        // condition, and Mojo instantiates them only through the conformance.
+        let mut unavailable = HashSet::new();
+        for (trait_name, predicate) in conformance_conditions {
+            if !matches!(self.eval(predicate, &env), Ok(CtValue::Bool(true))) {
+                unavailable.extend(self.trait_requirement_names(trait_name));
+            }
+        }
         let mut clones = Vec::new();
         for method in methods {
+            if unavailable.contains(&method.name) {
+                continue;
+            }
             if matches!(
                 mojito_symbol::symbol::lifecycle_method_name(method),
                 "__init__" | "__del__" | "__copyinit__" | "__moveinit__"
@@ -1882,6 +1906,43 @@ impl<'a> Elab<'a> {
         }
         clones.retain(|clone| !collapsed.contains(&clone.name));
         Ok((clones, field_types))
+    }
+
+    /// The method names a trait requires, including those of the traits it
+    /// refines; a trait the program does not declare requires nothing.
+    fn trait_requirement_names(&self, trait_name: &str) -> HashSet<String> {
+        let mut names = HashSet::new();
+        let mut pending = vec![trait_name.to_string()];
+        let mut seen = HashSet::new();
+        while let Some(current) = pending.pop() {
+            if !seen.insert(current.clone()) {
+                continue;
+            }
+            let declaration = self
+                .program
+                .iter()
+                .find_map(|statement| match &statement.kind {
+                    StmtKind::Trait {
+                        name,
+                        refines,
+                        methods,
+                        ..
+                    } if *name == current
+                        || name
+                            .rsplit_once('$')
+                            .is_some_and(|(_, unqualified)| unqualified == current) =>
+                    {
+                        Some((refines, methods))
+                    }
+                    _ => None,
+                });
+            let Some((refines, methods)) = declaration else {
+                continue;
+            };
+            names.extend(methods.iter().map(|method| method.name.clone()));
+            pending.extend(refines.iter().cloned());
+        }
+        names
     }
 
     /// Clone `method` with `bindings` baked: the bound parameters leave the

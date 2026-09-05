@@ -1770,7 +1770,9 @@ fn interior_destination_transfers_carry_their_domain() {
     // A transfer whose destination projects below the actual's root records
     // the interior path; lowering installs the generation with that domain,
     // so rebinding the exact field later releases it (sibling domains and
-    // the root generation stay).
+    // the root generation stay). The `List[RefBox]` instance's `append`
+    // clone exposes the element storage, so the recorded domain descends
+    // from `t.a` into it.
     let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Two[origin: Origin[mut=True]]:\n    var a: List[RefBox[Self.origin]]\n    var b: List[Int]\n\ndef main():\n    var a = List[RefBox]()\n    var t = Two(a^, [1])\n    var local: List[Int] = [9]\n    ref alias = local\n    t.a.append(RefBox(alias))\n    print(t.b[0])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -1800,8 +1802,8 @@ fn interior_destination_transfers_carry_their_domain() {
                 } if *reference == t
                     && domain.root == t
                     && matches!(
-                        domain.path.as_slice(),
-                        [mojito::OriginSeg::Field(field)] if field == "a"
+                        domain.path.first(),
+                        Some(mojito::OriginSeg::Field(field)) if field == "a"
                     )
             )),
         "the transferred generation carries its interior destination domain"

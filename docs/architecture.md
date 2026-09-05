@@ -499,9 +499,17 @@ per same-name overload) has every `T`/`Self.T` respelled concretely, its
 `self: Optional[Int]`) the checker binds `self`/`Self` to instead of the
 struct scope's parametric `Self` (`AnnotationSite::MethodSelf` types the MIR
 receiver); a method whose `where` clause is false — or unevaluable — for the
-instance, a constructor or lifecycle method (they carry the value-parameter
-reification the erased path relies on), and an overload family that
-collapses to one shape on the instance stay uncloned. Type identity is
+instance, a requirement of a trait whose conditional conformance is false
+for the instance (`Iterator where conforms_to(T, Movable)` withholds
+`__next__` from `_ListOwnedIter[Pinned]`: Mojo instantiates it only through
+the conformance), a constructor or lifecycle method (they carry the
+value-parameter reification the erased path relies on), and an overload
+family that collapses to one shape on the instance stay uncloned. An
+instantiation whose argument mentions `StringLiteral` mints no clones and
+names none (`specialized_method_values`): its values keep the literal runtime
+representation while an un-annotated binding of the type materializes
+`String`, so a clone body would neither type against its own `Self.T` nor
+share values with the nominal-`String` instance. Type identity is
 unchanged (`Optional[Int]` is still `Ty::Struct("Optional", [Int])` and the
 runtime struct name stays `Optional`), so a call whose receiver instance has
 no clone simply keeps today's erased path; a call on a closed receiver
@@ -931,7 +939,14 @@ struct) and calls the hasher's `_update_with_simd` — a runtime dispatch on the
 VM, a monomorphized call natively — and a constructible type parameter (`H()`
 under a `Hasher`/`Defaultable` bound) is reified at runtime as the bound
 struct's name (`MirInstr::ConstructTypeParam`), bound into a def's frame or a
-struct's value parameters with the declaration default when unsupplied.
+struct's value parameters with the declaration default when unsupplied. An
+erased body that forwards its own binder (`hash[Self.H](key)` in
+`DictEntry.__init__`) reifies the binder's spelling (`Const::Str("H")`), which
+the VM resolves through the caller frame's bindings at the call
+(`runtime_parameter_arguments`), so an explicit `Dict[K, V, SumHasher]`
+hashes under `SumHasher` on insertion as well as lookup; the native
+monomorphizer does not yet honor that forwarding (a `docs/roadmap.md`
+native-lane residue).
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features, `with`, and advanced expression/declaration forms that the VM

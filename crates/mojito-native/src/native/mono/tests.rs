@@ -456,11 +456,13 @@ fn distinct_instantiations_split_into_owner_named_instances() {
                   \x20   print(a.get())\n\
                   \x20   print(b.get())\n";
     let specialized = specialized_main(source);
+    // The calls reach the per-instantiation method clones (`refresh$y3:Int`),
+    // each an instance of its owner; the constructor stays the template's.
     for expected in [
-        "Pairing$mono$TInt.refresh",
-        "Pairing$mono$TBool.refresh",
-        "Pairing$mono$TInt.set",
-        "Pairing$mono$TBool.set",
+        "Pairing$mono$TInt.refresh$y3:Int",
+        "Pairing$mono$TBool.refresh$y4:Bool",
+        "Pairing$mono$TInt.set$y3:Int",
+        "Pairing$mono$TBool.set$y4:Bool",
         "Pairing$mono$TInt.__init__",
         "Pairing$mono$TBool.__init__",
     ] {

@@ -181,7 +181,14 @@ recreates this section's checkbox with the fresh divergence list.
        occurrence whose def clone already exists retargets without a round).
        Structs with value parameters
        (`Array[T, length]`), origin binders (`Span`, the iterator structs),
-       or callable-bounded parameters keep the erased path.
+       or callable-bounded parameters keep the erased path, and so does an
+       instantiation whose argument mentions `StringLiteral` (`{"a": 1}`
+       is `Dict[StringLiteral, Int]`): its values keep the literal runtime
+       representation while an un-annotated binding of the type
+       materializes `String`, so a clone body cannot type against its own
+       `Self.T`. Lifting that means giving `StringLiteral` one runtime
+       representation with `String` (or typing the display as
+       `Dict[String, Int]`, as Mojo does).
      Related but separate: the bundled `Writable` trait declares only
      `write_to`, so a bounded `T: Writable` cannot call `write_repr_to`
      (spell `repr(x)`); and upstream spells
@@ -336,6 +343,14 @@ recreates this section's checkbox with the fresh divergence list.
       - The projection tag-mismatch trap categories differ (the VM raises a
         `TypeError` `Variant holds 'Int', not 'String'` where native traps
         `UnhandledError`), so no error-differential fixture pins it.
+      - An erased body forwarding its own constructible binder
+        (`hash[Self.H](key)` in `DictEntry.__init__`, or any
+        `Holder[H: Hasher]` constructor) monomorphizes with the callee's
+        declaration default: native `Dict[K, V, SumHasher]` entries hash
+        under `AHasher` while the VM honors `SumHasher` (the binder spelling
+        the MIR reifies, `Const::Str("H")`, resolves only on the VM).
+        Fixture outputs agree because both lanes are self-consistent; a
+        probe printing from the hasher diverges.
       - The generic `next[T: Iterator](mut it: T)` body fails natively
         (`unsupported reference-result method adapter` on its erased
         trait-bound `__next__` call, instantiated for a range), so `next`

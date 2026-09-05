@@ -793,10 +793,13 @@ impl Checker {
                         || parameter.is_origin_mutability_binder(&info.source_params)
                 })
         });
+        // A `StringLiteral` argument names no clone (`specialized_method_values`):
+        // the instance keeps the erased path, so there is nothing to mint.
         if !bakeable
-            || !arguments
-                .iter()
-                .all(|argument| matches!(argument, TyArg::Ty(_)))
+            || !arguments.iter().all(|argument| {
+                matches!(argument, TyArg::Ty(ty)
+                    if !mojito_types::types::contains_string_literal(ty))
+            })
         {
             return;
         }

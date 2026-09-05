@@ -1639,18 +1639,20 @@ impl Flatten<'_> {
     /// parameter (`hash[Fnv1a](x)`, alias-folded to type spelling): reify it
     /// as the named struct so an abstract callee's `ConstructTypeParam`
     /// dispatch constructs the supplied type rather than the declaration
-    /// default. The VM ignores the reified value in every other erased slot.
+    /// default. An enclosing struct's own parameter (`hash[Self.H](key)` in
+    /// an erased method body) reifies as the binder's spelling, which the VM
+    /// resolves through the caller's reified parameters at the call. The VM
+    /// ignores the reified value in every other erased slot.
     fn reified_type_argument(
         &mut self,
         ty: &mojito_ast::ast::Type,
         site: &SourceSpan,
     ) -> Option<Reg> {
-        let mojito_ast::ast::Type::Named(name, args) = ty else {
-            return None;
+        let name = match ty {
+            mojito_ast::ast::Type::Named(name, args) if args.is_empty() => name,
+            mojito_ast::ast::Type::SelfParam(name) => name,
+            _ => return None,
         };
-        if !args.is_empty() {
-            return None;
-        }
         let dest = self.fresh_typed(site.clone(), None, Ty::StringLiteral);
         self.emit(MirInstr::Const {
             dest,

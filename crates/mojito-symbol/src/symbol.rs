@@ -27,7 +27,7 @@ use mojito_ast::ast::{
     TypeParam,
 };
 use mojito_types::ct::CtValue;
-use mojito_types::types::{ParamDecl, Ty, TyArg, default_literal};
+use mojito_types::types::{ParamDecl, Ty, TyArg, contains_string_literal, default_literal};
 
 /// One declaration visible to phase-neutral runtime/backend dispatch.
 #[derive(Debug, Clone, Copy)]
@@ -114,16 +114,15 @@ pub fn resolve_method_symbol<'a>(
     resolve_callable_symbol(declarations, &format!("{receiver_type}.{method}"), argc)
 }
 
-/// A type or value argument as a specialization clone spells it: literal
-/// types materialize (a string literal bound to `T: Movable` instantiates the
-/// `String` clone, which the call reaches through the ordinary literal
-/// conversion), so two applications differing only in literal-ness share one
-/// clone instead of minting two symbol-equivalent overloads.
+/// A type or value argument as a specialization clone spells it: numeric
+/// literal types materialize (`Pair(1, 2)` instantiates the `Int` clone, which
+/// the call reaches through the ordinary literal conversion), so two
+/// applications differing only in literal-ness share one clone instead of
+/// minting two symbol-equivalent overloads. `StringLiteral` stays itself: its
+/// values keep the literal runtime representation, so it never names the
+/// nominal-`String` clone (see `specialized_method_values`).
 pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
     match argument {
-        TyArg::Ty(Ty::StringLiteral) => {
-            TyArg::Ty(Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()))
-        }
         TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
         other => other.clone(),
     }
@@ -148,6 +147,13 @@ pub fn specialized_method_values(decls: &[ParamDecl], arguments: &[TyArg]) -> Op
                 _,
             ) => continue,
             (ParamDecl::Type { variadic: true, .. }, _) => return None,
+            // The compile-time string keeps the literal runtime representation
+            // (and materializes `String` at `var` bindings), so a clone body
+            // would neither type against its own `Self.T` nor share values
+            // with a nominal-`String` instance: it stays on the erased path.
+            (ParamDecl::Type { .. }, TyArg::Ty(ty)) if contains_string_literal(ty) => {
+                return None;
+            }
             (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
                 values.push(CtValue::Type(Box::new(ty.clone())));
             }

@@ -536,27 +536,40 @@ pub fn is_range_type(ty: &Ty) -> bool {
 }
 
 pub fn contains_infer(ty: &Ty) -> bool {
+    mentions(ty, &|ty| matches!(ty, Ty::Infer))
+}
+
+/// Whether the compile-time `StringLiteral` occurs anywhere in `ty`. Its
+/// runtime values are the literal representation rather than the nominal
+/// `String` struct's, so an instantiation argument that mentions it never
+/// selects a nominal-`String` instance.
+pub fn contains_string_literal(ty: &Ty) -> bool {
+    mentions(ty, &|ty| matches!(ty, Ty::StringLiteral))
+}
+
+/// Whether `predicate` holds for `ty` or any type nested in it (struct
+/// arguments, elements, callable signatures).
+pub fn mentions(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
+    if predicate(ty) {
+        return true;
+    }
+    let argument_mentions = |argument: &TyArg| match argument {
+        TyArg::Ty(ty) => mentions(ty, predicate),
+        TyArg::Val(_) | TyArg::Origin(_) => false,
+    };
     match ty {
-        Ty::Infer => true,
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-            TyArg::Ty(ty) => contains_infer(ty),
-            TyArg::Val(_) | TyArg::Origin(_) => false,
-        }),
+        Ty::Struct(_, arguments) => arguments.iter().any(argument_mentions),
         Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-            contains_infer(element)
+            mentions(element, predicate)
         }
         Ty::Dependent(DependentType::Indexed { elements, .. }) => {
-            elements.iter().any(contains_infer)
+            elements.iter().any(|element| mentions(element, predicate))
         }
         Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
-            elements.iter().any(contains_infer)
+            elements.iter().any(|element| mentions(element, predicate))
         }
         Ty::Assoc { base, args, .. } => {
-            contains_infer(base)
-                || args.iter().any(|argument| match argument {
-                    TyArg::Ty(ty) => contains_infer(ty),
-                    TyArg::Val(_) | TyArg::Origin(_) => false,
-                })
+            mentions(base, predicate) || args.iter().any(argument_mentions)
         }
         Ty::Func {
             params,
@@ -572,12 +585,18 @@ pub fn contains_infer(ty: &Ty) -> bool {
             kw_variadic,
             ..
         } => {
-            params.iter().any(contains_infer)
-                || contains_infer(ret)
-                || variadic.as_deref().is_some_and(contains_infer)
-                || kw_variadic.as_deref().is_some_and(contains_infer)
+            params.iter().any(|param| mentions(param, predicate))
+                || mentions(ret, predicate)
+                || variadic
+                    .as_deref()
+                    .is_some_and(|variadic| mentions(variadic, predicate))
+                || kw_variadic
+                    .as_deref()
+                    .is_some_and(|variadic| mentions(variadic, predicate))
         }
-        Ty::Overload(candidates) => candidates.iter().any(contains_infer),
+        Ty::Overload(candidates) => candidates
+            .iter()
+            .any(|candidate| mentions(candidate, predicate)),
         _ => false,
     }
 }
