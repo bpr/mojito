@@ -1107,6 +1107,35 @@ pub fn value_coerces(from: &Ty, to: &Ty) -> bool {
     coerces(from, to)
 }
 
+/// The runtime type an exact literal materializes to when no context selects
+/// another (`IntLiteral` → `Int`, `FloatLiteral` → `Float64`), applied through
+/// struct arguments, packs, and variants.
+pub fn default_literal(ty: &Ty) -> Ty {
+    match ty {
+        Ty::IntLiteral => Ty::Int,
+        Ty::FloatLiteral => Ty::Float64,
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
+                    TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
+                })
+                .collect(),
+        ),
+        // Internal heterogeneous pack storage also materializes its elements.
+        Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(default_literal).collect()),
+        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(default_literal(element))),
+        Ty::RuntimePack(elems) => Ty::RuntimePack(elems.iter().map(default_literal).collect()),
+        Ty::Variant(alternatives) => {
+            Ty::Variant(alternatives.iter().map(default_literal).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 /// Whether a value of type `from` can be used where `to` is required. Only the
 /// literal types coerce (to the concrete numeric types, or `IntLiteral` up to
 /// `FloatLiteral`); everything else must match exactly.

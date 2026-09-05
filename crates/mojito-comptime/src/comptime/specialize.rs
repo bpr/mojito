@@ -1820,6 +1820,16 @@ impl<'a> Elab<'a> {
             ) {
                 continue;
             }
+            // A synthesized trait-default body (Copyable's `copy`, Hashable's
+            // `__hash__`; no source provenance) has no instance-specific
+            // behavior: the template's serves every instance.
+            if method
+                .body
+                .iter()
+                .all(|statement| statement.module.is_none())
+            {
+                continue;
+            }
             // Same-name overloads all clone: they share the mangled name and
             // stay an overload set on the clone side.
             let clone_name = mangle(&method.name, values);

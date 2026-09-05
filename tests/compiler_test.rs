@@ -171,6 +171,50 @@ fn generic_struct_instances_get_per_instantiation_method_clones() {
 }
 
 #[test]
+fn instance_clones_serve_operators_display_and_iteration() {
+    // Every call shape on a closed generic-struct instance reaches the
+    // instance's clone: the `==` dunder target, `len(x)`, `repr(x)` and
+    // `print(x)` (the VM formats through the clone named by the argument's
+    // checked static type), `List[Int]` subscript assignment, and the
+    // `for` loop's `__iter__` prepare symbol.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "from std.reflection.type_info import _unqualified_type_name\n\nstruct Box[T: Copyable & Deinitable](Copyable, Equatable where conforms_to(T, Equatable), Movable, Sized, Writable where conforms_to(T, Writable)):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def __eq__(self, other: Self) -> Bool where conforms_to(Self.T, Equatable):\n        return self.value == other.value\n\n    def __len__(self) -> Int:\n        comptime if Self.T == Int:\n            return 1\n        else:\n            return 2\n\n    def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(Self.T, Writable):\n        writer.write(_unqualified_type_name[Self](), \"(\", repr(self.value), \")\")\n\ndef main():\n    var a = Box[Int](7)\n    print(a == Box[Int](7), len(a), repr(a))\n    var xs: List[Int] = [1, 2]\n    xs[0] = 5\n    var total = 0\n    for x in xs:\n        total += x\n    print(total)\n",
+            std::path::Path::new("/tmp/mojito_instance_clone_dispatch.mojo"),
+        )
+        .expect("compile the instance dispatch program");
+    let targets = program.checked().overload_targets();
+    assert!(
+        targets.values().any(|target| target == "Box.__eq__$y3:Int"),
+        "the operator retargets to the instance clone: {targets:?}"
+    );
+    assert!(
+        targets
+            .values()
+            .any(|target| target == "List.__setitem__$y3:Int"),
+        "subscript assignment retargets to the instance clone: {targets:?}"
+    );
+    let iterates_through_clone = program.checked().expressions().iter().any(|expression| {
+        expression.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito::checked::SemanticAdjustment::Iterate(protocol)
+                    if protocol.prepare.iter().any(|symbol| symbol.starts_with("List.__iter__$y3:Int"))
+            )
+        })
+    });
+    assert!(
+        iterates_through_clone,
+        "the for loop prepares through the instance clone"
+    );
+    let output = compiler
+        .execute(&program)
+        .expect("run the instance dispatch program");
+    assert_eq!(output.output, "True 1 Box[SIMD[DType.int, 1]](Int(7))\n7\n");
+}
+
+#[test]
 fn linked_std_utils_variant_constructs_tests_projects_and_sets() {
     let compiler = Compiler::default();
     let program = compiler

@@ -307,7 +307,9 @@ impl<'a> Specializer<'a> {
                             Some(Ty::Struct(..))
                         )
                     {
-                        *instruction = dunder_method_call(*dest, args[0], method, None, Vec::new());
+                        let resolved = self.instance_dunder_target(function, args[0], method);
+                        *instruction =
+                            dunder_method_call(*dest, args[0], method, resolved, Vec::new());
                     }
                 }
                 // A prefix `-`/`~` on a nominal operand is the VM's dunder
@@ -323,7 +325,8 @@ impl<'a> Specializer<'a> {
                         Some(Ty::Struct(..))
                     )
                 {
-                    *instruction = dunder_method_call(*dest, *a, op.dunder(), None, Vec::new());
+                    let resolved = self.instance_dunder_target(function, *a, op.dunder());
+                    *instruction = dunder_method_call(*dest, *a, op.dunder(), resolved, Vec::new());
                 }
                 // A binary operator on a nominal left operand is the same VM
                 // dunder dispatch (`apply_binop` → `call_dunder`): rewrite to
@@ -348,7 +351,10 @@ impl<'a> Specializer<'a> {
                         Some(Ty::Struct(..))
                     )
                 {
-                    *instruction = dunder_method_call(*dest, *a, method, resolved.take(), vec![*b]);
+                    let resolved = resolved
+                        .take()
+                        .or_else(|| self.instance_dunder_target(function, *a, method));
+                    *instruction = dunder_method_call(*dest, *a, method, resolved, vec![*b]);
                 }
                 match instruction {
                     MirInstr::Call {
@@ -386,6 +392,12 @@ impl<'a> Specializer<'a> {
                                     {
                                         func.0 = concrete.clone();
                                     }
+                                    // The copied value carries the instance's
+                                    // parameters; an explicitly spelled
+                                    // type argument (`Dict[Int, Int,
+                                    // AHasher](copy: self)` in an instance
+                                    // clone) reified no runtime data here.
+                                    param_arg_regs.clear();
                                     continue;
                                 }
                                 let init_base = format!("{}.__init__", func.0);

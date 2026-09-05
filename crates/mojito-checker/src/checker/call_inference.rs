@@ -1415,16 +1415,28 @@ impl Checker {
             })
             .unwrap_or(referent);
         let error = error.as_ref().map(|error| resolve(error)).transpose()?;
-        // Retain the resolved application for instantiation discovery.
+        // An inferred application whose clone already exists (an earlier
+        // discovery round minted it for another occurrence) retargets to it
+        // by exact name instead of requesting a round of its own; otherwise
+        // retain the resolved application for instantiation discovery.
         // Speculative overload attempts overwrite the same span; the selected
         // candidate's re-run writes last.
-        self.generic_instantiations.borrow_mut().insert(
-            span.clone(),
-            mojito_checked::checked::GenericInstantiation {
-                callee: name.to_string(),
-                arguments: tyargs.clone(),
-            },
-        );
+        if param_args.is_empty()
+            && let Some(clone) = self.existing_def_clone(name, decls, &tyargs)
+        {
+            self.generic_instantiations.borrow_mut().remove(span);
+            self.overload_targets
+                .borrow_mut()
+                .insert(span.clone(), clone);
+        } else {
+            self.generic_instantiations.borrow_mut().insert(
+                span.clone(),
+                mojito_checked::checked::GenericInstantiation {
+                    callee: name.to_string(),
+                    arguments: tyargs.clone(),
+                },
+            );
+        }
         Ok((
             result,
             overload_rank(
@@ -1436,6 +1448,40 @@ impl Checker {
             error,
             bool_bindings,
         ))
+    }
+
+    /// The already-minted clone of bound-generic `name` for a closed inferred
+    /// application, when the program declares it: the specializer names a
+    /// clone `mangle(name, values)` over the declaration-order type and value
+    /// arguments (`def_request_values`), so an occurrence whose clone exists
+    /// needs no discovery round. Anything that does not resolve to a declared
+    /// concrete function keeps the request path.
+    fn existing_def_clone(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Option<String> {
+        if decls.is_empty() || decls.len() != arguments.len() {
+            return None;
+        }
+        let mut values = Vec::new();
+        for (decl, argument) in decls.iter().zip(arguments) {
+            match (decl, argument) {
+                (ParamDecl::Type { variadic: true, .. }, _) => return None,
+                (_, TyArg::Val(CtValue::Param(_))) => continue,
+                (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
+                    values.push(CtValue::Type(Box::new(ty.clone())));
+                }
+                (ParamDecl::Value { .. }, TyArg::Val(value)) => values.push(value.clone()),
+                _ => return None,
+            }
+        }
+        if values.is_empty() {
+            return None;
+        }
+        let clone = mojito_symbol::symbol::mangle(name, &values);
+        matches!(self.lookup(&clone), Some(Ty::Func { .. })).then_some(clone)
     }
 
     pub(super) fn forwarded_kwargs_element(

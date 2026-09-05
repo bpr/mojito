@@ -160,6 +160,33 @@ impl<'a> Specializer<'a> {
     /// calls — the VM's `format_value` dispatch. The receiver binds the
     /// owner's parameters; the writer parameter instantiates at the builtin
     /// string (the VM's `Value::Str` accumulator).
+    /// The per-instantiation clone a by-name dunder rewrite dispatches on a
+    /// receiver whose checked static type is a closed generic-struct
+    /// instance (`Box.__len__$y3:Int` for a `Box[Int]` register), when the
+    /// checker minted it; `None` keeps the template's method, as the VM's
+    /// runtime-name dispatch does for every erased body.
+    pub(super) fn instance_dunder_target(
+        &self,
+        function: &MirFunction,
+        receiver: Reg,
+        method: &str,
+    ) -> Option<String> {
+        let Ty::Struct(name, arguments) = peel_refs(function.reg_types.get(&receiver.0)?) else {
+            return None;
+        };
+        let template = nominal_template(name);
+        let struct_decl = self.structs.get(template)?;
+        let clone = mojito_symbol::symbol::instance_method_clone_name(
+            method,
+            &struct_decl.param_decls,
+            arguments,
+        )?;
+        let target = format!("{template}.{clone}");
+        self.functions
+            .contains_key(target.as_str())
+            .then_some(target)
+    }
+
     pub(super) fn enqueue_display_instance(
         &mut self,
         owner: &str,
@@ -176,16 +203,33 @@ impl<'a> Specializer<'a> {
         if mojito_symbol::symbol::is_stdlib_string_struct(name) {
             return Ok(());
         }
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
-            nominal_template(name),
-            "write_to",
-            None,
-            1,
-        );
+        // A closed instance displays through its per-instantiation
+        // `write_to` clone when the checker minted one; otherwise the
+        // template's erased `write_to` is instantiated for the receiver.
+        let clone_target = self
+            .structs
+            .get(nominal_template(name))
+            .and_then(|struct_decl| {
+                mojito_symbol::symbol::instance_method_clone_name(
+                    "write_to",
+                    &struct_decl.param_decls,
+                    arguments,
+                )
+            })
+            .map(|clone| format!("{}.{clone}", nominal_template(name)))
+            .filter(|target| self.functions.contains_key(target.as_str()));
+        let target = clone_target.unwrap_or_else(|| {
+            mojito_symbol::symbol::resolve_method_symbol(
+                self.functions.iter().map(|(name, f)| CallableCandidate {
+                    name,
+                    n_params: f.n_params,
+                }),
+                nominal_template(name),
+                "write_to",
+                None,
+                1,
+            )
+        });
         if !self.functions.contains_key(target.as_str()) {
             return Ok(());
         }

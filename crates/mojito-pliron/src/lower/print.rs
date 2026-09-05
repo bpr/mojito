@@ -37,22 +37,27 @@ impl<'a> FnLowering<'a> {
         dest: Reg,
     ) -> Result<(), PlironError> {
         let prefix = format!("{name}.write_to");
-        let mut candidates = self
+        // The instance's per-instantiation clone (`write_to$y3:Int`) wins
+        // over the template's erased `write_to` instantiated for the same
+        // receiver.
+        let mut candidates: Vec<_> = self
             .signatures
             .iter()
-            .filter(|(fname, _)| fname.starts_with(&prefix));
-        let Some((_, signature)) = candidates.next() else {
+            .filter(|(fname, _)| fname.starts_with(&prefix))
+            .collect();
+        if candidates.len() > 1 {
+            candidates.retain(|(fname, _)| fname.as_str() != prefix);
+        }
+        let [(_, signature)] = candidates.as_slice() else {
             return Err(self.unsupported_reg(
-                format!("display of `{name}` without a compiled `write_to`"),
+                if candidates.is_empty() {
+                    format!("display of `{name}` without a compiled `write_to`")
+                } else {
+                    format!("display of `{name}` with ambiguous `write_to` instances")
+                },
                 dest,
             ));
         };
-        if candidates.next().is_some() {
-            return Err(self.unsupported_reg(
-                format!("display of `{name}` with ambiguous `write_to` instances"),
-                dest,
-            ));
-        }
         if signature.outcome.is_some() {
             return Err(self.unsupported_reg(format!("raising `{prefix}`"), dest));
         }
@@ -91,22 +96,27 @@ impl<'a> FnLowering<'a> {
         dest: Reg,
     ) -> Result<(), PlironError> {
         let prefix = format!("{name}.write_to");
-        let mut candidates = self
+        // The instance's per-instantiation clone (`write_to$y3:Int`) wins
+        // over the template's erased `write_to` instantiated for the same
+        // receiver.
+        let mut candidates: Vec<_> = self
             .signatures
             .iter()
-            .filter(|(fname, _)| fname.starts_with(&prefix));
-        let Some((_, signature)) = candidates.next() else {
+            .filter(|(fname, _)| fname.starts_with(&prefix))
+            .collect();
+        if candidates.len() > 1 {
+            candidates.retain(|(fname, _)| fname.as_str() != prefix);
+        }
+        let [(_, signature)] = candidates.as_slice() else {
             return Err(self.unsupported_reg(
-                format!("display of `{name}` without a compiled `write_to`"),
+                if candidates.is_empty() {
+                    format!("display of `{name}` without a compiled `write_to`")
+                } else {
+                    format!("display of `{name}` with ambiguous `write_to` instances")
+                },
                 dest,
             ));
         };
-        if candidates.next().is_some() {
-            return Err(self.unsupported_reg(
-                format!("display of `{name}` with ambiguous `write_to` instances"),
-                dest,
-            ));
-        }
         if signature.outcome.is_some() {
             return Err(self.unsupported_reg(format!("raising `{prefix}`"), dest));
         }

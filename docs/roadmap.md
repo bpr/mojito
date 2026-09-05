@@ -152,12 +152,6 @@ recreates this section's checkbox with the fresh divergence list.
      (landed 2026-09-04: `docs/features.md` Generics row; design in
      `docs/architecture.md`), which fixes `_unqualified_type_name[Self]` and
      `comptime if Self.T` inside clones. What is still open, in order:
-     - Display and repr dispatch: `print`/`repr`/`String(x)`/`Writer.write`
-       reach the template body by runtime struct name (`repr(box)` prints
-       `Box[T](...)`); the checker must record the resolved `write_to`/
-       `write_repr_to` symbol and the VM prefer it. Operators, subscripts,
-       iteration, and the Equatable/Hashable dunders likewise still resolve
-       the template symbol; extend the retarget funnel to each.
      - Per-call specialization of method-level type parameters on every
        generic struct (`Optional.map[U]`, `__hash__[H]`): the discovery gate
        in `src/compiler.rs` still admits variadic owners only, and a clone
@@ -180,10 +174,12 @@ recreates this section's checkbox with the fresh divergence list.
      - Cost: clones are minted per whole instance (every available method,
        no reachability pruning) and each discovery round re-checks them;
        `benchmarks/compile/stdlib_heavy` costs 2.2x its baseline
-       (`docs/performance.md`), one extra round of which comes from inferred
-       generic-def calls inside clone bodies whose def clone already exists
-       (a checker-side retarget by name, as `instance_method_clone` does for
-       methods, would remove that round). Structs with value parameters
+       (`docs/performance.md`), one extra round of which comes from an
+       inferred generic-def call inside a clone body
+       — a genuinely new `hash[String, AHasher]` instantiation inside the
+       `Dict` clone, which the erased template never requested; an
+       occurrence whose def clone already exists retargets without a round).
+       Structs with value parameters
        (`Array[T, length]`), origin binders (`Span`, the iterator structs),
        or callable-bounded parameters keep the erased path.
      Related but separate: the bundled `Writable` trait declares only

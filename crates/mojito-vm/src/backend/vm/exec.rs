@@ -159,7 +159,7 @@ impl VmBackend {
                         .unwrap_or(type_name)
                 };
                 regs[dest.0 as usize] =
-                    self.call_named(prog, &type_name, Vec::new(), Vec::new(), &[])?;
+                    self.call_named(prog, &type_name, Vec::new(), Vec::new(), &[], &[])?;
             }
             MirInstr::SizeOf { dest, ty } => {
                 let target = mojito_native_core::target::NativeTarget::new(
@@ -426,7 +426,17 @@ impl VmBackend {
                         // parameters because by-value arguments may contain
                         // nested reference handles.
                         let stack_base = self.push_caller_mirror(frame_id, regs, vars);
-                        let outcome = self.call_named(prog, &func.0, argv, kw, &pvals);
+                        let arg_types: Vec<Option<mojito_types::types::Ty>> = args
+                            .iter()
+                            .map(|reg| {
+                                prog.mir.functions[function]
+                                    .1
+                                    .reg_types
+                                    .get(&reg.0)
+                                    .cloned()
+                            })
+                            .collect();
+                        let outcome = self.call_named(prog, &func.0, argv, kw, &pvals, &arg_types);
                         self.restore_caller_mirror(stack_base, vars)?;
                         outcome?
                     }
@@ -651,6 +661,16 @@ impl VmBackend {
                         keyword_argument_places: kwarg_places,
                         parameter_arguments: param_arg_regs,
                         parameter_declarations: param_decls,
+                        argument_types: args
+                            .iter()
+                            .map(|reg| {
+                                prog.mir.functions[function]
+                                    .1
+                                    .reg_types
+                                    .get(&reg.0)
+                                    .cloned()
+                            })
+                            .collect(),
                     },
                     CallerFrame {
                         id: frame_id,
@@ -793,6 +813,7 @@ impl VmBackend {
                             keyword_argument_places: &[],
                             parameter_arguments: &call.param_arg_regs,
                             parameter_declarations: &call.param_decls,
+                            argument_types: Vec::new(),
                         },
                         CallerFrame {
                             id: frame_id,
@@ -890,6 +911,7 @@ impl VmBackend {
                             keyword_argument_places: &[],
                             parameter_arguments: &call.param_arg_regs,
                             parameter_declarations: &call.param_decls,
+                            argument_types: Vec::new(),
                         },
                         CallerFrame {
                             id: frame_id,
@@ -972,6 +994,7 @@ impl VmBackend {
                         keyword_argument_places: kwarg_places,
                         parameter_arguments: &call.param_arg_regs,
                         parameter_declarations: &call.param_decls,
+                        argument_types: Vec::new(),
                     },
                     CallerFrame {
                         id: frame_id,
@@ -1041,6 +1064,7 @@ impl VmBackend {
                         keyword_argument_places: &keyword_argument_places,
                         parameter_arguments: &call.param_arg_regs,
                         parameter_declarations: &call.param_decls,
+                        argument_types: Vec::new(),
                     },
                     CallerFrame {
                         id: frame_id,

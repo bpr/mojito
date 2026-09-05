@@ -374,16 +374,41 @@ impl Checker {
                     super::traits::ConsumeKind::Move,
                 )?;
             }
-            if overloaded && let Some(span) = span.clone() {
-                self.overload_targets.borrow_mut().insert(
-                    span,
+            // A closed receiver instance dispatches the dunder's
+            // per-instantiation clone (`__eq__$y3:Int`), selected among the
+            // clone family by the same operand.
+            let Ty::Struct(_, targs) = &lt else {
+                unreachable!("dunder signatures resolve on struct receivers")
+            };
+            if let Some(span) = &span {
+                self.record_struct_instantiation(sname, targs, span.source.as_deref());
+            }
+            let (dispatched, selected, overloaded) = match self
+                .instance_method_clone(sname, dunder, targs)
+                .and_then(|clone| {
+                    self.struct_dunder_signature_for(&lt, &clone, &[&operand_ty])
+                        .map(|(_, sig, _)| (clone, sig))
+                }) {
+                Some((clone, sig)) => {
+                    let overloaded = info.methods.get(&clone).is_some_and(|sigs| sigs.len() > 1);
+                    (clone, sig, overloaded)
+                }
+                None => (dunder.to_string(), selected, overloaded),
+            };
+            if (overloaded || dispatched != dunder)
+                && let Some(span) = span.clone()
+            {
+                let target = if overloaded {
                     method_lowered_name(
                         sname,
-                        dunder,
+                        &dispatched,
                         selected,
                         self.self_instance_ty(sname).as_ref(),
-                    ),
-                );
+                    )
+                } else {
+                    format!("{sname}.{dispatched}")
+                };
+                self.overload_targets.borrow_mut().insert(span, target);
             }
             return self
                 .struct_dunder(&lt, dunder, &[&operand_ty])

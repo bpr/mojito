@@ -303,6 +303,22 @@ impl VmBackend {
         self.call_resolved_dunder(prog, sname, method, args, None)
     }
 
+    /// Dispatch a dunder by runtime struct name, preferring the
+    /// per-instantiation clone (`__len__$y3:Int`) that the argument's
+    /// checked static type names when the program declares it.
+    fn call_typed_dunder(
+        &mut self,
+        prog: &Prog,
+        sname: &str,
+        method: &str,
+        args: Vec<Value>,
+        static_ty: Option<&mojito_types::types::Ty>,
+    ) -> Result<Value, RuntimeError> {
+        let resolved =
+            instance_dunder_symbol(prog, sname, method, static_ty, args.len().saturating_sub(1));
+        self.call_resolved_dunder(prog, sname, method, args, resolved.as_deref())
+    }
+
     fn call_resolved_dunder(
         &mut self,
         prog: &Prog,
@@ -409,6 +425,31 @@ struct Prog {
     mir: MirProgram,
     structs: HashMap<String, StructDef>,
     sigs: HashMap<String, FnSig>,
+}
+
+/// The declared per-instantiation clone symbol of `method` on `sname` for
+/// the closed instance a checked static type names (`Box.__len__$y3:Int`
+/// for a `Box[Int]` register), or `None` when the type is not a closed
+/// instance or the program declares no such clone — the runtime-name path
+/// then serves the call, as it does for every erased body.
+fn instance_dunder_symbol(
+    prog: &Prog,
+    sname: &str,
+    method: &str,
+    static_ty: Option<&mojito_types::types::Ty>,
+    argc: usize,
+) -> Option<String> {
+    let mut ty = static_ty?;
+    while let mojito_types::types::Ty::Ref(reference) = ty {
+        ty = &reference.referent;
+    }
+    let mojito_types::types::Ty::Struct(_, arguments) = ty else {
+        return None;
+    };
+    let decls = &prog.structs.get(sname)?.param_decls;
+    let clone = mojito_symbol::symbol::instance_method_clone_name(method, decls, arguments)?;
+    let symbol = prog.overload_name(&format!("{sname}.{clone}"), argc);
+    prog.index_of(&symbol).is_some().then_some(symbol)
 }
 
 impl Prog {
@@ -851,6 +892,11 @@ struct MethodInvocation<'a> {
     keyword_argument_places: &'a [Option<MirPlace>],
     parameter_arguments: &'a [mojito_mir::mir::MirParamArg],
     parameter_declarations: &'a [mojito_types::types::ParamDecl],
+    /// The checked static type of each argument register, when the caller
+    /// has them: a `Writer.write` argument whose static type is a closed
+    /// generic-struct instance formats through that instance's
+    /// per-instantiation `write_to` clone.
+    argument_types: Vec<Option<mojito_types::types::Ty>>,
 }
 
 /// Recover the retained caller place selected for one bound parameter. Keyword

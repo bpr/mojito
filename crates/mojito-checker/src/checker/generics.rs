@@ -1,6 +1,9 @@
 //! Generic parameter classification, solving, substitution, and bound checks.
 
 use super::*;
+pub(super) use mojito_symbol::symbol::{
+    materialized_instantiation_argument, specialized_method_values,
+};
 pub use mojito_types::types::{map_tyargs, substitute};
 
 pub(super) fn unify(
@@ -824,18 +827,8 @@ impl Checker {
         arguments: &[TyArg],
     ) -> Option<String> {
         let info = self.structs.get(owner)?;
-        if info.decls.is_empty() || arguments.is_empty() {
-            return None;
-        }
-        let arguments: Vec<TyArg> = arguments
-            .iter()
-            .map(materialized_instantiation_argument)
-            .collect();
-        let values = specialized_method_values(&info.decls, &arguments)?;
-        if values.is_empty() {
-            return None;
-        }
-        let name = mojito_symbol::symbol::mangle(method, &values);
+        let name =
+            mojito_symbol::symbol::instance_method_clone_name(method, &info.decls, arguments)?;
         info.methods.contains_key(&name).then_some(name)
     }
 
@@ -999,48 +992,4 @@ pub(super) fn method_instantiation_arguments(
                 .map(materialized_instantiation_argument)
         })
         .collect()
-}
-
-/// A method-level type argument as the clone spells it: literal types
-/// materialize (a string literal bound to `T: Movable` instantiates the
-/// `String` clone, which the call reaches through the ordinary literal
-/// conversion), so two calls differing only in literal-ness share one clone
-/// instead of minting two symbol-equivalent overloads.
-pub(super) fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
-    match argument {
-        TyArg::Ty(Ty::StringLiteral) => TyArg::Ty(Ty::Struct(
-            mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-            Vec::new(),
-        )),
-        TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
-        other => other.clone(),
-    }
-}
-
-/// The specialization values of a method instantiation, or `None` when the
-/// instantiation cannot name a clone (see `specialized_method_clone`).
-pub(super) fn specialized_method_values(
-    decls: &[ParamDecl],
-    arguments: &[TyArg],
-) -> Option<Vec<CtValue>> {
-    let mut values = Vec::new();
-    for (decl, argument) in decls.iter().zip(arguments) {
-        match (decl, argument) {
-            (
-                ParamDecl::Type {
-                    callable_bound: Some(_),
-                    ..
-                },
-                _,
-            ) => continue,
-            (ParamDecl::Type { variadic: true, .. }, _) => return None,
-            (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
-                values.push(CtValue::Type(Box::new(ty.clone())));
-            }
-            (ParamDecl::Value { .. }, TyArg::Val(CtValue::Param(_))) => continue,
-            (ParamDecl::Value { .. }, TyArg::Val(value)) => values.push(value.clone()),
-            _ => return None,
-        }
-    }
-    Some(values)
 }

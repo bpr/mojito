@@ -27,7 +27,7 @@ use mojito_ast::ast::{
     TypeParam,
 };
 use mojito_types::ct::CtValue;
-use mojito_types::types::{Ty, TyArg};
+use mojito_types::types::{ParamDecl, Ty, TyArg, default_literal};
 
 /// One declaration visible to phase-neutral runtime/backend dispatch.
 #[derive(Debug, Clone, Copy)]
@@ -112,6 +112,74 @@ pub fn resolve_method_symbol<'a>(
         }
     }
     resolve_callable_symbol(declarations, &format!("{receiver_type}.{method}"), argc)
+}
+
+/// A type or value argument as a specialization clone spells it: literal
+/// types materialize (a string literal bound to `T: Movable` instantiates the
+/// `String` clone, which the call reaches through the ordinary literal
+/// conversion), so two applications differing only in literal-ness share one
+/// clone instead of minting two symbol-equivalent overloads.
+pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
+    match argument {
+        TyArg::Ty(Ty::StringLiteral) => {
+            TyArg::Ty(Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()))
+        }
+        TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
+        other => other.clone(),
+    }
+}
+
+/// The specialization values of a method or struct instantiation in
+/// declaration order — the list `mangle` bakes into a clone's name — or
+/// `None` when the instantiation cannot name a clone: callable-bounded
+/// parameters stay symbolic on the clone and contribute nothing; packs and
+/// symbolic placeholders make it unspecializable. The checker's retargeting,
+/// the specializer's `method_request_values`, and the backends' instance
+/// lookups all agree through this one function.
+pub fn specialized_method_values(decls: &[ParamDecl], arguments: &[TyArg]) -> Option<Vec<CtValue>> {
+    let mut values = Vec::new();
+    for (decl, argument) in decls.iter().zip(arguments) {
+        match (decl, argument) {
+            (
+                ParamDecl::Type {
+                    callable_bound: Some(_),
+                    ..
+                },
+                _,
+            ) => continue,
+            (ParamDecl::Type { variadic: true, .. }, _) => return None,
+            (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
+                values.push(CtValue::Type(Box::new(ty.clone())));
+            }
+            (ParamDecl::Value { .. }, TyArg::Val(CtValue::Param(_))) => continue,
+            (ParamDecl::Value { .. }, TyArg::Val(value)) => values.push(value.clone()),
+            _ => return None,
+        }
+    }
+    Some(values)
+}
+
+/// The per-instantiation clone name of `method` on a generic struct instance
+/// (`get$y3:Int` for `Optional[Int]`), or `None` when the instance cannot
+/// name one. Callers check that the declaration exists: an instance without
+/// clones keeps the template's erased path.
+pub fn instance_method_clone_name(
+    method: &str,
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+) -> Option<String> {
+    if decls.is_empty() || arguments.is_empty() {
+        return None;
+    }
+    let arguments: Vec<TyArg> = arguments
+        .iter()
+        .map(materialized_instantiation_argument)
+        .collect();
+    let values = specialized_method_values(decls, &arguments)?;
+    if values.is_empty() {
+        return None;
+    }
+    Some(mangle(method, &values))
 }
 
 /// Deterministic MIR identity for a concrete generic instance. Origins have

@@ -163,7 +163,7 @@ impl VmBackend {
         {
             return self.construct_via_init(prog, &name, Some(&target), arguments, Vec::new(), &[]);
         }
-        self.call_named(prog, &name, arguments, Vec::new(), &[])
+        self.call_named(prog, &name, arguments, Vec::new(), &[], &[])
     }
 
     /// Normalize an `Indexer` to the VM's signed index representation. Int-like
@@ -194,6 +194,7 @@ impl VmBackend {
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
         param_vals: &[Option<Value>],
+        arg_types: &[Option<mojito_types::types::Ty>],
     ) -> Result<Value, RuntimeError> {
         // Built-ins take positional arguments only, and user functions handle
         // keywords through their signatures below. Struct constructors get a
@@ -257,8 +258,9 @@ impl VmBackend {
             }
             "print" => {
                 let mut cells = Vec::with_capacity(args.len());
-                for value in args {
-                    cells.push(self.format_value(prog, value, false)?);
+                for (index, value) in args.into_iter().enumerate() {
+                    let static_ty = arg_types.get(index).and_then(Option::as_ref);
+                    cells.push(self.format_value(prog, value, false, static_ty)?);
                 }
                 self.output.push_str(&cells.join(" "));
                 self.output.push('\n');
@@ -280,11 +282,17 @@ impl VmBackend {
                 Err(RuntimeError::Abort(message))
             }
             "String" => Ok(Value::Str(match args.into_iter().next() {
-                Some(value) => self.format_value(prog, value, false)?,
+                Some(value) => {
+                    let static_ty = arg_types.first().and_then(Option::as_ref);
+                    self.format_value(prog, value, false, static_ty)?
+                }
                 None => String::new(),
             })),
             "repr" => match args.into_iter().next() {
-                Some(value) => Ok(Value::Str(self.format_value(prog, value, true)?)),
+                Some(value) => {
+                    let static_ty = arg_types.first().and_then(Option::as_ref);
+                    Ok(Value::Str(self.format_value(prog, value, true, static_ty)?))
+                }
                 None => Err(RuntimeError::ArityMismatch {
                     name: "repr".to_string(),
                     expected: 1,
@@ -308,7 +316,8 @@ impl VmBackend {
                         fields,
                         value_params,
                     };
-                    self.call_dunder(prog, &name, "__len__", vec![recv])
+                    let static_ty = arg_types.first().and_then(Option::as_ref);
+                    self.call_typed_dunder(prog, &name, "__len__", vec![recv], static_ty)
                 }
                 _ => Err(RuntimeError::Unsupported(
                     "vm: len supports String, internal Tuple storage, and nominal structs with __len__"
@@ -400,7 +409,8 @@ impl VmBackend {
                         _ => "__int__",
                     };
                     let sname = sname.clone();
-                    return self.call_dunder(prog, &sname, dunder, vec![value]);
+                    let static_ty = arg_types.first().and_then(Option::as_ref);
+                    return self.call_typed_dunder(prog, &sname, dunder, vec![value], static_ty);
                 }
                 builtin_convert(name, value)
             }
@@ -502,11 +512,17 @@ impl VmBackend {
         }
     }
 
+    /// Format one value as `print`/`String`/`repr`/`Writer.write` do. A
+    /// nominal struct writes itself through `write_to`/`write_repr_to`,
+    /// dispatched by runtime struct name — or, when the caller knows the
+    /// argument's checked static type and it names a closed generic-struct
+    /// instance, through that instance's per-instantiation clone.
     pub(super) fn format_value(
         &mut self,
         prog: &Prog,
         value: Value,
         repr: bool,
+        static_ty: Option<&mojito_types::types::Ty>,
     ) -> Result<String, RuntimeError> {
         let Value::Struct {
             name,
@@ -521,7 +537,9 @@ impl VmBackend {
         };
         let method = if repr { "write_repr_to" } else { "write_to" };
         let source = format!("{name}.{method}");
-        if let Some(index) = prog.index_of(&prog.overload_name(&source, 1)) {
+        let symbol = super::instance_dunder_symbol(prog, &name, method, static_ty, 1)
+            .unwrap_or_else(|| prog.overload_name(&source, 1));
+        if let Some(index) = prog.index_of(&symbol) {
             let receiver = Value::Struct {
                 name,
                 fields,
@@ -541,7 +559,10 @@ impl VmBackend {
         }
         let mut cells = Vec::with_capacity(fields.len());
         for (field, value) in fields {
-            cells.push(format!("{field}={}", self.format_value(prog, value, repr)?));
+            cells.push(format!(
+                "{field}={}",
+                self.format_value(prog, value, repr, None)?
+            ));
         }
         Ok(format!("{name}({})", cells.join(", ")))
     }
@@ -587,7 +608,7 @@ impl VmBackend {
                         expected: index + 1,
                         got: arguments.len(),
                     })?;
-                let rendered = self.format_value(prog, value.clone(), repr)?;
+                let rendered = self.format_value(prog, value.clone(), repr, None)?;
                 output.push_str(&apply_format_spec(value, &rendered, spec)?);
                 cursor = end + 1;
                 continue;

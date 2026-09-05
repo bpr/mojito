@@ -506,8 +506,24 @@ unchanged (`Optional[Int]` is still `Ty::Struct("Optional", [Int])` and the
 runtime struct name stays `Optional`), so a call whose receiver instance has
 no clone simply keeps today's erased path; a call on a closed receiver
 retargets to the clone by exact name through the `specialized_method_clone`
-funnel (`instance_method_clone`). A clone that fails to check reports
-`TypeError::PostInstantiation` naming the instance and the source method. A
+funnel (`instance_method_clone`): method and static calls, operator dunders
+(re-selected among the clone family by operand), subscript assignment, and
+`for` iteration (`__iter__` by receiver convention) all record the clone
+symbol. The by-name dispatches the backends perform on a runtime struct
+name — `print`/`String(x)`/`repr(x)`/`Writer.write` through
+`write_to`/`write_repr_to`, and `len`/`abs`/`Bool`/`Int` and the prefix
+operators through their dunders — select the clone from the argument's
+*checked static type* instead (the VM's `format_value`/`call_typed_dunder`
+read the caller's register types; the native monomorphizer's
+`enqueue_display_instance`/`instance_dunder_target` read `reg_types`), all
+through the symbol crate's one identity helper `instance_method_clone_name`;
+with no clone the runtime-name path serves the call exactly as before. An
+inferred application of a bound-generic `def` whose clone already exists
+(`existing_def_clone`: `mangle(name, values)` declared as a concrete
+function) retargets to it directly and records no request, so a clone body
+calling an already-cloned def costs no discovery round. A clone that fails
+to check reports `TypeError::PostInstantiation` naming the instance and the
+source method. A
 template method whose body only elaborates with the struct's parameters
 bound becomes an `_mojito_abort` stub, exactly as in a variadic
 specialization.

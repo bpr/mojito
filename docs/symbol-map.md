@@ -124,7 +124,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   reached from a non-bundled source (`record_struct_instantiation` →
   `checked::StructInstantiation`) and retarget a closed receiver's call to
   its per-instantiation clone by exact name (`instance_method_clone`,
-  `generics.rs`, the same value list); `unify_through_callable_bounds`
+  `generics.rs`, over `symbol::instance_method_clone_name`); `operators.rs`,
+  `indexing.rs` (`resolve_struct_setitem`), and `iteration.rs` (the
+  `__iter__` prepare symbol) apply the same lookup, and
+  `call_inference.rs::existing_def_clone` retargets an inferred bound-generic
+  call to an already-declared def clone; `unify_through_callable_bounds`
   solves an infer-only type parameter through a callable-bounded sibling)
   (`infer_uninit_storage_method` types the compiler-private
   `__UninitStorage[T]` write/take/destroy crossings behind
@@ -341,6 +345,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   friends), struct-specialization argument resolution, and the t-string
   desugar into its `TString` specialization's construction.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
+- `crates/mojito-symbol/src/symbol.rs` also owns the instance-clone identity
+  shared by the checker and both backends: `specialized_method_values`,
+  `materialized_instantiation_argument`, and `instance_method_clone_name`
+  (the VM's `instance_dunder_symbol` in `backend/vm.rs` and the native
+  monomorphizer's `instance_dunder_target`/`enqueue_display_instance` in
+  `native/mono/instances.rs` select clones through it from checked register
+  types).
 
 ## Change Routing
 

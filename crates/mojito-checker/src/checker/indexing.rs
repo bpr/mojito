@@ -1043,9 +1043,14 @@ impl Checker {
             .structs
             .get(name)
             .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
+        // A closed receiver instance assigns through the per-instantiation
+        // clone family (`__setitem__$y3:Int`) when it exists.
+        let method = self
+            .instance_method_clone(name, "__setitem__", type_arguments)
+            .unwrap_or_else(|| "__setitem__".to_string());
         let signatures = info
             .methods
-            .get("__setitem__")
+            .get(&method)
             .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
         let substitution = struct_subst(&info.decls, type_arguments);
         let mut matches = Vec::new();
@@ -1166,10 +1171,13 @@ impl Checker {
         }
         Ok(SubscriptResolution {
             return_type: value_type.clone(),
-            lowered_name: (signatures.len() > 1).then(|| {
+            lowered_name: (signatures.len() > 1 || method != "__setitem__").then(|| {
+                if signatures.len() == 1 {
+                    return format!("{name}.{method}");
+                }
                 method_lowered_name(
                     name,
-                    "__setitem__",
+                    &method,
                     signature,
                     self.self_instance_ty(name).as_ref(),
                 )

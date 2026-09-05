@@ -284,3 +284,5 @@ string-view-equality	run	assets/ok/string_view_equality.mojo
 generic-equatable-dispatch	run	assets/ok/generic_equatable_dispatch.mojo
 generic-ctor-literal-materialization	run	assets/ok/generic_ctor_literal_materialization.mojo
 generic-struct-instance-bodies	run	assets/ok/generic_struct_instance_bodies.mojo
+generic-struct-instance-dispatch	run	assets/ok/generic_struct_instance_dispatch.mojo
+generic-instance-repr	run	conformance/fixtures/generic_instance_repr.mojo

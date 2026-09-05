@@ -447,15 +447,29 @@ impl Checker {
                 error.clone(),
             )?;
         }
-        let prepare_symbol = if candidates.len() > 1 {
-            method_lowered_name(
+        // A closed receiver instance iterates through the per-instantiation
+        // clone family (`__iter__$y3:Int`) with the same receiver convention.
+        let instance_iter = self
+            .instance_method_clone(cname, "__iter__", ctargs)
+            .and_then(|clone| {
+                let sigs = cinfo.methods.get(&clone)?;
+                let sig = sigs
+                    .iter()
+                    .find(|sig| sig.self_convention == iter_sig.self_convention)?;
+                Some((clone, sig, sigs.len()))
+            });
+        let prepare_symbol = match instance_iter {
+            Some((clone, _, 1)) => format!("{cname}.{clone}"),
+            Some((clone, sig, _)) => {
+                method_lowered_name(cname, &clone, sig, self.self_instance_ty(cname).as_ref())
+            }
+            None if candidates.len() > 1 => method_lowered_name(
                 cname,
                 "__iter__",
                 iter_sig,
                 self.self_instance_ty(cname).as_ref(),
-            )
-        } else {
-            format!("{cname}.__iter__")
+            ),
+            None => format!("{cname}.__iter__"),
         };
         // The iterator must itself be a struct with `__next__`. Current Mojo
         // terminates iteration when that method raises the typed

@@ -209,9 +209,14 @@ impl VmBackend {
         // errors only when its slot is actually taken.
         let make_default = |i: usize| -> Result<Value, RuntimeError> {
             match &sig.defaults[i] {
-                Some(CheckedConst::Construct { target, arg }) => {
-                    self.call_named(prog, target, vec![checked_const_value(arg)], vec![], &[])
-                }
+                Some(CheckedConst::Construct { target, arg }) => self.call_named(
+                    prog,
+                    target,
+                    vec![checked_const_value(arg)],
+                    vec![],
+                    &[],
+                    &[],
+                ),
                 Some(other) => Ok(checked_const_value(other)),
                 None => Err(RuntimeError::Unsupported(format!(
                     "vm: non-constant default for parameter '{}' of '{name}'",
@@ -342,6 +347,7 @@ impl VmBackend {
             keyword_argument_places: kwarg_places,
             parameter_arguments: param_arg_regs,
             parameter_declarations: param_decls,
+            argument_types: arg_types,
         } = invocation;
         let CallerFrame {
             id: frame_id,
@@ -413,6 +419,7 @@ impl VmBackend {
                                     keyword_argument_places: kwarg_places,
                                     parameter_arguments: param_arg_regs,
                                     parameter_declarations: param_decls,
+                                    argument_types: Vec::new(),
                                 },
                                 CallerFrame {
                                     id: frame_id,
@@ -470,8 +477,9 @@ impl VmBackend {
                     RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
                 })?;
                 let mut text = current.clone();
-                for argument in args {
-                    text.push_str(&self.format_value(prog, argument, false)?);
+                for (index, argument) in args.into_iter().enumerate() {
+                    let static_ty = arg_types.get(index).and_then(Option::as_ref);
+                    text.push_str(&self.format_value(prog, argument, false, static_ty)?);
                 }
                 self.store_at_call_place(prog, frame_id, place, Value::Str(text), regs, vars)?;
                 Ok(Value::None)
@@ -539,8 +547,9 @@ impl VmBackend {
                         matches!(ty, Ty::Struct(payload, args)
                         if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(payload))
                     });
-                for argument in args {
-                    let text = self.format_value(prog, argument, false)?;
+                for (position, argument) in args.into_iter().enumerate() {
+                    let static_ty = arg_types.get(position).and_then(Option::as_ref);
+                    let text = self.format_value(prog, argument, false, static_ty)?;
                     let payload = if nominal_payload {
                         self.nominal_string_value(prog, &text)?
                     } else {

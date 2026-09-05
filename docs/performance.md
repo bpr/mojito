@@ -132,32 +132,35 @@ elaboration 0.07 s, link 0.02 s, VM 0.005 s. The next bucket to attack is
 the nested discovery/transfer rounds (0.55 s of the 0.82 s), then a
 precompiled-prelude cache if sub-0.3 s matters.
 
-**Per-instantiation generic struct bodies (2026-09-04).** Ordinary generic
-structs now mint per-instantiation method clones (`docs/architecture.md`);
-the release matrix (same method, 5 runs, `--cmds run`, medians) before and
-after, with the counters `struct_requests`/`method_requests` now emitted
+**Per-instantiation generic struct bodies (2026-09-04/05).** Ordinary
+generic structs now mint per-instantiation method clones
+(`docs/architecture.md`), and every call shape reaches them; the release
+matrix (same method, 5 runs, `--cmds run`, medians) before and after, with
+the counters `struct_requests`/`method_requests` now emitted
 beside `def_requests`:
 
 | Fixture | Before | After | Instances |
 |---|---:|---:|---:|
-| `empty` | 0.761 | 0.726 | 0 |
-| `hello` | 0.757 | 0.728 | 0 |
-| `add` | 0.756 | 0.731 | 0 |
-| `generic` | 0.757 | 0.811 | 1 |
-| `tuple` | 0.796 | 0.779 | 0 |
-| `tstring` | 1.041 | 1.010 | 0 |
-| `stdlib_heavy` | 0.763 | 1.681 | 24 |
+| `empty` | 0.761 | 0.747 | 0 |
+| `hello` | 0.757 | 0.749 | 0 |
+| `add` | 0.756 | 0.765 | 0 |
+| `generic` | 0.757 | 0.832 | 1 |
+| `tuple` | 0.796 | 0.787 | 0 |
+| `tstring` | 1.041 | 1.037 | 0 |
+| `stdlib_heavy` | 0.763 | 1.888 | 24 |
 
 `stdlib_heavy` (six user instantiations of `Box`/`List`/`Dict`, 24 with the
-storage they reach, 919 MIR functions instead of 538) pays for two things:
+storage they reach, 919 MIR functions instead of 538; 2.5x) pays for two
+things:
 every discovery round re-checks ~380 clone bodies (each check pass 0.45 s
 instead of 0.27 s, the two transfer rounds included), and one extra round
-(0.55 s) exists only because the clone bodies contain inferred calls to
-generic defs whose clones already exist (`unsafe_alloc$y3:Int`): those are
-occurrence-keyed def requests, so they need a round to retarget. The levers,
-in order: a checker-side retarget to an existing def clone by name (the
-method path already does this), reachability-pruned clone lowering, and the
-§1/§2 round-structure items below. Programs without their own
+(0.55 s) comes from one inferred generic-def call inside a clone body
+(`hash[String, AHasher]` in `Dict[String, Int]`'s clone) that is a genuinely
+new instantiation — the erased template never requested it. An occurrence
+whose def clone already exists now retargets in the checker without a round
+(`existing_def_clone`), so only new instantiations discovered inside clones
+still cost one. The remaining levers, in order: reachability-pruned clone
+lowering and the §1/§2 round-structure items below. Programs without their own
 instantiations are unchanged: instances reached only inside bundled stdlib
 bodies keep the erased path and mint nothing.
 
