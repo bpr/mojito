@@ -2599,7 +2599,7 @@ impl Flatten<'_> {
                 then_b,
                 else_b,
             } => {
-                let c = self.expr_hir(cond); // evaluated at the end of this block
+                let c = self.condition_hir(cond); // evaluated at the end of this block
                 self.flush_argument_anchors();
                 MirTerm::Branch {
                     cond: c,

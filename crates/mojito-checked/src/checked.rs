@@ -480,6 +480,14 @@ pub enum SemanticAdjustment {
     /// Equatable's default `__ne__` is `not (a == b)`, so MIR dispatches
     /// `__eq__` and negates the result.
     NegatedEquality,
+    /// `a OP b` answered by the right operand's reflected dunder (`1 + m`
+    /// → `m.__radd__(1)`): MIR swaps the operands and `BinOp.resolved`
+    /// names the reflected method.
+    ReflectedOperator,
+    /// A condition (`if`/`while`/ternary/comprehension filter) whose value
+    /// is a `Boolable` struct: MIR converts it through `Bool(x)`, i.e. the
+    /// struct's `__bool__`.
+    Truthiness,
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),
@@ -1066,6 +1074,7 @@ impl CheckedProgram {
         call_place_uses: HashSet<SourceSpan>,
         borrowed_read_call_places: HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: HashSet<SourceSpan>,
+        truthiness_conditions: HashSet<SourceSpan>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
         let (expressions, expression_index) = build_checked_expressions(
@@ -1096,6 +1105,7 @@ impl CheckedProgram {
             &call_place_uses,
             &borrowed_read_call_places,
             &implicitly_copied_consuming_receivers,
+            &truthiness_conditions,
         );
         let declarations = build_checked_declarations(
             &statements,
@@ -1256,6 +1266,7 @@ fn build_checked_expressions(
     call_place_uses: &HashSet<SourceSpan>,
     borrowed_read_call_places: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
+    truthiness_conditions: &HashSet<SourceSpan>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
     struct Builder<'a> {
         nodes: Vec<CheckedExpr>,
@@ -1287,6 +1298,7 @@ fn build_checked_expressions(
         call_place_uses: &'a HashSet<SourceSpan>,
         borrowed_read_call_places: &'a HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
+        truthiness_conditions: &'a HashSet<SourceSpan>,
     }
     impl Builder<'_> {
         fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
@@ -1542,6 +1554,9 @@ fn build_checked_expressions(
             }
             if self.implicitly_copied_consuming_receivers.contains(&span) {
                 adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
+            }
+            if self.truthiness_conditions.contains(&span) {
+                adjustments.push(SemanticAdjustment::Truthiness);
             }
             if let Some((dtype, width)) = self.simd_constructions.get(&span) {
                 adjustments.push(SemanticAdjustment::ConstructSimd {
@@ -1817,6 +1832,7 @@ fn build_checked_expressions(
         call_place_uses,
         borrowed_read_call_places,
         implicitly_copied_consuming_receivers,
+        truthiness_conditions,
     };
     builder.block(statements);
     (builder.nodes, builder.index)

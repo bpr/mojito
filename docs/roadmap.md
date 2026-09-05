@@ -135,177 +135,236 @@ recreates this section's checkbox with the fresh divergence list.
 ### 3. Grow The CPU Standard Library *(demand-first — any order)*
 
 - [ ] **Collection API parity** — grow the tuple, slice, optional/variant,
-  and String result-API surfaces demand-first toward the audited head, one
-  session-sized slice each (`docs/features.md` records what lands). The
-  remaining work is the residue lists below; the self-hosted `Variant`
-  landed 2026-09-04.
+  and String surfaces toward the audited head, one session-sized slice at a
+  time (`docs/features.md` records what lands; the self-hosted `Variant`
+  landed 2026-09-04). What remains is listed below as tasks, ordered by
+  expected payoff: the first task fixes the most user-visible bugs per hour
+  of work, and the later ones unlock progressively narrower features. Each
+  task names the residues it closes, so finishing one deletes its bullet.
+  Each task also says whether to `/plan` first: most are direct fixes;
+  tasks 3, 7, and 11 carry a design decision and get a plan (3 and 7 share
+  one), and tasks 4, 5, and 6 need only a half-page list of the sites or
+  the one choice named in their note.
 
-  String residues (2026-09; batch 1 landed the search/count/replace/join/
-  split/splitlines/strip families, `Boolable`, `__mul__`, String as `Writer`,
-  and StringSpan `Equatable`/`Boolable`/`in`): `String == StringSpan` needs a
-  second same-arity `String.__eq__` overload, which would make the String
-  struct's trait-dispatch symbol (`__trait_dispatch.__eq__` retargeted to
-  `String.__eq__`) ambiguous — spell `view == string`; a view-returning call
-  on a temporary receiver (`String("x").strip()`) rejects with "reference
-  binding to a non-place expression" (the receiver anchor only handles bound
-  places) — bind the receiver; a `StringSpan` argument does not convert to a
-  `String` parameter (upstream's parameters are `StringSpan`; Mojito's are
-  `String`) — use `to_string()`; `split(sep, maxsplit=-1)` is one defaulted
-  overload where upstream declares two (call sites are identical); bare `if
-  s:` truthiness stays with the collection-truthiness item below. Batch 2
-  (case/predicates/justification) residues: `upper`/`lower` cover a
-  simple-case subset (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic,
-  `ß` -> `SS`) where upstream ships the full Unicode simple + special casing
-  tables (`_unicode.mojo`, generated lookups — port when a fixture needs
-  another script); the batch-2 members live on `String` only, not
-  `StringSpan` (call them on `view.to_string()`); `isspace` drops upstream's
-  `single_character` parameter; `count_codepoints`/`count_graphemes` still
-  `raise` on invalid UTF-8 (upstream's are non-raising over trusted buffers);
-  `__radd__` (`"lit" + s` on a StringLiteral left operand already dispatches
-  through the mixed-string path, so only user-struct reflected operators are
-  missing: the checker has no `__r*__` fallback). Batch 3 (bytes, parsing,
-  iterators) residues: `atof` is correctly rounded only while the
-  significand (≤ 19 digits) and the power of ten (≤ 22) stay exact, and
-  Mojito prints NaN as `NaN` where upstream prints `nan`; the `next(it)`
-  builtin does not exist (iterate with `for` or call `__next__`);
-  `Span(unsafe_ptr=, length=)` takes a `Pointer[T, MutUntrackedOrigin]`
-  (a `Pointer[T, origin]` parameter cannot bind through a constructor type
-  application: Pointer parameters coerce only on exact origins, and the
-  constructor path resolves type applications without origin slots, so
-  `Span[Byte, origin_of(self)](...)` rejects with a type-argument count);
-  `Pointer`'s `[unsafe_offset=]` keyword subscript (upstream deprecates the
-  positional form); `codepoint_slices_reversed`/`graphemes_reversed`/
-  `__reversed__`, `bytes()`, `split_at_grapheme`, and `peek_next` on the
-  iterators; and `count_codepoints`/`count_graphemes` (used by the iterators'
-  `__len__`) still decode through an eager `to_string()` copy per step.
+  1. **Everyday spellings that still misbehave.** No plan. The 2026-09-05
+     slice closed `if collection:` truthiness, the reflected `__r*__`
+     dunders, the `~` operator, `next(it)`, `reversed(range)`, Tuple
+     `==`/`!=` over user-struct elements, and two entries that turned out to
+     be invalid Mojo (`List[Int](1, 2)` and a bare `T` field type are
+     rejected upstream too; the first is pinned by a `reject` conformance
+     row, the second moved to task 13). Still open, found while closing
+     them:
+     - `Box[Float64](2.5)` and `Box(2.5)` on a generic struct store the
+       unmaterialized `FloatLiteral` and print `5/2`: a specialized
+       constructor's literal argument is never materialized to the solved
+       field type (a non-generic `Float64` field prints `2.5`). Recording
+       `MaterializeLiteral` on the generic-inference constructor path did
+       not reach it; the explicit `Box[Float64]` spelling and the
+       final-round specialized path need the same treatment.
 
-  Repr residues (2026-09; the repr slice landed `_unqualified_type_name[T]()`,
-  `TypeNames`, upstream's scalar/String/Tuple/Slice repr texts): upstream's
-  `FormatStruct(writer, "Name").params(...).fields(...)` builder needs
-  variadic-pack methods on a struct (`def fields[*Ts: Writable](self, *args:
-  *Ts)` — the elaborator reports "'Ts' is not a compile-time type" for a
-  method-level pack, while the same shape on a free def specializes) plus a
-  `ref` field to the writer; `write_repr_to` on `Optional` and other
-  non-variadic generic structs needs either per-specialization checking of
-  the body or runtime type bindings (the VM runs one erased body, and an
-  `Optional[Int]` value carries no reified `T`, so
-  `_unqualified_type_name[Self]` spells `Optional[T]`); `List`/`Dict`/`Set`
-  repr falls back to the field-wise `Name(field=value)` text (upstream:
-  `List[SIMD[DType.int, 1]]([Int(1), Int(2)])`); the bundled `Writable`
-  trait declares only `write_to`, so a bounded `T: Writable` cannot call
-  `write_repr_to` (spell `repr(x)`); natively `repr` lowers only for
-  Strings and without escapes (scalars, tuples, and structs reject); a
-  subscript view temporary passed as a call argument at its source's last
-  use (`writer.write(s[byte=a:b])`) still frees the source first — bind the
-  view to a local (the `$arg_loan_r` anchor covers call and method-call
-  temporaries only); and upstream spells `_unqualified_type_name[Tuple[Int,
-  Bool]]()` as `Tuple[<unprintable>, {}]`, so shared fixtures avoid tuple
-  type names.
+  2. **Same-arity dunder overloads.** Dunders are selected by arity in both
+     `struct_dunder_signature` and the VM's `call_resolved_dunder`, so a
+     struct cannot declare `__eq__(rhs: Self)` beside `__eq__(rhs: NoneType)`
+     or `__eq__(rhs: String)`. Record a `ResolveCallable` adjustment on the
+     infix expression so `BinOp.resolved` names the exact overload. No
+     plan: the mechanism is decided above and mirrors how overloaded method
+     calls already resolve; the sites are the checker's dunder selection,
+     the VM's dunder dispatch, and pliron's `lower_binop`. This unlocks:
+     - `opt == None` on `Optional`.
+     - `String == StringSpan` (today: spell `view == string`), which also
+       removes the ambiguity a second `String.__eq__` would create for the
+       String struct's `__trait_dispatch.__eq__` symbol.
 
-  Tuple residues (2026-09; the Tuple slice landed `Hashable`/`Sized` and
-  upstream's `__contains__[T: Equatable]` bound): `Defaultable` needs
-  `Ts[i]()` element default construction (the `Self.T()` blocker shared with
-  Array), the static `__len__()` overload cannot coexist with the
-  instance one under arity-keyed dunder selection, and a Tuple whose
-  elements are user structs compares neither structurally nor nominally
-  (`(1, Opaque(2)) == (1, Opaque(3))` rejects and `t.__ne__(u)` finds no
-  method): the structural `Ty::Tuple` path accepts scalar elements only
-  and does not route to the specialized `Tuple.__eq__`/`__ne__` bodies,
-  which check (the pinned Mojo accepts both spellings). Natively,
-  conformance/fixtures/tuple_consume_elements.mojo (`values^.consume_elements[
-  print_length]()` over `Array` elements) prints correctly and then traps
-  `use after Pointer deallocation` at teardown on both the current tree and
-  the da4d129 baseline — a pre-existing native drop gap, not a manifest row.
+  3. **Per-specialization checking of non-variadic generic struct bodies.**
+     Today a generic struct such as `Optional[T]` runs one erased body: the
+     VM has no reified `T`, and per-call specialization of method-level type
+     parameters works only inside specialized variadic structs. Either
+     check each specialization's body or carry runtime type bindings. Plan
+     first, together with task 7: this is a real design choice between
+     those two branches, it touches the discovery loop, the elaborator, the
+     checker, and both backends, and the branch chosen decides how repr,
+     FormatStruct, and per-call specialization all land. This is the
+     largest task here and unlocks a whole family:
+     - `write_repr_to` on `Optional` and other non-variadic generics
+       (`_unqualified_type_name[Self]` currently spells `Optional[T]`).
+     - Upstream's `FormatStruct(writer, "Name").params(...).fields(...)`
+       builder, which also needs variadic-pack methods on a struct (`def
+       fields[*Ts: Writable](self, *args: *Ts)` — the elaborator reports
+       "'Ts' is not a compile-time type" for a method-level pack while the
+       same shape on a free def specializes) and a `ref` field to the writer.
+     - `List`/`Dict`/`Set` repr in upstream's text
+       (`List[SIMD[DType.int, 1]]([Int(1), Int(2)])`) instead of the
+       field-wise `Name(field=value)` fallback.
+     - Per-call specialization of method-level type parameters on every
+       generic struct, not only variadic ones.
+     - `Optional.copied` and `OptionalReg`, which need self-type-constrained
+       methods and `TrivialRegisterPassable`.
+     Related but separate: the bundled `Writable` trait declares only
+     `write_to`, so a bounded `T: Writable` cannot call `write_repr_to`
+     (spell `repr(x)`); and upstream spells
+     `_unqualified_type_name[Tuple[Int, Bool]]()` as
+     `Tuple[<unprintable>, {}]`, so shared fixtures avoid tuple type names.
 
-  Optional residues (2026-09; the Optional slice landed declared
-  `Boolable`/`Defaultable`, conditional `Equatable`/`Hashable`/`Writable`,
-  the `@implicit` value constructor, consuming `or_else`,
-  `unsafe_value`/`unsafe_take`/`bounds`): `opt == None` needs same-arity
-  dunder overload selection (`__eq__(rhs: Self)` beside `__eq__(rhs:
-  NoneType)` — `struct_dunder_signature` and the VM's
-  `call_resolved_dunder` key dunders by arity; record a `ResolveCallable`
-  adjustment on the infix so `BinOp.resolved` names the exact overload),
-  `__invert__` needs a `~` prefix operator, the raising `opt[]` subscript
-  needs the empty-subscript form on nominal receivers plus
-  `EmptyOptionalError`'s `TypeNames` text, and `copied`/`OptionalReg` need
-  self-type-constrained methods / `TrivialRegisterPassable`.
+  4. **View temporaries as receivers and arguments.** Two ownership-anchor
+     gaps make idiomatic String chains fail. Short plan (half a page): the
+     anchors already exist (`$mat_r`, `$arg_loan_r`), so the plan only
+     names the anchor each case extends and the fixture matrix, because
+     ownership changes have regressed before.
+     - A view-returning call on a temporary receiver (`String("x").strip()`)
+       rejects with "reference binding to a non-place expression" because
+       the receiver anchor only handles bound places. Workaround: bind the
+       receiver first.
+     - A subscript view temporary passed as a call argument at its source's
+       last use (`writer.write(s[byte=a:b])`) frees the source first. The
+       `$arg_loan_r` anchor covers call and method-call temporaries only.
+       Workaround: bind the view to a local.
 
-  Variant residues (2026-09-04; the self-hosted `Variant` landed:
-  `stdlib/std/utils/variant.mojo` over the bundled-private
-  `__VariantStorage[*Ts]` primitive, per-call specialization of type-keyed
-  methods, the intrinsic surface retired): variadic-struct pack forwarding
-  through a generic def — `Variant[*Ts]`/`Variant[T, String]` applied to an
-  enclosing `def f[*Ts]`/`def f[T]`'s own parameters — cannot check (the
-  erased template body resolves no variadic template application; user
-  variadic structs never could, the retired intrinsic could; pinned by
-  tests/compiler_test.rs `variant_pack_forwarding_through_a_generic_def_is_rejected`),
-  which needs variadic template applications over symbolic arguments to
-  resolve in erased template bodies and struct specialization requests to be
-  discovered from substituted generic signatures; per-call specialization of
-  method-level type parameters is limited to methods of specialized variadic
-  structs (elsewhere they stay erased); natively, `repr(v)` waits on the
-  general native repr path (no user struct's `write_repr_to` runs natively
-  yet) and a parameterized `@staticmethod` reached through an instance of a
-  non-variadic generic struct (`p.pick[Int]()`) fails monomorphization
-  (`cannot resolve parameter T`; the VM runs it), as does an instance
-  method whose only parameter is callable-bounded (`__getitem__[F: def()
-  -> Int](self, callback: F)` in conformance/fixtures/subscript_call_contracts.mojo:
-  `cannot resolve parameter F`); an unavailable where-gated
-  method reports Mojito's `'set' is unavailable for Variant[Conn]: its where
-  clause evaluated to False` rather than upstream's clause text; and the
-  projection tag-mismatch trap categories differ (the VM raises a `TypeError`
-  `Variant holds 'Int', not 'String'` where native traps `UnhandledError`),
-  so no error-differential fixture pins it. Observed while landing it, not
-  Variant-specific and unchanged from the committed baseline: `List[Int](1,
-  2)` (explicit parameter plus variadic elements) reports no matching
-  constructor, and a user `struct Box[T: Copyable & Movable](Copyable,
-  Movable)` instantiated as `Box[Int](1)` fails the specialization
-  conformance oracle (`unknown type 'T'`).
+  5. **`StringSpan` parameters in upstream's shape.** Upstream's String
+     APIs take `StringSpan`; Mojito's take `String`, so a `StringSpan`
+     argument does not convert (today: `to_string()`), and the batch-2
+     members (case, predicates, justification) live on `String` only.
+     Retargeting the signatures fixes both at once. No design; the plan is
+     the list of signatures to retarget, since the change is mechanical but
+     wide across the stdlib and its call sites. Cosmetic siblings that
+     can ride along: `split(sep, maxsplit=-1)` is one defaulted overload
+     where upstream declares two (call sites are identical), and `isspace`
+     drops upstream's `single_character` parameter.
 
-  Slice residues (2026-09; the Slice slice landed `Slice.__eq__`, the
-  `Slice(start, end, step)` writer text, the two-element
-  `ContiguousSlice.indices`, native explicit construction, and the
-  `Slice -> StridedSlice` widening): `Slice(...)` construction reads only
-  `Int`/`None` argument expressions (`infer_slice_construction`; an
-  `Optional[Int]`-typed variable needs the nominal Optional's slot read), and
-  the explicit `.write_to(writer)` method spelling on a descriptor is not
-  wired (print/`String(x)`/`Writer.write` are).
+  6. **Hashing parity.** Independent of the above, one slice. The one
+     decision to make up front is whether to move the `UInt64` leaf to
+     upstream's `to_bits` shape (second bullet); the rest is porting and
+     needs no plan.
+     - Container `Hashable` conformances on the hasher protocol
+       (`List`/`Optional`/`Array`/`Set`/`Dict.__hash__`; upstream
+       discriminates `Optional`/`Variant` alternatives with a `UInt8` tag
+       before delegating — `String`/`StringSpan`/`Tuple` already conform).
+     - Upstream-exact `Hasher` member spellings: `_update_with_simd(mut
+       self, value: SIMD[_, _])` with `SIMD.to_bits()` (Mojito narrows the
+       leaf to one normalized `UInt64`, which both bundled hashers mix
+       identically, so both backends' `UInt64` Variant discriminant lane is
+       bit-identical to upstream's `UInt8` tag until this lands), the keyed
+       `AHasher[key: U256]` (Mojito's is key-less; the seeded initializer
+       remains), and the bytes `hash(bytes: ImmPointer[UInt8, _], n)`
+       overload plus `hash_seeded_bytes` (the pointer-backed
+       `Span(unsafe_ptr=, length=)` constructor they need landed 2026-09;
+       `StringSpan.__hash__` already feeds `as_bytes()` to
+       `_update_with_bytes` without copying).
+     - CTFE `hash`/`default_comp_time_hasher` for compile-time dictionaries.
+     - On the raw seam only, a generic body forwarding its own `H` into
+       `hash[H](x)` without specialization reifies the binder's name, and the
+       VM's `ConstructTypeParam` falls back to the declaration default
+       instead of the caller's binding. The compiled discovery path
+       specializes the clone and is unaffected.
 
-  Deferred from the 2026-08 Dict/Set/List pass with no shared blocker
-  (each recorded in `conformance/parity.tsv` notes):
-  - relaxing K/V/element bounds toward upstream's Movable-only KeyElement
-    (a List-`AnyType`-style per-API `where` pass; sequence it after — or
-    with — the transfer-convention item below, which rewrites the same
-    signatures and call sites)
-  - bare `if collection:` truthiness (relax the checker's `expect_bool`
-    condition positions to dispatch `__bool__`; the `Bool(x)` lowering
-    already exists)
-  - `__reversed__`/`reversed()` (needs a short investigation: possibly
-    self-hostable as a `Reversible` trait plus a prelude free function —
-    no compiler protocol exists today)
-  - `(*, unsafe_uninit_length)` construction/resize (blocked on an
-    uninit-element storage story for List, MaybeUninit-adjacent)
-  - container `Hashable` conformances on the hasher protocol
-    (`List`/`Optional`/`Array`/`Set`/`Dict.__hash__`; upstream
-    discriminates `Optional`/`Variant` alternatives with a `UInt8` tag before
-    delegating — `String`/`StringSpan`/`Tuple` already conform)
-  - the upstream-exact `Hasher` member spellings: `_update_with_simd(mut
-    self, value: SIMD[_, _])` with `SIMD.to_bits()` (Mojito narrows the leaf
-    to one normalized `UInt64`, which both bundled hashers mix identically,
-    so both backends' `UInt64` Variant discriminant lane is bit-identical to
-    upstream's `UInt8` tag until this lands), the keyed `AHasher[key: U256]`
-    (Mojito's is key-less; the seeded initializer remains), and the bytes
-    `hash(bytes: ImmPointer[UInt8, _], n)` overload and `hash_seeded_bytes`
-    (the pointer-backed `Span(unsafe_ptr=, length=)` constructor they need
-    landed 2026-09 over an untracked pointer; `StringSpan.__hash__` feeds
-    `as_bytes()` to `_update_with_bytes` without copying)
-  - CTFE `hash`/`default_comp_time_hasher` for compile-time dictionaries
-  - propagating a constructible type argument through an enclosing abstract
-    binder on the raw seam (a generic body forwarding its own `H` into
-    `hash[H](x)` without specialization): the reified argument spells the
-    binder's name, and the VM's `ConstructTypeParam` falls back to the
-    declaration default instead of the caller's binding (the compiled
-    discovery path specializes the clone and is unaffected)
+  7. **Variadic pack forwarding through generic defs.** `Variant[*Ts]` or
+     `Variant[T, String]` applied to an enclosing `def f[*Ts]`/`def f[T]`'s
+     own parameters cannot check: the erased template body resolves no
+     variadic template application (user variadic structs never could; the
+     retired intrinsic could). Pinned by tests/compiler_test.rs
+     `variant_pack_forwarding_through_a_generic_def_is_rejected`. Needs
+     variadic template applications over symbolic arguments to resolve in
+     erased template bodies, and struct specialization requests discovered
+     from substituted generic signatures. Plan it inside task 3's plan (same
+     discovery machinery) and sequence it after 3.
+
+  8. **Optional, Tuple, and Slice odds and ends.** Small items, each
+     self-contained; no plan:
+     - The raising `opt[]` subscript needs the empty-subscript form on
+       nominal receivers plus `EmptyOptionalError`'s `TypeNames` text.
+     - `Tuple`/`Array` `Defaultable` needs `Ts[i]()`/`Self.T()` element
+       default construction (one shared blocker).
+     - Tuple's static `__len__()` overload cannot coexist with the instance
+       one under arity-keyed dunder selection (falls out of task 2).
+     - An explicit dunder call other than the comparisons and `__len__` on a
+       Tuple whose specialization discovery has not yet minted
+       (`t.__contains__(x)`) reports no such method; the operator spelling
+       (`x in t`) works.
+     - `Slice(...)` construction reads only `Int`/`None` argument
+       expressions (`infer_slice_construction`); an `Optional[Int]`-typed
+       variable needs the nominal Optional's slot read.
+     - The explicit `.write_to(writer)` spelling on a slice descriptor is
+       not wired (print, `String(x)`, and `Writer.write` are).
+
+  9. **String Unicode, iterator, and parsing extras.** Port when a fixture
+     needs them; no plan:
+     - `upper`/`lower` cover a simple-case subset (ASCII, Latin-1, Latin
+       Extended-A, Greek, Cyrillic, `ß` -> `SS`); upstream ships the full
+       Unicode simple and special casing tables (`_unicode.mojo`, generated
+       lookups).
+     - `count_codepoints`/`count_graphemes` still `raise` on invalid UTF-8
+       (upstream's are non-raising over trusted buffers) and decode through
+       an eager `to_string()` copy per step, which the iterators' `__len__`
+       inherits.
+     - Missing iterator members: `codepoint_slices_reversed`,
+       `graphemes_reversed`, `__reversed__`, `bytes()`, `split_at_grapheme`,
+       and `peek_next`.
+     - `atof` is correctly rounded only while the significand (at most 19
+       digits) and the power of ten (at most 22) stay exact, and Mojito
+       prints NaN as `NaN` where upstream prints `nan`.
+
+  10. **Origin-bearing `Span`/`Pointer` construction.** `Span(unsafe_ptr=,
+      length=)` takes a `Pointer[T, MutUntrackedOrigin]` because a
+      `Pointer[T, origin]` parameter cannot bind through a constructor type
+      application: Pointer parameters coerce only on exact origins, and the
+      constructor path resolves type applications without origin slots, so
+      `Span[Byte, origin_of(self)](...)` rejects with a type-argument count.
+      `Pointer`'s `[unsafe_offset=]` keyword subscript (upstream deprecates
+      the positional form) belongs to the same slice. Two more origin gaps
+      found 2026-09-05: an origin-bearing struct return type in a free
+      function (`def view[T](ref xs: List[T]) -> Span[T, origin_of(xs)]`)
+      rejects with a type-argument count although the same spelling works
+      in a method — this is what keeps `reversed(list)` a method spelling
+      (`for x in xs.__reversed__()`) rather than upstream's free function —
+      and `var it = xs.__iter__()` cannot infer the local's origin parameter
+      (`failed to infer parameter 'iterable_origin'`), so a borrowed
+      iterator local must be constructed explicitly from a `ref`. No plan;
+      one constructor-path fix, the free-function signature path, the
+      local-binding inference, and a subscript spelling.
+
+  11. **Storage-shape items with a known blocker.** Short plan, mostly to
+      fix the order: the uninit-element storage story is a design question,
+      and the bounds relaxation rewrites many signatures at once.
+      - Relaxing K/V/element bounds toward upstream's Movable-only
+        `KeyElement` (a List-`AnyType`-style per-API `where` pass).
+      - `(*, unsafe_uninit_length)` construction and resize, blocked on an
+        uninit-element storage story for List (MaybeUninit-adjacent).
+
+  12. **Native-lane follow-ups** (the VM runs all of these; they belong to
+      the native backend but are recorded here because collection fixtures
+      surface them). No plan: these are monomorphizer and native-drop bug
+      fixes; the teardown trap needs a debugging session, not a design.
+      - `repr` lowers natively only for Strings and without escapes; no user
+        struct's `write_repr_to` runs natively, so `repr(v)` on a Variant
+        waits on the general native repr path.
+      - Monomorphization cannot resolve a method-level parameter for a
+        parameterized `@staticmethod` reached through an instance of a
+        non-variadic generic struct (`p.pick[Int]()`: `cannot resolve
+        parameter T`) or for an instance method whose only parameter is
+        callable-bounded (`__getitem__[F: def() -> Int](self, callback: F)`
+        in conformance/fixtures/subscript_call_contracts.mojo: `cannot
+        resolve parameter F`).
+      - conformance/fixtures/tuple_consume_elements.mojo
+        (`values^.consume_elements[print_length]()` over `Array` elements)
+        prints correctly and then traps `use after Pointer deallocation` at
+        teardown, on both the current tree and the da4d129 baseline: a
+        pre-existing native drop gap, not a manifest row.
+      - The projection tag-mismatch trap categories differ (the VM raises a
+        `TypeError` `Variant holds 'Int', not 'String'` where native traps
+        `UnhandledError`), so no error-differential fixture pins it.
+      - The generic `next[T: Iterator](mut it: T)` body fails natively
+        (`unsupported reference-result method adapter` on its erased
+        trait-bound `__next__` call, instantiated for a range), so `next`
+        is pinned by a conformance-only fixture
+        (conformance/fixtures/next_builtin.mojo); the VM runs it.
+
+  13. **Diagnostic wording and strictness.** No plan.
+      - An unavailable where-gated method reports Mojito's `'set' is
+        unavailable for Variant[Conn]: its where clause evaluated to False`
+        rather than upstream's clause text.
+      - Mojito accepts a bare `T` in a struct field type and a
+        non-`Deinitable` field parameter (`struct Box[T: Copyable & Movable]:
+        var value: T`) where upstream requires `Self.T` and a `Deinitable`
+        bound (a lenience, not a rejection).
 
 - [ ] **Filesystem and I/O slice** — port representative file/path/stream APIs on
   the Writer and explicit-destroy foundations.

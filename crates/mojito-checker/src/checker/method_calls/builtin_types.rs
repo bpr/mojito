@@ -654,6 +654,32 @@ impl Checker {
                 }
                 Ok(Ty::None)
             }
+            // Before discovery mints the specialization, the canonical
+            // public Tuple carries no method bodies; an explicit comparison
+            // or length dunder call is typed structurally here so the first
+            // check round reaches the specialization, whose real methods
+            // answer in the next round.
+            "__len__" if args.is_empty() && param_args.is_empty() => Ok(Ty::Int),
+            "__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__"
+                if args.len() == 1 && param_args.is_empty() =>
+            {
+                let other = self.infer(&args[0])?;
+                let this = nominal_tuple_type(elements.to_vec());
+                let same_self = coerces(&other, &this) || coerces(&this, &other);
+                let elements_ok = if matches!(method, "__eq__" | "__ne__") {
+                    self.tuple_elements_equatable_nominal(elements)
+                } else {
+                    elements.iter().all(|element| self.is_comparable(element))
+                };
+                if same_self && elements_ok {
+                    Ok(Ty::Bool)
+                } else {
+                    Err(TypeError::NoSuchMethod {
+                        object_type: this.to_string(),
+                        method: method.to_string(),
+                    })
+                }
+            }
             _ => Err(TypeError::NoSuchMethod {
                 object_type: nominal_tuple_type(elements.to_vec()).to_string(),
                 method: method.to_string(),

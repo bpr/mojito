@@ -169,12 +169,21 @@ impl<'a> FnLowering<'a> {
         // Negation of a pending literal stays a pending literal (the
         // materialization folds the sign into one constant).
         if let Some(literal) = self.pending_literals.get(&a.0).cloned() {
-            if !matches!(op, PrefixOp::Neg) {
-                return Err(self.unsupported_reg(format!("operator `{op:?}` on a literal"), dest));
-            }
-            let negated = match literal {
-                PendingLiteral::Int(literal) => PendingLiteral::Int(literal.neg()),
-                PendingLiteral::Float(literal) => PendingLiteral::Float(literal.neg()),
+            let negated = match (op, literal) {
+                (PrefixOp::Neg, PendingLiteral::Int(literal)) => PendingLiteral::Int(literal.neg()),
+                (PrefixOp::Neg, PendingLiteral::Float(literal)) => {
+                    PendingLiteral::Float(literal.neg())
+                }
+                (PrefixOp::Invert, PendingLiteral::Int(literal)) => PendingLiteral::Int(
+                    literal
+                        .neg()
+                        .sub(&mojito_common::literal::IntLiteral::from(1i64)),
+                ),
+                _ => {
+                    return Err(
+                        self.unsupported_reg(format!("operator `{op:?}` on a literal"), dest)
+                    );
+                }
             };
             self.pending_literals.insert(dest.0, negated);
             return Ok(());
@@ -194,10 +203,31 @@ impl<'a> FnLowering<'a> {
                     FNegOp::new_with_fast_math_flags(ctx, value, FastmathFlagsAttr::default());
                 self.define(ctx, dest, neg.get_operation(), neg.get_result(ctx))
             }
-            (PrefixOp::Not, ScalarTy::Bool) => {
+            (PrefixOp::Not | PrefixOp::Invert, ScalarTy::Bool) => {
                 let one = self.bool_constant(ctx, true);
                 let not = XorOp::new(ctx, value, one);
                 self.define(ctx, dest, not.get_operation(), not.get_result(ctx))
+            }
+            // Bitwise inversion is xor with all ones at the operand width.
+            (PrefixOp::Invert, ScalarTy::Int) => {
+                let ones = self.int_constant(ctx, -1);
+                let inverted = XorOp::new(ctx, value, ones);
+                self.define(
+                    ctx,
+                    dest,
+                    inverted.get_operation(),
+                    inverted.get_result(ctx),
+                )
+            }
+            (PrefixOp::Invert, ScalarTy::Sized(dtype)) if !dtype.is_float() => {
+                let ones = self.sized_int_constant(ctx, dtype, u64::MAX);
+                let inverted = XorOp::new(ctx, value, ones);
+                self.define(
+                    ctx,
+                    dest,
+                    inverted.get_operation(),
+                    inverted.get_result(ctx),
+                )
             }
             // Sized-lane negation: `0 - x` wraps at the lane width for
             // integers; f32 negation is exact, so no widen/round dance.

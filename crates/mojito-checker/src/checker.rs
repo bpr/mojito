@@ -204,6 +204,7 @@ pub fn check_program_with_materialized_callables(
         checker.call_place_uses.into_inner(),
         checker.borrowed_read_call_places.into_inner(),
         checker.implicitly_copied_consuming_receivers.into_inner(),
+        checker.truthiness_conditions.into_inner(),
         checker.declaration_effects.into_inner(),
     ))
 }
@@ -542,6 +543,9 @@ pub struct Checker {
     /// separate from the single operation-adjustment slot so parameterized
     /// method metadata can coexist at the same expression.
     implicitly_copied_consuming_receivers: RefCell<HashSet<SourceSpan>>,
+    /// Condition expressions whose value is a `Boolable` struct rather than
+    /// `Bool` (see `SemanticAdjustment::Truthiness`).
+    truthiness_conditions: RefCell<HashSet<SourceSpan>>,
     return_ref_contracts: Vec<Option<ReturnRefContract>>,
     named_result_context: Vec<bool>,
     raising_context: Vec<Option<Ty>>,
@@ -653,6 +657,7 @@ impl Checker {
             call_place_uses: RefCell::new(HashSet::new()),
             borrowed_read_call_places: RefCell::new(HashSet::new()),
             implicitly_copied_consuming_receivers: RefCell::new(HashSet::new()),
+            truthiness_conditions: RefCell::new(HashSet::new()),
             return_ref_contracts: Vec::new(),
             named_result_context: Vec::new(),
             raising_context: Vec::new(),
@@ -1532,7 +1537,9 @@ impl Checker {
         ))
     }
 
-    /// Require `expr` to have type `Bool` (used for `if`/`while` conditions).
+    /// Require `expr` to be usable as a condition (`if`/`while`/ternary/
+    /// comprehension filter): `Bool`, or a struct whose `__bool__` supplies
+    /// its truth value (`if collection:`), recorded for MIR to convert.
     fn expect_bool(&self, expr: &Expr, context: &str) -> Result<(), TypeError> {
         let ty = self.infer(expr)?;
         if ty == Ty::Bool
@@ -1544,6 +1551,12 @@ impl Checker {
                 }
             )
         {
+            Ok(())
+        } else if let Some(result) = self.struct_dunder(&ty, "__bool__", &[]) {
+            require_dunder_ret(result?, &Ty::Bool, "__bool__")?;
+            self.truthiness_conditions
+                .borrow_mut()
+                .insert(expr.source_span());
             Ok(())
         } else {
             Err(TypeError::TypeMismatch {

@@ -4,6 +4,42 @@
 use super::*;
 
 impl Flatten<'_> {
+    /// A condition whose value is a `Boolable` struct (checker-marked
+    /// `Truthiness`) converts through `Bool(x)` — the same call `Bool(x)`
+    /// spells, which both backends dispatch to the struct's `__bool__`.
+    pub(in crate::mir) fn truthiness(&mut self, condition: &Expr, value: Reg) -> Reg {
+        let boolable = self
+            .checked_adjustments(condition)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::Truthiness
+                )
+            });
+        if !boolable {
+            return value;
+        }
+        self.bool_conversion(condition.source_span(), value)
+    }
+
+    /// The `Bool(x)` call both backends dispatch to a struct's `__bool__`.
+    pub(in crate::mir) fn bool_conversion(&mut self, span: SourceSpan, value: Reg) -> Reg {
+        let dest = self.fresh_typed(span, None, Ty::Bool);
+        self.emit(MirInstr::Call {
+            dest,
+            func: FuncRef::named("Bool"),
+            raises: None,
+            args: vec![value],
+            kwargs: Vec::new(),
+            arg_places: vec![None],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+        });
+        dest
+    }
+
     /// Lower `a and b` / `a or b` into control flow so the right operand is only
     /// evaluated when needed (Python/Mojo short-circuit semantics). The result is
     /// carried in a synthetic variable across the branch and read back in the
@@ -69,6 +105,7 @@ impl Flatten<'_> {
         sp: SourceSpan,
     ) -> Reg {
         let rc = self.expr(cond);
+        let rc = self.truthiness(cond, rc);
         let result = self.fresh_var();
         let then_blk = self.new_block();
         let else_blk = self.new_block();
@@ -439,7 +476,8 @@ impl Flatten<'_> {
 
         match &clauses[index] {
             mojito_ast::ast::ComprehensionClause::If(condition) => {
-                let condition = self.expr(condition);
+                let value = self.expr(condition);
+                let condition = self.truthiness(condition, value);
                 let body = self.new_block();
                 let continuation = self.new_block();
                 self.f.blocks[self.cur].term = MirTerm::Branch {

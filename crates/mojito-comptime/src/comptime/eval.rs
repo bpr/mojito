@@ -202,6 +202,17 @@ impl<'a> Elab<'a> {
                 };
                 self.eval_parameterized_reflection_method(&ty, field, param_args, scope)
             }
+            ExprKind::Prefix(PrefixOp::Invert, inner) => match self.eval(inner, scope)? {
+                CtValue::Int(value) => Ok(CtValue::Int(!value)),
+                CtValue::IntLiteral(value) => Ok(CtValue::IntLiteral(
+                    value
+                        .neg()
+                        .sub(&mojito_common::literal::IntLiteral::from(1i64)),
+                )),
+                _ => Err(ComptimeError::NotComptime(
+                    "unary '~' expects a compile-time integer value".to_string(),
+                )),
+            },
             ExprKind::Prefix(PrefixOp::Neg, inner) => match self.eval(inner, scope)? {
                 CtValue::Int(value) => value.checked_neg().map(CtValue::Int).ok_or_else(|| {
                     ComptimeError::BadArithmetic("compile-time integer overflow".to_string())

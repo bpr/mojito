@@ -2027,6 +2027,7 @@ fn prefix(value: PrefixOp) -> &'static str {
     match value {
         PrefixOp::Neg => "neg",
         PrefixOp::Not => "not",
+        PrefixOp::Invert => "invert",
     }
 }
 fn infix(value: InfixOp) -> &'static str {

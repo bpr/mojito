@@ -21,6 +21,7 @@ impl Decoder {
         match self.atom(value)? {
             "neg" => Some(PrefixOp::Neg),
             "not" => Some(PrefixOp::Not),
+            "invert" => Some(PrefixOp::Invert),
             other => {
                 self.error(value.span, format!("unknown unary operator `{other}`"));
                 None

@@ -273,3 +273,10 @@ string-codepoint-iter	run	assets/ok/nominal_string_codepoint_iter.mojo
 raise-borrowed-string-parameter	run	assets/ok/raise_borrowed_string_parameter.mojo
 repr-type-names	run	assets/ok/repr_type_names.mojo
 repr-vocabulary	run	conformance/fixtures/repr_vocabulary.mojo
+reflected-operators	run	assets/ok/reflected_operators.mojo
+invert-operator	run	assets/ok/invert_operator.mojo
+collection-truthiness	run	assets/ok/collection_truthiness.mojo
+tuple-struct-element-equality	run	assets/ok/tuple_struct_element_equality.mojo
+reversed-iteration	run	assets/ok/reversed_iteration.mojo
+next-builtin	run	conformance/fixtures/next_builtin.mojo
+list-explicit-params-with-elements	reject	assets/type_error/list_explicit_params_with_elements.mojo

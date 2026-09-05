@@ -139,6 +139,10 @@ struct Optional[T: AnyType](
     def __bool__(self) -> Bool:
         return self._size == 1
 
+    # `~opt` is the negated truth value (upstream's `__invert__`).
+    def __invert__(self) -> Bool:
+        return self._size == 0
+
     # `opt is None` / `opt is not None` (upstream's identity dunders).
     def __is__(self, other: NoneType) -> Bool:
         return self._size == 0

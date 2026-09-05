@@ -43,6 +43,9 @@ struct _ZeroStartingRange[dtype: DType = DType.int](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
 
+    def __reversed__(self) -> _StridedRange[dtype]:
+        return _StridedRange[dtype](self.end - 1, Scalar[dtype](-1), Scalar[dtype](-1))
+
     def __next__(mut self) raises StopIteration -> Scalar[dtype]:
         var remaining = self.curr
         if Int(remaining) == 0:
@@ -75,6 +78,9 @@ struct _SequentialRange[dtype: DType = DType.int](
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
+
+    def __reversed__(self) -> _StridedRange[dtype]:
+        return _StridedRange[dtype](self.end - 1, self.start - 1, Scalar[dtype](-1))
 
     def __next__(mut self) raises StopIteration -> Scalar[dtype]:
         var current = self.start
@@ -119,6 +125,10 @@ struct _StridedRange[dtype: DType = DType.int](
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
+
+    def __reversed__(self) -> _StridedRange[dtype]:
+        var last = self.start + Scalar[dtype](len(self) - 1) * self.step
+        return _StridedRange[dtype](last, self.start - self.step, -self.step)
 
     def __next__(mut self) raises StopIteration -> Scalar[dtype]:
         if Int(self.step) > 0:

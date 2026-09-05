@@ -17,6 +17,14 @@ impl Checker {
                 return Ok(simd_ty(*dtype, *width));
             }
             (PrefixOp::Not, Ty::Bool) => return Ok(Ty::Bool),
+            // Bitwise inversion keeps an integer (or `Bool`) type; float
+            // operands and masks have no inversion.
+            (PrefixOp::Invert, Ty::Int | Ty::UInt | Ty::IntLiteral | Ty::Bool) => {
+                return Ok(t);
+            }
+            (PrefixOp::Invert, Ty::Simd { dtype, width }) if !dtype.is_float() => {
+                return Ok(simd_ty(*dtype, *width));
+            }
             _ => {}
         }
         // An opaque type parameter bounded by the prefix operator's trait
@@ -24,7 +32,7 @@ impl Checker {
         // `Boolable`); the concrete impl runs on the erased type.
         if param_has_bound(&t, prefix_operation_trait(op)) {
             return Ok(match op {
-                PrefixOp::Neg => t,
+                PrefixOp::Neg | PrefixOp::Invert => t,
                 PrefixOp::Not => Ty::Bool,
             });
         }
@@ -33,13 +41,24 @@ impl Checker {
         if let Some(result) = self.struct_dunder(&t, op.dunder(), &[]) {
             let ret = result?;
             return match op {
-                PrefixOp::Neg => Ok(ret),
+                PrefixOp::Neg | PrefixOp::Invert => Ok(ret),
                 PrefixOp::Not => require_dunder_ret(ret, &Ty::Bool, "__bool__"),
             };
         }
         Err(TypeError::BadOperator {
             op: prefix_symbol(op).to_string(),
             operands: t.to_string(),
+        })
+    }
+
+    /// Whether every element of a public Tuple supports `==`/`!=`: scalars
+    /// and bounded parameters as before, nested tuples recursively, and user
+    /// structs with `__eq__` (the specialization's `__eq__`/`__ne__` run at
+    /// the operator).
+    pub(in crate::checker) fn tuple_elements_equatable_nominal(&self, elements: &[Ty]) -> bool {
+        elements.iter().all(|element| match element {
+            Ty::Tuple(nested) => self.tuple_elements_equatable_nominal(nested),
+            other => has_equality_bound_or_concrete(self, other),
         })
     }
 
@@ -101,7 +120,9 @@ impl Checker {
             let same_self = coerces(&lt, &rt) || coerces(&rt, &lt);
             let supported = match op {
                 Eq | Ne => {
-                    same_self && tuple_elements_equatable(left) && tuple_elements_equatable(right)
+                    same_self
+                        && self.tuple_elements_equatable_nominal(left)
+                        && self.tuple_elements_equatable_nominal(right)
                 }
                 Lt | Gt | Le | Ge => same_self && tuple_order_compatible(left, right),
                 _ => false,
@@ -119,7 +140,9 @@ impl Checker {
             let same_self = coerces(&lt, &rt) || coerces(&rt, &lt);
             let supported = match op {
                 Eq | Ne => {
-                    same_self && tuple_elements_equatable(&left) && tuple_elements_equatable(&right)
+                    same_self
+                        && self.tuple_elements_equatable_nominal(&left)
+                        && self.tuple_elements_equatable_nominal(&right)
                 }
                 Lt | Gt | Le | Ge => same_self && tuple_order_compatible(&left, &right),
                 _ => false,
@@ -361,6 +384,51 @@ impl Checker {
             return self
                 .struct_dunder(&lt, dunder, &[&operand_ty])
                 .expect("dunder signature was resolved");
+        }
+        // The right operand's reflected dunder (`1 + m` → `m.__radd__(1)`)
+        // answers when the left operand has no operator method for the
+        // pair: MIR swaps the operands and calls the recorded symbol.
+        if let Some(span) = span
+            && let Some(reflected) = op.reflected_dunder()
+            && let Some((info, sig, targs)) =
+                self.struct_dunder_signature_for(&rt, reflected, &[&lt])
+            && let Ty::Struct(rname, _) = &rt
+            && self.value_coerces(&lt, &substitute_at(&sig.params[0], &info.decls, targs))
+        {
+            let environment: HashMap<String, TyArg> = info
+                .decls
+                .iter()
+                .map(|decl| decl.name().to_string())
+                .zip(targs.iter().cloned())
+                .collect();
+            if self.method_constraint_result(sig, &environment).is_ok() {
+                // The symbol the backends dispatch: the overload key only
+                // when the reflected dunder is overloaded.
+                let target = if info
+                    .methods
+                    .get(reflected)
+                    .is_some_and(|sigs| sigs.len() > 1)
+                {
+                    method_lowered_name(
+                        rname,
+                        reflected,
+                        sig,
+                        self.self_instance_ty(rname).as_ref(),
+                    )
+                } else {
+                    format!("{rname}.{reflected}")
+                };
+                self.overload_targets
+                    .borrow_mut()
+                    .insert(span.clone(), target);
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::ReflectedOperator,
+                );
+                return self
+                    .struct_dunder(&rt, reflected, &[&lt])
+                    .expect("reflected dunder signature was resolved");
+            }
         }
         Err(TypeError::BadOperator {
             op: infix_symbol(op).to_string(),
@@ -750,5 +818,6 @@ pub(super) fn prefix_symbol(op: PrefixOp) -> &'static str {
     match op {
         PrefixOp::Neg => "-",
         PrefixOp::Not => "not",
+        PrefixOp::Invert => "~",
     }
 }

@@ -233,6 +233,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let operand = self.parse_expression(Precedence::Unary)?;
                 Ok(self.node(ExprKind::Prefix(PrefixOp::Neg, Box::new(operand)), start))
             }
+            Token::Tilde => {
+                let operand = self.parse_expression(Precedence::Unary)?;
+                Ok(self.node(ExprKind::Prefix(PrefixOp::Invert, Box::new(operand)), start))
+            }
             Token::Not => {
                 let operand = self.parse_expression(Precedence::Not)?;
                 Ok(self.node(ExprKind::Prefix(PrefixOp::Not, Box::new(operand)), start))

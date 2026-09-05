@@ -15,6 +15,18 @@ impl Flatten<'_> {
         result
     }
 
+    /// A branch condition: `expr_hir` plus the `Boolable` conversion of a
+    /// checker-marked truthiness condition (`if collection:`).
+    pub(in crate::mir) fn condition_hir(&mut self, expression: &mojito_hir::hir::HirExpr) -> Reg {
+        let mut index = HashMap::new();
+        index_hir_expression(&expression.syntax, expression, &mut index);
+        self.active_semantics.push(index);
+        let value = self.expr(&expression.syntax);
+        let result = self.truthiness(&expression.syntax, value);
+        self.active_semantics.pop();
+        result
+    }
+
     pub(in crate::mir) fn reference_handle_hir(
         &mut self,
         expression: &mojito_hir::hir::HirExpr,

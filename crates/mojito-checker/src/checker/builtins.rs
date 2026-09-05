@@ -166,6 +166,7 @@ pub(super) fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> &'static 
     match op {
         mojito_ast::ast::PrefixOp::Neg => "Negatable",
         mojito_ast::ast::PrefixOp::Not => "Boolable",
+        mojito_ast::ast::PrefixOp::Invert => "Invertable",
     }
 }
 

@@ -28,6 +28,7 @@ assets/ok/callable_struct_transfer_after_last_use.mojo	-	ineligible	no-scalar-en
 assets/ok/captured_store_local_carrier.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closures.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/collection_truthiness.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comparable_ordered_algorithms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comprehension_borrowed_named_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comprehension_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
@@ -94,6 +95,7 @@ assets/ok/inplace_subscript_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_var.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/input.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/invert_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/iterable_associated_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_only.mojo	-	ineligible	no-scalar-entry-shape
@@ -298,7 +300,9 @@ assets/ok/reference_list_write_through_method.mojo	-	ineligible	no-scalar-entry-
 assets/ok/reference_yielding_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_yielding_iteration_named_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_yielding_iteration_parametric_mut.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_dtype_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_sequential.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_strided.mojo	-	ineligible	no-scalar-entry-shape
@@ -351,6 +355,7 @@ assets/ok/tstring_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_generic_interpolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_lazy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_hashable_dict_key.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_struct_element_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_predicate_comptime_if.mojo	-	ineligible	no-scalar-entry-shape

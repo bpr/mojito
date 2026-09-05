@@ -1185,14 +1185,7 @@ impl Checker {
                 then_branch,
                 else_branch,
             } => {
-                let ct = self.infer(cond)?;
-                if ct != Ty::Bool {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "Bool".to_string(),
-                        found: ct.to_string(),
-                        context: "conditional-expression condition".to_string(),
-                    });
-                }
+                self.expect_bool(cond, "conditional-expression condition")?;
                 let tt = self.infer(then_branch)?;
                 let et = self.infer(else_branch)?;
                 common_branch_ty(&tt, &et).ok_or_else(|| TypeError::TypeMismatch {

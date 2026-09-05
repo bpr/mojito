@@ -14,6 +14,8 @@ from std.collections.dict import Dict
 from std.optional import Optional
 from std.collections.tuple import Tuple
 from std.range import range
+from std.iterable import next
+from std.builtin.reversed import reversed
 from std.memory import alloc
 from std.span import Span
 from std.hashlib import hash

@@ -37,6 +37,36 @@ struct _ListIter[
         self.index += 1
         return self.src[r]
 
+# The borrowed back-to-front iterator `reversed(list)` returns: `_ListIter`'s
+# shape with the index counting down. It iterates itself so a temporary
+# (`for x in reversed(xs)`) drives a loop directly.
+@fieldwise_init
+struct _ListReversedIter[
+    iterable_mut: Bool, //, T: AnyType, iterable_origin: Origin[mut=iterable_mut]
+](Iterator where conforms_to(T, Copyable)):
+    comptime Element = Self.T
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _ListReversedIter[Self.T, iterable_origin]
+
+    var src: ref[iterable_origin] List[Self.T]
+    var remaining: Int
+
+    def __len__(self) -> Int:
+        return self.remaining
+
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        ref source = self.src
+        return _ListReversedIter[Self.T](source, self.remaining)
+
+    def __next__(mut self) raises StopIteration -> ref[
+        Self.iterable_origin._get_owned_interior["element"]
+    ] Self.T where conforms_to(Self.T, Copyable):
+        if self.remaining <= 0:
+            raise StopIteration()
+        self.remaining -= 1
+        return self.src[self.remaining]
+
 struct _ListOwnedIter[T: AnyType](
     Deinitable where conforms_to(T, Deinitable),
     Iterator where conforms_to(T, Movable),
@@ -88,6 +118,9 @@ struct List[T: AnyType](
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = _ListIter[Self.T, iterable_origin]
     comptime IteratorOwnedType = _ListOwnedIter[Self.T]
+    comptime ReversedIterType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _ListReversedIter[Self.T, iterable_origin]
 
     var data: UnsafePointer[Self.T]
     var size: Int
@@ -481,6 +514,12 @@ struct List[T: AnyType](
     ):
         ref source = self
         return _ListIter[Self.T](source, 0)
+
+    def __reversed__(ref self) -> Self.ReversedIterType[origin_of(self)] where conforms_to(
+        Self.T, Copyable
+    ):
+        ref source = self
+        return _ListReversedIter[Self.T](source, len(self))
 
     def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
         Self.T, Deinitable

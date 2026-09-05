@@ -631,6 +631,7 @@ term:
     | factor
 factor:
     | '-' factor
+    | '~' factor
     | power
 power:
     | primary '**' factor
@@ -781,8 +782,9 @@ Notes:
   (`x^`, `raise e^`). MIR represents whole-value and projected-field moves;
   ownership analysis rejects use-after-move, double moves, conditional moves,
   and invalid partial-move uses.
-- **`factor`** has only unary `-` (no unary `+`, no `~`). Unary `-` applies to `Int`
-  and `Float64` (not `UInt`).
+- **`factor`** has unary `-` and `~` (no unary `+`). Unary `-` applies to `Int`
+  and `Float64` (not `UInt`); `~` applies to integers and `Bool` (and to a
+  user struct through `__invert__`).
 - **`power` (`**`) is right-associative and binds tighter than unary `-`** (so
   `-2 ** 2` is `-(2 ** 2)` and `2 ** 3 ** 2` is `2 ** (3 ** 2)`); its right operand is a
   `factor`, so `2 ** -1` is `2 ** (-1)`.

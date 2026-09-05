@@ -153,6 +153,15 @@ impl Flatten<'_> {
             // --- Operators -----------------------------------------------------
             ExprKind::Prefix(op, a) => {
                 let ra = self.expr(a);
+                // `not x` on a struct is `not x.__bool__()`: convert through
+                // the explicit `Bool(x)` call so the negation is scalar on
+                // both backends.
+                let ra =
+                    if *op == PrefixOp::Not && matches!(self.checked_ty(a), Some(Ty::Struct(..))) {
+                        self.bool_conversion(a.source_span(), ra)
+                    } else {
+                        ra
+                    };
                 let d = self.fresh(span(e), None);
                 self.emit(MirInstr::UnOp {
                     op: *op,
@@ -216,6 +225,15 @@ impl Flatten<'_> {
                 let ra = self.expr(a); // operands left-to-right (evaluation order is explicit)
                 let rb = self.expr(b);
                 let resolved = self.resolved_callable(e);
+                // A reflected operator (checker-marked) runs on the RIGHT
+                // operand: `1 + m` calls `m.__radd__(1)`.
+                let reflected = self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ReflectedOperator
+                    )
+                });
+                let (ra, rb) = if reflected { (rb, ra) } else { (ra, rb) };
                 // Equatable's default `__ne__` (checker-marked): dispatch
                 // `__eq__` and negate its result.
                 if *op == InfixOp::Ne

@@ -1100,6 +1100,8 @@ pub enum PrefixOp {
     Neg,
     /// Logical negation, `not`.
     Not,
+    /// Bitwise inversion, `~`.
+    Invert,
 }
 
 impl PrefixOp {
@@ -1110,6 +1112,7 @@ impl PrefixOp {
         match self {
             PrefixOp::Neg => "__neg__",
             PrefixOp::Not => "__bool__",
+            PrefixOp::Invert => "__invert__",
         }
     }
 }
@@ -1178,6 +1181,40 @@ impl InfixOp {
             InfixOp::Is => "__is__",
             InfixOp::IsNot => "__isnot__",
             InfixOp::And | InfixOp::Or | InfixOp::In | InfixOp::NotIn => return None,
+        })
+    }
+
+    /// The reflected dunder the *right* operand answers when the left
+    /// operand has no operator method for the pair (`1 + m` →
+    /// `m.__radd__(1)`), or `None` for operators without a reflected form
+    /// (comparisons, identity, membership, and the short-circuit operators).
+    pub fn reflected_dunder(self) -> Option<&'static str> {
+        Some(match self {
+            InfixOp::Add => "__radd__",
+            InfixOp::Sub => "__rsub__",
+            InfixOp::Mul => "__rmul__",
+            InfixOp::Div => "__rtruediv__",
+            InfixOp::FloorDiv => "__rfloordiv__",
+            InfixOp::Mod => "__rmod__",
+            InfixOp::MatMul => "__rmatmul__",
+            InfixOp::Shl => "__rlshift__",
+            InfixOp::Shr => "__rrshift__",
+            InfixOp::BitAnd => "__rand__",
+            InfixOp::BitOr => "__ror__",
+            InfixOp::BitXor => "__rxor__",
+            InfixOp::Pow => "__rpow__",
+            InfixOp::Eq
+            | InfixOp::Ne
+            | InfixOp::Lt
+            | InfixOp::Gt
+            | InfixOp::Le
+            | InfixOp::Ge
+            | InfixOp::Is
+            | InfixOp::IsNot
+            | InfixOp::And
+            | InfixOp::Or
+            | InfixOp::In
+            | InfixOp::NotIn => return None,
         })
     }
 

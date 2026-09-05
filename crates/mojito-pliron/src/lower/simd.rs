@@ -644,6 +644,18 @@ impl<'a> FnLowering<'a> {
                     self.append(ctx, neg.get_operation(), Some(dest));
                     neg.get_result(ctx)
                 }
+                (PrefixOp::Invert, ScalarTy::Sized(kind)) if !kind.is_float() => {
+                    let ones = self.sized_int_constant(ctx, kind, u64::MAX);
+                    let inverted = XorOp::new(ctx, value, ones);
+                    self.append(ctx, inverted.get_operation(), Some(dest));
+                    inverted.get_result(ctx)
+                }
+                (PrefixOp::Invert, ScalarTy::Bool) => {
+                    let one = self.bool_constant(ctx, true);
+                    let inverted = XorOp::new(ctx, value, one);
+                    self.append(ctx, inverted.get_operation(), Some(dest));
+                    inverted.get_result(ctx)
+                }
                 _ => {
                     return Err(self.unsupported_reg(format!("SIMD unary operator `{op:?}`"), dest));
                 }

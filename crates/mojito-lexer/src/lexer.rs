@@ -720,6 +720,11 @@ impl<'a> Iterator for Lexer<'a> {
                     }
                     continue;
                 }
+                '~' => {
+                    self.pos += 1;
+                    self.emit(Token::Tilde);
+                    continue;
+                }
                 '-' => {
                     // `->` (return arrow), `-=` (augmented) vs `-` (sub / negation)
                     if self.remainder().starts_with("->") {

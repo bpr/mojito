@@ -170,6 +170,7 @@ pub enum Token {
     Amp,      // `&` (trait-bound conjunction)
     Pipe,     // `|`
     Caret,    // `^` (transfer sigil)
+    Tilde,    // `~` (bitwise inversion)
     Arrow,    // `->`
     LParen,
     RParen,

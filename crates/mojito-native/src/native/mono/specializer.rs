@@ -310,6 +310,21 @@ impl<'a> Specializer<'a> {
                         *instruction = dunder_method_call(*dest, args[0], method, None, Vec::new());
                     }
                 }
+                // A prefix `-`/`~` on a nominal operand is the VM's dunder
+                // dispatch (`apply_prefix` → `__neg__`/`__invert__`); `not`
+                // arrives already converted through `Bool(x)` by MIR.
+                if let MirInstr::UnOp { op, dest, a } = instruction
+                    && matches!(
+                        op,
+                        mojito_ast::ast::PrefixOp::Neg | mojito_ast::ast::PrefixOp::Invert
+                    )
+                    && matches!(
+                        function.reg_types.get(&a.0).map(peel_refs),
+                        Some(Ty::Struct(..))
+                    )
+                {
+                    *instruction = dunder_method_call(*dest, *a, op.dunder(), None, Vec::new());
+                }
                 // A binary operator on a nominal left operand is the same VM
                 // dunder dispatch (`apply_binop` → `call_dunder`): rewrite to
                 // the operator method so the shared resolver monomorphizes
