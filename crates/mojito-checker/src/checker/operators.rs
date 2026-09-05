@@ -295,13 +295,17 @@ impl Checker {
         // `a != b` on a struct declaring `__eq__` without `__ne__` is
         // Equatable's default `__ne__` (`not (a == b)`): the operator
         // dispatches `__eq__` and MIR negates the result.
-        let negated_equality = op == Ne
-            && self
-                .struct_dunder_signature_for(&lt, "__ne__", &[&rt])
-                .is_none()
-            && self
-                .struct_dunder_signature_for(&lt, "__eq__", &[&rt])
-                .is_some();
+        // (`struct_dunder_signature_for` falls back to the first same-arity
+        // declaration for diagnostics, so acceptance is re-checked here: a
+        // `__ne__` overload set that accepts no operand of this type still
+        // defers to `__eq__`.)
+        let dunder_accepts = |dunder: &str| {
+            self.struct_dunder_signature_for(&lt, dunder, &[&rt])
+                .is_some_and(|(info, sig, targs)| {
+                    self.value_coerces(&rt, &substitute_at(&sig.params[0], &info.decls, targs))
+                })
+        };
+        let negated_equality = op == Ne && !dunder_accepts("__ne__") && dunder_accepts("__eq__");
         let dunder = if negated_equality {
             Some("__eq__")
         } else {

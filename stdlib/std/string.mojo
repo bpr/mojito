@@ -463,6 +463,21 @@ struct String(
     def __ne__(self, other: Self) -> Bool:
         return not (self == other)
 
+    # Upstream compares an owned String against a view bytewise; the operator
+    # selects this overload by the right operand's type.
+    def __eq__(self, other: StringSpan) -> Bool:
+        if self.size != other._size:
+            return False
+        var i = 0
+        while i < self.size:
+            if Int(self.data[i]) != Int(other._data[i]):
+                return False
+            i += 1
+        return True
+
+    def __ne__(self, other: StringSpan) -> Bool:
+        return not (self == other)
+
     def __lt__(self, other: Self) -> Bool:
         var shared = self.size
         if other.size < shared:

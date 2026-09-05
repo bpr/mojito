@@ -62,10 +62,21 @@ pub fn resolve_callable_symbol<'a>(
         return name.to_string();
     };
     if matches.next().is_none() {
-        first.name.to_string()
-    } else {
-        name.to_string()
+        return first.name.to_string();
     }
+    // Several same-arity overloads: an unresolved dunder dispatch (a
+    // `T: Equatable` body's `a == b` erased to the runtime receiver) is the
+    // trait requirement's call, whose parameters are all `Self`; that
+    // overload answers when it exists (`String.__eq__$ov$Self` beside
+    // `String.__eq__$ov$StringSpan`).
+    let self_shaped = format!("{name}{OV_SEP}{}", vec!["Self"; argc].join("$"));
+    if declarations
+        .iter()
+        .any(|candidate| candidate.name == self_shaped)
+    {
+        return self_shaped;
+    }
+    name.to_string()
 }
 
 /// Resolve a checker-selected method against a concrete receiver declaration

@@ -138,49 +138,21 @@ recreates this section's checkbox with the fresh divergence list.
   and String surfaces toward the audited head, one session-sized slice at a
   time (`docs/features.md` records what lands; the self-hosted `Variant`
   landed 2026-09-04). What remains is listed below as tasks, ordered by
-  expected payoff: the first task fixes the most user-visible bugs per hour
-  of work, and the later ones unlock progressively narrower features. Each
-  task names the residues it closes, so finishing one deletes its bullet.
+  expected payoff: the first task unlocks the widest family of features,
+  and the later ones progressively narrower ones. Each task names the
+  residues it closes, so finishing one deletes its bullet.
   Each task also says whether to `/plan` first: most are direct fixes;
-  tasks 3, 7, and 11 carry a design decision and get a plan (3 and 7 share
-  one), and tasks 4, 5, and 6 need only a half-page list of the sites or
-  the one choice named in their note.
+  tasks 1, 5, and 9 carry a design decision and get a plan (1 and 5 share
+  one), and tasks 2, 3, and 4 need only a half-page list of the sites or
+  the one choice named in their note. Tasks closed 2026-09-05 (everyday
+  spellings; same-arity dunder overloads) are deleted, not listed.
 
-  1. **Everyday spellings that still misbehave.** No plan. The 2026-09-05
-     slice closed `if collection:` truthiness, the reflected `__r*__`
-     dunders, the `~` operator, `next(it)`, `reversed(range)`, Tuple
-     `==`/`!=` over user-struct elements, and two entries that turned out to
-     be invalid Mojo (`List[Int](1, 2)` and a bare `T` field type are
-     rejected upstream too; the first is pinned by a `reject` conformance
-     row, the second moved to task 13). Still open, found while closing
-     them:
-     - `Box[Float64](2.5)` and `Box(2.5)` on a generic struct store the
-       unmaterialized `FloatLiteral` and print `5/2`: a specialized
-       constructor's literal argument is never materialized to the solved
-       field type (a non-generic `Float64` field prints `2.5`). Recording
-       `MaterializeLiteral` on the generic-inference constructor path did
-       not reach it; the explicit `Box[Float64]` spelling and the
-       final-round specialized path need the same treatment.
-
-  2. **Same-arity dunder overloads.** Dunders are selected by arity in both
-     `struct_dunder_signature` and the VM's `call_resolved_dunder`, so a
-     struct cannot declare `__eq__(rhs: Self)` beside `__eq__(rhs: NoneType)`
-     or `__eq__(rhs: String)`. Record a `ResolveCallable` adjustment on the
-     infix expression so `BinOp.resolved` names the exact overload. No
-     plan: the mechanism is decided above and mirrors how overloaded method
-     calls already resolve; the sites are the checker's dunder selection,
-     the VM's dunder dispatch, and pliron's `lower_binop`. This unlocks:
-     - `opt == None` on `Optional`.
-     - `String == StringSpan` (today: spell `view == string`), which also
-       removes the ambiguity a second `String.__eq__` would create for the
-       String struct's `__trait_dispatch.__eq__` symbol.
-
-  3. **Per-specialization checking of non-variadic generic struct bodies.**
+  1. **Per-specialization checking of non-variadic generic struct bodies.**
      Today a generic struct such as `Optional[T]` runs one erased body: the
      VM has no reified `T`, and per-call specialization of method-level type
      parameters works only inside specialized variadic structs. Either
      check each specialization's body or carry runtime type bindings. Plan
-     first, together with task 7: this is a real design choice between
+     first, together with task 5: this is a real design choice between
      those two branches, it touches the discovery loop, the elaborator, the
      checker, and both backends, and the branch chosen decides how repr,
      FormatStruct, and per-call specialization all land. This is the
@@ -199,13 +171,20 @@ recreates this section's checkbox with the fresh divergence list.
        generic struct, not only variadic ones.
      - `Optional.copied` and `OptionalReg`, which need self-type-constrained
        methods and `TrivialRegisterPassable`.
+     - `Box[Float64](2.5)` and `Box(2.5)` on a generic struct store the
+       unmaterialized `FloatLiteral` and print `5/2`: a specialized
+       constructor's literal argument is never materialized to the solved
+       field type (a non-generic `Float64` field prints `2.5`). Recording
+       `MaterializeLiteral` on the generic-inference constructor path did
+       not reach it; the explicit `Box[Float64]` spelling and the
+       final-round specialized path need the same treatment.
      Related but separate: the bundled `Writable` trait declares only
      `write_to`, so a bounded `T: Writable` cannot call `write_repr_to`
      (spell `repr(x)`); and upstream spells
      `_unqualified_type_name[Tuple[Int, Bool]]()` as
      `Tuple[<unprintable>, {}]`, so shared fixtures avoid tuple type names.
 
-  4. **View temporaries as receivers and arguments.** Two ownership-anchor
+  2. **View temporaries as receivers and arguments.** Two ownership-anchor
      gaps make idiomatic String chains fail. Short plan (half a page): the
      anchors already exist (`$mat_r`, `$arg_loan_r`), so the plan only
      names the anchor each case extends and the fixture matrix, because
@@ -219,7 +198,7 @@ recreates this section's checkbox with the fresh divergence list.
        `$arg_loan_r` anchor covers call and method-call temporaries only.
        Workaround: bind the view to a local.
 
-  5. **`StringSpan` parameters in upstream's shape.** Upstream's String
+  3. **`StringSpan` parameters in upstream's shape.** Upstream's String
      APIs take `StringSpan`; Mojito's take `String`, so a `StringSpan`
      argument does not convert (today: `to_string()`), and the batch-2
      members (case, predicates, justification) live on `String` only.
@@ -230,7 +209,7 @@ recreates this section's checkbox with the fresh divergence list.
      where upstream declares two (call sites are identical), and `isspace`
      drops upstream's `single_character` parameter.
 
-  6. **Hashing parity.** Independent of the above, one slice. The one
+  4. **Hashing parity.** Independent of the above, one slice. The one
      decision to make up front is whether to move the `UInt64` leaf to
      upstream's `to_bits` shape (second bullet); the rest is porting and
      needs no plan.
@@ -256,7 +235,7 @@ recreates this section's checkbox with the fresh divergence list.
        instead of the caller's binding. The compiled discovery path
        specializes the clone and is unaffected.
 
-  7. **Variadic pack forwarding through generic defs.** `Variant[*Ts]` or
+  5. **Variadic pack forwarding through generic defs.** `Variant[*Ts]` or
      `Variant[T, String]` applied to an enclosing `def f[*Ts]`/`def f[T]`'s
      own parameters cannot check: the erased template body resolves no
      variadic template application (user variadic structs never could; the
@@ -264,17 +243,19 @@ recreates this section's checkbox with the fresh divergence list.
      `variant_pack_forwarding_through_a_generic_def_is_rejected`. Needs
      variadic template applications over symbolic arguments to resolve in
      erased template bodies, and struct specialization requests discovered
-     from substituted generic signatures. Plan it inside task 3's plan (same
-     discovery machinery) and sequence it after 3.
+     from substituted generic signatures. Plan it inside task 1's plan (same
+     discovery machinery) and sequence it after 1.
 
-  8. **Optional, Tuple, and Slice odds and ends.** Small items, each
+  6. **Optional, Tuple, and Slice odds and ends.** Small items, each
      self-contained; no plan:
      - The raising `opt[]` subscript needs the empty-subscript form on
        nominal receivers plus `EmptyOptionalError`'s `TypeNames` text.
      - `Tuple`/`Array` `Defaultable` needs `Ts[i]()`/`Self.T()` element
        default construction (one shared blocker).
      - Tuple's static `__len__()` overload cannot coexist with the instance
-       one under arity-keyed dunder selection (falls out of task 2).
+       one under arity-keyed dunder selection (same-arity operand selection
+       landed 2026-09-05; re-probe whether the static/instance pair now
+       coexists).
      - An explicit dunder call other than the comparisons and `__len__` on a
        Tuple whose specialization discovery has not yet minted
        (`t.__contains__(x)`) reports no such method; the operator spelling
@@ -285,7 +266,7 @@ recreates this section's checkbox with the fresh divergence list.
      - The explicit `.write_to(writer)` spelling on a slice descriptor is
        not wired (print, `String(x)`, and `Writer.write` are).
 
-  9. **String Unicode, iterator, and parsing extras.** Port when a fixture
+  7. **String Unicode, iterator, and parsing extras.** Port when a fixture
      needs them; no plan:
      - `upper`/`lower` cover a simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` -> `SS`); upstream ships the full
@@ -302,7 +283,7 @@ recreates this section's checkbox with the fresh divergence list.
        digits) and the power of ten (at most 22) stay exact, and Mojito
        prints NaN as `NaN` where upstream prints `nan`.
 
-  10. **Origin-bearing `Span`/`Pointer` construction.** `Span(unsafe_ptr=,
+  8. **Origin-bearing `Span`/`Pointer` construction.** `Span(unsafe_ptr=,
       length=)` takes a `Pointer[T, MutUntrackedOrigin]` because a
       `Pointer[T, origin]` parameter cannot bind through a constructor type
       application: Pointer parameters coerce only on exact origins, and the
@@ -321,7 +302,7 @@ recreates this section's checkbox with the fresh divergence list.
       one constructor-path fix, the free-function signature path, the
       local-binding inference, and a subscript spelling.
 
-  11. **Storage-shape items with a known blocker.** Short plan, mostly to
+  9. **Storage-shape items with a known blocker.** Short plan, mostly to
       fix the order: the uninit-element storage story is a design question,
       and the bounds relaxation rewrites many signatures at once.
       - Relaxing K/V/element bounds toward upstream's Movable-only
@@ -329,7 +310,7 @@ recreates this section's checkbox with the fresh divergence list.
       - `(*, unsafe_uninit_length)` construction and resize, blocked on an
         uninit-element storage story for List (MaybeUninit-adjacent).
 
-  12. **Native-lane follow-ups** (the VM runs all of these; they belong to
+  10. **Native-lane follow-ups** (the VM runs all of these; they belong to
       the native backend but are recorded here because collection fixtures
       surface them). No plan: these are monomorphizer and native-drop bug
       fixes; the teardown trap needs a debugging session, not a design.
@@ -357,7 +338,7 @@ recreates this section's checkbox with the fresh divergence list.
         is pinned by a conformance-only fixture
         (conformance/fixtures/next_builtin.mojo); the VM runs it.
 
-  13. **Diagnostic wording and strictness.** No plan.
+  11. **Diagnostic wording and strictness.** No plan.
       - An unavailable where-gated method reports Mojito's `'set' is
         unavailable for Variant[Conn]: its where clause evaluated to False`
         rather than upstream's clause text.
