@@ -1851,13 +1851,17 @@ impl<'a> Elab<'a> {
         })
     }
 
-    /// Whether a checked type mentions an origin-slotted struct anywhere: an
+    /// Whether a checked type mentions an origin-slotted struct applied to
+    /// non-origin arguments anywhere (`_ListIter[Int]`, `Named[Int]`): an
     /// inferred type argument of that shape keeps its call on the abstract
-    /// path (origin-carrying references do the same).
+    /// path (origin-carrying references do the same), because its clone
+    /// spelling would be a partial application that omits the erased slot.
+    /// A struct whose only explicit parameters are origins (`RefIter`,
+    /// `RefBox`) spells bare, which infers per call, so it specializes.
     pub(super) fn ty_mentions_origin_slotted_struct(&self, ty: &Ty) -> bool {
         mojito_types::types::mentions(
             ty,
-            &|candidate| matches!(candidate, Ty::Struct(name, _) if self.struct_has_explicit_origin_slots(name)),
+            &|candidate| matches!(candidate, Ty::Struct(name, arguments) if !arguments.is_empty() && self.struct_has_explicit_origin_slots(name)),
         )
     }
 
@@ -1889,7 +1893,10 @@ impl<'a> Elab<'a> {
     /// origin slot the checker erased spelled as upstream's `_` placeholder
     /// (`Named[Int]` → `Named[Int, _]`): the specialized `$pack` parameter
     /// annotation resolves in parameter position, where a placeholder marks
-    /// the slot explicitly inferred.
+    /// the slot explicitly inferred. A struct with only origin slots stays
+    /// bare (`RefBox`, not `RefBox[_]`): the bare spelling infers in every
+    /// position a specialized `Tuple` element occupies, the placeholder only
+    /// in parameter position.
     pub(super) fn pack_element_source_type(&self, ty: &Ty) -> Option<Type> {
         source_type_from_ty(ty).map(|source| self.insert_origin_placeholders(source))
     }
@@ -1920,6 +1927,7 @@ impl<'a> Elab<'a> {
             .filter(|parameter| !is_origin(parameter))
             .count();
         if non_origin == explicit.len()
+            || non_origin == 0
             || arguments.len() != non_origin
             || arguments
                 .iter()

@@ -1530,8 +1530,11 @@ fn pointer_to_place_aliases_the_source_place() {
 
 #[test]
 fn pointer_owner_drops_after_the_pointer_last_use() {
+    // The pointer's loan propagates through registers: the owner outlives
+    // every consumer of a value derived from the pointer, the `print` call
+    // over the dereferenced element included, and drops right after it.
     let src = "struct Box:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\ndef main():\n    var box = Box(1)\n    var p = UnsafePointer(to=box.n)\n    print(\"before\")\n    print(p[0])\n    print(\"after\")\n";
-    assert_eq!(vm(src), "before\ndrop 1\n1\nafter\n");
+    assert_eq!(vm(src), "before\n1\ndrop 1\nafter\n");
 }
 
 #[test]

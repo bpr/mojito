@@ -1,7 +1,8 @@
-# expect: expects 0 type argument(s)
-# Origin parameters are erased from a struct's explicit argument list, so an
-# origin-applied struct type cannot be spelled in an annotation; the
-# reference-bearing carrier is written bare and its origin is inferred.
+# expect: which names no in-scope Origin parameter
+# A def-level Origin parameter cannot bind a struct's explicit origin slot in
+# an annotation: only the enclosing struct's origin binders and the builtin
+# origins resolve there, so the reference-bearing carrier is written bare and
+# its origin is inferred.
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]

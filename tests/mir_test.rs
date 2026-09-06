@@ -356,18 +356,22 @@ fn augmented_nominal_subscript_retains_both_calls_and_one_operand_evaluation() {
     else {
         unreachable!()
     };
-    assert_ne!(receiver, base);
+    // A value-returning `ref self` getter with no recorded parametric write
+    // classifies as a read of its receiver, so the setter reuses the loaded
+    // receiver register: no reload of the retained place sits between the
+    // two calls (a mutating getter's reload is pinned by
+    // `augmented_mutating_index_reloads_typed_source_before_setter`).
+    assert_eq!(receiver, base);
     assert!(
-        instructions[index_call + 1..setter_call]
+        !instructions[index_call + 1..setter_call]
             .iter()
             .any(|instruction| matches!(
                 instruction,
-                MirInstr::LoadPlace { dest, place }
-                    if dest == receiver
-                        && place.root == base_place.root
+                MirInstr::LoadPlace { place, .. }
+                    if place.root == base_place.root
                         && place.proj.len() == base_place.proj.len()
             )),
-        "a parametric `ref self` getter requires the retained receiver place to be reloaded before the setter: {instructions:#?}"
+        "a read-only `ref self` getter needs no receiver reload before the setter: {instructions:#?}"
     );
     assert!(matches!(args.as_slice(), [MirSubscriptArg::Index(value)] if value == index));
     assert!(getter.target.starts_with("Counter.__getitem__"));

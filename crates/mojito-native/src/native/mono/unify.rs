@@ -361,7 +361,7 @@ pub(super) fn bind_type(name: &str, ty: &Ty, bindings: &mut Bindings) -> Result<
     // Solutions join instance identity: erase callable-environment spellings
     // so `capturing[origin@N]` and `thin` variants of one contract are one
     // instance.
-    let ty = &canonicalize_callable(ty);
+    let ty = &materialize_nested_literals(&canonicalize_callable(ty));
     let literal = |ty: &Ty| matches!(ty, Ty::IntLiteral | Ty::FloatLiteral | Ty::StringLiteral);
     match bindings.types.get(name) {
         // A literal-typed actual materializes into whatever concrete storage

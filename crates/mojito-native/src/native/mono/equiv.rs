@@ -289,6 +289,36 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
 /// origin facts with no runtime ABI: instance identity and binding solutions
 /// must not split on them (`capturing[_]` vs `capturing[origin@N]` is the
 /// same closure value).
+/// Materialize literal types nested inside a solution (`Tuple$t2[..][IntLiteral,
+/// IntLiteral]` → `[Int, Int]`): instance symbols spell them materialized, so
+/// two solutions differing only there are one instance, not a symbol
+/// collision. The top-level literal case is `bind_type`'s merge rule.
+pub(super) fn materialize_nested_literals(ty: &Ty) -> Ty {
+    fn leaf(ty: &Ty) -> Ty {
+        match ty {
+            Ty::IntLiteral => Ty::Int,
+            Ty::FloatLiteral => Ty::Float64,
+            other => materialize_nested_literals(other),
+        }
+    }
+    match ty {
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(leaf(ty)),
+                    other => other.clone(),
+                })
+                .collect(),
+        ),
+        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(leaf).collect()),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(leaf).collect()),
+        Ty::Variant(elements) => Ty::Variant(elements.iter().map(leaf).collect()),
+        other => other.clone(),
+    }
+}
+
 pub(super) fn canonicalize_callable(ty: &Ty) -> Ty {
     let mut canonical = ty.clone();
     erase_callable_environments(&mut canonical);
