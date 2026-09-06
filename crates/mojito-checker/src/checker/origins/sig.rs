@@ -114,7 +114,9 @@ pub(in crate::checker) fn validate_origin_expr(
                 || name == "self"
                 || name == "ImmStaticOrigin"
                 || name == "ImmUntrackedOrigin"
+                || name == "MutUntrackedOrigin"
                 || name == "MutUnsafeAnyOrigin"
+                || name == "ImmUnsafeAnyOrigin"
                 || origin_params.contains(name.as_str())
                 || value_params.contains(name.as_str()) =>
         {
@@ -337,9 +339,15 @@ pub(in crate::checker) fn lower_ref_sig(
                 members.push(SigOrigin::Untracked { mutable: false });
                 mutability = SigMutability::Immutable;
             }
-            ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
+            ExprKind::Identifier(name)
+                if name == "MutUnsafeAnyOrigin" || name == "MutUntrackedOrigin" =>
+            {
                 members.push(SigOrigin::Untracked { mutable: true });
                 mutability = SigMutability::Mutable;
+            }
+            ExprKind::Identifier(name) if name == "ImmUnsafeAnyOrigin" => {
+                members.push(SigOrigin::Untracked { mutable: false });
+                mutability = SigMutability::Immutable;
             }
             ExprKind::Identifier(name) => {
                 if let Some(index) = params.iter().position(|param| param.name == *name) {

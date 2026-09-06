@@ -371,6 +371,70 @@ pub(in crate::checker) fn field_carries_origin_param(
     }
 }
 
+/// Replace each pointer provenance `PointerOrigin::Param { id, .. }` that
+/// `bindings` binds with the bound provenance, re-applying the parameter's
+/// interior tags and `_subtree` projection on top of it, recursing through
+/// struct arguments, references, and tuples. A projection that cannot be
+/// expressed on the bound provenance (an untracked base) leaves the
+/// parameter origin in place for the coercion check to report.
+pub(in crate::checker) fn substitute_pointer_origin_params(
+    ty: &Ty,
+    bindings: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::PointerOrigin>,
+) -> Ty {
+    use mojito_types::origin::PointerOrigin;
+    match ty {
+        Ty::Pointer { element, origin } => {
+            let element = Box::new(substitute_pointer_origin_params(element, bindings));
+            let origin = match origin {
+                PointerOrigin::Param {
+                    id,
+                    interior,
+                    subtree,
+                    ..
+                } if bindings.contains_key(id) => {
+                    let mut bound = Ok(bindings[id].clone());
+                    for tag in interior {
+                        bound = bound.and_then(|origin| {
+                            crate::checker::type_resolution::append_interior_tag(origin, tag)
+                        });
+                    }
+                    if *subtree {
+                        bound = bound.and_then(crate::checker::type_resolution::append_subtree);
+                    }
+                    bound.unwrap_or_else(|_| origin.clone())
+                }
+                other => other.clone(),
+            };
+            Ty::Pointer { element, origin }
+        }
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(substitute_pointer_origin_params(ty, bindings)),
+                    other => other.clone(),
+                })
+                .collect(),
+        ),
+        Ty::Ref(reference) => Ty::Ref(mojito_types::origin::RefTy {
+            referent: Box::new(substitute_pointer_origin_params(
+                &reference.referent,
+                bindings,
+            )),
+            origin: reference.origin.clone(),
+            mutability: reference.mutability,
+        }),
+        Ty::Tuple(elements) => Ty::Tuple(
+            elements
+                .iter()
+                .map(|element| substitute_pointer_origin_params(element, bindings))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 /// Replace each `Origin::Param(id)` for which `concrete` yields a binding with that
 /// concrete origin, recursing through unions and leaving every other origin as-is.
 pub(in crate::checker) fn substitute_origin_params(

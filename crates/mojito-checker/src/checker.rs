@@ -375,6 +375,11 @@ pub struct Checker {
     /// from calls through generic receiver fields. The completed frame is
     /// merged into that method's registered signature.
     parametric_write_frames: RefCell<Vec<Vec<mojito_types::origin::OriginParamId>>>,
+    /// Whether a parameter annotation is being resolved: the only position
+    /// where a bare `Pointer[T, _]` placeholder is concrete (as the immutable
+    /// alias; upstream infers the origin per call there and rejects the
+    /// placeholder elsewhere as not concrete).
+    resolving_parameter_annotation: std::cell::Cell<bool>,
     /// The declaration currently being checked comes from the bundled
     /// standard-library crossing module (`stdlib/std/memory.mojo`). Only such
     /// declarations may name compiler-private storage types (`__UninitStorage`)
@@ -466,6 +471,12 @@ pub struct Checker {
     /// wholly from its initializer (upstream-attested via `StringSlice`);
     /// fields and uninitialized locals may not.
     strict_storage_annotation: std::cell::Cell<StorageStrictness>,
+    /// While a storage annotation is resolved with
+    /// `resolve_storage_annotation_with_origins`, the explicit origin
+    /// arguments its outermost struct application supplied (`(slot name,
+    /// origin)`), so the binding site can judge the initializer against them
+    /// after they are erased from the type. `None` = not collecting.
+    storage_origin_demands: RefCell<Option<Vec<(String, mojito_types::origin::Origin)>>>,
     /// Synthetic tuple element reads introduced by unpacking have no source
     /// expression nodes. Retain their checked types and exact generated
     /// accessors on the RHS expression for HIR/MIR lowering.
@@ -632,6 +643,7 @@ impl Checker {
             hash_leaf_types: RefCell::new(Vec::new()),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects),
+            resolving_parameter_annotation: std::cell::Cell::new(false),
             call_transfers: RefCell::new(HashMap::new()),
             effect_observations: RefCell::new(HashMap::new()),
             call_through_effects: RefCell::new(call_through_seed),
@@ -645,6 +657,7 @@ impl Checker {
             operation_adjustments: RefCell::new(HashMap::new()),
             parameterized_method_calls: RefCell::new(HashMap::new()),
             strict_storage_annotation: std::cell::Cell::new(StorageStrictness::Off),
+            storage_origin_demands: RefCell::new(None),
             tuple_unpack_plans: RefCell::new(HashMap::new()),
             interior_references: RefCell::new(HashMap::new()),
             interior_invalidations: RefCell::new(HashMap::new()),
@@ -1633,6 +1646,11 @@ struct MethodSig {
     /// instantiations binding the origin to a mutable source, judged at each
     /// call site against the receiver's concrete origin arguments.
     parametric_origin_writes: Vec<mojito_types::origin::OriginParamId>,
+    /// Per regular parameter, the enclosing struct's origin binder its `ref`
+    /// clause names (`ref [Self.origin] list`), so a constructor call can
+    /// check an explicitly applied origin against the argument filling that
+    /// slot. `None` for every other parameter.
+    origin_binders: Vec<Option<mojito_types::origin::PointerOrigin>>,
 }
 
 impl MethodSig {
@@ -1660,6 +1678,7 @@ impl MethodSig {
             ref_return: None,
             implicit: false,
             parametric_origin_writes: Vec::new(),
+            origin_binders: vec![None; len],
         }
     }
 }

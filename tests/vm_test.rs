@@ -1216,9 +1216,21 @@ fn unsafe_pointer_vocabulary_round_trip() {
 #[test]
 fn pointer_keyword_subscript_dereferences() {
     // The keyword spelling executes as the same indexed dereference on heap
-    // and place pointers.
-    let src = "from std.memory import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](2)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[unsafe_offset=0], p[unsafe_offset=1])\n    p.unsafe_free()\n    var x = 5\n    var q = Pointer(to=x)\n    print(q[unsafe_offset=0])\n";
-    assert_eq!(parity(src), "1 2\n5\n");
+    // and place pointers, reading and writing (`=`, `+=`, a `ref` binding, a
+    // `mut` argument, a member base, a pointer parameter).
+    let src = "from std.memory import unsafe_alloc\n\nstruct Buf:\n    var p: Pointer[Int]\n    def __init__(out self):\n        self.p = unsafe_alloc[Int](2)\n        self.p[unsafe_offset=0] = 3\n        self.p[unsafe_offset=1] = 4\n    def get(self, i: Int) -> Int:\n        return self.p[unsafe_offset=i]\n\ndef bump(mut v: Int):\n    v += 10\n\ndef store(p: Pointer[Int]):\n    p[unsafe_offset=1] = 20\n\ndef main():\n    var p = unsafe_alloc[Int](2)\n    p.unsafe_write(1)\n    p.unsafe_offset(1).unsafe_write(2)\n    print(p[unsafe_offset=0], p[unsafe_offset=1])\n    p[unsafe_offset=1] = 9\n    p[unsafe_offset=0] += 40\n    ref r = p[unsafe_offset=1]\n    r += 1\n    bump(p[unsafe_offset=0])\n    print(p[unsafe_offset=0], p[unsafe_offset=1])\n    store(p)\n    print(p[unsafe_offset=1])\n    p.unsafe_free()\n    var x = 5\n    var q = Pointer(to=x)\n    print(q[unsafe_offset=0])\n    q[unsafe_offset=0] = 7\n    q[unsafe_offset=0] += 1\n    print(x)\n    var b = Buf()\n    b.p[unsafe_offset=1] = 40\n    print(b.get(0), b.get(1))\n    b.p.free()\n";
+    assert_eq!(parity(src), "1 2\n51 10\n20\n5\n8\n3 40\n");
+}
+
+#[test]
+fn pointer_argument_keeps_its_source_alive_through_the_call() {
+    // A tracked pointer handed to a call — a `unsafe_ptr()` temporary or a
+    // pointer local at its last use — keeps its source alive until the
+    // callee has read the pointee, even when the argument is the source's
+    // last use (the ownership analysis propagates the pointer's loan through
+    // the argument register and the call-result seeding).
+    let src = "def first(bytes: ImmPointer[UInt8, _], n: Int) -> Int:\n    return Int(bytes[])\n\ndef head(p: ImmPointer[Int, _]) -> Int:\n    return p[]\n\ndef main():\n    var s = String(\"hello\")\n    print(first(s.unsafe_ptr(), 5))\n    var t = String(\"world\")\n    var q = t.unsafe_ptr()\n    print(first(q, 5))\n    var xs = List[Int]()\n    xs.append(4)\n    print(head(xs.unsafe_ptr()))\n";
+    assert_eq!(parity(src), "104\n119\n4\n");
 }
 
 #[test]
@@ -1414,6 +1426,39 @@ fn string_mutation_during_grapheme_iteration_rejects() {
         err.contains("conflicts with live reference"),
         "unexpected error: {err}"
     );
+}
+
+#[test]
+fn span_pointer_construction_binds_and_loans_the_pointer_origin() {
+    // `Span(unsafe_ptr=, length=)` takes `Pointer[Self.T, Self.origin]`
+    // (upstream's shape): a tracked pointer binds — and loans — the span's
+    // origin, so mutating the source while the span lives is rejected; an
+    // explicit application is checked against the pointer's provenance.
+    let ok_src = "def main():\n    var s = String(\"hello\")\n    var v = Span(unsafe_ptr=s.unsafe_ptr(), length=5)\n    var w = Span[Byte, origin_of(s)](unsafe_ptr=s.unsafe_ptr(), length=5)\n    print(len(v), Int(v[1]), Int(w[4]))\n";
+    assert_eq!(parity(ok_src), "5 101 111\n");
+    let mutation = "def main():\n    var s = String(\"hello\")\n    var v = Span(unsafe_ptr=s.unsafe_ptr(), length=5)\n    s += \"!\"\n    print(Int(v[1]))\n";
+    let err =
+        run_compiled(mutation).expect_err("source mutation under a pointer-built span rejects");
+    assert!(
+        err.contains("invalidated interior reference"),
+        "unexpected error: {err}"
+    );
+    let mismatch = "def main():\n    var s = String(\"hello\")\n    var t = String(\"world\")\n    var v = Span[Byte, origin_of(t)](unsafe_ptr=s.unsafe_ptr(), length=5)\n    print(len(v))\n";
+    let err = run_compiled(mismatch)
+        .expect_err("an explicit origin the pointer does not lie within rejects");
+    assert!(
+        err.contains("origin lies within the supplied 'origin' argument"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn two_live_views_read_one_string() {
+    // A `ref self` subscript returning a view reads its receiver: two byte
+    // views of one String coexist, and a read of the source under a live
+    // view is fine; mutation still conflicts (the negative pin below).
+    let src = "def main():\n    var s = String(\"hello\")\n    var view = s[byte=0:2]\n    var v2 = s[byte=1:3]\n    print(view)\n    print(v2)\n    print(s.byte_length())\n";
+    assert_eq!(parity(src), "he\nel\n5\n");
 }
 
 #[test]
@@ -1852,6 +1897,34 @@ fn container_family_owning_apis_execute() {
         run_compiled(src).expect("family APIs run"),
         "close 1\nclose 2\ndisplaced 10\nfresh False\ncleared 1 11\ncleared 2 20\nlen 0\nset displaced 7\ntorn 7\n"
     );
+}
+
+#[test]
+fn annotated_local_origin_arguments_are_demands_on_the_initializer() {
+    // An explicit origin argument in a `var` annotation is a demand on the
+    // initializer, not just validated and erased: a local place cannot
+    // satisfy `ImmStaticOrigin`, and `origin_of(xs)` rejects a value that
+    // borrows a different list. A view of the named place, a `Span(xs)`
+    // construction, and a literal view (borrowing nothing) satisfy them.
+    let ok_src = "def main():\n    var xs: List[Int] = [1, 2, 3]\n    var a: Span[Int, origin_of(xs)] = xs\n    var b: Span[Int, origin_of(xs)] = Span(xs)\n    var lit: StringSpan[ImmStaticOrigin] = \"abc\"\n    print(a[0], b[2], lit)\n";
+    assert_eq!(parity(ok_src), "1 3 abc\n");
+    for (src, expected) in [
+        (
+            "def main():\n    var s = String(\"hi\")\n    var w: StringSpan[ImmStaticOrigin] = s\n    print(w)\n",
+            "cannot satisfy ImmStaticOrigin",
+        ),
+        (
+            "def main():\n    var xs: List[Int] = [1]\n    var v: Span[Int, ImmStaticOrigin] = xs\n    print(v[0])\n",
+            "cannot satisfy ImmStaticOrigin",
+        ),
+        (
+            "def main():\n    var xs: List[Int] = [1]\n    var ys: List[Int] = [2]\n    var v: Span[Int, origin_of(ys)] = xs\n    print(v[0])\n",
+            "borrowing a different place",
+        ),
+    ] {
+        let err = run_compiled(src).expect_err("annotation origin demand rejects");
+        assert!(err.contains(expected), "unexpected error: {err}");
+    }
 }
 
 #[test]

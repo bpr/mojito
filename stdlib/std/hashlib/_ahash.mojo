@@ -118,9 +118,7 @@ comptime _ZeroKeyAHasher = AHasher[U256(0)]
 
 def hash_seeded_bytes(data: ImmPointer[UInt8, _], n: Int, seed: U256) -> UInt64:
     var hasher = _ZeroKeyAHasher(seed)
-    hasher._update_with_bytes(
-        Span[Byte](unsafe_ptr=data.unsafe_origin_cast[ImmUntrackedOrigin](), length=n)
-    )
+    hasher._update_with_bytes(Span[Byte](unsafe_ptr=data, length=n))
     return hasher^.finish()
 
 def hash_seeded[T: Hashable](value: T, seed: U256) -> UInt64:

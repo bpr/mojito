@@ -205,7 +205,7 @@ impl<'a> Elab<'a> {
                 }
                 continue;
             }
-            if !self.bound_generics.contains(callee) {
+            if !self.bound_generics.contains(callee) && !self.pack_generics.contains(callee) {
                 continue;
             }
             let Some(template) = self.specializable.get(callee) else {
@@ -342,6 +342,14 @@ impl<'a> Elab<'a> {
                 && (mono.retained.contains(&template_name) || !monomorphized)
             {
                 out.push(stmt);
+            } else if self.pack_generics.contains(&template_name)
+                && mono.retained.contains(&template_name)
+            {
+                // A type-pack template with a deferred call survives as a
+                // signature-only stub: the discovery check types the call
+                // against it and records the instantiation the next round
+                // mints; its body only specializes concretely.
+                out.push(pack_template_stub(&stmt));
             }
             if let Some(mut specs) = generated {
                 specs.reverse();
@@ -606,7 +614,7 @@ impl<'a> Elab<'a> {
                     let source_types = types
                         .iter()
                         .map(|value| match value {
-                            CtValue::Type(ty) => source_type_from_ty(ty),
+                            CtValue::Type(ty) => self.pack_element_source_type(ty),
                             _ => None,
                         })
                         .collect::<Option<Vec<_>>>()
@@ -1148,6 +1156,7 @@ impl<'a> Elab<'a> {
             .iter()
             .map(|ty| {
                 source_type_from_ty_with_origins(ty, &origin_names, &self.materialized_callables)
+                    .map(|source| self.insert_origin_placeholders(source))
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| {
@@ -1743,6 +1752,10 @@ impl<'a> Elab<'a> {
                     {
                         return None;
                     }
+                    // See `Elab::ty_mentions_origin_slotted_struct`.
+                    if self.ty_mentions_origin_slotted_struct(ty) {
+                        return None;
+                    }
                     let source = source_type_from_ty(ty)?;
                     values.push(CtValue::Type(Box::new(ty.clone())));
                     bindings.push(MethodBinding {
@@ -1872,6 +1885,10 @@ impl<'a> Elab<'a> {
                 .iter()
                 .any(|bound| self.conformance.require(ty, bound).is_err())
             {
+                return Ok((Vec::new(), Vec::new()));
+            }
+            // See `Elab::ty_mentions_origin_slotted_struct`.
+            if self.ty_mentions_origin_slotted_struct(ty) {
                 return Ok((Vec::new(), Vec::new()));
             }
             let Some(source) = source_type_from_ty(ty) else {
@@ -2232,7 +2249,7 @@ impl<'a> Elab<'a> {
             let source_types = elements
                 .iter()
                 .map(|element| match element {
-                    CtValue::Type(ty) => source_type_from_ty(ty),
+                    CtValue::Type(ty) => self.pack_element_source_type(ty),
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()
@@ -2547,6 +2564,35 @@ fn unavailable_method_clause(method: &Method, owner: &str, types: &[CtValue]) ->
         ]),
         span,
     )
+}
+
+/// A type-pack `def` template reduced to its signature: the body traps, so
+/// the retained declaration checks (an abort diverges past any return type)
+/// without specializing `args[i]` over an unknown pack.
+pub(super) fn pack_template_stub(template: &Stmt) -> Stmt {
+    let mut stub = template.clone();
+    if let StmtKind::Def { name, body, .. } = &mut stub.kind {
+        let span = body
+            .first()
+            .map(|statement| statement.span)
+            .unwrap_or(mojito_common::token::DUMMY_SPAN);
+        *body = vec![mk(
+            StmtKind::Expr(Expr::new(
+                ExprKind::Call {
+                    name: "_mojito_abort".to_string(),
+                    param_args: Vec::new(),
+                    args: vec![Expr::new(
+                        ExprKind::Str(format!("{name}: unspecialized type-pack function")),
+                        span,
+                    )],
+                    kwargs: Vec::new(),
+                },
+                span,
+            )),
+            span,
+        )];
+    }
+    stub
 }
 
 pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {

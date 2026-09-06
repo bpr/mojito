@@ -895,6 +895,55 @@ impl<'a> Elab<'a> {
                                 }
                             }
                         }
+                    } else if self.pack_generics.contains(name.as_str()) {
+                        // A type-pack call: element types read syntactically
+                        // specialize at once; a call whose elements are not
+                        // statically evident (a local, a generic construction,
+                        // an origin-bearing temporary) consults the
+                        // checker-recorded instantiation for this occurrence
+                        // and otherwise keeps the template for the discovery
+                        // check. A bound violation is a real error either way.
+                        let template = self.specializable[name.as_str()];
+                        let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
+                        let resolved =
+                            top_level_forwarded_pack_types(template, name, args, kwargs, mono)
+                                .and_then(|forwarded| {
+                                    self.resolve_spec_args_for(
+                                        template,
+                                        name,
+                                        SpecRequest {
+                                            param_args,
+                                            call_args: args,
+                                            kwargs,
+                                            consts,
+                                            request_site: &request_site,
+                                            forwarded_pack_types: forwarded.as_deref(),
+                                        },
+                                    )
+                                });
+                        match resolved {
+                            Ok((values, kept)) if self.pack_values_statically_evident(&values) => {
+                                (values, kept, whole_pack_abi)
+                            }
+                            Err(
+                                error @ (ComptimeError::GenericBound(_)
+                                | ComptimeError::PackBound(_)),
+                            ) => return Err(error),
+                            // A syntactic guess that names a generic struct
+                            // bare (`Box(7)`, `Named("k", w)`) is not
+                            // evident either: its arguments are the
+                            // checker's to solve.
+                            Ok(_) | Err(_) => {
+                                match self.def_request_target(name, &source_span, param_args, mono)
+                                {
+                                    Some((values, kept)) => (values, kept, whole_pack_abi),
+                                    None => {
+                                        mono.retained.insert(name.clone());
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         let template = self.specializable[name.as_str()];
                         let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
@@ -1295,7 +1344,16 @@ impl<'a> Elab<'a> {
                         variadic: false, ..
                     },
                     TyArg::Ty(ty),
-                ) => CtValue::Type(Box::new(ty.clone())),
+                ) => {
+                    // An origin-slotted struct argument (`_ListIter[Int]`,
+                    // `Named[Int]`) has no concrete source spelling: the call
+                    // keeps the abstract path rather than minting a clone
+                    // whose annotation would omit the erased slot.
+                    if self.ty_mentions_origin_slotted_struct(ty) {
+                        return None;
+                    }
+                    CtValue::Type(Box::new(ty.clone()))
+                }
                 (
                     ParamDecl::Value {
                         variadic: false,
@@ -1309,8 +1367,31 @@ impl<'a> Elab<'a> {
                     }
                     value.clone()
                 }
-                // Packs never reach here (they classify as comptime-class
-                // templates), and any other pairing is a drift signal.
+                // A checker-inferred type pack (`show(w)` on `def show[*Ts:
+                // Writable](*args: *Ts)`): every element is a checked type
+                // satisfying the pack's bounds.
+                (
+                    ParamDecl::Type {
+                        variadic: true,
+                        bounds,
+                        ..
+                    },
+                    TyArg::Val(value @ CtValue::Tuple(elements)),
+                ) => {
+                    for element in elements {
+                        let CtValue::Type(ty) = element else {
+                            return None;
+                        };
+                        if bounds
+                            .iter()
+                            .any(|bound| self.conformance.require(ty, bound).is_err())
+                        {
+                            return None;
+                        }
+                    }
+                    value.clone()
+                }
+                // Any other pairing is a drift signal.
                 _ => return None,
             };
             // Drift guard between the checker's conformance and this oracle:

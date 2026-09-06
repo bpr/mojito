@@ -7,7 +7,7 @@ use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, MethodSpecializationRequest,
     StructInstanceRequest, TStringSpecializationRequest, TupleSpecializationRequest,
     TupleTransformRequest, bound_generic_template_names, elaborate_with_requests,
-    tuple_materialized_callables, variadic_struct_template_names,
+    pack_generic_template_names, tuple_materialized_callables, variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -215,7 +215,11 @@ impl Compiler {
         // keep their single re-elaboration; ownership and MIR verification run
         // exactly once, on the fixpoint program.
         const SPECIALIZATION_ROUNDS: usize = 5;
-        let templates = bound_generic_template_names(&linked);
+        let templates = {
+            let mut templates = bound_generic_template_names(&linked);
+            templates.extend(pack_generic_template_names(&linked));
+            templates
+        };
         let range_templates = scalar_range_template_names(&linked);
         let variadic_templates = variadic_struct_template_names(&linked);
         let user_structs = user_struct_names(&linked);

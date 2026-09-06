@@ -4539,6 +4539,31 @@ fn empty_subscript_dereferences_a_pointer() {
 }
 
 #[test]
+fn bare_placeholder_pointer_parameter_reads_as_the_immutable_alias() {
+    // Upstream infers a bare `Pointer[T, _]` parameter's origin (and so its
+    // `mut`) per call, so its body reads through it but cannot prove the
+    // capability a write or a mutable-demanding forward needs; outside
+    // parameter position the placeholder is not concrete.
+    ok(
+        "def peek(p: Pointer[Int, _]) -> Int:\n    return p[unsafe_offset=0]\n\ndef via(p: Pointer[Int, _]) -> Int:\n    return peek(p)\n\ndef main():\n    var x = 4\n    print(via(Pointer(to=x)))\n",
+    );
+    assert!(matches!(
+        err("def bump(p: Pointer[Int, _]):\n    p[unsafe_offset=0] = 2\n\ndef main():\n    print(1)\n"),
+        TypeError::Unsupported(message) if message.contains("immutable origin")
+    ));
+    assert!(matches!(
+        err(
+            "def w(q: MutPointer[Int, _]):\n    q[unsafe_offset=0] = 3\n\ndef via(p: Pointer[Int, _]):\n    w(p)\n\ndef main():\n    print(1)\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+    assert!(matches!(
+        err("def f(p: Pointer[Int, _]) -> Pointer[Int, _]:\n    return p\n\ndef main():\n    print(1)\n"),
+        TypeError::Unsupported(message) if message.contains("not concrete outside parameter position")
+    ));
+}
+
+#[test]
 fn untracked_immutable_pointer_rejects_writes() {
     // Reads through an immutable untracked pointer stay ordinary…
     ok(
@@ -4637,11 +4662,17 @@ fn pointer_keyword_subscript_reads() {
         err("def main():\n    var p = UnsafePointer[Int].alloc(1)\n    print(p[offset=0])\n"),
         TypeError::Unsupported(message) if message.contains("unsafe_offset=i")
     ));
-    // …and keyword subscripts stay read-only (stores use `ptr[i] = v` or
-    // `unsafe_write`).
+    // …and the keyword spelling is a place: it stores, compound-assigns,
+    // binds a `ref`, and writes through a pointer parameter (a pointer is a
+    // value; the write needs the origin's mutable capability, not a mutable
+    // binding).
+    ok(
+        "def bump(p: MutPointer[Int, _]):\n    p[unsafe_offset=0] += 1\n\ndef main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[unsafe_offset=0] = 1\n    p[unsafe_offset=0] += 1\n    ref r = p[unsafe_offset=0]\n    r = 2\n    bump(p)\n    p.unsafe_free()\n",
+    );
+    // A write through an immutable-origin pointer still rejects.
     assert!(matches!(
-        err("def main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[unsafe_offset=0] = 1\n"),
-        TypeError::Unsupported(message) if message.contains("read-only")
+        err("def f(x: Int):\n    var q = Pointer(to=x)\n    q[unsafe_offset=0] = 1\n"),
+        TypeError::Unsupported(message) if message.contains("immutable origin")
     ));
 }
 
@@ -5204,6 +5235,23 @@ fn omitted_origin_slot_in_a_local_annotation_fails_to_infer() {
             err(src),
             TypeError::CannotInferParam { name, param } if name == "Tagged" && param == "o"
         ),
+        "{:?}",
+        err(src)
+    );
+}
+
+#[test]
+fn builtin_origin_values_bind_struct_origin_slots() {
+    // The untracked/unsafe-any builtins fill a struct's explicit origin slot
+    // in either permission, and an unresolvable origin-shaped argument reports
+    // the origin diagnostic rather than an arity count against the erased
+    // binder.
+    ok(
+        "@fieldwise_init\nstruct Holder[o: Origin]:\n    var p: Pointer[Int, Self.o]\n\ndef f(h: Holder[MutUntrackedOrigin]) -> Int:\n    return h.p[0]\n\ndef g(h: Holder[ImmUnsafeAnyOrigin]) -> Int:\n    return h.p[0]\n\ndef main():\n    pass\n",
+    );
+    let src = "@fieldwise_init\nstruct Holder[o: Origin]:\n    var p: Pointer[Int, Self.o]\n\ndef f(h: Holder[Bogus]) -> Int:\n    return 1\n\ndef main():\n    pass\n";
+    assert!(
+        matches!(err(src), TypeError::TypeMismatch { context, .. } if context == "explicit origin argument"),
         "{:?}",
         err(src)
     );

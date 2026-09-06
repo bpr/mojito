@@ -71,3 +71,8 @@ def main():
     print(byte_count(t[byte=0:2]))
     var w = 7
     print(Named("n", w))
+    var u = String("mojito")
+    var head = u[byte=0:3]
+    var tail = u[byte=3:6]
+    print(head)
+    print(tail)

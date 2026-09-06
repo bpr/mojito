@@ -25,7 +25,5 @@ def hash[HasherType: Hasher = default_hasher](
     bytes: ImmPointer[UInt8, _], n: Int
 ) -> UInt64:
     var hasher = HasherType()
-    hasher._update_with_bytes(
-        Span[Byte](unsafe_ptr=bytes.unsafe_origin_cast[ImmUntrackedOrigin](), length=n)
-    )
+    hasher._update_with_bytes(Span[Byte](unsafe_ptr=bytes, length=n))
     return hasher^.finish()

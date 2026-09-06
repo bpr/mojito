@@ -140,7 +140,12 @@ impl Checker {
         site: SourceSpan,
         place: &Expr,
     ) {
-        if let ExprKind::Index { object, .. } = &place.kind
+        let pointer_object = match &place.kind {
+            ExprKind::Index { object, .. } => Some(object.as_ref()),
+            _ => crate::checker::places::pointer_offset_keyword_subscript(place)
+                .map(|(object, _)| object),
+        };
+        if let Some(object) = pointer_object
             && let Ok(Ty::Pointer {
                 origin: mojito_types::origin::PointerOrigin::Place { place: origin, .. },
                 ..

@@ -24,7 +24,23 @@ pub(super) fn is_place_expr(e: &Expr) -> bool {
             | ExprKind::Member { .. }
             | ExprKind::Index { .. }
             | ExprKind::TypeApply { .. }
-    )
+    ) || pointer_offset_keyword_subscript(e).is_some()
+}
+
+/// The pointer keyword subscript (`p[unsafe_offset=i]`, current Mojo's
+/// offset-dereference spelling) as its pointer object and offset expression.
+/// It is a place exactly like the positional `p[i]`; every other keyword
+/// subscript is a nominal `__getitem__` call.
+pub(super) fn pointer_offset_keyword_subscript(e: &Expr) -> Option<(&Expr, &Expr)> {
+    match &e.kind {
+        ExprKind::MultiIndex { object, args } => match args.as_slice() {
+            [mojito_ast::ast::SubscriptArg::Keyword { name, value }] if name == "unsafe_offset" => {
+                Some((object, value))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// The root variable of a place expression (`p` for `p`, `p.a.b`, `p.items[i]`),
@@ -230,6 +246,12 @@ pub(super) fn place_path(e: &Expr) -> Option<(&str, Vec<PlaceSeg>)> {
                 Some(r)
             }
             ExprKind::Index { object, .. } => {
+                let r = go(object, path)?;
+                path.push(PlaceSeg::Index);
+                Some(r)
+            }
+            ExprKind::MultiIndex { .. } => {
+                let (object, _) = pointer_offset_keyword_subscript(e)?;
                 let r = go(object, path)?;
                 path.push(PlaceSeg::Index);
                 Some(r)

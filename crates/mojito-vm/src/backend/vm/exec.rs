@@ -25,6 +25,28 @@ impl VmBackend {
             MirInstr::EstablishLoans { .. } | MirInstr::InvalidateInteriors { .. } => {}
             MirInstr::MakeRef { dest, place } => {
                 let root = vars[place.root as usize].clone();
+                // A tracked pointer variable holding a heap pointer (a
+                // constructor's `Pointer[T, Self.origin]` parameter bound to
+                // `xs.unsafe_ptr()`) is its own handle: forward the pointer,
+                // applying an element projection as pointer arithmetic (a
+                // single-pointee deref designates the pointee the pointer
+                // already addresses).
+                if let Value::Pointer { allocation, offset } = root {
+                    let mut offset = offset;
+                    for segment in super::references::place_projection_segments(place, regs)? {
+                        match segment {
+                            RefProjection::Deref => {}
+                            RefProjection::Index(index) => offset += index as i64,
+                            other => {
+                                return Err(RuntimeError::TypeError(format!(
+                                    "vm: cannot project {other:?} through a heap pointer"
+                                )));
+                            }
+                        }
+                    }
+                    regs[dest.0 as usize] = Value::Pointer { allocation, offset };
+                    return Ok(Flow::Normal);
+                }
                 let (frame, slot, mut projection) = match root {
                     Value::Ref {
                         frame,
@@ -198,7 +220,16 @@ impl VmBackend {
                     } else {
                         moved
                     }
-                } else if let Value::Ref { .. } = &vars[slot] {
+                } else if let Value::Ref { .. } = &vars[slot]
+                    && !matches!(
+                        prog.mir.functions[function].1.var_tys.get(var),
+                        Some(Ty::Pointer { .. })
+                    )
+                {
+                    // A pointer-typed variable holding a place handle
+                    // (`Pointer(to=x)` bound to a placeholder-origin parameter)
+                    // is the handle itself; only reference bindings read
+                    // through their stored handle.
                     self.read_reference(&vars[slot], frame_id, vars)?
                 } else {
                     match mode {
@@ -784,8 +815,13 @@ impl VmBackend {
                 let base_value = regs[base.0 as usize].clone();
                 // A ref-typed subscript base register holds a handle; the
                 // checked receiver is its referent (the read twin of the
-                // ref-field store's second dereference).
-                let base_value = if matches!(base_value, Value::Ref { .. }) {
+                // ref-field store's second dereference). A pointer subscript
+                // keeps its handle: a place pointer bound to a
+                // placeholder-origin parameter IS the handle, and the pointer
+                // intrinsic below dereferences it.
+                let base_value = if matches!(base_value, Value::Ref { .. })
+                    && *intrinsic != Some(MirIntrinsicSubscript::Pointer)
+                {
                     self.read_reference(&base_value, frame_id, vars)?
                 } else {
                     base_value
@@ -849,6 +885,25 @@ impl VmBackend {
                         )
                     })?;
                     regs[dest.0 as usize] = match (intrinsic, base_value) {
+                        // `ptr[i]` through a place handle (a `Pointer(to=x)`
+                        // bound to a placeholder-origin parameter) reads the
+                        // pointee; the handle designates one value.
+                        (MirIntrinsicSubscript::Pointer, handle @ Value::Ref { .. }) => {
+                            let off = self.normalize_index(prog, &regs[index.0 as usize])?;
+                            if off != 0 {
+                                return Err(RuntimeError::TypeError(
+                                    "vm: a place pointer designates a single value; only \
+                                     offset 0 can be dereferenced"
+                                        .to_string(),
+                                ));
+                            }
+                            let value = self.read_reference(&handle, frame_id, vars)?;
+                            if self.has_copyinit {
+                                self.clone_value(prog, &value)?
+                            } else {
+                                value
+                            }
+                        }
                         // `ptr[i]` loads the pointee at `base + i` from the heap arena.
                         (MirIntrinsicSubscript::Pointer, Value::Pointer { allocation, offset }) => {
                             let off = self.normalize_index(prog, &regs[index.0 as usize])?;

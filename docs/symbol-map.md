@@ -137,7 +137,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   inference (`infer_call`, generic-call instantiation).
 - `checker/type_resolution.rs` resolves source annotations into checked `Ty`
   (builtin type-argument forms, dependent/associated projection, and generic
-  comptime alias expansion via `resolve_comptime_alias`). It also owns pointer
+  comptime alias expansion via `resolve_comptime_alias`), partitions a struct
+  application's origin slots out of its arguments
+  (`partition_struct_origin_args`, the funnel shared by annotations and
+  `infer_construction`; `resolve_storage_annotation_with_origins` reports the
+  explicit origins a local's annotation demands), and resolves the bare
+  `Pointer[T, _]` parameter placeholder as the immutable alias. It also owns pointer
   origin arguments (`pointer_origin_arg`/`pointer_origin_expr`: origin
   parameters, `origin_of(place)`, `._get_owned_interior["tag"]` projections
   in both annotation and expression shapes — the multi-element pointer
@@ -152,9 +157,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ast::canonical_destructor_name`, applied by the parser at the semantic
   positions and by the checker where trait names are extracted from
   expressions.
-- `checker/origins.rs` (split across `origins/{actuals,binders,transfer,
-  solve,sig,subst,interior,ref_params}.rs`) owns origin/reference-handle
-  derivation, interior and
+- `checker/origins.rs` (split across `origins/{actuals,binders,construct,
+  transfer,solve,sig,subst,interior,ref_params}.rs`) owns origin/reference-handle
+  derivation, constructor origin binding (`origins/construct.rs`:
+  `bind_constructor_origins` binds a struct's origin binder from a
+  `Pointer[Self.T, Self.origin]` argument and checks an explicitly applied
+  origin; `substitute_pointer_origin_params` rewrites the parameter types),
+  the annotation-demand verdict for locals (`check_storage_origin_demands`),
+  interior and
   aggregate-origin tracking, capture-origin collection, origin-signature
   lowering (including the shared `SigOrigin` instantiation helpers
   `instantiate_sig_origin`/`instantiate_bound_origin` used by the iteration
@@ -188,7 +198,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and iterator-protocol selection respectively.
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates
   checker-only signature rules.
-- `checker/places.rs` owns call-site place classification and alias rejection.
+- `checker/places.rs` owns call-site place classification and alias rejection
+  (the pointer keyword subscript `p[unsafe_offset=i]` is a place:
+  `pointer_offset_keyword_subscript`).
 - `checker/generics.rs` owns unification, substitution, and callable/method
   specialization.
 - `checker/declarations.rs` owns parameter classification and method/function
@@ -325,7 +337,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `backend/vm/dispatch.rs` owns named-call dispatch, drops, slice bounds, and
   value formatting.
 - `comptime.rs` owns the `Elab` elaboration driver (`block`/`stmt`), type
-  resolution, and the free-function/`Mono` support code; `Elab`'s remaining
+  resolution, the template classifications (`bound_generic_template_names`,
+  `pack_generic_template_names` — type-pack defs whose non-evident calls
+  specialize from checker-recorded instantiations, `pack_template_stub` in
+  `comptime/specialize.rs` standing in for a deferred template), the
+  origin-slot guards (`ty_mentions_origin_slotted_struct` keeps such type
+  arguments abstract; `pack_element_source_type` spells erased slots as
+  `_`), and the free-function/`Mono` support code; `Elab`'s remaining
   methods are split across `impl<'a> Elab<'a>` blocks in the submodules
   below (`comptime/elab.rs` holds the root driver's own cluster), and the
   root's helper clusters live in

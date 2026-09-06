@@ -1086,7 +1086,10 @@ impl Checker {
                     _ => elem,
                 };
                 let arg_ty = self.infer_with_expected(&args[p], expected, true)?;
-                if !coerces(&arg_ty, expected) {
+                // A checker-minted pack clone materializes a literal element
+                // as its nominal type (`"lit"` → `String`): the element
+                // converts exactly as a regular argument does.
+                if !self.record_implicit_conversion(&args[p], &arg_ty, expected)? {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: arg_ty.to_string(),

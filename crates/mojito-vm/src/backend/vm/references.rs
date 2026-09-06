@@ -211,6 +211,11 @@ impl VmBackend {
         current: FrameId,
         current_variables: &[Value],
     ) -> Result<Value, RuntimeError> {
+        // A heap pointer forwarded as a handle (see `MakeRef`) reads its
+        // pointee from the arena.
+        if let Value::Pointer { allocation, offset } = reference {
+            return self.heap_read(*allocation, *offset, 0);
+        }
         if let Value::Ref {
             frame,
             slot,
@@ -257,6 +262,12 @@ impl VmBackend {
         current_variables: &mut [Value],
         value: Value,
     ) -> Result<(), RuntimeError> {
+        // A heap pointer forwarded as a handle (see `MakeRef`) writes its
+        // pointee in the arena.
+        if let Value::Pointer { allocation, offset } = reference {
+            let (region, slot) = self.heap_index(*allocation, *offset, 0)?;
+            return self.write_heap_projection(region, slot, &[], value);
+        }
         let Value::Ref {
             frame,
             slot,

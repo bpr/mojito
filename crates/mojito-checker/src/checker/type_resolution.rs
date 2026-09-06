@@ -19,6 +19,24 @@ pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(),
     Ok(())
 }
 
+/// One explicit origin argument a struct application supplied, resolved
+/// against its slot: the slot's index in the declaration's full parameter
+/// list (the `OriginParamId` domain of the struct's own binders) and the
+/// origin the argument names (its mutability was already validated against
+/// the slot by `accept_origin_argument`).
+pub(in crate::checker) struct ExplicitStructOrigin {
+    pub(in crate::checker) id: mojito_types::origin::OriginParamId,
+    pub(in crate::checker) origin: mojito_types::origin::Origin,
+}
+
+/// A struct application's compile-time arguments with the origin slots
+/// partitioned out (validated and erased): `forwarded` is exactly what the
+/// origin-erased binder sees.
+pub(super) struct PartitionedStructArgs {
+    pub(super) forwarded: Vec<mojito_ast::ast::ParamArg>,
+    pub(super) explicit_origins: Vec<ExplicitStructOrigin>,
+}
+
 impl Checker {
     /// The type denoted by a source annotation; resolves type parameters and
     /// validates struct names and type-argument counts.
@@ -649,8 +667,62 @@ impl Checker {
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<(HashMap<String, Ty>, Vec<TyArg>), TypeError> {
+        let partitioned = self.partition_struct_origin_args(name, source_params, args)?;
+        self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)
+    }
+
+    /// Partition a struct application's explicit compile-time arguments into
+    /// the origin slots the declaration's raw parameter list spells and the
+    /// arguments the origin-erased binder sees (see
+    /// [`Self::resolve_struct_use_args`], the annotation-side consumer; the
+    /// constructor-call funnel in `infer_construction` is the other). Each
+    /// resolvable origin argument is validated against its slot and erased,
+    /// and returned so a constructor call can check the arguments binding
+    /// that slot against it.
+    pub(super) fn partition_struct_origin_args(
+        &self,
+        name: &str,
+        source_params: &[mojito_ast::ast::TypeParam],
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<PartitionedStructArgs, TypeError> {
+        // Only the outermost application of a collected storage annotation
+        // reports its demands; nested applications resolve uncollected.
+        let collecting = self.storage_origin_demands.take();
+        let result = self.partition_struct_origin_args_uncollected(name, source_params, args);
+        if let Some(mut demands) = collecting {
+            if let Ok(partitioned) = &result {
+                demands.extend(partitioned.explicit_origins.iter().map(|explicit| {
+                    (
+                        source_params[explicit.id.0 as usize].name.clone(),
+                        explicit.origin.clone(),
+                    )
+                }));
+            }
+            self.storage_origin_demands.replace(Some(demands));
+        }
+        result
+    }
+
+    fn partition_struct_origin_args_uncollected(
+        &self,
+        name: &str,
+        source_params: &[mojito_ast::ast::TypeParam],
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<PartitionedStructArgs, TypeError> {
         use mojito_ast::ast::ParamArg;
         let is_origin = |p: &mojito_ast::ast::TypeParam| matches!(p.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
+        let slot_id = |param: &mojito_ast::ast::TypeParam| {
+            mojito_types::origin::OriginParamId(
+                source_params
+                    .iter()
+                    .position(|candidate| candidate.name == param.name)
+                    .expect("explicit parameter comes from the source list") as u32,
+            )
+        };
+        let forward_all = || PartitionedStructArgs {
+            forwarded: args.to_vec(),
+            explicit_origins: Vec::new(),
+        };
         let explicit: Vec<&mojito_ast::ast::TypeParam> =
             source_params.iter().filter(|p| !p.infer_only).collect();
         let origin_slots = explicit.iter().filter(|p| is_origin(p)).count();
@@ -666,7 +738,7 @@ impl Checker {
         // alignment the erased-decl binder owns — resolves as before.
         if origin_slots == 0 || args.is_empty() || explicit.iter().any(|p| p.name.starts_with('*'))
         {
-            return self.resolve_use_params(name, decls, args, patterns, actuals);
+            return Ok(forward_all());
         }
         let any_named = args.iter().any(|a| matches!(a, ParamArg::Named { .. }));
         if !any_named {
@@ -682,7 +754,7 @@ impl Checker {
                         param: omitted.name.clone(),
                     });
                 }
-                return self.resolve_use_params(name, decls, args, patterns, actuals);
+                return Ok(forward_all());
             }
             if args.len() != explicit.len() {
                 return Err(TypeError::WrongTypeArgCount {
@@ -715,7 +787,7 @@ impl Checker {
                 }
                 match self.resolve_origin_param_arg(argument) {
                     Ok(origin) => resolved.push((*param, argument, origin)),
-                    Err(_) => {
+                    Err(error) => {
                         // A signature annotation may name places only the body
                         // can resolve (`origin_of(self.entries)`): accept an
                         // origin-shaped argument syntactically and erase it.
@@ -725,12 +797,23 @@ impl Checker {
                             self.accept_origin_argument(name, param, argument, None)?;
                             continue;
                         }
-                        return self.resolve_use_params(name, decls, args, patterns, actuals);
+                        // An origin-shaped argument that does not resolve is
+                        // an origin diagnostic, never an arity mismatch
+                        // against the origin-erased binder.
+                        if syntactic_origin_argument(argument) {
+                            return Err(error);
+                        }
+                        return Ok(forward_all());
                     }
                 }
             }
-            for (param, argument, (_, mutability)) in resolved {
+            let mut explicit_origins = Vec::with_capacity(resolved.len());
+            for (param, argument, (origin, mutability)) in resolved {
                 self.accept_origin_argument(name, param, argument, mutability)?;
+                explicit_origins.push(ExplicitStructOrigin {
+                    id: slot_id(param),
+                    origin,
+                });
             }
             let forwarded: Vec<mojito_ast::ast::ParamArg> = explicit
                 .iter()
@@ -738,11 +821,15 @@ impl Checker {
                 .filter(|(param, _)| !is_origin(param))
                 .map(|(_, argument)| argument.clone())
                 .collect();
-            return self.resolve_use_params(name, decls, &forwarded, patterns, actuals);
+            return Ok(PartitionedStructArgs {
+                forwarded,
+                explicit_origins,
+            });
         }
         // Keyword spellings: extract named origin arguments wherever they
         // appear; everything else forwards to the erased-decl binder.
         let mut forwarded = Vec::with_capacity(args.len());
+        let mut explicit_origins = Vec::new();
         let mut supplied_origins: Vec<&str> = Vec::new();
         for argument in args {
             if let ParamArg::Named { name: keyword, .. } = argument
@@ -757,9 +844,13 @@ impl Checker {
                     continue;
                 }
                 match self.resolve_origin_param_arg(argument) {
-                    Ok((_, mutability)) => {
+                    Ok((origin, mutability)) => {
                         self.accept_origin_argument(name, param, argument, mutability)?;
                         supplied_origins.push(&param.name);
+                        explicit_origins.push(ExplicitStructOrigin {
+                            id: slot_id(param),
+                            origin,
+                        });
                         continue;
                     }
                     Err(error) => return Err(error),
@@ -777,7 +868,10 @@ impl Checker {
                 param: omitted.name.clone(),
             });
         }
-        self.resolve_use_params(name, decls, &forwarded, patterns, actuals)
+        Ok(PartitionedStructArgs {
+            forwarded,
+            explicit_origins,
+        })
     }
 
     /// Resolve a return annotation: explicit origin slots must be applied
@@ -793,6 +887,41 @@ impl Checker {
         let result = self.resolve_storage_annotation(annotation, super::StorageStrictness::Full);
         self.signature_origin_leniency.set(saved);
         result
+    }
+
+    /// Resolve the return annotation of a compiler-generated (`$`-mangled)
+    /// specialization: it rebinds an already-checked annotation whose origin
+    /// identity is legitimately erased, so signature concreteness does not
+    /// apply, but an origin expression naming a parameter place
+    /// (`Span[T, origin_of(xs)]` cloned as `view$Int`) is still accepted
+    /// syntactically and erased rather than judged against the erased binder.
+    pub(super) fn resolve_generated_return_annotation(
+        &self,
+        annotation: &mojito_ast::ast::SourceType,
+    ) -> Result<Ty, TypeError> {
+        let saved = self.signature_origin_leniency.replace(true);
+        let result = self.resolve_storage_annotation(annotation, super::StorageStrictness::Off);
+        self.signature_origin_leniency.set(saved);
+        result
+    }
+
+    /// [`Self::resolve_storage_annotation`] that also returns the explicit
+    /// origin arguments the annotation's outermost struct application
+    /// supplied (`var w: StringSpan[ImmStaticOrigin] = s`, `var v: Span[Int,
+    /// origin_of(xs)] = xs`), erased from the resolved type, so the binding
+    /// site can judge its initializer against them.
+    pub(super) fn resolve_storage_annotation_with_origins(
+        &self,
+        annotation: &mojito_ast::ast::SourceType,
+        strictness: super::StorageStrictness,
+    ) -> Result<(Ty, Vec<(String, mojito_types::origin::Origin)>), TypeError> {
+        let saved = self.storage_origin_demands.replace(Some(Vec::new()));
+        let result = self.resolve_storage_annotation(annotation, strictness);
+        let demands = self
+            .storage_origin_demands
+            .replace(saved)
+            .unwrap_or_default();
+        result.map(|ty| (ty, demands))
     }
 
     /// Resolve a type annotation in a storage position (a struct field or a
@@ -1832,15 +1961,25 @@ impl Checker {
         } else if origin_placeholder(&args[1]) {
             // A placeholder origin (`ImmPointer[UInt8, _]`, upstream's raw
             // byte-pointer parameter) accepts any provenance at the alias's
-            // fixed permission; the callee holds no loan. The permission
-            // must be spelled: upstream infers it, Mojito's subset asks.
+            // fixed permission; the callee holds no loan. The bare spelling
+            // (`Pointer[T, _]`) is a parameter whose origin — and so whose
+            // `mut` — is inferred per call: the body cannot prove the
+            // capability, so upstream rejects writes and mutable-demanding
+            // forwards through it, exactly the immutable alias's reading.
+            // Outside parameter position the bare placeholder is not
+            // concrete (upstream's verdict).
+            use mojito_types::origin::PointerOrigin;
             match name {
-                "ImmPointer" => mojito_types::origin::PointerOrigin::UnsafeAny { mutable: false },
-                "MutPointer" => mojito_types::origin::PointerOrigin::UnsafeAny { mutable: true },
+                "ImmPointer" => PointerOrigin::UnsafeAny { mutable: false },
+                "MutPointer" => PointerOrigin::UnsafeAny { mutable: true },
+                _ if self.resolving_parameter_annotation.get() => {
+                    PointerOrigin::UnsafeAny { mutable: false }
+                }
                 _ => {
                     return Err(TypeError::Unsupported(format!(
-                        "spell the pointer permission: `ImmPointer[T, _]` or `MutPointer[T, _]` \
-                         (`{name}[T, _]` leaves it to inference)"
+                        "'{name}[{elem}, _]' is not concrete outside parameter position: a \
+                         bare placeholder origin is inferred only for a parameter; spell \
+                         ImmPointer[T, _] or MutPointer[T, _] here"
                     )));
                 }
             }
@@ -2364,7 +2503,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
 /// Append an interior-generation tag to a tracked pointer origin — the
 /// resolution of a `._get_owned_interior["tag"]` projection in a `Pointer`
 /// origin argument. Untracked provenances have no place to project into.
-fn append_interior_tag(
+pub(in crate::checker) fn append_interior_tag(
     mut origin: mojito_types::origin::PointerOrigin,
     tag: &str,
 ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
@@ -2393,7 +2532,7 @@ fn append_interior_tag(
 /// Append the conservative `._subtree` projection to a tracked pointer origin.
 /// Subtree is terminal: nothing projects below it, including another
 /// `._subtree`. Untracked provenances have no place to project into.
-fn append_subtree(
+pub(in crate::checker) fn append_subtree(
     mut origin: mojito_types::origin::PointerOrigin,
 ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
     use mojito_types::origin::{OriginSeg, PointerOrigin};

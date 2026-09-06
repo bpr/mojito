@@ -62,13 +62,13 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
     var _size: Int
 
     # Current Mojo's pointer-backed construction (`Span(unsafe_ptr=p,
-    # length=n)`) over an untracked (raw) pointer of either permission (a
-    # mutable untracked pointer binds the immutable spelling): the caller
-    # vouches that `length` elements stay live behind it for the origin's
-    # lifetime. (Upstream's parameter carries the Span's own origin; Mojito's
-    # Pointer parameters bind only exact origins, so the raw spelling is the
-    # subset.)
-    def __init__(out self, *, unsafe_ptr: Pointer[Self.T, ImmUntrackedOrigin], length: Int):
+    # length=n)`): the pointer carries the span's own origin. A tracked
+    # pointer (`xs.unsafe_ptr()`) binds — and loans — that origin, an explicit
+    # application (`Span[Byte, origin_of(self)](...)`) is checked against the
+    # pointer's provenance, and an untracked or unsafe-any pointer binds the
+    # slot untracked: the caller vouches that `length` elements stay live
+    # behind it for the origin's lifetime.
+    def __init__(out self, *, unsafe_ptr: Pointer[Self.T, Self.origin], length: Int):
         self._data = unsafe_ptr.unsafe_origin_cast[
             origin._get_owned_interior["element"]
         ]()

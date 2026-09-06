@@ -147,6 +147,16 @@ pub(super) fn transfer_register_loans(
             recv_place: Some(place),
             ..
         } => Some(place),
+        // A method call returning a tracked pointer (`xs.unsafe_ptr()`, a
+        // `pointer_self`/`pointer_place` provenance) hands out a handle into
+        // the receiver's storage the same way: the receiver must outlive
+        // every consumer of the pointer register — a callee reading the
+        // pointee included. Untracked and unsafe-any results carry no loan.
+        MirInstr::MethodCall {
+            dest,
+            recv_place: Some(place),
+            ..
+        } if tracked_pointer_result(register_types, dest) => Some(place),
         _ => None,
     };
     let mut reference_seeded = BTreeSet::new();
@@ -154,6 +164,20 @@ pub(super) fn transfer_register_loans(
         reference_seeded.insert(place.root);
         if let Some(reference) = place.through {
             reference_seeded.insert(reference);
+        }
+    }
+    // A free call returning a tracked pointer borrows through its retained
+    // argument places.
+    if let MirInstr::Call {
+        dest, arg_places, ..
+    } = instruction
+        && tracked_pointer_result(register_types, dest)
+    {
+        for place in arg_places.iter().flatten() {
+            reference_seeded.insert(place.root);
+            if let Some(reference) = place.through {
+                reference_seeded.insert(reference);
+            }
         }
     }
     owners.extend(reference_seeded.iter().copied());
@@ -298,4 +322,17 @@ pub(super) fn register_loan_uses_over(
         })
         .collect();
     (uses, entries)
+}
+
+/// Whether a call result register holds a pointer whose provenance designates
+/// checked storage (a loan-tracked origin), as opposed to an untracked or
+/// unsafe-any pointer.
+fn tracked_pointer_result(
+    register_types: &HashMap<u32, mojito_types::types::Ty>,
+    dest: &Reg,
+) -> bool {
+    matches!(
+        register_types.get(&dest.0),
+        Some(mojito_types::types::Ty::Pointer { origin, .. }) if origin.as_origin().is_some()
+    )
 }

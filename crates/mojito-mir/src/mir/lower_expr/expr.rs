@@ -47,7 +47,7 @@ impl Flatten<'_> {
                 }
                 let var = self.expression_var(name, e);
                 let d = self.fresh(span(e), Some(var));
-                if self.is_origin_bearing_pointer(e) {
+                if self.is_origin_bearing_pointer(e) && !self.is_parametric_origin_pointer(e) {
                     // Reading a pointer variable produces its handle value;
                     // `UseVar` would read through the stored `Value::Ref` the
                     // way a `ref` binding does. `MakeRef` on the root forwards

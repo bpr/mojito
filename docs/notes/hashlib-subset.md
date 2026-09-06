@@ -52,9 +52,10 @@ Mojito's:
 4. **The bytes overloads bind a placeholder-origin pointer.** `ImmPointer[T,
    _]` in a free function resolves to the unsafe-any provenance at the
    alias's permission (any pointer binds it; the callee holds no loan), Span's
-   raw constructor takes an immutable untracked pointer (a mutable one binds
-   by capability drop), and the bare `Pointer[T, _]` asks for the permission
-   upstream infers.
+   pointer constructor takes `Pointer[Self.T, Self.origin]` (an unsafe-any
+   pointer binds the slot untracked), and the bare `Pointer[T, _]` reads as
+   the immutable alias — upstream infers the origin per call and likewise
+   rejects writes through it.
 5. **Compile-time hashing runs the VM.** A call to a type-parameterized free
    function with a constructible parameter routes through a synthesized
    checked entry (folded type arguments, typed literal arguments), the purity

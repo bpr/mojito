@@ -193,6 +193,7 @@ assets/ok/overloading_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/owned_iteration_iterator_owned_type.mojo	main	exe-differential	sanitized
 assets/ok/owned_pointer_api.mojo	main	exe-differential	sanitized
 assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
+assets/ok/pack_element_temporaries.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_pair.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_variadic_init.mojo	main	exe-differential	sanitized
@@ -274,6 +275,7 @@ assets/ok/pointer_empty_deref.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_deref_index.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_iterator_storage.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_returned.mojo	main	exe-differential	sanitized
+assets/ok/pointer_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan_indirect.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan_return.mojo	main	exe-differential	sanitized
@@ -336,9 +338,11 @@ assets/ok/size_of_builtin.mojo	main	exe-differential	sanitized
 assets/ok/sized_generic_views.mojo	main	exe-differential	sanitized
 assets/ok/slice.mojo	main	exe-differential	sanitized
 assets/ok/slice_descriptor_protocols.mojo	main	exe-differential	sanitized
+assets/ok/span_generic_free_def_view.mojo	main	exe-differential	sanitized
 assets/ok/span_implicit_from_list.mojo	main	exe-differential	sanitized
 assets/ok/span_iteration.mojo	main	exe-differential	sanitized
 assets/ok/span_move_use.mojo	main	exe-differential	sanitized
+assets/ok/span_pointer_construction.mojo	main	exe-differential	sanitized
 assets/ok/span_temp_method_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_temp_static_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_view_basics.mojo	main	exe-differential	sanitized

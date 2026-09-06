@@ -244,7 +244,10 @@ list-element-not-hashable	reject	assets/type_error/list_element_not_hashable.moj
 hashlib-keyed-ahasher	run	assets/ok/hashlib_keyed_ahasher.mojo
 set-repr-keyed-hasher	run	conformance/fixtures/set_repr_keyed_hasher.mojo
 hashlib-bytes-hash	run	assets/ok/hashlib_bytes_hash.mojo
-pointer-placeholder-needs-permission	mojo-only	assets/type_error/pointer_placeholder_needs_permission.mojo
+pointer-placeholder-parameter	run	assets/ok/pointer_placeholder_parameter.mojo
+pointer-placeholder-immutable-write	reject	assets/type_error/pointer_placeholder_immutable_write.mojo
+pointer-placeholder-mutable-forward	reject	assets/type_error/pointer_placeholder_mutable_forward.mojo
+pointer-placeholder-return	reject	assets/type_error/pointer_placeholder_return.mojo
 comptime-hash	run	assets/ok/comptime_hash.mojo
 dict-hasher-forwarding	run	assets/ok/dict_hasher_forwarding.mojo
 hashable-user-struct	run	conformance/fixtures/hashable_user_struct.mojo
@@ -306,4 +309,5 @@ generic-method-per-call-clones	run	assets/ok/generic_method_per_call_clones.mojo
 generic-repr-texts	run	conformance/fixtures/generic_repr_texts.mojo
 view-temporaries	run	assets/ok/view_temporaries.mojo
 view-temporary-write	run	conformance/fixtures/view_temporary_write.mojo
+pack-named-repr	run	conformance/fixtures/pack_named_repr.mojo
 joint-map	run	assets/ok/joint_map.mojo

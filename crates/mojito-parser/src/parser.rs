@@ -178,12 +178,30 @@ fn param_argument_name(arg: &mojito_ast::ast::ParamArg) -> Result<String, ParseE
     }
 }
 
+/// Whether an expression names a value rather than a type: a lowercase
+/// identifier, a field chain rooted at one (`self.p`, `w.s`), or a call or
+/// subscript result — the bases a keyword subscript (`s[byte=i]`,
+/// `self.p[unsafe_offset=i]`, `f(x)[unsafe_offset=0]`) accepts, as opposed
+/// to a capitalized type name taking a named parameter (`Origin[mut=True]`).
 fn expression_name_starts_lowercase(expression: &Expr) -> bool {
-    matches!(
-        &expression.kind,
-        ExprKind::Identifier(name)
-            if name.chars().next().is_some_and(|character| character.is_lowercase())
-    )
+    let starts_lowercase = |name: &str| {
+        name.chars()
+            .next()
+            .is_some_and(|character| character.is_lowercase())
+    };
+    match &expression.kind {
+        ExprKind::Identifier(name) => starts_lowercase(name),
+        ExprKind::Member { object, field } => {
+            starts_lowercase(field) && expression_name_starts_lowercase(object)
+        }
+        ExprKind::Call { .. }
+        | ExprKind::MethodCall { .. }
+        | ExprKind::Invoke { .. }
+        | ExprKind::Index { .. }
+        | ExprKind::MultiIndex { .. }
+        | ExprKind::Slice { .. } => true,
+        _ => false,
+    }
 }
 
 /// The infix operator an augmented-assignment token applies (`+=` → `Add`, …),

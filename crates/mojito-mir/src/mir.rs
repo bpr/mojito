@@ -1013,6 +1013,36 @@ impl Flatten<'_> {
         )
     }
 
+    /// A pointer whose provenance is a symbolic origin parameter (a
+    /// `Pointer[T, Self.origin]` constructor parameter): each call binds it
+    /// to a heap pointer or a place handle, so its value IS the pointer —
+    /// read as a value (`UseVar`), never borrowed as a slot (`MakeRef`),
+    /// which natively would take the slot's address.
+    fn is_parametric_origin_pointer(&self, expression: &Expr) -> bool {
+        matches!(
+            self.checked_ty(expression),
+            Some(Ty::Pointer {
+                origin: mojito_types::origin::PointerOrigin::Param { .. }
+                    | mojito_types::origin::PointerOrigin::SelfPlace { .. },
+                ..
+            })
+        )
+    }
+
+    /// The pointer subscript a place expression spells — positional `p[i]` on
+    /// a pointer-typed object, or current Mojo's keyword `p[unsafe_offset=i]`
+    /// — as its pointer object and offset expression.
+    fn pointer_offset_subscript<'a>(&self, e: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
+        match &e.kind {
+            ExprKind::Index { object, index }
+                if matches!(self.checked_ty(object), Some(Ty::Pointer { .. })) =>
+            {
+                Some((object, index))
+            }
+            _ => pointer_keyword_subscript(e),
+        }
+    }
+
     /// The statically known storage place behind a stably bound origin-bearing
     /// pointer variable. Substituting it at deref sites touches the owner at
     /// each access — the liveness contract `ref` aliases have — so ASAP
@@ -2585,3 +2615,17 @@ struct ComprehensionPlan<'a> {
 mod nested;
 
 use nested::*;
+
+/// The keyword pointer subscript (`p[unsafe_offset=i]`) as its object and
+/// offset expression; every other keyword subscript is a nominal call.
+pub(crate) fn pointer_keyword_subscript(e: &Expr) -> Option<(&Expr, &Expr)> {
+    match &e.kind {
+        ExprKind::MultiIndex { object, args } => match args.as_slice() {
+            [mojito_ast::ast::SubscriptArg::Keyword { name, value }] if name == "unsafe_offset" => {
+                Some((object, value))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}

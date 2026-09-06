@@ -407,22 +407,25 @@ impl Checker {
                     return Ok(());
                 }
                 self.register_named_bindings(value)?;
-                let contextual = ty
-                    .as_ref()
-                    .map(|annotation| {
-                        self.resolve_storage_annotation(
+                let (contextual, origin_demands) = match ty.as_ref() {
+                    Some(annotation) => {
+                        let (contextual, demands) = self.resolve_storage_annotation_with_origins(
                             annotation,
                             super::StorageStrictness::AllowBare,
-                        )
-                    })
-                    .transpose()?;
+                        )?;
+                        (Some(contextual), demands)
+                    }
+                    None => (None, Vec::new()),
+                };
                 let found = match contextual.as_ref() {
                     Some(expected) => self.infer_with_expected(value, expected, true)?,
                     None => self.infer(value)?,
                 };
                 // A borrowing view conversion (`var s: Span[Int, _] = xs`)
                 // consumes the conversion temporary, not the source place.
-                if !self.storage_conversion_borrows_source(&found, contextual.as_ref()) {
+                let conversion_borrows_source =
+                    self.storage_conversion_borrows_source(&found, contextual.as_ref());
+                if !conversion_borrows_source {
                     self.check_consuming(value, &found, &format!("variable '{name}'"))?;
                 }
                 let declared = match ty {
@@ -512,6 +515,15 @@ impl Checker {
                     } else {
                         (Vec::new(), HashMap::new())
                     };
+                if !origin_demands.is_empty() {
+                    // The annotation's explicit origins are demands on the
+                    // initializer: the value must borrow what they name.
+                    let mut actual_origins = aggregate_origins.clone();
+                    if conversion_borrows_source && let Ok(place) = self.origin_place(value) {
+                        actual_origins.push(mojito_types::origin::Origin::Place(place));
+                    }
+                    self.check_storage_origin_demands(name, &origin_demands, &actual_origins)?;
+                }
                 self.declare(name, declared)?;
                 self.record_statement_binding(stmt, name);
                 self.set_aggregate_origins(name, aggregate_origins);
@@ -1872,7 +1884,9 @@ impl Checker {
                 // already-checked annotations whose origin identity is
                 // legitimately erased; signature concreteness applies to
                 // user-spelled declarations only.
-                (Some(t), _) if name.contains('$') => self.ty_from_anno(t)?,
+                (Some(t), _) if name.contains('$') => {
+                    self.resolve_generated_return_annotation(t)?
+                }
                 (Some(t), _) => self.resolve_return_annotation(t)?,
                 (None, Some(result)) => self.ty_from_anno(&result.ty)?,
                 (None, None) => Ty::None,
@@ -2426,11 +2440,15 @@ impl Checker {
                 }
                 // The initialized-local rule for parameter annotations
                 // (pin-attested): bare infers per call, a partial application
-                // omitting an origin slot rejects, a placeholder is inferred.
-                self.resolve_storage_annotation(
+                // omitting an origin slot rejects, a placeholder is inferred
+                // (a bare `Pointer[T, _]` is concrete here only).
+                self.resolving_parameter_annotation.set(true);
+                let resolved = self.resolve_storage_annotation(
                     &parameter.ty,
                     super::StorageStrictness::AllowBare,
-                )
+                );
+                self.resolving_parameter_annotation.set(false);
+                resolved
             })
             .collect()
     }

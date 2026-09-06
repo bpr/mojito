@@ -21,6 +21,9 @@ struct _ListIter[
     iterable_mut: Bool, //, T: AnyType, iterable_origin: Origin[mut=iterable_mut]
 ](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _ListIter[Self.T, iterable_origin]
 
     var src: ref[iterable_origin] List[Self.T]
     var index: Int
@@ -29,6 +32,12 @@ struct _ListIter[
     # reported by StopIteration, not by the old HasNext/length sentinel.
     def __len__(self) -> Int:
         return len(self.src) - self.index
+
+    # The iterator iterates itself (upstream's `IteratorType = Self`): a
+    # stored iterator drives a loop directly.
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        ref source = self.src
+        return _ListIter[Self.T](source, self.index)
 
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]

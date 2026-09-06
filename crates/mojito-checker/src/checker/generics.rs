@@ -112,6 +112,18 @@ pub(super) fn unify(
             ),
             _ => unify(&pattern_reference.referent, actual, subst),
         },
+        // A pointer pattern solves through its pointee (`Pointer[Self.T,
+        // Self.origin]` against `Pointer[Int, …]` solves `T = Int`); the
+        // provenance is bound separately (constructor origin binding).
+        Ty::Pointer {
+            element: pattern_element,
+            ..
+        } => {
+            if let Ty::Pointer { element, .. } = actual {
+                unify(pattern_element, element, subst)?;
+            }
+            Ok(())
+        }
         // A non-parameter pattern contributes no solution; coercion is checked
         // separately by the caller.
         _ => Ok(()),

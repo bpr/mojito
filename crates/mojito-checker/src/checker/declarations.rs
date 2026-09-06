@@ -332,7 +332,9 @@ impl Checker {
                 Some(SourceType::Ref { referent, .. }) => self.ty_from_anno(referent)?,
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
-                Some(ret) if method.name.contains('$') => self.ty_from_anno(ret)?,
+                Some(ret) if method.name.contains('$') => {
+                    self.resolve_generated_return_annotation(ret)?
+                }
                 Some(ret) => self.resolve_return_annotation(ret)?,
                 None => Ty::None,
             },
@@ -362,6 +364,10 @@ impl Checker {
             // Populated by struct signature registration, which has the
             // enclosing struct's resolved field types in hand.
             parametric_origin_writes: Vec::new(),
+            origin_binders: regular_params
+                .iter()
+                .map(|param| self.reference_parameter_struct_binder(param.origin.as_deref()))
+                .collect(),
         })
     }
 
@@ -1054,7 +1060,7 @@ impl Checker {
             Some(SourceType::Ref { referent, .. }) => self.ty_from_anno(referent)?,
             // `$`-mangled generated methods rebind already-checked
             // annotations with origins legitimately erased.
-            Some(t) if m.name.contains('$') => self.ty_from_anno(t)?,
+            Some(t) if m.name.contains('$') => self.resolve_generated_return_annotation(t)?,
             Some(t) => self.resolve_return_annotation(t)?,
             None => Ty::None,
         };
@@ -1196,9 +1202,13 @@ impl Checker {
             // Parameter annotations follow the initialized-local rule
             // (pin-attested): a bare origin-slotted generic infers per call,
             // a partial application that omits an origin slot rejects, and a
-            // placeholder marks the slot explicitly inferred.
-            let mut pty =
-                self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare)?;
+            // placeholder marks the slot explicitly inferred (a bare
+            // `Pointer[T, _]` is concrete here only).
+            self.resolving_parameter_annotation.set(true);
+            let resolved =
+                self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare);
+            self.resolving_parameter_annotation.set(false);
+            let mut pty = resolved?;
             pty = match p.kind {
                 // A specialized heterogeneous pack (`$pack` → RuntimePack)
                 // binds as the tuple itself; an ordinary variadic collects into
@@ -1451,6 +1461,13 @@ impl Checker {
         let info = self.structs.get(name).ok_or_else(|| {
             TypeError::InvariantViolation(format!("constructor target '{name}' is not registered"))
         })?;
+        // Origin slots are partitioned out of the application once, here:
+        // every binder below sees origin-free arguments, and the explicit
+        // origins are checked against the arguments binding those slots
+        // once a constructor is selected.
+        let partitioned =
+            self.partition_struct_origin_args(name, &info.source_params, param_args)?;
+        let param_args: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
         if !kwargs.is_empty() && args.is_empty() && kwargs.len() == 1 && kwargs[0].name == "copy" {
             let sig = info
                 .methods
@@ -1679,10 +1696,27 @@ impl Checker {
                 let (mut subst, tyargs) =
                     self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)?;
                 unify_through_callable_bounds(&sig.decls, &mut subst)?;
+                let bound_slots: Vec<(usize, &Expr, &Ty)> = args
+                    .iter()
+                    .zip(&params)
+                    .enumerate()
+                    .map(|(index, (expression, pattern))| (index, expression, pattern))
+                    .collect();
+                let pointer_origins = self.bind_constructor_origins(
+                    name,
+                    &info.source_params,
+                    sig,
+                    &bound_slots,
+                    &arg_tys,
+                    &partitioned.explicit_origins,
+                )?;
                 self.record_constructor_instantiation(&span, name, sig, &subst);
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
-                    let expected = substitute(pty, &subst);
+                    let expected = substitute_pointer_origin_params(
+                        &substitute(pty, &subst),
+                        &pointer_origins,
+                    );
                     if coerces(aty, &expected) {
                         // A literal argument materializes to the solved
                         // parameter type exactly as it does for a non-generic
@@ -1731,6 +1765,10 @@ impl Checker {
             // parameter slots with the shared structural matcher, then solve
             // the struct's generic parameters from the bound slots.
             let mut matches = Vec::new();
+            // The reason the last candidate failed its origin binding, so a
+            // call that matches no constructor because of an explicit-origin
+            // or pointer-permission mismatch reports that, not a bare miss.
+            let mut origin_failure: Option<TypeError> = None;
             for sig in sigs {
                 let Ok(matched) = mojito_ast::call::match_call_slots(
                     &sig.names,
@@ -1754,12 +1792,14 @@ impl Checker {
                     continue;
                 }
                 let mut bound: Vec<(&Expr, Ty, Option<ArgConvention>)> = Vec::new();
+                let mut bound_slots: Vec<(usize, &Expr, &Ty)> = Vec::new();
                 for (index, slot) in matched.slots.iter().enumerate() {
                     let expression = match slot {
                         ArgSlot::Positional(position) => &args[*position],
                         ArgSlot::Keyword(position) => &kwargs[*position].value,
                         ArgSlot::Default => continue,
                     };
+                    bound_slots.push((index, expression, &sig.params[index]));
                     bound.push((
                         expression,
                         sig.params[index].clone(),
@@ -1785,6 +1825,20 @@ impl Checker {
                 let resolved_use =
                     self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys);
                 if let Ok((subst, tyargs)) = resolved_use {
+                    let pointer_origins = match self.bind_constructor_origins(
+                        name,
+                        &info.source_params,
+                        sig,
+                        &bound_slots,
+                        &arg_tys[..bound_slots.len()],
+                        &partitioned.explicit_origins,
+                    ) {
+                        Ok(bindings) => bindings,
+                        Err(error) => {
+                            origin_failure = Some(error);
+                            continue;
+                        }
+                    };
                     let bindings = AssocBindings {
                         types: subst.clone(),
                         values: solved_value_bindings(&decls, &tyargs),
@@ -1795,7 +1849,10 @@ impl Checker {
                     let mut conversions = Vec::new();
                     let mut materializations = Vec::new();
                     for (index, (aty, pty)) in arg_tys.iter().zip(&patterns).enumerate() {
-                        let expected = substitute_assoc(pty, &bindings);
+                        let expected = substitute_pointer_origin_params(
+                            &substitute_assoc(pty, &bindings),
+                            &pointer_origins,
+                        );
                         if coerces(aty, &expected) {
                             if *aty != expected {
                                 score += 1;
@@ -1934,7 +1991,12 @@ impl Checker {
             }
             return Err(TypeError::BadCall {
                 func: name.to_string(),
-                reason: "no constructor overload matches the supplied arguments".to_string(),
+                reason: match origin_failure {
+                    Some(error) => {
+                        format!("no constructor overload matches the supplied arguments ({error})")
+                    }
+                    None => "no constructor overload matches the supplied arguments".to_string(),
+                },
             });
         }
         if info.methods.contains_key("__init__") {

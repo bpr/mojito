@@ -684,9 +684,10 @@ tuple_or_group:
 
 subscript_arg:
     | NAME '=' expression         # keyword subscript (`s[byte=i]`); value bases only
+                                  # (a lowercase name or a field chain rooted at one)
     | NAME '=' [expression] ':' [expression] [':' [expression]]
                                   # keyword slice (`s[byte=a:b]`); read-only like
-                                  # every keyword subscript
+                                  # every nominal keyword subscript
     | expression
     | [expression] ':' [expression] [':' [expression]]
 args: ','.arg+ [',']              # positional args/spread, then keyword args/forwarding
@@ -772,7 +773,7 @@ Notes:
   application. A named argument whose value is a slice (`s[byte=a:b]`,
   `s[byte=:b]`, `s[byte=::2]`) is a **keyword slice**: the slice becomes a
   `ContiguousSlice`/`StridedSlice` descriptor bound to a keyword-only
-  `__getitem__` parameter, read-only like every keyword subscript.
+  `__getitem__` parameter, read-only like every nominal keyword subscript.
   A slice preserves omitted bounds and whether a stride was written, selecting
   `ContiguousSlice` or `StridedSlice`; mixed/multiple arguments dispatch through
   variadic `__getitem__`/`__setitem__`. Nominal List slicing receives the same
@@ -1152,11 +1153,16 @@ a value-type struct own mutable heap storage, e.g. a self-hosted `List`).
   `ptr[] += e`) writes, the pointee at offset 0 — current Mojo's direct
   dereference spelling. Empty brackets on a non-pointer value are a checker
   error, and `p[None]` is not a dereference.
-- **Load / store**: `ptr[unsafe_offset=i]` reads the pointee at offset `i`
-  (current Mojo's keyword spelling; keyword subscripts stay read-only —
-  stores go through `ptr[i] = e` or `unsafe_write`). Positional `ptr[i]`
-  reads, and `ptr[i] = e` (and `ptr[i] += e`) writes, the pointee at offset
-  `i` (an `Int`; the positional read is upstream-deprecated); `e` must be a `T`.
+- **Load / store**: `ptr[unsafe_offset=i]` (current Mojo's keyword spelling)
+  reads the pointee at offset `i`, and `ptr[unsafe_offset=i] = e` (and
+  `+= e`) writes it; the pointer keyword subscript is a place, so `ref r =
+  ptr[unsafe_offset=i]` aliases the pointee and a `mut` argument writes back
+  through it, and the base may be a field chain (`self.p[unsafe_offset=i]`).
+  A store needs the pointer origin's mutable capability, not a mutable
+  binding: a pointer parameter is written through. Positional `ptr[i]`
+  reads, and `ptr[i] = e` (and `ptr[i] += e`) writes, the same pointee (an
+  `Int` offset; the positional forms are upstream-deprecated and stay
+  accepted as a bridge until the next re-pin); `e` must be a `T`.
 - **`unsafe_*` operations** (current Mojo's vocabulary): `unsafe_offset(i)` is
   provenance-preserving element arithmetic; `unsafe_write(value)` moves — and
   `unsafe_write(copy=v)` copies — a value into the pointee at offset 0;

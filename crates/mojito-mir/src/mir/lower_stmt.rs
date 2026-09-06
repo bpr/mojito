@@ -468,6 +468,18 @@ impl Flatten<'_> {
                 }
                 p
             }
+            // `p[unsafe_offset=i]`: the pointer element place, as `p[i]`.
+            ExprKind::MultiIndex { .. } if pointer_keyword_subscript(e).is_some() => {
+                let (object, offset) = pointer_keyword_subscript(e).expect("guarded");
+                let mut p = self.place(object);
+                let idx = self.expr(offset);
+                if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
+                    p.project(Proj::Index(idx), ty);
+                } else {
+                    p.proj.push(Proj::Index(idx));
+                }
+                p
+            }
             ExprKind::Index { object, index } => {
                 // A type-keyed projection (`v[Int]` on the self-hosted
                 // `Variant`): the accessor call's reference result is the
@@ -1768,6 +1780,17 @@ impl Flatten<'_> {
     pub(super) fn try_place(&mut self, e: &Expr) -> Option<MirPlace> {
         match &e.kind {
             ExprKind::Identifier(name) => Some(self.expression_place_root(name, e)),
+            ExprKind::MultiIndex { .. } if pointer_keyword_subscript(e).is_some() => {
+                let (object, offset) = pointer_keyword_subscript(e).expect("guarded");
+                let mut p = self.try_place(object)?;
+                let idx = self.expr(offset);
+                if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
+                    p.project(Proj::Index(idx), ty);
+                } else {
+                    p.proj.push(Proj::Index(idx));
+                }
+                Some(p)
+            }
             ExprKind::Member { object, field } => {
                 if self.is_slice_descriptor(object) {
                     return None;
@@ -1894,13 +1917,13 @@ impl Flatten<'_> {
                 }
                 if materialized.is_none()
                     && (self.reference_result(value).is_some()
-                        || !matches!(
+                        || !(matches!(
                             value.kind,
                             ExprKind::Identifier(_)
                                 | ExprKind::Member { .. }
                                 | ExprKind::Index { .. }
                                 | ExprKind::TypeApply { .. }
-                        ))
+                        ) || pointer_keyword_subscript(value).is_some()))
                 {
                     let source = self.expr(value);
                     self.runtime_aliases.insert(reference);
@@ -2084,7 +2107,7 @@ impl Flatten<'_> {
                 // loaded before the invalidation boundary, so a first write
                 // through a subtree pointer uses its still-live generation and
                 // only later uses observe the self-invalidation.
-                if let ExprKind::Index { object, .. } = &place.kind {
+                if let Some((object, _)) = self.pointer_offset_subscript(place) {
                     if let Some(target) = self.pointer_deref_place(object) {
                         self.emit_interior_invalidations(place, None);
                         self.emit(MirInstr::Store { place: target, src });
@@ -2195,7 +2218,7 @@ impl Flatten<'_> {
                             binding_ty: None,
                         });
                     }
-                } else if let ExprKind::Index { object, .. } = &place.kind
+                } else if let Some((object, _)) = self.pointer_offset_subscript(place)
                     && let Some(target) = self.pointer_deref_place(object)
                 {
                     // `p[0] OP= e` through a stably bound pointer: owner-place
@@ -2219,7 +2242,7 @@ impl Flatten<'_> {
                         place: target,
                         src: res,
                     });
-                } else if let ExprKind::Index { object, .. } = &place.kind
+                } else if let Some((object, _)) = self.pointer_offset_subscript(place)
                     && self.is_origin_bearing_pointer(object)
                 {
                     // `p[0] OP= e` through an origin-bearing pointer: read and

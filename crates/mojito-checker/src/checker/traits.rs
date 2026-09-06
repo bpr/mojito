@@ -220,6 +220,7 @@ impl Checker {
                     ref_return,
                     implicit: false,
                     parametric_origin_writes: Vec::new(),
+                    origin_binders: vec![None; regular_params.len()],
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
@@ -1028,6 +1029,7 @@ impl Checker {
                         ref_return: req_sig.ref_return.clone(),
                         implicit: req_sig.implicit,
                         parametric_origin_writes: req_sig.parametric_origin_writes.clone(),
+                        origin_binders: req_sig.origin_binders.clone(),
                     };
                 if !got_sigs.iter().any(|got| {
                     self.method_satisfies_requirement_under(

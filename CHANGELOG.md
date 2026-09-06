@@ -8,6 +8,55 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Origin-bearing `Span`/`Pointer` construction in upstream's shape:
+  `Span(unsafe_ptr=, length=)` takes `Pointer[Self.T, Self.origin]` — a
+  tracked pointer (`xs.unsafe_ptr()`, `Pointer(to=x)`) binds and loans the
+  span's origin, an explicit application (`Span[Byte, origin_of(self)](…)`)
+  is checked against the pointer's provenance, and an untracked or
+  unsafe-any pointer binds the slot untracked; `String.as_bytes` and the
+  hashlib bytes overloads spell it that way. Constructor calls partition
+  explicit origin arguments like annotations do (`V[origin_of(s)](3)` on a
+  hand-written `__init__`), generic free defs return origin-bearing structs
+  (`def view[T](ref xs: List[T]) -> Span[T, origin_of(xs)]`),
+  `MutUntrackedOrigin`/`ImmUnsafeAnyOrigin` fill struct origin slots, and
+  `ImmStaticOrigin` is importable from `std.origin`
+  (`assets/ok/span_pointer_construction.mojo`,
+  `assets/ok/span_generic_free_def_view.mojo`).
+- `ptr[unsafe_offset=i]` is a place: it stores (`=`, `+=`), binds a `ref`,
+  passes as a `mut` argument, and takes a field-chain or call-result base;
+  a pointer parameter is written through (a pointer is a value whose
+  origin, not whose binding, carries the write capability).
+- A bare `Pointer[T, _]` parameter is accepted as the immutable alias, the
+  verdicts upstream's per-call origin inference reaches (reads through it,
+  rejects writes and mutable-demanding forwards, not concrete outside
+  parameter position): `case:pointer-placeholder-parameter` and the three
+  reject cases.
+- Free type-pack defs (`def show[*Ts: Writable](*args: *Ts)`) specialize
+  over any checked argument — a local, a generic construction, an
+  origin-bearing temporary (`Named("k", w)`, its erased origin slot spelled
+  `_`) — through the checker-recorded instantiation, and method packs
+  accept origin-bearing temporaries (`FormatStruct.params(Named("k", k))`,
+  `case:pack-named-repr`; `assets/ok/pack_element_temporaries.mojo`).
+- The bundled `_ListIter`/`_SetIter` iterate themselves (`for x in it` over
+  a stored iterator), and an inferred generic call over an origin-slotted
+  struct value (`next(it)`, `ident(named)`) keeps the abstract path instead
+  of failing to spell the erased slot.
+
+### Fixed
+
+- A tracked pointer passed to a call at its source's last use
+  (`first(s.unsafe_ptr(), 5)`, `var q = s.unsafe_ptr(); first(q, 5)`) no
+  longer frees the source before the callee reads the pointee; a
+  `Pointer(to=x)` handle bound to a placeholder-origin parameter is
+  dereferenced as the handle rather than read through.
+- A `ref self` method returning a value classifies as a read of its
+  receiver: two live byte views of one String coexist, and a read of the
+  source under a live view is accepted.
+- An origin argument in a local's annotation (`var w:
+  StringSpan[ImmStaticOrigin] = s`, `Span[Int, origin_of(ys)] = xs`) is a
+  demand the initializer must satisfy instead of being validated and
+  erased.
+
 - Hashing parity with current Mojo: `Hasher._update_with_simd(mut self,
   value: SIMD[_, _])` (one per-type clone per hashed scalar/vector; the
   retired `UInt64` leaf is a conformance error), `SIMD.to_bits[dtype]()` and

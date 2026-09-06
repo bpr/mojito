@@ -958,10 +958,10 @@ pub(super) fn region_any_generation_state(
 /// dependency of the variable slot.
 pub(super) struct DropLoanGeneration {
     pub(super) roots: Vec<VarId>,
-    /// Direct `UnsafePointer` lowering reads the pointee before its ordinary
-    /// variable use ends, so its existing NLL timing is already precise. `ref`
-    /// values and reference-bearing aggregates can leave a handle in an SSA
-    /// register and therefore participate in transient register provenance.
+    /// `ref` values, reference-bearing aggregates, and tracked pointers can
+    /// leave a handle in an SSA register (a pointer argument is read inside
+    /// its callee) and therefore participate in transient register
+    /// provenance.
     pub(super) propagate_through_registers: bool,
 }
 
@@ -972,23 +972,16 @@ pub(super) struct DropLoanGeneration {
 pub(super) fn drop_loan_generations(f: &MirFunction) -> BTreeMap<u32, DropLoanGeneration> {
     let mut roots_by_generation: BTreeMap<u32, DropLoanGeneration> = BTreeMap::new();
     for_each_instr_deep(&f.blocks, &mut |instr| {
-        if let MirInstr::EstablishLoans {
-            reference,
-            loans,
-            marker,
-            ..
-        } = instr
-        {
-            let direct = matches!(
-                f.var_tys.get(reference),
-                Some(mojito_types::types::Ty::Pointer { .. })
-            );
+        if let MirInstr::EstablishLoans { loans, marker, .. } = instr {
+            // Every generation propagates, pointer variables included: a
+            // pointer register handed to a call reads its pointee inside the
+            // callee, after the variable's own last use.
             let generation =
                 roots_by_generation
                     .entry(marker.0)
                     .or_insert_with(|| DropLoanGeneration {
                         roots: Vec::new(),
-                        propagate_through_registers: !direct,
+                        propagate_through_registers: true,
                     });
             for loan in loans {
                 if !generation.roots.contains(&loan.place.root) {

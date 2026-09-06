@@ -3031,6 +3031,21 @@ fn keyword_subscripts_parse_on_value_bases_and_type_applications_stay() {
         [mojito::ast::SubscriptArg::Keyword { name, .. }] if name == "byte"
     ));
 
+    // A field chain rooted at a value is a value base too
+    // (`self.p[unsafe_offset=i]`, `w.s[byte=i]`).
+    let program = mojito::parse("x = self.p[unsafe_offset=1]\n").expect("parse");
+    let StmtKind::Assign { value, .. } = &program[0].kind else {
+        panic!("assign");
+    };
+    let ExprKind::MultiIndex { object, args } = &value.kind else {
+        panic!("expected keyword subscript, got {:?}", value.kind);
+    };
+    assert!(matches!(object.kind, ExprKind::Member { .. }));
+    assert!(matches!(
+        args.as_slice(),
+        [mojito::ast::SubscriptArg::Keyword { name, .. }] if name == "unsafe_offset"
+    ));
+
     let program = mojito::parse("x = Origin[mut=True]\n").expect("parse");
     let StmtKind::Assign { value, .. } = &program[0].kind else {
         panic!("assign");

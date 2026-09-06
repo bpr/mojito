@@ -1318,14 +1318,19 @@ impl Checker {
                 }
             }
         }
-        // A `ref self` receiver whose capability is not provably mutable —
-        // immutable or parametric (`Origin[mut=m]` ref fields and their
-        // reborrows) — classifies as an immutable access for ownership: only a
-        // proven-mutable receiver may map to a write. Receiver-aliasing
+        // A `ref self` receiver classifies as an immutable access for
+        // ownership unless the call needs the receiver's mutable capability:
+        // a recorded parametric write in the body, or a reference result
+        // (whose loan carries the receiver's mutability) — and then only when
+        // the receiver is provably mutable. A `ref self` method returning a
+        // value (`s[byte=a:b]`, `xs.__iter__()`) names `origin_of(self)` for
+        // the result's shared loan and cannot store into its receiver, so it
+        // reads: two live byte views of one String coexist. Receiver-aliasing
         // exclusivity below still uses the raw declared convention.
         let effective_receiver_convention = if resolved.self_convention == Some(ArgConvention::Ref)
-            && self.reference_actual(object)?.mutability
-                != mojito_types::origin::Mutability::Mutable
+            && ((resolved.parametric_origin_writes.is_empty() && resolved.ref_return.is_none())
+                || self.reference_actual(object)?.mutability
+                    != mojito_types::origin::Mutability::Mutable)
         {
             Some(ArgConvention::Imm)
         } else {

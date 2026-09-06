@@ -74,6 +74,14 @@ impl Checker {
                 place.path.push(OriginSeg::AnyIndex);
                 Ok(place)
             }
+            ExprKind::MultiIndex { .. }
+                if let Some((object, _)) =
+                    crate::checker::places::pointer_offset_keyword_subscript(expr) =>
+            {
+                let mut place = self.origin_place(object)?;
+                place.path.push(OriginSeg::AnyIndex);
+                Ok(place)
+            }
             ExprKind::TypeApply { name, .. }
                 if self
                     .operation_adjustments
@@ -252,6 +260,19 @@ impl Checker {
             // the parameter directly from its declared origin; the VM re-roots the
             // returned handle at the pointee and forwards the offset-0 index.
             ExprKind::Index { object, .. } => {
+                if let Ok(Ty::Pointer {
+                    origin: mojito_types::origin::PointerOrigin::Param { id, .. },
+                    ..
+                }) = self.infer(object)
+                {
+                    return Some(Origin::Param(id));
+                }
+                self.returned_reference_parameter_origin(object)
+            }
+            ExprKind::MultiIndex { .. }
+                if let Some((object, _)) =
+                    crate::checker::places::pointer_offset_keyword_subscript(expr) =>
+            {
                 if let Ok(Ty::Pointer {
                     origin: mojito_types::origin::PointerOrigin::Param { id, .. },
                     ..

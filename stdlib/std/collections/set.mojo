@@ -12,6 +12,9 @@ struct _SetIter[
     iterable_origin: Origin[mut=iterable_mut],
 ](Iterator):
     comptime Element = Self.T
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _SetIter[Self.T, iterable_origin]
 
     var src: ref[iterable_origin] List[Self.T]
     var index: Int
@@ -19,6 +22,12 @@ struct _SetIter[
     # Optimization hint / compatibility API; exhaustion is StopIteration.
     def __len__(self) -> Int:
         return len(self.src) - self.index
+
+    # The iterator iterates itself (upstream's `IteratorType = Self`): a
+    # stored iterator drives a loop directly.
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        ref source = self.src
+        return _SetIter[Self.T](source, self.index)
 
     # Element yields are read-only regardless of the set's mutability:
     # writing through an element reference would corrupt the hash and

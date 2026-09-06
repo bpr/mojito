@@ -34,6 +34,49 @@ fn ct_value_can_carry_a_type_without_runtime_materialization() {
 }
 
 #[test]
+fn free_type_pack_def_takes_checked_arguments() {
+    // A free `def show[*Ts: Writable](*args: *Ts)` specializes over any
+    // checked argument — a local, a constructed value, an origin-bearing
+    // temporary whose erased origin slot the clone spells as `_` — through
+    // the checker-recorded instantiation, as inferred bound-generic calls do;
+    // literal-only calls still specialize before checking.
+    let src = "from std.format._utils import Named\n\ndef show[*Ts: Writable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        print(args[i])\n\ndef main():\n    var w = 7\n    var x = 5\n    show(x)\n    show(\"lit\", 3)\n    show(Named(\"k\", w), x)\n    var n = Named(\"m\", w)\n    show(n)\n    w += 1\n    print(w)\n";
+    assert_eq!(run(src).unwrap(), "5\nlit\n3\nk=7\n5\nm=7\n8\n");
+    // A type-pack template that is never called still elaborates.
+    let unused = "def show[*Ts: Writable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        print(args[i])\n\ndef main():\n    print(1)\n";
+    assert_eq!(run(unused).unwrap(), "1\n");
+    // A bound violation is still reported.
+    let bad = "struct Opaque:\n    var n: Int\n    def __init__(out self):\n        self.n = 0\n\ndef show[*Ts: Writable](*args: *Ts):\n    print(1)\n\ndef main():\n    var o = Opaque()\n    show(o)\n";
+    let err = run(bad).unwrap_err();
+    assert!(
+        err.contains("does not conform to trait 'Writable'"),
+        "{err}"
+    );
+}
+
+#[test]
+fn method_pack_elements_spell_erased_origin_slots_as_placeholders() {
+    // `FormatStruct.params(Named("k", k))` (upstream's collection-repr
+    // spelling): the method pack's element type renders its erased origin
+    // slot as `_`, which the clone's parameter annotation accepts.
+    let src = "from std.format._utils import FormatStruct, Named\n\nstruct S(Writable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def write_to(self, mut writer: Some[Writer]):\n        var k = self.x + 1\n        FormatStruct(writer, \"S\").params(Named(\"k\", k), Named(\"x\", self.x)).fields(self.x)\n\ndef main():\n    print(S(3))\n";
+    assert_eq!(run(src).unwrap(), "S[k=4, x=3](3)\n");
+}
+
+#[test]
+fn inferred_generic_over_origin_erased_iterator_stays_abstract() {
+    // A bound-generic call whose inferred type argument is an origin-slotted
+    // struct (`next(it)` over a stored `_ListIter`, `ident(n)` over a
+    // `Named` local) keeps the abstract path: a clone could not spell the
+    // erased origin slot. The bundled List/Set iterators iterate themselves.
+    let src = "from std.format._utils import Named\n\ndef ident[T: AnyType](x: T) -> Int:\n    return 1\n\ndef main() raises:\n    var xs: List[Int] = [1, 2, 3]\n    var it = xs.__iter__()\n    print(next(it), next(it))\n    for rest in it:\n        print(rest)\n    var st = Set[Int]()\n    st.add(9)\n    var si = st.__iter__()\n    print(next(si))\n    var w = 7\n    var n = Named(\"k\", w)\n    print(ident(n), ident(it))\n";
+    assert_eq!(run(src).unwrap(), "1 2\n3\n9\n1 1\n");
+    let mutation = "def main() raises:\n    var xs: List[Int] = [1, 2]\n    var it = xs.__iter__()\n    xs.append(9)\n    print(next(it))\n";
+    let err = run(mutation).unwrap_err();
+    assert!(err.contains("conflicts with live reference"), "{err}");
+}
+
+#[test]
 fn comptime_if_selects_a_branch() {
     let src = "comptime N = 8\n\ndef main():\n    comptime if N > 4:\n        print(\"big\")\n    elif N > 0:\n        print(\"small\")\n    else:\n        print(\"zero\")\n";
     assert_eq!(run(src).unwrap(), "big\n");

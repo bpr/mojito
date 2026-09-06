@@ -526,6 +526,7 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
     const ORIGIN: &[&str] = &[
         "Origin",
         "OriginSet",
+        "ImmStaticOrigin",
         "UntrackedOrigin",
         "MutUntrackedOrigin",
         "ImmUntrackedOrigin",

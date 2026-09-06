@@ -307,6 +307,12 @@ impl Checker {
             ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
                 Ok(Origin::Untracked { mutable: true })
             }
+            ExprKind::Identifier(name) if name == "MutUntrackedOrigin" => {
+                Ok(Origin::Untracked { mutable: true })
+            }
+            ExprKind::Identifier(name) if name == "ImmUnsafeAnyOrigin" => {
+                Ok(Origin::Untracked { mutable: false })
+            }
             // A bare name (or `Self.name`) may spell an in-scope Origin
             // parameter directly, mirroring the `ref[o]` annotation channel:
             // `EntryIter[Self.K, Self.V, iterable_origin]`.
@@ -379,9 +385,13 @@ impl Checker {
                     Origin::Untracked { mutable: false },
                     Some(Mutability::Immutable),
                 )),
-                "MutUnsafeAnyOrigin" => Ok((
+                "MutUnsafeAnyOrigin" | "MutUntrackedOrigin" => Ok((
                     Origin::Untracked { mutable: true },
                     Some(Mutability::Mutable),
+                )),
+                "ImmUnsafeAnyOrigin" => Ok((
+                    Origin::Untracked { mutable: false },
+                    Some(Mutability::Immutable),
                 )),
                 _ => Err(TypeError::TypeMismatch {
                     expected: "origin_of(place) or a builtin Origin value".to_string(),
@@ -410,8 +420,10 @@ impl Checker {
                 },
             ),
             None => match name {
-                "ImmStaticOrigin" | "ImmUntrackedOrigin" => Some(Mutability::Immutable),
-                "MutUnsafeAnyOrigin" => Some(Mutability::Mutable),
+                "ImmStaticOrigin" | "ImmUntrackedOrigin" | "ImmUnsafeAnyOrigin" => {
+                    Some(Mutability::Immutable)
+                }
+                "MutUnsafeAnyOrigin" | "MutUntrackedOrigin" => Some(Mutability::Mutable),
                 _ => None,
             },
         };

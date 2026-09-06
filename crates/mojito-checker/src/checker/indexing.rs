@@ -49,6 +49,10 @@ impl Checker {
                 Some(substitute(field_ty, &struct_subst(&info.decls, &arguments)))
             }),
             ExprKind::Index { object, index } => self.index_storage_ty(object, index),
+            ExprKind::MultiIndex { .. } => {
+                let (object, offset) = super::places::pointer_offset_keyword_subscript(place)?;
+                self.index_storage_ty(object, offset)
+            }
             _ => None,
         }
     }
@@ -161,7 +165,14 @@ impl Checker {
                         ))),
                     };
                 }
-                let obj_ty = self.check_place(object)?;
+                // A pointer is a value: a store through it needs its origin's
+                // mutable capability (`check_pointer_write` below), not a
+                // mutable binding, so `def w(p: Pointer[Int]): p[0] = 2`
+                // writes through the parameter as upstream does.
+                let obj_ty = match self.infer(object)? {
+                    pointer @ Ty::Pointer { .. } => pointer,
+                    _ => self.check_place(object)?,
+                };
                 // A subscript-shaped Variant projection target (`storage[T] = x`
                 // on a Variant-typed field, `v[String] = x`).
                 if let Ty::Variant(alternatives) = &obj_ty
@@ -311,6 +322,27 @@ impl Checker {
                 Ok(resolution.return_type)
             }
             ExprKind::MultiIndex { object, args } => {
+                // `ptr[unsafe_offset=i] = e` (current Mojo's keyword
+                // dereference): the pointer store, exactly like `ptr[i] = e`.
+                if let Some((object, offset)) =
+                    super::places::pointer_offset_keyword_subscript(place)
+                    && let Ty::Pointer { element, origin } = self.infer(object)?
+                {
+                    self.check_pointer_offset(&origin, offset)?;
+                    self.check_pointer_write(&origin)?;
+                    let idx_ty = self.infer(offset)?;
+                    if !self.is_index_type(&idx_ty) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: "Indexer".to_string(),
+                            found: idx_ty.to_string(),
+                            context: "index".to_string(),
+                        });
+                    }
+                    return Ok(match *element {
+                        Ty::Ref(reference) => *reference.referent,
+                        other => other,
+                    });
+                }
                 let object_type = self.check_place(object)?;
                 let mut argument_types = Vec::with_capacity(args.len());
                 let mut descriptors = Vec::with_capacity(args.len());

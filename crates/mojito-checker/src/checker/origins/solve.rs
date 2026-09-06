@@ -331,3 +331,51 @@ impl Checker {
         Ok((effective, returned, bool_bindings))
     }
 }
+
+impl Checker {
+    /// Judge a `var` initializer against the explicit origin arguments its
+    /// annotation supplied (erased from the resolved type): an
+    /// `ImmStaticOrigin` slot rejects any borrowed local place (the `ref`
+    /// demand's verdict, `solve_call_origins_with_bool_bindings`), and an
+    /// `origin_of(place)` slot rejects a value borrowing only other roots.
+    /// A value borrowing nothing (a literal view) satisfies any demand.
+    pub(in crate::checker) fn check_storage_origin_demands(
+        &self,
+        name: &str,
+        demands: &[(String, mojito_types::origin::Origin)],
+        actuals: &[mojito_types::origin::Origin],
+    ) -> Result<(), TypeError> {
+        use mojito_types::origin::Origin;
+        for (parameter, demand) in demands {
+            match demand {
+                Origin::Static => {
+                    if actuals
+                        .iter()
+                        .any(|actual| !matches!(actual, Origin::Static))
+                    {
+                        return Err(TypeError::Unsupported(
+                            "a local place cannot satisfy ImmStaticOrigin".to_string(),
+                        ));
+                    }
+                }
+                Origin::Place(place)
+                    if !actuals.is_empty()
+                        && !actuals
+                            .iter()
+                            .any(|actual| origin_rooted_at(actual, place.root)) =>
+                {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!(
+                            "a value borrowing the place named by the '{parameter}' origin \
+                             argument"
+                        ),
+                        found: "a value borrowing a different place".to_string(),
+                        context: format!("variable '{name}'"),
+                    });
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}

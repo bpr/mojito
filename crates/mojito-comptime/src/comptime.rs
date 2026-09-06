@@ -538,6 +538,15 @@ pub fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_bound_generic_templates(program)
 }
 
+/// The top-level type-pack template names (`def show[*Ts: Writable](*args:
+/// *Ts)`) of a linked program: a call whose element types are not statically
+/// evident before checking (a local, a generic construction, an origin-bearing
+/// temporary) is minted from the checker-recorded instantiation on the next
+/// discovery round, as inferred bound-generic calls are.
+pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
+    collect_pack_generic_templates(program)
+}
+
 /// Elaborate a program while materializing checker-discovered public `Tuple`
 /// and `TString` specializations and inferred bound-generic applications.
 /// This is a crate-internal staging seam: ordinary callers use [`elaborate`],
@@ -613,6 +622,7 @@ pub fn elaborate_with_requests(
         .map(|(key, ty)| (ty, key))
         .collect();
     let bound_generics = collect_bound_generic_templates(&program);
+    let pack_generics = collect_pack_generic_templates(&program);
     let elab = Elab {
         program: &program,
         fns: collect_fns(&program),
@@ -626,6 +636,7 @@ pub fn elaborate_with_requests(
             .collect(),
         specializable: collect_specializable(&program, &bound_generics),
         bound_generics,
+        pack_generics,
         method_requests: method_requests_by_owner,
         instance_requests,
         hash_leaf_types: hash_leaf_types.to_vec(),
@@ -1251,6 +1262,12 @@ struct Elab<'a> {
     /// application monomorphizes, every other reference stays on the template's
     /// abstract erased-dispatch path and retains the template.
     bound_generics: HashSet<String>,
+    /// Top-level type-pack `def`s (a `*Ts` type parameter, unique name). A
+    /// call whose pack element types the elaborator cannot read syntactically
+    /// consults the checker-recorded instantiation for its occurrence, and a
+    /// deferred call keeps the template as a signature-only stub for the
+    /// discovery check.
+    pack_generics: HashSet<String>,
     /// Checker-discovered generic-method instantiations on specialized
     /// variadic structs, by owner name: each becomes a per-call clone.
     method_requests: HashMap<String, Vec<MethodSpecializationRequest>>,
@@ -1631,6 +1648,41 @@ fn collect_specializable<'a>(
 /// Mojo-style pre-check of the uninstantiated body. An overloaded name stays
 /// entirely on the abstract path: the registry is name-keyed and overload
 /// selection is the checker's.
+/// Top-level type-pack templates: a uniquely named `def` with a `*Ts` type
+/// parameter (see [`pack_generic_template_names`]). Value packs and
+/// overloaded names stay on the syntactic (hard) specialization path.
+fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
+    let mut def_counts: HashMap<&str, usize> = HashMap::new();
+    for statement in program {
+        if let StmtKind::Def { name, .. } = &statement.kind {
+            *def_counts.entry(name.as_str()).or_default() += 1;
+        }
+    }
+    program
+        .iter()
+        .filter_map(|statement| {
+            let StmtKind::Def {
+                name, type_params, ..
+            } = &statement.kind
+            else {
+                return None;
+            };
+            if def_counts[name.as_str()] != 1 {
+                return None;
+            }
+            type_params
+                .iter()
+                .any(|parameter| {
+                    matches!(
+                        classify_ct_param(parameter, type_params),
+                        Some(ParamDecl::Type { variadic: true, .. })
+                    )
+                })
+                .then(|| name.clone())
+        })
+        .collect()
+}
+
 fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let mut def_counts: HashMap<&str, usize> = HashMap::new();
     for statement in program {
@@ -1784,6 +1836,113 @@ mod rewrite;
 mod specialize;
 
 use rewrite::*;
+
+impl<'a> Elab<'a> {
+    /// Whether `name` declares an explicit (non-infer-only) `Origin`/
+    /// `OriginSet` parameter — a slot the checker erases from `Ty::Struct`,
+    /// so a type mentioning the struct cannot be spelled concretely in a
+    /// generated clone (`_ListIter[Int]` would omit `iterable_origin`).
+    pub(super) fn struct_has_explicit_origin_slots(&self, name: &str) -> bool {
+        self.structs.get(name).is_some_and(|declaration| {
+            declaration.source_params.iter().any(|parameter| {
+                !parameter.infer_only
+                    && matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+            })
+        })
+    }
+
+    /// Whether a checked type mentions an origin-slotted struct anywhere: an
+    /// inferred type argument of that shape keeps its call on the abstract
+    /// path (origin-carrying references do the same).
+    pub(super) fn ty_mentions_origin_slotted_struct(&self, ty: &Ty) -> bool {
+        mojito_types::types::mentions(
+            ty,
+            &|candidate| matches!(candidate, Ty::Struct(name, _) if self.struct_has_explicit_origin_slots(name)),
+        )
+    }
+
+    /// Whether syntactically guessed pack element types are the whole truth:
+    /// a bare generic struct name (`Box(7)` guessed as `Box`, `Named("k",
+    /// w)` as `Named`) hides arguments only the checker can solve, so the
+    /// call defers to the checker-recorded instantiation instead.
+    pub(super) fn pack_values_statically_evident(&self, values: &[CtValue]) -> bool {
+        values.iter().all(|value| match value {
+            CtValue::Tuple(elements) => elements.iter().all(|element| match element {
+                CtValue::Type(ty) => !mojito_types::types::mentions(ty, &|candidate| {
+                    matches!(
+                        candidate,
+                        Ty::Struct(name, arguments)
+                            if arguments.is_empty()
+                                && self.structs.get(name).is_some_and(|declaration| {
+                                    !declaration.decls.is_empty()
+                                        || self.struct_has_explicit_origin_slots(name)
+                                })
+                    )
+                }),
+                _ => true,
+            }),
+            _ => true,
+        })
+    }
+
+    /// The source spelling of a heterogeneous pack element type, with every
+    /// origin slot the checker erased spelled as upstream's `_` placeholder
+    /// (`Named[Int]` → `Named[Int, _]`): the specialized `$pack` parameter
+    /// annotation resolves in parameter position, where a placeholder marks
+    /// the slot explicitly inferred.
+    pub(super) fn pack_element_source_type(&self, ty: &Ty) -> Option<Type> {
+        source_type_from_ty(ty).map(|source| self.insert_origin_placeholders(source))
+    }
+
+    /// See [`Self::pack_element_source_type`]; walks nested applications.
+    pub(super) fn insert_origin_placeholders(&self, source: Type) -> Type {
+        let Type::Named(name, arguments) = source else {
+            return source;
+        };
+        let arguments: Vec<ParamArg> = arguments
+            .into_iter()
+            .map(|argument| match argument {
+                ParamArg::Type(inner) => ParamArg::Type(self.insert_origin_placeholders(inner)),
+                other => other,
+            })
+            .collect();
+        let is_origin = |parameter: &TypeParam| matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
+        let Some(declaration) = self.structs.get(&name) else {
+            return Type::Named(name, arguments);
+        };
+        let explicit: Vec<&TypeParam> = declaration
+            .source_params
+            .iter()
+            .filter(|parameter| !parameter.infer_only)
+            .collect();
+        let non_origin = explicit
+            .iter()
+            .filter(|parameter| !is_origin(parameter))
+            .count();
+        if non_origin == explicit.len()
+            || arguments.len() != non_origin
+            || arguments
+                .iter()
+                .any(|argument| matches!(argument, ParamArg::Named { .. }))
+        {
+            return Type::Named(name, arguments);
+        }
+        let mut positional = arguments.into_iter();
+        let filled = explicit
+            .iter()
+            .map(|parameter| {
+                if is_origin(parameter) {
+                    ParamArg::Value(Expr::new(ExprKind::Identifier("_".to_string()), (0, 0)))
+                } else {
+                    positional
+                        .next()
+                        .expect("argument count equals the non-origin explicit count")
+                }
+            })
+            .collect();
+        Type::Named(name, filled)
+    }
+}
 
 #[cfg(test)]
 mod vm_bridge_tests {

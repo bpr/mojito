@@ -193,6 +193,7 @@ assets/ok/overloading_variadic_constructor.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/owned_iteration_iterator_owned_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/owned_pointer_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ownership_marker_traits.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_element_temporaries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_pair.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_variadic_init.mojo	-	ineligible	no-scalar-entry-shape
@@ -274,6 +275,7 @@ assets/ok/pointer_empty_deref.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_deref_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_iterator_storage.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_returned.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan_indirect.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan_return.mojo	-	ineligible	no-scalar-entry-shape
@@ -336,9 +338,11 @@ assets/ok/size_of_builtin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sized_generic_views.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/slice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/slice_descriptor_protocols.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/span_generic_free_def_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_implicit_from_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_move_use.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/span_pointer_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_method_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_static_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_view_basics.mojo	-	ineligible	no-scalar-entry-shape

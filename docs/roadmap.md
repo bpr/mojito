@@ -130,39 +130,43 @@ exempt from the ordering.
      - `len(s)` on a String or StringSpan is accepted (byte length) where
        upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
        `len(s.graphemes())`); an extension to drop at the next re-pin.
-  3. **Origin-bearing `Span`/`Pointer` construction.**
-     - `Span(unsafe_ptr=, length=)` takes `Pointer[T, ImmUntrackedOrigin]`
-       (a mutable untracked pointer binds it by capability drop): a
-       `Pointer[T, origin]` parameter cannot bind through a constructor
-       type application (`Span[Byte, origin_of(self)](...)` rejects with a
-       type-argument count).
-     - `Pointer`'s `[unsafe_offset=]` keyword subscript (upstream deprecates
-       the positional form).
-     - A placeholder-origin pointer parameter (`bytes: Pointer[UInt8, _]`)
-       must spell its permission (`ImmPointer`/`MutPointer`); upstream
-       infers `mut` from the argument's origin and accepts the bare
-       spelling, so `pointer-placeholder-needs-permission` is a `mojo-only`
-       conformance case.
-     - An origin-bearing struct return in a free function (`def view[T](ref
-       xs: List[T]) -> Span[T, origin_of(xs)]`) rejects with a type-argument
-       count though the same spelling works in a method — this keeps
-       `reversed(list)` a method spelling (`xs.__reversed__()`).
-     - `var it = xs.__iter__()` cannot infer the local's origin parameter
-       (`failed to infer parameter 'iterable_origin'`); construct from a
-       `ref` explicitly.
-     - An origin-bearing struct temporary as a pack element
-       (`format.params(Named("k", v))`, upstream's `Set` repr spelling)
-       cannot infer its origin binder (`'Named' failed to infer parameter
-       'o'`; a free pack def reports `cannot infer type parameter 'T'`);
-       `Named` works bound to a local, as a plain argument, and over a
-       `self` field.
-     - Two live byte-slice views of one String conflict (`s[byte=1:3]`
-       while a `view` of `s` is live: `access to 's' conflicts with live
-       reference 'view'`) because the parametric `ref self` subscript
-       receiver counts as a mutable access; slice a different String.
-     - `var w: StringSpan[ImmStaticOrigin] = s` is accepted although a local
-       place cannot satisfy a static origin: the `SigOrigin::Static` check
-       covers only `ref` demands.
+  3. **Pointer, view, and pack residues.** Found while closing the
+     origin-bearing `Span`/`Pointer` construction task (2026-09-06); each
+     is a real gap with its fix outside that task's scope.
+     - A generic struct with a trait-bound parameter and a `write_to`
+       (`struct Wrap[T: Writable](Writable)`) fails the specialization
+       conformance oracle (`unknown type 'T'`) even for `print(Wrap(8))`.
+     - `B2(Pointer(to=w))` cannot infer `T` through a `Pointer[Self.T, …]`
+       field, and `B2[Int](Pointer(to=w))` rejects the tracked pointer
+       against a `MutUntrackedOrigin` field.
+     - Two `Named` values over one `w` conflict (`print(Named("a", w),
+       Named("b", w))`, or two bound locals): the construction's loan on
+       `w` is minted mutable although `Named`'s origin is `Origin[mut=False]`.
+     - `var view = Span(xs)` then `for ref x in xs: x += 1` is accepted while
+       the view lives (loop write-through does not conflict with the view's
+       loan).
+     - Reassigning an origin-annotated local (`var v: Span[Int,
+       origin_of(xs)] = xs` then `v = ys`) is not judged against the
+       annotation's origin demand (only the declaration is).
+     - `_ArrayIter` and `_SpanIter` do not iterate themselves: an
+       `IteratorType` alias naming the enclosing struct's own value parameter
+       resolves `length` as a type, and the erased `_SpanIter.__next__` body
+       has no VM dispatch for `len(span)`. `_ListIter`/`_SetIter` do.
+     - Nested and whole-pack-forwarded type-pack calls keep the syntactic
+       element-typing path (`not a compile-time value` for a non-evident
+       element); only top-level calls consult the checker's instantiation.
+     - A static-method call through an origin-bearing type application
+       (`Span[Int, origin_of(xs)].method()`) does not partition the origin
+       slot (`method_calls/statics.rs`).
+     - `reversed(list)` stays the method spelling (`xs.__reversed__()`):
+       `reversed` is an overload set, and overloaded names keep the abstract
+       path, so the origin-bearing generic free def is not minted.
+     - `TypeNames[Int]()` prints `SIMD[DType.int, 1]` where upstream prints
+       `Int`.
+     - Casting a tracked pointer to an untracked origin at its source's last
+       use (`s.unsafe_ptr().unsafe_origin_cast[ImmUntrackedOrigin]()`) frees
+       the source before the pointer is read — as upstream would; a note,
+       not a gap.
   4. **Storage-shape items with a known blocker.** Short plan (ordering).
      - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
        (a per-API `where` pass, as `List[T: AnyType]`).

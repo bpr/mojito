@@ -478,21 +478,60 @@ impl Checker {
                                 append_unique(&mut result, self.aggregate_origins(argument));
                             }
                         }
-                    } else if let Some(signature) =
-                        info.methods.get("__init__").and_then(|signatures| {
-                            signatures.iter().find(|sig| sig.params.len() == args.len())
-                        })
-                    {
-                        let refs = signature.ref_params.clone();
-                        for (index, argument) in args.iter().enumerate() {
-                            if refs.get(index).is_some_and(Option::is_some) {
-                                if let Ok(reference) = self.materialized_reference_actual(argument)
-                                {
-                                    append_unique(&mut result, [reference.origin]);
-                                }
-                            } else {
-                                append_unique(&mut result, self.aggregate_origins(argument));
+                    } else if let Some(signatures) = info.methods.get("__init__") {
+                        // Slot the call against the first constructor whose
+                        // parameter shape accepts it (positional and keyword
+                        // arguments alike — `Span(unsafe_ptr=…, length=…)`),
+                        // so a `ref` slot contributes its reference origin and
+                        // every other slot its value's aggregate origins.
+                        let keyword_names: Vec<&str> =
+                            kwargs.iter().map(|kw| kw.name.as_str()).collect();
+                        for signature in signatures {
+                            let Ok(matched) = mojito_ast::call::match_call_slots(
+                                &signature.names,
+                                &signature.required,
+                                signature.positional_only,
+                                signature.keyword_only,
+                                args.len(),
+                                &keyword_names,
+                                mojito_ast::call::CallVariadics {
+                                    positional: signature.variadic.is_some(),
+                                    keyword: signature.kw_variadic.is_some(),
+                                },
+                            ) else {
+                                continue;
+                            };
+                            if !matched.keyword_overflow.is_empty() {
+                                continue;
                             }
+                            let refs = signature.ref_params.clone();
+                            for (index, slot) in matched.slots.iter().enumerate() {
+                                let argument = match slot {
+                                    mojito_ast::call::ArgSlot::Positional(position) => {
+                                        &args[*position]
+                                    }
+                                    mojito_ast::call::ArgSlot::Keyword(position) => {
+                                        &kwargs[*position].value
+                                    }
+                                    mojito_ast::call::ArgSlot::Default => continue,
+                                };
+                                if refs.get(index).is_some_and(Option::is_some) {
+                                    if let Ok(reference) =
+                                        self.materialized_reference_actual(argument)
+                                    {
+                                        append_unique(&mut result, [reference.origin]);
+                                    }
+                                } else {
+                                    append_unique(&mut result, self.aggregate_origins(argument));
+                                }
+                            }
+                            for position in &matched.positional_overflow {
+                                append_unique(
+                                    &mut result,
+                                    self.aggregate_origins(&args[*position]),
+                                );
+                            }
+                            break;
                         }
                     }
                 }

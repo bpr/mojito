@@ -636,7 +636,7 @@ struct String(
     # Byte access: a borrowed `Span[Byte]` over the buffer and the raw
     # interior pointer (current Mojo's `as_bytes`/`unsafe_ptr`).
     def as_bytes(ref self) -> Span[Byte, origin_of(self)]:
-        return Span[Byte](unsafe_ptr=self.data, length=self.size)
+        return Span[Byte, origin_of(self)](unsafe_ptr=self.unsafe_ptr(), length=self.size)
 
     def unsafe_ptr(ref self) -> Pointer[Byte, origin_of(self)._get_owned_interior["bytes"]]:
         return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
@@ -1589,9 +1589,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         hasher._update_with_bytes(self.as_bytes())
 
     def as_bytes(self) -> Span[Byte, Self.origin]:
-        return Span[Byte](
-            unsafe_ptr=self._data.unsafe_origin_cast[MutUntrackedOrigin](), length=self._size
-        )
+        return Span[Byte](unsafe_ptr=self._data, length=self._size)
 
     def codepoints(self) -> _CodepointIter[Self.origin]:
         return _CodepointIter(self, 0)

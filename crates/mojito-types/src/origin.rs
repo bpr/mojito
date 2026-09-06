@@ -262,6 +262,10 @@ pub enum PointerOrigin {
     Untracked {
         mutable: bool,
     },
+    /// A placeholder-origin pointer (`ImmPointer[T, _]`, `MutPointer[T, _]`,
+    /// and the bare `Pointer[T, _]` parameter, which reads as the immutable
+    /// alias): any provenance binds and no loan is held; only the permission
+    /// is retained.
     UnsafeAny {
         mutable: bool,
     },
